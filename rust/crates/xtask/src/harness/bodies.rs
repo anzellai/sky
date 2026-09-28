@@ -1040,7 +1040,12 @@ pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
 /// `0/0 … GATE: PASS` defect.
 /// 10 -> 11: v0.27.0 phase 6B adds the `sky package` verb and its refusal test
 /// (`package_refuses_a_release_it_cannot_ship`).
-pub const CLI_VERBS_EXPECTED: u64 = 11;
+///
+/// 11 -> 12: `config_migrate_checks_and_previews_without_writing`. The coverage
+/// ledger used to credit `cli.migrate` (`sky config migrate`) from any quoted
+/// `"migrate"` token in a flow file (`sky db migrate` calls); it now counts
+/// only real invocations, so the verb got a real test.
+pub const CLI_VERBS_EXPECTED: u64 = 12;
 
 pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
     let suite = ctx.repo_root.join("rust/crates/sky/tests/cli_verb_flow.rs");

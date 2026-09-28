@@ -21,9 +21,9 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | value |
 |---|---|
 | surfaces | 176 |
-| covered by the new corpus (>= Asserted) | 163 |
-| verdict `stronger` | 158 |
-| verdict `equal` | 18 |
+| covered by the new corpus (>= Asserted) | 164 |
+| verdict `stronger` | 159 |
+| verdict `equal` | 17 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 109 |
@@ -40,7 +40,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 ### Surfaces with zero new cover
 
-- `cli.config`
 - `cli.console`
 - `cli.console-serve`
 - `cli.lsp`
@@ -88,7 +87,7 @@ None.
 | `cli.build` | cli | Runs | Falsified | stronger |
 | `cli.check` | cli | None | Falsified | stronger |
 | `cli.clean` | cli | None | Falsified | stronger |
-| `cli.config` | cli | None | None | equal |
+| `cli.config` | cli | None | Falsified | stronger |
 | `cli.console` | cli | None | None | equal |
 | `cli.console-serve` | cli | None | None | equal |
 | `cli.db` | cli | None | Falsified | stronger |

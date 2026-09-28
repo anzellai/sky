@@ -704,6 +704,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   read-only when GOROOT is (a Nix store), so the next build's brotli failed
   with "Permission denied", the build said brotli was missing, and the
   `.br` file stayed stale. The build now removes the old output first.
+- **The coverage ledger credited a CLI verb from any quoted token.** A verb
+  counted as covered by the `cli-verbs` gate when its name appeared in quotes
+  anywhere in a `*_flow.rs` file, so an argument handed to another program
+  (`apksigner verify`) or a `sky db migrate` call counted as a test of `sky
+  verify` or `sky config migrate`. The ledger now reads the argument list of
+  each `Command::new(SKY)` builder (directly, through a local variable, or
+  through a helper that forwards its argument list), and a subcommand verb
+  counts only under its parent. `sky config migrate` got a real flow test.
 - **Sky.Spa could not use a `Secret` the client holds.** `Secret.fromString`
   and `Secret.reveal` were classified as server effects (fail-closed), so a
   client branch that revealed a secret read from the device became a server

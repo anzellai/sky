@@ -209,7 +209,7 @@
       "tier": "T1"
     },
     "cli-verbs": {
-      "expected_assertions": 11,
+      "expected_assertions": 12,
       "falsifier_mutation": "cli-verbs.break-an-expectation",
       "falsifier_proven": true,
       "summary": "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
@@ -721,10 +721,10 @@
   "summary": {
     "stdlib_entries": 2117,
     "stdlib_modules": 109,
-    "surfaces_covered": 163,
-    "surfaces_covered_pct": 92.6,
-    "surfaces_equal": 18,
-    "surfaces_stronger": 158,
+    "surfaces_covered": 164,
+    "surfaces_covered_pct": 93.2,
+    "surfaces_equal": 17,
+    "surfaces_stronger": 159,
     "surfaces_total": 176,
     "surfaces_weaker": 0,
     "units_by_role": {
@@ -887,9 +887,15 @@
     {
       "category": "cli",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -898,7 +904,7 @@
       },
       "description": "`sky config`",
       "id": "cli.config",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -12890,9 +12896,8 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 12,
+      "count": 11,
       "surfaces": [
-        "cli.config",
         "cli.console",
         "cli.console-serve",
         "cli.lsp",

@@ -2022,7 +2022,14 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
     let (verbs, undocumented, undispatched) = derive_cli_verbs(repo_root)?;
     let verify_cli_src =
         std::fs::read_to_string(repo_root.join("scripts/verify-cli.sh")).unwrap_or_default();
-    let mut flow_src = String::new();
+    // The verbs a flow test actually runs the `sky` binary with. Parsed from
+    // the command builder's argument position (see `flow_invoked_verbs`), not
+    // from any quoted token: a string such as `"verify"` handed to another
+    // tool is not a test of `sky verify`.
+    let mut flow_verbs: BTreeSet<Vec<String>> = BTreeSet::new();
+    let verb_parents = cli_verb_parents(
+        &std::fs::read_to_string(repo_root.join("rust/crates/sky/src/main.rs")).unwrap_or_default(),
+    );
     if let Ok(rd) = std::fs::read_dir(repo_root.join("rust/crates/sky/tests")) {
         let mut paths: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
         paths.sort();
@@ -2032,7 +2039,9 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                 .map(|f| f.ends_with("_flow.rs"))
                 .unwrap_or(false)
             {
-                flow_src.push_str(&std::fs::read_to_string(&p).unwrap_or_default());
+                flow_verbs.extend(flow_invoked_verbs(
+                    &std::fs::read_to_string(&p).unwrap_or_default(),
+                ));
             }
         }
     }
@@ -2049,7 +2058,15 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                 gate_strength("verify-cli", &proofs),
             ));
         }
-        if flow_src.contains(&format!("\"{verb}\"")) {
+        // A verb dispatched by another verb's handler (`sky config migrate`)
+        // counts only when invoked under that parent.
+        let invoked = match verb_parents.get(verb.as_str()) {
+            Some(parent) => flow_verbs
+                .iter()
+                .any(|p| p.len() == 2 && p[0] == *parent && p[1] == *verb),
+            None => flow_verbs.iter().any(|p| p[0] == *verb),
+        };
+        if invoked {
             new.push(Ev::new(
                 "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
                 gate_strength("cli-verbs", &proofs),
@@ -3666,8 +3683,477 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
 
 // ----------------------------------------------------------------------- tests
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Which `sky` verbs a flow test runs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `src` with every `//` line comment blanked (string literals kept), so a
+/// commented-out invocation is not read as a test.
+fn blank_line_comments(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                // A plain string literal (raw strings start with r#" or r", and
+                // their `"` is handled here too: close enough for `//`).
+                out.push(b'"');
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    if b[i] == b'\\' && i + 1 < b.len() {
+                        out.push(b[i]);
+                        i += 1;
+                    }
+                    out.push(b[i]);
+                    i += 1;
+                }
+                if i < b.len() {
+                    out.push(b'"');
+                    i += 1;
+                }
+            }
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                while i < b.len() && b[i] != b'\n' {
+                    out.push(b' ');
+                    i += 1;
+                }
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// The text inside the bracket that opens at `open` (`(` or `[`), or `None`
+/// when it is not closed. String literals are skipped.
+fn bracket_body(src: &str, open: usize) -> Option<&str> {
+    let b = src.as_bytes();
+    let (o, c) = match b.get(open)? {
+        b'(' => (b'(', b')'),
+        b'[' => (b'[', b']'),
+        _ => return None,
+    };
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    if b[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            x if x == o => depth += 1,
+            x if x == c => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&src[open + 1..i]);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Split `s` on commas at bracket depth 0 (strings skipped).
+fn top_level_args(s: &str) -> Vec<&str> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let (mut depth, mut start, mut i) = (0i32, 0usize, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    if b[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            b'(' | b'[' | b'{' | b'<' => depth += 1,
+            b')' | b']' | b'}' | b'>' => depth -= 1,
+            b',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        out.push(last);
+    }
+    out
+}
+
+/// The string literal `s` starts with (after `&` / whitespace), unescaped
+/// simply, or `None`.
+fn leading_literal(s: &str) -> Option<String> {
+    let s = s.trim_start_matches(|c: char| c == '&' || c.is_whitespace());
+    let rest = s.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// The leading string literals (at most two: the verb and its subcommand) of
+/// an array expression (`["x", …]`, `&["x", …]`, `vec!["x", …]`), or `None`
+/// when the first element is not a literal.
+fn array_literals(expr: &str) -> Option<Vec<String>> {
+    let e = expr.trim_start_matches(|c: char| c == '&' || c.is_whitespace());
+    let e = e.strip_prefix("vec!").unwrap_or(e);
+    let open = e.find('[')?;
+    if !e[..open].trim().is_empty() {
+        return None;
+    }
+    let body = bracket_body(e, open)?;
+    let lits: Vec<String> = top_level_args(body)
+        .into_iter()
+        .take(2)
+        .map_while(leading_literal)
+        .collect();
+    (!lits.is_empty()).then_some(lits)
+}
+
+/// What a builder's `.arg(…)` / `.args(…)` argument names as the verb: a
+/// literal verb, or the name of a variable that holds the argument list.
+enum FirstArg {
+    Verb(Vec<String>),
+    Var(String),
+    Unknown,
+}
+
+fn first_arg(method_is_args: bool, arg: &str, next: Option<(bool, &str)>) -> FirstArg {
+    let a = arg.trim();
+    if method_is_args {
+        if let Some(v) = array_literals(a) {
+            return FirstArg::Verb(v);
+        }
+    } else if let Some(v) = leading_literal(a) {
+        // `.arg("config").arg("migrate")` — the chained next argument is the
+        // subcommand.
+        let sub = next.and_then(|(is_args, body)| {
+            if is_args {
+                array_literals(body).and_then(|l| l.into_iter().next())
+            } else {
+                leading_literal(body)
+            }
+        });
+        return FirstArg::Verb(std::iter::once(v).chain(sub).collect());
+    }
+    let ident = a.trim_start_matches('&').trim();
+    if !ident.is_empty() && ident.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        FirstArg::Var(ident.to_string())
+    } else {
+        FirstArg::Unknown
+    }
+}
+
+/// The first `.arg(` / `.args(` at or after `from` whose receiver chain
+/// starts at `from` (a builder expression) — the chain ends at `;` at depth 0.
+fn first_builder_arg(src: &str, from: usize) -> Option<(bool, &str, usize)> {
+    let b = src.as_bytes();
+    let mut depth = 0i32;
+    let mut i = from;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    if b[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+            b';' if depth == 0 => return None,
+            b'.' if depth == 0 => {
+                let rest = &src[i + 1..];
+                for (name, is_args) in [("args(", true), ("arg(", false)] {
+                    if rest.starts_with(name) {
+                        let open = i + 1 + name.len() - 1;
+                        return bracket_body(src, open).map(|body| (is_args, body, open));
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The enclosing `fn`'s name and its parameter names (without `self`), for
+/// the byte offset `at`.
+fn enclosing_fn(src: &str, at: usize) -> Option<(String, Vec<String>)> {
+    let head = &src[..at];
+    let fpos = head.rfind("fn ")?;
+    let after = &src[fpos + 3..];
+    let name_len = after.find(|c: char| !(c.is_alphanumeric() || c == '_'))?;
+    let name = after[..name_len].to_string();
+    let open = fpos + 3 + after.find('(')?;
+    let params = bracket_body(src, open)?;
+    let names = top_level_args(params)
+        .into_iter()
+        .filter(|p| !p.contains("self"))
+        .filter_map(|p| p.split(':').next())
+        .map(|p| p.trim().trim_start_matches("mut ").to_string())
+        .collect();
+    Some((name, names))
+}
+
+/// Verbs that [`derive_cli_verbs`] reads from a dispatch arm OUTSIDE the
+/// top-level `fn dispatch` — a subcommand of another verb, such as `migrate`
+/// in `fn cmd_config` (`sky config migrate`) — mapped to that parent verb.
+fn cli_verb_parents(main_src: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut current_fn = String::new();
+    for line in main_src.lines() {
+        if let Some(rest) = line.strip_prefix("fn ") {
+            current_fn = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            continue;
+        }
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("Some(\"") else {
+            continue;
+        };
+        let Some(end) = rest.find('"') else { continue };
+        if !t.contains("=> cmd_") || current_fn == "dispatch" {
+            continue;
+        }
+        if let Some(parent) = current_fn.strip_prefix("cmd_") {
+            out.insert(rest[..end].to_string(), parent.replace('_', "-"));
+        }
+    }
+    out
+}
+
+/// The call chained directly after the builder argument that opened at
+/// `open` (`.arg("config").arg("migrate")`), if it is another `.arg`/`.args`.
+fn chained_next_arg(src: &str, open: usize) -> Option<(bool, &str)> {
+    let body = bracket_body(src, open)?;
+    let after = open + body.len() + 2;
+    let rest = src.get(after..)?;
+    let trimmed = rest.trim_start();
+    let skip = rest.len() - trimmed.len();
+    if !trimmed.starts_with('.') {
+        return None;
+    }
+    first_builder_arg(src, after + skip).map(|(a, b, _)| (a, b))
+}
+
+/// Every `sky` invocation a flow-test source makes, as its leading literal
+/// arguments: the verb, and the subcommand when there is a literal one.
+///
+/// A verb counts only where the test builds a `Command::new(SKY)` (or the
+/// `CARGO_BIN_EXE_sky` path) and its FIRST argument is that verb:
+///
+/// * `Command::new(SKY).arg("verb")…` / `.args(["verb", …])`;
+/// * `let mut c = Command::new(SKY); c.arg("verb")…`;
+/// * a helper that forwards its parameter (`fn run_sky(dir, args: &[&str]) {
+///   Command::new(SKY).args(args) }`), counted at each call whose argument in
+///   that position is `&["verb", …]` (methods as `.helper(&["verb", …])`);
+/// * a local list (`let args = ["verb", …]; … .args(&args)`).
+///
+/// A quoted verb token anywhere else (an argument to another program, an
+/// assertion message) is not an invocation.
+pub(crate) fn flow_invoked_verbs(raw: &str) -> BTreeSet<Vec<String>> {
+    let src = blank_line_comments(raw);
+    let mut verbs = BTreeSet::new();
+    // (helper name, parameter index, is a method)
+    let mut helpers: Vec<(String, usize, bool)> = Vec::new();
+    for needle in [
+        "Command::new(SKY)",
+        "Command::new(env!(\"CARGO_BIN_EXE_sky\"))",
+    ] {
+        let mut from = 0;
+        while let Some(rel) = src[from..].find(needle) {
+            let at = from + rel;
+            from = at + needle.len();
+            let after = from;
+            let rest = src[after..].trim_start();
+            let found = if rest.starts_with(';') {
+                // `let mut c = Command::new(SKY);` then `c.arg(…)`.
+                let line_start = src[..at].rfind('\n').map(|n| n + 1).unwrap_or(0);
+                let decl = src[line_start..at].trim();
+                let var = decl
+                    .strip_prefix("let ")
+                    .map(|d| d.trim_start_matches("mut ").trim_end_matches('=').trim());
+                var.and_then(|v| {
+                    let mut search = after;
+                    loop {
+                        let rel = src[search..].find(v)?;
+                        let pos = search + rel;
+                        search = pos + v.len();
+                        let before_ok = pos == 0
+                            || !src.as_bytes()[pos - 1].is_ascii_alphanumeric()
+                                && src.as_bytes()[pos - 1] != b'_';
+                        if before_ok {
+                            if let Some(hit) = first_builder_arg(&src, pos + v.len()) {
+                                return Some(hit);
+                            }
+                        }
+                    }
+                })
+            } else {
+                first_builder_arg(&src, after)
+            };
+            let Some((is_args, arg, open)) = found else {
+                continue;
+            };
+            match first_arg(is_args, arg, chained_next_arg(&src, open)) {
+                FirstArg::Verb(v) => {
+                    verbs.insert(v);
+                }
+                FirstArg::Var(var) => {
+                    let Some((fname, params)) = enclosing_fn(&src, at) else {
+                        continue;
+                    };
+                    if let Some(idx) = params.iter().position(|p| *p == var) {
+                        let fn_decl = src[..at].rfind(&format!("fn {fname}")).unwrap_or(0);
+                        let is_method = src[fn_decl..]
+                            .split(')')
+                            .next()
+                            .map(|sig| sig.contains("self"))
+                            .unwrap_or(false);
+                        helpers.push((fname, idx, is_method));
+                    } else {
+                        // A local list built earlier in the same fn.
+                        let fn_start = src[..at].rfind("fn ").unwrap_or(0);
+                        let body = &src[fn_start..at];
+                        for pat in [format!("let {var} = "), format!("let mut {var} = ")] {
+                            if let Some(p) = body.rfind(&pat) {
+                                if let Some(v) = array_literals(&body[p + pat.len()..]) {
+                                    verbs.insert(v);
+                                }
+                            }
+                        }
+                    }
+                }
+                FirstArg::Unknown => {}
+            }
+        }
+    }
+    for (name, idx, is_method) in helpers {
+        let call = if is_method {
+            format!(".{name}(")
+        } else {
+            format!("{name}(")
+        };
+        let mut from = 0;
+        while let Some(rel) = src[from..].find(&call) {
+            let at = from + rel;
+            from = at + call.len();
+            if !is_method {
+                let prev = src[..at].chars().next_back();
+                if prev.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                    continue;
+                }
+                if src[..at].trim_end().ends_with("fn") {
+                    continue;
+                }
+            }
+            let open = at + call.len() - 1;
+            if let Some(body) = bracket_body(&src, open) {
+                if let Some(arg) = top_level_args(body).get(idx) {
+                    if let Some(v) = array_literals(arg) {
+                        verbs.insert(v);
+                    }
+                }
+            }
+        }
+    }
+    verbs
+}
+
 #[cfg(test)]
 mod tests {
+    /// The CLI-verb detector counts an invocation of the `sky` binary, not a
+    /// quoted token. A verb handed to another program (`apksigner verify`), in
+    /// a message, or in a commented-out line is not a test of `sky verify`.
+    #[test]
+    fn flow_verbs_come_from_sky_invocations_only() {
+        let false_positives = r#"
+fn check_apk() {
+    let out = Command::new("apksigner").args(["verify", "--print-certs"]).output();
+    assert!(msg.contains("doctor"), "the word \"lsp\" in a message");
+    // Command::new(SKY).arg("upgrade-claude")
+}
+"#;
+        assert!(
+            flow_invoked_verbs(false_positives).is_empty(),
+            "{:?}",
+            flow_invoked_verbs(false_positives)
+        );
+
+        let true_positives = r#"
+const SKY: &str = env!("CARGO_BIN_EXE_sky");
+fn run_sky(dir: &Path, args: &[&str]) -> Output {
+    Command::new(SKY).args(args).current_dir(dir).output().unwrap()
+}
+struct H;
+impl H {
+    fn sky(&self, args: &[&str]) -> Output {
+        let mut c = Command::new(SKY);
+        c.args(args).output().unwrap()
+    }
+}
+#[test]
+fn t() {
+    run_sky(&dir, &["init", "app"]);
+    h.sky(&["db", "start"]);
+    let out = Command::new(SKY)
+        .env("X", "1")
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .output();
+    let mut cmd = Command::new(SKY);
+    cmd.arg("package").args(extra);
+    let list = ["fmt", "--check"];
+    Command::new(SKY).args(&list).output();
+    Command::new(SKY).arg("config").arg("migrate").output();
+}
+"#;
+        let got: Vec<String> = flow_invoked_verbs(true_positives)
+            .into_iter()
+            .map(|p| p.join(" "))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                "build --target",
+                "config migrate",
+                "db start",
+                "fmt --check",
+                "init app",
+                "package"
+            ]
+        );
+        let main_rs = "fn dispatch(a: &[String]) {\n    match x {\n        Some(\"config\") => cmd_config(a),\n    }\n}\nfn cmd_config(a: &[String]) {\n    match y {\n        Some(\"migrate\") => cmd_config_migrate(a),\n    }\n}\n";
+        let parents = cli_verb_parents(main_rs);
+        assert_eq!(parents.get("migrate").map(String::as_str), Some("config"));
+        assert!(!parents.contains_key("config"));
+    }
+
     use super::*;
 
     /// A gate with several mutations: the ledger must name the same mutation
