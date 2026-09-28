@@ -38,8 +38,28 @@ The wrapper, the arity and primitive argument and payload types are checked.
 Go-opaque types (`*mux.Router`, `context.Context`, …) are wildcards: they flow
 between FFI calls unchecked, and a later release will type them nominally. A
 partially applied FFI function (`Strings.repeat "ab"`) is a normal Sky function
-value. `Sky.Ffi.call` / `callPure` / `callTask` are stdlib-only (`[E1011]`); an
-application calls the `sky add` binding directly.
+value.
+
+`Sky.Ffi` is stdlib-only (`[E1011]`): `Ffi.kernel`, `Ffi.call`, `Ffi.callPure`
+and `Ffi.callTask`. `Ffi.call*` reach a Go binding by name with an unchecked
+type. `Ffi.kernel "Sym"` binds a runtime kernel and trusts the annotation it
+is given, and the checker cannot compare that annotation with the kernel's
+real signature, so a wrong one compiles and fails at run time. The stdlib uses
+them behind declared, reviewed signatures. An application calls the typed
+stdlib function (the `[E1011]` hint names it) or the `sky add` binding. A
+module is never exempt by its name. The compiler grants two exceptions, both
+to its own code: a project the Sky.Spa split generated may bind the split's
+`Spa_*` kernels, and a module whose text is the compiler's bundled-app source
+(the Sky Console, the doc server) keeps full `Sky.Ffi`.
+
+What keeps the stdlib's own `Ffi.kernel` bindings honest is a set of gates,
+not the checker. `xtask kernel-members` and
+`rust/crates/project/tests/kernel_surface.rs` prove every bound symbol is a
+real `rt` function; `kernel_signature_coverage.rs` proves every advertised
+kernel member has a signature; `kernel_signature_runtime_arity.rs` proves the
+signature's arity matches the Go function. The argument and result TYPES of a
+stdlib binding are its reviewed annotation, exercised by the conformance
+suites; no gate derives them from the Go source.
 
 ## Why Result, not Task
 

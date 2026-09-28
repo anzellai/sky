@@ -508,3 +508,124 @@ fn ctor_into_container_runs_correctly() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ===========================================================================
+// Defect 4 — a FUNCTION-RETURNING kernel alias, point-free, in a slot that
+// takes more params than the kernel.
+//
+// `Handler -> Handler` (`Handler = Request -> Task Error Response`) flattens to
+// the two-param Go slot `func(Handler, Request) Task`, while
+// `rt.Middleware_withLogging` takes ONE param and returns the wrapped handler.
+// `kernel_value_eta` declined any arity mismatch, so `logged = Mw.withLogging`
+// emitted the bare one-param symbol and `go build` rejected it. It now
+// eta-expands over the slot's params, applies the kernel to the first one and
+// the narrowed result to the rest (`kernel_over_arity_eta`).
+// ===========================================================================
+
+const OVER_ARITY_KERNEL: &str = "module Main exposing (main)\n\n\
+     import Sky.Core.Prelude exposing (..)\n\
+     import Sky.Http.Middleware as Mw\n\
+     import Sky.Http.Server exposing (Handler)\n\
+     import Std.Log exposing (println)\n\n\
+     logged : Handler -> Handler\n\
+     logged =\n    Mw.withLogging\n\n\
+     cors : List String -> Handler -> Handler\n\
+     cors =\n    Mw.withCors\n\n\
+     main =\n\
+     \x20   let\n\
+     \x20       _ =\n            logged\n\n\
+     \x20       _ =\n            cors\n\
+     \x20   in\n\
+     \x20   println \"ok\"\n";
+
+/// Emission leg — neither def may return the bare one-param kernel symbol.
+#[test]
+fn function_returning_kernel_alias_is_eta_expanded_over_the_slot() {
+    let dir = project("overarity-emit", OVER_ARITY_KERNEL);
+    let log = build(&dir);
+    let src = emitted_go(&dir, &log);
+    for (def, sym) in [
+        ("Main_logged", "rt.Middleware_withLogging"),
+        ("Main_cors", "rt.Middleware_withCors"),
+    ] {
+        let body = func_body(&src, def);
+        assert!(
+            !body.contains(&format!("{{ return {sym} }}")),
+            "{def} must not return the bare kernel symbol {sym}. Emitted:\n{body}"
+        );
+        assert!(
+            body.contains(&format!("{sym}(")),
+            "{def} must CALL {sym} inside an eta-expanded closure. Emitted:\n{body}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Build + run leg.
+#[test]
+fn function_returning_kernel_alias_go_builds_and_runs() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("overarity-run", OVER_ARITY_KERNEL);
+    let log = build(&dir);
+    let bin = dir.join("sky-out").join("app");
+    assert!(
+        bin.is_file(),
+        "a point-free function-returning kernel alias type-checks, so it must `go \
+         build`. Log:\n{log}"
+    );
+    let out = Command::new(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("run app");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ===========================================================================
+// Defect 5 — an UNDER-applied point-free def whose declared type ends in a
+// function alias.
+//
+// `add3 : Int -> Int -> Step` (`Step = Int -> Int`) is a forced CAF of Go type
+// `func(int, int, int) int`. `add3 1 2` reached `over_apply` (arity 0, two
+// args), which called the three-param func with two args — `go build`: "not
+// enough arguments in call to Main_add3()". The last round now closes over the
+// missing params (`make_partial`).
+// ===========================================================================
+
+const UNDER_APPLIED_CAF: &str = "module Main exposing (main)\n\n\
+     import Sky.Core.Prelude exposing (..)\n\
+     import Sky.Core.String as String\n\
+     import Std.Log exposing (println)\n\n\
+     type alias Step =\n    Int -> Int\n\n\
+     add3 : Int -> Int -> Step\n\
+     add3 =\n    \\a b c -> a + b + c\n\n\
+     main =\n\
+     \x20   let\n\
+     \x20       f =\n            add3 1 2\n\
+     \x20   in\n\
+     \x20   println (String.fromInt (f 3) ++ \"/\" ++ String.fromInt (add3 10 20 30))\n";
+
+#[test]
+fn under_applied_point_free_def_builds_and_runs() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("underapplied-caf", UNDER_APPLIED_CAF);
+    let log = build(&dir);
+    let bin = dir.join("sky-out").join("app");
+    assert!(bin.is_file(), "project must build (log:\n{log})");
+    let out = Command::new(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("run app");
+    let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
+    combined.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "Output:\n{combined}");
+    assert!(
+        combined.contains("6/60"),
+        "`add3 1 2` applied to 3 is 6; `add3 10 20 30` is 60. Output:\n{combined}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

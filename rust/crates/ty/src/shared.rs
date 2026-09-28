@@ -123,6 +123,9 @@ impl SkyDb for ScopedDb<'_> {
     fn ffi_fn(&self, package: &str, name: &str) -> Option<hir::FfiFnSig> {
         self.inner.ffi_fn(package, name)
     }
+    fn ffi_member_allowed(&self, module: &str, member: &str, symbol: Option<&str>) -> bool {
+        self.inner.ffi_member_allowed(module, member, symbol)
+    }
 }
 
 /// Why a case could not use the prebuilt world. Every variant is counted and

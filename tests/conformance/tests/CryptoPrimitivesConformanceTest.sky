@@ -7,7 +7,9 @@ module CryptoPrimitivesConformanceTest exposing (main, tests)
 --   * Std.Crypto.Kx    — X25519, RFC 7748 §6.1 (Alice and Bob)
 --   * Std.Crypto.Kdf   — HKDF-SHA256, RFC 5869 A.1 and A.3
 --   * Sky.Core.Crypto  — xchachaSeal / xchachaOpen, and the AEAD encrypt
---                        functions, which are Tasks since v0.27.0
+--                        functions, which are Tasks since v0.27.0; the
+--                        explicit-nonce ChaCha20-Poly1305 (RFC 8439 2.8.2)
+--                        and XChaCha20-Poly1305 (draft A.3.1) seal / open
 --
 -- plus the negative cases: tampered ciphertext, wrong key, wrong associated
 -- data, bad lengths, a low-order public key, and the redaction of secret keys.
@@ -415,7 +417,169 @@ tests =
                   (Ok "payload")
                   (Task.run (Crypto.chacha20Encrypt aeadKey "payload")
                       |> Result.andThen (Crypto.chacha20Decrypt aeadKey)))
+    , Test.test
+          "ChaCha20-Poly1305 RFC 8439 2.8.2: explicit nonce seals to the vector and opens"
+          (\_ ->
+              Test.equal
+                  ( Ok rfc8439Sealed, Ok sunscreen )
+                  ( Crypto.chacha20Poly1305Seal
+                        vectorKey
+                        rfc8439Nonce
+                        vectorAad
+                        sunscreen
+                        |> Result.map Bytes.toHex
+                  , Crypto.chacha20Poly1305Open
+                        vectorKey
+                        rfc8439Nonce
+                        vectorAad
+                        (hex rfc8439Sealed)
+                  ))
+    , Test.test
+          "XChaCha20-Poly1305 draft A.3.1: explicit nonce seals to the vector and opens"
+          (\_ ->
+              Test.equal
+                  ( Ok xchachaSealed, Ok sunscreen )
+                  ( Crypto.xchacha20Poly1305Seal
+                        vectorKey
+                        xchachaNonce
+                        vectorAad
+                        sunscreen
+                        |> Result.map Bytes.toHex
+                  , Crypto.xchacha20Poly1305Open
+                        vectorKey
+                        xchachaNonce
+                        vectorAad
+                        (hex xchachaSealed)
+                  ))
+    , Test.test
+          "explicit-nonce seal is deterministic and xchachaOpenWith opens its bytes"
+          (\_ ->
+              Test.equal
+                  ( True, Ok sunscreen )
+                  ( Crypto.xchacha20Poly1305Seal
+                        vectorKey
+                        xchachaNonce
+                        vectorAad
+                        sunscreen
+                        == Crypto.xchacha20Poly1305Seal
+                               vectorKey
+                               xchachaNonce
+                               vectorAad
+                               sunscreen
+                  , Crypto.xchachaOpenWith
+                        vectorKey
+                        vectorAad
+                        (Bytes.toBase64
+                            (Bytes.append xchachaNonce (hex xchachaSealed)))
+                  ))
+    , Test.test
+          "explicit-nonce open refuses a wrong nonce, wrong associated data, a wrong key and a tampered tag"
+          (\_ ->
+              let
+                  sealed = hex rfc8439Sealed
+                  refused r = Result.toMaybe r == Nothing
+              in
+                  Test.equal
+                      ( True, True, True, True )
+                      ( refused
+                            (Crypto.chacha20Poly1305Open
+                                vectorKey
+                                (hex "070000004041424344454648")
+                                vectorAad
+                                sealed)
+                      , refused
+                            (Crypto.chacha20Poly1305Open
+                                vectorKey
+                                rfc8439Nonce
+                                "other"
+                                sealed)
+                      , refused
+                            (Crypto.chacha20Poly1305Open
+                                otherKey
+                                rfc8439Nonce
+                                vectorAad
+                                sealed)
+                      , refused
+                            (Crypto.chacha20Poly1305Open
+                                vectorKey
+                                rfc8439Nonce
+                                vectorAad
+                                (hex (String.dropRight 2 rfc8439Sealed ++ "90")))
+                      ))
+    , Test.test
+          "explicit-nonce seal and open refuse a nonce of the wrong length"
+          (\_ ->
+              let
+                  refused r = Result.toMaybe r == Nothing
+              in
+                  Test.equal
+                      ( True, True, True, True )
+                      ( refused
+                            (Crypto.chacha20Poly1305Seal
+                                vectorKey
+                                xchachaNonce
+                                ""
+                                "x")
+                      , refused
+                            (Crypto.xchacha20Poly1305Seal
+                                vectorKey
+                                rfc8439Nonce
+                                ""
+                                "x")
+                      , refused
+                            (Crypto.chacha20Poly1305Open
+                                vectorKey
+                                ""
+                                ""
+                                (hex rfc8439Sealed))
+                      , refused
+                            (Crypto.xchacha20Poly1305Seal
+                                (Secret.unsafeFromString "short")
+                                xchachaNonce
+                                ""
+                                "x")
+                      ))
     ]
+
+
+-- RFC 8439 2.8.2 / draft-irtf-cfrg-xchacha-03 A.3.1 inputs (the same key,
+-- associated data and "sunscreen" plaintext in both).
+sunscreen : String
+sunscreen =
+    "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+
+
+vectorKey : Secret
+vectorKey =
+    secretHex "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+
+
+vectorAad : String
+vectorAad =
+    hex "50515253c0c1c2c3c4c5c6c7"
+
+
+rfc8439Nonce : String
+rfc8439Nonce =
+    hex "070000004041424344454647"
+
+
+-- Ciphertext || tag, lower-case hex.
+rfc8439Sealed : String
+rfc8439Sealed =
+    "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116"
+        ++ "1ae10b594f09e26a7e902ecbd0600691"
+
+
+xchachaNonce : String
+xchachaNonce =
+    hex "404142434445464748494a4b4c4d4e4f5051525354555657"
+
+
+xchachaSealed : String
+xchachaSealed =
+    "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff921f9664c97637da9768812f615c68b13b52e"
+        ++ "c0875924c1c7987947deafd8780acf49"
 
 
 main =

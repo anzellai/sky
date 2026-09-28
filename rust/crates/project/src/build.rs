@@ -496,7 +496,9 @@ fn assemble_and_emit_with(
     // FFI), and a Go-FFI reference then stays flexible in the checker while
     // lowering refuses it with a `sky install` hint.
     let registry = load_ffi_surface(example_dir);
-    db.set_ffi_surface(std::sync::Arc::new(ffi_type_surface(&registry)));
+    let mut surface = ffi_type_surface(&registry);
+    surface.set_trust(ffi_trust(&db, repo_root, example_dir, &check_ids));
+    db.set_ffi_surface(std::sync::Arc::new(surface));
     let t_check = crate::timings::phase("canonicalise + typecheck");
     let checked = ty::check_modules(&db, &check_ids);
     t_check.end();
@@ -1966,6 +1968,79 @@ pub fn load_ffi_surface(example_dir: &Path) -> ffi::FfiRegistry {
     ffi::load_surface(&cache_ffi, &cache_go)
 }
 
+/// The kernel-symbol prefix a Sky.Spa-GENERATED project may bind with
+/// `Ffi.kernel`: the split's own backend plumbing (`Spa_runServerPerform`,
+/// `Spa_ssrSettle`, …; see `spa_split.rs`). Nothing else in a generated project
+/// may use `Sky.Ffi`.
+pub const SPA_GENERATED_KERNEL_PREFIX: &str = "Spa_";
+
+/// The `Sky.Ffi` grants of one build (`hir::FfiTrust`, the `[E1011]` scan).
+///
+/// App code gets none. Two facts widen it, and neither is a module NAME:
+///
+/// * A checked module whose source text is byte-identical to a file under
+///   `<repo_root>/sky-bundled/*/src` is the compiler's own bundled-app source
+///   (the Sky Console, the doc server), built from the embedded copy or a cache
+///   copy of it. It gets full `Sky.Ffi`, like the stdlib, because its kernel
+///   bindings (`Hub_*`, `Doc_*`) ship with the compiler that checks them.
+/// * A project the Sky.Spa split generated (`[spa] generated = true`, written
+///   only by the generator) may bind `Spa_*` kernels with `Ffi.kernel`. Its
+///   user-written modules were already checked in the source project before the
+///   split, so the grant reaches only the generator's plumbing.
+pub fn ffi_trust(
+    db: &skydb::SkyDatabase,
+    repo_root: &Path,
+    example_dir: &Path,
+    check_ids: &[base::ModuleId],
+) -> hir::FfiTrust {
+    let mut trust = hir::FfiTrust::default();
+    let texts: Vec<(String, String)> = check_ids
+        .iter()
+        .map(|m| {
+            (
+                hir::SkyDb::module_name(db, *m).to_string(),
+                db.source_file(*m).text(db).to_string(),
+            )
+        })
+        .collect();
+    // Only a module that mentions `Ffi` can need a grant; skip the bundled-source
+    // read for the ordinary project.
+    if texts.iter().any(|(_, t)| t.contains("Ffi")) {
+        let bundled = bundled_source_texts(repo_root);
+        for (name, text) in &texts {
+            if bundled.contains(text) {
+                trust.modules.insert(name.clone());
+            }
+        }
+    }
+    if is_spa_generated_project(example_dir) {
+        trust
+            .kernel_prefixes
+            .insert(SPA_GENERATED_KERNEL_PREFIX.to_string());
+    }
+    trust
+}
+
+/// Every `.sky` source text under `<repo_root>/sky-bundled/` (the compiler's
+/// bundled apps), for the content comparison in [`ffi_trust`].
+pub fn bundled_source_texts(repo_root: &Path) -> std::collections::HashSet<String> {
+    let mut files = Vec::new();
+    collect_sky(&repo_root.join("sky-bundled"), &mut files);
+    files
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect()
+}
+
+/// `[spa] generated = true` in the project's `sky.toml`: the Sky.Spa split
+/// wrote this project (the same marker `sky build` keys its no-re-split guard
+/// on).
+pub fn is_spa_generated_project(example_dir: &Path) -> bool {
+    std::fs::read_to_string(example_dir.join("sky.toml"))
+        .map(|s| s.contains("[spa]") && s.contains("generated = true"))
+        .unwrap_or(false)
+}
+
 /// Project the loaded registry to the signature table the type checker reads
 /// (`hir::FfiSurface`, served by `SkyDb::ffi_fn`). Only the raw `skyType`
 /// strings and arities are copied; `ty::ffi_sig` parses one lazily when a
@@ -2540,9 +2615,9 @@ pub(crate) fn load_source_db(
     // The same pinned Go-FFI signatures the build checks against, so an
     // analysis over this db (the Sky.Spa partition) types FFI calls exactly as
     // `sky check` does.
-    db.set_ffi_surface(std::sync::Arc::new(ffi_type_surface(&load_ffi_surface(
-        example_dir,
-    ))));
+    let mut surface = ffi_type_surface(&load_ffi_surface(example_dir));
+    surface.set_trust(ffi_trust(&db, repo_root, example_dir, &check_ids));
+    db.set_ffi_surface(std::sync::Arc::new(surface));
     Ok((db, entry, check_ids))
 }
 
@@ -3889,5 +3964,116 @@ mod go_diagnostics_tests {
         let r = ds[0].range.unwrap();
         assert_eq!((r.start.line, r.start.character), (6, 0));
         assert_eq!(ds[0].message, "something odd");
+    }
+}
+
+#[cfg(test)]
+mod ffi_trust_tests {
+    //! The `Sky.Ffi` grants (`ffi_trust`, the checker's `[E1011]` scan).
+    use super::*;
+
+    fn repo_root() -> PathBuf {
+        let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        while !dir.join("sky-stdlib").is_dir() {
+            assert!(dir.pop(), "no sky-stdlib ancestor");
+        }
+        dir
+    }
+
+    /// Load `example_dir`'s modules the way the build does and return its grants.
+    fn trust_for(example_dir: &Path) -> hir::FfiTrust {
+        let root = repo_root();
+        let (db, _entry, ids) = load_source_db(&root, example_dir, None).expect("load");
+        ffi_trust(&db, &root, example_dir, &ids)
+    }
+
+    fn scratch(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-ffi-trust-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for (rel, text) in files {
+            let p = dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, text).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn a_verbatim_copy_of_bundled_source_is_trusted_by_content() {
+        let root = repo_root();
+        let catalog =
+            std::fs::read_to_string(root.join("sky-bundled/doc/src/DocCatalog.sky")).unwrap();
+        let main = "module Main exposing (main)\n\nimport DocCatalog\n\n\nmain =\n    DocCatalog.loadCatalog \"x\"\n";
+        let dir = scratch(
+            "bundled",
+            &[
+                ("sky.toml", "name = \"t\"\nentry = \"src/Main.sky\"\n"),
+                ("src/Main.sky", main),
+                ("src/DocCatalog.sky", &catalog),
+            ],
+        );
+        let t = trust_for(&dir);
+        assert!(t.modules.contains("DocCatalog"), "{t:?}");
+        assert!(!t.modules.contains("Main"), "{t:?}");
+        assert!(t.kernel_prefixes.is_empty(), "{t:?}");
+
+        // One changed byte and it is app code again.
+        std::fs::write(dir.join("src/DocCatalog.sky"), format!("{catalog}\n")).unwrap();
+        let t = trust_for(&dir);
+        assert!(!t.modules.contains("DocCatalog"), "{t:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_spa_generated_project_gets_only_the_spa_kernel_prefix() {
+        let main = "module Main exposing (main)\n\nimport Sky.Ffi as Ffi\n\n\nmain =\n    Ffi.kernel \"Spa_newBroker\"\n";
+        let dir = scratch(
+            "spa",
+            &[
+                (
+                    "sky.toml",
+                    "name = \"t-backend\"\nentry = \"src/Main.sky\"\n\n[spa]\ngenerated = true\nrole = \"backend\"\n",
+                ),
+                ("src/Main.sky", main),
+            ],
+        );
+        let t = trust_for(&dir);
+        assert!(t.modules.is_empty(), "{t:?}");
+        assert_eq!(
+            t.kernel_prefixes.iter().cloned().collect::<Vec<_>>(),
+            vec![SPA_GENERATED_KERNEL_PREFIX.to_string()]
+        );
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"t\"\nentry = \"src/Main.sky\"\n",
+        )
+        .unwrap();
+        assert_eq!(trust_for(&dir), hir::FfiTrust::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every kernel the Sky.Spa generator binds carries the granted prefix, so
+    /// a generated backend never needs a wider grant.
+    #[test]
+    fn every_generator_kernel_carries_the_spa_prefix() {
+        let src = include_str!("spa_split.rs");
+        let needle = "Ffi.kernel \\\"";
+        let mut n = 0;
+        for (at, _) in src.match_indices(needle) {
+            let sym = &src[at + needle.len()..];
+            assert!(
+                sym.starts_with(SPA_GENERATED_KERNEL_PREFIX),
+                "generator binds {} outside the granted prefix",
+                &sym[..sym.find('\\').unwrap_or(sym.len())]
+            );
+            n += 1;
+        }
+        assert!(n >= 17, "found only {n} generator kernel bindings");
     }
 }

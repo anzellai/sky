@@ -455,3 +455,82 @@ func Crypto_xchachaOpen(key any, encoded any) any {
 func Crypto_xchachaOpenWith(key any, ad any, encoded any) any {
 	return xchachaOpen("Crypto.xchachaOpenWith", key, ad, encoded)
 }
+
+// ─── ChaCha20-Poly1305 / XChaCha20-Poly1305 with a caller nonce ────
+//
+// The explicit-nonce AEAD (RFC 8439 §2.8; draft-irtf-cfrg-xchacha §2): the
+// caller supplies the nonce and associated data, and the result is the raw
+// `ciphertext || tag` bytes (no nonce prefix, no base64 — the caller already
+// holds the nonce). Pure and deterministic: the same inputs always give the
+// same output, which is what a protocol with its own nonce schedule (a
+// counter, a transcript-derived nonce) or a published test vector needs.
+//
+// Reusing a nonce with the same key breaks both confidentiality (the two
+// plaintexts XOR out of the two ciphertexts) and authenticity (the Poly1305
+// key repeats, so tags can be forged). The random-nonce `xchachaSeal` is the
+// recommended default; these are for interoperability with a fixed protocol.
+
+// aeadExplicit seals or opens with a caller nonce. `x` selects XChaCha20
+// (24-byte nonce) over ChaCha20 (12-byte nonce).
+func aeadExplicit(name string, x bool, key, nonce, ad, data any, seal bool) any {
+	k, err := readKey(name, key)
+	if err != nil {
+		return Err[any, any](ErrInvalidInput(err.Error()))
+	}
+	n := readBytes(nonce)
+	want := chacha20poly1305.NonceSize
+	if x {
+		want = chacha20poly1305.NonceSizeX
+	}
+	if len(n) != want {
+		return Err[any, any](ErrInvalidInput(fmt.Sprintf("%s: nonce must be %d bytes, got %d", name, want, len(n))))
+	}
+	var aead interface {
+		Seal(dst, nonce, plaintext, additionalData []byte) []byte
+		Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error)
+	}
+	if x {
+		aead, err = chacha20poly1305.NewX(k)
+	} else {
+		aead, err = chacha20poly1305.New(k)
+	}
+	if err != nil {
+		return Err[any, any](ErrFfi(name + ": " + err.Error()))
+	}
+	buf := readBytes(data)
+	if seal {
+		return Ok[any, any](string(aead.Seal(nil, n, buf, readBytes(ad))))
+	}
+	if len(buf) < chacha20poly1305.Overhead {
+		return Err[any, any](ErrInvalidInput(fmt.Sprintf("%s: sealed input must be at least %d bytes (the tag), got %d", name, chacha20poly1305.Overhead, len(buf))))
+	}
+	pt, err := aead.Open(nil, n, buf, readBytes(ad))
+	if err != nil {
+		return Err[any, any](ErrInvalidInput(name + ": authentication failed (wrong key, wrong nonce, wrong associated data, or a tampered ciphertext)"))
+	}
+	return Ok[any, any](string(pt))
+}
+
+// Crypto.chacha20Poly1305Seal : Secret -> Bytes -> Bytes -> Bytes -> Result Error Bytes
+// — (key, 12-byte nonce, associated data, plaintext) → ciphertext || tag.
+func Crypto_chacha20Poly1305Seal(key any, nonce any, ad any, plaintext any) any {
+	return aeadExplicit("Crypto.chacha20Poly1305Seal", false, key, nonce, ad, plaintext, true)
+}
+
+// Crypto.chacha20Poly1305Open : Secret -> Bytes -> Bytes -> Bytes -> Result Error Bytes
+// — (key, 12-byte nonce, associated data, ciphertext || tag) → plaintext.
+func Crypto_chacha20Poly1305Open(key any, nonce any, ad any, sealed any) any {
+	return aeadExplicit("Crypto.chacha20Poly1305Open", false, key, nonce, ad, sealed, false)
+}
+
+// Crypto.xchacha20Poly1305Seal : Secret -> Bytes -> Bytes -> Bytes -> Result Error Bytes
+// — (key, 24-byte nonce, associated data, plaintext) → ciphertext || tag.
+func Crypto_xchacha20Poly1305Seal(key any, nonce any, ad any, plaintext any) any {
+	return aeadExplicit("Crypto.xchacha20Poly1305Seal", true, key, nonce, ad, plaintext, true)
+}
+
+// Crypto.xchacha20Poly1305Open : Secret -> Bytes -> Bytes -> Bytes -> Result Error Bytes
+// — (key, 24-byte nonce, associated data, ciphertext || tag) → plaintext.
+func Crypto_xchacha20Poly1305Open(key any, nonce any, ad any, sealed any) any {
+	return aeadExplicit("Crypto.xchacha20Poly1305Open", true, key, nonce, ad, sealed, false)
+}

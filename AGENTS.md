@@ -104,8 +104,9 @@ Sky's guarantees, so prefer the stdlib and keep FFI for what it does not cover.
 To run a call later, off `update`, wrap it yourself:
 `Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`. The checker
 enforces the `Result` from the binding's pinned signature (v0.27.0): using a
-call's result as the bare value is an `[E2001]` type error, and `Sky.Ffi.call`
-/ `callPure` / `callTask` are stdlib-only. See
+call's result as the bare value is an `[E2001]` type error, and `Sky.Ffi`
+(`kernel` / `call` / `callPure` / `callTask`) is stdlib-only (`[E1011]`): call
+the typed stdlib function or a `sky add` binding. See
 `docs/ffi/boundary-philosophy.md`.
 
 `let _ = someTask` auto-forces the task (fires the effect). A top-level
@@ -411,7 +412,7 @@ for UX/DX/security/scalability, not by accident.
 | **Auth** | The internal **`Std.Auth`** module by default (bcrypt + HS256 JWT cookies — you own the users). OAuth (Google/GitHub) or external (Auth0/Clerk) only when the user needs them. Never `fmt.Sprintf("%v", secret)` — secrets are typed. |
 | **Serialization** | `Std.Codec` (`Codec.auto blank`) for record↔JSON+DB from one definition. Raw `Json.Encode/Decode` only for a shape a codec can't express (legacy/third-party wire formats). |
 | **Money / decimals** | `Std.Money` on `Std.Decimal`. **Never** raw `Float` for currency. |
-| **Encryption / signatures** | Encrypt with **`Crypto.xchachaSeal`** / `xchachaOpen` (XChaCha20-Poly1305, 24-byte random nonce; seal is a `Task`, open is pure). Keys are 32-byte `Secret`s: `Crypto.aesKeyFromPassword` from a password, `Kdf.derive` (`Std.Crypto.Kdf`, HKDF) from key material. Sign with `Std.Crypto.Sign` (Ed25519), agree keys with `Std.Crypto.Kx` (X25519; refuses a low-order peer key). An encrypted session with a pinned server key: `Std.Crypto.Noise` (IK). A short pairing code: `Std.Crypto.Cpace` (a PAKE, **awaiting external review**). A QR code for a pairing URL: `Std.Qr`. Never a `String` secret key. |
+| **Encryption / signatures** | Encrypt with **`Crypto.xchachaSeal`** / `xchachaOpen` (XChaCha20-Poly1305, 24-byte random nonce; seal is a `Task`, open is pure). Only when a protocol fixes the nonce: `Crypto.chacha20Poly1305Seal` / `xchacha20Poly1305Seal` (caller nonce, pure; never reuse a nonce under one key). Keys are 32-byte `Secret`s: `Crypto.aesKeyFromPassword` from a password, `Kdf.derive` (`Std.Crypto.Kdf`, HKDF) from key material. Sign with `Std.Crypto.Sign` (Ed25519), agree keys with `Std.Crypto.Kx` (X25519; refuses a low-order peer key). An encrypted session with a pinned server key: `Std.Crypto.Noise` (IK). A short pairing code: `Std.Crypto.Cpace` (a PAKE, **awaiting external review**). A QR code for a pairing URL: `Std.Qr`. Never a `String` secret key. |
 | **Child processes / file watching** | Run a command to completion: `Process.run`. Talk to a long-running child: **`Process.spawn`** (`Process.command "x" \|> Process.withArgs [...]`, `withPty { cols, rows }` on Linux/macOS) with output in an offset-addressed ring (`readFrom` from a Task, or the `Process.events` Sub in a TEA app, never both), `write` / `closeStdin` / `resize` / `kill` (whole process group) / `wait` / `close`. Children are reaped, closed with their Sky.Live session, and killed on exit. Watch files with **`Std.Watch`** (`watch` / `next` / `changes` Sub / `close`; coalesced batches, `Overflow` means rescan). |
 | **Errors** | `Result Error a` / `Task Error a`. **Never** `String` as an error type. |
 | **Concurrency** | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded — a goroutine/connection storm at scale); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
@@ -609,7 +610,10 @@ SKY_LIVE_TESTS=skip cargo test --workspace   # the ONLY way to skip a live test
 New live tests gate through `rust/crates/sky/src/live_gate.rs`
 (`live_gate::required(Need::Postgres, <your probe>)`), and
 `rust/crates/xtask/tests/live_tests_are_not_silently_skipped.rs` fails the build
-on the shapes that used to be written instead.
+on the shapes that used to be written instead. The Go runtime's tests follow
+the same rule and the same variable: a test that needs Node.js or PostgreSQL
+calls `requireNode(t)` / `requirePgBinDir(t)` (`runtime-go/rt/live_gate_test.go`),
+which fails naming what to install unless `SKY_LIVE_TESTS=skip`.
 
 `xtask coerce-floor` takes the same variable for the same reason. Its golden
 locks a runtime-narrowing floor **per project**, and a project whose generated

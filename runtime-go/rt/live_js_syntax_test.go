@@ -12,10 +12,7 @@ import (
 // the real client JS and runs `node --check` on it. Skips when node is absent
 // (e.g. minimal CI images) rather than failing.
 func TestLiveJSSyntaxValid(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not available; skipping embedded-JS syntax check")
-	}
+	node := requireNode(t)
 	js := liveClientJS
 	f, err := os.CreateTemp("", "skylive-*.js")
 	if err != nil {

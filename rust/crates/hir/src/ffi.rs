@@ -32,6 +32,53 @@ pub struct FfiFnSig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FfiSurface {
     packages: BTreeMap<String, BTreeMap<String, FfiFnSig>>,
+    /// Which checked modules may use `Sky.Ffi` directly (`[E1011]`).
+    trust: FfiTrust,
+}
+
+/// Which checked modules may use `Sky.Ffi` (`kernel`, `call`, `callPure`,
+/// `callTask`) directly.
+///
+/// `Sky.Ffi` is stdlib-only: `Ffi.kernel "Sym"` trusts the def's annotation
+/// without comparing it to the kernel's real signature, and `Ffi.call*` reach a
+/// Go binding by name with a free type. The type checker only checks APP code
+/// (the stdlib is trusted and never re-checked), so an app module gets no
+/// `Sky.Ffi` at all unless the build grants it here. There are two grants,
+/// and the build decides both from facts a user does not write by accident:
+///
+/// * `modules` — a module whose source text IS the compiler's own bundled-app
+///   source (`sky-bundled/<app>/src`, compared by content, not by name), or a
+///   stdlib module opened in the editor. Full `Sky.Ffi`, like the stdlib.
+/// * `kernel_prefixes` — a project the Sky.Spa split GENERATED (`[spa]
+///   generated = true`, written only by the generator). Its backend binds the
+///   split's own `Spa_*` plumbing kernels. `Ffi.kernel` only, and only for a
+///   literal symbol with one of these prefixes.
+///
+/// A module is never trusted by its NAME: a project module declared as
+/// `module Sky.Evil` is app code like any other.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct FfiTrust {
+    /// Module names granted full `Sky.Ffi` (compiler-owned source).
+    pub modules: std::collections::BTreeSet<String>,
+    /// Kernel-symbol prefixes any checked module may bind with `Ffi.kernel`.
+    pub kernel_prefixes: std::collections::BTreeSet<String>,
+}
+
+impl FfiTrust {
+    /// May `module` use `Sky.Ffi.<member>`? `symbol` is the literal kernel
+    /// symbol of an `Ffi.kernel "Sym"` application, `None` when the reference
+    /// is not applied to a string literal.
+    pub fn allows(&self, module: &str, member: &str, symbol: Option<&str>) -> bool {
+        if self.modules.contains(module) {
+            return true;
+        }
+        member == "kernel"
+            && symbol.is_some_and(|s| {
+                self.kernel_prefixes
+                    .iter()
+                    .any(|p| s.starts_with(p.as_str()))
+            })
+    }
 }
 
 impl FfiSurface {
@@ -66,6 +113,16 @@ impl FfiSurface {
 
     pub fn is_empty(&self) -> bool {
         self.packages.is_empty()
+    }
+
+    /// The `Sky.Ffi` grants of this build (see [`FfiTrust`]).
+    pub fn trust(&self) -> &FfiTrust {
+        &self.trust
+    }
+
+    /// Replace the `Sky.Ffi` grants of this build (see [`FfiTrust`]).
+    pub fn set_trust(&mut self, trust: FfiTrust) {
+        self.trust = trust;
     }
 
     /// Number of loaded packages.

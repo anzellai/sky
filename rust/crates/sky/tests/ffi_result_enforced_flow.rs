@@ -200,3 +200,64 @@ fn go_stdlib_bindings_enforce_the_result_and_run() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `Ffi.kernel` is stdlib-only (`[E1011]`), end to end through the real CLI.
+/// The reproduction below type-checked and then panicked at run time with a
+/// TypeMismatch: the checker trusted the annotation `String -> Int` and never
+/// compared it to `Crypto_sha256`'s real `String -> String`. So did the same
+/// binding in a project module named into the reserved `Sky.*` namespace.
+/// No Go toolchain needed: the check halts before `go build`.
+#[test]
+fn app_code_ffi_kernel_is_rejected_by_sky_check() {
+    let probe = "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.String as String\n\
+         import Sky.Ffi as Ffi\n\
+         import Std.Log exposing (println)\n\n\n\
+         probe : String -> Int\n\
+         probe =\n    Ffi.kernel \"Crypto_sha256\"\n\n\n\
+         main =\n    println (String.fromInt (probe \"abc\" + 1))\n";
+    let dir = scratch("kernel");
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"ffi-kernel\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/Main.sky"), probe).unwrap();
+    let (ok, log) = run(&dir, SKY, &["check", "src/Main.sky"]);
+    assert!(!ok, "sky check must reject app-code Ffi.kernel:\n{log}");
+    assert!(log.contains("[E1011]"), "expected [E1011]:\n{log}");
+    assert!(
+        log.contains("`Crypto.sha256`"),
+        "the hint must name the typed stdlib function:\n{log}"
+    );
+
+    // The same binding in a module declared into the reserved namespace.
+    std::fs::create_dir_all(dir.join("src/Sky/Evil")).unwrap();
+    std::fs::write(
+        dir.join("src/Sky/Evil/Coerce.sky"),
+        "module Sky.Evil.Coerce exposing (probe)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Ffi as Ffi\n\n\n\
+         probe : String -> Int\n\
+         probe =\n    Ffi.kernel \"Crypto_sha256\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.String as String\n\
+         import Sky.Evil.Coerce exposing (probe)\n\
+         import Std.Log exposing (println)\n\n\n\
+         main =\n    println (String.fromInt (probe \"abc\" + 1))\n",
+    )
+    .unwrap();
+    let (ok, log) = run(&dir, SKY, &["check", "src/Main.sky"]);
+    assert!(!ok, "a reserved-namespace module is app code:\n{log}");
+    assert!(
+        log.contains("[E1011]") && log.contains("Coerce.sky"),
+        "expected [E1011] in Sky/Evil/Coerce.sky:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

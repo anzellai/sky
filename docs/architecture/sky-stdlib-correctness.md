@@ -428,6 +428,7 @@ delegates).
 | `xchachaOpen`/`xchachaOpenWith` | `Secret -> String (-> String) -> Result Error String` | fallible-pure |
 | `aesGcmEncrypt`/`chacha20Encrypt` | `Secret -> String -> Task Error String` | effect (random nonce; a Task since v0.27.0) |
 | `aesGcmDecrypt`/`chacha20Decrypt` | `Secret -> String -> Result Error String` | fallible-pure |
+| `chacha20Poly1305Seal`/`Open`, `xchacha20Poly1305Seal`/`Open` | `Secret -> String -> String -> String -> Result Error String` | fallible-pure (caller nonce; deterministic) |
 | `aesKeyFromPassword`/`chachaKeyFromPassword` | `Secret -> String -> Secret` | pure (PBKDF2) |
 | `randomBytes`           | `Int -> Task Error String`                   | effect |
 | `randomToken`           | `Int -> Task Error String`                   | effect |
@@ -446,6 +447,13 @@ delegates).
   recommended default: a random 24-byte nonce does not repeat in practice,
   where the 12-byte nonce of `aesGcmEncrypt` / `chacha20Encrypt` limits one
   key to well under 2^32 messages.
+* The explicit-nonce AEADs (`chacha20Poly1305Seal`, 12-byte nonce;
+  `xchacha20Poly1305Seal`, 24-byte nonce) draw nothing, so they are pure:
+  equal inputs give equal bytes. Their safety depends on the CALLER never
+  repeating a nonce under one key; a repeat breaks confidentiality and
+  authenticity. Verified against RFC 8439 §2.8.2 and draft-irtf-cfrg-xchacha
+  §A.3.1 (`TestChaCha20Poly1305Rfc8439Vector`,
+  `TestXChaCha20Poly1305DraftVector`, `TestExplicitNonceAeadNegative`).
 * `hashPassword` (in `Std.Auth`) is bcrypt with cost 10 (default)
   — Go's `golang.org/x/crypto/bcrypt`.
 

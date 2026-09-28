@@ -255,9 +255,14 @@ divergence. It is closed as follows.
 - **Leniency that remains.** A package whose surface is not loaded at all keeps
   the fresh flexible variable; lowering refuses the reference (`sky install`)
   and `sky check` runs the same path, so no unsound binary results.
-- **`Sky.Ffi`.** `Ffi.call` / `callPure` / `callTask` (by-name calls with a free
-  result type) are stdlib-only: app code gets `[E1011]`. `Ffi.kernel` stays
-  available, typed by the def's own annotation.
+- **`Sky.Ffi`.** `Ffi.kernel` / `call` / `callPure` / `callTask` are
+  stdlib-only: app code gets `[E1011]` (`ty::check`, the `STDLIB_ONLY_FFI`
+  scan). `Ffi.call*` are by-name calls with a free result type; `Ffi.kernel` is
+  typed only by the def's own annotation, which the checker cannot compare with
+  the kernel's real signature. No module is exempt by its name. The build's
+  `hir::FfiTrust` grants the only exceptions (`project::ffi_trust`): modules
+  whose text is the compiler's bundled-app source, and `Spa_*` kernels in a
+  Sky.Spa-generated project.
 - **Lowering.** A partially applied FFI function eta-expands into a closure
   (`ffi_partial`), and a fully applied call whose type is neither `any` nor
   `SkyResult` is a hard lowering error (the backstop).

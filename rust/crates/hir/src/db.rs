@@ -328,6 +328,11 @@ pub trait SkyDb {
     /// reference flexible and lowering reports the missing wrapper. Required (no
     /// default) so a new database backend cannot silently drop FFI typing.
     fn ffi_fn(&self, package: &str, name: &str) -> Option<crate::FfiFnSig>;
+    /// May checked module `module` use `Sky.Ffi.<member>` (for `kernel`, with
+    /// literal symbol `symbol`)? Reads the build's [`crate::FfiTrust`]; `false`
+    /// for ordinary app code. Required (no default) so a new database backend
+    /// cannot silently open `Sky.Ffi` to every module.
+    fn ffi_member_allowed(&self, module: &str, member: &str, symbol: Option<&str>) -> bool;
 }
 
 impl SkyDb for SourceDb {
@@ -376,6 +381,9 @@ impl SkyDb for SourceDb {
     }
     fn ffi_fn(&self, package: &str, name: &str) -> Option<crate::FfiFnSig> {
         self.ffi.lookup(package, name)
+    }
+    fn ffi_member_allowed(&self, module: &str, member: &str, symbol: Option<&str>) -> bool {
+        self.ffi.trust().allows(module, member, symbol)
     }
 }
 

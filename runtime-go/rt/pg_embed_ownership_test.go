@@ -9,7 +9,7 @@ package rt
 // re-execed with a mode variable, exactly as
 // `TestDeadPostmasterExitsTheAppNonZero` does — and inspect what it left behind.
 //
-// Live gates skip without PostgreSQL:
+// Live gates fail without PostgreSQL (SKY_LIVE_TESTS=skip: skip):
 //
 //	SKY_POSTGRES_BIN=/opt/homebrew/opt/postgresql@14/bin go test ./rt/ -run Ownership
 
@@ -145,10 +145,7 @@ func TestOwnershipLiveAdoptedClusterSurvivesTheAppThatAdoptedIt(t *testing.T) {
 		}
 		return
 	}
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "ownership-adopt")
 
@@ -230,10 +227,7 @@ func TestOwnershipLiveEmbedMigrateAppliesAgainstTheStartedCluster(t *testing.T) 
 		}
 		return
 	}
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "ownership-migrate")
 
@@ -339,10 +333,7 @@ func TestOwnershipLiveEmbedMigrateFailureStopsItsClusterToo(t *testing.T) {
 		}
 		return
 	}
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "ownership-migrate-fail")
 	dataDir := filepath.Join(root, "pg")
@@ -417,10 +408,7 @@ func TestOwnershipLiveSystemExitStopsTheEmbeddedCluster(t *testing.T) {
 		}
 		return
 	}
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "ownership-system-exit")
 	dataDir := filepath.Join(root, "pg")

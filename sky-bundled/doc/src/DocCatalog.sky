@@ -1,0 +1,28 @@
+module DocCatalog exposing (loadCatalog, searchCatalog)
+
+-- | The doc TUI's two runtime kernels (runtime-go/rt/doc_catalog.go).
+--
+-- `Sky.Ffi` is stdlib-only: the checker grants it to this module because its
+-- text is the compiler's own bundled source (`project::ffi_trust`, compared by
+-- content). It lives outside the entry module because the `Std.App` build
+-- rewrites the entry (`App.run` to the target's runner), and a rewritten file
+-- no longer matches the bundled source.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Ffi as Ffi
+
+
+-- | `loadCatalog path` — synchronous Go-side JSON parse + cache. `Ok` carries
+-- the total entry count for the status line.
+loadCatalog : String -> Result Error Int
+loadCatalog =
+    Ffi.kernel "Doc_loadCatalog"
+
+
+-- | `searchCatalog path query maxShown` — the top-N pre-formatted display
+-- lines and the total match count. Pure compute against the cached blob, no
+-- I/O.
+searchCatalog : String -> String -> Int -> ( List String, Int )
+searchCatalog =
+    Ffi.kernel "Doc_searchCatalog"

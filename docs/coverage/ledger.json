@@ -265,7 +265,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1339,
+      "expected_assertions": 1344,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -555,6 +555,7 @@
       "Sky.Core.Process": "examples/17-skymon",
       "Sky.Core.Random": "examples/18-job-queue",
       "Sky.Core.Regex": "examples/35-composite-generics",
+      "Sky.Http.Middleware": "examples/36-composite-server",
       "Sky.Http.RateLimit": "examples/36-composite-server",
       "Sky.Http.Server.WebSocket": "examples/33-websocket-echo",
       "Std.Ai.Policy": "examples/66-slack-agent",
@@ -605,12 +606,6 @@
         "path": "tests/conformance",
         "units": [
           "tests/conformance"
-        ]
-      },
-      "Sky.Http.Middleware": {
-        "path": "apps/relay",
-        "units": [
-          "apps:relay"
         ]
       },
       "Std.Ai.Agent": {
@@ -719,7 +714,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2160,
+    "stdlib_entries": 2164,
     "stdlib_modules": 111,
     "surfaces_covered": 166,
     "surfaces_covered_pct": 93.3,
@@ -6773,14 +6768,25 @@
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "examples/36-composite-server (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
       },
       "description": "the Sky.Http.Middleware public API",
       "id": "stdlib.Sky.Http.Middleware",
@@ -15264,7 +15270,7 @@
         }
       },
       "count": 753,
-      "pct_of_denominator": 34.9
+      "pct_of_denominator": 34.8
     }
   },
   "units": [
@@ -15277,7 +15283,7 @@
       "refs_generous": 136,
       "refs_qualified": 130,
       "role": "Layer2",
-      "sky_files": 13,
+      "sky_files": 14,
       "sky_toml_sections": []
     },
     {
@@ -15926,10 +15932,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "examples/36-composite-server",
-      "modules_imported": 27,
+      "modules_imported": 28,
       "path": "examples/36-composite-server",
-      "refs_generous": 115,
-      "refs_qualified": 106,
+      "refs_generous": 119,
+      "refs_qualified": 110,
       "role": "Example",
       "sky_files": 10,
       "sky_toml_sections": [
@@ -16444,8 +16450,8 @@
       "id": "tests/conformance",
       "modules_imported": 53,
       "path": "tests/conformance",
-      "refs_generous": 687,
-      "refs_qualified": 671,
+      "refs_generous": 691,
+      "refs_qualified": 675,
       "role": "Conformance",
       "sky_files": 41,
       "sky_toml_sections": []

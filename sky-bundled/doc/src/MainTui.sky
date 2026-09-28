@@ -4,7 +4,8 @@ module Main exposing (main)
 --
 -- Companion to the HTTP server in @Main.sky@.  Reads the same
 -- @$SKY_DOC_DIR/api/symbols.json@ catalogue, but parsing + search
--- happen entirely in the Go runtime via two kernel bindings:
+-- happen entirely in the Go runtime via two kernel bindings
+-- (in @DocCatalog.sky@):
 --
 --   * `Doc.loadCatalog : String -> Result Error Int`
 --   * `Doc.searchCatalog : String -> String -> Int -> (List String, Int)`
@@ -27,7 +28,7 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.System as System
 import Sky.Core.Error exposing (Error)
-import Sky.Ffi as Ffi
+import DocCatalog exposing (loadCatalog, searchCatalog)
 import Std.App as App
 import Std.Cmd as Cmd
 import Std.Sub as Sub
@@ -36,25 +37,6 @@ import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
-
-
--- ═══════════════════════════════════════════════════════════════════
--- Kernel bindings (registered in src/Sky/Generate/Go/Kernel.hs)
--- ═══════════════════════════════════════════════════════════════════
--- Doc.loadCatalog path : Result Error Int
--- Synchronous Go-side JSON parse + cache.  Result.Ok carries the
--- total entry count for the status line.
-loadCatalog : String -> Result Error Int
-loadCatalog =
-    Ffi.kernel "Doc_loadCatalog"
-
-
--- Doc.searchCatalog path query maxShown : (List String, Int)
--- Returns (top-N pre-formatted display lines, total match count).
--- Pure compute against the cached blob — no I/O.
-searchCatalog : String -> String -> Int -> ( List String, Int )
-searchCatalog =
-    Ffi.kernel "Doc_searchCatalog"
 
 
 -- ═══════════════════════════════════════════════════════════════════

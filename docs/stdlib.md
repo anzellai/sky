@@ -180,7 +180,7 @@ match = Regex.match "^[a-z]+$" "hello"   -- True
 
 ### `Path` — file path manipulation
 
-`base`, `dir`, `ext`, `isAbsolute`. (For joining paths, use string concatenation with `String.append` or interpolation — the Sky-source surface is intentionally minimal; reach for `Sky.Ffi.callPure "path/filepath.Join"` if you need Go's full path API.)
+`base`, `dir`, `ext`, `isAbsolute`, `join`, `safeJoin`. (`Sky.Ffi` is stdlib-only, `[E1011]`: for Go's full `path/filepath` API, `sky add path/filepath` and call its bindings, which return `Result Error a`.)
 
 ### `Crypto` — hashes, MAC, signatures, entropy
 
@@ -212,6 +212,10 @@ hmac   = Crypto.hmacSha256 "secret" "message"
 | `Crypto.aesGcmDecrypt` | `Secret -> String -> Result Error String` | Inverse of `aesGcmEncrypt`. Err on tag/key mismatch |
 | `Crypto.chacha20Encrypt` | `Secret -> String -> Task Error String` | ChaCha20-Poly1305 AEAD, random 12-byte nonce. A `Task` since v0.27.0 |
 | `Crypto.chacha20Decrypt` | `Secret -> String -> Result Error String` | Inverse of `chacha20Encrypt` |
+| `Crypto.chacha20Poly1305Seal` | `Secret -> String -> String -> String -> Result Error String` | IETF ChaCha20-Poly1305 (RFC 8439) with a **caller-supplied** 12-byte nonce: (key, nonce, associated data, plaintext) → raw `ct \|\| tag`. Pure and deterministic |
+| `Crypto.chacha20Poly1305Open` | `Secret -> String -> String -> String -> Result Error String` | Inverse of `chacha20Poly1305Seal`: (key, nonce, associated data, `ct \|\| tag`) → plaintext |
+| `Crypto.xchacha20Poly1305Seal` | `Secret -> String -> String -> String -> Result Error String` | XChaCha20-Poly1305 with a **caller-supplied** 24-byte nonce; same shape as `chacha20Poly1305Seal` |
+| `Crypto.xchacha20Poly1305Open` | `Secret -> String -> String -> String -> Result Error String` | Inverse of `xchacha20Poly1305Seal` |
 | `Crypto.aesKeyFromPassword` | `Secret -> String -> Secret` | PBKDF2-HMAC-SHA256 100k iter → 32-byte key (a `Secret`) for any AEAD above |
 | `Crypto.chachaKeyFromPassword` | `Secret -> String -> Secret` | Same derivation, named for ChaCha |
 
@@ -221,6 +225,18 @@ hmac   = Crypto.hmacSha256 "secret" "message"
   repeats in practice, so one key can seal any number of messages.
   `aesGcmEncrypt` and `chacha20Encrypt` use a 12-byte random nonce: keep them
   for interoperability and rotate the key well before 2^32 messages.
+- **An explicit nonce is for a fixed protocol, not for new designs.**
+  `chacha20Poly1305Seal` / `xchacha20Poly1305Seal` take the nonce from you,
+  so they are deterministic: the same key, nonce, associated data and
+  plaintext always give the same bytes. **Never use one nonce twice with the
+  same key**: a repeated nonce reveals the XOR of the two plaintexts and lets
+  an attacker forge tags, so it breaks both confidentiality and authenticity.
+  Use them when a protocol fixes the nonce (a message counter, a
+  transcript-derived nonce, a published test vector); otherwise use
+  `xchachaSeal`. Every argument is raw bytes (`Encoding.hexDecode` /
+  `Bytes.fromBase64` for text forms), the output is `ct || tag` without the
+  nonce, and a key, nonce or input of the wrong length is `Err InvalidInput`,
+  as is a failed authentication.
 - **Keys are `Secret`s, 32 bytes.** From a password: `Crypto.aesKeyFromPassword`
   (PBKDF2). From key material (an X25519 shared secret, a master key):
   `Kdf.derive` (HKDF). From configuration: `Secret.fromEnv`.

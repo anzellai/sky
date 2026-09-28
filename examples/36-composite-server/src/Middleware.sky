@@ -1,18 +1,16 @@
 module Middleware exposing (withCors, withLogging, withRateLimit, withBasicAuth)
 
--- Local typed wrappers over the kernel middleware dispatchers.
+-- The middleware stack this server composes, re-exported from the stdlib
+-- `Sky.Http.Middleware` under the project's own `Handler` alias.
 --
--- The stdlib `Sky.Http.Middleware` module declares its helpers as
--- `Handler -> Handler` where `Handler` is an undeclared name — Sky's
--- HM treats it as an opaque type that doesn't unify with the actual
--- handler shape `Request -> Task Error Response`, so passing the
--- result to `Server.get` / `Server.post` produces a type error.
--- (Filed as a finding in the v0.16.2 composite-server work; until
--- the stdlib module exports a typed Handler alias, this re-binding
--- via `Ffi.kernel` is the canonical workaround.)
+-- `Handler` is `Sky.Http.Server.Handler` (`Request -> Task Error Response`),
+-- so each helper here is the stdlib function with its declared signature.
+-- Application code does not bind runtime kernels itself: `Ffi.kernel` is
+-- stdlib-only (`[E1011]`), because the checker cannot compare a hand-written
+-- annotation with the kernel's real signature.
 
-import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Http.Middleware as Mw
 import Sky.Http.Server exposing (Request, Response)
 
 type alias Handler =
@@ -20,20 +18,20 @@ type alias Handler =
 
 
 withCors : List String -> Handler -> Handler
-withCors =
-    Ffi.kernel "Middleware_withCors"
+withCors origins handler =
+    Mw.withCors origins handler
 
 
 withLogging : Handler -> Handler
-withLogging =
-    Ffi.kernel "Middleware_withLogging"
+withLogging handler =
+    Mw.withLogging handler
 
 
 withRateLimit : String -> Int -> Int -> Handler -> Handler
-withRateLimit =
-    Ffi.kernel "Middleware_withRateLimit"
+withRateLimit name capacity refillPerSec handler =
+    Mw.withRateLimit name capacity refillPerSec handler
 
 
 withBasicAuth : String -> String -> Handler -> Handler
-withBasicAuth =
-    Ffi.kernel "Middleware_withBasicAuth"
+withBasicAuth user password handler =
+    Mw.withBasicAuth user password handler

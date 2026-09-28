@@ -126,7 +126,7 @@ desktop only; a `web:app` build refuses it) and put it behind sign-in.
 | DB | Records → `Std.Db.Store` + `Std.Codec` (one codec drives JSON **and** dialect-safe DB). SQLite for prototypes, PostgreSQL for multi-instance. Schema via committed file migrations (`sky db migrate --gen`). See **Database** below for the layer choice + the `sky doc` API source of truth. |
 | Serialization | `Std.Codec` — **the portable default** for turning a record into JSON and back. ONE codec (`Codec.auto blank`) gives you `Codec.toJson` / `Codec.fromJson` AND, if you persist it, the dialect-safe DB mapping — from a single definition, with no drift between your JSON and DB shapes. Same codec works on every backend (Sky.Live / Http.Server / Cli). Reach for raw `Sky.Core.Json.Encode` / `Sky.Core.Json.Decode` only for a JSON shape a codec can't express — a custom/legacy wire format, or decoding third-party JSON you don't own (there, a hand-written `Decoder` + `Decode.decodeString` is right). |
 | Money / decimals | `Std.Money` on `Std.Decimal`. Never raw `Float` for currency. |
-| Encryption / signatures | `Crypto.xchachaSeal` / `xchachaOpen` (seal is a `Task`: it draws a random nonce). Keys are 32-byte `Secret`s (`Crypto.aesKeyFromPassword`, or `Kdf.derive` from `Std.Crypto.Kdf`). Ed25519 `Std.Crypto.Sign`, X25519 `Std.Crypto.Kx`, Noise IK sessions `Std.Crypto.Noise`, pairing codes `Std.Crypto.Cpace` (awaiting external review), QR codes `Std.Qr`. Secret keys are opaque and never `String`. |
+| Encryption / signatures | `Crypto.xchachaSeal` / `xchachaOpen` (seal is a `Task`: it draws a random nonce). Only when a protocol fixes the nonce: `Crypto.chacha20Poly1305Seal` / `xchacha20Poly1305Seal` (caller nonce, pure; never reuse a nonce under one key). Keys are 32-byte `Secret`s (`Crypto.aesKeyFromPassword`, or `Kdf.derive` from `Std.Crypto.Kdf`). Ed25519 `Std.Crypto.Sign`, X25519 `Std.Crypto.Kx`, Noise IK sessions `Std.Crypto.Noise`, pairing codes `Std.Crypto.Cpace` (awaiting external review), QR codes `Std.Qr`. Secret keys are opaque and never `String`. |
 | Child processes / file watching | `Process.run` for a one-shot command; `Process.spawn` (builder: `withArgs`, `withEnv`, `withCwd`, `withPty`) for a long-running child, read with `readFrom` (Task) or the `Process.events` Sub, not both. `Std.Watch` for file changes (`next` Task or `changes` Sub; `Overflow` means rescan). |
 | Concurrency | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. |
 | Errors | `Result Error a` / `Task Error a`. Never `String` as the error type. |
@@ -335,8 +335,9 @@ prefer the stdlib and keep FFI for what it does not cover. To run a call later,
 off `update` (for example with `Cmd.perform`), wrap it yourself:
 `Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`.
 The checker enforces the `Result` (since v0.27.0): code that uses a call's
-result as the bare value is an `[E2001]` type error. `Sky.Ffi.call` /
-`callPure` / `callTask` are stdlib-only.
+result as the bare value is an `[E2001]` type error. `Sky.Ffi` (`kernel` /
+`call` / `callPure` / `callTask`) is stdlib-only (`[E1011]`): call the typed
+stdlib function or a `sky add` binding.
 
 **Top-level bindings are memoised — evaluated once, then cached.** A
 zero-parameter top-level binding is a single VALUE: `apiKey` reads the env

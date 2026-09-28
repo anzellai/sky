@@ -445,10 +445,7 @@ func TestEveryTunedSettingIsAResourceKnob(t *testing.T) {
 // So: initialise a cluster, plant a `max_connections` from a machine this data
 // directory no longer runs on, boot again, and read the file.
 func TestASecondBootRetunesTheManagedBlock(t *testing.T) {
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "retune-on-boot")
 	s := liveSupervisor(t, root)

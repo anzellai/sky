@@ -2,11 +2,14 @@ package rt
 
 // Live-cluster gates: a real initdb, a real postmaster, a real stop.
 //
-// These skip when there is no PostgreSQL to run. That is a real weakness of a
-// suite — a gate that skips is a gate that proves nothing — so it is stated
-// loudly rather than hidden: run them with
+// Without PostgreSQL these FAIL, naming what to install (`requirePgBinDir`,
+// live_gate_test.go): a gate that skips is a gate that proves nothing, and a
+// skipped Go test prints the same `ok` as one that ran. Point them at a
+// PostgreSQL with
 //
 //	SKY_POSTGRES_BIN=/opt/homebrew/opt/postgresql@14/bin go test ./rt/ -run Live
+//
+// or skip them on purpose with SKY_LIVE_TESTS=skip.
 //
 // The data directory is deliberately NOT t.TempDir(). On macOS that is under
 // /var/folders, which the supervisor refuses for the same reason a production
@@ -114,10 +117,7 @@ func liveSupervisor(t *testing.T, root string) *pgSupervisor {
 // The whole lifecycle on one cluster, in the order the failure modes actually
 // occur in production.
 func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "lifecycle")
 
@@ -394,10 +394,7 @@ func TestLiveEmbeddedClusterLifecycle(t *testing.T) {
 // ownership rule — never stops it either. The cluster outlives every run after
 // the one that failed.
 func TestLiveABootThatFailsAfterTheSpawnStopsWhatItStarted(t *testing.T) {
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "boot-fails-after-spawn")
 
@@ -452,10 +449,7 @@ func TestLiveABootThatFailsAfterTheSpawnStopsWhatItStarted(t *testing.T) {
 // perfectly — which reads as a Sky.Live bug for as long as it takes someone to
 // check what the session store actually opened.
 func TestLiveEmbeddedStartHandsTheDSNToBothNamesTheRuntimeReads(t *testing.T) {
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, "dsn-handoff")
 	t.Setenv("SKY_DATA_DIR", root)
@@ -562,18 +556,15 @@ func TestDeadPostmasterExitsTheAppNonZero(t *testing.T) {
 		return
 	}
 
-	modes := []string{"fake"}
-	if livePgBinDir() != "" {
-		modes = append(modes, "live")
-	} else {
-		t.Log("no PostgreSQL binaries: running the fake-child mode only")
-	}
-	for _, mode := range modes {
+	// The fake child always runs; the live one needs PostgreSQL, and a missing
+	// one fails it (SKY_LIVE_TESTS=skip: skips it) rather than quietly
+	// running the fake half alone.
+	for _, mode := range []string{"fake", "live"} {
 		t.Run(mode, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestDeadPostmasterExitsTheAppNonZero$", "-test.v")
 			cmd.Env = append(os.Environ(), "SKY_PG_CHILD_MODE="+mode)
-			if d := livePgBinDir(); d != "" {
-				cmd.Env = append(cmd.Env, "SKY_POSTGRES_BIN="+d)
+			if mode == "live" {
+				cmd.Env = append(cmd.Env, "SKY_POSTGRES_BIN="+requirePgBinDir(t))
 			}
 			out, err := cmd.CombinedOutput()
 			code := cmd.ProcessState.ExitCode()

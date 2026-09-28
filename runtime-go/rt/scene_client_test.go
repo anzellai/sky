@@ -28,10 +28,7 @@ import (
 //
 // Skips when node is absent, like TestIslandJS_ClientRuntime.
 func TestSceneJS_PointerRuntime(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not available; skipping the scene client test")
-	}
+	node := requireNode(t)
 	if strings.Contains(sceneClientJS, "`") {
 		t.Fatal("sceneClientJS must hold no backquote (the Rust build reads it as a raw literal)")
 	}

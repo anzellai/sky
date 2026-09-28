@@ -685,6 +685,10 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "xchachaSealWith",
             "xchachaOpen",
             "xchachaOpenWith",
+            "chacha20Poly1305Seal",
+            "chacha20Poly1305Open",
+            "xchacha20Poly1305Seal",
+            "xchacha20Poly1305Open",
         ],
     ),
     (
