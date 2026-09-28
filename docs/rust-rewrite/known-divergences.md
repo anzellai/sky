@@ -78,6 +78,19 @@ one active behavioural divergence:
   (kernel-module exemption) and REJECTED `[E1011]` by Rust, which enforces the
   `exposing` boundary uniformly. Intentional hardening.
 
+### Go-FFI typing (closed on the `Result` wrapper in v0.27.0)
+
+Until v0.27.0 the Rust checker typed every Go-FFI reference as a free type
+variable, while the oracle typed FFI calls from the pinned `skyType`. That was a
+**rust-lenient divergence that was never ledgered** — this document said there
+were none. v0.27.0 closes it for the `Result Error` wrapper, the arity, the
+primitives, `List`, `Maybe`, tuples and callback arrows (doc 06, "Go-FFI
+references"). Go-opaque payload positions remain the wildcard `any`, where the
+oracle compares them nominally under its implements axiom; that remainder is the
+future payload-soundness tier. It has no `[[divergence]]` entry because no
+differential probe against the oracle has been run for it — per the rule above,
+a divergence is ledgered only once observed.
+
 ## Codegen-capability divergences (not check-level)
 
 The ledger above (and `xtask divergences`) covers **type-check** accept/reject

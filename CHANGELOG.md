@@ -157,7 +157,59 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   literal must add `onFrame = \_ _ -> Task.succeed ()` and
   `frameMode = False`.
 
+- **Code that ignores a Go FFI `Result` does not compile.** Every `sky add`
+  binding returns `Result Error a`, but the checker gave each Go FFI
+  reference a free type. `probe : Int` / `probe = Hex.encodedLen 3` passed
+  `sky check`, the build narrowed a `Result` to an `Int`, and the program
+  crashed at run time. The checker now types each call from the binding's
+  pinned signature (`sky-ffi/<pkg>.kernel.json`): the `Result Error`
+  wrapper, the argument count, and `String` / `Int` / `Float` / `Bool` /
+  `()` / `List` / `Maybe` / tuple arguments and payloads. The error is
+  `[E2001]` (type mismatch: `Result Error Int` vs `Int`) with a hint. Go
+  opaque types (`*mux.Router`, `context.Context`, …) stay unchecked for
+  now; a later release types them. An unannotated helper that returns an
+  FFI call carries the `Result` to its callers too.
+- **`Sky.Ffi.call`, `Ffi.callPure` and `Ffi.callTask` are stdlib-only.**
+  They call a Go binding by name with an unchecked result type, so in an
+  application they bypassed the `Result`. An application gets
+  `[E1011]`; call the `sky add` binding directly. `Ffi.kernel` is
+  unchanged.
+
 ### Migration
+
+- **A Go FFI call used as its payload:** handle the `Result` where you call
+  it. Before:
+
+  ```elm
+  newId =
+      Uuid.newString ()          -- used as a String below
+
+  greeting =
+      "id: " ++ newId
+  ```
+
+  After, pick one:
+
+  ```elm
+  greeting =
+      case Uuid.newString () of
+          Ok id ->
+              "id: " ++ id
+
+          Err e ->
+              "no id: " ++ errorToString e
+
+  -- or keep a default
+  newId =
+      Result.withDefault "anonymous" (Uuid.newString ())
+
+  -- or chain several calls
+  result =
+      Uuid.newString () |> Result.andThen (\id -> Store.insert id)
+  ```
+
+- **`Ffi.callPure "name" args` in application code:** `sky add` the Go
+  package and call its binding, which returns `Result Error a`.
 
 - **Stop keying your own data by the session cookie.** Code such as
   `Dict.get "sky_sid" req.cookies` now reads a value that changes every time
@@ -285,6 +337,21 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+
+- **A partially applied Go FFI function did not build.** `Strings.repeat
+  "ab"` emitted a Go call with too few arguments, which `go build`
+  rejected. It is now a closure over the remaining arguments, so it can be
+  passed to `List.map` like any Sky function.
+- **A Go `(T, bool)` result was described as a tuple.** `sky add` wrote the
+  comma-ok result as `(T, Bool)` while the binding returns `Maybe T`. New
+  surfaces say `Maybe T`. The checker reads a `(T, Bool)` payload in an
+  older surface as unchecked, so both `Ok (Just v)` patterns and older code
+  still compile; run `sky install` to refresh the surface.
+- **The editor merged every project's Go FFI surface.** With two projects
+  open, a package pinned by one project was used for the other. The LSP now
+  keeps one surface per project and checks each file against its own.
+- **`xtask harness`'s `coverage-ledger` gate expected 171 assertions** after
+  `Sky.Core.Tuple` added a surface (172). The constant is current.
 
 - **`Server.withHeader` changed the response it was given.** It wrote into
   the response's headers map, so two responses derived from one shared base

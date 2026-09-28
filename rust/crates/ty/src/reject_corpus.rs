@@ -125,7 +125,7 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// **Adding or removing a corpus file is a deliberate act: update this constant
 /// in the SAME commit.** Both faces fail with an actionable message naming the
 /// expected and actual counts, so the ratchet cannot be satisfied by accident.
-pub const EXPECTED_CORPUS_FILES: usize = 77;
+pub const EXPECTED_CORPUS_FILES: usize = 81;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -145,7 +145,7 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// [`EXPECTED_FILES_WITH_ORACLE_CODE`] or
 /// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] and updates BOTH constants in the
 /// same commit.
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 31;
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 35;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the
@@ -472,6 +472,17 @@ pub fn evaluate_modules(
     let mut db = SourceDb::new();
     for (n, parse) in stdlib {
         db.add_module(n, parse.clone());
+    }
+    // `-- ffi: Pkg name : skyType` directives pin Go-FFI bindings for the case,
+    // exactly as a project's `sky-ffi/` surface does for a build.
+    let mut ffi = hir::FfiSurface::new();
+    for (_, src) in modules {
+        for (p, n, sig) in crate::ffi_sig::surface_from_directives(src).iter() {
+            ffi.insert_fn(p, n, sig.clone());
+        }
+    }
+    if !ffi.is_empty() {
+        db.set_ffi_surface(std::sync::Arc::new(ffi));
     }
 
     let mut parse_errors = 0usize;

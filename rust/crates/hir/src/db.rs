@@ -112,6 +112,10 @@ pub struct SourceDb {
     /// memo memoises rather than asserting it. Not part of the db's value.
     resolve_hits: std::cell::Cell<u64>,
     resolve_misses: std::cell::Cell<u64>,
+    /// The pinned Go-FFI signature table (`SkyDb::ffi_fn`). Empty until the
+    /// driver sets it — then a `Res::Foreign` reference stays a fresh flexible
+    /// variable, exactly as for a package whose surface was never installed.
+    ffi: crate::SharedFfiSurface,
 }
 
 impl Default for SourceDb {
@@ -134,7 +138,15 @@ impl SourceDb {
             resolved: RefCell::new(HashMap::new()),
             resolve_hits: std::cell::Cell::new(0),
             resolve_misses: std::cell::Cell::new(0),
+            ffi: crate::SharedFfiSurface::default(),
         }
+    }
+
+    /// Install the pinned Go-FFI surface every inference run reads through
+    /// [`SkyDb::ffi_fn`]. The table is not an input of `resolve`, so no
+    /// memoised resolution is invalidated.
+    pub fn set_ffi_surface(&mut self, surface: crate::SharedFfiSurface) {
+        self.ffi = surface;
     }
 
     /// Register a parsed module under its dotted name. A later add with the same
@@ -310,6 +322,12 @@ pub trait SkyDb {
     /// Recover a definition's location from its id (successor to
     /// `defs().borrow().loc()`).
     fn def_loc(&self, def: DefId) -> Option<DefLoc>;
+    /// The pinned Go-FFI signature of `package.name` (`package` is the Sky module
+    /// path a `Res::Foreign` carries). `None` when no surface for the package is
+    /// loaded, or it defines no such function — inference then keeps the
+    /// reference flexible and lowering reports the missing wrapper. Required (no
+    /// default) so a new database backend cannot silently drop FFI typing.
+    fn ffi_fn(&self, package: &str, name: &str) -> Option<crate::FfiFnSig>;
 }
 
 impl SkyDb for SourceDb {
@@ -355,6 +373,9 @@ impl SkyDb for SourceDb {
     }
     fn def_loc(&self, def: DefId) -> Option<DefLoc> {
         self.defs.borrow().loc(def)
+    }
+    fn ffi_fn(&self, package: &str, name: &str) -> Option<crate::FfiFnSig> {
+        self.ffi.lookup(package, name)
     }
 }
 

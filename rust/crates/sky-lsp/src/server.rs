@@ -156,6 +156,11 @@ impl LanguageServer for Backend {
         // publish is debounced.
         if let Some(change) = params.content_changes.into_iter().next_back() {
             let mut a = self.analysis.lock().await;
+            // The checker reads the Go-FFI surface of the edited document's
+            // project (a no-op when it is already the active one).
+            if let Ok(path) = uri.to_file_path() {
+                a.activate_ffi_for(&path);
+            }
             a.set_document(uri.clone(), change.text);
         }
         // Bump this document's generation and capture it for the delayed publish.

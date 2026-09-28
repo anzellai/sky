@@ -49,6 +49,21 @@ pub struct SkyDatabase {
     modules: Vec<ModuleReg>,
     by_name: HashMap<String, ModuleId>,
     kernel: HashMap<String, String>,
+    /// The pinned Go-FFI signature table, as a salsa INPUT (`None` until the
+    /// driver installs one). Every inference run reads it through
+    /// [`SkyDb::ffi_fn`], so the read is recorded as a dependency of the
+    /// tracked query that made it: re-installing a different surface (the LSP
+    /// after `sky add`, or switching project) invalidates exactly the queries
+    /// that typed a Go-FFI reference, and nothing else.
+    ffi: Option<FfiSurfaceInput>,
+}
+
+/// The Go-FFI surface as a salsa input (see [`SkyDatabase::set_ffi_surface`]).
+/// One field, shared behind an `Arc` so a clone of the db is cheap.
+#[salsa::input]
+pub struct FfiSurfaceInput {
+    #[returns(ref)]
+    pub surface: hir::SharedFfiSurface,
 }
 
 impl Clone for ModuleReg {
@@ -546,6 +561,24 @@ impl SkyDatabase {
         id
     }
 
+    /// Install (or replace) the pinned Go-FFI surface. The first call creates the
+    /// salsa input; a later call with a DIFFERENT surface sets it, which
+    /// invalidates every query that read a Go-FFI signature. Setting an equal
+    /// surface is a no-op, so a caller may re-install on every request.
+    pub fn set_ffi_surface(&mut self, surface: hir::SharedFfiSurface) {
+        use salsa::Setter;
+        match self.ffi {
+            None => {
+                self.ffi = Some(FfiSurfaceInput::new(self, surface));
+            }
+            Some(input) => {
+                if *input.surface(self) != surface {
+                    input.set_surface(self).to(surface);
+                }
+            }
+        }
+    }
+
     /// The [`SourceFile`] input backing a registered module (for reading its
     /// parse-error diagnostics off the driver's build path).
     pub fn source_file(&self, m: ModuleId) -> SourceFile {
@@ -626,6 +659,10 @@ impl SkyDb for SkyDatabase {
     }
     fn def_loc(&self, def: DefId) -> Option<DefLoc> {
         Some(def_id_loc(self, def))
+    }
+    fn ffi_fn(&self, package: &str, name: &str) -> Option<hir::FfiFnSig> {
+        // Reading the input records the dependency on the enclosing query.
+        self.ffi?.surface(self).lookup(package, name)
     }
 }
 

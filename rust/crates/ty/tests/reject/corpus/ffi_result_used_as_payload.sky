@@ -1,0 +1,25 @@
+-- gate: reject
+-- defect: a Go FFI call's `Result Error a` used as its bare payload
+-- rust: reject [E2001] the pinned skyType types the call; `Result` vs `Int`
+-- ffi: Pkg read : String -> Int -> Int -> Result Error (String, Int)
+--
+-- Before v0.27.0 every Go-FFI reference inferred to a fresh flexible type
+-- variable, so this program type-checked, the lowering narrowed the wrapper's
+-- `SkyResult` with `rt.AsInt`, and it crashed at run time. The binding's pinned
+-- `skyType` (the `-- ffi:` line above stands in for `sky-ffi/<pkg>.kernel.json`)
+-- now reaches inference through the type database.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Pkg
+
+
+probe : Int
+probe =
+    Pkg.read "x" 0 0
+
+
+main =
+    println (String.fromInt probe)

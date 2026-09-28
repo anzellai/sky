@@ -12,3 +12,6 @@ base = { path = "../base" }
 hir = { path = "../hir" }
 syntax = { path = "../syntax" }
 diagnostics = { path = "../diagnostics" }
+
+[dev-dependencies]
+serde_json.workspace = true

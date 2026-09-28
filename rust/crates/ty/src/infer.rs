@@ -8,10 +8,19 @@
 //! repo root for the full attribution and licence text.
 //!
 //! Leniency contract (the accept-parity discipline): an unknown name — a kernel
-//! function with no stdlib sig, a Go-FFI reference, an unannotated cross-module
-//! def — resolves to a **fresh flexible var**, never an error. That is what keeps
-//! the checker from emitting false positives on programs the oracle accepts,
-//! while genuine clashes *within* known-typed code still unify-fail (L7).
+//! function with no stdlib sig, an unannotated cross-module def — resolves to a
+//! **fresh flexible var**, never an error. That is what keeps the checker from
+//! emitting false positives on programs the oracle accepts, while genuine clashes
+//! *within* known-typed code still unify-fail (L7).
+//!
+//! A **Go-FFI reference is NOT lenient** (v0.27.0). Its pinned `skyType`
+//! reaches every inference run through the type database (`SkyDb::ffi_fn`), is
+//! parsed on first use (`crate::ffi_sig`), and is instantiated like a kernel
+//! signature: the `Result Error` wrapper, the arity and the primitives are
+//! enforced; Go-opaque positions are the per-occurrence wildcard `any`. Only a
+//! reference whose package surface is not loaded at all stays a fresh flexible
+//! var — lowering then refuses to emit it (`sky install`), so no unsound binary
+//! can come of it.
 
 use crate::sig::World;
 use crate::unify::{Content, FlatTy, SuperType, UnionFind};
@@ -108,6 +117,10 @@ pub struct Infer<'a> {
     /// A unify clash reads this to anchor its `TypeError` at the offending
     /// sub-expression. Read-only bookkeeping; never affects unification.
     cur_span: Option<Span>,
+    /// Go-FFI schemes parsed so far in THIS run, keyed by `(package, name)`.
+    /// A skyType is parsed only when a reference to it is first instantiated,
+    /// and at most once per run — never the whole surface.
+    ffi_schemes: HashMap<(Name, Name), Scheme>,
 }
 
 impl<'a> Infer<'a> {
@@ -125,6 +138,7 @@ impl<'a> Infer<'a> {
             use_inferred: false,
             expected: None,
             cur_span: None,
+            ffi_schemes: HashMap::new(),
         }
     }
 
@@ -1013,8 +1027,28 @@ impl<'a> Infer<'a> {
                     None => self.uf.fresh_flex(),
                 }
             }
-            Res::Foreign { .. } | Res::Error => self.uf.fresh_flex(),
+            Res::Foreign { package, name } => self.foreign_ref(&package, &name),
+            Res::Error => self.uf.fresh_flex(),
         }
+    }
+
+    /// Type a Go-FFI reference from its pinned signature (see the module doc's
+    /// leniency contract). A leading `()` parameter relaxes exactly as a
+    /// kernel's does (`relax_unit_arg_spine`), so `Uuid.newString ()` and a
+    /// real-value unit slot both check.
+    fn foreign_ref(&mut self, package: &Name, name: &Name) -> TyVarId {
+        let key = (package.clone(), name.clone());
+        if let Some(s) = self.ffi_schemes.get(&key) {
+            let s = s.clone();
+            return self.instantiate(&s);
+        }
+        let Some(sig) = self.db.ffi_fn(package.as_str(), name.as_str()) else {
+            return self.uf.fresh_flex();
+        };
+        let scheme =
+            relax_unit_arg_spine(&crate::ffi_sig::scheme_for(&sig.sky_type, sig.arity).scheme);
+        self.ffi_schemes.insert(key, scheme.clone());
+        self.instantiate(&scheme)
     }
 
     fn infer_binop(&mut self, op: &str, tl: TyVarId, tr: TyVarId) -> TyVarId {

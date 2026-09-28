@@ -1,0 +1,29 @@
+-- gate: reject
+-- defect: the FFI `Result` hidden behind an UNANNOTATED wrapper def
+-- rust: reject [E2001] the wrapper's inferred type carries the FFI Result
+-- ffi: Pkg read : String -> Int -> Int -> Result Error (String, Int)
+--
+-- The signature pass infers every unannotated def (`ty::sig`), with its own
+-- inference run. Had the FFI signatures reached only the checker's runs, the
+-- wrapper `readIt` would have inferred to a free type and `probe` below would
+-- still pass. The pinned signatures are a database query, so every run sees
+-- them.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Pkg
+
+
+readIt s =
+    Pkg.read s 0 0
+
+
+probe : Int
+probe =
+    readIt "x"
+
+
+main =
+    println (String.fromInt probe)

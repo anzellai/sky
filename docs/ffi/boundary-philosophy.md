@@ -22,6 +22,25 @@ Sky applies the same principle to Go: every FFI call returns
 `Result Error T`, forcing the user to acknowledge the boundary at
 each call site.
 
+## The checker enforces it
+
+Since v0.27.0 the type checker types every Go-FFI call from the binding's
+pinned signature (`sky-ffi/<pkg>.kernel.json`). A program that uses the
+`Result` as its bare payload does not compile:
+
+```text
+probe : Int
+probe =
+    Hex.encodedLen 3     -- [E2001] type mismatch: `Result Error Int` vs `Int`
+```
+
+The wrapper, the arity and primitive argument and payload types are checked.
+Go-opaque types (`*mux.Router`, `context.Context`, …) are wildcards: they flow
+between FFI calls unchecked, and a later release will type them nominally. A
+partially applied FFI function (`Strings.repeat "ab"`) is a normal Sky function
+value. `Sky.Ffi.call` / `callPure` / `callTask` are stdlib-only (`[E1011]`); an
+application calls the `sky add` binding directly.
+
 ## Why Result, not Task
 
 | Sky type | Meaning | Use for |

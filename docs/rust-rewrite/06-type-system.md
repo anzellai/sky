@@ -214,6 +214,56 @@ fn occurs(&mut self, target: TyVarId) -> bool {
 }
 ```
 
+## Go-FFI references — typed on the `Result` wrapper (v0.27.0)
+
+Until v0.27.0 every `Res::Foreign` reference (a `sky add` binding) inferred to a
+**fresh flexible variable** (`infer.rs`, the old leniency contract). So
+`probe : Int` / `probe = Pkg.read "x" 0 0` type-checked, the lowering narrowed
+the wrapper's `SkyResult` with `rt.AsInt`, and the program crashed at run time.
+The Haskell oracle typed FFI calls from the pinned surface; the Rust port had
+dropped the signature (`build_ffi_table` kept only symbols), an untracked
+divergence. It is closed as follows.
+
+- **Delivery through the database, not a check-only parameter.** The pinned
+  `skyType` strings (`sky-ffi/<pkg>.kernel.json`) are projected by the driver
+  into a `hir::FfiSurface` and installed on the db: a salsa **input**
+  (`skydb::FfiSurfaceInput`) on `SkyDatabase`, an eager field on `SourceDb`.
+  `SkyDb::ffi_fn(package, name)` serves it, and `Infer` consults it at the
+  `Res::Foreign` arm. Every inference run sees it — the checker, the signature
+  pass that infers each UNANNOTATED def (so `readIt s = Pkg.read s 0 0` carries
+  the `Result` into its callers), the lowering's `compute_body_types`, the
+  Sky.Spa partition and the LSP. `ty` does not depend on the `ffi` crate.
+- **Lazy parsing.** `ty::ffi_sig` parses one skyType when a reference to it is
+  first instantiated, memoised per `(package, name)` per inference run. A
+  surface is never parsed whole (a payment SDK pins more than 80,000 bindings).
+- **What is strict:** the `Result Error` wrapper, the arity (the top-level
+  arrow count must equal the inspector's arity), primitives (with Go residue
+  normalised: `int*`/`uint*`/`byte`/`rune`/`uintptr`/`untyped int` → `Int`,
+  `float*` → `Float`, `string` → `String`, `bool` → `Bool`), `List`, `Maybe`,
+  tuples and a callback parameter's arrows. The error type is emitted
+  **qualified** (`Sky.Core.Error.Error`), so a dependency's own `type Error`
+  never unifies with it (`nominal::same`).
+- **What is the wildcard `any`:** Go-opaque types (`Name@pkg`, unknown or
+  lower-case names), a callback's result, a zero-parameter callback, any other
+  function-typed position, `Bytes`, `Dict` (the generator renders every Go map
+  as `Dict String V` whatever its key), `error`, a legacy 2-tuple payload ending
+  in `Bool` (older surfaces render the comma-ok `Maybe T` that way), Go array
+  residue and `complex*`. A single capital letter is a type variable.
+- **Fallback.** A missing or unreadable skyType (18 of 81,639 bindings across
+  the example surfaces have none; none is unreadable) gets the arity-only
+  scheme `any -> … -> Result Error any`: the wrapper stays enforced.
+- **Leniency that remains.** A package whose surface is not loaded at all keeps
+  the fresh flexible variable; lowering refuses the reference (`sky install`)
+  and `sky check` runs the same path, so no unsound binary results.
+- **`Sky.Ffi`.** `Ffi.call` / `callPure` / `callTask` (by-name calls with a free
+  result type) are stdlib-only: app code gets `[E1011]`. `Ffi.kernel` stays
+  available, typed by the def's own annotation.
+- **Lowering.** A partially applied FFI function eta-expands into a closure
+  (`ffi_partial`), and a fully applied call whose type is neither `any` nor
+  `SkyResult` is a hard lowering error (the backstop).
+- **Future tier: payload soundness.** Go-opaque payloads are wildcards. Typing
+  them needs nominal opaque types plus the implements axiom described below.
+
 ## `infer(DefId)` — inference as a salsa query (target)
 
 > **Implementation status.** HM inference is

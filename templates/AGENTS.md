@@ -323,6 +323,9 @@ Handling it at each call site marks where the code leaves Sky's guarantees, so
 prefer the stdlib and keep FFI for what it does not cover. To run a call later,
 off `update` (for example with `Cmd.perform`), wrap it yourself:
 `Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`.
+The checker enforces the `Result` (since v0.27.0): code that uses a call's
+result as the bare value is an `[E2001]` type error. `Sky.Ffi.call` /
+`callPure` / `callTask` are stdlib-only.
 
 **Top-level bindings are memoised — evaluated once, then cached.** A
 zero-parameter top-level binding is a single VALUE: `apiKey` reads the env
