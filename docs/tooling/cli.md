@@ -1164,8 +1164,11 @@ sky add ./libs/widgets  # has sky.toml or .sky sources → [dependencies] "widge
   under its module path; the build adds `require <module> v0.0.0` and
   `replace <module> => <absolute dir>` to the generated `go.mod` on **every**
   build (the build rewrites `go.mod` each time, so the wiring is re-applied
-  from `sky.toml`, never lost), and `sky add` inspects it for its FFI surface
-  like any Go dependency. Its functions return `Result Error a`. A `sky.toml` or
+  from `sky.toml`, never lost), then runs `go get <module>@v0.0.0` so the
+  module's own `go` line and requirements reach the generated `go.mod` and
+  `go.sum`. `sky add` inspects it for its FFI surface like any Go dependency,
+  and records it in `sky.toml` only when that succeeds: a module Go cannot
+  load leaves `sky.toml` unchanged and the error names Go's own message. Its functions return `Result Error a`. A `sky.toml` or
   `.sky` sources make it a Sky package, recorded under its `name` (else the
   directory name); every build loads its modules from its source root. A
   directory that is both is a Sky package; `--go` / `--sky` force the kind.
