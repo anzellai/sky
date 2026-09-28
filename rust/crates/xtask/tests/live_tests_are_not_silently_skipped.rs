@@ -644,3 +644,70 @@ fn every_cluster_start_routes_its_failure_through_the_gate() {
         );
     }
 }
+
+/// The Go runtime's own live tests follow the same rule.
+///
+/// Eight `runtime-go/rt` tests that run the embedded browser clients under
+/// Node.js, and nine that drive a real PostgreSQL, ended their probe with
+/// `t.Skip(...)`; `go test` prints `ok` for a skipped test, so a job without
+/// node reported the same green line as one that ran them. They now go through
+/// `runtime-go/rt/live_gate_test.go` (`requireNode` / `requirePgBinDir`), which
+/// fails the test naming what to install unless `SKY_LIVE_TESTS=skip`. The
+/// probes may appear nowhere else, so a new test cannot reintroduce the skip.
+#[test]
+fn go_runtime_live_probes_go_through_the_go_live_gate() {
+    let rt = repo().join("runtime-go/rt");
+    let gate = std::fs::read_to_string(rt.join("live_gate_test.go"))
+        .expect("runtime-go/rt/live_gate_test.go must exist");
+    for helper in [
+        "func requireNode(",
+        "func requirePgBinDir(",
+        "SKY_LIVE_TESTS",
+    ] {
+        assert!(gate.contains(helper), "live_gate_test.go lost `{helper}`");
+    }
+    // `livePgBinDir` is DEFINED in pg_embed_live_test.go; only the gate calls it.
+    let probes: [(&str, &[&str]); 2] = [
+        ("exec.LookPath(\"node\")", &["live_gate_test.go"]),
+        (
+            "livePgBinDir()",
+            &["live_gate_test.go", "pg_embed_live_test.go"],
+        ),
+    ];
+    let mut offenders = Vec::new();
+    let mut scanned = 0;
+    for e in std::fs::read_dir(&rt)
+        .expect("read runtime-go/rt")
+        .flatten()
+    {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.ends_with("_test.go") {
+            continue;
+        }
+        scanned += 1;
+        let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+        for (probe, allowed) in &probes {
+            if allowed.contains(&name.as_str()) {
+                continue;
+            }
+            if text.contains(probe) {
+                offenders.push(format!("{name}: {probe}"));
+            }
+        }
+    }
+    assert!(scanned > 50, "only {scanned} rt test files found");
+    // The definition file may contain only the definition, not a call.
+    let def = std::fs::read_to_string(rt.join("pg_embed_live_test.go")).unwrap_or_default();
+    assert_eq!(
+        def.matches("livePgBinDir()").count(),
+        1,
+        "pg_embed_live_test.go may define livePgBinDir but not call it; gate through \
+         requirePgBinDir(t)"
+    );
+    assert!(
+        offenders.is_empty(),
+        "these rt tests probe a live environment outside live_gate_test.go — call \
+         requireNode(t) / requirePgBinDir(t) instead, so a missing tool fails the test:\n{}",
+        offenders.join("\n")
+    );
+}

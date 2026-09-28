@@ -361,6 +361,26 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Crypto", "xchachaSealWith", "rt.Crypto_xchachaSealWith"),
     ("Crypto", "xchachaOpen", "rt.Crypto_xchachaOpen"),
     ("Crypto", "xchachaOpenWith", "rt.Crypto_xchachaOpenWith"),
+    (
+        "Crypto",
+        "chacha20Poly1305Seal",
+        "rt.Crypto_chacha20Poly1305Seal",
+    ),
+    (
+        "Crypto",
+        "chacha20Poly1305Open",
+        "rt.Crypto_chacha20Poly1305Open",
+    ),
+    (
+        "Crypto",
+        "xchacha20Poly1305Seal",
+        "rt.Crypto_xchacha20Poly1305Seal",
+    ),
+    (
+        "Crypto",
+        "xchacha20Poly1305Open",
+        "rt.Crypto_xchacha20Poly1305Open",
+    ),
     ("Sign", "generate", "rt.Sign_generate"),
     ("Sign", "publicKey", "rt.Sign_publicKey"),
     ("Sign", "sign", "rt.Sign_sign"),

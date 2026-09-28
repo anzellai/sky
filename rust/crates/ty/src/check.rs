@@ -240,9 +240,51 @@ impl<'a> Typer<'a> {
     }
 }
 
-/// `Sky.Ffi` members that invoke a registered Go binding by name. Stdlib-only
-/// (see the `[E1011]` scan in [`check_modules_with_world`]).
-const STDLIB_ONLY_FFI: &[&str] = &["call", "callPure", "callTask"];
+/// `Sky.Ffi` members that bind a runtime kernel or a registered Go binding by
+/// name. Stdlib-only (see the `[E1011]` scan in [`check_modules_with_world`]).
+const STDLIB_ONLY_FFI: &[&str] = &["kernel", "call", "callPure", "callTask"];
+
+/// The `[E1011]` diagnostic text for an app-code `Sky.Ffi.<member>` reference.
+/// `symbol` is the literal kernel symbol of an `Ffi.kernel "Sym"` application.
+/// The hint names the typed stdlib function only when the stdlib declares one
+/// for that kernel (`Crypto_sha256` is `Crypto.sha256`).
+fn ffi_stdlib_only_text(world: &World, member: &str, symbol: Option<&str>) -> (String, String) {
+    if member == "kernel" {
+        let wrapper = symbol
+            .and_then(|s| s.split_once('_'))
+            .filter(|(m, f)| {
+                world
+                    .kernel_sigs
+                    .contains_key(&(m.to_string(), f.to_string()))
+            })
+            .map(|(m, f)| format!(" (for `{}`, that is `{m}.{f}`)", symbol.unwrap_or_default()))
+            .unwrap_or_default();
+        (
+            "`Ffi.kernel` is not exposed to application code. It binds a runtime kernel \
+             by name and trusts the annotation you give it, which the checker cannot \
+             compare with the kernel's real signature, so a wrong annotation compiles \
+             and fails at run time."
+                .to_string(),
+            format!(
+                "call the typed stdlib function that wraps the kernel{wrapper}, or for Go \
+                 code `sky add <go/module>` and `import` the binding: its pinned signature \
+                 returns `Result Error a`."
+            ),
+        )
+    } else {
+        (
+            format!(
+                "`Ffi.{member}` is not exposed to application code. It calls a Go \
+                 binding by name with an unchecked type, which would bypass \
+                 the `Result Error a` every Go FFI call returns."
+            ),
+            "call the Go binding directly (`sky add <go/module>`, then \
+             `import` it): its pinned signature returns `Result Error a`, \
+             handled with `case`, `Result.withDefault` or `Result.andThen`."
+                .to_string(),
+        )
+    }
+}
 
 /// Advance a span's start byte past any leading whitespace (within the span),
 /// so a diagnostic caret anchors under the first real character of the offending
@@ -563,16 +605,44 @@ pub fn check_modules_with_world(
         // `[E2010]` state (per module, one diagnostic per offending call).
         let mut form_submits = crate::form_submit::FormSubmitScan::default();
 
-        // `[E1011]` — `Sky.Ffi`'s Go-binding entry points are stdlib-only.
-        // `Ffi.call` / `Ffi.callPure` / `Ffi.callTask` reach a registered Go
-        // binding by NAME and infer to a free type, so in app code they would
-        // be an escape hatch around the `Result Error a` every Go-FFI call is
-        // held to. The stdlib uses them behind a declared, audited signature
-        // (`Std.Decimal`, `Std.Time`, `Std.Money`, …); app code calls a `sky
-        // add` binding directly instead, and `Ffi.kernel` (a typed runtime-
-        // kernel binding that needs the def's own annotation) stays available.
-        if !hir::is_reserved_sky_namespace(&mname) {
+        // `[E1011]` — `Sky.Ffi` is stdlib-only. `Ffi.call` / `Ffi.callPure` /
+        // `Ffi.callTask` reach a registered Go binding by NAME and infer to a
+        // free type, so in app code they would be an escape hatch around the
+        // `Result Error a` every Go-FFI call is held to. `Ffi.kernel "Sym"`
+        // binds a runtime kernel and trusts the def's annotation without
+        // comparing it to the kernel's real signature: `probe : String -> Int =
+        // Ffi.kernel "Crypto_sha256"` compiled and panicked at run time. The
+        // stdlib uses them behind declared, audited signatures (`Std.Decimal`,
+        // `Std.Time`, `Sky.Core.Crypto`, …); app code calls the typed stdlib
+        // function or a `sky add` binding instead.
+        //
+        // Every module in `to_check` is app code by construction: the build
+        // never re-checks the stdlib. A module is NOT exempt by its name — a
+        // project module declared `module Sky.Evil` used to pass this scan
+        // because its name sat in the reserved namespace. The only exemptions
+        // are the build's explicit grants (`hir::FfiTrust`: compiler-owned
+        // bundled source, and the Sky.Spa split's generated `Spa_*` plumbing).
+        {
             for body in resolved.bodies.values() {
+                // The literal symbol of each `Ffi.kernel "Sym"` application in
+                // this body, keyed by the callee expression (ids are per body).
+                let mut kernel_syms: HashMap<ExprId, String> = HashMap::new();
+                for (_, expr) in body.exprs.iter() {
+                    let Expr::Call(f, args) = expr else {
+                        continue;
+                    };
+                    let is_kernel = matches!(
+                        &body.exprs[*f],
+                        Expr::Var(Res::Kernel { module, func })
+                            if module.as_str() == "Ffi" && func.as_str() == "kernel"
+                    );
+                    if !is_kernel {
+                        continue;
+                    }
+                    if let Some(Expr::Str(sym)) = args.first().map(|a| &body.exprs[*a]) {
+                        kernel_syms.insert(*f, sym.to_string());
+                    }
+                }
                 for (e, expr) in body.exprs.iter() {
                     let Expr::Var(Res::Kernel { module, func }) = expr else {
                         continue;
@@ -580,16 +650,16 @@ pub fn check_modules_with_world(
                     if module.as_str() != "Ffi" || !STDLIB_ONLY_FFI.contains(&func.as_str()) {
                         continue;
                     }
+                    let symbol = kernel_syms.get(&e).map(String::as_str);
+                    if sky.ffi_member_allowed(&mname, func.as_str(), symbol) {
+                        continue;
+                    }
+                    let (message, suggestion) = ffi_stdlib_only_text(&world, func.as_str(), symbol);
                     out.name_errors += 1;
                     out.diagnostics.push(Diagnostic {
                         severity: Severity::Error,
                         code: Code("E1011".to_string()),
-                        message: format!(
-                            "`Ffi.{}` is not exposed to application code. It calls a Go \
-                             binding by name with an unchecked type, which would bypass \
-                             the `Result Error a` every Go FFI call returns.",
-                            func.as_str()
-                        ),
+                        message,
                         labels: body
                             .expr_span(e)
                             .map(|sp| {
@@ -599,12 +669,7 @@ pub fn check_modules_with_world(
                                 }]
                             })
                             .unwrap_or_default(),
-                        suggestion: Some(
-                            "call the Go binding directly (`sky add <go/module>`, then \
-                             `import` it): its pinned signature returns `Result Error a`, \
-                             handled with `case`, `Result.withDefault` or `Result.andThen`."
-                                .to_string(),
-                        ),
+                        suggestion: Some(suggestion),
                     });
                 }
             }

@@ -28,10 +28,7 @@ import (
 //
 // Skips when node is absent, like TestLiveJSSyntaxValid.
 func TestIslandJS_ClientRuntime(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not available; skipping the island client test")
-	}
+	node := requireNode(t)
 	harness := `
 const vm = require("vm");
 const fs = require("fs");
@@ -191,10 +188,7 @@ func TestIslandJS_SpaBootCarriesTheRuntime(t *testing.T) {
 	if strings.Contains(islandClientJS, "`") {
 		t.Fatal("islandClientJS must hold no backquote (the Rust build reads it as a raw literal)")
 	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not available; skipping the boot loader syntax check")
-	}
+	node := requireNode(t)
 	f := t.TempDir() + "/boot.js"
 	if err := os.WriteFile(f, []byte(SpaBootJS), 0o600); err != nil {
 		t.Fatal(err)

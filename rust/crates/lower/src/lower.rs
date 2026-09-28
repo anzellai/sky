@@ -3959,18 +3959,78 @@ impl<'a> Ctx<'a> {
     ///   * an arity mismatch means the slot is not this symbol's call shape
     ///     (a function-returning kernel whose curried Sky type over-counts), and
     ///     eta-expanding to the wrong arity would emit a bad call.
+    ///
+    /// One arity mismatch IS bridged: a slot with MORE params than the runtime
+    /// arity, for a kernel whose result is itself a function. `Handler -> Handler`
+    /// (`Handler = Request -> Task Error Response`) flattens to the two-param Go
+    /// slot `func(Handler, Request) Task`, while `rt.Middleware_withLogging` takes
+    /// one param and returns the wrapped handler. `logged = Mw.withLogging` used
+    /// to emit the bare one-param symbol there, which `go build` rejected. See
+    /// [`Self::kernel_over_arity_eta`].
     fn kernel_value_eta(&mut self, go: &str, expected: &GoTy) -> Option<GoExpr> {
         let GoTy::Func(params, ret) = expected else {
             return None;
         };
         let arity = self.kernel_runtime_arity(go)?;
-        if arity == 0 || params.len() != arity {
+        if arity == 0 {
+            return None;
+        }
+        if params.len() > arity {
+            let sym = go.strip_prefix("rt.").unwrap_or(go);
+            if self.variadic_kernels.contains(sym) {
+                return None;
+            }
+            return Some(self.kernel_over_arity_eta(go, arity, params, ret));
+        }
+        if params.len() != arity {
             return None;
         }
         if params.iter().all(|p| *p == GoTy::Any) && **ret == GoTy::Any {
             return None;
         }
         Some(self.kernel_partial(go, &[], arity, expected))
+    }
+
+    /// Eta-expand a function-returning kernel into a slot that takes more params
+    /// than the kernel does: `func(_p0 P0, …, _pn Pn) R { return
+    /// coerce[func(Pk…Pn) R](rt.K(_p0…_pk-1))(_pk…_pn) }`. The kernel call takes
+    /// the first `arity` params widened to `any`; its `any` result is narrowed to
+    /// the func type of the remaining params (the same narrowing a fully applied
+    /// `Mw.withLogging h` in a `Handler` slot already emits), then applied to them.
+    fn kernel_over_arity_eta(
+        &mut self,
+        go: &str,
+        arity: usize,
+        params: &[GoTy],
+        ret: &GoTy,
+    ) -> GoExpr {
+        let mut gparams: Vec<GoParam> = Vec::new();
+        let mut idents: Vec<GoExpr> = Vec::new();
+        for pty in params {
+            let pname = format!("_p{}", self.local_counter);
+            self.local_counter += 1;
+            gparams.push(GoParam {
+                name: pname.clone(),
+                ty: pty.clone(),
+            });
+            idents.push(GoExpr::new(GoExprKind::Ident(pname), pty.clone()));
+        }
+        let rest = idents.split_off(arity);
+        let kargs: Vec<GoExpr> = idents.into_iter().map(|e| self.widen(e)).collect();
+        let call = GoExpr::new(
+            GoExprKind::Call(
+                Box::new(GoExpr::new(GoExprKind::Ident(go.into()), GoTy::Any)),
+                kargs,
+            ),
+            GoTy::Any,
+        );
+        let inner_ty = GoTy::Func(params[arity..].to_vec(), Box::new(ret.clone()));
+        let inner = self.coerce_if_needed(call, &inner_ty);
+        let applied = GoExpr::new(GoExprKind::Call(Box::new(inner), rest), ret.clone());
+        GoExpr::new(
+            GoExprKind::FuncLit(gparams, ret.clone(), vec![GoStmt::Return(Some(applied))]),
+            GoTy::Func(params.to_vec(), Box::new(ret.clone())),
+        )
     }
 
     fn lower_ctor_value(
@@ -5124,6 +5184,17 @@ impl<'a> Ctx<'a> {
                             self.coerce_if_needed(e.clone(), ps.get(k).unwrap_or(&GoTy::Any))
                         })
                         .collect();
+                    // The LAST round may hold fewer args than the running func
+                    // takes: a point-free def whose declared type ends in a
+                    // function alias (`add3 : Int -> Int -> Step`, `Step = Int
+                    // -> Int`) is a forced CAF of Go type `func(int, int, int)
+                    // int`, and `add3 1 2` applies it to two. Go cannot call a
+                    // fixed-arity func with fewer args, so close over the rest
+                    // (the same closure `make_partial` builds for a Def).
+                    if batch.len() < ps.len() {
+                        let arity = ps.len();
+                        return self.make_partial(call, batch, &Some(ps), &cod, arity);
+                    }
                     call = GoExpr::new(GoExprKind::Call(Box::new(call), batch), cod.clone());
                     cur = cod;
                     idx += n;

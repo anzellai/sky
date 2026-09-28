@@ -209,11 +209,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   opaque types (`*mux.Router`, `context.Context`, …) stay unchecked for
   now; a later release types them. An unannotated helper that returns an
   FFI call carries the `Result` to its callers too.
-- **`Sky.Ffi.call`, `Ffi.callPure` and `Ffi.callTask` are stdlib-only.**
-  They call a Go binding by name with an unchecked result type, so in an
-  application they bypassed the `Result`. An application gets
-  `[E1011]`; call the `sky add` binding directly. `Ffi.kernel` is
-  unchanged.
+- **`Sky.Ffi` is stdlib-only: `Ffi.kernel`, `Ffi.call`, `Ffi.callPure`
+  and `Ffi.callTask`.** `Ffi.call*` call a Go binding by name with an
+  unchecked result type, so in an application they bypassed the `Result`.
+  `Ffi.kernel "Sym"` binds a runtime kernel and trusts the annotation you
+  give it: `probe : String -> Int = Ffi.kernel "Crypto_sha256"` compiled
+  and then failed at run time with a type mismatch, because the checker
+  cannot compare the annotation with the kernel's real signature. An
+  application gets `[E1011]` for each of them. Call the typed stdlib
+  function instead (the hint names it: `Crypto_sha256` is
+  `Crypto.sha256`), or `sky add` a Go package and call its binding. A
+  project module is never exempt by its name: a module declared into the
+  reserved namespace (`module Sky.Evil`) used to pass this check, and is
+  now checked like any other application module. The compiler's own
+  generated and bundled code keeps its grant: a Sky.Spa-generated project
+  binds only the split's `Spa_*` kernels, and the Sky Console and doc
+  server modules are trusted only while their text is the bundled source.
 
 - **`Crypto.aesGcmEncrypt` and `Crypto.chacha20Encrypt` return
   `Task Error String`, not `Result Error String`.** Each draws a random
@@ -280,6 +291,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 - **`Ffi.callPure "name" args` in application code:** `sky add` the Go
   package and call its binding, which returns `Result Error a`.
+
+- **`Ffi.kernel "Module_name"` in application code:** call the stdlib
+  function that wraps the kernel, usually `Module.name` (`Ffi.kernel
+  "Middleware_withCors"` becomes `Sky.Http.Middleware.withCors`). The
+  `[E1011]` hint names it when the stdlib has one.
 
 - **Stop keying your own data by the session cookie.** Code such as
   `Dict.get "sky_sid" req.cookies` now reads a value that changes every time
@@ -590,6 +606,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   wrong-key, wrong-AD, bad-length and low-order cases
   (`runtime-go/rt/crypto_sign_kx.go`, `crypto_sign_kx_test.go`,
   `tests/conformance/tests/CryptoPrimitivesConformanceTest.sky`).
+- **ChaCha20-Poly1305 and XChaCha20-Poly1305 with a caller-supplied
+  nonce.** `Crypto.chacha20Poly1305Seal key nonce associatedData
+  plaintext` (IETF, RFC 8439, 12-byte nonce) and
+  `Crypto.xchacha20Poly1305Seal` (24-byte nonce) return the raw
+  `ciphertext || tag`; `chacha20Poly1305Open` / `xchacha20Poly1305Open`
+  reverse them. All four are pure and deterministic, for a protocol that
+  fixes its own nonce (a counter, a transcript-derived nonce) or a
+  published test vector. A key, nonce or input of the wrong length is
+  `Err InvalidInput`, as is a failed authentication. Never use one nonce
+  twice with the same key: it breaks both confidentiality and
+  authenticity. The random-nonce `xchachaSeal` stays the recommended
+  default. (`xchachaSealWith` / `xchachaOpenWith` are not this: they draw
+  a random nonce and take only associated data.) Tested against the RFC
+  8439 §2.8.2 and draft-irtf-cfrg-xchacha §A.3.1 vectors, with tampered,
+  wrong-nonce, wrong-AD, wrong-key and bad-length cases. Secret-key
+  operations, so the Sky.Spa split keeps them on the server.
 - **`Std.Qr`: a pure QR Code encoder.** `Qr.encode level text` (byte mode,
   levels `Low` / `Medium` / `Quartile` / `High`, versions 1 to 40, mask by
   the standard's penalty rules), `size`, `isDark`, `rows`, and renderers
@@ -793,6 +825,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+
+- **Runtime tests that needed Node.js or PostgreSQL skipped silently.**
+  Eight `runtime-go/rt` tests that run the embedded browser clients under
+  node, and nine that drive a real PostgreSQL, called `t.Skip` when the
+  tool was missing, and `go test` prints the same `ok` for a skipped test
+  as for a passing one. They now fail, naming what to install, through one
+  helper (`runtime-go/rt/live_gate_test.go`), with the one opt-out the Rust
+  live tests already use: `SKY_LIVE_TESTS=skip` (any other value is an
+  error). Every CI job that runs `go test ./rt/...` now installs node; the
+  jobs without PostgreSQL binaries skip only the PostgreSQL tests, which
+  the `integration-postgres` job and the release race job run with real
+  binaries.
+
+- **A point-free alias of a function-returning kernel failed `go build`.**
+  `logged : Handler -> Handler` / `logged = Mw.withLogging` type-checked,
+  but `Handler -> Handler` is a two-parameter Go function and the kernel
+  takes one, so the lowering emitted the bare kernel and `go build`
+  rejected it. The lowering now wraps it in a closure over both parameters.
+
+- **An under-applied point-free function whose type ends in a function
+  alias failed `go build`.** With `type alias Step = Int -> Int`,
+  `add3 : Int -> Int -> Step` / `add3 = \a b c -> a + b + c` and a call
+  `add3 1 2` called a three-parameter Go function with two arguments. The
+  call now builds a closure over the missing parameter.
 
 - **The Sky.Spa client drew SVG it built or patched as nothing.** The wasm
   renderer created every element with `document.createElement`, so a

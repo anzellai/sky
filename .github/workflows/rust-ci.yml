@@ -666,7 +666,19 @@ jobs:
         env:
           SKY_LIVE_TESTS: skip
         run: cargo run -q -p xtask -- coerce-floor
+      # Node.js runs the embedded browser clients in the rt tests (island,
+      # scene, terminal and Sky.Live client tests). A missing node FAILS those
+      # tests (runtime-go/rt/live_gate_test.go), so it is installed, not assumed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # SKY_LIVE_TESTS=skip covers only what this job does not provide: the
+      # embedded-PostgreSQL live tests, which `integration-postgres` runs with
+      # real binaries on every push. Node is present, so the node tests RUN
+      # here; skip mode skips a test only when its need is missing.
       - name: Gate — runtime rt tests (go test)
+        env:
+          SKY_LIVE_TESTS: skip
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       # runtime-go/rt/console_app/main.go is GENERATED from
       # sky-bundled/console/src by scripts/regenerate-console.sh and committed.
@@ -1327,6 +1339,11 @@ jobs:
             }
           done
 
+      # The rt tests that run the embedded browser clients need node; a
+      # missing one fails them (runtime-go/rt/live_gate_test.go).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: rt tests under the race detector, with a live PostgreSQL
         working-directory: runtime-go
         env:
@@ -1562,7 +1579,16 @@ jobs:
           shared-key: sky-macos
           save-if: 'false'
       - run: cargo build --workspace --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Node is installed, so the browser-client rt tests run on this platform
+      # too. SKY_LIVE_TESTS=skip covers only the embedded-PostgreSQL live
+      # tests, which `integration-postgres` runs on Linux with real binaries;
+      # a PostgreSQL install here would bill at 10x for no platform signal.
       - name: Gate — runtime rt tests (go test, 2nd platform)
+        env:
+          SKY_LIVE_TESTS: skip
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       - name: Gate — project integration tests (go build regressions, 2nd platform)
         run: cargo test -p project --locked

@@ -40,6 +40,10 @@ module Sky.Core.Crypto exposing
     , xchachaSealWith
     , xchachaOpen
     , xchachaOpenWith
+    , chacha20Poly1305Seal
+    , chacha20Poly1305Open
+    , xchacha20Poly1305Seal
+    , xchacha20Poly1305Open
     , aesKeyFromPassword
     , chachaKeyFromPassword
     , randomBytes
@@ -149,6 +153,61 @@ xchachaOpen =
 xchachaOpenWith : Secret -> String -> String -> Result Error String
 xchachaOpenWith =
     Ffi.kernel "Crypto_xchachaOpenWith"
+
+
+-- ─── AEAD with a caller-supplied nonce ─────────────────────────────
+-- `chacha20Poly1305Seal` / `Open` (RFC 8439, 12-byte nonce) and
+-- `xchacha20Poly1305Seal` / `Open` (draft-irtf-cfrg-xchacha, 24-byte nonce)
+-- take the nonce and the associated data from the caller. They are pure
+-- and deterministic: the same inputs give the same bytes, which is what a
+-- protocol with its own nonce schedule, or a published test vector, needs.
+--
+-- **Never use one nonce twice with the same key.** A repeated nonce reveals
+-- the XOR of the two plaintexts and lets an attacker forge tags: both
+-- confidentiality and authenticity are lost. If nothing in your protocol
+-- fixes the nonce, use the random-nonce `xchachaSeal`, which stays the
+-- recommended default.
+--
+-- Every argument is raw bytes (use `Encoding.hexDecode` /
+-- `Encoding.base64Decode` for text forms). The key is 32 bytes. Seal
+-- returns `ciphertext || tag` (16-byte tag, no nonce); open takes the same.
+-- A key, nonce or input of the wrong length is `Err InvalidInput`, and so
+-- is a failed authentication (wrong key, nonce or associated data, or a
+-- tampered input).
+-- | `chacha20Poly1305Seal key nonce associatedData plaintext` — IETF
+-- ChaCha20-Poly1305 (RFC 8439 §2.8) with a 12-byte `nonce`. Returns
+-- `ciphertext || tag`. Never seal two messages under one key with the same
+-- nonce: it breaks confidentiality and authenticity. Prefer `xchachaSeal`
+-- unless a protocol fixes the nonce.
+chacha20Poly1305Seal : Secret -> String -> String -> String -> Result Error String
+chacha20Poly1305Seal =
+    Ffi.kernel "Crypto_chacha20Poly1305Seal"
+
+
+-- | `chacha20Poly1305Open key nonce associatedData sealed` — the inverse of
+-- `chacha20Poly1305Seal`. `Err` unless key, nonce and associated data all
+-- match and `sealed` is untouched.
+chacha20Poly1305Open : Secret -> String -> String -> String -> Result Error String
+chacha20Poly1305Open =
+    Ffi.kernel "Crypto_chacha20Poly1305Open"
+
+
+-- | `xchacha20Poly1305Seal key nonce associatedData plaintext` —
+-- XChaCha20-Poly1305 (draft-irtf-cfrg-xchacha) with a 24-byte `nonce`.
+-- Returns `ciphertext || tag`. Never seal two messages under one key with
+-- the same nonce: it breaks confidentiality and authenticity. Prefer
+-- `xchachaSeal` unless a protocol fixes the nonce. `xchachaOpenWith key associatedData
+-- (Encoding.base64Encode (nonce ++ sealed))` opens the same bytes.
+xchacha20Poly1305Seal : Secret -> String -> String -> String -> Result Error String
+xchacha20Poly1305Seal =
+    Ffi.kernel "Crypto_xchacha20Poly1305Seal"
+
+
+-- | `xchacha20Poly1305Open key nonce associatedData sealed` — the inverse of
+-- `xchacha20Poly1305Seal`.
+xchacha20Poly1305Open : Secret -> String -> String -> String -> Result Error String
+xchacha20Poly1305Open =
+    Ffi.kernel "Crypto_xchacha20Poly1305Open"
 
 
 -- | `aesGcmEncrypt key plaintext` — encrypt under AES-256-GCM.

@@ -86,6 +86,13 @@ pub struct Analysis {
     /// canonicalisation regardless of encoding differences).
     by_path: HashMap<String, usize>,
     stdlib_loaded: bool,
+    /// The modules loaded from the stdlib directory, and the root holding it
+    /// (`<root>/sky-stdlib`, `<root>/sky-bundled`). They feed the `Sky.Ffi`
+    /// grants (`hir::FfiTrust`): a stdlib file opened in the editor is trusted
+    /// like the build trusts the stdlib, and the compiler's bundled-app source is
+    /// trusted by content, as `project::ffi_trust` does for `sky check`.
+    stdlib_modules: std::collections::BTreeSet<String>,
+    assets_root: Option<PathBuf>,
     /// Project roots whose `src/`+`tests/` have already been loaded, so opening
     /// a second file in the same project doesn't re-walk it.
     loaded_projects: std::collections::HashSet<PathBuf>,
@@ -142,6 +149,8 @@ impl Analysis {
             by_name: HashMap::new(),
             by_path: HashMap::new(),
             stdlib_loaded: false,
+            stdlib_modules: std::collections::BTreeSet::new(),
+            assets_root: None,
             loaded_projects: std::collections::HashSet::new(),
             ffi: HashMap::new(),
             active_ffi: None,
@@ -213,7 +222,15 @@ impl Analysis {
             return;
         }
         if let Some(dir) = stdlib_dir(root) {
+            let before: std::collections::HashSet<String> = self.by_name.keys().cloned().collect();
             self.load_dir(&dir);
+            self.stdlib_modules = self
+                .by_name
+                .keys()
+                .filter(|n| !before.contains(*n))
+                .cloned()
+                .collect();
+            self.assets_root = dir.parent().map(Path::to_path_buf);
             self.stdlib_loaded = true;
         }
     }
@@ -335,13 +352,41 @@ impl Analysis {
         if self.active_ffi.as_deref() == Some(proj) {
             return;
         }
-        let surface = self
+        let mut surface = self
             .ffi
             .get(proj)
             .map(project::ffi_type_surface)
             .unwrap_or_default();
+        surface.set_trust(self.ffi_trust_for(proj));
         self.db.set_ffi_surface(std::sync::Arc::new(surface));
         self.active_ffi = Some(proj.to_path_buf());
+    }
+
+    /// The `Sky.Ffi` grants for `proj` (`hir::FfiTrust`, the checker's
+    /// `[E1011]` scan): the stdlib modules, the documents whose text is the
+    /// compiler's own bundled-app source, and the `Spa_*` kernels for a
+    /// Sky.Spa-generated project — the same grants `sky check` computes.
+    fn ffi_trust_for(&self, proj: &Path) -> hir::FfiTrust {
+        let mut trust = hir::FfiTrust {
+            modules: self.stdlib_modules.clone(),
+            ..hir::FfiTrust::default()
+        };
+        if let Some(root) = &self.assets_root {
+            let bundled = project::bundled_source_texts(root);
+            if !bundled.is_empty() {
+                for (name, &i) in &self.by_name {
+                    if bundled.contains(&self.docs[i].text) {
+                        trust.modules.insert(name.clone());
+                    }
+                }
+            }
+        }
+        if project::is_spa_generated_project(proj) {
+            trust
+                .kernel_prefixes
+                .insert(project::SPA_GENERATED_KERNEL_PREFIX.to_string());
+        }
+        trust
     }
 
     /// The Go-FFI registry of the project that owns module `m`'s document (the

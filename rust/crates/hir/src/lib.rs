@@ -20,7 +20,7 @@ mod resolve;
 
 pub use db::{ImportSource, SkyDb, SourceDb};
 pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};
-pub use ffi::{FfiFnSig, FfiSurface, SharedFfiSurface};
+pub use ffi::{FfiFnSig, FfiSurface, FfiTrust, SharedFfiSurface};
 pub use hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{

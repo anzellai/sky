@@ -666,6 +666,10 @@ impl SkyDb for SkyDatabase {
         // Reading the input records the dependency on the enclosing query.
         self.ffi?.surface(self).lookup(package, name)
     }
+    fn ffi_member_allowed(&self, module: &str, member: &str, symbol: Option<&str>) -> bool {
+        self.ffi
+            .is_some_and(|f| f.surface(self).trust().allows(module, member, symbol))
+    }
 }
 
 /// The salsa-backed [`ty::TyDb`]: the assembled world and each def's typed table

@@ -298,10 +298,7 @@ process.stdout.write(JSON.stringify({ ran, fails }));
 
 func runTerminalHarness(t *testing.T, mode string) {
 	t.Helper()
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not available; skipping the terminal widget test")
-	}
+	node := requireNode(t)
 	dir := t.TempDir()
 	jsPath := dir + "/client.js"
 	harnessPath := dir + "/harness.js"
@@ -348,10 +345,7 @@ func TestTerminalJS_NoBackquoteAndSyntax(t *testing.T) {
 	if !strings.HasPrefix(terminalWidgetJS, "// Sky terminal widget (runtime-go/rt/island_terminal.go)") {
 		t.Fatal("terminalWidgetJS must open with its header line")
 	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not available; skipping the syntax check")
-	}
+	node := requireNode(t)
 	f := t.TempDir() + "/terminal.js"
 	if err := os.WriteFile(f, []byte(islandClientJS+terminalWidgetJS), 0o600); err != nil {
 		t.Fatal(err)

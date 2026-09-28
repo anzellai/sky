@@ -22,10 +22,7 @@ import (
 //
 // Skips when node is absent, like TestLiveJSSyntaxValid.
 func TestLiveJS_SessionRotationClient(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not available; skipping the client rotation test")
-	}
+	node := requireNode(t)
 	harness := `
 const vm = require("vm");
 const fs = require("fs");

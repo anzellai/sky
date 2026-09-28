@@ -242,14 +242,11 @@ func shutdownHookNames() []string {
 
 // ── live-PostgreSQL gates ───────────────────────────────────────────────
 
-// liveAnalyticsCluster boots a real embedded PostgreSQL and returns its DSN,
-// or skips. Uses the pg_embed_live_test.go harness.
+// liveAnalyticsCluster boots a real embedded PostgreSQL and returns its DSN.
+// Without PostgreSQL it fails the test (SKY_LIVE_TESTS=skip: skips it). Uses the pg_embed_live_test.go harness.
 func liveAnalyticsCluster(t *testing.T, name string) string {
 	t.Helper()
-	binDir := livePgBinDir()
-	if binDir == "" {
-		t.Skip("no PostgreSQL binaries (set SKY_POSTGRES_BIN)")
-	}
+	binDir := requirePgBinDir(t)
 	t.Setenv("SKY_POSTGRES_BIN", binDir)
 	root := durableTestDir(t, name)
 	s := liveSupervisor(t, root)

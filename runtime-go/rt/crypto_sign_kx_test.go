@@ -348,3 +348,104 @@ func runCryptoTaskAny(t *testing.T, v any) any {
 	t.Helper()
 	return runCryptoTask(t, v)
 }
+
+// ─── Explicit-nonce ChaCha20-Poly1305 / XChaCha20-Poly1305 ─────────
+
+// rfc8439PT is the "sunscreen" plaintext of RFC 8439 §2.8.2 and
+// draft-irtf-cfrg-xchacha-03 §A.3.1.
+const rfc8439PT = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+
+func TestChaCha20Poly1305Rfc8439Vector(t *testing.T) {
+	key := Secret{v: unhex(t, "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")}
+	// §2.8.2: the 32-bit constant 07000000 followed by the 64-bit IV.
+	nonce := unhex(t, "070000004041424344454647")
+	aad := unhex(t, "50515253c0c1c2c3c4c5c6c7")
+	want := unhex(t, `d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6
+		3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36
+		92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc
+		3ff4def08e4b7a9de576d26586cec64b6116`) + unhex(t, "1ae10b594f09e26a7e902ecbd0600691")
+	got := cryOk(t, Crypto_chacha20Poly1305Seal(key, nonce, aad, rfc8439PT)).(string)
+	if got != want {
+		t.Fatalf("ChaCha20-Poly1305 ciphertext||tag mismatch:\n got %x", got)
+	}
+	// Deterministic: the same inputs seal to the same bytes.
+	if again := cryOk(t, Crypto_chacha20Poly1305Seal(key, nonce, aad, rfc8439PT)).(string); again != want {
+		t.Fatalf("seal is not deterministic")
+	}
+	if pt := cryOk(t, Crypto_chacha20Poly1305Open(key, nonce, aad, want)).(string); pt != rfc8439PT {
+		t.Fatalf("open did not recover the RFC plaintext: %q", pt)
+	}
+}
+
+func TestXChaCha20Poly1305DraftVector(t *testing.T) {
+	key := Secret{v: unhex(t, "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")}
+	nonce := unhex(t, "404142434445464748494a4b4c4d4e4f5051525354555657")
+	aad := unhex(t, "50515253c0c1c2c3c4c5c6c7")
+	want := unhex(t, `bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb
+		731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b452
+		2f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff9
+		21f9664c97637da9768812f615c68b13b52e`) + unhex(t, "c0875924c1c7987947deafd8780acf49")
+	got := cryOk(t, Crypto_xchacha20Poly1305Seal(key, nonce, aad, rfc8439PT)).(string)
+	if got != want {
+		t.Fatalf("XChaCha20-Poly1305 ciphertext||tag mismatch:\n got %x", got)
+	}
+	if pt := cryOk(t, Crypto_xchacha20Poly1305Open(key, nonce, aad, want)).(string); pt != rfc8439PT {
+		t.Fatalf("open did not recover the draft plaintext: %q", pt)
+	}
+	// The random-nonce wire format carries the same bytes behind the nonce.
+	wire := base64.StdEncoding.EncodeToString([]byte(nonce + want))
+	if pt := cryOk(t, Crypto_xchachaOpenWith(key, aad, wire)).(string); pt != rfc8439PT {
+		t.Fatalf("xchachaOpenWith disagrees with xchacha20Poly1305Seal")
+	}
+}
+
+func TestExplicitNonceAeadNegative(t *testing.T) {
+	key := Secret{v: strings.Repeat("\x07", 32)}
+	type pair struct {
+		name       string
+		nonceLen   int
+		seal, open func(k, n, ad, x any) any
+	}
+	for _, c := range []pair{
+		{"Crypto.chacha20Poly1305", 12, Crypto_chacha20Poly1305Seal, Crypto_chacha20Poly1305Open},
+		{"Crypto.xchacha20Poly1305", 24, Crypto_xchacha20Poly1305Seal, Crypto_xchacha20Poly1305Open},
+	} {
+		nonce := strings.Repeat("\x01", c.nonceLen)
+		sealed := cryOk(t, c.seal(key, nonce, "hdr", "attack at dawn")).(string)
+		if len(sealed) != len("attack at dawn")+16 {
+			t.Fatalf("%s: sealed length %d: want ciphertext + 16-byte tag, no nonce", c.name, len(sealed))
+		}
+		// Tampered ciphertext, tampered tag.
+		for _, i := range []int{0, len(sealed) - 1} {
+			bad := []byte(sealed)
+			bad[i] ^= 0x80
+			cryErr(t, c.open(key, nonce, "hdr", string(bad)), "authentication failed")
+		}
+		// Wrong nonce, wrong associated data, wrong key.
+		cryErr(t, c.open(key, strings.Repeat("\x02", c.nonceLen), "hdr", sealed), "authentication failed")
+		cryErr(t, c.open(key, nonce, "other", sealed), "authentication failed")
+		cryErr(t, c.open(Secret{v: strings.Repeat("\x08", 32)}, nonce, "hdr", sealed), "authentication failed")
+		// Bad lengths: nonce (short and long), key, sealed input shorter than the tag.
+		for _, n := range []int{0, c.nonceLen - 1, c.nonceLen + 1} {
+			cryErr(t, c.seal(key, strings.Repeat("\x01", n), "", "x"), fmt.Sprintf("nonce must be %d bytes, got %d", c.nonceLen, n))
+			cryErr(t, c.open(key, strings.Repeat("\x01", n), "", sealed), fmt.Sprintf("nonce must be %d bytes", c.nonceLen))
+		}
+		cryErr(t, c.seal(Secret{v: "short"}, nonce, "", "x"), "key must be 32 bytes")
+		cryErr(t, c.open(Secret{v: "short"}, nonce, "", sealed), "key must be 32 bytes")
+		cryErr(t, c.open(key, nonce, "", sealed[:15]), "at least 16 bytes")
+		// A length error is InvalidInput (kind 7), not an FFI failure.
+		r := c.seal(key, "", "", "x").(SkyResult[any, any])
+		wantErr := ErrInvalidInput(fmt.Sprintf("%sSeal: nonce must be %d bytes, got 0", c.name, c.nonceLen))
+		if fmt.Sprintf("%v", r.ErrValue) != fmt.Sprintf("%v", wantErr) {
+			t.Fatalf("%s: a bad nonce length must be InvalidInput, got %v", c.name, r.ErrValue)
+		}
+		// Empty plaintext seals to the tag alone and opens back to "".
+		empty := cryOk(t, c.seal(key, nonce, "", "")).(string)
+		if len(empty) != 16 {
+			t.Fatalf("%s: empty plaintext sealed to %d bytes, want 16", c.name, len(empty))
+		}
+		if pt := cryOk(t, c.open(key, nonce, "", empty)).(string); pt != "" {
+			t.Fatalf("%s: empty round trip gave %q", c.name, pt)
+		}
+	}
+}
