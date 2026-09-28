@@ -111,7 +111,9 @@ Review rejects a generic purpose string. Use `withUsage`.
 ## Typed entitlements — `withEntitlement`
 
 `Bundle.withEntitlement` writes an Apple entitlement into the signed app's
-`.entitlements` file (iOS and the macOS `.app`; Android has none):
+`.entitlements` file (iOS and the macOS `.app`). Android has no entitlements;
+an associated domain maps onto its Android equivalent (see "Links into the
+app" below):
 
 | Constructor | Entitlement key |
 |---|---|
@@ -122,8 +124,8 @@ Review rejects a generic purpose string. Use `withUsage`.
 | `ICloudContainer "iCloud.com.acme.app"` | `com.apple.developer.icloud-container-identifiers` + `icloud-services: CloudKit` |
 
 The build checks the shape of each value (an app group starts with `group.`,
-an associated domain names its service, an iCloud container starts with
-`iCloud.`). A signed release also checks that the provisioning profile grants
+an associated domain is `<service>:<host>` with an optional `:<port>` and
+`?mode=developer`, an iCloud container starts with `iCloud.`). A signed release also checks that the provisioning profile grants
 every entitlement the app asks for, and names the ones it does not.
 
 **The simulator build.** The iOS simulator build carries its entitlements the
@@ -148,6 +150,73 @@ the login Keychain without an access group. Signed with a Developer ID
 identity, a restricted entitlement needs `SKY_MACOS_PROVISIONING_PROFILE`: the
 profile is embedded in the `.app` and must grant every entitlement the app asks
 for.
+
+## Links into the app — `AssociatedDomain "applinks:…"`
+
+`Bundle.withEntitlement (Bundle.AssociatedDomain "applinks:example.com")`
+lets a link to `https://example.com/…` open the app instead of the browser,
+on the link's page.
+
+| Platform | What the build does |
+|---|---|
+| iOS / iPadOS | The associated-domains entitlement. The shell takes the universal link (`onOpenURL`, `NSUserActivityTypeBrowsingWeb`) and opens the link's path, query and fragment on the backend's own address, where the app's router shows the page. |
+| Android | An App Links intent filter on the activity: `android:autoVerify="true"`, `VIEW`, `DEFAULT` + `BROWSABLE`, `https` and the host (and port). The activity is `singleTask`. `onCreate` opens a link that starts the app; `onNewIntent` navigates the running app in place (`history.pushState` + `popstate`, as Back does), so its state and an open scanner stay. |
+| macOS | The entitlement. The desktop window does not route the link to its page yet: the app opens on its first page, and the build prints a note. |
+
+Only a declared host is routed. A `*.example.com` domain matches its
+subdomains. The link's host is not the backend's: the app loads the link's
+path from the backend it always talks to (`App.withAppUrl`), so an app whose
+backend is `https://app.example.com/` and whose domain is `example.com` shows
+`https://app.example.com/orders/7` for `https://example.com/orders/7`.
+
+Other services on Android:
+
+- `webcredentials:<host>` (password autofill) maps onto Android's shared
+  sign-in: the app gets `asset_statements` (a `<meta-data>` entry and a
+  string resource that points at the site's `assetlinks.json`), and the
+  site's file gets the `delegate_permission/common.get_login_creds`
+  relation.
+- `activitycontinuation:` and `appclips:` have no Android equivalent. The
+  Android build leaves them out and prints a note naming each one.
+
+**The site must vouch for the app.** Android verifies an App Link against
+`https://<host>/.well-known/assetlinks.json`; iOS against the site's
+`apple-app-site-association` file. The Android build writes the exact
+`assetlinks.json` for the app, with the SHA-256 digest of the certificate that
+signed the APK, and prints where it is and where to serve it:
+
+- `sky build --target mobile:android` → `…/android/build/assetlinks.json`,
+  signed with the debug key (for testing on a device or an emulator).
+- `sky package --release --target mobile:android` →
+  `sky-out/release/assetlinks.json`, signed with the upload key.
+
+```json
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.example.probe",
+      "sha256_cert_fingerprints": ["0A:1B:…:F9"]
+    }
+  }
+]
+```
+
+Serve it on every declared host, as `application/json`, with no redirect. A
+Sky backend on the same host can serve it from an `App.api
+"/.well-known/assetlinks.json"` handler, or a static host from its web root.
+Google Play re-signs an app with its own key when Play App Signing is on: then
+add the app signing key's SHA-256 (Play Console → App integrity) to
+`sha256_cert_fingerprints` beside the upload key's.
+
+To test on an emulator before the site serves the file, approve the domain
+for the app (`adb shell pm set-app-links-user-selection --user cur --package
+<id> true <host>`) and send the link (`adb shell am start -a
+android.intent.action.VIEW -c android.intent.category.BROWSABLE -d
+"https://<host>/some/path" <id>`). The Android emulator release gate does
+this: a link that starts the app, and one sent to the running app, each open
+their page.
 
 ## Native fragments and how they merge
 

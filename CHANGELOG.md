@@ -997,6 +997,36 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   CFBundleDisplayName keep the name as written. An app with no `withName`
   takes its product name from the project name, as its display name already
   did.
+- **`Bundle.AssociatedDomain "applinks:…"` opens the app on the link's page,
+  on Android and iOS.** On Android it did nothing: the manifest had no App
+  Links filter. It now gets one `android:autoVerify` intent filter per
+  `applinks:` host (`VIEW`, `DEFAULT` + `BROWSABLE`, `https`, the host and an
+  optional port; a repeated domain or its `?mode=developer` form adds none),
+  beside the filters and permissions the structured manifest merge keeps. The
+  activity is `singleTask`: a link that starts the app opens its path on the
+  backend's own address, and a link sent to the running app navigates it in
+  place (`history.pushState` + `popstate`), so the app keeps its state. A
+  first cut reloaded the page there, which left an open scanner dialog
+  behind and made the next `Native.scanCode` fail with "a code scan is
+  already open". The iOS shell had the entitlement but took no link either;
+  it now handles `onOpenURL` / `NSUserActivityTypeBrowsingWeb` the same way.
+  Only a declared host is routed. `webcredentials:` maps onto Android's
+  shared sign-in (`asset_statements` in the app, `get_login_creds` in the
+  site's file); `activitycontinuation:` and `appclips:` have no Android
+  equivalent and the build names each one it leaves out. The macOS desktop
+  window does not route a universal link to its page yet, and its release
+  build says so. The Android build writes the site's
+  `/.well-known/assetlinks.json` with the SHA-256 digest of the signing
+  certificate (`build/assetlinks.json` with the debug key,
+  `sky-out/release/assetlinks.json` with the upload key under `sky package
+  --release`) and prints where to serve it. The build also checks an
+  associated domain's host (`<service>:<host>[:port][?mode=…]`).
+  (`docs/skyapp/native.md` "Links into the app";
+  `rust/crates/sky/src/native_pkg.rs` `link_domains`; tests: the native_pkg
+  and manifest unit tests, and the native release gates: the Android
+  emulator test opens `https://example.com/probe/deep` to start the app and
+  `/probe/again` in the running app, and reads the routes the app reports;
+  the app without the domain does not take the link.)
 - **A Sky.Spa server branch can match inside its Msg's arguments.** The split
   sent the names a server arm binds and rebuilt the Msg on the backend from
   them, so an arm such as `Report (Ok line) -> (model, Cmd.perform

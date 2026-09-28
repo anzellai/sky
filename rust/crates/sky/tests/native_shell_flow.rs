@@ -296,8 +296,10 @@ fn simctl(args: &[&str]) -> std::process::Output {
 /// A `Std.App` probe for the native shells, built the way an app is: it runs
 /// `Native.secureSet` then `Native.secureGet` at start, then `Native.scanCode`,
 /// and reports each result through a SERVER branch that prints a
-/// `SKY-PROBE <result>` line on the backend. The test reads the lines from the
-/// backend's output, so it asserts what the app on the device saw.
+/// `SKY-PROBE <result>` line on the backend. It also reports each route it
+/// navigates to (`route=home`, `route=probe:<name>` for `/probe/<name>`), so
+/// a test can see which page an App Link opened. The test reads the lines from
+/// the backend's output, so it asserts what the app on the device saw.
 /// `bundle_steps` are the `|> Bundle.with…` lines after the name and id.
 fn probe_app(dir: &Path, bundle_steps: &str) {
     let src = format!(
@@ -325,11 +327,12 @@ bundle =
 
 
 type alias Model =
-    {{ status : String }}
+    {{ status : String, page : String }}
 
 
 type Msg
-    = Got (Result Error (Maybe Secret))
+    = Navigated String
+    | Got (Result Error (Maybe Secret))
     | Scanned (Result Error (Maybe Native.ScannedCode))
     | Authed (Result Error Bool)
     | Report (Result Error String)
@@ -383,12 +386,15 @@ authText r =
 
 init : () -> ( Model, Cmd.Cmd Msg )
 init _ =
-    ( {{ status = "running" }}, Cmd.perform roundTrip Got )
+    ( {{ status = "running", page = "home" }}, Cmd.perform roundTrip Got )
 
 
 update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
 update msg model =
     case msg of
+        Navigated p ->
+            ( {{ model | page = p }}, Cmd.perform (Task.succeed ("route=" ++ p)) Report )
+
         Got r ->
             ( {{ model | status = secureText r }}
             , Cmd.batch
@@ -432,7 +438,12 @@ subscriptions _ =
 
 appDef =
     App.app {{ init = init, update = update, view = view, subscriptions = subscriptions }}
-        |> App.withNotFound ()
+        |> App.withRoutes
+            [ App.route "/" "home"
+            , App.routeParam "/probe/:name" (\n -> "probe:" ++ n)
+            ]
+        |> App.withNotFound "home"
+        |> App.withOnNavigate Navigated
 
 
 main =
@@ -446,9 +457,10 @@ main =
 /// USE_BIOMETRIC (`Native.authenticate`).
 const USAGES: &str = "        |> Bundle.withUsage Bundle.Camera \"Scans the pairing code.\"\n        |> Bundle.withUsage Bundle.FaceId \"Confirms it is you.\"";
 
-/// The restricted Apple entitlements the "declared" variant asks for. Android
-/// has no entitlements: they must change nothing there, and never stop a
-/// launch on either platform.
+/// The restricted Apple entitlements the "declared" variant asks for. They must
+/// never stop a launch on either platform. Android has no entitlements; the
+/// associated domain becomes an App Links filter there, and a link to it opens
+/// the app on the link's page.
 const DECLARED: &str = "        |> Bundle.withEntitlement (Bundle.KeychainAccessGroup \"ABCDE12345.com.example.probe\")\n        |> Bundle.withEntitlement (Bundle.AssociatedDomain \"applinks:example.com\")";
 
 /// A port nothing listens on, for the probe's backend.
@@ -521,6 +533,26 @@ impl Backend {
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
         None
+    }
+
+    /// Whether the backend printed `SKY-PROBE <text>` exactly, waiting up to
+    /// `secs`.
+    fn saw(&self, text: &str, secs: u64) -> bool {
+        let want = format!("SKY-PROBE {text}");
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        while std::time::Instant::now() < until {
+            if self
+                .lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.trim_end().ends_with(&want))
+            {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        false
     }
 
     fn output(&self) -> String {
@@ -663,6 +695,18 @@ fn ios_simulator_app_launches_and_round_trips_the_keychain() {
                 "the declared domain is embedded"
             );
         }
+        // A universal link to a declared `applinks:` host opens its page in
+        // the web view (App.swift); the plain variant takes none.
+        let app_swift = std::fs::read_to_string(ios.join("Sky_Probe/App.swift")).unwrap();
+        let hosts = if tag == "declared" {
+            "static let linkHosts: [String] = [\"example.com\"]"
+        } else {
+            "static let linkHosts: [String] = []"
+        };
+        assert!(
+            app_swift.contains(hosts) && app_swift.contains(".onOpenURL"),
+            "{tag}: {app_swift}"
+        );
 
         let backend = Backend::start(&split, port);
         let _ = simctl(&["uninstall", &udid, "com.example.probe"]);
@@ -730,7 +774,7 @@ fn android_release_is_signed_with_the_upload_key() {
     let dir = scratch("android");
     vault_app(
         &dir,
-        "        |> Bundle.withName \"Vault\"\n        |> Bundle.withUsage Bundle.FaceId \"Unlocks your vault.\"\n        |> Bundle.withBuild 7",
+        "        |> Bundle.withName \"Vault\"\n        |> Bundle.withUsage Bundle.FaceId \"Unlocks your vault.\"\n        |> Bundle.withBuild 7\n        |> Bundle.withEntitlement (Bundle.AssociatedDomain \"applinks:app.example.test\")",
     );
     let ks = dir.join("upload.jks");
     let kt = Command::new("keytool")
@@ -799,6 +843,33 @@ fn android_release_is_signed_with_the_upload_key() {
     .unwrap();
     assert!(manifest.contains("android.permission.USE_BIOMETRIC"));
     assert!(manifest.contains("android:versionCode=\"7\""));
+    // App Links: the release writes the site-association file with the
+    // UPLOAD key's certificate digest, and says where to serve it.
+    assert!(
+        manifest.contains("android:host=\"app.example.test\""),
+        "{manifest}"
+    );
+    let digest = certs
+        .lines()
+        .find_map(|l| l.split_once("certificate SHA-256 digest:"))
+        .map(|(_, d)| d.trim().to_ascii_uppercase())
+        .expect("apksigner prints the SHA-256 digest");
+    let links: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("sky-out/release/assetlinks.json"))
+            .expect("sky-out/release/assetlinks.json"),
+    )
+    .unwrap();
+    let fp = links[0]["target"]["sha256_cert_fingerprints"][0]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(fp.replace(':', ""), digest, "{links}");
+    assert_eq!(links[0]["target"]["package_name"], "com.example.vault");
+    assert!(
+        out.contains("https://app.example.test/.well-known/assetlinks.json")
+            && out.contains("upload key"),
+        "{out}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -919,8 +990,9 @@ impl Drop for Emulator {
 }
 
 /// The Android gate, the counterpart of the iOS simulator one: the same probe,
-/// with no entitlement and with the restricted Apple ones declared (Android
-/// has no entitlements; they must change nothing), built for
+/// with no entitlement and with the restricted Apple ones declared (the
+/// associated domain becomes an App Links filter; the link checks are below),
+/// built for
 /// `mobile:android`, installed on a running emulator and LAUNCHED. The app's
 /// own results are read back through its backend: the Keystore-backed secure
 /// store round-trips a value, `Native.scanCode` opens the camera scanner and
@@ -979,6 +1051,25 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
                 && manifest.contains("android.permission.USE_BIOMETRIC"),
             "{tag}: {manifest}"
         );
+        // `applinks:example.com` is an App Links filter; the plain variant has
+        // none.
+        assert_eq!(
+            manifest.matches("android:autoVerify=\"true\"").count(),
+            usize::from(tag == "declared"),
+            "{tag}: {manifest}"
+        );
+        assert_eq!(
+            manifest.contains("android:host=\"example.com\""),
+            tag == "declared",
+            "{tag}: {manifest}"
+        );
+        if tag == "declared" {
+            assert!(
+                android.join("build/assetlinks.json").is_file()
+                    && out.contains("/.well-known/assetlinks.json"),
+                "the build writes assetlinks.json and says where to serve it:\n{out}"
+            );
+        }
         // The APK is named from the whole display name ("Sky Probe").
         let apk = android.join("build/skyprobe.apk");
         assert!(apk.is_file(), "{tag}: no skyprobe.apk:\n{out}");
@@ -1017,6 +1108,85 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
         let scan = backend.probe_line("scan", 60);
         let auth = backend.probe_line("auth", 60);
         let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
+        // App Links. The declared variant carries `Bundle.AssociatedDomain
+        // "applinks:example.com"`: a link to that host opens the app on the
+        // link's page, both when it starts the app (onCreate) and when the app
+        // is running (onNewIntent, which navigates in place). example.com serves no assetlinks.json for
+        // this app, so the test approves the domain for the app, as a user
+        // does in the app's settings. The plain variant declares no domain and
+        // must not take the link.
+        let open_link = |path: &str| {
+            let o = emu.adb(&[
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-a",
+                "android.intent.action.VIEW",
+                "-c",
+                "android.intent.category.BROWSABLE",
+                "-d",
+                &format!("https://example.com{path}"),
+                "com.example.probe",
+            ]);
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            )
+        };
+        let mut link_failure = None;
+        if *tag == "declared" {
+            let state = emu.adb(&["shell", "pm", "get-app-links", "com.example.probe"]);
+            let state = String::from_utf8_lossy(&state.stdout).into_owned();
+            let _ = emu.adb(&[
+                "shell",
+                "pm",
+                "set-app-links-user-selection",
+                "--user",
+                "cur",
+                "--package",
+                "com.example.probe",
+                "true",
+                "example.com",
+            ]);
+            let cold = open_link("/probe/deep");
+            let deep = backend.saw("route=probe:deep", 180);
+            let warm = open_link("/probe/again");
+            let again = backend.saw("route=probe:again", 120);
+            let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
+            if !state.contains("example.com") {
+                link_failure = Some(format!(
+                    "the installed app declares no App Link domain:\n{state}"
+                ));
+            } else if !deep {
+                link_failure = Some(format!(
+                    "an App Link that starts the app must open /probe/deep:\n{cold}\n{}",
+                    backend.output()
+                ));
+            } else if !again {
+                link_failure = Some(format!(
+                    "an App Link to the running app must open /probe/again:\n{warm}\n{}",
+                    backend.output()
+                ));
+            } else if backend.output().contains("already open") {
+                // The running app navigates in place: the scanner the cold
+                // start opened is still its own, not an orphan a reload left.
+                link_failure = Some(format!(
+                    "an App Link to the running app must not reload it:\n{}",
+                    backend.output()
+                ));
+            }
+        } else {
+            let cold = open_link("/probe/deep");
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
+            if backend.saw("route=probe:deep", 1) || !cold.contains("unable to resolve") {
+                link_failure = Some(format!(
+                    "an app that declares no associated domain must not take the link:\n{cold}"
+                ));
+            }
+        }
         let _ = emu.adb(&["uninstall", "com.example.probe"]);
         let output = backend.output();
         drop(backend);
@@ -1040,6 +1210,8 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
             failures.push(format!(
                 "{tag}: Native.authenticate with no enrolled biometric read {auth:?}, want Err Unavailable\n{output}"
             ));
+        } else if let Some(f) = link_failure {
+            failures.push(format!("{tag}: {f}"));
         }
         let _ = std::fs::remove_dir_all(dir);
     }

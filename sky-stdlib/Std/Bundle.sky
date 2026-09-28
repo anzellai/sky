@@ -236,12 +236,17 @@ type PushEnvironment
 -- * `AppGroup "group.com.acme.app"` — `com.apple.security.application-groups`.
 -- * `AssociatedDomain "applinks:acme.com"` —
 --   `com.apple.developer.associated-domains` (universal links,
---   `webcredentials:` for password autofill).
+--   `webcredentials:` for password autofill). The iOS and Android shells open
+--   a link to the host on the link's page.
 -- * `PushNotifications PushProduction` — `aps-environment`.
 -- * `ICloudContainer "iCloud.com.acme.app"` —
 --   `com.apple.developer.icloud-container-identifiers` (CloudKit).
 --
--- Android has no entitlements file; these are ignored there.
+-- Android has no entitlements file. An `applinks:` domain becomes an App Links
+-- intent filter there, and a `webcredentials:` domain the app's
+-- `asset_statements`; the build writes the site's `assetlinks.json`. Any other
+-- entitlement has no Android equivalent, and an `activitycontinuation:` or
+-- `appclips:` domain is left out with a build note.
 type Entitlement
     = KeychainAccessGroup String
     | AppGroup String

@@ -469,6 +469,11 @@ pub fn scan_entitlements(src: &str) -> Result<Vec<Entitlement>, String> {
                         return bad("an associated domain names its service, e.g. \
                              `applinks:example.com` or `webcredentials:example.com`");
                     }
+                    if parse_associated_domain(&v).is_none() {
+                        return bad("an associated domain is `<service>:<host>`, where the \
+                             host is a domain name, optionally starting `*.`, with an \
+                             optional `:<port>` and `?mode=developer` (or `managed`)");
+                    }
                     Entitlement::AssociatedDomain(v)
                 }
                 _ => {
@@ -486,6 +491,226 @@ pub fn scan_entitlements(src: &str) -> Result<Vec<Entitlement>, String> {
         }
     }
     Ok(out)
+}
+
+/// One associated domain, parsed: Apple's `<service>:<host>[:<port>][?mode=…]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssociatedDomain {
+    /// `applinks`, `webcredentials`, `activitycontinuation` or `appclips`.
+    pub service: String,
+    /// The domain name, possibly `*.`-prefixed (a wildcard subdomain).
+    pub host: String,
+    pub port: Option<u16>,
+}
+
+/// Parse an `AssociatedDomain` value (`applinks:example.com`,
+/// `applinks:*.example.com:8443?mode=developer`). `None` when the host is not
+/// a domain name.
+pub fn parse_associated_domain(v: &str) -> Option<AssociatedDomain> {
+    let (service, rest) = v.split_once(':')?;
+    let rest = match rest.split_once('?') {
+        Some((before, mode)) => {
+            let m = mode.strip_prefix("mode=")?;
+            if !m.split('+').all(|x| x == "developer" || x == "managed") {
+                return None;
+            }
+            before
+        }
+        None => rest,
+    };
+    let (host, port) = match rest.rsplit_once(':') {
+        Some((h, p)) => (h, Some(p.parse::<u16>().ok().filter(|p| *p > 0)?)),
+        None => (rest, None),
+    };
+    let bare = host.strip_prefix("*.").unwrap_or(host);
+    let label_ok = |l: &str| {
+        !l.is_empty()
+            && l.len() <= 63
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
+    if bare.is_empty() || !bare.split('.').all(label_ok) {
+        return None;
+    }
+    Some(AssociatedDomain {
+        service: service.to_string(),
+        host: host.to_ascii_lowercase(),
+        port,
+    })
+}
+
+/// The declared associated domains, as the native shells use them: the iOS
+/// and Android shells route a link to an `applinks:` host into the app, and
+/// the Android build maps each domain onto its Android equivalent.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct LinkDomains {
+    /// `applinks:` domains: an `autoVerify` App Links intent filter each.
+    pub app_links: Vec<AssociatedDomain>,
+    /// `webcredentials:` hosts: the site shares its sign-in credentials with
+    /// the app (Digital Asset Links `get_login_creds`, and the app's
+    /// `asset_statements`).
+    pub login_hosts: Vec<String>,
+    /// Domains with no Android equivalent (`activitycontinuation:`,
+    /// `appclips:`), as written: the build says it leaves them out.
+    pub unmapped: Vec<String>,
+}
+
+impl LinkDomains {
+    pub fn is_empty(&self) -> bool {
+        self.app_links.is_empty() && self.login_hosts.is_empty()
+    }
+
+    /// Every host the site-association file must be served on.
+    pub fn hosts(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for h in self
+            .app_links
+            .iter()
+            .map(|d| d.host.trim_start_matches("*.").to_string())
+            .chain(self.login_hosts.iter().cloned())
+        {
+            if !out.contains(&h) {
+                out.push(h);
+            }
+        }
+        out
+    }
+}
+
+/// Read the associated domains out of the declared entitlements.
+pub fn link_domains(ents: &[Entitlement]) -> LinkDomains {
+    let mut out = LinkDomains::default();
+    for e in ents {
+        let Entitlement::AssociatedDomain(v) = e else {
+            continue;
+        };
+        let Some(d) = parse_associated_domain(v) else {
+            continue; // refused by scan_entitlements
+        };
+        match d.service.as_str() {
+            "applinks" => {
+                if !out
+                    .app_links
+                    .iter()
+                    .any(|x| x.host == d.host && x.port == d.port)
+                {
+                    out.app_links.push(d);
+                }
+            }
+            "webcredentials" => {
+                let h = d.host.trim_start_matches("*.").to_string();
+                if !out.login_hosts.contains(&h) {
+                    out.login_hosts.push(h);
+                }
+            }
+            _ => {
+                if !out.unmapped.contains(v) {
+                    out.unmapped.push(v.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The App Links intent filters for the shell's activity: one
+/// `android:autoVerify` filter per `applinks:` domain, for `https` and that
+/// host (and port). Empty when there is none.
+pub fn android_link_filters(links: &LinkDomains) -> String {
+    links
+        .app_links
+        .iter()
+        .map(|d| {
+            let port = d
+                .port
+                .map(|p| format!(" android:port=\"{p}\""))
+                .unwrap_or_default();
+            format!(
+                "\n            <intent-filter android:autoVerify=\"true\">\n\
+                 \x20               <action android:name=\"android.intent.action.VIEW\" />\n\
+                 \x20               <category android:name=\"android.intent.category.DEFAULT\" />\n\
+                 \x20               <category android:name=\"android.intent.category.BROWSABLE\" />\n\
+                 \x20               <data android:scheme=\"https\" android:host=\"{}\"{port} />\n\
+                 \x20           </intent-filter>",
+                d.host
+            )
+        })
+        .collect()
+}
+
+/// The `asset_statements` string resource (a JSON array, as Android reads it)
+/// that tells Android which sites the app trusts for sign-in credentials, or
+/// `None` without a `webcredentials:` domain.
+pub fn android_asset_statements(links: &LinkDomains) -> Option<String> {
+    if links.login_hosts.is_empty() {
+        return None;
+    }
+    let items: Vec<String> = links
+        .login_hosts
+        .iter()
+        .map(|h| format!("{{\"include\": \"https://{h}/.well-known/assetlinks.json\"}}"))
+        .collect();
+    Some(format!("[{}]", items.join(", ")))
+}
+
+/// The hosts the shell accepts an incoming link for (the `applinks:` hosts,
+/// `*.`-prefixed for a wildcard), as a Java / Swift string-array body.
+pub fn link_host_literals(links: &LinkDomains) -> String {
+    links
+        .app_links
+        .iter()
+        .map(|d| format!("\"{}\"", d.host))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Format a SHA-256 certificate digest the way Digital Asset Links writes it:
+/// upper-case hex pairs joined by `:`. `None` unless `hex` is 64 hex digits
+/// (colons and spaces are ignored).
+pub fn sha256_fingerprint(hex: &str) -> Option<String> {
+    let clean: String = hex
+        .chars()
+        .filter(|c| !matches!(c, ':' | ' '))
+        .collect::<String>()
+        .to_ascii_uppercase();
+    if clean.len() != 64 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(
+        clean
+            .as_bytes()
+            .chunks(2)
+            .map(|p| std::str::from_utf8(p).unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(":"),
+    )
+}
+
+/// The first signer's SHA-256 certificate digest from `apksigner verify
+/// --print-certs` output, as a Digital Asset Links fingerprint.
+pub fn apksigner_sha256(output: &str) -> Option<String> {
+    output.lines().find_map(|l| {
+        let (_, rest) = l.split_once("certificate SHA-256 digest:")?;
+        sha256_fingerprint(rest.trim())
+    })
+}
+
+/// The `/.well-known/assetlinks.json` the site must serve on each host of
+/// `links` for the app `package` signed with the certificate `fingerprint`:
+/// `handle_all_urls` for App Links, `get_login_creds` for shared sign-in.
+pub fn assetlinks_json(package: &str, fingerprint: &str, links: &LinkDomains) -> String {
+    let mut relations = Vec::new();
+    if !links.app_links.is_empty() {
+        relations.push("\"delegate_permission/common.handle_all_urls\"");
+    }
+    if !links.login_hosts.is_empty() {
+        relations.push("\"delegate_permission/common.get_login_creds\"");
+    }
+    format!(
+        "[\n  {{\n    \"relation\": [{}],\n    \"target\": {{\n      \"namespace\": \"android_app\",\n      \"package_name\": \"{package}\",\n      \"sha256_cert_fingerprints\": [\"{fingerprint}\"]\n    }}\n  }}\n]\n",
+        relations.join(", ")
+    )
 }
 
 fn push_array(out: &mut Vec<(String, Value)>, key: &str, item: Value) {
@@ -2071,5 +2296,144 @@ mod tests {
             .collect();
         let table: Vec<&str> = PERMISSIONS.iter().map(|p| p.ctor).collect();
         assert_eq!(ctors, table);
+    }
+
+    #[test]
+    fn associated_domains_parse_host_port_mode_and_wildcard() {
+        let d = parse_associated_domain("applinks:Example.com").unwrap();
+        assert_eq!(
+            (d.service.as_str(), d.host.as_str(), d.port),
+            ("applinks", "example.com", None)
+        );
+        let d = parse_associated_domain("applinks:*.example.com:8443?mode=developer").unwrap();
+        assert_eq!((d.host.as_str(), d.port), ("*.example.com", Some(8443)));
+        assert!(
+            parse_associated_domain("webcredentials:a.example.com?mode=developer+managed")
+                .is_some()
+        );
+        for bad in [
+            "applinks:",
+            "applinks:exa mple.com",
+            "applinks:-x.com",
+            "applinks:x.com:0",
+            "applinks:x.com:port",
+            "applinks:x.com?mode=other",
+            "applinks:x.com/path",
+            "applinks:x.com\"><evil",
+        ] {
+            assert!(parse_associated_domain(bad).is_none(), "{bad}");
+        }
+        // The build refuses one before any platform sees it.
+        let e = scan_entitlements(
+            "b = Bundle.withEntitlement (Bundle.AssociatedDomain \"applinks:x.com/path\")",
+        )
+        .unwrap_err();
+        assert!(e.contains("<service>:<host>"), "{e}");
+    }
+
+    #[test]
+    fn associated_domains_map_onto_android_with_nothing_dropped_silently() {
+        let links = link_domains(&[
+            Entitlement::AssociatedDomain("applinks:example.com".into()),
+            Entitlement::AssociatedDomain("applinks:example.com?mode=developer".into()),
+            Entitlement::AssociatedDomain("applinks:*.shop.example".into()),
+            Entitlement::AssociatedDomain("webcredentials:example.com".into()),
+            Entitlement::AssociatedDomain("activitycontinuation:example.com".into()),
+            Entitlement::AssociatedDomain("appclips:example.com".into()),
+            Entitlement::AppGroup("group.com.example".into()),
+        ]);
+        let hosts: Vec<&str> = links.app_links.iter().map(|d| d.host.as_str()).collect();
+        assert_eq!(
+            hosts,
+            vec!["example.com", "*.shop.example"],
+            "one filter per host"
+        );
+        assert_eq!(links.login_hosts, vec!["example.com".to_string()]);
+        assert_eq!(
+            links.unmapped,
+            vec![
+                "activitycontinuation:example.com".to_string(),
+                "appclips:example.com".to_string()
+            ]
+        );
+        assert_eq!(links.hosts(), vec!["example.com", "shop.example"]);
+        assert_eq!(
+            link_host_literals(&links),
+            "\"example.com\", \"*.shop.example\""
+        );
+        assert_eq!(
+            android_asset_statements(&links).as_deref(),
+            Some("[{\"include\": \"https://example.com/.well-known/assetlinks.json\"}]")
+        );
+    }
+
+    #[test]
+    fn the_app_links_filter_is_a_verified_https_view_filter() {
+        let links = link_domains(&[
+            Entitlement::AssociatedDomain("applinks:example.com".into()),
+            Entitlement::AssociatedDomain("applinks:example.org:8443".into()),
+        ]);
+        let xml = android_link_filters(&links);
+        let nodes = xmlmini::parse_nodes(&xml).expect("valid XML");
+        assert_eq!(nodes.len(), 2);
+        for (n, (host, port)) in nodes
+            .iter()
+            .zip([("example.com", None), ("example.org", Some("8443"))])
+        {
+            let Node::Element(f) = n else { panic!("{xml}") };
+            assert_eq!(f.name, "intent-filter");
+            assert_eq!(f.attr("android:autoVerify"), Some("true"));
+            let kids: Vec<(&str, Option<&str>)> = f
+                .elements()
+                .map(|e| (e.name.as_str(), e.attr("android:name")))
+                .collect();
+            assert_eq!(
+                kids,
+                vec![
+                    ("action", Some("android.intent.action.VIEW")),
+                    ("category", Some("android.intent.category.DEFAULT")),
+                    ("category", Some("android.intent.category.BROWSABLE")),
+                    ("data", None),
+                ]
+            );
+            let data = f.elements().last().unwrap();
+            assert_eq!(data.attr("android:scheme"), Some("https"));
+            assert_eq!(data.attr("android:host"), Some(host));
+            assert_eq!(data.attr("android:port"), port);
+        }
+        assert_eq!(android_link_filters(&LinkDomains::default()), "");
+    }
+
+    #[test]
+    fn assetlinks_json_names_the_package_and_the_signing_certificate() {
+        let out = "Signer #1 certificate DN: CN=Flow Test, O=Sky, C=GB\n\
+                   Signer #1 certificate SHA-256 digest: 0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9\n\
+                   Signer #1 certificate SHA-1 digest: 00\n";
+        let fp = apksigner_sha256(out).expect("digest");
+        assert_eq!(
+            fp,
+            "0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9:0A:1B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9"
+        );
+        assert!(sha256_fingerprint("abc").is_none());
+        let links = link_domains(&[
+            Entitlement::AssociatedDomain("applinks:example.com".into()),
+            Entitlement::AssociatedDomain("webcredentials:example.com".into()),
+        ]);
+        let json: serde_json::Value =
+            serde_json::from_str(&assetlinks_json("com.example.probe", &fp, &links)).expect("JSON");
+        assert_eq!(
+            json,
+            serde_json::json!([{
+                "relation": [
+                    "delegate_permission/common.handle_all_urls",
+                    "delegate_permission/common.get_login_creds"
+                ],
+                "target": {
+                    "namespace": "android_app",
+                    "package_name": "com.example.probe",
+                    "sha256_cert_fingerprints": [fp]
+                }
+            }])
+        );
     }
 }
