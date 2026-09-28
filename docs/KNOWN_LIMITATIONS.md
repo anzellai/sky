@@ -127,10 +127,10 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
    side. It is closed in the other direction instead: rejected at check
    time, so it can no longer reach the runtime at all.
 
-9. **Recursion through `Task.andThen` is not stack-safe.** Each `andThen`
-   step nests Go frames: `AnyTaskAndThen` forces the outer task and then the
-   continuation's task inside the same Go call. A Task loop written as plain
-   recursion,
+9. **CLOSED in v0.27.0 — recursion through `Task.andThen` is stack-safe.**
+   Before v0.27.0 each `andThen` step nested Go frames (`AnyTaskAndThen`
+   forced the outer task and then the continuation's task inside the same Go
+   call), so
 
    ```elm
    count n =
@@ -138,19 +138,25 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
        else Task.succeed n |> Task.andThen (\_ -> count (n - 1))
    ```
 
-   grows the goroutine stack every iteration. At two million iterations
-   (measured with `count 2000000`) Go stops the process with the fatal
-   `goroutine stack exceeds 1000000000-byte limit`. That is not a panic: no
-   recover site sees it, no error handler runs, and the process exits.
-   Auto-TCO does not apply, because the recursive call is inside a lambda
-   that the runtime calls later, not in tail position of the function.
-   **Workaround (the supported form)**: write the loop with `Task.loop`
-   (v0.26.2), which runs each step to completion in a Go `for` loop, so the
-   stack stays flat at any iteration count; `Task.forever` for a loop that
-   only stops on an error. A recursion that ends after a small, known
-   number of steps is safe as it is. Making every `andThen` chain
-   stack-safe (a full Task trampoline) is a wider runtime change and is not
-   in this release.
+   died at two million iterations with the fatal `goroutine stack exceeds
+   1000000000-byte limit`. A Task is now data (`rt.SkyTask` holds a task
+   node) run by one interpreter (`runtime-go/rt/task_trampoline.go`), which
+   pops a bind before it runs the task the continuation returns. The loop
+   above, recursion through `Task.onError`, and `Task.sequence` over a long
+   list run at a constant Go stack (regression tests:
+   `runtime-go/rt/task_trampoline_test.go` at a 1 MB stack cap, and
+   `rust/crates/sky/tests/task_trampoline_flow.rs` end to end).
+   What remains, by design:
+   - A recursive call that is not behind a continuation,
+     `step n = step (n - 1) |> Task.map f`, is evaluated while the task is
+     BUILT. That is ordinary strict recursion and grows the Go stack as it
+     does in Elm; put the recursive call inside `andThen`.
+   - A recursion that maps its own result, `\_ -> step (n + 1) |> Task.map
+     f`, keeps one pending `map` per level until the innermost step
+     finishes. Those frames live on the heap, not the Go stack, and the
+     semantics require them.
+   `Task.loop` (explicit state) and `Task.forever` (a service loop) stay the
+   clearest forms for a long loop.
 
 ## Sky.Spa
 

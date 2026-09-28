@@ -94,7 +94,7 @@ func TestConsoleStore_ReadsHostTelemetryUnderTokenAuth(t *testing.T) {
 		t.Fatalf("init did not pick up SKY_PARENT_URL; the console would show mock data")
 	}
 
-	ov := model.Store.ReadOverview(struct{}{})()
+	ov := rt.Task_run(model.Store.ReadOverview(struct{}{}))
 	if ov.Tag != 0 {
 		t.Fatalf("overview read failed (the console would stay on its empty model): %+v", ov.ErrValue)
 	}
@@ -112,11 +112,11 @@ func TestConsoleStore_ReadsHostTelemetryUnderTokenAuth(t *testing.T) {
 		t.Errorf("ProductionMode = false under ENV=production; the header would say dev")
 	}
 
-	logs := model.Store.ReadLogs(State_emptyLogFilter())()
+	logs := rt.Task_run(model.Store.ReadLogs(State_emptyLogFilter()))
 	if logs.Tag != 0 || len(logs.OkValue) == 0 {
 		t.Errorf("logs read: tag=%d n=%d err=%+v, want the synthetic log line", logs.Tag, len(logs.OkValue), logs.ErrValue)
 	}
-	traces := model.Store.ReadTraces(struct{}{})()
+	traces := rt.Task_run(model.Store.ReadTraces(struct{}{}))
 	if traces.Tag != 0 || len(traces.OkValue) == 0 {
 		t.Errorf("traces read: tag=%d n=%d err=%+v, want the synthetic span", traces.Tag, len(traces.OkValue), traces.ErrValue)
 	}

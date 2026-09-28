@@ -593,9 +593,36 @@ exact runtime shape).
     the result; no later step runs.
   * CONSTANT STACK: the runtime (`runtime-go/rt/task_loop.go`) forces each
     step to completion inside one Go `for` loop, so the goroutine stack depth
-    is that of one step, at any iteration count. `andThen` recursion does NOT
-    have this property (each step nests Go frames; `count 2000000` dies with
-    Go's fatal stack overflow) — `docs/KNOWN_LIMITATIONS.md` #9.
+    is that of one step, at any iteration count.
+* **The Task trampoline (v0.27.0) — every Task runs in constant stack per
+  continuation**:
+  * A Task is data: `rt.SkyTask[E, A]` holds an immutable task node (E and A
+    are phantom, so `rt.TaskCoerceT` between instantiations copies a pointer
+    and allocates nothing). One interpreter, `forceTask`
+    (`runtime-go/rt/task_trampoline.go`), forces every Task; it keeps pending
+    continuations on its own heap frame stack.
+  * TAIL CONTINUATIONS: a bind (`andThen`) or catch (`onError`) frame is popped
+    BEFORE the task its continuation returns is run, so recursion through
+    either runs at a constant Go stack and a constant frame stack
+    (`count 2000000` finishes under a 1 MB stack cap).
+  * FOLDS: `map`, `mapError`, `andThenResult` are frames; `sequence` runs its
+    elements inside the same loop through one frame holding its index and
+    accumulator. A left-nested chain keeps its pending frames on the heap.
+  * SEMANTICS unchanged: left-to-right effect order, first `Err` short-circuits,
+    `sequence` stops at the first `Err`, `lazy` re-runs its thunk per force, a
+    kernel thunk's Result of any instantiation is read as that Result, a bare
+    value is `Ok value`.
+  * ONE CLASSIFIER: every site that forces or converts a value that may be a
+    Task (`AnyTaskRun`, `anyTaskInvoke`, `SkyCall`, `sky_call`, `Task_lazy`,
+    `Coerce`, `coerceInner`, `narrowReflectValue`, `narrowSkyContainer`,
+    `coerceReflectArg`, `skyCallDirect`, `skyValueAsType`, the session-value
+    validator) recognises a SkyTask through `taskNodeOf` / `isSkyTaskType`.
+    A site that cannot force what it was handed (a func with parameters, a
+    zero SkyTask, a Task applied to arguments, a Task as `Task.lazy`'s thunk)
+    panics classified `CoerceFailure`; it never returns the unforced value.
+  * NOT covered, by design: a recursive call outside a continuation
+    (`step (n - 1) |> Task.map f`) runs while the task is built — strict
+    recursion, as in Elm (`docs/KNOWN_LIMITATIONS.md` #9).
   * `Step` is decoded by constructor NAME (`SkyName`), never by numeric tag.
     A value that is not a `Step` is a classified `CoerceFailure` panic.
   * `forever t` = `loop (\_ -> t |> map (\_ -> Loop ())) ()`: it re-runs `t`
@@ -622,9 +649,13 @@ per-request defer/recover. The Cmd.perform goroutine wraps
 
 **Verification**: runtime tests in `runtime-go/rt/task_test.go`,
 `retry_test.go`, `task_loop_test.go` (2,000,000 steps under a 1 MB stack cap,
-flat heap, plus a child-process control proving `andThen` recursion overflows
-the same cap), `task_spawn_log_test.go`; Sky suite
-`tests/conformance/tests/TaskLoopConformanceTest.sky`. Examples 07-todo-cli and 18-job-queue exercise the
+flat heap, plus a child-process control proving a nested force still overflows
+the same cap), `task_trampoline_test.go` (2,000,000 steps of `andThen`,
+`onError` and left-nested recursion in child processes at a 1 MB cap; constant
+heap for `Task.forever` and a recursive service loop; free `TaskCoerceT`;
+every force site; classified fallbacks), `task_spawn_log_test.go`; Sky suite
+`tests/conformance/tests/TaskLoopConformanceTest.sky`, and
+`rust/crates/sky/tests/task_trampoline_flow.rs` (a compiled Sky program). Examples 07-todo-cli and 18-job-queue exercise the
 two-level error pattern (correlation ID + structured log + user
 message).
 

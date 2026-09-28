@@ -571,7 +571,7 @@ main =
 | `Task.lazy` | `(() -> a) -> Task e a` | Defer computation |
 | `Task.spawn` | `Task e a -> Task e ()` | Start a task on a background goroutine and return at once. Its result is discarded; a panic in it is recovered and written to the log as a classified panic line |
 | `Task.Step state a` | ADT | `Loop state \| Done a` — what a `Task.loop` step returns: go again with a new state, or stop with a result |
-| `Task.loop` | `(state -> Task e (Step state a)) -> state -> Task e a` | Stack-safe loop: run the step, then again on each `Loop` state, until `Done`. An `Err` stops it. Use this, not `andThen` recursion, for any loop that can run many times |
+| `Task.loop` | `(state -> Task e (Step state a)) -> state -> Task e a` | Stack-safe loop: run the step, then again on each `Loop` state, until `Done`. An `Err` stops it. The clearest form for a loop with explicit state (`andThen` recursion is stack-safe too) |
 | `Task.forever` | `Task e a -> Task e b` | Re-run a task until it fails, then fail with that error. Stack-safe. The free `b` says it never succeeds |
 | `Task.run` | `Task e a -> Result e a` | Force at the boundary |
 | `Task.fromResult` | `Result e a -> Task e a` | Bridge from Result |
@@ -593,7 +593,7 @@ main =
 | `Task.andMap` | `Task e a -> Task e (a -> b) -> Task e b` | Applicative application — VALUE first, FUNCTION second, matching `Maybe.andMap` / `Result.andMap`. Forces the function task first |
 
 
-**Loops: `Task.loop`, never `andThen` recursion.** Each `andThen` step nests Go frames. A loop written as recursion through `andThen` grows the Go stack every iteration, and by two million iterations the process dies with a fatal stack overflow that no error handler sees (`docs/KNOWN_LIMITATIONS.md`). `Task.loop` runs each step to completion before the next, so the stack stays flat at any iteration count:
+**Loops: `Task.loop`, or plain `andThen` recursion.** A Task is data run by one interpreter (the Task trampoline, v0.27.0). It pops an `andThen` before it runs the task the continuation returns, so recursion through `andThen` or `onError` runs at a constant Go stack: two million iterations of `step n = work |> Task.andThen (\_ -> step (n + 1))` finish. `Task.sequence` over a long list is folded by the same interpreter. `Task.loop` is the clearer form when the loop has explicit state, and `Task.forever` for a loop that only stops on an error. A recursive call that is not behind a continuation (`step (n - 1) |> Task.map f`) is evaluated while the task is built, and grows the stack like any strict recursion (`docs/KNOWN_LIMITATIONS.md`):
 
 ```elm
 import Sky.Core.Task as Task exposing (Step(..))

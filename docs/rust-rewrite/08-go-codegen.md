@@ -175,7 +175,7 @@ entry). Module-level `Task.run` bindings still emit their explicit force.
 |---|---|---|---|
 | `Result e a` | `SkyResult[E,A]{ Tag int; OkValue A; ErrValue E }` | `rt.go:69` | `Ok`→`Tag:0`, `Err`→`Tag:1` — **tags stable, never reordered** |
 | `Maybe a` | `SkyMaybe[A]{ Tag int; JustValue A }` | `rt.go:87` | `Just`→`Tag:0`, `Nothing`→`Tag:1` |
-| `Task e a` | `SkyTask[E,A] = func() SkyResult[E,A]` | `rt.go:1084` | a thunk; forced by `AnyTaskRun` |
+| `Task e a` | `SkyTask[E,A] struct{ n *taskNode }` (E, A phantom) | `task_trampoline.go` | data, never called directly; forced by `AnyTaskRun` (the one interpreter, `forceTask`, since v0.27.0); `TaskCoerceT` between instantiations copies the node pointer |
 | `(a, b)` / `(a,b,c)` | `rt.T2[A,B]` / `rt.T3[…]`; arity ≥ 4 → `rt.SkyTupleN{ Vs []any }` | `rt.go:3439/3522` | `GoTy::Tuple` chooses parametric vs slice-backed by arity |
 | user ADT | `T{ Tag int; SkyName string; Fields []any }` | e.g. `examples/01-hello-world/sky-out/main.go:18` | tags in declaration order; `SkyName` for diagnostics |
 | `Dict`/`Set`/list | `map[K]V` / `[]T` directly | — | no wrapper type |

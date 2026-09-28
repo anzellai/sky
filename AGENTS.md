@@ -134,16 +134,23 @@ Task.succeed ())` / `unless cond t = if cond then Task.succeed () else t` for th
 two shapes the stdlib does not name. `templates/AGENTS.md` carries the worked
 before/after for scaffolded projects.
 
-**A Task loop that can run many times uses `Task.loop`, never `andThen`
-recursion.** Each `andThen` step nests Go frames, so a loop written as
-`step n = work |> Task.andThen (\_ -> step (n + 1))` grows the Go stack every
-iteration and, by two million iterations, kills the process with a fatal
-stack overflow that no error handler sees. `Task.loop step initial` runs each
-step to completion first: `step : state -> Task e (Step state a)` returns
-`Loop newState` to go again or `Done result` to stop, and the stack stays flat
-(`import Sky.Core.Task as Task exposing (Step(..))`). `Task.forever task` re-runs
-a task until it fails (a poller, a serve loop). A recursion that ends after a
-small, known number of steps is fine as it is.
+**Recursion through `Task.andThen` is stack-safe; `Task.loop` is the clearer
+form for a long loop.** Since v0.27.0 a Task is data run by one interpreter (the
+Task trampoline, `runtime-go/rt/task_trampoline.go`), which pops an `andThen`
+before it runs the task its continuation returns. So
+`step n = work |> Task.andThen (\_ -> step (n + 1))` runs at a constant Go
+stack, and two million iterations finish (before v0.27.0 they died with a fatal
+stack overflow that no error handler saw). The same holds for recursion through
+`Task.onError`, and for `Task.sequence` over a long list. Prefer
+`Task.loop step initial` when the loop's state is explicit — `step : state ->
+Task e (Step state a)` returns `Loop newState` to go again or `Done result` to
+stop (`import Sky.Core.Task as Task exposing (Step(..))`) — and `Task.forever
+task` for a loop that only stops on an error (a poller, a serve loop). Two limits
+stay: a recursive call that is NOT behind a continuation (`step n = step (n - 1)
+|> Task.map f`) is evaluated while the task is BUILT, which is ordinary strict
+recursion and grows the stack as it does in Elm; and a recursion that maps its
+own result (`\_ -> step (n + 1) |> Task.map f`) keeps one pending `map` per level
+on the heap, which the semantics require.
 
 **A Task program reads a WebSocket with Tasks, and can host a Live app.** Outside
 a TEA loop, read a `Sky.Core.WebSocket` with `WebSocket.receive` /
