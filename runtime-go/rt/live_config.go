@@ -131,6 +131,13 @@ func Live_withMaxBodyBytes(n, cfg any) any { return liveCfgSet(cfg, "MaxBodyByte
 // env `SKY_LIVE_INPUT_MODE` wins). See resolveInputMode.
 func Live_withInput(mode, cfg any) any { return liveCfgSet(cfg, "Input", mode) }
 
+// Live_withEmbedded — run the app as a guest inside a larger Task program
+// (live_embedded.go): no signal handler, no process exit; a failure to start
+// is the Task's Err and the host owns shutdown. `withEmbedded : AppConfig
+// model msg -> AppConfig model msg` takes no value, so the kernel takes only
+// the cfg.
+func Live_withEmbedded(cfg any) any { return liveCfgSet(cfg, "Embedded", true) }
+
 // Live_withAnalytics — `analytics : { pageViews : Bool }` (invariant 4:
 // the record is stored verbatim and read via Field(a,"PageViews")).
 func Live_withAnalytics(a, cfg any) any { return liveCfgSet(cfg, "Analytics", a) }

@@ -326,6 +326,41 @@ step-journalled workflow (`Durable.step`) rather than a bare `Cmd.perform`. See
 `examples/67-durable-counter` (a Cli counter that keeps its count across restarts
 through the one `App.withDurable` line).
 
+## Running an app inside a Task program — `App.withEmbedded`
+
+`main = App.run app` gives the app the whole process: on the `web` target
+Sky.Live installs its own signal handler, and a port already in use or a failed
+boot check exits the process. To run the app as ONE part of a larger Task
+program, mark it embedded and spawn it next to the other work:
+
+```elm
+statusApp =
+    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+        |> App.withNotFound NotFound
+        |> App.withEmbedded
+
+main =
+    Task.spawn
+        (App.run statusApp
+            |> Task.onError (\e -> Log.println ("status UI: " ++ Error.toString e))
+        )
+        |> Task.andThen (\_ -> Task.loop workerStep 0)
+```
+
+`withEmbedded : App … -> App …`. In embedded mode the Live app installs no
+signal handler and never exits the process: a taken port, the console boot check
+and a production session store that is unreachable become the `Err` of its Task.
+The host program owns shutdown, and the process ends when `main` returns, so keep
+`main` running for as long as the app should serve.
+
+Caveats: it applies to the `web` / `tablet` targets (Sky.Live); a `web:app`
+backend is a generated server program that owns its process, and the terminal
+and desktop runners ignore it. A plain Task host has no signal handler, so
+SIGINT / SIGTERM end the process at once; a host that runs `Server.listen` or
+`--embed` keeps its own termination sequence, and the embedded app's listener is
+closed in its drain phase, before the session store is released. The full
+account is `docs/skylive/embedded.md`.
+
 ## View adapter
 
 You write one `view : model -> Element msg`. `Std.App` adapts it per backend:

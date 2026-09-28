@@ -723,12 +723,19 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// * **+25** — five surfaces the ledger listed as dark-but-assertable
 ///   (`Sky.Core.Bytes`, `Sky.Core.Jwt`, `Std.Codec`, `Std.Markdown`,
 ///   `Std.Compression`) × their five edge classes.
-pub const CORPUS_EXPECTED: u64 = 485;
+///
+/// **487 since the Sky.Core.Tuple Family-S surface** (+2, the module's nominal
+/// and boundary edge classes; it landed dark in v0.27 and the dark-module
+/// ratchet refused it).
+pub const CORPUS_EXPECTED: u64 = 487;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
+///
+/// **341 since the Sky.Core.Tuple Family-S surface** (+2: its nominal and
+/// boundary cases, both built and run; 339 before, after `Std.Image`).
 ///
 /// **337 since the Sky.Core.Secret Family-S surface** (was 335 since the
 /// Family-S shape close, itself up from 296): the two `stdlib_edge/*-secret`
@@ -738,7 +745,7 @@ pub const CORPUS_EXPECTED: u64 = 485;
 /// T1 tier — so a behavioural-case addition that forgets this const surfaces a
 /// tier late. Both `CORPUS_EXPECTED` (all cases) and this (the built-and-run
 /// subset) move by the same +2 when a behavioural case lands.
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 339;
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 341;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

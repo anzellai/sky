@@ -42,7 +42,15 @@
 // gap (LLM tokens and SSE keepalives arrive seconds apart at most), so silence
 // that long means the peer is gone; and it comfortably exceeds the 30 s header
 // timeout and the 30 s consumer-stall timeout, so it never races a handle that
-// is merely slow to start. Closing the body/conn cascades cleanly: a spool or
+// is merely slow to start.
+//
+// A WebSocket can also be quiet AND alive: a feed that sends nothing for an
+// hour while its heartbeat pings are answered. Silence is then not evidence of
+// a gone peer, so a handle may give the reaper its own proof of life
+// (keepAliver): a socket whose last ping was answered, or a Task-owned socket
+// whose reader is parked on a full queue, is never idle-reaped. Until v0.27
+// only a delivered frame refreshed a socket's activity time, and such a socket
+// was closed at the 10-minute mark. Closing the body/conn cascades cleanly: a spool or
 // reader goroutine blocked on Read wakes with an error, delivers its terminal
 // event, and any forEachChunk drains to completion and unregisters.
 
@@ -73,6 +81,18 @@ type reapableHandle interface {
 	IsClosed() bool
 	lastActivityUnixNano() int64
 	Close()
+}
+
+// keepAliver is the optional proof-of-life a handle can give the reaper
+// beyond its activity time. wsHandle implements it: an answered heartbeat
+// ping means the peer is there, however long the socket has been quiet.
+type keepAliver interface {
+	reaperKeepAlive() bool
+}
+
+func isKeptAlive(h reapableHandle) bool {
+	ka, ok := h.(keepAliver)
+	return ok && ka.reaperKeepAlive()
 }
 
 var sessionlessReaperOnce sync.Once
@@ -117,6 +137,9 @@ func sweepSessionlessMap(m *sync.Map, now time.Time) {
 		case h.IsClosed():
 			// Dead handle still mapped — reclaim the entry.
 			m.Delete(key)
+		case isKeptAlive(h):
+			// The handle has its own proof of life (a WebSocket whose last
+			// heartbeat ping was answered): quiet is not dead.
 		case h.lastActivityUnixNano() < cutoff:
 			// Open but silent past the idle TTL — close and evict. Closing the
 			// body/conn cascades the handle's own goroutines to exit.

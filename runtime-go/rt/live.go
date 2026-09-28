@@ -2026,6 +2026,11 @@ func msgAdtFromUpdate(update any) string {
 }
 
 func liveAppRun(cfg any) any {
+	// Embedded mode (Live.withEmbedded / App.withEmbedded, live_embedded.go):
+	// the app is a guest in a larger Task program. It installs no signal
+	// handler and never exits the process; every refusal to start is the
+	// Task's Err, and the host owns shutdown.
+	embedded := AsBoolOrFalse(Field(cfg, "Embedded"))
 	app := &liveApp{
 		init:               Field(cfg, "Init"),
 		update:             Field(cfg, "Update"),
@@ -2089,7 +2094,15 @@ func liveAppRun(cfg any) any {
 	// (not per request / per /_sky/config hit) and stored on the app.
 	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
 	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
-	app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
+	if embedded {
+		store, err := chooseStoreOrErr(storeKind, storePath, ttl, idleEvict)
+		if err != nil {
+			return Err[any, any](ErrUnavailable("Sky.Live (embedded) did not start: " + err.Error()))
+		}
+		app.store = store
+	} else {
+		app.store = chooseStore(storeKind, storePath, ttl, idleEvict)
+	}
 	app.sessionTTL = ttl
 	// Wire the session store into /_sky/readyz so the endpoint reports 503 when
 	// the backing DB is unreachable — instead of returning 200 while the store
@@ -2233,7 +2246,13 @@ func liveAppRun(cfg any) any {
 	// this prints a FATAL stderr line + os.Exit(1). Catches the
 	// hand-edited main.go that lost the console_app blank import.
 	// No-op when shouldHaveConsole is false (off / unset / sub-app).
-	AssertConsoleInvariantOrExit()
+	if embedded {
+		if err := consoleInvariantError(); err != nil {
+			return Err[any, any](ErrInvalidInput("Sky.Live (embedded) did not start: console invariant: " + err.Error()))
+		}
+	} else {
+		AssertConsoleInvariantOrExit()
+	}
 	// Static assets (if configured) mounted first so api/page routing
 	// doesn't shadow them.
 	if app.staticDir != "" {
@@ -2356,59 +2375,20 @@ func liveAppRun(cfg any) any {
 	// listener is what makes its first phase real; a no-op when there is no
 	// embedded cluster.
 	RegisterAcceptStopper("live.Server", func() { _ = srv.Close() })
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	go func() {
-		<-sigCh
-		fmt.Println("\nSky.Live shutting down…")
-		// Flip readyz to 503 immediately so orchestrators (k8s /
-		// fly.io / ECS) stop routing new traffic while in-flight
-		// requests drain. healthz stays 200 — the process IS still
-		// alive, just refusing new work.
-		SetReady(false)
-		// Flush pending OTel spans BEFORE killing the server so
-		// in-flight requests' spans reach the collector. Bounded
-		// timeout (2s VM, 500ms serverless) so we don't hang past
-		// the orchestrator grace window.
-		ShutdownTracing()
-		// Stop the Std.Jobs worker (if started) so in-flight jobs
-		// finish + the goroutine exits cleanly. Idempotent —
-		// safe to call when no worker was ever spawned.
-		JobsShutdown()
-		// v0.16.1: drain the in-process HubExporter (and any other
-		// registered shutdown hook) BEFORE srv.Close. 8 s budget
-		// leaves 2 s safety within Cloud Run's 10 s grace window.
-		// LIFO order — HubExporter (registered last, during boot)
-		// runs first; future v0.17+ hooks fan out from here. No-op
-		// when no exporter / no hooks are registered.
-		//
-		// v0.16.0: the inline console runs in-process, so there's
-		// no child to tear down. Pre-v0.16.0 this section closed
-		// srv.Close() FIRST (to drain in-flight reverse-proxy
-		// requests) then ShutdownSubApps() to signal the console
-		// child. Now the console handler runs on the same mux, so
-		// closing the server is sufficient.
-		//
-		// The release phase then closes the session store — which
-		// until v0.20.4 NOTHING did, so its cleanup goroutine and
-		// its backing handle were left to process exit. It runs
-		// after the drain deliberately: a store closed while the
-		// hook chain is still flushing telemetry is a store taken
-		// away from a writer. See drainAndRelease.
-		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
-		// If srv.Close completes the listener teardown, ListenAndServe
-		// returns and the function exits naturally. If something hangs,
-		// a second Ctrl-C escapes via os.Exit. Without this watchdog,
-		// a wedged goroutine could leave the user stuck.
-		go func() {
-			<-sigCh
-			fmt.Fprintln(os.Stderr, "Sky.Live: forcing exit (second SIGINT)")
-			// ExitProcess, not os.Exit: this runs from a goroutine, so main's
-			// `defer rt.StopEmbeddedPostgres()` never fires. Forcing past a
-			// wedged HTTP shutdown must not also force past the database.
-			ExitProcess(130) // 128 + SIGINT(2)
-		}()
-	}()
+	var sigCh chan os.Signal
+	if embedded {
+		// The host owns the process: no signal handler, no process-wide
+		// teardown (readiness, tracing, jobs, the shutdown chain are the
+		// host's). The app still stops in the right place when the host
+		// runs a termination sequence: closing the listener is a drain-phase
+		// hook, so it happens before the release phase closes this app's
+		// session store (RegisterResourceCloser in chooseStoreOrErr).
+		RegisterShutdownHook("live.embedded", func(context.Context) { _ = srv.Close() })
+	} else {
+		sigCh = make(chan os.Signal, 2)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		go liveSignalShutdown(sigCh, srv)
+	}
 	fmt.Printf("Sky.Live listening on :%d\n", port)
 	// The block goes UNDER that line, never in place of it:
 	// `apps/fieldbook/verify.sh` greps it literally, and both `xtask
@@ -2417,7 +2397,9 @@ func liveAppRun(cfg any) any {
 	// startup_report.go.
 	printStartupReport(port)
 	err := srv.ListenAndServe()
-	signal.Stop(sigCh)
+	if sigCh != nil {
+		signal.Stop(sigCh)
+	}
 	// See the note in Server_listen: exiting here mid-shutdown would kill the
 	// embedded database instead of stopping it.
 	BlockIfEmbeddedShuttingDown()
@@ -2425,12 +2407,73 @@ func liveAppRun(cfg any) any {
 		// A port-already-bound failure is the common startup error — make it
 		// LOUD + actionable on stderr instead of a silent Task-Err exit.
 		if isAddrInUse(err) {
+			if embedded {
+				// A guest does not end its host: the host decides.
+				return Err[any, any](ErrUnavailable(fmt.Sprintf(
+					"Sky.Live (embedded) did not start: port %d is already in use "+
+						"(set SKY_LIVE_PORT, or [live] port in sky.toml)", port)))
+			}
 			reportPortInUse(port, "set SKY_LIVE_PORT, or [live] port in sky.toml")
 			ExitProcess(1)
 		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](struct{}{})
+}
+
+// liveSignalShutdown is the shutdown sequence of a Sky.Live app that owns its
+// process (every mode except embedded): the first SIGINT/SIGTERM/SIGHUP
+// drains and releases, a second one forces the exit.
+func liveSignalShutdown(sigCh chan os.Signal, srv *http.Server) {
+	<-sigCh
+	fmt.Println("\nSky.Live shutting down…")
+	// Flip readyz to 503 immediately so orchestrators (k8s /
+	// fly.io / ECS) stop routing new traffic while in-flight
+	// requests drain. healthz stays 200 — the process IS still
+	// alive, just refusing new work.
+	SetReady(false)
+	// Flush pending OTel spans BEFORE killing the server so
+	// in-flight requests' spans reach the collector. Bounded
+	// timeout (2s VM, 500ms serverless) so we don't hang past
+	// the orchestrator grace window.
+	ShutdownTracing()
+	// Stop the Std.Jobs worker (if started) so in-flight jobs
+	// finish + the goroutine exits cleanly. Idempotent —
+	// safe to call when no worker was ever spawned.
+	JobsShutdown()
+	// v0.16.1: drain the in-process HubExporter (and any other
+	// registered shutdown hook) BEFORE srv.Close. 8 s budget
+	// leaves 2 s safety within Cloud Run's 10 s grace window.
+	// LIFO order — HubExporter (registered last, during boot)
+	// runs first; future v0.17+ hooks fan out from here. No-op
+	// when no exporter / no hooks are registered.
+	//
+	// v0.16.0: the inline console runs in-process, so there's
+	// no child to tear down. Pre-v0.16.0 this section closed
+	// srv.Close() FIRST (to drain in-flight reverse-proxy
+	// requests) then ShutdownSubApps() to signal the console
+	// child. Now the console handler runs on the same mux, so
+	// closing the server is sufficient.
+	//
+	// The release phase then closes the session store — which
+	// until v0.20.4 NOTHING did, so its cleanup goroutine and
+	// its backing handle were left to process exit. It runs
+	// after the drain deliberately: a store closed while the
+	// hook chain is still flushing telemetry is a store taken
+	// away from a writer. See drainAndRelease.
+	drainAndRelease(8*time.Second, func() { _ = srv.Close() })
+	// If srv.Close completes the listener teardown, ListenAndServe
+	// returns and the function exits naturally. If something hangs,
+	// a second Ctrl-C escapes via os.Exit. Without this watchdog,
+	// a wedged goroutine could leave the user stuck.
+	go func() {
+		<-sigCh
+		fmt.Fprintln(os.Stderr, "Sky.Live: forcing exit (second SIGINT)")
+		// ExitProcess, not os.Exit: this runs from a goroutine, so main's
+		// `defer rt.StopEmbeddedPostgres()` never fires. Forcing past a
+		// wedged HTTP shutdown must not also force past the database.
+		ExitProcess(130) // 128 + SIGINT(2)
+	}()
 }
 
 // isAddrInUse reports whether a listen error is a port-already-bound failure.

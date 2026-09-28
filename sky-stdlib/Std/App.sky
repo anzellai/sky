@@ -68,6 +68,7 @@ module Std.App exposing
     , withAppUrl
     , withDurable
     , withDurableId
+    , withEmbedded
     , DurableWiring
     , baseDefaults
     , webDefaults
@@ -365,6 +366,7 @@ type App fallback seed page model msg key
 , consoleAuth : Maybe (Request -> model -> Task Error (Maybe Console.Identity))
 , rpcError : Maybe (Error -> msg)
 , durable : DurableWiring model
+, embedded : Bool
 }
 
 -- | The durability wiring carried to the backend loop by `withDurable`. The
@@ -425,6 +427,7 @@ app cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
+        , embedded = False
         }
 
 
@@ -458,6 +461,7 @@ web cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
+        , embedded = False
         }
 
 
@@ -490,6 +494,7 @@ cli cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
+        , embedded = False
         }
 
 
@@ -524,6 +529,7 @@ tui cfg =
         , consoleAuth = Nothing
         , rpcError = Nothing
         , durable = noDurableWiring
+        , embedded = False
         }
 
 
@@ -894,6 +900,28 @@ withRpcError onErr (App a) =
     App { a | rpcError = Just onErr }
 
 
+-- | Run a `web` (Sky.Live) app as ONE task inside a larger Task program:
+--
+--     main =
+--         Task.spawn (App.run (appDef |> App.withEmbedded))
+--             |> Task.andThen (\_ -> Task.loop pollQueue 0)
+--
+-- The Live app then installs no signal handler and never exits the process:
+-- a port already in use, the console boot check and a production session
+-- store that is unreachable all become the `Err` of its Task. `Task.spawn`
+-- discards a Task's `Err`, so handle it inside the spawned Task with
+-- `Task.onError`. The host program owns
+-- shutdown. See docs/skyapp/overview.md ("Running an app inside a Task
+-- program") for the pattern and its caveats.
+--
+-- Only the `web` / `tablet` targets (Sky.Live) read this. A `web:app` build's
+-- backend is a generated server program that owns its own process, and the
+-- terminal and desktop runners ignore it.
+withEmbedded : App fallback seed page model msg key -> App fallback seed page model msg key
+withEmbedded (App a) =
+    App { a | embedded = True }
+
+
 -- | Set the backend address the NATIVE shells load: `mobile:ios`,
 -- `mobile:android` and `desktop:<os>` wrap the wasm client in a native web
 -- view that loads it from this absolute `http://` or `https://` URL.
@@ -1214,8 +1242,14 @@ runLiveBoot_ (App a) =
 
                         Nothing ->
                             withDur_
+                withEmbedded_ =
+                    if a.embedded then
+                        Live.withEmbedded withConsole_
+
+                    else
+                        withConsole_
             in
-                Live.app withConsole_
+                Live.app withEmbedded_
 
         Nothing ->
             Task.fail

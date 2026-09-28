@@ -151,6 +151,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   for that request in a server, exit 1 with a structured log line in a CLI.
   Guard a Float you do not control with `Math.isNaN` before you encode it.
 
+- **`Sky.Http.Server.WebSocket.WebSocketServerCfg` has two new fields,
+  `onFrame` and `frameMode`** (set together by `withOnFrame`). Code that
+  builds the cfg with `Ws.defaultCfg |> Ws.with…` is unaffected; a record
+  literal must add `onFrame = \_ _ -> Task.succeed ()` and
+  `frameMode = False`.
+
 ### Migration
 
 - **Stop keying your own data by the session cookie.** Code such as
@@ -240,6 +246,44 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   that is already serialised. The text is validated; invalid JSON is
   `Err InvalidInput`. Key order and number text are kept.
 
+- **`Ws.withOnFrame` — the WebSocket server keeps the frame type.**
+  `withOnMessage` gives the handler a `String` for text and binary frames
+  alike, so a handler could not tell a binary protocol message from text.
+  `withOnFrame : (WebSocketServer -> WebSocketMessage -> Task Error ()) -> …`
+  hands it `Text s` or `Binary bytes` (the client module's type, the bytes
+  unchanged). When it is set, `onMessage` is not called; a cfg without it
+  behaves as before (`runtime-go/rt/server_websocket.go`,
+  `server_websocket_frame_test.go`).
+- **Task-based WebSocket client receive:** `WebSocket.receive`,
+  `receiveWithin ms` and `forEachMessage` read a socket from a Task, so a
+  CLI, a worker or a bridge (anything that is not a TEA loop) can read
+  frames. `receive` is `Just frame`, then `Nothing` once the socket has
+  closed (on every later call too), `Err Network` on a read failure;
+  `receiveWithin` adds `Err Timeout`, which consumes no frame and leaves the
+  socket open; `forEachMessage` runs a body per frame, stops at the first
+  body `Err`, and always closes the socket. Concurrent receivers share the
+  queue. A socket has one reader: `receive` on a socket a Sub reads is
+  `Err InvalidInput`, and a Sub on a socket a Task reads is ignored and
+  logged. A Task reader applies backpressure: the runtime no longer closes
+  the socket after 30 s of a full queue, it stops reading until the Task
+  receives (TCP slows the peer), and the heartbeat does not ping, and so
+  does not time out, while the reader waits (`runtime-go/rt/websocket_task.go`,
+  `websocket_task_receive_test.go`).
+- **Embedded Sky.Live: `App.withEmbedded` / `Live.withEmbedded`.** Run a
+  Live app as one Task in a larger program (`Task.spawn (App.run app)` next
+  to a `Task.loop`). An embedded app installs no signal handler and never
+  exits the process: a port already in use, the console boot check and a
+  production session store that is unreachable become the `Err` of its
+  Task. The host owns shutdown; the app's listener closes in the drain phase
+  of the host's termination sequence, before its session store is released.
+  Applies to the `web` / `tablet` targets (`docs/skylive/embedded.md`,
+  `docs/skyapp/overview.md`, `runtime-go/rt/live_embedded_test.go`).
+- **An end-to-end WebSocket frame test.** Nothing sent a WebSocket frame end
+  to end before (the `examples/33-websocket-echo` verify file said
+  `verify-cli` did; it did not). `task_ws_embedded_live_flow.rs` builds one
+  Task program that serves `withOnFrame`, reads it back with `receive`, and
+  runs an embedded Live app next to a `Task.loop`.
+
 ### Fixed
 
 - **`Server.withHeader` changed the response it was given.** It wrote into
@@ -300,6 +344,43 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   under a `kernel_api_covers_registered_kernel_functions` gate; both were
   deleted in v0.19. It now says the `.sky` file is the one doc source for
   every stdlib module and names the gates that guard it.
+
+- **A healthy but quiet sessionless WebSocket was closed after 10 minutes.**
+  The sessionless reaper judged a socket by the time of its last delivered
+  frame only. A socket whose heartbeat pings are answered now counts as alive
+  (and is never idle-reaped), as does a Task-owned socket whose reader is
+  waiting on a full queue (`runtime-go/rt/sessionless_reaper.go`).
+- **`Server.listen` served at the call instead of building a Task.** The
+  kernel bound the port and ran `ListenAndServe` while its argument was
+  being evaluated, so `Task.spawn (Server.listen port routes)` blocked the
+  caller inside the server and the rest of `main` never ran. It now returns
+  a Task like every other effect; `main = Server.listen …` is unchanged
+  (`server_listen_deferred_test.go`).
+- **A model holding a `Json.Value`, a `Decimal` or a `Money` was not stored
+  by the DB-backed session stores.** Found while testing `Json.Decode.value`.
+  Three defects: `Json.Value` has no exported fields, so gob refused it; the
+  session-value check PANICKED on a `Value` holding an object (it read map
+  keys through an unexported field); and the gob type walk skipped every
+  SkyADT after the first, so the `decimal.Decimal` inside a `Money` was never
+  registered. The sqlite, postgres and redis stores fell back to the
+  in-process copy, and the session was lost on restart and invisible to other
+  replicas. `Json.Value` now encodes itself (exact number text and object
+  key order kept), the check skips types that encode themselves, the walk
+  visits every instance that can hold an interface, and a restarted process
+  registers `Json.Value` and `Decimal` at boot. Tested against memory, sqlite,
+  redis (miniredis) and a real PostgreSQL, and across a process restart
+  (`runtime-go/rt/json_value_gob.go`, `json_value_session_gob_test.go`). The
+  Redis pub/sub payload walk had the same skip and is fixed the same way.
+- **`cargo test -p xtask` failed: `Sky.Core.Tuple` landed with no Family-S
+  cover.** The stdlib-coverage ratchet counted 75 dark modules against a
+  ceiling of 74. `Sky.Core.Tuple` is pure, so it is now covered rather than
+  excused: two corpus cases (nominal and boundary) assert every member against
+  Elm's `Tuple` semantics (`corpus/manifest.toml` 485 -> 487 cases).
+- **A `Secret` in a model is refused by name.** It was already never written
+  (gob refuses a struct with no exported fields), but by accident of its
+  layout and with gob's generic message. The session check now names the
+  Secret and its path, and `Secret` refuses gob encoding explicitly, so no
+  later field change can write one to a store in clear.
 
 ## v0.26.1 — the app's own admins open the Sky Console, and `SKY_CONSOLE_AUTH=app` is closed (2026-09-27)
 

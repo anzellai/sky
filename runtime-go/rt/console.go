@@ -163,19 +163,27 @@ func shouldHaveConsole() bool {
 // The exit path is OS-level so tests must drive it via subprocess
 // (os/exec).
 func AssertConsoleInvariantOrExit() {
+	if err := consoleInvariantError(); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.console] FATAL: %v\n", err)
+		ExitProcess(1)
+	}
+}
+
+// consoleInvariantError is the check AssertConsoleInvariantOrExit enforces,
+// as a value: nil when the invariant holds. Embedded Sky.Live
+// (live_embedded.go) returns it as the Task's Err instead of exiting.
+func consoleInvariantError() error {
 	if !shouldHaveConsole() {
-		return
+		return nil
 	}
 	if inlineConsoleHealthy.Load() || legacyConsoleHealthy.Load() {
-		return
+		return nil
 	}
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("SKY_CONSOLE_AUTH")))
-	fmt.Fprintf(os.Stderr,
-		"[sky.console] FATAL: SKY_CONSOLE_AUTH=%s is set but neither inline nor legacy console mounted /_sky/console. "+
-			"Either link the console_app blank import (the compiler emits this for every Sky.Live + Sky.Http.Server "+
-			"app — a hand-edited main.go may have dropped it) OR set SKY_CONSOLE_AUTH=off to declare the surface "+
-			"intentionally absent.\n", mode)
-	ExitProcess(1)
+	return fmt.Errorf("SKY_CONSOLE_AUTH=%s is set but neither inline nor legacy console mounted /_sky/console. "+
+		"Either link the console_app blank import (the compiler emits this for every Sky.Live + Sky.Http.Server "+
+		"app — a hand-edited main.go may have dropped it) OR set SKY_CONSOLE_AUTH=off to declare the surface "+
+		"intentionally absent", mode)
 }
 
 // MountConsoleEndpoints wires the console routes onto a ServeMux.

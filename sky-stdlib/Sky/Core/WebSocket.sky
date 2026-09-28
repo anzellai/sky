@@ -2,8 +2,14 @@
 --
 -- Opens a long-lived bidirectional connection to a peer.  Incoming
 -- frames surface as `Sub` events on a Sky.Live update loop (mirror
--- of `Sky.Core.Http.Stream.chunks`); outbound `send` writes a text
--- or binary frame from the calling goroutine.
+-- of `Sky.Core.Http.Stream.chunks`), or, in a Task program, through
+-- `receive` / `receiveWithin` / `forEachMessage`; outbound `send`
+-- writes a text or binary frame from the calling goroutine.
+--
+-- One reader per socket: the first consumer (a Sub or a Task
+-- receive) owns its frames.  `receive` on a socket a Sub reads
+-- returns `Err InvalidInput`; a Sub on a socket a Task reads is
+-- ignored (and logged).
 --
 -- Driving use cases: bidirectional LLM chat, collab editor ops,
 -- multiplayer game state, financial feeds.  When you need request
@@ -38,7 +44,23 @@
 -- (30 s).  The bounded read channel (64 frames) provides
 -- per-socket backpressure to the upstream when the user's update
 -- loop falls behind — Sky.Live's existing
--- `sky_live_sse_drops_total` covers spillover.
+-- `sky_live_sse_drops_total` covers spillover.  A Sub that stops
+-- draining for 30 s loses the socket.  A Task reader never does: the
+-- runtime stops reading from the network until the Task receives
+-- again, so TCP slows the peer, and the socket stays open.
+--
+-- Task use (a CLI, a worker, a bridge):
+--
+--     WebSocket.connect "wss://feed.example.com"
+--         |> Task.andThen
+--             (\sock ->
+--                 WebSocket.forEachMessage sock
+--                     (\frame ->
+--                         case frame of
+--                             Text s -> Log.println s
+--                             Binary _ -> Task.succeed ()
+--                     )
+--             )
 --
 -- See `examples/33-websocket-echo` for the canonical pattern.
 module Sky.Core.WebSocket exposing
@@ -56,6 +78,9 @@ module Sky.Core.WebSocket exposing
     , sendBinary
     , close
     , closeWithCode
+    , receive
+    , receiveWithin
+    , forEachMessage
     , onOpen
     , onMessage
     , onClose
@@ -238,6 +263,72 @@ closeCodeToInt code =
 
         Custom n ->
             n
+
+
+receiveRaw : Int -> Task Error (Maybe WebSocketMessage)
+receiveRaw =
+    Ffi.kernel "WebSocket_receive"
+
+
+-- | `receive sock` — wait for the next frame, from a Task.
+--
+--   * `Just (Text s)` / `Just (Binary bytes)` — the next frame, in order.
+--   * `Nothing` — the socket closed cleanly; every later call is also
+--     `Nothing`.
+--   * `Err` (`Network`) — the read failed; the socket is closed.
+--   * `Err` (`InvalidInput`) — a Sub (`onMessage` & co.) already reads
+--     this socket.  A socket has one reader.
+--
+-- Several Tasks may receive from one socket at once; each frame goes to
+-- one of them.  A waiting `receive` wakes when the socket closes, returns
+-- any frame still queued, then `Nothing`.
+receive : WebSocket -> Task Error (Maybe WebSocketMessage)
+receive sock =
+    case sock of
+
+        WebSocket raw ->
+            receiveRaw raw
+
+
+receiveWithinRaw : Int -> Int -> Task Error (Maybe WebSocketMessage)
+receiveWithinRaw =
+    Ffi.kernel "WebSocket_receiveWithin"
+
+
+-- | `receiveWithin ms sock` — `receive`, but fail with `Err` (`Timeout`)
+-- when no frame arrives within `ms` milliseconds.  A timeout consumes no
+-- frame and leaves the socket open: call again to keep waiting.  A
+-- timeout of 0 or less returns a frame that is already queued, else
+-- `Err Timeout` at once.
+receiveWithin : Int -> WebSocket -> Task Error (Maybe WebSocketMessage)
+receiveWithin ms sock =
+    case sock of
+
+        WebSocket raw ->
+            receiveWithinRaw ms raw
+
+
+forEachMessageRaw : Int -> (WebSocketMessage -> Task Error ()) -> Task Error ()
+forEachMessageRaw =
+    Ffi.kernel "WebSocket_forEachMessage"
+
+
+-- | `forEachMessage sock body` — run `body` on every frame, in order,
+-- until the socket closes.
+--
+--   * Clean close: `Task.succeed ()`.
+--   * Read failure: `Task.fail` with the `Network` error.
+--   * `body` fails: stop at once, close the socket, return that error.
+--
+-- The socket is closed when `forEachMessage` returns, on every path (like
+-- `Sky.Core.Http.Stream.forEachChunk`).  `body` runs on the calling Task,
+-- so a slow `body` slows the peer (TCP backpressure); no frame is dropped.
+forEachMessage : WebSocket -> (WebSocketMessage -> Task Error ()) -> Task Error ()
+forEachMessage sock body =
+    case sock of
+
+        WebSocket raw ->
+            forEachMessageRaw raw body
 
 
 -- | Internal — direct kernel alias.  `kind` selects which event

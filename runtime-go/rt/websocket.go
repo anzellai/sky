@@ -38,9 +38,14 @@
 //     Cleanup is local to the session — markDone walks every socket
 //     and closes it (mirrors http_stream.go).
 //
-//   - Bounded channel (cap 64) per socket for incoming frames; reader
-//     goroutine drops with a consumer-stall timeout (30s) if the
-//     drain consumer wedges.
+//   - Bounded channel (cap 64) per socket for incoming frames. The
+//     socket has ONE reader, claimed by the first consumer: a Sub
+//     (onOpen/onMessage/onClose/onError) or a Task (receive /
+//     receiveWithin / forEachMessage, websocket_task.go). For a Sub (or
+//     no reader yet) the reader goroutine gives up with a consumer-stall
+//     timeout (30s) if the drain consumer wedges. For a Task reader it
+//     waits instead: TCP backpressure slows the peer, and the parked
+//     reader counts as alive for the heartbeat and the reaper.
 //
 //   - Heartbeat: nhooyr/websocket sends pings every `pingInterval`
 //     (default 30s) via `Ping()` inside a separate goroutine. Server
@@ -74,18 +79,27 @@ import (
 // Per-socket constants
 // ═════════════════════════════════════════════════════════════════════
 
-const (
-	// wsReadChanBuffer — bounded channel capacity per socket. The
-	// reader goroutine drops with a consumer-stall timeout if the
-	// drain consumer falls this far behind. 64 matches typical
-	// bursty WebSocket traffic (collab editor ops, multiplayer
-	// game state, financial ticks) without over-allocating idle
-	// sockets.
-	wsReadChanBuffer = 64
+// Tunables. Variables, not constants, so a test can shrink them; nothing in
+// the runtime writes them.
+var (
+	// wsReadChanCap — bounded channel capacity per socket. 64 matches
+	// typical bursty WebSocket traffic (collab editor ops, multiplayer
+	// game state, financial ticks) without over-allocating idle sockets.
+	wsReadChanCap = 64
 
-	// wsConsumerTimeout — if the reader goroutine cannot push an
-	// event onto the channel within this window, it logs + abandons
-	// the socket. Bounds the runaway-goroutine class.
+	// wsConsumerStallTimeout — if the reader goroutine cannot push an
+	// event onto the channel within this window, and no Task owns the
+	// socket, it logs + abandons the socket. Bounds the runaway-goroutine
+	// class for a Sub that stopped draining.
+	wsConsumerStallTimeout = 30 * time.Second
+
+	// wsPingTimeout — how long a heartbeat ping waits for its pong.
+	wsPingTimeout = 10 * time.Second
+)
+
+const (
+	// wsConsumerTimeout — the write timeout for send / sendBinary (and the
+	// server-side send kernels).
 	wsConsumerTimeout = 30 * time.Second
 
 	// wsDefaultPingInterval — nhooyr/websocket's Ping cadence by
@@ -154,10 +168,54 @@ type wsHandle struct {
 
 	// lastActivityNano — unix-nano of the last sign of life. See the
 	// identically-named field on streamHandle: read only by the sessionless
-	// reaper to reap an OPEN sessionless socket that has gone silent.
+	// reaper to reap an OPEN sessionless socket that has gone silent. A
+	// delivered frame and an answered ping both refresh it.
 	lastActivityNano atomic.Int64
 
+	// owner — which consumer reads sh.ch: wsOwnerNone until the first Sub
+	// or Task claims it, then fixed for the socket's life. A socket has one
+	// reader, so a second kind of consumer is refused instead of racing
+	// the first for frames (websocket_task.go).
+	owner atomic.Int32
+
+	// parked — the reader goroutine is blocked because sh.ch is full.
+	// While parked it does not call conn.Read, so a pong cannot be read;
+	// the heartbeat must not read a missing pong as a dead peer.
+	// parkEpoch counts parks so a ping that overlapped one is recognised.
+	parked    atomic.Bool
+	parkEpoch atomic.Int64
+
+	// pingOK — the most recent heartbeat ping was answered. The reaper
+	// keeps such a socket: the peer is demonstrably there.
+	pingOK atomic.Bool
+
 	closeOnce sync.Once
+}
+
+// Socket owners (wsHandle.owner).
+const (
+	wsOwnerNone int32 = iota
+	wsOwnerSub
+	wsOwnerTask
+)
+
+// claim makes `want` the socket's reader if it has none yet. It reports
+// whether `want` is (now) the owner.
+func (sh *wsHandle) claim(want int32) bool {
+	if sh.owner.CompareAndSwap(wsOwnerNone, want) {
+		return true
+	}
+	return sh.owner.Load() == want
+}
+
+// reaperKeepAlive tells the sessionless reaper that an idle-looking socket
+// is alive: its last ping was answered, or a Task owns it and its reader is
+// parked on a full queue (the backlog is itself proof of a live peer).
+func (sh *wsHandle) reaperKeepAlive() bool {
+	if sh.pingOK.Load() {
+		return true
+	}
+	return sh.parked.Load() && sh.owner.Load() == wsOwnerTask
 }
 
 func (sh *wsHandle) touch()                      { sh.lastActivityNano.Store(time.Now().UnixNano()) }
@@ -180,9 +238,14 @@ func (sh *wsHandle) Close() {
 
 func (sh *wsHandle) IsClosed() bool { return sh.closed.Load() }
 
-// deliver pushes one event onto sh.ch with the consumer-stall timeout.
-// Returns true if the event landed; false if the consumer stalled past
-// wsConsumerTimeout (signal to abandon the connection).
+// deliver pushes one event onto sh.ch. Returns true if the event landed
+// (or the socket closed meanwhile); false if the consumer stalled past
+// wsConsumerStallTimeout (signal to abandon the connection).
+//
+// A Task-owned socket never stalls out: the reader waits for the Task to
+// receive, which stops conn.Read and so lets TCP backpressure slow the
+// peer. A Task reads when it is ready, not on a schedule, so a 30 s stall
+// rule would close a healthy socket under a consumer that is merely busy.
 func (sh *wsHandle) deliver(ev wsEvent) bool {
 	sh.touch()
 	select {
@@ -190,17 +253,35 @@ func (sh *wsHandle) deliver(ev wsEvent) bool {
 		return true
 	default:
 	}
-	t := time.NewTimer(wsConsumerTimeout)
-	defer t.Stop()
-	select {
-	case sh.ch <- ev:
-		return true
-	case <-sh.done:
-		return true
-	case <-t.C:
-		fmt.Printf("[sky.websocket] consumer stall on socket %d (event kind=%d dropped after %s)\n",
-			sh.id, ev.kind, wsConsumerTimeout)
-		return false
+	sh.parkEpoch.Add(1)
+	sh.parked.Store(true)
+	defer sh.parked.Store(false)
+	for {
+		if sh.owner.Load() == wsOwnerTask {
+			select {
+			case sh.ch <- ev:
+				return true
+			case <-sh.done:
+				return true
+			}
+		}
+		t := time.NewTimer(wsConsumerStallTimeout)
+		select {
+		case sh.ch <- ev:
+			t.Stop()
+			return true
+		case <-sh.done:
+			t.Stop()
+			return true
+		case <-t.C:
+			if sh.owner.Load() == wsOwnerTask {
+				// A Task claimed the socket while we waited: wait for it.
+				continue
+			}
+			fmt.Printf("[sky.websocket] consumer stall on socket %d (event kind=%d dropped after %s)\n",
+				sh.id, ev.kind, wsConsumerStallTimeout)
+			return false
+		}
 	}
 }
 
@@ -415,7 +496,7 @@ func doWebSocketConnect(url string, headers http.Header, tlsCfg *tls.Config, dia
 	sh := &wsHandle{
 		id:     nextWsID(),
 		conn:   conn,
-		ch:     make(chan wsEvent, wsReadChanBuffer),
+		ch:     make(chan wsEvent, wsReadChanCap),
 		ctx:    connCtx,
 		cancel: connCancel,
 		done:   make(chan struct{}),
@@ -509,15 +590,35 @@ func wsHeartbeat(sh *wsHandle, interval time.Duration) {
 		AlsoStop: stopped,
 		Report:   periodicReport,
 		Work: func(time.Time) error {
-			pingCtx, cancel := context.WithTimeout(sh.ctx, 10*time.Second)
+			// A parked reader (queue full, consumer busy) is not calling
+			// conn.Read, so the pong could not be read: a ping now would
+			// time out and close a healthy socket. The unread backlog is
+			// proof enough that the peer is alive.
+			if sh.parked.Load() {
+				sh.touch()
+				return nil
+			}
+			epoch := sh.parkEpoch.Load()
+			pingCtx, cancel := context.WithTimeout(sh.ctx, wsPingTimeout)
 			err := sh.conn.Ping(pingCtx)
 			cancel()
 			if err != nil {
+				if sh.parked.Load() || sh.parkEpoch.Load() != epoch {
+					// The reader parked during the ping: the pong is
+					// queued behind frames nobody has read yet.
+					return nil
+				}
 				// Peer dead — close the connection so the reader
 				// surfaces the error.
+				sh.pingOK.Store(false)
 				sh.Close()
 				close(stopped)
+				return nil
 			}
+			// An answered ping is a sign of life: the sessionless reaper
+			// must not close a quiet socket whose peer is still there.
+			sh.pingOK.Store(true)
+			sh.touch()
 			return nil
 		},
 	})
@@ -788,6 +889,17 @@ func (app *liveApp) applyWsSubsDiff(sess *liveSession, desired map[string]subT) 
 		// Sanity-check the socket exists.
 		sh := lookupWs(sess, leaf.socketID)
 		if sh == nil {
+			continue
+		}
+		// One reader per socket. A Task that already reads this socket
+		// (WebSocket.receive / forEachMessage) keeps it: registering the
+		// Sub would start a drain goroutine that steals its frames.
+		if !sh.claim(wsOwnerSub) {
+			id := leaf.socketID
+			logOnce(fmt.Sprintf("ws-sub-refused-%d", id), func() {
+				fmt.Printf("[sky.websocket] Sub on socket %d ignored: a Task reads this socket "+
+					"(WebSocket.receive / forEachMessage). A socket has one reader.\n", id)
+			})
 			continue
 		}
 		reg := &wsSubReg{

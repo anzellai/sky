@@ -51,6 +51,7 @@ module Sky.Http.Server.WebSocket exposing
     , defaultCfg
     , withOnConnect
     , withOnMessage
+    , withOnFrame
     , withOnClose
     , withOnError
     , withMaxMessageBytes
@@ -66,6 +67,7 @@ import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.Task as Task
+import Sky.Core.WebSocket exposing (WebSocketMessage(..))
 import Sky.Http.Server exposing (Request, Response)
 
 -- | Opaque handle to one connected peer.  The wrapped `Int` is the
@@ -79,12 +81,18 @@ type WebSocketServer
 -- Constructed via `defaultCfg` + `with*` builders so future field
 -- additions don't break call sites.
 --
--- All four callbacks are Task-returning; failures are logged and
+-- All callbacks are Task-returning; failures are logged and
 -- isolated per-peer (an erroring `onMessage` on one client does
 -- not abort the upgrade loop).
+--
+-- `onFrame` + `frameMode` are set together by `withOnFrame`. When
+-- `frameMode` is `True` every frame goes to `onFrame` with its type
+-- (`Text` / `Binary`) and `onMessage` is not called.
 type alias WebSocketServerCfg msg =
     { onConnect : WebSocketServer -> Task Error ()
     , onMessage : WebSocketServer -> String -> Task Error ()
+    , onFrame : WebSocketServer -> WebSocketMessage -> Task Error ()
+    , frameMode : Bool
     , onClose : WebSocketServer -> Task Error ()
     , onError : WebSocketServer -> Error -> Task Error ()
     , maxMessageBytes : Int
@@ -100,6 +108,8 @@ defaultCfg : WebSocketServerCfg msg
 defaultCfg =
     { onConnect = \_ -> Task.succeed ()
     , onMessage = \_ _ -> Task.succeed ()
+    , onFrame = \_ _ -> Task.succeed ()
+    , frameMode = False
     , onClose = \_ -> Task.succeed ()
     , onError = \_ _ -> Task.succeed ()
     , maxMessageBytes = 1048576
@@ -115,6 +125,24 @@ withOnConnect cb cfg =
 withOnMessage : (WebSocketServer -> String -> Task Error ()) -> WebSocketServerCfg msg -> WebSocketServerCfg msg
 withOnMessage cb cfg =
     { cfg | onMessage = cb }
+
+
+-- | `withOnFrame cb cfg` — receive every frame WITH its type. `cb` gets
+-- `Text s` for a text frame and `Binary bytes` for a binary frame
+-- (`WebSocketMessage` from `Sky.Core.WebSocket`; the bytes arrive
+-- unchanged in the `String`). Once set, `onMessage` is not called:
+-- `withOnMessage` gives a `String` for both frame types, so it cannot
+-- tell a binary protocol message from text.
+--
+--     import Sky.Core.WebSocket exposing (WebSocketMessage(..))
+--
+--     onFrame sock frame =
+--         case frame of
+--             Text s -> Ws.sendToClient sock ("text: " ++ s)
+--             Binary b -> Ws.sendBinaryToClient sock b
+withOnFrame : (WebSocketServer -> WebSocketMessage -> Task Error ()) -> WebSocketServerCfg msg -> WebSocketServerCfg msg
+withOnFrame cb cfg =
+    { cfg | onFrame = cb, frameMode = True }
 
 
 withOnClose : (WebSocketServer -> Task Error ()) -> WebSocketServerCfg msg -> WebSocketServerCfg msg

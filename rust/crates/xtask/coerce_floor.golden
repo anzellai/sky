@@ -164,6 +164,18 @@
 #     retired id restores nothing. The one new token is the field's copy into
 #     the Live wiring record, the same narrowing the sibling `persist` field
 #     already pays there. Only the one durable example builds that record.
+#
+# ── Recorded transition, 2026-09-28 — v0.27 embedded Sky.Live ──
+#     narrow  13031 -> 13190 (+159) over 35 rows, +2 to +8 each; adapter and
+#     dispatch unchanged (0). Full coverage: 75 of 75 golden rows measured.
+#     Cause (2), a STDLIB source change: the `Std.App` `App` record gained an
+#     `embedded : Bool` field (`App.withEmbedded`, read by `runLive` to pass
+#     `Live.withEmbedded`). Every generic-erase copy of the App record narrows
+#     each field once, so each copy site gains one `rt.AsBool(_m.Embedded)`
+#     (verified on 20-cli-counter: exactly its 3 new tokens, all that form).
+#     Projects that never build an `App` record (33-websocket-echo,
+#     32-sse-relay, the 40-55 language examples) did not move; each new token
+#     is a succeeding bool assertion, as the sibling fields already pay there.
 00-standard-libs	adapter=0	dispatch=0	narrow=215
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=11
@@ -173,35 +185,35 @@
 06-json	adapter=0	dispatch=0	narrow=79
 07-todo-cli	adapter=0	dispatch=0	narrow=177
 08-notes-app	adapter=0	dispatch=0	narrow=462
-09-live-counter	adapter=0	dispatch=0	narrow=137
-10-live-component	adapter=0	dispatch=0	narrow=140
-12-skyvote	adapter=0	dispatch=0	narrow=506
-13-skyshop	adapter=0	dispatch=0	narrow=1479
+09-live-counter	adapter=0	dispatch=0	narrow=142
+10-live-component	adapter=0	dispatch=0	narrow=145
+12-skyvote	adapter=0	dispatch=0	narrow=511
+13-skyshop	adapter=0	dispatch=0	narrow=1485
 14-task-demo	adapter=0	dispatch=0	narrow=10
 15-http-server	adapter=0	dispatch=0	narrow=19
-16-skychess	adapter=0	dispatch=0	narrow=614
-17-skymon	adapter=0	dispatch=0	narrow=570
-18-job-queue	adapter=0	dispatch=0	narrow=243
-19-skyforum	adapter=0	dispatch=0	narrow=140
-20-cli-counter	adapter=0	dispatch=0	narrow=53
-21-tui-stopwatch	adapter=0	dispatch=0	narrow=60
-22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=66
-23-tui-todo	adapter=0	dispatch=0	narrow=84
-24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=90
-25-sky-console	adapter=0	dispatch=0	narrow=94
-26-ui-showcase	adapter=0	dispatch=0	narrow=355
-27-multi-session-chat	adapter=0	dispatch=0	narrow=236
-28-streaming-chat	adapter=0	dispatch=0	narrow=101
-29-webview-threejs-spike	adapter=0	dispatch=0	narrow=62
+16-skychess	adapter=0	dispatch=0	narrow=619
+17-skymon	adapter=0	dispatch=0	narrow=575
+18-job-queue	adapter=0	dispatch=0	narrow=248
+19-skyforum	adapter=0	dispatch=0	narrow=144
+20-cli-counter	adapter=0	dispatch=0	narrow=56
+21-tui-stopwatch	adapter=0	dispatch=0	narrow=63
+22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=69
+23-tui-todo	adapter=0	dispatch=0	narrow=87
+24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=95
+25-sky-console	adapter=0	dispatch=0	narrow=99
+26-ui-showcase	adapter=0	dispatch=0	narrow=359
+27-multi-session-chat	adapter=0	dispatch=0	narrow=241
+28-streaming-chat	adapter=0	dispatch=0	narrow=106
+29-webview-threejs-spike	adapter=0	dispatch=0	narrow=66
 30-sse-server-demo	adapter=0	dispatch=0	narrow=17
-31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=75
+31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=79
 32-sse-relay	adapter=0	dispatch=0	narrow=21
 33-websocket-echo	adapter=0	dispatch=0	narrow=6
-34-multi-tier-console	adapter=0	dispatch=0	narrow=80
+34-multi-tier-console	adapter=0	dispatch=0	narrow=85
 35-composite-generics	adapter=0	dispatch=0	narrow=162
 36-composite-server	adapter=0	dispatch=0	narrow=320
-37-composite-live-shop	adapter=0	dispatch=0	narrow=421
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=325
+37-composite-live-shop	adapter=0	dispatch=0	narrow=427
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=333
 40-generic-adt-field	adapter=0	dispatch=0	narrow=5
 41-nested-curry	adapter=0	dispatch=0	narrow=7
 42-poly-record	adapter=0	dispatch=0	narrow=3
@@ -214,28 +226,28 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=2
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=475
+52-blog-analytics	adapter=0	dispatch=0	narrow=480
 53-record-update-map	adapter=0	dispatch=0	narrow=25
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=5
 55-store-partial-update	adapter=0	dispatch=0	narrow=135
-61-app-kanban	adapter=0	dispatch=0	narrow=273
-62-app-notes	adapter=0	dispatch=0	narrow=455
-63-app-chat	adapter=0	dispatch=0	narrow=454
-64-app-native	adapter=0	dispatch=0	narrow=350
+61-app-kanban	adapter=0	dispatch=0	narrow=276
+62-app-notes	adapter=0	dispatch=0	narrow=458
+63-app-chat	adapter=0	dispatch=0	narrow=457
+64-app-native	adapter=0	dispatch=0	narrow=353
 65-metadata-service	adapter=0	dispatch=0	narrow=41
 66-slack-agent	adapter=0	dispatch=0	narrow=160
-67-durable-counter	adapter=0	dispatch=0	narrow=90
-apps/dispatch	adapter=0	dispatch=0	narrow=469
-apps/fieldbook	adapter=0	dispatch=0	narrow=708
+67-durable-counter	adapter=0	dispatch=0	narrow=94
+apps/dispatch	adapter=0	dispatch=0	narrow=475
+apps/fieldbook	adapter=0	dispatch=0	narrow=716
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=571
+apps/ledger	adapter=0	dispatch=0	narrow=577
 apps/relay	adapter=0	dispatch=0	narrow=244
-examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=83
-examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=82
+examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=88
+examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=87
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=276
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=227
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/console	adapter=0	dispatch=0	narrow=329
-sky-bundled/doc	adapter=0	dispatch=0	narrow=69
+sky-bundled/console	adapter=0	dispatch=0	narrow=331
+sky-bundled/doc	adapter=0	dispatch=0	narrow=72
 test_pkg	adapter=0	dispatch=0	narrow=1

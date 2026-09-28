@@ -376,16 +376,18 @@ func encodePubSubPayload(v any) ([]byte, error) {
 // type sitting at an interface boundary — the top-level value, `any`
 // map-values, `any` slice-elements, `any` struct fields — INCLUDING
 // unnamed composites like map[string]string that the store's walkGob
-// skips (it registers only PkgPath'd structs). Depth-bounded + type-set
-// guarded like walkGobSeen so opaque FFI handles with pointer cycles
+// skips (it registers only PkgPath'd structs). Walks every instance of a
+// type that can hold an interface (two SkyADTs nested in each other carry
+// different payloads; see walkGobSeen) and visits each pointer / map /
+// slice backing array once, so opaque FFI handles with pointer cycles
 // can't overflow the stack.
 func registerWirePayloadTypes(v any) {
 	gobRegMu.Lock()
 	defer gobRegMu.Unlock()
-	registerWireVal(reflect.ValueOf(v), make(map[reflect.Type]bool, 16), 0)
+	registerWireVal(reflect.ValueOf(v), make(map[uintptr]bool, 16), 0)
 }
 
-func registerWireVal(rv reflect.Value, seen map[reflect.Type]bool, depth int) {
+func registerWireVal(rv reflect.Value, seenRefs map[uintptr]bool, depth int) {
 	if !rv.IsValid() || depth > 64 {
 		return
 	}
@@ -397,27 +399,45 @@ func registerWireVal(rv reflect.Value, seen map[reflect.Type]bool, depth int) {
 			gob.Register(reflect.Zero(t).Interface())
 		}()
 	}
+	if rv.Kind() != reflect.Interface && !gobTypeHoldsInterface(t) {
+		// Static inside: nothing below needs registering.
+		return
+	}
 	switch rv.Kind() {
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface:
 		if !rv.IsNil() {
-			registerWireVal(rv.Elem(), seen, depth+1)
+			registerWireVal(rv.Elem(), seenRefs, depth+1)
 		}
-	case reflect.Struct:
-		if seen[t] {
+	case reflect.Ptr:
+		if rv.IsNil() || seenRefs[rv.Pointer()] {
 			return
 		}
-		seen[t] = true
+		seenRefs[rv.Pointer()] = true
+		registerWireVal(rv.Elem(), seenRefs, depth+1)
+	case reflect.Struct:
 		for i := 0; i < rv.NumField(); i++ {
-			registerWireVal(rv.Field(i), seen, depth+1)
+			registerWireVal(rv.Field(i), seenRefs, depth+1)
 		}
-	case reflect.Slice, reflect.Array:
+	case reflect.Slice:
+		if rv.Len() == 0 || seenRefs[rv.Pointer()] {
+			return
+		}
+		seenRefs[rv.Pointer()] = true
 		for i := 0; i < rv.Len(); i++ {
-			registerWireVal(rv.Index(i), seen, depth+1)
+			registerWireVal(rv.Index(i), seenRefs, depth+1)
+		}
+	case reflect.Array:
+		for i := 0; i < rv.Len(); i++ {
+			registerWireVal(rv.Index(i), seenRefs, depth+1)
 		}
 	case reflect.Map:
+		if rv.IsNil() || seenRefs[rv.Pointer()] {
+			return
+		}
+		seenRefs[rv.Pointer()] = true
 		it := rv.MapRange()
 		for it.Next() {
-			registerWireVal(it.Value(), seen, depth+1)
+			registerWireVal(it.Value(), seenRefs, depth+1)
 		}
 	}
 }

@@ -264,7 +264,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1184,
+      "expected_assertions": 1213,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -287,7 +287,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 339,
+      "expected_assertions": 341,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -347,7 +347,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 485,
+      "expected_assertions": 487,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -615,12 +615,6 @@
           "tests/conformance"
         ]
       },
-      "Sky.Core.WebSocket": {
-        "path": "tests/Core",
-        "units": [
-          "tests/Core"
-        ]
-      },
       "Sky.Http.Middleware": {
         "path": "apps/relay",
         "units": [
@@ -703,7 +697,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1987,
+    "stdlib_entries": 1993,
     "stdlib_modules": 102,
     "surfaces_covered": 152,
     "surfaces_covered_pct": 90.5,
@@ -3127,6 +3121,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -6642,6 +6641,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/Core (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -6915,6 +6919,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
@@ -12569,10 +12578,9 @@
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
-      "count": 2,
+      "count": 1,
       "modules": [
-        "Sky.Core.Char",
-        "Sky.Core.WebSocket"
+        "Sky.Core.Char"
       ]
     },
     "surfaces_with_zero_new_cover": {
@@ -12783,7 +12791,7 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 12,
+          "count": 11,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
@@ -12795,8 +12803,7 @@
             "map5",
             "mapError",
             "parallelN",
-            "retryAlways",
-            "spawn"
+            "retryAlways"
           ]
         },
         "Sky.Core.Time": {
@@ -12816,21 +12823,17 @@
           ]
         },
         "Sky.Core.WebSocket": {
-          "count": 13,
+          "count": 9,
           "symbols": [
-            "WebSocket",
             "WebSocketCfg",
-            "WebSocketMessage",
-            "close",
             "closeWithCode",
-            "connect",
             "connectWith",
+            "forEachMessage",
             "onClose",
             "onError",
             "onMessage",
             "onOpen",
-            "send",
-            "sendBinary"
+            "receive"
           ]
         },
         "Sky.Http.Server": {
@@ -12848,12 +12851,11 @@
           ]
         },
         "Sky.Http.Server.WebSocket": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "WebSocketServerCfg",
             "broadcast",
-            "closeClient",
-            "sendBinaryToClient"
+            "closeClient"
           ]
         },
         "Sky.Test": {
@@ -12934,10 +12936,9 @@
           ]
         },
         "Std.App": {
-          "count": 18,
+          "count": 17,
           "symbols": [
             "BaseConfig",
-            "Config",
             "DesktopOpts",
             "DurableWiring",
             "MobileOpts",
@@ -13297,7 +13298,7 @@
           ]
         },
         "Std.Live": {
-          "count": 25,
+          "count": 26,
           "symbols": [
             "AppConfig",
             "Route",
@@ -13310,6 +13311,7 @@
             "withConsoleAuth",
             "withConsoleAuthModel",
             "withDurable",
+            "withEmbedded",
             "withGuard",
             "withHead",
             "withIdleEvict",
@@ -13623,8 +13625,8 @@
           ]
         }
       },
-      "count": 647,
-      "pct_of_denominator": 32.6
+      "count": 641,
+      "pct_of_denominator": 32.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -13833,7 +13835,7 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 13,
+          "count": 12,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
@@ -13846,8 +13848,7 @@
             "map5",
             "mapError",
             "parallelN",
-            "retryAlways",
-            "spawn"
+            "retryAlways"
           ]
         },
         "Sky.Core.Time": {
@@ -13867,22 +13868,20 @@
           ]
         },
         "Sky.Core.WebSocket": {
-          "count": 14,
+          "count": 12,
           "symbols": [
             "CloseCode",
             "WebSocket",
             "WebSocketCfg",
             "WebSocketMessage",
-            "close",
             "closeWithCode",
-            "connect",
             "connectWith",
+            "forEachMessage",
             "onClose",
             "onError",
             "onMessage",
             "onOpen",
-            "send",
-            "sendBinary"
+            "receive"
           ]
         },
         "Sky.Http.Server": {
@@ -13901,12 +13900,11 @@
           ]
         },
         "Sky.Http.Server.WebSocket": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "WebSocketServerCfg",
             "broadcast",
-            "closeClient",
-            "sendBinaryToClient"
+            "closeClient"
           ]
         },
         "Sky.Test": {
@@ -14415,7 +14413,7 @@
           ]
         },
         "Std.Live": {
-          "count": 28,
+          "count": 29,
           "symbols": [
             "AppConfig",
             "Route",
@@ -14431,6 +14429,7 @@
             "withConsoleAuth",
             "withConsoleAuthModel",
             "withDurable",
+            "withEmbedded",
             "withGuard",
             "withHead",
             "withIdleEvict",
@@ -14746,8 +14745,8 @@
           ]
         }
       },
-      "count": 727,
-      "pct_of_denominator": 36.6
+      "count": 724,
+      "pct_of_denominator": 36.3
     }
   },
   "units": [
@@ -14767,12 +14766,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 44,
+      "modules_imported": 47,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 268,
-      "refs_qualified": 256,
+      "refs_generous": 291,
+      "refs_qualified": 275,
       "role": "Layer2",
-      "sky_files": 153,
+      "sky_files": 154,
       "sky_toml_sections": []
     },
     {

@@ -422,9 +422,10 @@ pub static GATES: &[Gate] = &[
                 // defect (+9 cases, 432 → 441) surfaced here, and the Family-S
                 // shape close (+40 cases, 441 → 481) after it, and the
                 // Sky.Core.Secret Family-S surface (+2 cases, 481 → 483), and
-                // the Std.Image Family-S surface (+2 cases, 483 → 485).
-                from: "n_min = 485",
-                to: "n_min = 486",
+                // the Std.Image Family-S surface (+2 cases, 483 → 485), and
+                // the Sky.Core.Tuple Family-S surface (+2 cases, 485 → 487).
+                from: "n_min = 487",
+                to: "n_min = 488",
             },
         }]),
         body: bodies::corpus_manifest,

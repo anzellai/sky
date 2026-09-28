@@ -179,6 +179,7 @@ pub const SURFACE: Axis = Axis::new(
         "compression",
         "secret",
         "image",
+        "tuple",
     ],
 );
 

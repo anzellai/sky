@@ -27,16 +27,16 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 102 |
-| stdlib entries (denominator) | 1987 |
+| stdlib entries (denominator) | 1993 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.8% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 727 | 36.6% |
-| symbols unreferenced under the generous rule | 647 | 32.6% |
-| stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 2 | — |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 724 | 36.3% |
+| symbols unreferenced under the generous rule | 641 | 32.2% |
+| stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
 
@@ -61,7 +61,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 23 |
-| stdlib modules owned by exactly one unit of any role | 19 |
+| stdlib modules owned by exactly one unit of any role | 18 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **2** |
 | **lost if `examples/` retired** — config sections | **1** |

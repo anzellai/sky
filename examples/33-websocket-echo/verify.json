@@ -1,5 +1,5 @@
 {
-    "_comment": "verify scenarios for the WebSocket echo demo (Sky.Http.Server.WebSocket, v0.15.46). The HTTP root returns a landing page; the actual WebSocket round-trip is exercised in scripts/verify-cli.sh + runtime-go/rt/websocket_test.go (TestWebSocket_RoundTrip + 18 others). This file just keeps the sweep gate green by hitting / for HTTP-200 + landing-page content.",
+    "_comment": "verify scenarios for the WebSocket echo demo (Sky.Http.Server.WebSocket, v0.15.46). The HTTP root returns a landing page; the WebSocket frame round-trip (text and binary, with their type) is exercised end to end by rust/crates/sky/tests/task_ws_embedded_live_flow.rs and at the runtime level by runtime-go/rt/websocket_test.go, websocket_task_receive_test.go and server_websocket_frame_test.go. This file only hits / for HTTP-200 + landing-page content.",
     "requests": [
         { "method": "GET", "path": "/", "expectStatus": 200, "expectBody": ["WebSocket echo demo"] }
     ]

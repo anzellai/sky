@@ -173,6 +173,8 @@ func ServerWebSocket_upgrade(_ any, cfgArg any) any {
 	cfg := webSocketUpgradeCfg{
 		onConnect:       recordField(cfgArg, "OnConnect", "onConnect"),
 		onMessage:       recordField(cfgArg, "OnMessage", "onMessage"),
+		onFrame:         recordField(cfgArg, "OnFrame", "onFrame"),
+		frameMode:       AsBoolOrFalse(recordField(cfgArg, "FrameMode", "frameMode")),
 		onClose:         recordField(cfgArg, "OnClose", "onClose"),
 		onError:         recordField(cfgArg, "OnError", "onError"),
 		maxMessageBytes: wsDefaultMaxMessageBytes,
@@ -330,7 +332,8 @@ func ServerWebSocket_closeClient(sidArg any) any {
 //     announcement, etc).  If onConnect errors, the socket closes
 //     immediately.
 //
-//   - Each successful Read frame dispatches onMessage(sock, text).
+//   - Each successful Read frame dispatches onFrame(sock, Text/Binary)
+//     when the cfg set withOnFrame, else onMessage(sock, text).
 //     The loop continues until the peer closes, a read errors, OR
 //     the user calls closeClient.
 //
@@ -484,15 +487,24 @@ func serveWebSocketUpgrade(w http.ResponseWriter, r *http.Request, cfg webSocket
 			}
 			return
 		}
-		var payload string
-		if typ == websocket.MessageBinary {
-			// Sky's String covers byte content — Bytes alias = String.
-			payload = string(data)
-		} else {
-			payload = string(data)
+		// withOnFrame: the handler receives the frame type as the client
+		// module's WebSocketMessage (Text / Binary). The bytes are passed
+		// unchanged (Sky.Core.Bytes alias = String).
+		if cfg.frameMode && cfg.onFrame != nil {
+			ev := wsEvent{kind: wsMessageEv}
+			if typ == websocket.MessageBinary {
+				ev.isBinary = true
+				ev.binary = string(data)
+			} else {
+				ev.text = string(data)
+			}
+			runWsServerCallback2(cfg.onFrame, sockADT, buildWebSocketMessageValue(ev), "onFrame")
+			continue
 		}
+		// onMessage (the original contract): text and binary both arrive
+		// as a String.
 		if cfg.onMessage != nil {
-			runWsServerCallback2(cfg.onMessage, sockADT, payload, "onMessage")
+			runWsServerCallback2(cfg.onMessage, sockADT, string(data), "onMessage")
 		}
 	}
 }

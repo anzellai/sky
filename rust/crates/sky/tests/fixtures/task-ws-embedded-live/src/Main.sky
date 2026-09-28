@@ -1,0 +1,195 @@
+module Main exposing (main)
+
+-- A Task program (not a TEA loop) that exercises three v0.27 surfaces end to
+-- end. The flow test (tests/task_ws_embedded_live_flow.rs) picks one with
+-- FLOW_MODE:
+--
+--   ws          a Sky.Http.Server WebSocket endpoint (withOnFrame) and a
+--               Sky.Core.WebSocket client read with receive / receiveWithin,
+--               in one process: text and binary frames round-trip with
+--               their type, a timeout consumes nothing, a closed socket
+--               reads Nothing.
+--   live        an embedded Sky.Live app (App.withEmbedded) spawned next to
+--               a Task.loop that polls it over HTTP.
+--   port-taken  the embedded app's port is already held: its Task fails and
+--               main reports the error instead of the process exiting.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task exposing (Step(..))
+import Sky.Core.String as String
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Http as Http
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.WebSocket as WebSocket exposing (WebSocket, WebSocketMessage(..))
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server.WebSocket as Ws
+import Std.App as App exposing (Config(..), webDefaults)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Log as Log
+
+
+port : Int
+port =
+    System.getenvOr "FLOW_PORT" "18931" |> String.toInt
+        |> Maybe.withDefault 18931
+
+
+-- ── WebSocket: server keeps the frame type, client reads from a Task ──
+onFrame : Ws.WebSocketServer -> WebSocketMessage -> Task Error ()
+onFrame sock frame =
+    case frame of
+
+        Text s ->
+            Ws.sendToClient sock ("text:" ++ s)
+
+        Binary b ->
+            Ws.sendBinaryToClient sock b
+
+
+handleWs : Request -> Task Error Response
+handleWs req =
+    Ws.upgrade
+        req
+        (Ws.defaultCfg |> Ws.withOnFrame onFrame |> Ws.withOriginPatterns [ "*" ])
+
+
+describe : Maybe WebSocketMessage -> String
+describe m =
+    case m of
+
+        Just (Text s) ->
+            "Text " ++ s
+
+        Just (Binary b) ->
+            "Binary " ++ Encoding.hexEncode b
+
+        Nothing ->
+            "Nothing"
+
+
+connectStep : Int -> Task Error (Step Int WebSocket)
+connectStep n =
+    WebSocket.connect ("ws://127.0.0.1:" ++ String.fromInt port ++ "/ws")
+        |> Task.map Done
+        |> Task.onError
+               (\e ->
+                   if n > 200 then
+                       Task.fail e
+
+                   else
+                       Time.sleep 50 |> Task.map (\_ -> Loop (n + 1)))
+
+
+printRecv : WebSocket -> Task Error ()
+printRecv sock =
+    WebSocket.receiveWithin 5000 sock
+        |> Task.andThen (\m -> Log.println ("RECV " ++ describe m))
+
+
+roundTrip : WebSocket -> Task Error ()
+roundTrip sock =
+    let
+        bytes = Encoding.hexDecode "00ff" |> Result.withDefault ""
+    in
+        WebSocket.send sock "hello" |> Task.andThen (\_ -> printRecv sock)
+            |> Task.andThen (\_ -> WebSocket.sendBinary sock bytes)
+            |> Task.andThen (\_ -> printRecv sock)
+            |> Task.andThen (\_ -> WebSocket.receiveWithin 100 sock)
+            |> Task.map (\_ -> "NO_TIMEOUT")
+            |> Task.onError
+                   (\e -> Task.succeed ("TIMEOUT " ++ Error.toString e))
+            |> Task.andThen Log.println
+            |> Task.andThen (\_ -> WebSocket.close sock)
+            |> Task.andThen (\_ -> printRecv sock)
+
+
+runWs : Task Error ()
+runWs =
+    Task.spawn (Server.listen port [ Server.get "/ws" handleWs ])
+        |> Task.andThen (\_ -> Task.loop connectStep 0)
+        |> Task.andThen roundTrip
+        |> Task.andThen (\_ -> Log.println "WS_FLOW_DONE")
+
+-- ── Embedded Sky.Live next to a Task.loop ──
+type alias Model =
+    { count : Int }
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text ("EMBEDDED_COUNT=" ++ String.fromInt model.count)
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.withConfig (WebConfig { webDefaults | port = port })
+        |> App.withEmbedded
+
+
+poll : Int -> Task Error (Step Int String)
+poll n =
+    Http.get ("http://127.0.0.1:" ++ String.fromInt port ++ "/")
+        |> Task.map
+               (\resp -> Done ("LIVE_STATUS " ++ String.fromInt resp.status))
+        |> Task.onError
+               (\e ->
+                   if n > 200 then
+                       Task.fail e
+
+                   else
+                       Time.sleep 50 |> Task.map (\_ -> Loop (n + 1)))
+
+
+runLive : Task Error ()
+runLive =
+    Task.spawn (App.run appDef) |> Task.andThen (\_ -> Task.loop poll 0)
+        |> Task.andThen Log.println
+        |> Task.andThen (\_ -> Log.println "LOOP_DONE")
+
+
+runPortTaken : Task Error ()
+runPortTaken =
+    App.run appDef |> Task.map (\_ -> "EMBED_OK_UNEXPECTED")
+        |> Task.onError (\e -> Task.succeed ("EMBED_ERR " ++ Error.toString e))
+        |> Task.andThen Log.println
+
+
+main : Task Error ()
+main =
+    case System.getenvOr "FLOW_MODE" "ws" of
+
+        "live" ->
+            runLive
+
+        "port-taken" ->
+            runPortTaken
+
+        _ ->
+            runWs

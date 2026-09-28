@@ -48,6 +48,7 @@ module Std.Live exposing
     , withInput
     , withAnalytics
     , withAnalyticsIdentify
+    , withEmbedded
     , withStatus
     , withDurable
     , withAuthSliding
@@ -285,6 +286,29 @@ withAnalytics =
 withAnalyticsIdentify : (model -> Maybe String) -> AppConfig model msg -> AppConfig model msg
 withAnalyticsIdentify =
     Ffi.kernel "Live_withAnalyticsIdentify"
+
+
+-- | Run the app as ONE task inside a larger Task program (embedded mode).
+--
+-- A Live app normally owns its process: it catches SIGINT / SIGTERM / SIGHUP
+-- and tears down process-wide state (readiness, tracing, jobs, the shutdown
+-- chain), a second signal exits the process, and a port already in use or a
+-- failed boot check (the console invariant, a production session store that
+-- is unreachable) exits it. With `withEmbedded` the app installs NO signal
+-- handler and NEVER exits the process: each of those failures is the
+-- `Err` of `Live.app`'s Task, and the host program owns shutdown.
+--
+--     main =
+--         Task.spawn (Live.app (Live.config { ... } |> Live.withEmbedded))
+--             |> Task.andThen (\_ -> otherWork)
+--
+-- The app's listener is closed in the drain phase of the host's termination
+-- sequence (a `Server.listen` signal handler, the `--embed` PostgreSQL
+-- supervisor), before its session store is released. See
+-- docs/skylive/embedded.md for the caveats.
+withEmbedded : AppConfig model msg -> AppConfig model msg
+withEmbedded =
+    Ffi.kernel "Live_withEmbedded"
 
 
 -- | Override the connection-status banner strings —

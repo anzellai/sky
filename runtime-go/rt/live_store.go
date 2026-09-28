@@ -171,49 +171,125 @@ func init() {
 }
 
 func walkGob(v reflect.Value) {
-	walkGobSeen(v, make(map[reflect.Type]bool, 16), 0)
+	walkGobSeen(v, make(map[uintptr]bool, 16), 0)
 }
 
-// walkGobSeen: depth-bounded + type-set guarded. Sky-side Model values
-// sometimes carry opaque FFI handles (`*sql.DB`, `*SkyDb`, Stripe
-// customers, Firestore clients). Their internal fields form pointer
-// cycles — `*sql.DB.connector → *pool → *DB` and so on — so a naïve
-// recursive walk overflows the goroutine stack. Skip types we've
-// already visited and cap recursion at 64 levels so adversarial or
-// accidental cycles can't crash the server during session persistence.
-func walkGobSeen(v reflect.Value, seenTypes map[reflect.Type]bool, depth int) {
+// walkGobSeen registers every concrete type the value holds behind an
+// interface. Called under gobRegMu.
+//
+// It walks each INSTANCE of a type that can hold an interface, not just the
+// first instance of each type. The walk used to skip any struct TYPE it had
+// already seen, which is wrong for the runtime's generic carriers: the outer
+// `Money` and the inner `Decimal__Internal` box are both SkyADT, so the second
+// was skipped and the decimal.Decimal in its `Fields []any` was never
+// registered — a model holding a Money could not be stored by any DB-backed
+// session store. A struct type with NO interface anywhere in its type graph
+// needs no per-instance walk (its field types are static, and gob only needs
+// registration at an interface boundary), so that case still returns at once
+// and a list of 10,000 plain records costs one type check each.
+//
+// Cycles: Sky values are immutable trees, but a model may carry an opaque FFI
+// handle (`*sql.DB`, an SDK client) whose internals form pointer cycles. Each
+// pointer / map / slice backing array is visited once, and the depth cap
+// stays as a backstop.
+func walkGobSeen(v reflect.Value, seenRefs map[uintptr]bool, depth int) {
 	if !v.IsValid() || depth > 64 {
 		return
 	}
 	switch v.Kind() {
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface:
 		if !v.IsNil() {
-			walkGobSeen(v.Elem(), seenTypes, depth+1)
+			walkGobSeen(v.Elem(), seenRefs, depth+1)
 		}
-	case reflect.Struct:
-		t := v.Type()
-		if seenTypes[t] {
+	case reflect.Ptr:
+		if v.IsNil() || seenRefs[v.Pointer()] {
 			return
 		}
-		seenTypes[t] = true
+		seenRefs[v.Pointer()] = true
+		walkGobSeen(v.Elem(), seenRefs, depth+1)
+	case reflect.Struct:
+		t := v.Type()
 		if t.PkgPath() != "" && !gobRegistered[t] {
 			if tryGobRegisterVal(reflect.New(t).Elem().Interface()) {
 				gobRegistered[t] = true
 			}
 		}
-		for i := 0; i < v.NumField(); i++ {
-			walkGobSeen(v.Field(i), seenTypes, depth+1)
+		if !gobTypeHoldsInterface(t) {
+			return
 		}
-	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.NumField(); i++ {
+			walkGobSeen(v.Field(i), seenRefs, depth+1)
+		}
+	case reflect.Slice:
+		if v.Len() == 0 || !gobTypeHoldsInterface(v.Type().Elem()) {
+			return
+		}
+		if seenRefs[v.Pointer()] {
+			return
+		}
+		seenRefs[v.Pointer()] = true
 		for i := 0; i < v.Len(); i++ {
-			walkGobSeen(v.Index(i), seenTypes, depth+1)
+			walkGobSeen(v.Index(i), seenRefs, depth+1)
+		}
+	case reflect.Array:
+		if !gobTypeHoldsInterface(v.Type().Elem()) {
+			return
+		}
+		for i := 0; i < v.Len(); i++ {
+			walkGobSeen(v.Index(i), seenRefs, depth+1)
 		}
 	case reflect.Map:
+		if v.IsNil() || !gobTypeHoldsInterface(v.Type().Elem()) || seenRefs[v.Pointer()] {
+			return
+		}
+		seenRefs[v.Pointer()] = true
 		it := v.MapRange()
 		for it.Next() {
-			walkGobSeen(it.Value(), seenTypes, depth+1)
+			walkGobSeen(it.Value(), seenRefs, depth+1)
 		}
 	}
+}
+
+// gobHoldsIface caches gobTypeHoldsInterface. Guarded by gobRegMu (every
+// caller walks under it).
+var gobHoldsIface = map[reflect.Type]bool{}
+
+// gobTypeHoldsInterface reports whether a value of type t can hold an
+// interface value anywhere inside it — the only place gob needs a concrete
+// type registered. Only a top-level answer is cached: a result computed while
+// a recursive type was still in progress is not final.
+func gobTypeHoldsInterface(t reflect.Type) bool {
+	if r, ok := gobHoldsIface[t]; ok {
+		return r
+	}
+	r := gobHoldsIfaceWalk(t, map[reflect.Type]bool{})
+	gobHoldsIface[t] = r
+	return r
+}
+
+func gobHoldsIfaceWalk(t reflect.Type, visiting map[reflect.Type]bool) bool {
+	if r, ok := gobHoldsIface[t]; ok {
+		return r
+	}
+	if visiting[t] {
+		return false // the cycle itself adds nothing; its other fields decide
+	}
+	visiting[t] = true
+	switch t.Kind() {
+	case reflect.Interface:
+		return true
+	case reflect.Ptr, reflect.Slice, reflect.Array:
+		return gobHoldsIfaceWalk(t.Elem(), visiting)
+	case reflect.Map:
+		return gobHoldsIfaceWalk(t.Key(), visiting) || gobHoldsIfaceWalk(t.Elem(), visiting)
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			if gobHoldsIfaceWalk(t.Field(i).Type, visiting) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func cryptoRandRead(b []byte) (int, error) { return crand.Read(b) }
@@ -1729,6 +1805,11 @@ func encodeSession(s *liveSession) ([]byte, error) {
 //
 // Returns nil for the whole-graph-safe case; otherwise a descriptive
 // error naming the offending path (e.g. "model.Handlers[0].Fn: func").
+var (
+	secretReflectType = reflect.TypeOf(Secret{})
+	gobEncoderType    = reflect.TypeOf((*gob.GobEncoder)(nil)).Elem()
+)
+
 func validateSessionValue(v any, path string) error {
 	return walkValidateGob(reflect.ValueOf(v), path, make(map[uintptr]bool))
 }
@@ -1759,6 +1840,18 @@ func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error 
 		return walkValidateGob(v.Elem(), path, seen)
 	case reflect.Struct:
 		t := v.Type()
+		// A Secret is never stored: it would sit in the store in clear.
+		// Refuse it by name, with its path, before gob sees it.
+		if t == secretReflectType {
+			return fmt.Errorf("session value at %s is a Secret — not session-safe "+
+				"(a secret would be stored in clear); keep secrets out of the model", path)
+		}
+		// A type that encodes itself (JsonValue, decimal.Decimal) decides
+		// what gob writes; its unexported internals are not ours to walk
+		// (reading them through reflect panics).
+		if t.Implements(gobEncoderType) || reflect.PointerTo(t).Implements(gobEncoderType) {
+			return nil
+		}
 		for i := 0; i < v.NumField(); i++ {
 			childPath := path + "." + t.Field(i).Name
 			if err := walkValidateGob(v.Field(i), childPath, seen); err != nil {
@@ -1779,9 +1872,16 @@ func walkValidateGob(v reflect.Value, path string, seen map[uintptr]bool) error 
 			// The path is shown to the developer, so a Dict key is
 			// rendered in its logical form, not the tagged runtime form
 			// `encodeDictKey` stores (`Model.byId[10]`, not `Model.byId[\x01i10]`).
-			k := fmt.Sprintf("%v", it.Key().Interface())
-			if ks, isStr := it.Key().Interface().(string); isStr {
-				k = detagDisplayKey(ks)
+			// A map reached through an unexported field cannot hand out its
+			// keys via Interface() (reflect panics); render those by kind.
+			k := "?"
+			if it.Key().CanInterface() {
+				k = fmt.Sprintf("%v", it.Key().Interface())
+				if ks, isStr := it.Key().Interface().(string); isStr {
+					k = detagDisplayKey(ks)
+				}
+			} else if it.Key().Kind() == reflect.String {
+				k = detagDisplayKey(it.Key().String())
 			}
 			if err := walkValidateGob(it.Value(), path+"["+k+"]", seen); err != nil {
 				return err
@@ -1898,9 +1998,9 @@ func connectStoreWithRetry(kind string, mk func() (SessionStore, error)) (Sessio
 // failDurableStore handles an explicitly-configured durable store that stayed
 // unreachable after retries. Production → FATAL (refuse to start). Dev → loud
 // WARN + memory fallback so a DB-less `sky run` still works.
-func failDurableStore(kind string, err error, ttl time.Duration) SessionStore {
+func failDurableStore(kind string, err error, ttl time.Duration, fatal func(string, ...any)) SessionStore {
 	if productionFromEnv() {
-		storeFatalf("[sky.live] FATAL: session store %q is configured but unreachable "+
+		fatal("[sky.live] FATAL: session store %q is configured but unreachable "+
 			"after %d attempts (%v). Refusing to start with a silent in-memory fallback in "+
 			"production — sessions would be lost on every restart. Fix the connection (check the "+
 			"connection string and that the database accepts connections), or set "+
@@ -1939,13 +2039,40 @@ func failDurableStore(kind string, err error, ttl time.Duration) SessionStore {
 // most of those are moot; in-process — a mounted sub-app, a test harness, any
 // store swapped out while the process lives — they are leaks.
 func chooseStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
-	store := selectStore(kind, path, ttl, idleEvict)
+	store := selectStore(kind, path, ttl, idleEvict, func(format string, args ...any) {
+		storeFatalf(format, args...)
+	})
+	registerStoreCloser(store)
+	return store
+}
+
+// chooseStoreOrErr is chooseStore for an app that must not exit the process
+// (embedded Sky.Live, live_embedded.go): a store refusal that would be FATAL
+// (a configured store unreachable in production, an unknown store kind in
+// production) comes back as an error instead of calling storeFatalf. The
+// fallback store selectStore built on the way is closed, never registered.
+func chooseStoreOrErr(kind, path string, ttl, idleEvict time.Duration) (SessionStore, error) {
+	var refusal error
+	store := selectStore(kind, path, ttl, idleEvict, func(format string, args ...any) {
+		if refusal == nil {
+			refusal = fmt.Errorf(format, args...)
+		}
+	})
+	if refusal != nil {
+		_ = store.Close()
+		return nil, refusal
+	}
+	registerStoreCloser(store)
+	return store, nil
+}
+
+// registerStoreCloser registers the release-phase close of a session store.
+func registerStoreCloser(store SessionStore) {
 	RegisterResourceCloser("live.sessionStore", func() {
 		if err := store.Close(); err != nil {
 			log.Printf("[sky.live] session store close: %v", err)
 		}
 	})
-	return store
 }
 
 // selectStore builds the session store from ALREADY-RESOLVED values.
@@ -1960,7 +2087,10 @@ func chooseStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 //
 // Callers passing explicit values — the store tests do — therefore get exactly
 // what they passed, which the env-fallback shape could not promise.
-func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
+//
+// fatal is the fail-loud action for a refusal to start (chooseStore passes
+// storeFatalf; chooseStoreOrErr collects it as an error).
+func selectStore(kind, path string, ttl, idleEvict time.Duration, fatal func(string, ...any)) SessionStore {
 	if ttl == 0 {
 		ttl = 30 * time.Minute
 	}
@@ -1983,7 +2113,7 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 			return s, nil
 		})
 		if err != nil {
-			return failDurableStore("sqlite", err, ttl)
+			return failDurableStore("sqlite", err, ttl, fatal)
 		}
 		log.Printf("[sky.live] session store: sqlite @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog)
 		return store
@@ -1995,7 +2125,7 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 			// An explicit postgres store with no connection string is a config
 			// error, not a connect failure — fail loud in prod, not silent RAM.
 			return failDurableStore("postgres",
-				fmt.Errorf("no connection string (set DATABASE_URL or [live] storePath)"), ttl)
+				fmt.Errorf("no connection string (set DATABASE_URL or [live] storePath)"), ttl, fatal)
 		}
 		store, err := connectStoreWithRetry("postgres", func() (SessionStore, error) {
 			s, e := newPostgresStore(path, ttl, idleEvict)
@@ -2005,7 +2135,7 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 			return s, nil
 		})
 		if err != nil {
-			return failDurableStore("postgres", err, ttl)
+			return failDurableStore("postgres", err, ttl, fatal)
 		}
 		log.Printf("[sky.live] session store: postgres (ttl=%s, idleEvict=%s)", ttl, tieredLog)
 		return store
@@ -2024,7 +2154,7 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 			return s, nil
 		})
 		if err != nil {
-			return failDurableStore("redis", err, ttl)
+			return failDurableStore("redis", err, ttl, fatal)
 		}
 		log.Printf("[sky.live] session store: redis @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog)
 		return store
@@ -2042,7 +2172,7 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration) SessionStore {
 		// connect, not UNKNOWN store names. Fail loud in production; warn + memory
 		// in dev.
 		if productionFromEnv() {
-			storeFatalf("[sky.live] FATAL: unknown session store %q — valid kinds are "+
+			fatal("[sky.live] FATAL: unknown session store %q — valid kinds are "+
 				"memory, sqlite, postgres, redis. Refusing to start with a silent in-memory "+
 				"fallback in production (sessions would be lost on every restart and never "+
 				"shared across replicas). Fix [live] store / SKY_LIVE_STORE, or set it to "+

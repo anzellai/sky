@@ -142,6 +142,15 @@ step to completion first: `step : state -> Task e (Step state a)` returns
 a task until it fails (a poller, a serve loop). A recursion that ends after a
 small, known number of steps is fine as it is.
 
+**A Task program reads a WebSocket with Tasks, and can host a Live app.** Outside
+a TEA loop, read a `Sky.Core.WebSocket` with `WebSocket.receive` /
+`receiveWithin ms` / `forEachMessage` (a socket has one reader: a Sub or a Task,
+never both). To serve a Sky.Live UI from a program that also does other work,
+mark the app `App.withEmbedded` and `Task.spawn (App.run app)`: it then installs
+no signal handler and never exits the process, and a failure to start is its
+Task's `Err` (`docs/skylive/embedded.md`). A server that needs the frame type
+uses `Ws.withOnFrame` (`Text` / `Binary`) instead of `withOnMessage`.
+
 ## Writing a Sky app — interview first, then architect
 
 **You are the front line. Lead with questions — do not guess.** When a user

@@ -67,7 +67,8 @@ func TestServerListen_SamePathDifferentMethodsCoexist_466(t *testing.T) {
 		SkyRoute{Method: "POST", Path: "/api/x", Handler: fakeHandler("got-post")},
 	}
 
-	// Server_listen blocks; trap panics to surface them as test failures.
+	// Server_listen builds the Task; running it blocks. Trap panics to
+	// surface them as test failures.
 	var serverErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -78,7 +79,7 @@ func TestServerListen_SamePathDifferentMethodsCoexist_466(t *testing.T) {
 				serverErr = fmt.Errorf("Server_listen panicked: %v", r)
 			}
 		}()
-		Server_listen(port, routes)
+		anyTaskInvoke(Server_listen(port, routes))
 	}()
 
 	// Probe GET — wait for bind.

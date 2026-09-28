@@ -670,6 +670,40 @@ update msg model =
             ( { model | latestBlob = bytes }, Cmd.none )
 ```
 
+**Client side from a Task program (v0.27).** A CLI, a worker or a bridge has
+no update loop to deliver a Sub to. It reads the socket with Tasks instead:
+
+```elm
+-- receive : WebSocket -> Task Error (Maybe WebSocketMessage)
+-- receiveWithin : Int -> WebSocket -> Task Error (Maybe WebSocketMessage)
+-- forEachMessage : WebSocket -> (WebSocketMessage -> Task Error ()) -> Task Error ()
+Ws.connect "wss://api.example.com/feed"
+    |> Task.andThen
+        (\sock ->
+            Ws.forEachMessage sock
+                (\frame ->
+                    case frame of
+                        Text s -> Log.println s
+                        Binary _ -> Task.succeed ()
+                )
+        )
+```
+
+`receive` returns `Just frame` per frame, `Nothing` once the socket has
+closed cleanly (and on every later call), and `Err` (`Network`) when the read
+fails. `receiveWithin ms` adds `Err` (`Timeout`); a timeout consumes no frame
+and leaves the socket open. `forEachMessage` runs a body per frame until the
+socket closes, stops at the first body `Err`, and always closes the socket.
+Several Tasks may receive from one socket (each frame goes to one of them).
+
+A socket has **one reader**: the first consumer claims it. `receive` on a
+socket a Sub reads returns `Err` (`InvalidInput`); a Sub on a socket a Task
+reads is ignored and logged. A Task reader never loses the socket to a slow
+consumer: the runtime stops reading from the network until the Task receives
+again (TCP slows the peer), and the heartbeat and the idle reaper treat the
+waiting socket as alive. A socket whose heartbeat pings are answered is never
+closed as idle.
+
 **Server side (Sky.Http.Server.WebSocket):** turn any
 `Sky.Http.Server` route into a WebSocket upgrade endpoint.
 
@@ -695,13 +729,30 @@ main =
         ]
 ```
 
+`withOnMessage` gives the handler a `String` for text and binary frames
+alike. To know the frame type, use `withOnFrame` (v0.27), which hands the
+handler the client module's `WebSocketMessage`:
+
+```elm
+import Sky.Core.WebSocket exposing (WebSocketMessage(..))
+
+onFrame sock frame =
+    case frame of
+        Text s -> Ws.sendToClient sock ("echo: " ++ s)
+        Binary bytes -> Ws.sendBinaryToClient sock bytes
+
+-- Ws.defaultCfg |> Ws.withOnFrame onFrame
+```
+
+Once `withOnFrame` is set, `onMessage` is not called.
+
 | Concern | Default |
 |---|---|
 | Handshake timeout | 30 s |
 | Heartbeat ping | 30 s (set `pingInterval = 0` to disable) |
 | Max message size | 1 MiB (`withMaxMessageBytes`) |
 | Origin gate | no `Origin` (a native client) and a same-host page always pass. With no `withOriginPatterns`: production refuses every upgrade (403); outside production, loopback pages on any port (`localhost:5173`) and hosts in `SKY_ALLOWED_HOSTS` pass, every other origin gets 403 |
-| Read buffer | 64 frames per socket (bounded) |
+| Read buffer | 64 frames per socket (bounded). A Sub that stops draining for 30 s loses the socket; a Task reader (`receive`) applies backpressure instead |
 | `send` backpressure | blocks up to 30 s on a slow consumer |
 
 `broadcast` fans a single text frame across a list of peers and

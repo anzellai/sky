@@ -476,7 +476,16 @@ func registerSharedPathPreflights(mux *http.ServeMux, routeList []any, pathRoute
 	}
 }
 
+// Server_listen builds the Task; the returned thunk binds and serves. Nothing
+// happens at the call: `Task.spawn (Server.listen port routes)` must reach the
+// spawn (see server_listen_deferred_test.go). The routes are captured now.
 func Server_listen(port any, routes any) any {
+	return func() any {
+		return serverListenRun(port, routes)
+	}
+}
+
+func serverListenRun(port any, routes any) any {
 	p := AsInt(port)
 	mux, rootFiles := serverRouteMux(AsList(routes))
 

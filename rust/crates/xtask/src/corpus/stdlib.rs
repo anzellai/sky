@@ -256,6 +256,10 @@ pub const SURFACES: &[Surface] = &[
     sf("set", "Sky.Core.Set"),
     sf("maybe", "Sky.Core.Maybe"),
     sf("result", "Sky.Core.Result"),
+    // `Sky.Core.Tuple` (v0.27) is pure Sky with Elm's `Tuple` semantics, so
+    // every member is value-assertable (the ratchet named it dark when it
+    // landed; this is the cover).
+    sf("tuple", "Sky.Core.Tuple"),
     sf("char", "Sky.Core.Char"),
     sf("encoding", "Sky.Core.Encoding"),
     sf("crypto", "Sky.Core.Crypto"),
@@ -599,6 +603,7 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Sky.Core.Set",
     "Sky.Core.String",
     "Sky.Core.ToString",
+    "Sky.Core.Tuple",
     "Std.Codec",
     "Std.Compression",
     "Std.Csv",
@@ -1155,6 +1160,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "set" => set_battery(edge),
         "maybe" => maybe_battery(edge),
         "result" => result_battery(edge),
+        "tuple" => tuple_battery(edge),
         "char" => char_battery(edge),
         "encoding" => encoding_battery(edge),
         "crypto" => crypto_battery(edge),
@@ -2475,6 +2481,63 @@ fn set_battery(edge: &str) -> Vec<Check> {
 }
 
 // --- Sky.Core.Maybe --------------------------------------------------------
+
+// --- Sky.Core.Tuple --------------------------------------------------------
+//
+// Elm's `Tuple` module, item for item: `pair` builds, `first` / `second`
+// project, `mapFirst` / `mapSecond` change ONE side and must leave the other
+// untouched (the half a swapped implementation gets wrong), `mapBoth` applies
+// each function to its own side. Every expectation follows from those
+// definitions (Elm semantics, source 2 above).
+
+fn tuple_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            i(&["Tuple.first"], "Tuple.first ( 1, \"a\" )", 1),
+            s(&["Tuple.second"], "Tuple.second ( 1, \"a\" )", "a"),
+            i(&["Tuple.pair"], "Tuple.first (Tuple.pair 3 4)", 3),
+            i(&["Tuple.pair"], "Tuple.second (Tuple.pair 3 4)", 4),
+            i(
+                &["Tuple.mapFirst"],
+                "Tuple.first (Tuple.mapFirst (\\x -> x + 1) ( 1, 2 ))",
+                2,
+            ),
+            i(
+                &["Tuple.mapFirst"],
+                "Tuple.second (Tuple.mapFirst (\\x -> x + 1) ( 1, 2 ))",
+                2,
+            ),
+            i(
+                &["Tuple.mapSecond"],
+                "Tuple.second (Tuple.mapSecond (\\x -> x * 10) ( 1, 2 ))",
+                20,
+            ),
+            i(
+                &["Tuple.mapSecond"],
+                "Tuple.first (Tuple.mapSecond (\\x -> x * 10) ( 1, 2 ))",
+                1,
+            ),
+            s(
+                &["Tuple.mapBoth"],
+                "Tuple.first (Tuple.mapBoth String.fromInt String.toUpper ( 7, \"b\" ))",
+                "7",
+            ),
+            s(
+                &["Tuple.mapBoth"],
+                "Tuple.second (Tuple.mapBoth String.fromInt String.toUpper ( 7, \"b\" ))",
+                "B",
+            ),
+        ],
+        // A change of type on one side: `mapFirst` may turn an Int into a
+        // String while the other side keeps its own type.
+        "boundary" => vec![s(
+            &["Tuple.mapFirst"],
+            "Tuple.first (Tuple.mapFirst String.fromInt ( 0, True ))",
+            "0",
+        )],
+        _ => vec![],
+    }
+}
 
 fn maybe_battery(edge: &str) -> Vec<Check> {
     match edge {
