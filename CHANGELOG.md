@@ -331,6 +331,50 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Changed
 
+- **Recursion through `Task.andThen` no longer grows the Go stack (the Task
+  trampoline).** A Task used to be a Go thunk, and each `andThen` forced its
+  continuation's task inside its own Go frame, so
+  `step n = work |> Task.andThen (\_ -> step (n + 1))` died at about two
+  million steps with Go's fatal `stack overflow` (no error handler saw it, the
+  process exited). A Task is now data: `rt.SkyTask[E, A]` holds an immutable
+  task node, and one interpreter (`forceTask`,
+  `runtime-go/rt/task_trampoline.go`) runs every Task with its own heap frame
+  stack. It pops an `andThen` (or an `onError`) before it runs the task the
+  continuation returns, so recursion through either runs at a constant stack:
+  two million steps finish under a 1 MB stack cap. `Task.map`,
+  `Task.mapError` and `Task.andThenResult` are frames of the same loop, and
+  `Task.sequence` is folded by it. `rt.TaskCoerceT` between instantiations now
+  copies one pointer and allocates nothing, so `Task.forever` and a recursive
+  service loop hold a constant heap (10 s soak, 1.2 x 10^8 iterations, no
+  growth). Measured on an M1 (`go test ./rt/ -run '^$' -bench BenchmarkTask
+  -benchmem`): 10^5 `andThen` recursion steps 29.4 ms, 1,099,494 allocs →
+  7.6 ms, 399,746 allocs; 10^6 steps fatal → 76 ms; `Task.loop` 10^6 127 ms
+  → 109 ms; `Task.sequence` of 10^5 2.65 ms, 100,450 allocs → 0.57 ms, 110
+  allocs. Behaviour is otherwise unchanged (effect order, short-circuit,
+  `sequence` stopping at the first `Err`, `lazy` re-running per force). Two
+  things change on purpose: a function with parameters forced as a Task, a
+  Task applied to arguments, and a Task handed to `Task.lazy` as its thunk now
+  fail as a classified `CoerceFailure` panic instead of passing the unforced
+  value on; and a kernel thunk that returns a Result of a non-`any`
+  instantiation is read as that Result (it used to be wrapped inside `Ok`).
+  `Task.loop` stays the clearest form for a loop with explicit state. A
+  recursive call that is NOT behind a continuation
+  (`step (n - 1) |> Task.map f`) is still evaluated while the task is built,
+  like any strict recursion. (`runtime-go/rt/task_trampoline.go`; tests
+  `task_trampoline_test.go`, `rust/crates/sky/tests/task_trampoline_flow.rs`,
+  three new `TaskLoopConformanceTest` cases; plan and review record
+  `docs/history/v0.27/phase7-plan.md`.)
+- **A `case` on a typed Result or Maybe reads its payload without a runtime
+  narrowing.** `case parse s of Ok n -> … ; Err e -> …` emitted
+  `rt.AsInt(_subj.OkValue)` and `rt.Coerce[Sky_Core_Error_Error](_subj.ErrValue)`
+  even when the subject was an `rt.SkyResult[Sky_Core_Error_Error, int]`, so
+  the field was boxed into `any` and asserted straight back. The payload is
+  now read at its own Go type (doc 14 origin R8, lever §5.2). The coerce-floor
+  census falls from 13,063 to 12,171 `narrow` tokens across 52 projects; it
+  also removes the +32 Phase 3 had to bless for this shape. The embedded Sky
+  Console is regenerated. (`rust/crates/lower/src/lower.rs` `bind_field_pat`;
+  test `rust/crates/sky/tests/typed_result_payload_pattern.rs`.)
+
 - **`Ui.text` wraps like a text box outside a paragraph (elm-ui style).**
   Before, it was a bare HTML text node wherever it sat. Two adjacent text
   nodes are ONE run to the browser, so in a `Ui.column`,

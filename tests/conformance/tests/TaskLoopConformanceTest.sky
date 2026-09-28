@@ -2,13 +2,13 @@ module TaskLoopConformanceTest exposing (main, tests)
 
 -- Behavioral conformance for Sky.Core.Task.loop / Task.forever / Task.Step.
 --
--- The defect these close: every `Task.andThen` step nests Go frames, so a
--- loop written as plain `andThen` recursion dies after about a million steps
--- with a FATAL Go stack overflow (no error handler sees it; the process
--- exits). `Task.loop` runs each step to completion before the next, so the
--- stack does not grow. The first case runs TWO MILLION steps: before
--- `Task.loop` existed there was no way to write this loop in Sky that
--- survived.
+-- The defect these close: before v0.27.0 every `Task.andThen` step nested
+-- Go frames, so a loop written as plain `andThen` recursion died after about
+-- a million steps with a FATAL Go stack overflow (no error handler saw it; the
+-- process exited). `Task.loop` runs each step to completion before the next,
+-- and since the Task trampoline (v0.27.0) plain recursion through `andThen`
+-- and `onError` runs at a constant stack too. The loop cases and the
+-- recursion cases each run TWO MILLION steps.
 --
 -- `Task.forever` runs its task until the task fails; the tests stop it with an
 -- Err and read back how many times it ran from a temp file.
@@ -16,6 +16,7 @@ module TaskLoopConformanceTest exposing (main, tests)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task exposing (Step(..))
 import Sky.Core.String as String
+import Sky.Core.List as List
 import Sky.Core.File as File
 import Sky.Core.Error as Error
 import Sky.Test as Test exposing (Test)
@@ -97,6 +98,30 @@ report path e =
                               (\_ -> ( String.length content, Error.toString e )))
 
 
+-- Plain recursion through `andThen` (v0.27.0, the Task trampoline): the
+-- interpreter pops the bind before it runs the continuation's task, so this
+-- runs at a constant Go stack. Before v0.27.0 two million steps died with a
+-- fatal stack overflow.
+countRec : Int -> Int -> Task Error Int
+countRec limit n =
+    if n >= limit then
+        Task.succeed n
+
+    else
+        Task.succeed n |> Task.andThen (\_ -> countRec limit (n + 1))
+
+
+-- Recursion through the error continuation.
+retryRec : Int -> Int -> Task Error Int
+retryRec limit n =
+    if n >= limit then
+        Task.succeed n
+
+    else
+        Task.fail (Error.invalidInput "again")
+            |> Task.onError (\_ -> retryRec limit (n + 1))
+
+
 tests : List Test
 tests =
     [ Test.test
@@ -133,6 +158,25 @@ tests =
           "forever: a task that fails at once runs exactly once"
           (\_ ->
               Test.equal (Ok ( 1, "InvalidInput: enough ticks" )) (foreverRun 1))
+    , Test.test
+          "andThen recursion: two million steps finish (Task trampoline)"
+          (\_ -> Test.equal (Ok 2000000) (Task.run (countRec 2000000 0)))
+    , Test.test
+          "onError recursion: two million steps finish (Task trampoline)"
+          (\_ -> Test.equal (Ok 2000000) (Task.run (retryRec 2000000 0)))
+    , Test.test
+          "sequence: one hundred thousand tasks, in order"
+          (\_ ->
+              Test.equal
+                  (Ok ( 100000, Just 100000 ))
+                  (Task.run
+                      (Task.sequence
+                          (List.map Task.succeed (List.range 1 100000))
+                          |> Task.map
+                                 (\xs ->
+                                     ( List.length xs
+                                     , List.head (List.reverse xs)
+                                     )))))
     ]
 
 

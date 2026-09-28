@@ -750,6 +750,22 @@ attribution is unreliable on that host at high interaction rates** — the analy
 rests on the 974-element runs, where three repeats agree, and on allocation
 profiles, which agree to 0.2%.
 
+### 9.5 R8 on a TYPED container payload was an identity narrowing (closed, v0.27.0)
+
+`bind_field_pat` (`lower.rs`, the `GenericErase` Coerce reached from
+`ctor_pattern`) built the payload selector as `any` unconditionally, so a
+`case` on a subject whose Go type was already `rt.SkyResult[E, A]` /
+`rt.SkyMaybe[A]` emitted `rt.Coerce[E](_subj.ErrValue)` / `rt.AsInt(_subj.OkValue)`
+— boxing a typed field into `any` and asserting it straight back. By §1 both
+shapes were known at emit time and EQUAL, so this was never floor; the §2.2
+identity rule simply was not reached. The selector now carries the field's
+Go type (lever §5.2). Measured by `xtask coerce-floor`: `narrow` 13063 →
+12171 (−892) over 52 rows, none raised; the build with the change reverted
+reproduced 13063 exactly, and every removed token sits in a hunk that reads a
+payload field (`docs/history/v0.27/phase7-plan.md`). R8 on an ELEMENT-ERASED
+container (`rt.SkyResult[E, any]` matched by `Ok (Just x)`) still narrows —
+there the value's shape is `any` and the narrowing is genuine.
+
 ---
 
 ## 10. How to cite this document
