@@ -256,6 +256,42 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Widget islands: a third-party JS widget inside a view, with typed
+  messages both ways.** `Ui.island { name, id, props } attrs` (and
+  `Std.Html.island`) marks an element that a JavaScript widget owns (a code
+  editor, a canvas painter). The server renders it empty and never patches
+  inside it: the shared diff changes only its attributes (the `props`, as JSON)
+  while its name and id hold, and replaces it when either changes, which
+  remounts the widget. The widget registers from a same-origin file with
+  `window.Sky.island(name, { mount(el, props, send), update(props),
+  command(name, payload), destroy() })`; a `MutationObserver` drives the
+  lifecycle on both clients. `Ui.onIslandEvent type decoder toMsg` (and
+  `Std.Html.Events.onIslandEvent`) decodes the widget's `send(type, data)`
+  with a Sky decoder into a typed Msg; a payload the decoder rejects is
+  logged (class `IslandEventDecode`) and dropped. `Cmd.toIsland id name
+  payload` calls the widget's `command` after the update: an SSE event
+  `island` to every tab on Sky.Live, a microtask on Sky.Spa, held until the
+  island mounts (up to 256 per island). Both clients keep the widget's
+  element through HTML swaps, child reconciles and replaced ancestors, and
+  restore the focus and selection inside it, so typing in a widget survives
+  any number of re-renders. It runs under the strict CSP: the island runtime
+  opens the Sky.Live client and the Sky.Spa boot loader. The widget's state
+  lives in the browser (no server input authority): a remount (a reload, a
+  lost session) starts from `props`. A terminal target renders the empty
+  element and ignores the command; a Sky.Spa server branch cannot deliver
+  it and the backend logs `SpaIslandCommandOnServer`. Decision taken for the
+  unattended release: a widget event's type is matched without regard to case
+  (HTML lower-cases attribute names). See docs/skyui/overview.md, "Widget
+  islands". (`runtime-go/rt/island_core.go`, `island_client.go`,
+  `island_wasm.go`; tests `island_test.go`, `island_client_test.go` and the
+  browser gate `scripts/islands-e2e.sh`, Sky.Live and Sky.Spa under
+  `SKY_CSP=strict`, in the release and nightly web gates.)
+- **A `CustomEvent`'s `detail` reaches its handler.** `Events.on "<name>"`
+  on an element that fires a `CustomEvent` (a web component, a third-party
+  element) dispatched with no argument: both clients dropped the `detail`.
+  Sky.Live now sends `[detail]` and the server decodes it into the handler's
+  parameter like any wire argument; the Sky.Spa client decodes it the same
+  way.
 - **`Server.rpc : String -> (Request -> Task Error Response) -> Route`** —
   a route for JSON endpoints that authenticate with the browser's session
   cookie. It needs no CSRF token and refuses any request that is not a
@@ -338,6 +374,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **Sky.Spa dropped `App.withHead` on the static shell.** A `--target
+  web:app` app whose backend has no per-request work (no server branch, no
+  GET-safe `init` read, no routed `onNavigate`) is served the static
+  `dist/index.html`, not an SSR page, and the wasm client ignored the head
+  builder, so its `<script>`, `<link>` and `<meta>` never reached the page.
+  The client now applies the head once at boot on a page the server did not
+  render, from the first model, as Sky.Live and the SSR page do; a `<title>`
+  sets `document.title`. (`runtime-go/rt/live_wasm.go`
+  `spaApplyShellHead`; found by the widget-islands e2e, whose widget file is
+  loaded through `App.withHead`.)
 - **A partially applied Go FFI function did not build.** `Strings.repeat
   "ab"` emitted a Go call with too few arguments, which `go build`
   rejected. It is now a closure over the remaining arguments, so it can be

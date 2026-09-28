@@ -106,6 +106,9 @@ func (l *teaLoop) runCmd(cmd any) {
 	case "publishNoEcho":
 		// The only subscriber of a single-process program is the
 		// publisher, which publishNoEcho skips by definition.
+	case "island":
+		// Cmd.toIsland: a terminal target renders no widget islands, so a
+		// command for one has no receiver.
 	}
 }
 

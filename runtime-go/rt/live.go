@@ -4105,6 +4105,24 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 			Origin:     sess.currentSID(),
 			SkipOrigin: true,
 		})
+	case "island":
+		// Cmd.toIsland: push the command to every tab of the session as the
+		// SSE event "island" (island_core.go). The client queues it until the
+		// island with that id is mounted, so a command sent in the same update
+		// that first renders the island still arrives. Non-blocking like
+		// every producer: a full buffer drops the frame, counts it, and marks
+		// the connections out of sync (the resync re-renders; the widget keeps
+		// its state, but this command is lost).
+		ic, ok := islandCmdOf(c)
+		if !ok || sess.sseCh == nil {
+			return
+		}
+		select {
+		case sess.sseCh <- sseFrame{event: "island", data: islandFrameData(ic)}:
+		default:
+			recordSseDrop(sess.currentSID())
+			sess.markAllConnsOutOfSync()
+		}
 	}
 }
 

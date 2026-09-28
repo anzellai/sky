@@ -80,6 +80,23 @@ Sky-side `Html.div [ Attr.class "x" ] [ Html.text "hi" ]` produces a `vnode` lit
 
 Patches are encoded as JSON and streamed over SSE.
 
+### Widget islands
+
+An element with `data-sky-island` (`Ui.island`, `Html.island`) is a widget
+island (`runtime-go/rt/island_core.go`). The diff patches only its attributes
+while its name and id hold, and never descends into it. A new name or id
+replaces the element. The server renders no children for it. The client keeps
+the island's element across every HTML swap (`__skyReplaceHTMLPreservingFocus`),
+children reconcile (`__skyApplyKids`) and element replace, like a same-src
+iframe, and restores the focus and the selection inside it. The island runtime
+(`island_client.go`, at the start of the client file) mounts, updates and
+destroys widgets from a `MutationObserver`. A widget event is the
+`CustomEvent` `skyisland-<type>`; the client sends its `detail` as JSON text,
+and the handler (`islandEventHandler`) runs the Sky decoder: a rejected payload
+is logged and dropped. `Cmd.toIsland` goes to every tab as the SSE event
+`island`. The island has no server input authority: its state lives in the
+browser, and a remount (a reload, a lost session) starts from `props`.
+
 ## SSE transport: `event: patches` vs `event: patch`
 
 (Cycle 3 P50 / Gap C11 — landed in v0.15.x hardening.)
@@ -402,6 +419,12 @@ onInput (\s -> SetName s)  -- serialises as "SetName@<slot>"
 ```
 
 The server stores a per-session event-handler table. When the client posts a tagged event, the server looks up the handler closure and applies it to the decoded payload (input value, form data, etc.).
+
+Any event the view binds is dispatched (`Events.on "<name>"`). A `CustomEvent`
+that carries a `detail` (a third-party element's own event) sends `[detail]`
+as its argument; the server decodes it into the handler's parameter type, like
+any wire argument. A widget island's event sends its `detail` as JSON text for
+the Sky decoder (see [Widget islands](#widget-islands)).
 
 ## Event dispatch — handler ids and view identity
 

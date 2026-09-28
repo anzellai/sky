@@ -516,7 +516,14 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
     ),
     (
         "Cmd",
-        &["none", "batch", "perform", "publish", "publishNoEcho"],
+        &[
+            "none",
+            "batch",
+            "perform",
+            "publish",
+            "publishNoEcho",
+            "toIsland",
+        ],
     ),
     (
         "Time",

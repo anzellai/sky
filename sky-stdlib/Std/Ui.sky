@@ -123,6 +123,8 @@ module Std.Ui exposing
     , form
     , name
     , html
+    , island
+    , onIslandEvent
     , mobile
     , tablet
     , desktop
@@ -208,6 +210,8 @@ import Sky.Core.Math as Math
 import Std.Html as Html
 import Std.Html.Attributes as Attr
 import Std.Html.Events as Event
+import Sky.Core.Json.Encode as Encode exposing (Value)
+import Sky.Core.Json.Decode exposing (Decoder)
 
 -- ─── Core types ──────────────────────────────────────────────────
 type Element msg
@@ -1226,6 +1230,51 @@ name value =
 html : any -> Element msg
 html node =
     Raw node
+
+
+-- | A widget island: a place in the view that a third-party JS widget (a
+-- code editor, a canvas painter, a map) owns. The server renders the
+-- element, empty, and never patches inside it; the widget mounts into it
+-- from a same-origin script that calls `window.Sky.island name { mount,
+-- update, command, destroy }` (see docs/skyui/overview.md, "Widget
+-- islands"). `props` reaches `mount` and, when it changes, `update`, as
+-- parsed JSON. Changing `name` or `id` remounts the widget.
+--
+--     Ui.island
+--         { name = "editor"
+--         , id = "main-editor"
+--         , props = Encode.object [ ( "text", Encode.string model.text ) ]
+--         }
+--         [ Ui.width Ui.fill
+--         , Ui.onIslandEvent "changed" (Decode.field "text" Decode.string) TextChanged
+--         ]
+--
+-- `id` must be unique on the page. The widget's own state lives in the
+-- browser: report what matters with `onIslandEvent` and feed it back
+-- through `props`, because a remount (a reload, a lost session) starts
+-- from `props` alone. Give an island no nearby elements (`above`,
+-- `inFront`, …): the widget owns every child. A terminal target renders
+-- the empty element.
+island : { name : String, id : String, props : Value } -> List (Attribute msg) -> Element msg
+island cfg attrs =
+    TaggedNode "div"
+        NoDescription
+        (AttrAttribute "data-sky-island" cfg.name
+            :: AttrAttribute "data-sky-island-id" cfg.id
+            :: AttrAttribute "data-sky-props" (Encode.encode 0 cfg.props)
+            :: AttrAttribute "sky-key" cfg.id
+            :: attrs
+        )
+        []
+
+
+-- | A widget event: the widget calls `send type data` and the `data`
+-- (JSON) runs through the decoder into a typed Msg. A payload the decoder
+-- rejects is logged (class IslandEventDecode) and the event dropped; it
+-- never reaches `update`. `type` is matched case-insensitively.
+onIslandEvent : String -> Decoder a -> (a -> msg) -> Attribute msg
+onIslandEvent eventType decoder toMsg =
+    AttrEvent (Event.onIslandEvent eventType decoder toMsg)
 
 -- ─── Media queries + responsive breakpoints (issue #376) ─────────
 --

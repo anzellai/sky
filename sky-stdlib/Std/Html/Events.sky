@@ -11,6 +11,7 @@ module Std.Html.Events exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
+import Sky.Core.Json.Decode as Decode exposing (Decoder)
 import Std.Html.Attributes exposing (..)
 
 
@@ -148,6 +149,28 @@ onKeyPress handler =
 onCheck : (Bool -> msg) -> Attribute msg
 onCheck handler =
     EventAttr (OnBool "change" handler)
+
+
+-- ─── Widget island events ───────────────────────────────────────
+-- `onIslandEvent type decoder toMsg` — the event a widget island sends
+-- with `send type data` (see `Std.Html.island`). The client passes `data`
+-- as JSON text; the decoder turns it into the Msg. A payload the decoder
+-- rejects is logged (class IslandEventDecode) and dropped, never a crash.
+-- The DOM event is "skyisland-<type>", lower-cased (HTML attribute names
+-- are); the runtime reads the handler's Result (runtime-go/rt/island_core.go).
+onIslandEvent : String -> Decoder a -> (a -> msg) -> Attribute msg
+onIslandEvent eventType decoder toMsg =
+    EventAttr
+        (OnRaw
+            ("skyisland-" ++ String.toLower eventType)
+            (\json ->
+                case Decode.decodeString decoder json of
+
+                    Ok a ->
+                        Ok (toMsg a)
+
+                    Err e ->
+                        Err e))
 
 
 -- ─── File / image side-channel events (sky- prefixed) ───────────

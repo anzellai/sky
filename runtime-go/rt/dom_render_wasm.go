@@ -3,6 +3,7 @@
 package rt
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"syscall/js"
@@ -247,7 +248,10 @@ func buildDOM(el VNode) js.Value {
 			}
 		}
 		bindNodeEvents(n, el)
-		spaSetChildren(n, el.Children)
+		// An island's children are the widget's (island_core.go).
+		if !isIsland(&el) {
+			spaSetChildren(n, el.Children)
+		}
 		spaSyncSelectValue(n, &el)
 		return n
 	}
@@ -416,6 +420,24 @@ func bindNodeEvents(n js.Value, el VNode) {
 					if v := this.Get("value"); v.Type() == js.TypeString && v.String() == done.String() {
 						return nil
 					}
+				}
+			}
+			// A widget island's event: the Sky decoder gets the detail as
+			// JSON text (island_core.go). Any other CustomEvent with a detail
+			// decodes it like the Live server decodes a wire arg.
+			if strings.HasPrefix(e, islandEventPrefix) {
+				detail, _ := spaEventDetailJSON(args, true)
+				dispatchEvent(cur, detail)
+				return nil
+			}
+			if detail, ok := spaEventDetailJSON(args, false); ok {
+				if _, isIH := cur.(islandEventHandler); !isIH && isFunc(cur) {
+					p := decodeMsgArg(cur, json.RawMessage(detail))
+					if _, bad := p.(msgDecodeError); bad {
+						return nil
+					}
+					dispatchEvent(cur, p)
+					return nil
 				}
 			}
 			dispatchEvent(cur, eventPayload(e, args))
@@ -628,6 +650,11 @@ func dispatchEvent(handler any, payload any) {
 	// `reflect.Value.Call` (TinyGo cannot compile it). A plain Msg value
 	// (onClick Increment) is not a func → dispatched as-is.
 	switch h := handler.(type) {
+	case islandEventHandler:
+		// Ok is the Msg; a decode failure is logged and dropped.
+		if msg, ok := h.decode(payloadString(payload)); ok {
+			spaDispatch(msg)
+		}
 	case func(string) any:
 		spaDispatch(h(payloadString(payload)))
 	case func(bool) any:
@@ -748,8 +775,13 @@ func spaReplaceNode(el js.Value, id string, newRoot *VNode) {
 	if nv == nil {
 		return
 	}
+	pool := spaIslandPool(el)
+	focus := spaSaveIslandFocus(el)
 	releaseDOMSubtree(el)
-	el.Call("replaceWith", buildDOM(*nv))
+	n := buildDOM(*nv)
+	n = spaAdoptIslands(pool, n, newRoot)
+	el.Call("replaceWith", n)
+	focus.restore()
 }
 
 // spaApplyKids applies a children-reconcile patch (see KidOp): kept children
@@ -795,7 +827,11 @@ func spaApplyKids(el js.Value, p Patch, newRoot *VNode) {
 		}
 	}
 	// 2. Remove (and release) everything else — BEFORE any new node binds
-	// listeners, since a removed node may carry an id a new node reuses.
+	// listeners, since a removed node may carry an id a new node reuses. A
+	// widget island inside a removed child is pooled, so a new child with the
+	// same island adopts it (island_core.go).
+	islandFocus := spaSaveIslandFocus(el)
+	var islands map[string]js.Value
 	for c := el.Get("firstChild"); c.Truthy(); {
 		next := c.Get("nextSibling")
 		keep := false
@@ -805,6 +841,12 @@ func spaApplyKids(el js.Value, p Patch, newRoot *VNode) {
 			}
 		}
 		if !keep {
+			for k, v := range spaIslandPool(c) {
+				if islands == nil {
+					islands = map[string]js.Value{}
+				}
+				islands[k] = v
+			}
 			releaseDOMSubtree(c)
 			el.Call("removeChild", c)
 		}
@@ -822,7 +864,7 @@ func spaApplyKids(el js.Value, p Patch, newRoot *VNode) {
 		if k.Keep != "" && kept[k.Keep] {
 			n = byID[k.Keep]
 		} else if nv != nil && i < len(nv.Children) {
-			n = buildDOM(nv.Children[i])
+			n = spaAdoptIslands(islands, buildDOM(nv.Children[i]), newRoot)
 		} else {
 			continue
 		}
@@ -839,6 +881,7 @@ func spaApplyKids(el js.Value, p Patch, newRoot *VNode) {
 	if nv != nil {
 		spaSyncSelectValue(el, nv)
 	}
+	islandFocus.restore()
 	// A moved node loses focus (removal blurs); put it back.
 	if focusInside && active.Get("isConnected").Truthy() && !active.Equal(doc.Get("activeElement")) {
 		active.Call("focus")
@@ -1020,10 +1063,28 @@ func rebuildChildrenPreservingFocus(el js.Value, id string, newRoot *VNode) {
 		}
 	}
 
+	// Widget islands under el keep their element across the rebuild
+	// (island_core.go): pooled here, adopted into the new children below.
+	var islands map[string]js.Value
+	for c := el.Get("firstElementChild"); c.Truthy(); c = c.Get("nextElementSibling") {
+		for k, v := range spaIslandPool(c) {
+			if islands == nil {
+				islands = map[string]js.Value{}
+			}
+			islands[k] = v
+		}
+	}
+	islandFocus := spaSaveIslandFocus(el)
 	releaseDOMChildren(el)
 	el.Set("innerHTML", "")
 	spaSetChildren(el, newSub.Children)
+	for c := el.Get("firstElementChild"); c.Truthy() && len(islands) > 0; {
+		next := c.Get("nextElementSibling")
+		spaAdoptIslands(islands, c, newRoot)
+		c = next
+	}
 	spaSyncSelectValue(el, newSub)
+	islandFocus.restore()
 
 	if focSid != "" {
 		nf := doc.Call("querySelector", `[sky-id="`+escAttr(focSid)+`"]`)

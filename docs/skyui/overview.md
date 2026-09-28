@@ -1015,6 +1015,106 @@ For an animated element:
 
 The `@keyframes` name is auto-suffixed with `__<sky-id>` (CSS-sanitised) so two unrelated elements declaring `name = "fadeInUp"` with different keyframes never collide globally.
 
+## Widget islands — third-party JS widgets
+
+A widget island is a place in the view that a JavaScript widget owns: a code
+editor, a canvas painter, a map. The server renders the element, empty, and
+never patches inside it. The widget talks to the app with typed messages in
+both directions. The same code runs on Sky.Live, on Sky.Spa (`--target
+web:app`) and in the desktop window. A terminal target renders the empty
+element.
+
+```elm
+import Sky.Core.Json.Encode as Encode
+import Sky.Core.Json.Decode as Decode
+
+editor : Model -> Element Msg
+editor model =
+    Ui.island
+        { name = "editor"
+        , id = "main-editor"
+        , props = Encode.object [ ( "theme", Encode.string model.theme ) ]
+        }
+        [ Ui.width Ui.fill
+        , Ui.onIslandEvent "changed" (Decode.field "text" Decode.string) TextChanged
+        ]
+
+update msg model =
+    case msg of
+        FormatClicked ->
+            ( model, Cmd.toIsland "main-editor" "format" (Encode.object []) )
+        ...
+```
+
+| Function | Type |
+|---|---|
+| `Ui.island` | `{ name : String, id : String, props : Value } -> List (Attribute msg) -> Element msg` |
+| `Ui.onIslandEvent` | `String -> Decoder a -> (a -> msg) -> Attribute msg` |
+| `Cmd.toIsland` | `String -> String -> Value -> Cmd msg` (island id, command name, payload) |
+| `Std.Html.island`, `Std.Html.Events.onIslandEvent` | the same, for a `Std.Html` view |
+
+**The widget file.** The widget registers from a same-origin script. The page
+must load it after the Sky client, so load it with `defer`, for example
+through the head:
+
+```elm
+App.withHead (\_ -> [ Html.node "script" [ Attr.src "/static/editor.js", Attr.attribute "defer" "" ] [] ])
+```
+
+```js
+// static/editor.js
+window.Sky.island("editor", {
+  mount(el, props, send) {       // first render, and after every remount
+    this.view = createEditor(el, props);
+    this.view.onChange((text) => send("changed", { text }));
+  },
+  update(props) { this.view.setTheme(props.theme); },  // the props changed
+  command(name, payload) { if (name === "format") this.view.format(); },
+  destroy() { this.view.dispose(); },                  // it left the page
+});
+```
+
+Each island gets its own object, made with `Object.create(definition)`, so
+`this` holds per-island state. `this.el` is the element and `this.send` the
+sender. `send(type, data)` needs JSON data. The type is matched without regard
+to case (HTML attribute names are lower case).
+
+**The rules.**
+
+- **Identity.** An island is `name` + `id`. While both hold, a new render
+  changes only the element's attributes: new `props` call `update`. A new
+  `name` or `id` destroys the widget and mounts a new one. Keep `id` unique on
+  the page.
+- **The widget owns the children.** Render into `el`. Do not change `el`'s own
+  `sky-*` or `data-sky-*` attributes; the server owns them. An island takes no
+  nearby elements (`Ui.above`, `Ui.inFront`, and the others): the server
+  renders no children for an island.
+- **Re-renders keep the widget.** When the server rebuilds the island's parent
+  (an HTML swap, a child reconcile, a replaced ancestor), the client puts the
+  same element back, and it restores the focus and the selection inside it.
+  Typing in the widget survives any number of renders.
+- **Typed events.** `onIslandEvent` decodes `data` with the Sky decoder. A
+  payload the decoder rejects is logged (class `IslandEventDecode`) and the
+  event is dropped. It never reaches `update` and never crashes the session.
+- **Commands.** `Cmd.toIsland id name payload` calls `command(name, payload)`
+  after the update. A command for an island that is not mounted yet waits
+  until it mounts (up to 256 for each island). Sky.Live sends it to every tab
+  of the session. A Sky.Spa server branch cannot send it (the backend logs
+  `SpaIslandCommandOnServer`): return it from a client arm, for example the
+  arm that handles the branch's follow-up Msg.
+- **No server authority.** The widget's state lives in the browser. The server
+  sees only what the widget sends. A remount (a new id, a page reload, a lost
+  session, a navigation away and back) starts again from `props`. So report
+  every change that matters with `onIslandEvent`, keep it in the model, and
+  feed it back through `props`.
+- **Strict CSP.** Every page runs under `script-src 'self'
+  'wasm-unsafe-eval'` with no inline script. The island runtime is part of the
+  Sky client files, and the widget must be a same-origin file: no inline
+  script, no `eval`, no `new Function`.
+
+The regression gate is `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa, under
+`SKY_CSP=strict`).
+
 ## Putting it all together — a non-trivial example
 
 `examples/19-skyforum` is the canonical Sky.Ui demo: a Reddit/HackerNews-style forum split across 8 modules. Highlights:

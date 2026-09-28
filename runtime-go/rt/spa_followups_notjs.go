@@ -46,6 +46,14 @@ func Spa_collectFollowUps(cmd any) any {
 				return // a Std.Native client effect: the client runs it
 			}
 			out = append(out, sky_call(ct.toMsg, res))
+		case "island":
+			// Cmd.toIsland reaches a widget in the browser; a server branch
+			// runs on the backend, which has none. Say so rather than drop it
+			// silently: send the command from the client arm that handles
+			// this branch's follow-up Msg.
+			if ic, ok := islandCmdOf(ct); ok {
+				spaLogIslandFromServer(ic)
+			}
 		}
 	}
 	walk(cmd)
@@ -69,6 +77,20 @@ func asSkyADT(v any) SkyADT {
 		return a
 	}
 	return SkyADT{}
+}
+
+// spaIslandFromServerClass is the classified error a backend logs when a
+// server branch returns Cmd.toIsland.
+const spaIslandFromServerClass = "SpaIslandCommandOnServer"
+
+// spaLogIslandFromServer writes that error (a var so a host test can observe
+// it).
+var spaLogIslandFromServer = func(ic islandCmd) {
+	logEmit(logLevelError, "error",
+		"sky.spa: a server branch returned Cmd.toIsland \""+ic.ID+"\" \""+ic.Name+
+			"\"; a widget lives in the browser, so the backend cannot deliver it. "+
+			"Return the command from the client arm that handles the branch's follow-up Msg",
+		map[string]any{"class": spaIslandFromServerClass, "island": ic.ID, "command": ic.Name})
 }
 
 // spaFollowUpOutsideWireClass is the classified error a backend logs when a

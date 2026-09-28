@@ -697,7 +697,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 1993,
+    "stdlib_entries": 1998,
     "stdlib_modules": 102,
     "surfaces_covered": 152,
     "surfaces_covered_pct": 90.5,
@@ -3761,6 +3761,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
@@ -3906,6 +3911,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
@@ -13626,7 +13636,7 @@
         }
       },
       "count": 641,
-      "pct_of_denominator": 32.2
+      "pct_of_denominator": 32.1
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14247,7 +14257,7 @@
           ]
         },
         "Std.Html": {
-          "count": 72,
+          "count": 70,
           "symbols": [
             "a",
             "area",
@@ -14297,11 +14307,9 @@
             "ol",
             "pre",
             "progress",
-            "raw",
             "section",
             "small",
             "source",
-            "span",
             "strong",
             "styleNode",
             "summary",
@@ -14745,8 +14753,8 @@
           ]
         }
       },
-      "count": 724,
-      "pct_of_denominator": 36.3
+      "count": 722,
+      "pct_of_denominator": 36.1
     }
   },
   "units": [
@@ -14766,12 +14774,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 47,
+      "modules_imported": 49,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 291,
-      "refs_qualified": 275,
+      "refs_generous": 308,
+      "refs_qualified": 292,
       "role": "Layer2",
-      "sky_files": 154,
+      "sky_files": 155,
       "sky_toml_sections": []
     },
     {

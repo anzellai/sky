@@ -76,8 +76,12 @@ func livePageScripts(sid string, cfg liveBannerConfig, csrfToken, basePath, view
 // liveClientPath is the client's URL path relative to the app's base path.
 var liveClientPath = "/_sky/live." + assetHash(liveClientJS) + ".js"
 
-// liveClientJS is the whole Sky.Live browser client.
-const liveClientJS = `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the
+// liveClientJS is the whole Sky.Live browser client: the widget-island
+// runtime (island_client.go), then the Live client proper.
+const liveClientJS = islandClientJS + liveClientCoreJS
+
+// liveClientCoreJS is the Sky.Live client proper.
+const liveClientCoreJS = `// Sky.Live client (runtime-go/rt/live_client_asset.go). Served as the
 // same-origin, content-hashed file /_sky/live.<hash>.js so a strict
 // Content-Security-Policy (script-src 'self') runs it. Per-page values come
 // from the non-executable <script type="application/json" id="sky-live-cfg">
@@ -526,6 +530,15 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     tmp.innerHTML = newHTML;
   }
 
+  // Widget islands (island_client.go) keep their element — and with it the
+  // widget's DOM and state — across the swap: each one is put back in place
+  // of the parsed element with the same identity. Done first, so the input
+  // and iframe splices below never see a widget's own controls. The focus
+  // and selection inside an island are restored after the commit.
+  var islandRt = window.Sky && window.Sky.__islands;
+  var islandFocus = islandRt ? islandRt.saveFocus(container) : null;
+  if (islandRt) islandRt.adopt(islandRt.pool(container), tmp);
+
   // Snapshot focused-state BEFORE any DOM mutation. Selection read
   // throws on some input types, so catch.
   var selStart = null, selEnd = null, scrollTop = 0;
@@ -654,6 +667,7 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
     }
     if (scrollTop) preservedFocus.scrollTop = scrollTop;
   }
+  if (islandRt) islandRt.restoreFocus(islandFocus);
 }
 
 // __skyCopyAttrsExceptAuthority — mirror attrs from src onto dst,
@@ -774,6 +788,9 @@ function __skyReviveScripts(root) {
   var scripts = root.querySelectorAll("script:not([data-sky-script-revived])");
   for (var i = 0; i < scripts.length; i++) {
     var old = scripts[i];
+    // A widget island's DOM is the widget's (island_client.go): a script it
+    // inserted has already run as the widget meant, so it is never revived.
+    if (old.closest && old.closest("[data-sky-island]")) continue;
     // Mark the source element revived FIRST so a rejection branch
     // (no-src + inline body) doesn't re-trip on the next pass.
     try { old.setAttribute("data-sky-script-revived", "1"); } catch (_) {}
@@ -1593,9 +1610,19 @@ function __skyApplyKids(el, kids) {
       missed++;
     }
   }
+  // A widget island inside a removed child is pooled, and a new child that
+  // renders the same island adopts it (island_client.go).
+  var islandRt = window.Sky && window.Sky.__islands;
+  var islandPool = null, islandFocus = islandRt ? islandRt.saveFocus(el) : null;
   for (c = el.firstChild; c; ) {
     var next = c.nextSibling;
-    if (!(c.nodeType === 1 && kept[c.getAttribute("sky-id")] === c)) el.removeChild(c);
+    if (!(c.nodeType === 1 && kept[c.getAttribute("sky-id")] === c)) {
+      if (islandRt && c.nodeType === 1) {
+        var cp = islandRt.pool(c);
+        for (var ck in cp) (islandPool || (islandPool = {}))[ck] = cp[ck];
+      }
+      el.removeChild(c);
+    }
     c = next;
   }
   __skyRenameKept(renames);
@@ -1604,13 +1631,18 @@ function __skyApplyKids(el, kids) {
     k = kids[i];
     var nodes;
     if (k.keep && kept[k.keep]) nodes = [kept[k.keep]];
-    else if (k.html !== undefined && k.html !== null) nodes = Array.prototype.slice.call(__skyParseInto(el, k.html).childNodes);
+    else if (k.html !== undefined && k.html !== null) {
+      var kfrag = __skyParseInto(el, k.html);
+      if (islandPool) islandRt.adopt(islandPool, kfrag);
+      nodes = Array.prototype.slice.call(kfrag.childNodes);
+    }
     else continue;
     for (var j = 0; j < nodes.length; j++) {
       if (nodes[j] === cursor) { cursor = cursor.nextSibling; continue; }
       el.insertBefore(nodes[j], cursor);
     }
   }
+  if (islandRt) islandRt.restoreFocus(islandFocus);
   // Moving a kept node (a reorder) blurs it; restore focus and caret.
   if (focusInside && focused.isConnected && document.activeElement !== focused) {
     try { focused.focus({preventScroll: true}); } catch (_) { try { focused.focus(); } catch (_) {} }
@@ -1653,7 +1685,22 @@ function __skyRenameKept(renames) {
 function __skyReplaceElement(el, html) {
   var parent = el.parentNode;
   if (!parent) return;
-  parent.replaceChild(__skyParseInto(parent, html), el);
+  var frag = __skyParseInto(parent, html);
+  // A widget island inside the old element with the same identity in the
+  // new one keeps its element (island_client.go). The replaced element
+  // itself is never adopted: its identity changed, so it remounts.
+  var islandRt = window.Sky && window.Sky.__islands;
+  var islandFocus = null;
+  if (islandRt) {
+    islandFocus = islandRt.saveFocus(el);
+    var pool = islandRt.pool(el);
+    if (pool && el.getAttribute) {
+      for (var k in pool) { if (pool[k] === el) delete pool[k]; }
+    }
+    islandRt.adopt(pool, frag);
+  }
+  parent.replaceChild(frag, el);
+  if (islandRt) islandRt.restoreFocus(islandFocus);
 }
 
 // __skyNoteServerValue records a value the SERVER wrote into a tracked
@@ -1891,6 +1938,18 @@ function __skyExtractArgs(ev) {
     case "keypress":
       return [ev.key || ""];
     default:
+      // A widget island's event (island_client.go): the detail goes to the
+      // Sky decoder as JSON text. Any other CustomEvent with a detail (a
+      // third-party element's own event) sends the detail as it is.
+      if (ev.type && ev.type.lastIndexOf("skyisland-", 0) === 0) {
+        var text = "null";
+        try { text = JSON.stringify(ev.detail === undefined ? null : ev.detail); } catch (_) {}
+        return [text === undefined ? "null" : text];
+      }
+      if (typeof CustomEvent === "function" && ev instanceof CustomEvent &&
+          ev.detail !== undefined && ev.detail !== null) {
+        return [ev.detail];
+      }
       return [];
   }
 }
@@ -2329,6 +2388,16 @@ function __skyOpenSSE() {
     __skyHandleResponse(frame.seq, frame.ackInputs, function() {
       __skyApplyPatches(frame.patches);
     }, frame.globalSeq, frame.view, frame.base, true);
+  });
+  // Cmd.toIsland (island_core.go): a command for a widget island. The
+  // island runtime delivers it, or holds it until that island mounts.
+  __skySSE.addEventListener("island", function(e) {
+    __skyLastSseAt = Date.now();
+    var d = null;
+    try { d = JSON.parse(e.data); } catch (_) {}
+    if (d && typeof d.id === "string" && window.Sky && window.Sky.__islandCommand) {
+      window.Sky.__islandCommand(d.id, d.name, d.payload === undefined ? null : d.payload);
+    }
   });
   // L12: a classified update panic in any dispatch path of this session.
   __skySSE.addEventListener("skyerror", function(e) {

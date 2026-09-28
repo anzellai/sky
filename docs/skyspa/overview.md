@@ -176,6 +176,22 @@ Adjacent texts (`text "Hello, "` next to `text name`) arrive as one browser
 text node, and hydration splits that node at the client's boundaries; the
 server's nodes stay in the page.
 
+A widget island (`Ui.island`, [Std.Ui overview](../skyui/overview.md#widget-islands--third-party-js-widgets))
+works the same as on Sky.Live. The boot loader carries the island runtime, so a
+widget file loaded with `<script defer>` can register before the wasm boots.
+The client keeps the widget's element when it rebuilds the island's parent,
+hands a widget event's `detail` to the Sky decoder, and delivers
+`Cmd.toIsland` after the update (a microtask). A `Cmd.toIsland` returned by a
+server branch cannot reach the browser: the backend logs
+`SpaIslandCommandOnServer`. Any other `CustomEvent` with a `detail` reaches its
+handler decoded the way the Sky.Live server decodes a wire argument.
+
+`App.withHead` applies on every page. On an SSR page the backend renders it.
+On the static `dist/index.html` shell (an app whose backend has no per-request
+work, or a static host) the client applies it once at boot, from the first
+model, as Sky.Live does on its first load. Before v0.27.0 the head was dropped
+on the static shell.
+
 ## Routing — `App.withRoutes` (History API)
 
 Routing is opt-in via the `App.withX` builders (a single-view app needs none).

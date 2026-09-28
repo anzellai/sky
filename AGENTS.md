@@ -392,6 +392,7 @@ for UX/DX/security/scalability, not by accident.
 | **Sky.Live navigation** | Every internal link is `sky-nav` (one persistent SSE per session). Bare `<a href>` only to deliberately leave the app. |
 | **Password forms** | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record; never per-keystroke `onInput` on a password field. The record's fields must be `String`/`Int`/`Float`/`Bool`/`Maybe` of those (`[E2010]`); each is decoded strictly from the control with the same `Ui.name`. |
 | **No raw HTML/JS** | `Std.Ui` HTML-escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync. |
+| **Third-party JS widgets** | A widget island: `Ui.island { name, id, props }` (or `Html.island`) is an element the widget owns; the server never patches inside it and the client keeps it across re-renders. The widget registers from a same-origin file loaded with `<script defer>` (`window.Sky.island name { mount, update, command, destroy }`; no inline script, strict CSP). Its events arrive as typed Msgs through `Ui.onIslandEvent type decoder toMsg` (a rejected payload is logged and dropped); `Cmd.toIsland id name payload` sends it commands. Its state lives in the browser, so report what matters and feed it back through `props`: a remount starts from `props`. See `docs/skyui/overview.md` (Widget islands). |
 
 The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
 `Std.Ui` layout, Sky.Tui, Sky.Webview) live in `docs/skylive/`, `docs/skyui/`,
