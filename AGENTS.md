@@ -378,7 +378,11 @@ The native shells (`mobile:ios|android`, `desktop:<os>`) load the backend at
 `App.withAppUrl "https://app.example.test/"` (a literal or top-level `String`
 constant, read at build time), else `SKY_APP_URL` at build time (which wins over
 the builder), else the dev default `localhost` / `10.0.2.2` / `127.0.0.1` on
-`PORT` (8951). Permissions carry their purpose string
+`PORT` (8951). A device that must hold its own end-to-end keys (Noise, CPace,
+Kx, Sign, Kdf) opts in with `App.withClientCrypto`: those run in the wasm client
+and the build refuses any flow that would send a key to the server (a key field
+must be a `Maybe`, which the first paint and the saved model leave out); see
+`docs/skyspa/client-crypto.md`. Permissions carry their purpose string
 (`Bundle.withUsage Bundle.Camera "…"`; a `Native.authenticate` / `capturePhoto`
 / `geolocation` call without its permission fails the iOS and Android builds),
 entitlements are typed (`Bundle.withEntitlement (Bundle.AppGroup "group.…")`),

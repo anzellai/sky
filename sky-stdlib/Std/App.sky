@@ -68,6 +68,7 @@ module Std.App exposing
     , withConsoleAuth
     , withRpcError
     , withAppUrl
+    , withClientCrypto
     , withDurable
     , withDurableId
     , withEmbedded
@@ -1023,6 +1024,33 @@ embeddedIn_ configs =
 
         _ :: rest ->
             embeddedIn_ rest
+
+
+-- | Keep end-to-end key material on the device, on the client targets
+-- (`web:app`, `mobile:*`, `desktop:<os>`, `tablet:*`): the build carries it to
+-- `Spa.withClientCrypto`. On the Sky.Live and terminal targets there is no
+-- client split and it does nothing.
+--
+-- The Sky.Spa split puts every function that holds or derives secret key
+-- material on the SERVER by default. For an app whose DEVICE must hold its own
+-- end of an end-to-end encrypted session, this opt-in keeps
+-- `Std.Crypto.Noise`, `Std.Crypto.Cpace`, `Std.Crypto.Kx`, `Std.Crypto.Sign`
+-- and `Std.Crypto.Kdf` in the wasm CLIENT: keys are generated there (the
+-- browser's `crypto.getRandomValues`) and never leave the device. The build
+-- then refuses every flow that would move a key to the server: a key in an RPC
+-- field or a server Msg, a branch that mixes a key operation with a server
+-- effect, key operations in `init` (it also runs on the server for the first
+-- paint), and a key-typed model field that is not a `Maybe` (a `Maybe` key
+-- field is left out of the first-paint model and the saved model, so it is
+-- `Nothing` after a reload).
+--
+-- Threat model: a key in the page is readable by any script that runs in it
+-- (an XSS, a compromised dependency, an extension). Serve with the strict CSP
+-- and, on the native shells, keep long-term keys in `Native.secureSet` /
+-- `Native.secureGet`, not in the model. See docs/skyspa/client-crypto.md.
+withClientCrypto : App fallback seed page model msg key -> App fallback seed page model msg key
+withClientCrypto appVal =
+    appVal
 
 
 -- | Set the backend address the NATIVE shells load: `mobile:ios`,

@@ -472,8 +472,9 @@ the inline form `main = App.run (App.app { … } |> …)`, and any import spelli
 (`import Std.App as A` + `A.run`, or `exposing (run)` + bare `run`). Every
 builder step is either carried into the client build (`withRoutes`,
 `withNotFound`, `withHead`, `withOnNavigate`, `withRequest`, `withGuard`,
-`withRpcError`), read by the build for the native shell (`withAppUrl`, see
-below), or listed in a build warning as not applying to a client
+`withRpcError`, and `withClientCrypto`, which keeps end-to-end keys on the
+device: `docs/skyspa/client-crypto.md`), read by the build for the native shell
+(`withAppUrl`, see below), or listed in a build warning as not applying to a client
 (`withConfig`, `withInput`, `withWindow`, `withOnKey`, `withBase`,
 `withDurable`, `withDurableId`). Anything else fails the build with an error
 that names it: an unknown builder, a function from another module applied to the

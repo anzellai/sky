@@ -417,6 +417,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Sky.Spa: keys on the device with `App.withClientCrypto` /
+  `Spa.withClientCrypto`.** By default the split runs every Std.Crypto
+  function that holds a secret key on the server. An app whose device must
+  hold its own end of an end-to-end encrypted session now opts in: the
+  key-holding members of `Noise`, `Cpace`, `Kx`, `Sign` and `Kdf` run in the
+  wasm client (keys from `crypto.getRandomValues`), and the build refuses
+  every flow that would move a key to the server: a key on any wire (RPC
+  field, server Msg, follow-up, session projection, whatever codec the
+  project declares), a branch that mixes a key operation with a server
+  effect, a key operation in `init` / `withOnNavigate` / `withRequest` (they
+  also run on the server for the first paint), and a key-holding model field
+  that is not a top-level `Maybe`. A `Maybe` key field is written as
+  `Nothing` in the first-paint model and the saved model, so neither the page
+  HTML nor localStorage carries it. The marker is found by definition and
+  must be reachable from `main`; without it the split is unchanged. Threat
+  model (any script in the page can read a client key; use the strict CSP and
+  `Native.secureSet` on native shells) in `docs/skyspa/client-crypto.md`.
+  (`rust/crates/project/src/spa_partition.rs` `CLIENT_CRYPTO_MEMBERS`,
+  `detect_client_crypto`, `client_crypto_refusals`; `spa_split.rs`
+  `device_key_in`, `device_only_fields`; tests: partition unit tests,
+  `project/tests/spa_client_crypto.rs`, `spa_split_flow.rs`
+  `client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint`, and
+  `runtime-go/rt/noise_wasm_interop_test.go`, a Noise IK handshake between
+  the Go wasm build under Node.js and a native Go responder.)
 - **`Json.Decode.decodeValue : Decoder a -> Value -> Result Error a`.** Runs
   a decoder on a `Value` already in memory (a `Decode.value` sub-document, a
   `Json.Encode` tree, an `Encode.raw` document) without writing text. Pure.

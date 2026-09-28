@@ -563,7 +563,10 @@ and `--embed` (bundle PostgreSQL into the backend) COMPOSE with the split. A
 native shell (`mobile:ios|android`, `desktop:<os>`) loads the backend at
 `App.withAppUrl "https://app.example.test/"` (read at build time; a literal or
 a top-level `String` constant), or `SKY_APP_URL` at build time, which wins; with
-neither it loads the dev default on `PORT` (8951). Declare each native
+neither it loads the dev default on `PORT` (8951). If the device must hold its
+own end-to-end keys (Noise, CPace, Kx, Sign, Kdf), add `App.withClientCrypto`:
+those run in the client, a key field must be a `Maybe`, and the build refuses
+any flow that sends a key to the server (docs/skyspa/client-crypto.md). Declare each native
 permission with the text its prompt shows (`Bundle.withUsage Bundle.Camera
 "…"`; `Native.authenticate` needs `Bundle.FaceId`, and the iOS / Android build
 fails without it), Apple entitlements with `Bundle.withEntitlement`, keep
