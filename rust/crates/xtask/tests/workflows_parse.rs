@@ -1146,6 +1146,10 @@ fn the_release_workflow_is_the_full_suite() {
         ("scripts/ui-forms-e2e.sh", "e2e: Std.Ui forms"),
         ("scripts/spa-stale-handler-e2e.sh", "e2e: stale handlers"),
         ("scripts/spa-examples-e2e.sh", "e2e: Sky.Spa examples"),
+        (
+            "scripts/spa-client-crypto-e2e.sh",
+            "e2e: withClientCrypto Noise session through two relay steps",
+        ),
         ("scripts/spa-restore-e2e.sh", "e2e: restore"),
         ("scripts/csp-e2e.sh", "e2e: strict Content-Security-Policy"),
         ("scripts/islands-e2e.sh", "e2e: widget islands"),

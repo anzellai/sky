@@ -812,6 +812,74 @@ fn device_only_fields(model_fields: &[ModelFieldTy]) -> Result<Vec<String>, Stri
     Ok(out)
 }
 
+/// The fields of the record alias `ty_name` (qualified or not) as the program
+/// declares it, with each field type resolved in the declaring module. Empty
+/// when no project module declares a record alias of that name.
+fn declared_record_fields(
+    db: &SkyDatabase,
+    check_ids: &[ModuleId],
+    ty_name: &str,
+) -> Vec<(String, ty::Ty)> {
+    use ty::TyDb;
+    let tail = tail_seg(ty_name.trim());
+    let world = db.type_world();
+    for m in check_ids {
+        for d in db.module_parse(*m).tree().decls() {
+            if let syntax::ast::Decl::Alias(a) = d {
+                if a.name().is_some_and(|n| n.text() == tail) {
+                    let fields = world.record_alias_fields_resolved(db, *m, a.syntax());
+                    if !fields.is_empty() {
+                        return fields;
+                    }
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// The model fields with a field's type taken from the declared alias when
+/// the inferred one holds no device key but the declared one does. An app
+/// whose `init` sets `hs = Nothing` and whose `update` never touches `hs`
+/// infers `hs : Maybe a`; its `type alias Model` says `Maybe
+/// Noise.Handshake`, and that is the type the client build gives the field.
+///
+/// A declared field the inferred model does not list at all (`update` only
+/// updates other fields, so its row leaves `hs` out) is added with its
+/// declared type.
+fn with_declared_field_types(
+    fields: &[ModelFieldTy],
+    declared: &[(String, ty::Ty)],
+) -> Vec<ModelFieldTy> {
+    let mut out: Vec<ModelFieldTy> = fields
+        .iter()
+        .map(|f| {
+            let mut f = f.clone();
+            let inferred_key = f.ty.as_ref().and_then(device_key_in);
+            if inferred_key.is_none() {
+                if let Some((_, t)) = declared.iter().find(|(n, _)| *n == f.name) {
+                    if device_key_in(t).is_some() {
+                        f.ty = Some(t.clone());
+                        f.ty_name = render_ty(t);
+                    }
+                }
+            }
+            f
+        })
+        .collect();
+    for (n, t) in declared {
+        if !out.iter().any(|f| f.name == *n) {
+            out.push(ModelFieldTy {
+                name: n.clone(),
+                ty_name: render_ty(t),
+                codec: None,
+                ty: Some(t.clone()),
+            });
+        }
+    }
+    out
+}
+
 /// `{ <base> | f1 = Nothing, f2 = Nothing }` — the model with its device-only
 /// fields cleared, or `base` unchanged when there are none.
 fn clear_device_only(base: &str, device_only: &[String]) -> String {
@@ -2397,7 +2465,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `withClientCrypto`: the model fields the first paint and the saved model
     // leave out (a `Maybe` key); any other key-holding field is refused here.
     let device_only: Vec<String> = if report.client_crypto {
-        device_only_fields(&report.model_fields)?
+        let declared = ssr_model_anno(&file, &src)
+            .map(|t| declared_record_fields(&db, &check_ids, &t))
+            .unwrap_or_default();
+        device_only_fields(&with_declared_field_types(&report.model_fields, &declared))?
     } else {
         Vec::new()
     };
@@ -3006,6 +3077,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         follow_ctx.as_ref().map(|fc| (fc, fc_q(fc, entry))),
         &settle_plan,
         &device_only,
+        ssr_model_anno(&file, &src).as_deref(),
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
@@ -5750,6 +5822,9 @@ fn gen_backend(
     // `withClientCrypto`: the `Maybe` key fields the first paint writes as
     // `Nothing` (see [`device_only_fields`]).
     device_only: &[String],
+    // The model's type as the entry can name it (see [`ssr_model_anno`]):
+    // the first-paint encoder is annotated with it.
+    model_anno: Option<&str>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -6734,15 +6809,40 @@ fn gen_backend(
             "        initFields_ =\n            if initDone_ then\n                spaInitSeedFields_\n\n            else\n                []\n\n",
         );
         // `withClientCrypto`: the device-only key fields are embedded as `Nothing`.
-        let embedded = clear_device_only("resolved", device_only);
-        lets.push_str(&format!(
-            "        modelJson =\n            Codec.toJson (Codec.auto resolved) {}\n",
-            if device_only.is_empty() {
-                embedded
-            } else {
-                format!("({embedded})")
+        // The encoder is a top-level function annotated with the model's
+        // declared type when the entry can name it: `init`'s value alone leaves
+        // a field that nothing constrains (`hs = Nothing` that `update` never
+        // sets) a free `Maybe a`, and `Codec.auto` cannot derive a codec for
+        // that element ([E2009]); the declared type pins it (`Maybe
+        // Noise.Handshake`, always written `Nothing` here).
+        match model_anno {
+            Some(anno) => {
+                let cleared = clear_device_only("m_", device_only);
+                handlers.push_str(&format!(
+                    "-- The first-paint model as JSON (device-held keys written `Nothing`).\n\
+                     spaSsrModelJson_ : {anno} -> String\n\
+                     spaSsrModelJson_ m_ =\n    \
+                     Codec.toJson (Codec.auto m_) {}\n\n\n",
+                    if device_only.is_empty() {
+                        cleared
+                    } else {
+                        format!("({cleared})")
+                    }
+                ));
+                lets.push_str("        modelJson =\n            spaSsrModelJson_ resolved\n");
             }
-        ));
+            None => {
+                let embedded = clear_device_only("resolved", device_only);
+                lets.push_str(&format!(
+                    "        modelJson =\n            Codec.toJson (Codec.auto resolved) {}\n",
+                    if device_only.is_empty() {
+                        embedded
+                    } else {
+                        format!("({embedded})")
+                    }
+                ));
+            }
+        }
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -7175,13 +7275,23 @@ fn gen_frontend(
     // fields to their declared element types, so the decoder's `Codec.auto` matches
     // the encoder's byte-for-byte and hydration is lossless.
     if let Some(model) = &decoder_blank {
+        // `withClientCrypto`: a device-only key field is `Nothing` whatever the
+        // page or localStorage holds, so no key can be planted from outside.
+        let decoded = if device_only.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n        |> Result.map (\\m_ -> {})",
+                clear_device_only("m_", device_only)
+            )
+        };
         body.push_str(&format!(
             "spaModelBlank_ : {model_ty}\n\
              spaModelBlank_ =\n    \
              {model}\n\n\n\
              spaModelDecoder_ : String -> Result Error {model_ty}\n\
              spaModelDecoder_ jsonStr_ =\n    \
-             Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_\n\n\n"
+             Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_{decoded}\n\n\n"
         ));
         // P2: the SYMMETRIC encoder — byte-compatible with the decoder (the SAME
         // `Codec.auto spaModelBlank_`). The wasm client applies it to the WHOLE
@@ -8077,6 +8187,20 @@ fn model_type_name(file: &SourceFile, src: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The model's type as the ENTRY can name it, for annotating generated code:
+/// the type the entry's own `view` / `update` annotation names, else `Model`
+/// when the entry declares a `type alias Model`. `None` when neither holds
+/// (the generated code then stays unannotated, as before).
+fn ssr_model_anno(file: &SourceFile, src: &str) -> Option<String> {
+    model_type_name(file, src).or_else(|| {
+        file.decls()
+            .any(|d| {
+                matches!(&d, syntax::ast::Decl::Alias(a) if a.name().is_some_and(|n| n.text() == "Model"))
+            })
+            .then(|| "Model".to_string())
+    })
 }
 
 /// The `n`th top-level (paren-aware) `->` segment of a type annotation, trimmed.

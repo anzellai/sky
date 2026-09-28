@@ -997,6 +997,34 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   CFBundleDisplayName keep the name as written. An app with no `withName`
   takes its product name from the project name, as its display name already
   did.
+- **`withClientCrypto`: a device key field and a server branch build, and a
+  relay step always stays a client-result RPC.** An app with a `Maybe`
+  key field (`hs : Maybe Noise.Handshake`) and any server branch did not
+  build: the backend's first-paint encoder derived `Codec.auto` from `init`'s
+  value, where a field `update` never sets is a free `Maybe a`, and the
+  backend stopped with `[E2009]` (with no server branch there is no first
+  paint, which is why the existing test passed). The encoder is now a
+  top-level function typed with the model's alias, the key field is found
+  from the alias even when the inferred model does not list it (before, such
+  a field was not cleared at all), it is written `Nothing` in the first paint
+  and the saved model, and it is set to `Nothing` again after every client
+  decode. Second: of two relay steps of the same shape (a server arm that
+  forwards hex and returns `model`, whose result reaches a client arm doing
+  the Noise operation), `SendHello` → `GotMsg2` became a client-result RPC and
+  `SendEcho` → `GotEcho` a server-internal chain, because `GotEcho` ends with
+  `Cmd.none`; the chain's I/O then held the transport and the build refused
+  it. A Msg whose arm reaches client-only code (a device-key operation, a
+  `Std.Native` effect) is never settled on the server now, so both steps are
+  client-result RPCs; the refusal stays for an arm that reads or writes a key
+  field. Found on the way: a client-result root that also wrote the model lost
+  that write (the answer carried only the task result); such a root takes the
+  follow-up path, which applies the write and then the result Msg. Tests:
+  `spa_client_crypto.rs`, `spa_split_flow.rs`
+  `a_device_key_field_with_a_server_branch_builds_and_paints_nothing`, and a
+  browser e2e, `scripts/spa-client-crypto-e2e.sh` (release and nightly): the
+  wasm client completes a Noise IK handshake and a transport round trip
+  through two relay steps against a Go responder
+  (`runtime-go/rt/noisewasm/responder`).
 - **`Bundle.AssociatedDomain "applinks:…"` opens the app on the link's page,
   on Android and iOS.** On Android it did nothing: the manifest had no App
   Links filter. It now gets one `android:autoVerify` intent filter per

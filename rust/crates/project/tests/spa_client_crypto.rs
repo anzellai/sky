@@ -252,3 +252,133 @@ fn the_key_operations_stay_in_the_frontend_and_get_no_rpc() {
     // covers them on the `--target web:app` build.
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// A copy of the Std.App fixture `name` with its `main` rewritten as a
+/// hand-written `Spa.app` entry (the form `spa_split::generate` reads; the
+/// `--target web:app` build derives the same entry), plus `edits`.
+fn spa_variant(name: &str, tag: &str, spa_main: &str, edits: &[(&str, &str)]) -> PathBuf {
+    let from = repo_root()
+        .join("rust/crates/sky/tests/fixtures")
+        .join(name);
+    let dir = std::env::temp_dir().join(format!(
+        "sky-spa-client-crypto-{}-{tag}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::copy(from.join("sky.toml"), dir.join("sky.toml")).unwrap();
+    let src = std::fs::read_to_string(from.join("src/Main.sky")).unwrap();
+    let cut = src
+        .find("\nmain =")
+        .or_else(|| src.find("\nappDef ="))
+        .unwrap();
+    let mut src = src[..cut].replacen(
+        "import Std.App as App\n",
+        "import Std.App as App\nimport Std.Spa as Spa\n",
+        1,
+    );
+    for (from, to) in edits {
+        assert_eq!(src.matches(from).count(), 1, "`{from}` must occur once");
+        src = src.replace(from, to);
+    }
+    src.push_str(spa_main);
+    std::fs::write(dir.join("src/Main.sky"), src).unwrap();
+    dir
+}
+
+const RELAY_MAIN: &str = "\n\nmain : Task Error ()\nmain =\n    Spa.app\n        (Spa.config\n            { init = init, update = update, view = \\m -> Ui.layout [] (view m), subscriptions = \\_ -> Sub.none }\n            |> Spa.withClientCrypto\n        )\n";
+
+/// Two relay steps of the same shape: each server arm forwards public hex and
+/// returns `model`, and the client arm its result reaches does the Noise
+/// operation. Both are client-result RPCs. Before, `SendEcho` → `GotEcho` was
+/// settled as a server-internal chain (GotEcho ends with `Cmd.none`, while
+/// GotMsg2 performs a client-dispatched Msg), so the chain's I/O held the
+/// transport field `tr` and the build refused "branch `SendEcho`, field `tr`:
+/// … never crosses between client and server".
+#[test]
+fn two_relay_steps_of_the_same_shape_are_both_client_result_rpcs() {
+    let dir = spa_variant("spa-client-crypto-relay", "relay", RELAY_MAIN, &[]);
+    let r = analyze(&dir).unwrap_or_else(|e| panic!("analyze: {e}"));
+    let mut roots: Vec<(String, String)> = r.client_result.clone();
+    roots.sort();
+    assert_eq!(
+        roots,
+        vec![
+            ("SendEcho".to_string(), "GotEcho".to_string()),
+            ("SendHello".to_string(), "GotMsg2".to_string())
+        ],
+        "both relay steps answer the client with the result"
+    );
+    assert!(
+        !r.server_internal
+            .iter()
+            .any(|m| m == "GotEcho" || m == "GotMsg2"),
+        "a client arm holding the key is never settled on the server: {:?}",
+        r.server_internal
+    );
+    let (out, _) = generate(&dir, "relay").unwrap_or_else(|e| panic!("generate failed: {e}"));
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        back.contains("POST /_rpc/SendHello") && back.contains("POST /_rpc/SendEcho"),
+        "{back}"
+    );
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The refusal stays where a server arm really touches a key field: here the
+/// relay arm also clears `tr`, so its response would carry the transport.
+#[test]
+fn a_relay_arm_that_writes_the_key_field_is_still_refused() {
+    let dir = spa_variant(
+        "spa-client-crypto-relay",
+        "relay-writes-key",
+        RELAY_MAIN,
+        &[(
+            "( model, Cmd.perform (relay \"/echo\" hex) GotEcho )",
+            "( { model | tr = Nothing }, Cmd.perform (relay \"/echo\" hex) GotEcho )",
+        )],
+    );
+    let Err(e) = generate(&dir, "relay-writes-key") else {
+        panic!("a server arm writing `tr` must be refused");
+    };
+    assert!(e.contains("SendEcho") && e.contains("never crosses"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A relay root that also writes the model is not a client-result RPC: that
+/// answer carries only the task result, so the write (`status = "sending"`)
+/// would be lost. It takes the follow-up path, which applies the write-set and
+/// then dispatches the result Msg.
+#[test]
+fn a_relay_root_that_writes_the_model_keeps_its_write() {
+    let dir = spa_variant(
+        "spa-client-crypto-relay",
+        "relay-writes-status",
+        RELAY_MAIN,
+        &[(
+            "( model, Cmd.perform (relay \"/handshake\" hex) GotMsg2 )",
+            "( { model | status = \"sending\" }, Cmd.perform (relay \"/handshake\" hex) GotMsg2 )",
+        )],
+    );
+    let r = analyze(&dir).unwrap_or_else(|e| panic!("analyze: {e}"));
+    assert!(
+        !r.client_result.iter().any(|(root, _)| root == "SendHello"),
+        "{:?}",
+        r.client_result
+    );
+    let (out, _) =
+        generate(&dir, "relay-writes-status").unwrap_or_else(|e| panic!("generate failed: {e}"));
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let applied = front
+        .split("AppliedSendHello (Ok resp) ->")
+        .nth(1)
+        .and_then(|r| r.split("AppliedSendHello (Err").next())
+        .unwrap_or_default();
+    assert!(
+        applied.contains("status = resp.status") && applied.contains("spaDecodeFollows_"),
+        "the answer applies the write and then the follow-up:\n{applied}"
+    );
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&dir);
+}

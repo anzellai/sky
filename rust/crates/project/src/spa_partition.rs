@@ -1733,6 +1733,7 @@ pub fn analyze_loaded(
                 let extra_client = client_hook_ctors(db, &check_ids, entry);
                 let chaining = compute_server_chaining(
                     db,
+                    &graph,
                     umod,
                     body,
                     view_def,
@@ -3622,6 +3623,31 @@ fn collect_delegate_tail_cmd_leaves(
     visited.remove(&d);
 }
 
+/// Whether an `update` arm reaches code that runs only in the client: a
+/// client-effect kernel (`Std.Native`, and with `withClientCrypto` the
+/// device-key members), directly or through a callee.
+fn arm_reaches_client_only(db: &dyn SkyDb, graph: &Graph, body: &Body, e: ExprId) -> bool {
+    let mut acc = Refs::default();
+    let ctx = CollectCtx {
+        client_crypto: graph.client_crypto,
+        ..CollectCtx::default()
+    };
+    collect(body, e, &mut acc, &ctx);
+    if !acc.client_kernels.is_empty() {
+        return true;
+    }
+    if graph.families_for(&acc).iter().any(|f| {
+        CLIENT_EFFECT_KERNELS.contains(&f.as_str())
+            || (graph.client_crypto && CLIENT_CRYPTO_FAMILIES.contains(&f.as_str()))
+    }) {
+        return true;
+    }
+    let mut visited: HashSet<DefId> = HashSet::new();
+    acc.callees
+        .iter()
+        .any(|c| def_reaches_client_effect(db, *c, &mut visited))
+}
+
 /// Whether a task's collected refs reach a `Std.Native` CLIENT effect — directly
 /// (`client_kernels`) or transitively through a callee. A client effect cannot
 /// run server-side (its `!js` stub returns `Err`), so a chain containing one is
@@ -3830,6 +3856,7 @@ fn expr_constructed_ctors(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTre
 #[allow(clippy::too_many_arguments)]
 fn compute_server_chaining(
     db: &skydb::SkyDatabase,
+    graph: &Graph,
     umod: ModuleId,
     body: &Body,
     view_def: Option<DefId>,
@@ -4042,14 +4069,37 @@ fn compute_server_chaining(
         }
     }
 
+    // `client_only` — a Msg whose arm reaches code that runs only in the client:
+    // a `Std.Native` effect, or, with `withClientCrypto`, a device-key
+    // operation (`Noise.decrypt` on the model's transport). Such an arm cannot
+    // run inside a server chain: the server would need the device's key or a
+    // device API. It stays a client arm, and the Msg that performs to it answers
+    // the client with the result (pattern-2), as `SendHello` → `GotMsg2` does.
+    // Before this, a continuation that happened not to perform a
+    // client-dispatched Msg (`GotEcho`, which ends with `Cmd.none`) was settled
+    // on the server, and the build then refused the root because the chain's
+    // I/O held the key field.
+    let client_only: HashSet<String> = all_heads
+        .iter()
+        .filter(|h| {
+            arms_by_ctor.get(*h).is_some_and(|idxs| {
+                idxs.iter()
+                    .any(|&ai| arm_reaches_client_only(db, graph, body, arms[ai].body))
+            })
+        })
+        .cloned()
+        .collect();
+
     // `settleable` (S) — the greatest set of Msgs that fully settle server-side: a
-    // continuation, not client-dispatched, not dirty, and whose own clean
-    // continuations are all settleable. Iterative removal to the fixpoint.
+    // continuation, not client-dispatched, not client-only, not dirty, and whose
+    // own clean continuations are all settleable. Iterative removal to the
+    // fixpoint.
     let mut settleable: HashSet<String> = all_heads
         .iter()
         .filter(|h| {
             is_continuation.contains(*h)
                 && !client_dispatched.contains(*h)
+                && !client_only.contains(*h)
                 && info.get(*h).map(|i| !i.dirty).unwrap_or(false)
         })
         .cloned()
@@ -4291,6 +4341,21 @@ fn compute_server_chaining(
         if server_head_set.contains(&rm) {
             // SPA-3: a deeper chain — the FOLLOW-UP path returns `rm result` to
             // the client, whose `rm` arm then runs as its own RPC.
+            continue;
+        }
+        // The pattern-2 answer is the task result alone: the client dispatches
+        // `rm result` on the model it holds. A root arm that also writes the
+        // model (`{ model | status = "sending" }`) would lose that write, so it
+        // takes the follow-up path (SPA-3), which applies the write-set and
+        // then dispatches `rm result`.
+        let root_writes = branches.iter().any(|b| {
+            b.server
+                && pattern_head_ctor(&b.msg) == *bn
+                && b.io
+                    .as_ref()
+                    .is_none_or(|io| io.writes_whole_model || !io.write_fields.is_empty())
+        });
+        if root_writes {
             continue;
         }
         out.client_result.push((bn.clone(), rm));

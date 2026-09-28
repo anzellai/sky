@@ -522,7 +522,7 @@ fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
         "the backend must have no RPC for a key operation:\n{back}"
     );
     assert!(
-        back.contains("({ resolved | handshake = Nothing })"),
+        back.contains("Codec.toJson (Codec.auto m_) ({ m_ | handshake = Nothing })"),
         "the SSR first paint must write the device handshake as Nothing:\n{back}"
     );
     assert!(
@@ -532,6 +532,79 @@ fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
     assert!(
         !log.contains("Codec.auto` cannot round-trip"),
         "a cleared device-only field must not raise the SSR-embed warning:\n{log}"
+    );
+}
+
+/// `withClientCrypto` with a device-only key field AND a server branch, in an
+/// app with no type annotations (`tests/fixtures/spa-client-crypto-ssr`). The
+/// backend's first-paint encoder derived `Codec.auto` from `init`'s value,
+/// where `hs = Nothing` is a free `Maybe a` because `update` never sets it, so
+/// the backend failed with [E2009] "cannot derive an element codec for this
+/// `Maybe` field". With no server branch there is no first paint to encode,
+/// which is why `client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint`
+/// passed. The encoder is now a top-level function annotated with the declared
+/// `Model`, the key field is found from that alias (the inferred model did
+/// not list it), and the running backend's first paint carries `"hs":null`.
+#[test]
+fn a_device_key_field_with_a_server_branch_builds_and_paints_nothing() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-client-crypto-ssr"),
+        &proj,
+    );
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap_or_default();
+    let front = std::fs::read_to_string(split.join("frontend/src/Main.sky")).unwrap_or_default();
+    assert!(
+        back.contains("spaSsrModelJson_ : Model -> String")
+            && back.contains("Codec.toJson (Codec.auto m_) ({ m_ | hs = Nothing })"),
+        "the first-paint encoder is pinned to Model and clears the key:\n{back}\n{log}"
+    );
+    assert!(
+        front.contains("|> Result.map (\\m_ -> { m_ | hs = Nothing })")
+            && front.contains("({ m_ | hs = Nothing })"),
+        "the client clears the key after a decode and in the saved model:\n{front}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let port = free_port();
+    let back_dir = split.join("backend");
+    let log_path = back_dir.join("server.log");
+    let child = Killed(
+        Command::new(back_dir.join("sky-out/app"))
+            .current_dir(&back_dir)
+            .env("PORT", port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap())
+            .spawn()
+            .expect("start the backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 120),
+        "the backend did not start"
+    );
+    let page = curl_body_p(port, "/").unwrap_or_default();
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        page.contains(r#"{"hs":null,"note":""}"#),
+        "the first paint writes the device key as null:\n{page}"
     );
 }
 

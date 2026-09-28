@@ -970,6 +970,7 @@ jobs:
           scripts/spa-stale-handler-e2e.sh
           scripts/spa-rpc-consistency-e2e.sh
           scripts/spa-examples-e2e.sh
+          scripts/spa-client-crypto-e2e.sh
       - name: Terminal loops pty e2e (terminal:tui + terminal:cli)
         run: scripts/tui-e2e.sh
       - name: Sky.Spa + Sky.Live DOM identity e2e

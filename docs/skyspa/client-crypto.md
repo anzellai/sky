@@ -80,7 +80,33 @@ type (inside a `Maybe`, a `List`, a record, a tuple).
 The pattern that works: a client arm creates the key and runs the handshake,
 the model keeps the handshake or transport in a `Maybe` field, and only public
 bytes (a handshake message, a ciphertext, a public key) go to the server in a
-`String` field.
+`String` field. A relay step is a server arm that forwards the bytes and
+returns `model` unchanged, and the Msg its command produces is a client arm
+that does the key operation:
+
+```elm
+-- doc-example: skip  (fragment — the full app is rust/crates/sky/tests/fixtures/spa-client-crypto-relay)
+        SendEcho (Ok hex) ->
+            ( model, Cmd.perform (relay "/echo" hex) GotEcho )
+
+        GotEcho (Ok hex) ->
+            -- decrypts with model.tr, in the client
+```
+
+Each such step is a client-result RPC: the server runs the relay and answers
+with its result, and the client runs `GotEcho` on the model it holds. Every
+step has that shape, whatever the next client arm does (before v0.27.0 a step
+whose client arm ended with `Cmd.none` was run on the server as a chain, and
+the build refused it because the chain would hold `tr`). A relay arm that
+also writes the model (`{ model | status = "sending" }`) answers with the
+write and the result together; one that reads or writes a key field is
+refused.
+
+A `Maybe` key field needs no type annotation on `init` or `update`: the build
+reads its type from the model's `type alias`. The first paint's encoder is
+typed with that alias, the field is written `Nothing` there and in the saved
+model, and it is set to `Nothing` again after the client decodes either of
+them.
 
 ## Threat model
 
@@ -112,6 +138,15 @@ bytes (a handshake message, a ciphertext, a public key) go to the server in a
   `client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint`: a
   Std.App `--target web:app` build (backend and wasm) with the `Maybe` key
   field written as `Nothing` in the first paint and the saved model.
+- `rust/crates/project/tests/spa_client_crypto.rs`
+  `two_relay_steps_of_the_same_shape_are_both_client_result_rpcs` and
+  `a_relay_arm_that_writes_the_key_field_is_still_refused`;
+  `spa_split_flow.rs`
+  `a_device_key_field_with_a_server_branch_builds_and_paints_nothing`.
+- `scripts/spa-client-crypto-e2e.sh`: the relay fixture in a browser against a
+  Go Noise responder (`runtime-go/rt/noisewasm/responder`): the wasm client
+  completes the handshake and a transport round trip through two relay steps,
+  and each relay request carries only hex.
 - `runtime-go/rt/noise_wasm_interop_test.go`: a Noise IK (BLAKE2s) handshake
   and a transport round trip between the Go wasm build (under Node.js, with the
   client's own `fetch` kernel) and a native Go responder, and a check that keys
