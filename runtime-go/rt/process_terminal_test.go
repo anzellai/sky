@@ -41,8 +41,11 @@ func TestTerminalScrollbackReplay(t *testing.T) {
 		live.WriteString(ch.data)
 		off = ch.next
 	}
-	if strings.Count(live.String(), "\nhi\r\n") != 1 {
-		t.Fatalf("the live output holds the hi line %d times: %q", strings.Count(live.String(), "\nhi\r\n"), live.String())
+	// Count "hi\r\n", not "\nhi\r\n": the PTY echoes the typed line at once,
+	// and the shell may print its prompt after that echo, so the output line
+	// can read "$ hi". The echoed input holds "hi;", never "hi\r\n".
+	if strings.Count(live.String(), "hi\r\n") != 1 {
+		t.Fatalf("the live output holds the hi line %d times: %q", strings.Count(live.String(), "hi\r\n"), live.String())
 	}
 
 	// The replay: from 0 to where the live reads got.
