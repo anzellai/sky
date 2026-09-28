@@ -5,8 +5,8 @@
 //! (`app/Main.hs:1413`). The synthesised entry is removed regardless of outcome.
 
 use project::{
-    assets_root_for, build_project, configured_bin_name, declared_module_name,
-    module_name_from_path, project_dir_for, source_root_for_declared, BuildOptions,
+    assets_root_for, build_project_scoped, configured_bin_name, declared_module_name,
+    module_name_from_path, project_dir_for, source_root_for_declared, AppScope, BuildOptions,
 };
 use std::path::Path;
 
@@ -182,7 +182,10 @@ pub fn run_test_with(
         }
     }
     extra.push(scratch.clone());
-    let report = build_project(&opts, &extra, Some(ENTRY_MODULE));
+    // Only the suite and the modules it imports are built: a type error in
+    // another suite under `tests/` (or in an app module the suite does not
+    // import) must not stop this one.
+    let report = build_project_scoped(&opts, &extra, Some(ENTRY_MODULE), AppScope::EntryClosure);
 
     run.emitted = report.emitted;
     run.build_ok = report.go_build_ok;

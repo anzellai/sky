@@ -59,13 +59,13 @@ pub mod spa_split;
 /// `SKY_TIMINGS=1` / `sky build --timings` — the per-phase wall-clock report.
 pub mod timings;
 pub use build::{
-    build_example, build_project, bundled_source_texts, configured_bin_name,
+    build_example, build_project, build_project_scoped, bundled_source_texts, configured_bin_name,
     configured_source_root, db_driver_conflict, driver_for_dsn, emit_example_source,
     emit_example_warnings, enumerate_dependency_files, enumerate_skydep_files, ffi_trust,
     ffi_type_surface, front_half_errors, go_diagnostics, is_spa_generated_project,
     load_ffi_surface, migration_hint_for, offline_db_plan, sky_toml_flag, sky_toml_project_key,
-    sky_toml_section_key, BuildOptions, BuildReport, OfflineDbPlan, EMBEDDED_BUNDLE_FILENAME,
-    SPA_GENERATED_KERNEL_PREFIX,
+    sky_toml_section_key, AppScope, BuildOptions, BuildReport, OfflineDbPlan,
+    EMBEDDED_BUNDLE_FILENAME, SPA_GENERATED_KERNEL_PREFIX,
 };
 /// The structured diagnostic types a [`BuildReport`] carries, re-exported so
 /// the CLI and `testrunner` read them without a second dependency edge.

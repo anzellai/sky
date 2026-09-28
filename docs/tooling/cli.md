@@ -673,7 +673,9 @@ Output lines: `  ok: <name>`, `  FAIL build: …`, `  FAIL go-build: …`,
 
 ### `sky test <file>`
 
-Run a Sky test module. See [`testing.md`](testing.md). `--format json` prints
+Run a Sky test module. Only that suite and the project modules it imports
+are built, so a type error in another suite under `tests/` does not stop it
+(`sky verify` runs every suite). See [`testing.md`](testing.md). `--format json` prints
 one `test` line per case and a summary with the case counts (see
 [Machine-readable output](#machine-readable-output---format-json)). A project with a
 `.env.test` file runs in **test mode**: outbound HTTP is mocked from
