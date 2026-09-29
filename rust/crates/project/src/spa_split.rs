@@ -1190,33 +1190,40 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
     // itself in every JSON path, like `Secret`. `SecretKey` is matched on its
     // tail (Std.Crypto.Sign / Std.Crypto.Kx); the protocol states by their
     // module-qualified tail, so a user's own `Transport` is not flagged.
-    // A RESOLVED (module-qualified) name is matched exactly, so the app's own
-    // `SecretKey` or `Secret` type is not taken for the stdlib's; a bare name
-    // (declaring module unknown, or the surface fallback below) keeps the
-    // tail match, which errs toward flagging.
+    // The SURFACE form (the fallback below reads the type as written:
+    // `Sign.SecretKey`, `Noise.Transport`) is matched on its tail, which errs
+    // toward flagging.
     fn is_crypto_secret(name: &str) -> bool {
-        if name.contains('.') && !name.starts_with("Noise.") && !name.starts_with("Cpace.") {
-            return DEVICE_KEY_TYPES.contains(&name) && name != "Sky.Core.Secret.Secret";
-        }
         tail(name) == "SecretKey"
             || ["Noise.Handshake", "Noise.Transport", "Cpace.Pending"]
                 .iter()
                 .any(|q| name == *q || name.ends_with(&format!(".{q}")))
     }
-    fn is_secret(name: &str) -> bool {
+    // A RESOLVED type names its declaring module (`Std.Crypto.Kx.SecretKey`),
+    // so it is matched exactly: the app's own `Main.SecretKey` or
+    // `Main.Secret` is not taken for the stdlib's. A bare resolved name
+    // (declaring module unknown, `ty::nominal`) keeps the surface match.
+    fn resolved_kind(name: &str) -> Option<&'static str> {
         if name.contains('.') {
-            return name == "Sky.Core.Secret.Secret";
+            return match name {
+                "Sky.Core.Secret.Secret" => Some("Secret"),
+                n if DEVICE_KEY_TYPES.contains(&n) => Some("SecretKey"),
+                _ => None,
+            };
         }
-        name == "Secret"
+        if is_crypto_secret(name) {
+            Some("SecretKey")
+        } else if name == "Secret" {
+            Some("Secret")
+        } else {
+            None
+        }
     }
     fn scan(t: &ty::Ty) -> Option<&'static str> {
         match t {
             ty::Ty::App(name, args) => {
-                if is_crypto_secret(name.as_str()) {
-                    return Some("SecretKey");
-                }
-                if is_secret(name.as_str()) {
-                    return Some("Secret");
+                if let Some(kind) = resolved_kind(name.as_str()) {
+                    return Some(kind);
                 }
                 if tail(name.as_str()) == "Set" {
                     return Some("Set");
@@ -9806,6 +9813,28 @@ mod type_identity_tests {
         assert!(ty_matches(&app("Main.Pending"), &app("Main.Pending")));
         // A bare name is "module unknown" and still matches (`ty::nominal`).
         assert!(ty_matches(&app("Pending"), &app("Main.Pending")));
+    }
+
+    /// The first-paint check reads a resolved type by its module: the app's
+    /// own `SecretKey` / `Secret` is not the stdlib's, the stdlib's still is.
+    #[test]
+    fn the_first_paint_secret_check_reads_the_module() {
+        let field = |t: &str| ModelFieldTy {
+            name: "k".into(),
+            ty_name: tail_seg(t).into(),
+            codec: None,
+            ty: Some(app(t)),
+        };
+        for own in ["Main.SecretKey", "Main.Secret", "Main.Pending"] {
+            assert!(codec_auto_unencodable(&field(own)).is_none(), "{own}");
+        }
+        for key in [
+            "Std.Crypto.Kx.SecretKey",
+            "Std.Crypto.Cpace.Pending",
+            "Sky.Core.Secret.Secret",
+        ] {
+            assert!(codec_auto_unencodable(&field(key)).is_some(), "{key}");
+        }
     }
 
     /// The type-copy seed never takes a stdlib or dependency type for a
