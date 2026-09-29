@@ -1218,10 +1218,16 @@ impl Emulator {
     fn adb(&self, args: &[&str]) -> std::process::Output {
         let out = self.adb_once(args);
         let err = String::from_utf8_lossy(&out.stderr);
-        if !(err.contains("device offline")
-            || err.contains("not found")
-            || err.contains("no devices/emulators"))
-        {
+        // adb's own transport errors, never a command's output.
+        let transport = err.lines().any(|l| {
+            let l = l.trim();
+            l == "adb: device offline"
+                || l == "error: device offline"
+                || (l.starts_with("adb: device '") && l.ends_with("' not found"))
+                || (l.starts_with("error: device '") && l.ends_with("' not found"))
+                || l.ends_with("no devices/emulators found")
+        });
+        if !transport {
             return out;
         }
         let started = std::time::Instant::now();
