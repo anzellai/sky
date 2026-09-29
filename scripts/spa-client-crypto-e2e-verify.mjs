@@ -53,12 +53,10 @@ const listening = new Promise((resolve, reject) => {
 });
 const relayAddr = await listening;
 
-const proc = guardChild(
-  spawn(BACKEND, [], {
-    cwd: dirname(dirname(BACKEND)),
-    env: { ...process.env, PORT: String(PORT), RELAY_URL: `http://${relayAddr}` },
-  })
-);
+const proc = guardChild(spawn(BACKEND, [], {
+  cwd: dirname(dirname(BACKEND)),
+  env: { ...process.env, PORT: String(PORT), RELAY_URL: `http://${relayAddr}` },
+}));
 let serverLog = "";
 proc.stdout.on("data", (d) => (serverLog += d));
 proc.stderr.on("data", (d) => (serverLog += d));
