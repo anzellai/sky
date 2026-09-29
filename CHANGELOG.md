@@ -1418,6 +1418,27 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   which the job uploads when it fails. (Test: `android_emulator_a_system_dialog_is_dismissed_before_app_steps`
   raises a real crash dialog and checks it is found and dismissed; the four
   emulator tests passed after three cold boots, `-no-snapshot-load`.)
+- **The Android emulator gate uses the CI emulator it is given, and rides
+  out a dropped adb transport.** On its first CI run the runner's emulator
+  went offline for over 40 s during the notify test (`adb install: device
+  offline`). The next test then found no emulator in state `device` and
+  started a second one from the same AVD beside it, which never got a
+  resumed launcher in ten minutes on the runner: one transport drop failed
+  two tests. The tests now take the listed emulator in any state, wait for
+  its transport before they start, and when adb itself answers that the
+  transport is offline or gone they wait for it (up to 180 s) and run that
+  command once more; no other failure is retried, and every test still runs
+  all its steps. What dropped the transport is not in that run's record
+  (CPU saturation is not it: a run with `stress-ng` at load 17 on the
+  4-vCPU runner passed with no drop), so the job now samples, every 3 s,
+  the transport state, the host load and memory, the guest uptime and
+  system_server's pid, and keeps the whole device log in the evidence it
+  uploads on failure. That evidence caught a second race on CI: the notify
+  test read `dumpsys notification` the moment the app reported `notify=ok`,
+  but NotificationManager posts asynchronously, and on the CI emulator the
+  record arrived 0.2 s after the check (the device log shows it posted and
+  its sound played). The test now waits for the posted notification (up to
+  20 s), and checks after a wait that a refusal posted none.
 - **`Std.Ui.Terminal`: the server's screen could stay at the spawn size, so
   a row went missing (for example after Escape in vim).** `Terminal.attach`
   sends the first `Process.screen` read and the `Process.resize` to the

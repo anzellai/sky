@@ -2107,11 +2107,30 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
             .shell_text(&["dumpsys", "window"])
             .lines()
             .any(|l| l.contains("mCurrentFocus=") && l.contains("GrantPermissionsActivity"));
-        // The posted notification, as the system holds it.
-        let posted = emu
-            .shell_text(&["dumpsys", "notification", "--noredact"])
-            .lines()
-            .any(|l| l.contains("probe-notification"));
+        // The posted notification, as the system holds it. NotificationManager
+        // posts asynchronously: the shell answers when `notify` returns, and
+        // the record reaches `dumpsys notification` a moment later. On the CI
+        // emulator a check made at once missed a notification the system
+        // posted 0.2 s later (the device log shows it posted and its sound
+        // played), so the check waits for it (up to 20 s). A refusal must
+        // post nothing: it is checked after the same kind of wait.
+        let posted_now = || {
+            emu.shell_text(&["dumpsys", "notification", "--noredact"])
+                .lines()
+                .any(|l| l.contains("probe-notification"))
+        };
+        let posted = if want == "notify=ok" && notify.as_deref() == Some("notify=ok") {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut seen = posted_now();
+            while !seen && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                seen = posted_now();
+            }
+            seen
+        } else {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            posted_now()
+        };
         let output = backend.output();
         let failure = if secure.as_deref() != Some("secure=ok:probe-value") {
             Some(format!("the app did not start: {secure:?}"))
