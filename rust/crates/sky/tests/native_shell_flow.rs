@@ -1026,7 +1026,7 @@ fn macos_desktop_app_opens_a_universal_link_on_its_page() {
             &[
                 ("SKY_APP_URL", &base),
                 (
-                    "SKY_TEST_LINK_ACTIVITIES",
+                    "SKYTEST_LINK_ACTIVITIES",
                     "https://example.com/probe/act1,https://example.com/probe/act2",
                 ),
             ],
@@ -1951,4 +1951,101 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
     drop(emu);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The emulator helpers find and dismiss a system dialog that covers the app.
+/// A cold boot can leave a SystemUI "isn't responding" dialog in front, and a
+/// UI step then went to the dialog. This raises a real one (a crash dialog for
+/// Settings, with the first-crash dialog turned on) and checks that it is seen
+/// as a system dialog and dismissed.
+#[cfg(unix)]
+#[test]
+#[ignore = "native emulator: needs the Android SDK + a running emulator or an AVD (release gate-native-android)"]
+fn android_emulator_a_system_dialog_is_dismissed_before_app_steps() {
+    let _emulator = EMULATOR_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = android_home();
+    if !required(Need::AndroidSdk, home.is_some()) {
+        return;
+    }
+    let home = home.unwrap();
+    let emu = Emulator::attach_or_start(&home, first_avd(&home).as_deref());
+    if !required(Need::AndroidEmulator, emu.is_some()) {
+        return;
+    }
+    let emu = emu.unwrap();
+    assert!(emu.wait_booted(), "the emulator did not finish booting");
+    assert!(
+        emu.system_dialog().is_none(),
+        "wait_booted must leave no system dialog in front"
+    );
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "put",
+        "global",
+        "show_first_crash_dialog",
+        "1",
+    ]);
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "put",
+        "secure",
+        "show_first_crash_dialog_dev_option",
+        "1",
+    ]);
+    // Android shows no crash dialog for an app that crashed less than a
+    // minute before (it marks it as crashing repeatedly), so a second try
+    // waits that minute out.
+    let mut shown = None;
+    for attempt in 0..2 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(65));
+        }
+        let _ = emu.adb(&[
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-n",
+            "com.android.settings/.Settings",
+        ]);
+        let _ = emu.adb(&["shell", "am", "crash", "com.android.settings"]);
+        for _ in 0..20 {
+            shown = emu.system_dialog();
+            if shown.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if shown.is_some() {
+            break;
+        }
+    }
+    let dismissed = emu.dismiss_system_dialogs();
+    let after = emu.system_dialog();
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "put",
+        "global",
+        "show_first_crash_dialog",
+        "0",
+    ]);
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "delete",
+        "secure",
+        "show_first_crash_dialog_dev_option",
+    ]);
+    let _ = emu.adb(&["shell", "am", "force-stop", "com.android.settings"]);
+    drop(emu);
+    let shown = shown.expect("the crash dialog did not take the focus");
+    assert!(
+        shown.contains("Application Error"),
+        "a crash dialog is a system dialog: {shown}"
+    );
+    assert!(dismissed, "the dialog was there, dismiss must say so");
+    assert!(after.is_none(), "the dialog is still in front: {after:?}");
 }

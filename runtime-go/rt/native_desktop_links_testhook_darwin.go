@@ -11,8 +11,10 @@ package rt
 // does: an NSUserActivityTypeBrowsingWeb activity with the link as its
 // webpageURL, sent to the app delegate's
 // `application:continueUserActivity:restorationHandler:`. Each URL in
-// SKY_TEST_LINK_ACTIVITIES (comma-separated) is sent in turn, the first when
+// SKYTEST_LINK_ACTIVITIES (comma-separated) is sent in turn, the first when
 // the window has started and each next one 8 seconds later.
+// The variable is named after the build tag, not SKY_*: it is not a Sky
+// setting, and a production build does not read it.
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
@@ -49,7 +51,7 @@ import (
 
 func init() {
 	desktopLinkTestHook = func() {
-		spec := strings.TrimSpace(os.Getenv("SKY_TEST_LINK_ACTIVITIES"))
+		spec := strings.TrimSpace(os.Getenv("SKYTEST_LINK_ACTIVITIES"))
 		if spec == "" {
 			return
 		}

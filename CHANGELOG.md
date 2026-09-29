@@ -1029,6 +1029,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `android_emulator_notify_at_first_launch_waits_for_the_notification_prompt`:
   no answer while the prompt shows, Allow posts it (it is in `dumpsys
   notification`), Don't allow is `Err PermissionDenied`.)
+- **The Android emulator gates wait for a usable emulator, not only a booted
+  one.** On a cold boot a SystemUI "isn't responding" dialog can cover the
+  app, and a UI step (the permission prompt, Back to close the scanner) went
+  to the dialog: the gate failed by luck of the boot. The emulator tests now
+  wait for `sys.boot_completed`, the package manager and a resumed launcher,
+  turn the animations off, and dismiss a focused system dialog ("Wait" on an
+  ANR, "Close app" on a crash dialog, else the close-system-dialogs
+  broadcast) before each app step; a UI lookup is retried once, and only
+  after a dialog was found and dismissed. The `gate-native-android` job sets
+  a 15-minute boot timeout, closes system dialogs and wakes the screen
+  before the tests. (Test: `android_emulator_a_system_dialog_is_dismissed_before_app_steps`
+  raises a real crash dialog and checks it is found and dismissed; the four
+  emulator tests passed after three cold boots, `-no-snapshot-load`.)
 - **`Std.Ui.Terminal`: the server's screen could stay at the spawn size, so
   a row went missing (for example after Escape in vim).** `Terminal.attach`
   sends the first `Process.screen` read and the `Process.resize` to the

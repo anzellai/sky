@@ -1072,8 +1072,8 @@ jobs:
   gate-native:
     runs-on: macos-latest
     # A cold `cargo test -p sky` build (~15-20 min on macOS) plus the smoke
-    # tests (~3.5 min measured locally: the iOS launch gate 158 s, the Android
-    # release 36 s). 1.5x.
+    # tests (~4.5 min measured locally: the iOS launch gate 158 s, the macOS
+    # universal-link gate 62 s, the Android release 36 s). 1.5x.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1086,7 +1086,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: Native shell smoke (iOS simulator + Android release)
+      - name: Native shell smoke (iOS simulator, macOS universal links, Android release)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
@@ -1101,14 +1101,22 @@ jobs:
   # results are read back through its backend: the Keystore round trip, the
   # camera scanner opened and closed with Back (Ok Nothing), and the biometric
   # prompt with no enrolled finger (Err Unavailable)
-  # (`android_emulator_…` in rust/crates/sky/tests/native_shell_flow.rs). The
-  # runner image carries the Android SDK and a JDK; the emulator action boots
-  # the AVD and the test uses the running emulator.
+  # (`android_emulator_…` in rust/crates/sky/tests/native_shell_flow.rs), and
+  # the first-launch prompts: `Native.scanCode` and `Native.notify` wait for
+  # the permission prompt's answer. The runner image carries the Android SDK
+  # and a JDK; the emulator action boots the AVD and the test uses the running
+  # emulator. The emulator always cold-boots here (`-no-snapshot`), and a cold
+  # boot can leave a SystemUI "isn't responding" dialog over the app, so the
+  # script closes system dialogs before the tests, and the tests themselves
+  # wait for the package manager and the launcher, turn the animations off and
+  # dismiss a focused system dialog before each app step.
   gate-native-android:
     runs-on: ubuntu-latest
-    # A cold `cargo test -p sky` build (~15 min), the emulator boot (~3 min)
-    # and the test (~100 s measured locally). 1.5x.
-    timeout-minutes: 45
+    # A cold `cargo test -p sky` build (~15 min), the emulator boot (~3 min,
+    # up to the 15 min boot timeout below) and the four emulator tests
+    # (220-250 s measured locally after a cold boot, plus up to 85 s for the
+    # system-dialog test). About 1.5x.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1139,7 +1147,15 @@ jobs:
           # The scanner needs a back camera; the emulated one opens.
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated
           disable-animations: true
-          script: cd rust && cargo test -p sky --locked --test native_shell_flow android_emulator -- --ignored --test-threads=1
+          emulator-boot-timeout: 900
+          # Each line runs on its own. Close a system dialog a cold boot left
+          # (an ANR over SystemUI) and wake the screen before the tests.
+          script: |
+            adb wait-for-device
+            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+            adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
+            adb shell input keyevent KEYCODE_WAKEUP
+            cd rust && cargo test -p sky --locked --test native_shell_flow android_emulator -- --ignored --test-threads=1
 
   # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.
