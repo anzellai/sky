@@ -244,6 +244,9 @@ Per-arm guarantees, in one list:
 - a server arm's continuation whose own arm is client (reaches no server
   effect) runs in the client when the task's result arrives, on the model the
   client holds then, never on the server from a send-time copy;
+- a chain that passes through a server hop (a continuation that itself reads
+  server data) settles whole on the server, in one hold RPC: one round trip,
+  and no Msg runs between its hops;
 - a request is built from the model the Msg ran on, and a retry re-sends the
   same request (the backend's dedupe cache answers it without running the
   effect twice).

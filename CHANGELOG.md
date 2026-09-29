@@ -178,7 +178,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   arrives, on the model it holds then. `ResultMsg`'s argument now crosses the
   wire; when it has no wire codec, the continuation still settles on the server
   and the build says so in a note. `sky spa-partition` and `sky doc --diagram`
-  report the split as it is built, with that rule applied.
+  report the split as it is built, with that rule applied. This applies to a
+  root's own continuation only: a chain that passes through a server hop
+  (`Navigated` → `GotIndex` reads a file → `GotItems`) still settles whole in
+  the root's RPC, one round trip, with the root holding the client.
 
 - **`App.app` / `App.web` / `App.cli` / `App.tui` take `init : () -> …`.**
   The builders fixed `init`'s seed to `()`, which every runner passes. Before,
