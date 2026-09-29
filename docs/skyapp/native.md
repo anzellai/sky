@@ -83,6 +83,7 @@ declared:
 | `Native.authenticate` | `FaceId` |
 | `Native.capturePhoto` | `Camera` |
 | `Native.geolocation` | `Location` or `LocationAlways` |
+| `Native.notify` | `Notifications` (Android only: iOS asks with no key) |
 | `Native.scanCode` | `Camera` |
 
 ```
@@ -314,6 +315,31 @@ Android 9 and later. The four outcomes are distinct:
 
 Declare `Bundle.withUsage Bundle.FaceId "…"`: iOS needs the purpose string and
 Android the `USE_BIOMETRIC` permission. The build refuses the call without it.
+
+## Notifications — `Native.notify`
+
+```elm
+-- doc-example: skip  (fragment)
+notify : String -> String -> Task Error ()
+```
+
+The shell posts a local notification with the title and body:
+`UNUserNotificationCenter` on iOS, `NotificationManager` on Android. The first
+call asks the user for permission, and the Task waits for the answer:
+
+| Result | Meaning |
+|---|---|
+| `Ok ()` | the notification is posted |
+| `Err PermissionDenied` | the user refused, or turned the app's notifications off in Settings |
+| `Err Io` | the system refused to post it |
+
+On Android 13 and later POST_NOTIFICATIONS is a run-time permission, which
+the shell asks for when the app starts. A notify made while that prompt shows
+waits for the answer through the same permission broker as `Native.scanCode`,
+so a notification at first launch is posted after Allow, not dropped.
+Declare `Bundle.withPermission Bundle.Notifications`: the Android build
+refuses the call without it. iOS needs no declaration. In a browser and in
+the desktop window, `Native.notify` uses the Web Notification API.
 
 ## Scanning codes — `Native.scanCode`
 

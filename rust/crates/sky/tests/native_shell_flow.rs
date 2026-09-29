@@ -237,6 +237,27 @@ fn an_app_entry_missing_a_purpose_string_names_its_own_bundle_binding() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `Native.notify` needs `Bundle.withPermission Bundle.Notifications` on
+/// Android: Android 13 and later refuses an undeclared POST_NOTIFICATIONS
+/// without a prompt, so every notification was lost. The build refuses the
+/// call without it, naming the fix, before any toolchain is needed.
+#[test]
+fn native_notify_without_the_notifications_permission_fails_the_android_build() {
+    let dir = scratch("notifyperm");
+    probe_app_with(&dir, "", Flow::Notify);
+    for target in ["mobile:android", "tablet:android"] {
+        let (ok, out) = run(&dir, &["build", "--target", target, "src/Main.sky"], &[]);
+        assert!(!ok, "sky build --target {target} must refuse:\n{out}");
+        assert!(
+            out.contains("`Native.notify` at src/Main.sky:")
+                && out.contains("android.permission.POST_NOTIFICATIONS")
+                && out.contains("Bundle.withPermission Bundle.Notifications"),
+            "the error must name the call and the fix:\n{out}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Native smoke (macOS; run by the release workflow's gate-native job)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1243,18 +1264,164 @@ impl Emulator {
         })
     }
 
-    /// Wait until Android has finished booting.
+    /// Wait until Android is ready for an app.
+    ///
+    /// `sys.boot_completed` alone is not ready: on a cold boot the package
+    /// manager and the launcher are still starting, and SystemUI can show an
+    /// "isn't responding" dialog that covers the app, so a UI step (the
+    /// permission prompt, Back to close the scanner) went to the dialog and
+    /// the gate failed by luck of the boot. So this also waits for the package
+    /// manager and a resumed launcher, turns the animations off, and dismisses
+    /// a system dialog.
     fn wait_booted(&self) -> bool {
         let _ = self.adb(&["wait-for-device"]);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(600);
-        while std::time::Instant::now() < until {
-            let o = self.adb(&["shell", "getprop", "sys.boot_completed"]);
-            if String::from_utf8_lossy(&o.stdout).trim() == "1" {
-                return true;
+        let wait_for = |what: &dyn Fn() -> bool| -> bool {
+            while std::time::Instant::now() < until {
+                if what() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            false
+        };
+        if !wait_for(&|| self.shell_text(&["getprop", "sys.boot_completed"]).trim() == "1") {
+            eprintln!("the emulator did not set sys.boot_completed");
+            return false;
+        }
+        if !wait_for(&|| {
+            self.shell_text(&["pm", "path", "android"])
+                .contains("package:")
+        }) {
+            eprintln!("the emulator's package manager did not answer");
+            return false;
+        }
+        // The launcher: the package of the HOME activity is the resumed one.
+        let mut home = String::new();
+        let resolved = wait_for(&|| {
+            self.shell_text(&[
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.HOME",
+            ])
+            .lines()
+            .any(|l| l.contains('/'))
+        });
+        if resolved {
+            home = self
+                .shell_text(&[
+                    "cmd",
+                    "package",
+                    "resolve-activity",
+                    "--brief",
+                    "-a",
+                    "android.intent.action.MAIN",
+                    "-c",
+                    "android.intent.category.HOME",
+                ])
+                .lines()
+                .rev()
+                .find(|l| l.contains('/'))
+                .and_then(|l| l.trim().split('/').next().map(str::to_string))
+                .unwrap_or_default();
+        }
+        if home.is_empty()
+            || !wait_for(&|| {
+                self.shell_text(&["dumpsys", "activity", "activities"])
+                    .lines()
+                    .any(|l| l.contains("ResumedActivity") && l.contains(&home))
+            })
+        {
+            eprintln!("the emulator's launcher ({home:?}) did not resume");
+            return false;
+        }
+        for key in [
+            "window_animation_scale",
+            "transition_animation_scale",
+            "animator_duration_scale",
+        ] {
+            let _ = self.adb(&["shell", "settings", "put", "global", key, "0"]);
+        }
+        self.dismiss_system_dialogs();
+        true
+    }
+
+    fn shell_text(&self, args: &[&str]) -> String {
+        let mut all = vec!["shell"];
+        all.extend_from_slice(args);
+        String::from_utf8_lossy(&self.adb(&all).stdout).into_owned()
+    }
+
+    /// The system dialog that has the focus, if any: an "isn't responding"
+    /// (ANR) or crash dialog, read from the focused window (`dumpsys window`).
+    fn system_dialog(&self) -> Option<String> {
+        let focus = self
+            .shell_text(&["dumpsys", "window"])
+            .lines()
+            .find(|l| l.contains("mCurrentFocus="))?
+            .trim()
+            .to_string();
+        let lower = focus.to_lowercase();
+        (lower.contains("not responding")
+            || lower.contains("isn't responding")
+            || lower.contains("application error"))
+        .then_some(focus)
+    }
+
+    /// Dismiss the system dialogs that have the focus: "Wait" on an ANR
+    /// dialog, "Close app" on a crash dialog, else the system's close-dialogs
+    /// broadcast. Returns whether there was one.
+    fn dismiss_system_dialogs(&self) -> bool {
+        let mut seen = false;
+        for _ in 0..5 {
+            let Some(focus) = self.system_dialog() else {
+                break;
+            };
+            eprintln!("dismissing a system dialog: {focus}");
+            seen = true;
+            match ui_node_centre(self, &["aerr_wait", "aerr_close"]) {
+                Some((x, y)) => {
+                    let _ = self.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+                }
+                None => {
+                    let _ = self.adb(&[
+                        "shell",
+                        "am",
+                        "broadcast",
+                        "-a",
+                        "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                    ]);
+                }
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
-        false
+        seen
+    }
+
+    /// The centre of the first node whose `resource-id` ends with one of
+    /// `ids`. When it is not on screen because a system dialog covers it, the
+    /// dialog is dismissed and the lookup runs once more; there is no retry
+    /// without a detected dialog.
+    fn find_ui(&self, ids: &[&str]) -> Option<(i32, i32)> {
+        if let Some(c) = ui_node_centre(self, ids) {
+            return Some(c);
+        }
+        if self.dismiss_system_dialogs() {
+            return ui_node_centre(self, ids);
+        }
+        None
+    }
+
+    /// Send a key to the app, after dismissing a system dialog that would
+    /// take it instead.
+    fn key(&self, key: &str) {
+        self.dismiss_system_dialogs();
+        let _ = self.adb(&["shell", "input", "keyevent", key]);
     }
 }
 
@@ -1383,6 +1550,7 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
             String::from_utf8_lossy(&inst.stderr)
         );
         let backend = Backend::start(split, *port);
+        emu.dismiss_system_dialogs();
         let start = emu.adb(&[
             "shell",
             "am",
@@ -1394,7 +1562,7 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
         let secure = backend.probe_line("secure", 180);
         // The scanner is open over the app: Back closes it without a code.
         std::thread::sleep(std::time::Duration::from_secs(5));
-        let _ = emu.adb(&["shell", "input", "keyevent", "KEYCODE_BACK"]);
+        emu.key("KEYCODE_BACK");
         let scan = backend.probe_line("scan", 60);
         let auth = backend.probe_line("auth", 60);
         let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
@@ -1406,6 +1574,7 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
         // does in the app's settings. The plain variant declares no domain and
         // must not take the link.
         let open_link = |path: &str| {
+            emu.dismiss_system_dialogs();
             let o = emu.adb(&[
                 "shell",
                 "am",
@@ -1604,6 +1773,7 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
             "android.permission.CAMERA",
         ]);
         let backend = Backend::start(&split, port);
+        emu.dismiss_system_dialogs();
         let _ = emu.adb(&[
             "shell",
             "am",
@@ -1617,14 +1787,14 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
         // have answered yet.
         std::thread::sleep(std::time::Duration::from_secs(5));
         let early = backend.probe_line("scan", 1);
-        let tap = ui_node_centre(&emu, &[button]);
+        let tap = emu.find_ui(&[button]);
         if let Some((x, y)) = tap {
             let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
         }
         if want == "scan=cancelled" {
             // The scanner opens after Allow: Back closes it without a code.
             std::thread::sleep(std::time::Duration::from_secs(5));
-            let _ = emu.adb(&["shell", "input", "keyevent", "KEYCODE_BACK"]);
+            emu.key("KEYCODE_BACK");
         }
         let scan = backend.probe_line("scan", 60);
         let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
@@ -1645,6 +1815,135 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
         } else if !scan.as_deref().is_some_and(|s| s.starts_with(want)) {
             failures.push(format!(
                 "{button}: scanCode read {scan:?}, want {want}\n{output}"
+            ));
+        }
+    }
+    let _ = emu.adb(&["uninstall", "com.example.probe"]);
+    drop(emu);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The probe's notification permission (`Native.notify`).
+const NOTIFY: &str = "        |> Bundle.withPermission Bundle.Notifications";
+
+/// `Native.notify` at first launch waits for the notification prompt's
+/// answer. On Android 13 and later POST_NOTIFICATIONS is a run-time
+/// permission: the shell asks for it when it starts, and the probe calls
+/// `Native.notify` right after its secure-store round trip, while that prompt
+/// still shows. The bridge used to be a synchronous call that answered `Ok`
+/// at once, and NotificationManager dropped the notification (no permission
+/// yet), so the first notification was lost with no error. The shell now
+/// routes `sky:notify` through the permission broker: "Allow" posts the
+/// notification (it is in `dumpsys notification`) and answers `Ok`, and
+/// "Don't allow" answers `Err PermissionDenied`. The app is installed without
+/// `-g`, and the permission revoked, so it is not granted.
+#[cfg(unix)]
+#[test]
+#[ignore = "native emulator: needs Go + the Android SDK + a running emulator or an AVD (release gate-native-android)"]
+fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
+    let _emulator = EMULATOR_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = android_home();
+    if !required(Need::Go, have_go()) || !required(Need::AndroidSdk, home.is_some()) {
+        return;
+    }
+    let home = home.unwrap();
+    let home_s = home.to_string_lossy().into_owned();
+    let dir = scratch("android-notify");
+    probe_app_with(&dir, NOTIFY, Flow::Notify);
+    let port = free_port();
+    let port_s = port.to_string();
+    let (ok, out) = run(
+        &dir,
+        &["build", "--target", "mobile:android", "src/Main.sky"],
+        &[("PORT", &port_s), ("ANDROID_HOME", &home_s)],
+    );
+    assert!(ok, "the Android build failed:\n{out}");
+    let split = dir.join(".skyapp/mobile-android/.split");
+    let apk = split.join("frontend/sky-out/android/build/skyprobe.apk");
+    let emu = Emulator::attach_or_start(&home, first_avd(&home).as_deref());
+    if !required(Need::AndroidEmulator, emu.is_some()) {
+        return;
+    }
+    let emu = emu.unwrap();
+    assert!(emu.wait_booted(), "the emulator did not finish booting");
+    let sdk: u32 = emu
+        .shell_text(&["getprop", "ro.build.version.sdk"])
+        .trim()
+        .parse()
+        .unwrap_or(0);
+    assert!(
+        sdk >= 33,
+        "the notification prompt needs Android 13 (API 33) or later; the emulator runs API {sdk}"
+    );
+    let mut failures = Vec::new();
+    // (the prompt button to press, the notify result it must lead to)
+    for (button, want) in [
+        ("permission_allow_button", "notify=ok"),
+        ("permission_deny_button", "notify=err:PermissionDenied"),
+    ] {
+        let _ = emu.adb(&["uninstall", "com.example.probe"]);
+        let inst = emu.adb(&["install", "-r", apk.to_str().unwrap()]);
+        assert!(
+            inst.status.success(),
+            "adb install: {}",
+            String::from_utf8_lossy(&inst.stderr)
+        );
+        let _ = emu.adb(&[
+            "shell",
+            "pm",
+            "revoke",
+            "com.example.probe",
+            "android.permission.POST_NOTIFICATIONS",
+        ]);
+        let backend = Backend::start(&split, port);
+        emu.dismiss_system_dialogs();
+        let _ = emu.adb(&[
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-n",
+            "com.example.probe/.MainActivity",
+        ]);
+        let secure = backend.probe_line("secure", 180);
+        // notify has been called; the prompt is still up, so it must not
+        // have answered yet.
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let early = backend.probe_line("notify", 1);
+        let tap = emu.find_ui(&[button]);
+        if let Some((x, y)) = tap {
+            let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+        }
+        let notify = backend.probe_line("notify", 60);
+        // The posted notification, as the system holds it.
+        let posted = emu
+            .shell_text(&["dumpsys", "notification", "--noredact"])
+            .lines()
+            .any(|l| l.contains("probe-notification"));
+        let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
+        let output = backend.output();
+        drop(backend);
+        if secure.as_deref() != Some("secure=ok:probe-value") {
+            failures.push(format!(
+                "{button}: the app did not start: {secure:?}\n{output}"
+            ));
+        } else if early.is_some() {
+            failures.push(format!(
+                "{button}: notify answered {early:?} while the notification prompt showed\n{output}"
+            ));
+        } else if tap.is_none() {
+            failures.push(format!(
+                "{button}: the notification prompt was not on screen\n{output}"
+            ));
+        } else if !notify.as_deref().is_some_and(|s| s.starts_with(want)) {
+            failures.push(format!(
+                "{button}: notify read {notify:?}, want {want}\n{output}"
+            ));
+        } else if posted != (want == "notify=ok") {
+            failures.push(format!(
+                "{button}: the notification is {} in `dumpsys notification`",
+                if posted { "posted" } else { "not posted" }
             ));
         }
     }

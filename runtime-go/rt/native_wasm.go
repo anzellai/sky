@@ -339,110 +339,63 @@ func Native_openUrl(url any) any {
 }
 
 // Native_notify is the Std.Native.notify kernel (`String -> String -> Task Error
-// ()`). It shows a real device notification, preferring a NATIVE bridge the
-// generated mobile shells install over the Web Notification API:
-//
-//  1. iOS  — `window.webkit.messageHandlers.skyNative` (a
-//     WKScriptMessageHandlerWithReply the WKWebView shell registers). The
-//     shell's Swift handler drives `UNUserNotificationCenter`, so a real local
-//     notification fires even though iOS WKWebView disables the Web
-//     Notification API. postMessage returns a Promise → Ok/Err.
-//  2. Android — `window.SkyNative.notify(title, body)` (an @JavascriptInterface
-//     the WebView shell installs) drives `NotificationManager`; returns a bool.
-//  3. Web / desktop — the Web Notification API (requestPermission + new
-//     Notification), the original path.
+// ()`). It shows a real device notification through the native-shell
+// protocol (nativeNotifyVia, native_shell.go): the iOS shell drives
+// UNUserNotificationCenter and the Android shell NotificationManager, and
+// each replies only once the notification is posted, after the user has
+// answered the notification prompt. In a browser, and in the desktop window,
+// it uses the Web Notification API (webNotify).
 func Native_notify(title any, body any) any {
 	t := fmt.Sprintf("%v", title)
 	b := fmt.Sprintf("%v", body)
 	return func() any {
-		win := js.Global()
+		return nativeNotifyVia(nativeShellJS, func() SkyResult[any, any] { return webNotify(t, b) }, t, b)
+	}
+}
 
-		// 1. iOS native bridge (WKScriptMessageHandlerWithReply → Promise).
-		if webkit := win.Get("webkit"); webkit.Truthy() {
-			if mh := webkit.Get("messageHandlers"); mh.Truthy() {
-				if sky := mh.Get("skyNative"); sky.Truthy() &&
-					sky.Get("postMessage").Type() == js.TypeFunction {
-					msg := win.Get("Object").New()
-					msg.Set("type", "notify")
-					msg.Set("title", t)
-					msg.Set("body", b)
-					reply := sky.Call("postMessage", msg)
-					// A reply handler returns a Promise; a plain handler returns
-					// undefined — fall through to the Web path if so.
-					if reply.Truthy() && reply.Type() == js.TypeObject {
-						return blockOnJsPromise(reply, func(a []js.Value) SkyResult[any, any] {
-							return Ok[any, any](struct{}{})
-						})
-					}
-				}
+// webNotify shows a notification with the Web Notification API
+// (requestPermission, then `new Notification`). MUST run on the perform
+// goroutine: the permission request blocks until the user answers.
+func webNotify(t, b string) SkyResult[any, any] {
+	win := js.Global()
+	ctor := win.Get("Notification")
+	if !ctor.Truthy() {
+		return Err[any, any](ErrFfi("notifications: unavailable in this runtime"))
+	}
+	show := func() SkyResult[any, any] {
+		opts := js.Global().Get("Object").New()
+		opts.Set("body", b)
+		// `new Notification(title, opts)` — js.Value.New is the `new` operator;
+		// it panics if the constructor throws, so guard it.
+		var built bool
+		func() {
+			defer func() { recover() }()
+			ctor.New(t, opts)
+			built = true
+		}()
+		if !built {
+			return Err[any, any](ErrFfi("notifications: could not be shown"))
+		}
+		return Ok[any, any](struct{}{})
+	}
+	perm := ctor.Get("permission").String()
+	switch perm {
+	case "granted":
+		return show()
+	case "denied":
+		return Err[any, any](ErrPermissionDenied("notifications: permission denied"))
+	default:
+		// "default" — request permission (Promise<string>), then show.
+		req := ctor.Get("requestPermission")
+		if req.Type() != js.TypeFunction {
+			return Err[any, any](ErrFfi("notifications: cannot request permission"))
+		}
+		return blockOnJsPromise(ctor.Call("requestPermission"), func(a []js.Value) SkyResult[any, any] {
+			if len(a) > 0 && a[0].Type() == js.TypeString && a[0].String() == "granted" {
+				return show()
 			}
-		}
-
-		// 2. Android native bridge (@JavascriptInterface, synchronous bool). The
-		// injected object is a Java-reflection proxy: its methods are CALLABLE but
-		// property access (`SkyNative.notify` as a value) does not always report
-		// js.TypeFunction, so gate on the object's presence and attempt the call
-		// under recover rather than introspecting the method.
-		if sn := win.Get("SkyNative"); sn.Truthy() {
-			called := false
-			ok := false
-			func() {
-				defer func() { recover() }()
-				res := sn.Call("notify", t, b)
-				called = true
-				// A bool false = the device denied / failed; undefined = the proxy
-				// returned nothing but did not throw (treat as issued).
-				ok = res.Type() != js.TypeBoolean || res.Bool()
-			}()
-			if called {
-				if ok {
-					return Ok[any, any](struct{}{})
-				}
-				return Err[any, any](ErrPermissionDenied("notify: the device denied notifications"))
-			}
-			// The call threw — fall through to the Web path.
-		}
-
-		// 3. Web Notification API (browser / desktop webview).
-		ctor := win.Get("Notification")
-		if !ctor.Truthy() {
-			return Err[any, any](ErrFfi("notifications: unavailable in this runtime"))
-		}
-		show := func() SkyResult[any, any] {
-			opts := js.Global().Get("Object").New()
-			opts.Set("body", b)
-			// `new Notification(title, opts)` — js.Value.New is the `new` operator;
-			// it panics if the constructor throws, so guard it.
-			var built bool
-			func() {
-				defer func() { recover() }()
-				ctor.New(t, opts)
-				built = true
-			}()
-			if !built {
-				return Err[any, any](ErrFfi("notifications: could not be shown"))
-			}
-			return Ok[any, any](struct{}{})
-		}
-		perm := ctor.Get("permission").String()
-		switch perm {
-		case "granted":
-			return show()
-		case "denied":
-			return Err[any, any](ErrPermissionDenied("notifications: permission denied"))
-		default:
-			// "default" — request permission (Promise<string>), then show.
-			req := ctor.Get("requestPermission")
-			if req.Type() != js.TypeFunction {
-				return Err[any, any](ErrFfi("notifications: cannot request permission"))
-			}
-			return blockOnJsPromise(ctor.Call("requestPermission"), func(a []js.Value) SkyResult[any, any] {
-				if len(a) > 0 && a[0].Type() == js.TypeString && a[0].String() == "granted" {
-					return show()
-				}
-				return Err[any, any](ErrPermissionDenied("notifications: permission not granted"))
-			})
-		}
+			return Err[any, any](ErrPermissionDenied("notifications: permission not granted"))
+		})
 	}
 }
 

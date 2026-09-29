@@ -41,6 +41,7 @@ const (
 	nativeOpSecureRemove = "sky:secureRemove"
 	nativeOpAuthenticate = "sky:authenticate"
 	nativeOpScanCode     = "sky:scanCode"
+	nativeOpNotify       = "sky:notify"
 )
 
 // nativeCodeFormats is every Std.Native.CodeFormat by its wire name, in the
@@ -260,6 +261,29 @@ func nativeScanCodeVia(t nativeShellTransport, formats []string, prompt string) 
 	return Ok[any, any]([]any{rep.Format, rep.Text})
 }
 
+// nativeNotifyVia runs sky:notify: the shell posts a local notification
+// (UNUserNotificationCenter on iOS, NotificationManager on Android) and
+// replies once it is posted. A notification needs the user's consent (iOS
+// always, Android 13 and later), so a shell whose prompt is on screen waits
+// for the answer before it replies: posting before the answer loses the
+// notification. A refusal rejects "denied:" (Err PermissionDenied). Where no
+// shell answers (a browser), or the shell has no native notifications
+// ("unavailable:", the macOS desktop window), `web` shows it with the Web
+// Notification API.
+func nativeNotifyVia(t nativeShellTransport, web func() SkyResult[any, any], title, body string) SkyResult[any, any] {
+	r := t(nativeOpNotify, nativePayload(map[string]string{"title": title, "body": body}))
+	switch {
+	case !r.Present:
+		return web()
+	case r.Ok:
+		return Ok[any, any](struct{}{})
+	case strings.HasPrefix(strings.TrimSpace(r.Data), "unavailable:"):
+		return web()
+	default:
+		return Err[any, any](nativeShellErr(r.Data))
+	}
+}
+
 // ── the shell side (used by the macOS desktop shell) ─────────────────────────
 
 // nativeSecureStore is a platform secret store.
@@ -300,6 +324,10 @@ func nativeShellDispatch(store nativeSecureStore, auth nativeBiometric, op, payl
 		// The desktop window has no camera scanner. Scan with the iOS or
 		// Android app, or with a widget island in the web view.
 		return "", errors.New("unavailable: the desktop app has no camera code scanner")
+	case nativeOpNotify:
+		// The desktop window posts no native notification; the client then
+		// uses the web view's Notification API.
+		return "", errors.New("unavailable: the desktop app has no native notifications")
 	default:
 		return "", errors.New("invalid: unknown op " + op)
 	}

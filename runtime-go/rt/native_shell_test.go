@@ -3,6 +3,7 @@ package rt
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -385,5 +386,66 @@ func TestNativeCodeFormatsMatchTheStdlib(t *testing.T) {
 	}
 	if strings.Join(names, ",") != strings.Join(nativeCodeFormats, ",") {
 		t.Fatalf("Std.Native formatName %v, runtime %v", names, nativeCodeFormats)
+	}
+}
+
+// Native.notify goes through the native-shell protocol (sky:notify), so a
+// shell answers only once the notification is posted. Before v0.27.0 the
+// Android bridge was a synchronous call: on Android 13 and later it answered
+// Ok while the POST_NOTIFICATIONS prompt still showed, and NotificationManager
+// dropped the notification. The shells now wait for the prompt's answer; a
+// refusal is Err PermissionDenied, and only where no shell has native
+// notifications does the Web Notification API run.
+func TestNotifyGoesThroughTheShellAndKeepsItsAnswer(t *testing.T) {
+	var ops []string
+	var payload map[string]string
+	webCalls := 0
+	web := func() SkyResult[any, any] {
+		webCalls++
+		return Ok[any, any](struct{}{})
+	}
+	shell := func(reply nativeShellReply) nativeShellTransport {
+		return func(op, p string) nativeShellReply {
+			ops = append(ops, op)
+			_ = json.Unmarshal([]byte(p), &payload)
+			return reply
+		}
+	}
+
+	// Posted: Ok, with the title and body on the wire.
+	r := nativeNotifyVia(shell(nativeShellReply{Present: true, Ok: true}), web, "Sky", "Your order shipped")
+	if r.Tag != 0 {
+		t.Fatalf("posted: %+v", r)
+	}
+	if len(ops) != 1 || ops[0] != nativeOpNotify ||
+		payload["title"] != "Sky" || payload["body"] != "Your order shipped" {
+		t.Fatalf("wire: ops %v payload %v", ops, payload)
+	}
+
+	// The user refused the prompt: PermissionDenied, and no Web fallback.
+	r = nativeNotifyVia(shell(nativeShellReply{Present: true,
+		Data: "denied: the user did not allow notifications"}), web, "t", "b")
+	if kind, _ := errKind(t, r); kind != kindPermissionDenied {
+		t.Errorf("denied: kind %d, want PermissionDenied", kind)
+	}
+	// Posting failed: an I/O error.
+	r = nativeNotifyVia(shell(nativeShellReply{Present: true,
+		Data: "failed: the notification service refused it"}), web, "t", "b")
+	if kind, _ := errKind(t, r); kind != kindIo {
+		t.Errorf("failed: kind %d, want Io", kind)
+	}
+	if webCalls != 0 {
+		t.Fatalf("a shell's answer must not fall back to the Web API (%d calls)", webCalls)
+	}
+
+	// No shell (a browser) and a shell with no native notifications (the
+	// macOS desktop window): the Web Notification API.
+	nativeNotifyVia(func(string, string) nativeShellReply { return nativeShellReply{} }, web, "t", "b")
+	nativeNotifyVia(func(op, p string) nativeShellReply {
+		_, err := nativeShellDispatch(nil, nil, op, p)
+		return nativeShellReply{Present: true, Ok: err == nil, Data: fmt.Sprint(err)}
+	}, web, "t", "b")
+	if webCalls != 2 {
+		t.Errorf("no native notifications: %d Web API calls, want 2", webCalls)
 	}
 }

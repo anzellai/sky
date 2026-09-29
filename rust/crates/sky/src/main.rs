@@ -6695,7 +6695,7 @@ import LocalAuthentication
 ///
 /// The Coordinator ALSO installs the `skyNative` native bridge: a
 /// WKScriptMessageHandlerWithReply the wasm client calls as
-/// `window.webkit.messageHandlers.skyNative.postMessage({type:"notify",…})`.
+/// `window.webkit.messageHandlers.skyNative.postMessage({type:"sky:notify",…})`.
 /// This is how `Std.Native.notify` shows a REAL local notification on iOS, where
 /// the Web Notification API is disabled — the handler drives
 /// `UNUserNotificationCenter`, and its reply resolves/rejects the JS Promise so
@@ -6814,23 +6814,30 @@ struct WebView: UIViewRepresentable {
                 replyHandler(nil, "skyNative: malformed message"); return
             }
             switch type {
-            case "notify":
-                let title = dict["title"] as? String ?? ""
-                let body = dict["body"] as? String ?? ""
+            case "sky:notify":
+                // Std.Native.notify (runtime-go/rt/native_shell.go). The
+                // authorization request shows the prompt the first time and
+                // answers at once after that; the notification is posted only
+                // once the user has answered, and the reply waits for both.
+                let payload = dict["payload"] as? String ?? "{}"
+                let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
+                let reply: (Any?, String?) -> Void = { r, e in
+                    DispatchQueue.main.async { replyHandler(r, e) }
+                }
                 let center = UNUserNotificationCenter.current()
                 center.requestAuthorization(options: [.alert, .sound]) { granted, err in
-                    if let err = err { replyHandler(nil, err.localizedDescription); return }
-                    if !granted { replyHandler(nil, "notifications not authorized"); return }
+                    if let err = err { reply(nil, "failed: " + err.localizedDescription); return }
+                    if !granted { reply(nil, "denied: the user did not allow notifications"); return }
                     let content = UNMutableNotificationContent()
-                    content.title = title
-                    content.body = body
+                    content.title = p["title"] ?? ""
+                    content.body = p["body"] ?? ""
                     content.sound = .default
                     let req = UNNotificationRequest(
                         identifier: UUID().uuidString, content: content,
                         trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
                     center.add(req) { addErr in
-                        if let addErr = addErr { replyHandler(nil, addErr.localizedDescription) }
-                        else { replyHandler(nil, nil) }
+                        if let addErr = addErr { reply(nil, "failed: " + addErr.localizedDescription) }
+                        else { reply("", nil) }
                     }
                 }
             case "sky:secureSet", "sky:secureGet", "sky:secureRemove", "sky:authenticate":
@@ -7171,11 +7178,12 @@ public class MainActivity extends Activity {
 
         setContentView(web);
 {{RUNTIME_REQUEST}}
-        // The `skyNative` native bridge: the wasm client calls
-        // `window.SkyNative.notify(title, body)` and this shows a REAL system
-        // notification via NotificationManager. Std.Native.notify prefers this
-        // over the Web Notification API. @JavascriptInterface methods run on a
-        // background thread and may return a value synchronously to JS.
+        // The `SkyNative` native bridge: the wasm client calls
+        // `window.SkyNative.call(op, payload, cbId)` (Std.Native: the secure
+        // store, biometrics, the code scanner, notifications, and the app's
+        // own Native.bridge handlers) and the shell answers through
+        // window.__skyBridgeCb[cbId]. @JavascriptInterface methods run on a
+        // background thread.
         web.addJavascriptInterface(new SkyNativeBridge(this, web), "SkyNative");
         sky.nativeext.SkyNativeExtInstall.installAll();   // register native/android/* handlers
         webView = web;
@@ -7259,6 +7267,9 @@ public class MainActivity extends Activity {
                                 @Override public void ok(String json) { replyOk(cbId, json); }
                                 @Override public void err(String msg) { replyErr(cbId, msg); }
                             });
+                        break;
+                    case "sky:notify":
+                        notifyOp(p.optString("title", ""), p.optString("body", ""), cbId);
                         break;
                     default:
                         replyErr(cbId, "invalid: unknown op " + name);
@@ -7440,12 +7451,43 @@ public class MainActivity extends Activity {
             return b.append("\"").toString();
         }
 
-        @JavascriptInterface
-        public boolean notify(String title, String body) {
+        // Std.Native.notify. On Android 13 and later POST_NOTIFICATIONS is a
+        // run-time permission, and NotificationManager drops a notification
+        // posted without it, silently. So the reply waits for the permission:
+        // the broker answers at once when it is held, and otherwise waits for
+        // a prompt that covers it (the start-up request, or one it asks for
+        // when no prompt shows). Only a refusal is "denied:".
+        private void notifyOp(final String title, final String body, final String cbId) {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                sky.perm.SkyPermissions.ensure(act, "android.permission.POST_NOTIFICATIONS",
+                    new sky.perm.SkyPermissions.Done() {
+                        @Override public void done(boolean granted) {
+                            if (granted) {
+                                postNotification(title, body, cbId);
+                            } else {
+                                replyErr(cbId, "denied: the user did not allow notifications");
+                            }
+                        }
+                    });
+            } else {
+                postNotification(title, body, cbId);
+            }
+        }
+
+        private void postNotification(String title, String body, String cbId) {
             try {
                 NotificationManager nm =
                     (NotificationManager) ctx().getSystemService(Context.NOTIFICATION_SERVICE);
-                if (nm == null) return false;
+                if (nm == null) {
+                    replyErr(cbId, "failed: this device has no notification service");
+                    return;
+                }
+                // The user can turn an app's notifications off in Settings
+                // (on any version): a post would then be dropped.
+                if (!nm.areNotificationsEnabled()) {
+                    replyErr(cbId, "denied: notifications are turned off for this app");
+                    return;
+                }
                 if (android.os.Build.VERSION.SDK_INT >= 26) {
                     nm.createNotificationChannel(new NotificationChannel(
                         CHANNEL, "Sky", NotificationManager.IMPORTANCE_DEFAULT));
@@ -7461,9 +7503,9 @@ public class MainActivity extends Activity {
                         .setSmallIcon(android.R.drawable.ic_dialog_info).build();
                 }
                 nm.notify((int) (System.currentTimeMillis() & 0x7fffffff), n);
-                return true;
+                replyOk(cbId, "");
             } catch (Throwable t) {
-                return false;
+                replyErr(cbId, "failed: " + t);
             }
         }
     }
@@ -15741,12 +15783,12 @@ mod tests {
                 "iOS shell must wire the notification bridge: missing `{needle}`"
             );
         }
-        // Android: an @JavascriptInterface object "SkyNative" with notify(), driving
-        // NotificationManager.
+        // Android: the "SkyNative" @JavascriptInterface takes `sky:notify`
+        // through the permission broker, driving NotificationManager.
         for needle in [
             "addJavascriptInterface(new SkyNativeBridge(this, web), \"SkyNative\")",
             "@JavascriptInterface",
-            "public boolean notify(String title, String body)",
+            "case \"sky:notify\":",
             "NotificationManager",
             "NotificationChannel",
         ] {
@@ -15755,6 +15797,43 @@ mod tests {
                 "Android shell must wire the notification bridge: missing `{needle}`"
             );
         }
+    }
+
+    /// `Native.notify` waits for the user's answer to the notification prompt.
+    /// Before v0.27.0 the Android bridge was a synchronous
+    /// `SkyNative.notify(title, body)`: on Android 13 and later it answered
+    /// `Ok` while the POST_NOTIFICATIONS prompt still showed, and
+    /// NotificationManager dropped the notification. Both shells now take the
+    /// `sky:notify` op of the native-shell protocol and reply only once the
+    /// notification is posted; a refusal replies `denied:` (Err
+    /// PermissionDenied).
+    #[test]
+    fn native_notify_waits_for_the_notification_permission() {
+        assert!(
+            !ANDROID_MAIN_ACTIVITY.contains("public boolean notify("),
+            "the synchronous notify bridge answers before the prompt does"
+        );
+        for needle in [
+            "sky.perm.SkyPermissions.ensure(act, \"android.permission.POST_NOTIFICATIONS\"",
+            "replyErr(cbId, \"denied: the user did not allow notifications\")",
+            "nm.areNotificationsEnabled()",
+        ] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android notify: missing `{needle}`"
+            );
+        }
+        for needle in [
+            "case \"sky:notify\":",
+            "center.requestAuthorization(options: [.alert, .sound])",
+            "reply(nil, \"denied: the user did not allow notifications\")",
+        ] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS notify: missing `{needle}`"
+            );
+        }
+        assert!(!IOS_WEBVIEW_SWIFT.contains("case \"notify\":"));
     }
 
     // ---- App.withAppUrl / SKY_APP_URL: the backend address the shells load ----

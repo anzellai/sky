@@ -135,7 +135,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Native.authenticate` without `Bundle.FaceId`, `Native.capturePhoto` without
   `Bundle.Camera`, or `Native.geolocation` without `Bundle.Location` /
   `LocationAlways`. Before, the build succeeded and the OS denied the request
-  at run time. Add `|> Bundle.withUsage Bundle.<P> "<why>"`.
+  at run time. Add `|> Bundle.withUsage Bundle.<P> "<why>"`. The Android
+  build (`mobile:android`, `tablet:android`) also refuses `Native.notify`
+  without `Bundle.Notifications`: Android 13 and later refuses an undeclared
+  POST_NOTIFICATIONS without a prompt, so every notification was lost. Add
+  `|> Bundle.withPermission Bundle.Notifications` (see Migration).
 - **A native build refuses a native fragment that is not a valid property
   list or manifest fragment,** and one that sets a key Sky generates
   (`CFBundleIdentifier`, the version keys, transport security) to another
@@ -234,6 +238,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Crypto.xchachaSeal` follows the same rule. See Migration below.
 
 ### Migration
+
+- **An Android app that calls `Native.notify` declares the notification
+  permission.** Add `|> Bundle.withPermission Bundle.Notifications` to the
+  app's `bundle`. iOS needs nothing. `Native.notify` keeps its type
+  (`String -> String -> Task Error ()`); a caller that treated `Ok` as "shown"
+  is now right on Android 13 and later, and should handle
+  `Err PermissionDenied` for a user who refuses.
 
 - **A `Std.App` web app without a port setting now binds `sky.toml`'s
   port (8000 by default), not 8080.** To keep 8080, set `[live] port = 8080`
@@ -998,6 +1009,26 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`Native.notify` waits for the notification prompt, and a refusal is
+  `Err PermissionDenied`.** The Android shell's notify bridge was a
+  synchronous JavaScript call: at first launch it answered `Ok` while the
+  POST_NOTIFICATIONS prompt was still on screen, and NotificationManager
+  dropped the notification (on Android 13 and later it posts nothing without
+  the permission, and says nothing). Reproduced on an API 35 emulator:
+  `notify=ok` with the prompt showing, and nothing in `dumpsys
+  notification`. `Native.notify` now goes through the native-shell protocol
+  (`sky:notify`, `runtime-go/rt/native_shell.go`), and each shell replies only
+  when the notification is posted: the Android shell asks the permission
+  broker (`sky.perm.SkyPermissions`), which joins the start-up prompt, then
+  checks that the app's notifications are on; the iOS shell waits for
+  `requestAuthorization` before it adds the request. A refusal replies
+  `denied:` on both. In a browser and the desktop window the Web Notification
+  API runs as before. (Tests: `TestNotifyGoesThroughTheShellAndKeepsItsAnswer`
+  with a mock shell; `native_notify_waits_for_the_notification_permission` on
+  the shell templates; the emulator test
+  `android_emulator_notify_at_first_launch_waits_for_the_notification_prompt`:
+  no answer while the prompt shows, Allow posts it (it is in `dumpsys
+  notification`), Don't allow is `Err PermissionDenied`.)
 - **`Std.Ui.Terminal`: the server's screen could stay at the spawn size, so
   a row went missing (for example after Escape in vim).** `Terminal.attach`
   sends the first `Process.screen` read and the `Process.resize` to the
