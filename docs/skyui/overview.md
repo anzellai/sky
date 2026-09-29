@@ -1154,7 +1154,7 @@ to case (HTML attribute names are lower case).
 The regression gates are `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa,
 under `SKY_CSP=strict`, including a flood of 400 commands in one update),
 `live_island_delivery_test.go` (every server-side loss place is detected) and
-`island_delivery_js_test.go` (the client's gap handling, in node).
+`island_delivery_client_test.go` (the client's gap handling, in node).
 
 ## Canvas — typed 2D scenes (`Std.Ui.Canvas`)
 

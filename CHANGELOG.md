@@ -15,6 +15,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### ⚠ Security
 
+- **The Sky.Spa split decided "a key never crosses a wire" on a type's bare
+  name.** It read a `Msg` payload's types from the syntax, which drops the
+  module, and looked each one up in the project's types by its last name. A
+  `Started (Result Error ( Cpace.Pending, String ))` follow-up of an app that
+  also declared `type alias Pending = { id : Int }` was given a codec for the
+  app's record, so the key-on-wire rule for `withClientCrypto` was checked
+  against the wrong type (the build then failed with `[spaEncodeFollow_] type
+  mismatch: Pending vs record`). Every type the split generates code for is
+  now resolved by its module: payload types through the resolver in the
+  declaring module, the project's record and union shapes by qualified name,
+  a user `Codec T` by nominal identity, the `Shared` copy seed from project
+  types only, and the fuzz harness type map the same way. `Started` now does
+  not cross, with the reason naming `Std.Crypto.Cpace.Pending`; the app's own
+  `Pending` still crosses. (`rust/crates/project/src/spa_split.rs`,
+  `spa_diff_harness.rs`, `spa_diff_gen.rs`, `ty/src/sig.rs`; tests
+  `a_follow_up_payload_type_is_resolved_by_its_module_not_its_bare_name`,
+  `a_device_key_on_a_continuation_is_still_refused`,
+  `spa_split::type_identity_tests`.)
 - **Sky.Live session fixation: the session id did not change at sign-in.**
   The page GET adopted any presented `sky_sid`, and `Live.bindSessionUser`
   stamped the signed-in user onto that same id. Someone who planted an id in
@@ -476,6 +494,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `scripts/ui-canvas-terminal-e2e.sh`.)
 
 ### Added
+
+- **`Std.Nav`: move the address bar from `update`.** `Nav.pushUrl` /
+  `Nav.replaceUrl : String -> Cmd msg` and `Nav.clearFragment : Cmd msg`
+  change the URL with the History API and no page reload. A path or query
+  change routes like an in-app link (the routes, then `withOnNavigate`,
+  once); a fragment-only change moves no page and reaches `Sub.onFragment`.
+  Only a reference on the app's own site is followed (`/path`, `?query`,
+  `#fragment`); anything else is refused with the classified error
+  `NavRejectedUrl`. Sky.Live sends a `nav` frame to the tab whose action
+  caused the update (kept for a tab that has not connected yet), which
+  fetches the page like a `sky-nav` link; Sky.Spa applies it in wasm; in a
+  Sky.Spa server arm the client runs the navigation when it sends the
+  request, and a navigation the split cannot isolate is a build error. A
+  terminal target ignores it. (`sky-stdlib/Std/Nav.sky`,
+  `runtime-go/rt/nav.go`, `live_nav_delivery.go`, `live_wasm.go`,
+  `live_client_asset.go`; tests `nav_test.go`, `nav_client_test.go`, the
+  `spa_split_flow.rs` `a_server_arm_navigation_*` tests and
+  `scripts/nav-e2e.sh`, Chrome and WebKit under `SKY_CSP=strict`.)
 
 - **`Std.Sync`: a `Ref`, a `Mutex` and a bounded `Queue` for Task
   programs.** Several Tasks that run at once (`Task.parallel`, `Task.spawn`,
@@ -1572,7 +1608,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   tab and could not hold what a dying connection or a restart takes with it.
   (`runtime-go/rt/live_island_delivery.go`, `island_client.go`,
   `live_client_asset.go`; tests `live_island_delivery_test.go`,
-  `island_delivery_js_test.go` and the islands e2e flood case.)
+  `island_delivery_client_test.go` and the islands e2e flood case.)
 - **Runtime tests that needed Node.js or PostgreSQL skipped silently.**
   Eight `runtime-go/rt` tests that run the embedded browser clients under
   node, and nine that drive a real PostgreSQL, called `t.Skip` when the
@@ -1880,6 +1916,39 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   from `.split/backend`, as `sky run` and the deploy layouts do.
 
 ### Fixed
+
+- **A record alias from a `[dependencies]` path package was not a record in
+  the `web:app` split.** The split's analysis loaded the fetched registry
+  packages but not the path packages, so `import Geo.Shape exposing (Point)`
+  named a missing module and the build failed with `[update] type mismatch:
+  Point vs record` on a program `sky check` and the Sky.Live build accepted.
+  The analysis now uses the build's dependency loader, and a dependency's
+  record type crosses the wire: `Shared` imports its module under a
+  generated alias and derives its codec. (`rust/crates/project/src/build.rs`
+  `load_dependency_modules`, `spa_split.rs`; test
+  `a_record_alias_from_a_path_dependency_crosses_the_split`, which runs the
+  RPC against the Sky.Live build.)
+- **An error in code the split derived said only "the failure above is in the
+  SYNTHESISED client entry".** The app's source type-checks before the split
+  runs, so such an error is a defect of the split. The build now maps each
+  diagnostic back to the user's construct: a definition carried over is
+  reported at the user's file and line, a rewritten one at the user's
+  definition, a generated one (`spaEncodeFollow_`, `spaModelBlank_`, …) by the
+  construct it came from (`Msg`, `Model`, `init`, the routes) and where that
+  is. (`rust/crates/sky/src/split_diag.rs`.)
+- **An unresolved type name was reported as the type error it caused.** `p0 :
+  Geo.Shape.Point` under a plain `import Geo.Shape` (the qualifier is
+  `Shape`) printed `[p0] type mismatch: Int vs Float`: the unresolved name
+  fell back to the stdlib's `Std.Ui.Canvas.Point`. The build now reports the
+  `[E1001] Undefined name` first. (`rust/crates/project/src/build.rs`; test
+  `resolve_unresolved_type_ref_flow.rs`.)
+- **A node test of the Sky.Live island client never ran.**
+  `island_delivery_js_test.go` carried an implicit `GOOS=js` constraint from
+  its name and `//go:build !js` from its header, so it built for no target.
+  It is `island_delivery_client_test.go` now (it passes), and
+  `TestNoHostTestIsHiddenByAFileNameSuffix` fails on the next such file.
+- **A Sky.Spa split warning printed its prefix twice** (`warning [sky.spa]:
+  warning [sky.spa]: …`).
 
 - **`Live.withAuthSliding` never re-issued the sliding token.** The same
   string-tag comparison read a typed `Maybe` revocation check as the `Maybe`

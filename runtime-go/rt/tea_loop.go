@@ -111,6 +111,9 @@ func (l *teaLoop) runCmd(cmd any) {
 	case "island":
 		// Cmd.toIsland: a terminal target renders no widget islands, so a
 		// command for one has no receiver.
+	case "nav":
+		// Std.Nav: a terminal (or a plain webview window) has no address
+		// bar, so a navigation has no receiver.
 	}
 }
 

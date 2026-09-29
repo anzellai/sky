@@ -1,0 +1,131 @@
+module Main exposing (main)
+
+-- Std.Nav: `update` moves the address bar without a page reload, on every
+-- web target (Sky.Live `--target web`, Sky.Spa `--target web:app`).
+--
+--   go       a client arm pushes `/about?x=1`: the route and onNavigate run
+--   home     a client arm replaces the entry with `/`
+--   frag     a client arm pushes `#sec`: no page moves, Sub.onFragment sees it
+--   clear    `Nav.clearFragment`: the fragment leaves the address bar
+--   save     a SERVER arm (a timer read) returns a navigation too: the client
+--            runs it when it sends the request, as Sky.Live runs it
+--   evil     a URL off the site is refused; the address bar does not move
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Nav as Nav
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { page : String
+    , navs : Int
+    , frag : String
+    , saved : Int
+    }
+
+type Msg
+    = Navigated String
+    | GotFragment String
+    | Go
+    | Home
+    | Frag
+    | Clear
+    | Save
+    | Saved (Result Error Int)
+    | Evil
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = "home", navs = 0, frag = "", saved = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigated p ->
+            ( { model | page = p, navs = model.navs + 1 }, Cmd.none )
+
+        GotFragment f ->
+            ( { model | frag = f }, Cmd.none )
+
+        Go ->
+            ( model, Nav.pushUrl "/about?x=1" )
+
+        Home ->
+            ( model, Nav.replaceUrl "/" )
+
+        Frag ->
+            ( model, Nav.pushUrl "#sec" )
+
+        Clear ->
+            ( model, Nav.clearFragment )
+
+        Save ->
+            ( model
+            , Cmd.batch
+                  [ Cmd.perform (Time.sleep 10 |> Task.map (\_ -> 7)) Saved
+                  , Nav.pushUrl "/about"
+                  ]
+            )
+
+        Saved (Ok n) ->
+            ( { model | saved = n }, Cmd.none )
+
+        Saved (Err _) ->
+            ( model, Cmd.none )
+
+        Evil ->
+            ( model, Nav.pushUrl "https://example.com/" )
+
+
+button : String -> Msg -> Element Msg
+button id msg =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just msg, label = Ui.text id }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "state" ]
+              (Ui.text
+                  ("PAGE=" ++ model.page ++ " NAVS=" ++ String.fromInt model.navs
+                      ++ " FRAG="
+                      ++ model.frag
+                      ++ " SAVED="
+                      ++ String.fromInt model.saved))
+        , button "go" Go
+        , button "home" Home
+        , button "frag" Frag
+        , button "clear" Clear
+        , button "save" Save
+        , button "evil" Evil
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.onFragment GotFragment
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" "home", App.route "/about" "about" ]
+        |> App.withNotFound "home"
+        |> App.withOnNavigate Navigated
+
+
+main =
+    App.run app

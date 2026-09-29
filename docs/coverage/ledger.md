@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 179 |
-| covered by the new corpus (>= Asserted) | 168 |
-| verdict `stronger` | 163 |
+| surfaces | 180 |
+| covered by the new corpus (>= Asserted) | 169 |
+| verdict `stronger` | 164 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
-| stdlib modules (denominator) | 112 |
-| stdlib entries (denominator) | 2210 |
+| stdlib modules (denominator) | 113 |
+| stdlib entries (denominator) | 2213 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.0% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 753 | 34.1% |
-| symbols unreferenced under the generous rule | 663 | 30.0% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 752 | 34.0% |
+| symbols unreferenced under the generous rule | 662 | 29.9% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -230,6 +230,7 @@ None.
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Native` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Nav` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Qr` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |

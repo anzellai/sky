@@ -1,0 +1,52 @@
+-- | Std.Nav — move the browser's address bar from `update`, without a page
+-- reload.
+--
+-- `pushUrl` adds a history entry (Back returns to the page before);
+-- `replaceUrl` replaces the current one. A path or query change routes
+-- exactly like an in-app link: the app's routes pick the page and
+-- `App.withOnNavigate` runs. A fragment-only change moves no page and is
+-- delivered to `Sub.onFragment`. `clearFragment` removes the fragment from
+-- the address bar (for example after reading a one-time value from it).
+--
+--     update msg model =
+--         case msg of
+--             Saved (Ok order) ->
+--                 ( model, Nav.pushUrl ("/orders/" ++ String.fromInt order.id) )
+--
+--             GotKey key ->
+--                 ( { model | key = Just key }, Nav.clearFragment )
+--
+-- Only a reference on the app's own site is followed: a path (`/orders/7`),
+-- a query (`?page=2`) or a fragment (`#top`). Any other value (an absolute
+-- URL, `//host`, a backslash) is refused where the command runs, with the
+-- classified error `NavRejectedUrl` in the log, and the address bar does not
+-- change.
+--
+-- Sky.Live moves the tab whose action caused the update (or, for work no tab
+-- started, such as a timer, one tab of the session). Sky.Spa applies it in
+-- the wasm client; in a server branch the client runs the navigation when it
+-- sends the request, as Sky.Live does. A terminal target has no address bar
+-- and ignores it.
+module Std.Nav exposing (pushUrl, replaceUrl, clearFragment)
+
+import Sky.Ffi as Ffi
+
+
+-- | `pushUrl url` — go to `url` on this site and add a history entry.
+pushUrl : String -> Cmd msg
+pushUrl =
+    Ffi.kernel "Nav_pushUrl"
+
+
+-- | `replaceUrl url` — go to `url` on this site, replacing the current
+-- history entry.
+replaceUrl : String -> Cmd msg
+replaceUrl =
+    Ffi.kernel "Nav_replaceUrl"
+
+
+-- | Remove the fragment (`#…`) from the address bar, replacing the current
+-- history entry. The page does not change; `Sub.onFragment` receives `""`.
+clearFragment : Cmd msg
+clearFragment =
+    replaceUrl "#"

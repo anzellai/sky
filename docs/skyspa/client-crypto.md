@@ -85,7 +85,11 @@ key-holding kernel is not placed).
 With the opt-in, the build refuses every flow it can see that would move a
 device key to the server. A key type is `Kx.SecretKey`, `Sign.SecretKey`,
 `Noise.Handshake`, `Noise.Transport`, `Cpace.Pending` or `Secret`, anywhere in a
-type (inside a `Maybe`, a `List`, a record, a tuple).
+type (inside a `Maybe`, a `List`, a record, a tuple). The build decides this on
+the type's module, never its bare name: an app type named `Pending` is not
+`Cpace.Pending`, and it does not hide the real key from the rule (v0.27.0;
+before, a follow-up Msg carrying `Cpace.Pending` was given a codec for the
+app's own `Pending`).
 
 | Flow | Result |
 |---|---|

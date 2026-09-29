@@ -519,6 +519,59 @@ func spaInstallRouter() {
 	js.Global().Call("addEventListener", "popstate", popFn)
 }
 
+// spaNavApply moves the address bar for a Std.Nav command. A path or query
+// change routes exactly like an in-app link click (spaNavigate: the route,
+// then `onNavigate` or a render); a fragment-only change moves no page and is
+// delivered to `Sub.onFragment`, as a `hashchange` would be (the History API
+// fires none). A URL off this site is refused with a classified error.
+func spaNavApply(nc navCmd) {
+	refuse := func(why string) {
+		if c := js.Global().Get("console"); c.Truthy() {
+			c.Call("error", "[sky.spa] "+navRejectedMessage(nc, why)+" ("+navRejectedClass+")")
+		}
+	}
+	if why := navTargetError(nc.URL); why != "" {
+		refuse(why)
+		return
+	}
+	loc := js.Global().Get("location")
+	hist := js.Global().Get("history")
+	if !loc.Truthy() || !hist.Truthy() {
+		return
+	}
+	var u js.Value
+	func() {
+		defer func() {
+			if recover() != nil {
+				u = js.Undefined()
+			}
+		}()
+		u = js.Global().Get("URL").New(nc.URL, loc.Get("href"))
+	}()
+	if !u.Truthy() || u.Get("origin").String() != loc.Get("origin").String() {
+		refuse("it does not resolve to this site")
+		return
+	}
+	path, search, hash := u.Get("pathname").String(), u.Get("search").String(), u.Get("hash").String()
+	target := path + search
+	if len(hash) > 1 {
+		target += hash
+	}
+	oldPath, oldSearch, oldHash := loc.Get("pathname").String(), loc.Get("search").String(), loc.Get("hash").String()
+	if nc.Replace {
+		hist.Call("replaceState", hist.Get("state"), "", target)
+	} else {
+		hist.Call("pushState", js.Null(), "", target)
+	}
+	if path != oldPath || search != oldSearch {
+		spaNavigate(path)
+		return
+	}
+	if loc.Get("hash").String() != oldHash {
+		spaDeliverFragment(false)
+	}
+}
+
 // spaHasAttr reports whether el has attribute name (guarding hasAttribute's
 // presence for non-element nodes).
 func spaHasAttr(el js.Value, name string) bool {
@@ -949,6 +1002,13 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// Cmd.toIsland: straight to the island runtime (island_wasm.go).
 		if ic, ok := islandCmdOf(cmd); ok {
 			spaIslandCommand(ic)
+		}
+	case "nav":
+		// Std.Nav.pushUrl / replaceUrl (nav.go). Applied after this step
+		// returns (a goroutine yields to it), because a route change runs
+		// the TEA step again.
+		if nc, ok := navCmdOf(cmd); ok {
+			go spaNavApply(nc)
 		}
 	case "spaError":
 		if c := js.Global().Get("console"); c.Truthy() {

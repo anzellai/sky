@@ -319,6 +319,12 @@ type liveSession struct {
 	// (a Std.Ui.Terminal replay) went to nobody. The next connection to
 	// register receives them, in order (bounded by islandPendingMax).
 	islandPending []sseFrame
+	// navPending holds Std.Nav frames for a tab that had no live SSE
+	// connection when the command ran (guarded by sseConnMu), keyed by the
+	// tab id: an `init` or `onNavigate` command runs before the page's SSE
+	// connection is up. The tab's connection receives its frame when it
+	// registers (live_nav_delivery.go).
+	navPending map[string]sseFrame
 	// islands: Cmd.toIsland sequence numbers and delivery marks
 	// (live_island_delivery.go).
 	islands islandState
@@ -3871,6 +3877,19 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 			return
 		}
 		sess.pushIslandCmd(ic)
+	case "nav":
+		// Std.Nav.pushUrl / replaceUrl: the tab that caused this update moves
+		// its address bar (live_nav_delivery.go). A URL off this site is
+		// refused here, with a classified error, and never sent.
+		nc, ok := navCmdOf(c)
+		if !ok {
+			return
+		}
+		if why := navTargetError(nc.URL); why != "" {
+			logNavRejected(nc, why)
+			return
+		}
+		sess.pushNav(nc, currentLiveOriginTab())
 	}
 }
 
@@ -5517,6 +5536,7 @@ func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame, chan s
 		c.outOfSync.Store(true)
 		signalResync(c)
 	}
+	s.deliverPendingNavLocked(c)
 	return id, ch, resync
 }
 

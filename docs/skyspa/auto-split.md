@@ -1177,7 +1177,7 @@ fail-closed default (server), so a pure `Bytes.slice` became an RPC. Now:
 
 | Side | Families |
 |---|---|
-| Client effect | `Native`, `WebSocket` (the client holds its own socket, §20) |
+| Client effect | `Native`, `WebSocket` (the client holds its own socket, §20), `Nav` (§24) |
 | Client (pure) | `Bytes`, `Decimal`, `Compression`, `DbDec` (Std.Db.Decode decoders), `Spa`, the `Std.Html` render helpers |
 | Client members of a mixed family | `Csv` parse / encode; `Money` formatting and allocation; `Std.Config` decoders; `Std.Db.Table` descriptions; `Time` formatting, parsing and calendar arithmetic (UTC or a named zone; the runtime embeds `time/tzdata`); `Std.App` view conversions |
 | Server | `Schema`, `Analytics`, `Cache`, `Email`, `PubSub`, `HttpStream`, `ServerStream`, `ServerWebSocket`, `Trace`; `Money`'s FX-rate table (`setRate`, `getRate`, `hasRate`, `clearRates`, so `convert`); `Csv.parseStreamFromFile`; `Config.loadFromFile` and the `Sky.Config` builders; the `Table` queries; `Time.now` / `unixMillis` / `sleep` / `every`; `Std_App_livePort` |
@@ -1247,3 +1247,72 @@ build of the same source and compares the answers. Unit tests:
 `client_crypto_opt_in_makes_the_keyed_crypto_primitives_placement_neutral`,
 `a_comment_above_an_arm_is_not_part_of_its_constructor`; `app_entry`
 `config_fields_get_their_canonical_top_level_name`.
+
+## 24. Dependency types, type identity and navigation (2026-09-29)
+
+**The split loads the dependencies the build loads.** The analysis db
+(`build::load_source_db`, which the split, `sky spa-partition`, the diagrams
+and the fuzz harnesses read) loaded the fetched registry packages under
+`.skydeps/` but not the local `[dependencies]` path packages. A record alias
+from a path package then named a missing module in the synthesised client
+entry, and the split failed with `[update] type mismatch: Point vs record` on a
+program `sky check` accepted. Both loaders now share
+`build::load_dependency_modules`.
+
+**Every type is resolved by its module, never its bare name.** The codec
+resolver keyed the project's records and unions by bare name, and read a
+`Msg` payload's types from the syntax, which drops the qualifier. A payload of
+the stdlib's `Cpace.Pending` (device key material) was derived a codec as the
+app's own `type alias Pending`: the build failed, and the "a key never crosses
+a wire" rule was decided on the wrong type. Now:
+
+- a `Msg` payload's types are resolved through the resolver in the declaring
+  module (`ty::World::variant_arg_types_resolved`), so they carry their
+  module (`Std.Crypto.Cpace.Pending`);
+- the record and union shapes are keyed by qualified name; a qualified name
+  matches exactly one declaration, and a bare name (declaring module unknown)
+  matches only when one declaration has it;
+- a record field's default is classified from its resolved type, a user
+  `Codec T` binding matches by nominal identity (`ty::nominal::same`), and the
+  `Shared` type-copy seed takes only project types;
+- the key-on-wire rule reads the resolved name, so it refuses the real key
+  whatever the app calls its own types.
+
+**A dependency's record crosses the wire.** A record alias from a
+`[dependencies]` package (path or registry) is external: both generated
+projects carry the dependency, so `Shared` imports its module under a
+generated alias (`import Geo.Shape as SpaTy_Geo_Shape_`), names the type
+`SpaTy_Geo_Shape_.Point`, and derives its codec (`autoGeo_Shape_PointCodec_`).
+Two different project records with the same bare name on the wire are refused
+with a message naming both (the generated module names a project type by its
+bare name).
+
+**An error in derived code names the user's construct.** The app's own source
+type-checks before the split runs, so a type or name error reported from the
+synthesised entry or a generated leg is a defect of the split. The build maps
+each one back (`sky/src/split_diag.rs`): a definition carried over unchanged
+is reported at the user's file and line; a rewritten one at the user's
+definition; a generated one (`spaEncodeFollow_`, `spaModelBlank_`, …) names
+the construct it came from (`Msg`, `Model`, `init`, the routes) and where it
+is. "The failure above is in the SYNTHESISED client entry" is gone.
+
+**Navigation (`Std.Nav`).** `Nav.pushUrl` / `Nav.replaceUrl` /
+`Nav.clearFragment` are a client effect: an arm that only navigates stays in
+the client, and the wasm client applies the History API and routes like a
+link click (`spaNavigate`). A server arm that also navigates keeps its
+navigation leaf in the client: the leaf is lifted out of the arm's command and
+run when the client sends the request (the same residual `Std.Native` uses),
+as Sky.Live runs it when the update returns. The backend's copy of the leaf
+is then already applied. A navigation the split cannot isolate (a helper that
+returns it) is refused at build time, never dropped. A continuation arm that
+navigates is never settled on the server.
+
+Tests: the fixtures `spa-path-dep-record` (with its `lib/` package),
+`spa-follow-bare-name` and `nav-cmds`, driven by the `spa_split_flow.rs` tests
+`a_record_alias_from_a_path_dependency_crosses_the_split`,
+`a_follow_up_payload_type_is_resolved_by_its_module_not_its_bare_name`,
+`a_device_key_on_a_continuation_is_still_refused`,
+`a_server_arm_navigation_runs_in_the_client` and
+`a_server_arm_navigation_the_split_cannot_isolate_is_refused`; the unit tests
+`spa_split::type_identity_tests` and `split_diag::tests`; the browser e2e
+`scripts/nav-e2e.sh` (Sky.Live and web:app, Chrome and WebKit, strict CSP).

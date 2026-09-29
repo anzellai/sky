@@ -3333,7 +3333,14 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// (`surfaces_total` 178 -> 179), covered by the conformance suite
 /// `SyncFileConformanceTest.sky`, the Family-S corpus surface `sync` and
 /// `runtime-go/rt/sync_kernel_test.go` (run under `-race`).
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 183;
+///
+/// 183 -> 184: v0.27.0 adds the `stdlib.Std.Nav` module, one surface
+/// (`surfaces_total` 179 -> 180), covered by `runtime-go/rt/nav_test.go` and
+/// `nav_client_test.go` (the URL rule, the Sky.Live tab delivery, the browser
+/// client in node), the split tests in `rust/crates/sky/tests/spa_split_flow.rs`
+/// (`a_server_arm_navigation_*`) and the browser e2e `scripts/nav-e2e.sh`
+/// (Sky.Live and web:app, Chrome and WebKit).
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 184;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

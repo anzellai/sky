@@ -1749,11 +1749,77 @@ fn native_residual(
     tainted: &HashSet<String>,
     branch: &str,
 ) -> Result<String, String> {
+    let needle = format!("{native_alias}.");
+    client_residual(
+        arm,
+        src,
+        &|t: &str| t.contains(&needle),
+        tainted,
+        branch,
+        &ResidualWords {
+            what: "a Std.Native client effect",
+            isolate: format!(
+                "put the `Cmd.perform ({native_alias}.…)` directly in the branch's `Cmd.batch [ … ]`"
+            ),
+            runs: "The client runs a Std.Native effect itself",
+            elsewhere: "run the effect from the result Msg's client arm",
+        },
+    )
+}
+
+/// The Std.Nav leaves of a server arm's command, for the client to run when
+/// it sends the RPC (see [`ArmRoutes::nav_arms`]). A navigation the split
+/// cannot isolate (built by a helper, say) is refused: the backend cannot move
+/// the browser.
+fn nav_residual(
+    arm: &syntax::SyntaxNode,
+    src: &str,
+    names: &NavNames,
+    tainted: &HashSet<String>,
+    branch: &str,
+) -> Result<String, String> {
+    client_residual(
+        arm,
+        src,
+        &|t: &str| names.names_nav(t),
+        tainted,
+        branch,
+        &ResidualWords {
+            what: "a navigation (`Std.Nav`)",
+            isolate: "write the `Nav.pushUrl …` / `Nav.replaceUrl …` directly as the branch's command or in its `Cmd.batch [ … ]`, or navigate from the client arm of the branch's result Msg".to_string(),
+            runs: "The client runs the navigation itself",
+            elsewhere: "navigate from the result Msg's client arm",
+        },
+    )
+}
+
+/// The wording of a residual refusal.
+struct ResidualWords {
+    what: &'static str,
+    isolate: String,
+    runs: &'static str,
+    elsewhere: &'static str,
+}
+
+/// The leaves of a server arm's `( model, cmd )` command that `is_client` picks
+/// (the direct command, or the elements of its `Cmd.batch [ … ]`), as a
+/// `Cmd.batch [ … ]` the client runs when it sends the RPC. Refused when no
+/// leaf is picked, or a picked leaf uses a value only the server has (an
+/// arm-local `let`, a server-tainted name).
+fn client_residual(
+    arm: &syntax::SyntaxNode,
+    src: &str,
+    is_client: &dyn Fn(&str) -> bool,
+    tainted: &HashSet<String>,
+    branch: &str,
+    words: &ResidualWords,
+) -> Result<String, String> {
     use syntax::ast::Expr as E;
+    let what = words.what;
     let tuple = arm
         .descendants()
         .find(|n| n.kind() == SyntaxKind::TupleExpr)
-        .ok_or_else(|| format!("sky.spa: server branch `{branch}` returns a Std.Native client effect, but its `( model, cmd )` result could not be read; return the tuple directly"))?;
+        .ok_or_else(|| format!("sky.spa: server branch `{branch}` returns {what}, but its `( model, cmd )` result could not be read; return the tuple directly"))?;
     let elems: Vec<syntax::SyntaxNode> = tuple
         .children()
         .filter_map(E::cast)
@@ -1780,15 +1846,15 @@ fn native_residual(
     } else {
         leaves.push(cmd.clone());
     }
-    let needle = format!("{native_alias}.");
-    let native: Vec<String> = leaves
+    let picked: Vec<String> = leaves
         .iter()
         .map(|l| slice(src, l).to_string())
-        .filter(|t| t.contains(&needle))
+        .filter(|t| is_client(t))
         .collect();
-    if native.is_empty() {
+    if picked.is_empty() {
         return Err(format!(
-            "sky.spa: server branch `{branch}` returns a Std.Native client effect the split could not isolate; put the `Cmd.perform ({native_alias}.…)` directly in the branch's `Cmd.batch [ … ]`"
+            "sky.spa: server branch `{branch}` returns {what} the split could not isolate; {}",
+            words.isolate
         ));
     }
     // Names the client cannot see: the arm's own `let` bindings, server-tainted
@@ -1814,19 +1880,21 @@ fn native_residual(
             }
         }
     }
-    for t in &native {
+    for t in &picked {
         for n in locals.iter().chain(tainted.iter()) {
             if references_word(t, n) {
                 return Err(format!(
-                    "sky.spa: server branch `{branch}` returns the client effect `{}` that uses `{n}`, a value only the server has. The client runs a Std.Native effect itself, so it may use only the model and the Msg's arguments — move `{n}` into the model, or run the effect from the result Msg's client arm.",
-                    flatten_expr_text(t)
+                    "sky.spa: server branch `{branch}` returns the client effect `{}` that uses `{n}`, a value only the server has. {}, so it may use only the model and the Msg's arguments — move `{n}` into the model, or {}.",
+                    flatten_expr_text(t),
+                    words.runs,
+                    words.elsewhere
                 ));
             }
         }
     }
     Ok(format!(
         "Cmd.batch [ {} ]",
-        native
+        picked
             .iter()
             .map(|t| flatten_expr_text(t))
             .collect::<Vec<_>>()
@@ -2693,7 +2761,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .iter()
         .map(|r| (r.ctor.clone(), r.msg_arg_tys.clone()))
         .collect();
-    let arm_routes = ArmRoutes::from_report(&report.branches, &routes, &report.chaining_branches);
+    let mut arm_routes =
+        ArmRoutes::from_report(&report.branches, &routes, &report.chaining_branches);
     let mut client_names: Vec<String> = Vec::new();
     for b in report.branches.iter().filter(|b| !b.server) {
         let name = ctor_name(&b.msg).to_string();
@@ -3398,6 +3467,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let upd_parse = db.module_parse(update_module);
     let upd_src = upd_parse.syntax().text().to_string();
     let upd_file = upd_parse.tree();
+    // Std.Nav: how `update`'s module names the navigation commands, and the
+    // names a client residual may not use there.
+    arm_routes.nav_names = NavNames::of_module(&upd_file, &upd_src);
+    arm_routes.nav_tainted = scope_tainted
+        .get(&update_module)
+        .cloned()
+        .unwrap_or_default();
     let update_decl = upd_file
         .decls()
         .find(|d| decl_name(d).as_deref() == Some("update") && is_value_decl(d));
@@ -8144,6 +8220,70 @@ pub(crate) struct ArmRoutes {
     /// write-set: the client already made that write, and Msgs that ran since
     /// must not be overwritten.
     client_model: HashSet<String>,
+    /// Std.Nav (v0.27.0): the server arms (by index) whose branch reaches a
+    /// navigation, and, for a verdict with no arm position, its constructor.
+    /// The client runs such an arm's navigation when it sends the RPC (the
+    /// residual), as Sky.Live runs it when the update returns; the backend's
+    /// copy of the leaf is then already applied (runtime-go
+    /// spa_followups_notjs.go).
+    nav_arms: HashSet<usize>,
+    nav_heads: HashSet<String>,
+    /// How the module that declares `update` names Std.Nav, and its
+    /// server-only names (a residual may not use them).
+    nav_names: NavNames,
+    nav_tainted: HashSet<String>,
+}
+
+/// How one module names the Std.Nav commands: the qualifier of `import
+/// Std.Nav` (its alias, else `Std.Nav`) and the names it exposes unqualified.
+#[derive(Default, Clone)]
+pub(crate) struct NavNames {
+    qualifier: Option<String>,
+    bare: Vec<String>,
+}
+
+impl NavNames {
+    /// Read from a module's `import Std.Nav …` line (empty when it has none).
+    fn of_module(file: &SourceFile, src: &str) -> NavNames {
+        const ALL: [&str; 3] = ["pushUrl", "replaceUrl", "clearFragment"];
+        let mut out = NavNames::default();
+        for i in collect_imports(file, src) {
+            if i.module_path != "Std.Nav" {
+                continue;
+            }
+            let t = flatten_expr_text(&i.text);
+            let alias = t
+                .split_whitespace()
+                .skip_while(|w| *w != "as")
+                .nth(1)
+                .map(str::to_string);
+            out.qualifier = Some(alias.unwrap_or_else(|| "Std.Nav".to_string()));
+            if let Some(open) = t.find("exposing") {
+                let list = &t[open + "exposing".len()..];
+                let inner = list.trim().trim_start_matches('(').trim_end_matches(')');
+                if inner.trim() == ".." {
+                    out.bare = ALL.iter().map(|s| s.to_string()).collect();
+                } else {
+                    out.bare = inner
+                        .split(',')
+                        .map(|n| n.trim().to_string())
+                        .filter(|n| ALL.contains(&n.as_str()))
+                        .collect();
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether the text of a command leaf names a Std.Nav command.
+    fn names_nav(&self, text: &str) -> bool {
+        if let Some(q) = &self.qualifier {
+            if text.contains(&format!("{q}.")) {
+                return true;
+            }
+        }
+        self.bare.iter().any(|n| references_word(text, n))
+    }
 }
 
 impl ArmRoutes {
@@ -8187,7 +8327,26 @@ impl ArmRoutes {
                 }
             }
         }
+        for b in branches {
+            if !b.server || !b.effect_families.iter().any(|f| f == "Nav") {
+                continue;
+            }
+            match &b.arm {
+                Some(a) => {
+                    out.nav_arms.insert(a.index);
+                }
+                None => {
+                    out.nav_heads.insert(ctor_name(&b.msg).to_string());
+                }
+            }
+        }
         out
+    }
+
+    /// Whether server arm `index` (of constructor `head`) reaches a Std.Nav
+    /// navigation.
+    fn arm_navigates(&self, index: usize, head: &str) -> bool {
+        self.nav_arms.contains(&index) || self.nav_heads.contains(head)
     }
 
     fn is_empty(&self) -> bool {
@@ -8345,19 +8504,34 @@ fn gen_frontend_update(
                 .as_ref()
                 .and_then(|f| f.ctx.branches.get(&m).copied())
                 .unwrap_or(false);
-            let call = if native {
+            // The residual runs in the client when the request is sent, on
+            // the model this Msg runs on.
+            let mut residual: Vec<String> = Vec::new();
+            if native {
                 let f = follow.as_ref().expect("native implies follow");
                 let alias = f.native_alias.ok_or_else(|| {
                     format!("sky.spa: server branch `{m}` returns a Std.Native client effect, but its module does not import Std.Native")
                 })?;
-                // The residual runs in the client when the request is sent, on
-                // the model this Msg runs on.
-                let residual = native_residual(arm.syntax(), src, alias, f.tainted, &m)?;
-                format!(
-                    "Cmd.batch [ {residual}, {rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m} ]"
-                )
-            } else {
+                residual.push(native_residual(arm.syntax(), src, alias, f.tainted, &m)?);
+            }
+            // Std.Nav: the navigation moves the browser, so the client runs it,
+            // as Sky.Live runs it when the update returns.
+            if arm_routes.arm_navigates(arm_index, &m) {
+                residual.push(nav_residual(
+                    arm.syntax(),
+                    src,
+                    &arm_routes.nav_names,
+                    &arm_routes.nav_tainted,
+                    &m,
+                )?);
+            }
+            let call = if residual.is_empty() {
                 format!("{rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m}")
+            } else {
+                format!(
+                    "Cmd.batch [ {}, {rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m} ]",
+                    residual.join(", ")
+                )
             };
             // An async constructor whose arm writes the model keeps that write
             // in the client: the arm is written out as it stands, with only its
