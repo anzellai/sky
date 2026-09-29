@@ -319,7 +319,7 @@ jobs:
   # SETUP_INDEPENDENT_JOBS.
   # test-sky is SHARDED across five sibling jobs (`test-sky` + `test-sky-2` +
   # `test-sky-3` + `test-sky-4` + `test-sky-5`), `cargo nextest --partition
-  # count:1/5` .. `5/5`.
+  # slice:1/5` .. `5/5`.
   # nextest partitions at TEST granularity, so it is disjoint-and-total by
   # construction (every non-ignored test runs in exactly one shard, no manifest
   # to maintain). `count` (round-robin over the sorted test list) — not `hash`
@@ -328,7 +328,15 @@ jobs:
   # similarly-named tests in one file, and a name hash scatters them randomly —
   # v0.24.0's SPA additions hashed disproportionately into shard 1 (766s -> 1074s
   # against the 990s ceiling while shard 2 stayed ~606s). count round-robins that
-  # contiguous block evenly by construction. Four shards were added when the
+  # contiguous block evenly by construction.
+  # `slice`, not `count`, since v0.27.0: `count` round-robins WITHIN each test
+  # binary, so every binary's first test lands in shard 1. With ~60 binaries,
+  # many holding one to three tests, shard 1 always carried the most tests
+  # (run 36618730833: 149 tests in shard 1 against 102 in shard 5, 1180 s
+  # against 751 s). `slice` round-robins over the whole sorted test list, so
+  # the per-shard test counts differ by at most one and the contiguous
+  # spa_split_flow block still spreads evenly. Still disjoint-and-total.
+  # Four shards were added when the
   # 3-shard split reached ~1006-1035s at v0.25.1; the 5th when v0.27.0's tests
   # took the slowest of four to 979s (see `test-sky-5`).
   # Five explicitly-named jobs, NOT a `matrix` (a matrix leg reports to the REST
@@ -385,7 +393,7 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition count:1/5
+        run: cargo nextest run -p sky --locked --partition slice:1/5
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -434,7 +442,7 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition count:2/5
+        run: cargo nextest run -p sky --locked --partition slice:2/5
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -483,7 +491,7 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition count:3/5
+        run: cargo nextest run -p sky --locked --partition slice:3/5
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -537,7 +545,7 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition count:4/5
+        run: cargo nextest run -p sky --locked --partition slice:4/5
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -592,7 +600,7 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition count:5/5
+        run: cargo nextest run -p sky --locked --partition slice:5/5
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
