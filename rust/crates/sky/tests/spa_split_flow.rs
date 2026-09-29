@@ -4290,7 +4290,10 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     for needle in [
         "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path",
         "spaSsrSettleFull routed cmd0 update",
-        "Codec.toJson (Codec.auto resolved) resolved",
+        // The first-paint encoder is typed with the app's model (so a field
+        // `init` leaves unconstrained still has a codec element).
+        "Codec.toJson (Codec.auto m_) m_",
+        "spaSsrModelJson_ resolved",
     ] {
         assert!(
             backend.contains(needle),
