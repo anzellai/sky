@@ -84,7 +84,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1422; // +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
+pub const CONFORMANCE_EXPECTED: u64 = 1451; // +29 SyncFile (Sky.Core.File stat / lstat / realPath / readLink / chmod / permissions / resolveWithin, Std.Sync Ref / Mutex / Queue, the Sky-syntax toString printer) — v0.27.0 downstream round 3; +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -745,12 +745,19 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// `as_pattern_nesting` 24, `task_slot` 32, `let_polymorphism` 24,
 /// `qualified_field` 15). Each pins a downstream reproduction as its
 /// coordinate; see `corpus/lang_shapes.rs`.
-pub const CORPUS_EXPECTED: u64 = 614;
+///
+/// **616 since the v0.27.0 Std.Sync surface** (+2: `sync` nominal and
+/// failure). The new `Std.Sync` lands covered, so the dark-module count stays
+/// at its ceiling.
+pub const CORPUS_EXPECTED: u64 = 616;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
+///
+/// **470 since the v0.27.0 Std.Sync Family-S surface** (+2, both built and
+/// run; the same +2 as `CORPUS_EXPECTED`).
 ///
 /// **468 since the v0.27.0 round-3 language strata** (+95, every one built
 /// and run; the same +95 as `CORPUS_EXPECTED`).
@@ -775,7 +782,7 @@ pub const CORPUS_EXPECTED: u64 = 614;
 /// T1 tier — so a behavioural-case addition that forgets this const surfaces a
 /// tier late. Both `CORPUS_EXPECTED` (all cases) and this (the built-and-run
 /// subset) move by the same +2 when a behavioural case lands.
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 468;
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 470;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -3321,7 +3328,12 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// `island_terminal_test.go`, `process_terminal_test.go`,
 /// `term_screen_test.go`) and the browser e2e
 /// `scripts/ui-canvas-terminal-e2e.sh`.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 182;
+///
+/// 182 -> 183: v0.27.0 adds the `stdlib.Std.Sync` module, one surface
+/// (`surfaces_total` 178 -> 179), covered by the conformance suite
+/// `SyncFileConformanceTest.sky`, the Family-S corpus surface `sync` and
+/// `runtime-go/rt/sync_kernel_test.go` (run under `-race`).
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 183;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

@@ -356,3 +356,143 @@ fn a_named_suite_is_built_without_the_other_suites() {
     assert!(String::from_utf8_lossy(&bare.stderr).contains("usage: sky test"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn run_verify(dir: &Path) -> (i32, String) {
+    let out = Command::new(SKY)
+        .arg("verify")
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky verify");
+    let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+    s.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code().unwrap_or(-1), s)
+}
+
+/// `sky verify` on a LIBRARY package (no `entry`, no `Main`; a downstream
+/// project reported it): it failed with "no entry module named Main" and
+/// skipped the tests. A library is checked module by module, its tests run,
+/// and only the entry binary is skipped. A type error in a module that nothing
+/// imports still fails the check.
+#[test]
+fn verify_checks_a_library_package_and_runs_its_tests() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("verifylib");
+    std::fs::create_dir_all(dir.join("src/Lib")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"lib\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Lib/Double.sky"),
+        "module Lib.Double exposing (double)\n\nimport Sky.Core.Prelude exposing (..)\n\n\n\
+         double : Int -> Int\ndouble n =\n    n * 2\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("tests/DoubleTest.sky"),
+        "module DoubleTest exposing (tests)\n\nimport Lib.Double exposing (double)\n\
+         import Sky.Core.Prelude exposing (..)\nimport Sky.Test as Test exposing (Test)\n\n\n\
+         tests : List Test\ntests =\n    [ Test.test \"double\" (\\_ -> Test.equal 4 (double 2)) ]\n",
+    )
+    .unwrap();
+
+    let (code, out) = run_verify(&dir);
+    assert_eq!(code, 0, "a library package verifies:\n{out}");
+    assert!(out.contains("library: 1 module(s)"), "{out}");
+    assert!(out.contains("1 suite(s) passed"), "{out}");
+    assert!(!out.contains("no entry module named Main"), "{out}");
+    assert!(
+        !dir.join("sky-out").exists(),
+        "the library check builds in scratch, not in the project"
+    );
+
+    // A failing test fails the gate at the test phase.
+    std::fs::write(
+        dir.join("tests/DoubleTest.sky"),
+        "module DoubleTest exposing (tests)\n\nimport Lib.Double exposing (double)\n\
+         import Sky.Core.Prelude exposing (..)\nimport Sky.Test as Test exposing (Test)\n\n\n\
+         tests : List Test\ntests =\n    [ Test.test \"double\" (\\_ -> Test.equal 5 (double 2)) ]\n",
+    )
+    .unwrap();
+    let (code, out) = run_verify(&dir);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("verify failed: tests"), "{out}");
+
+    // A type error in a module nothing imports fails the check phase.
+    std::fs::write(
+        dir.join("src/Lib/Broken.sky"),
+        "module Lib.Broken exposing (bad)\n\nimport Sky.Core.Prelude exposing (..)\n\n\n\
+         bad : Int\nbad =\n    \"not an int\"\n",
+    )
+    .unwrap();
+    let (code, out) = run_verify(&dir);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("✗ check"), "{out}");
+    assert!(
+        out.contains("Broken.sky"),
+        "the error names the module's file:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `sky test` printed a failing `Test.equal`'s values as Go structs
+/// (`expected {0 a <nil>} but got {0 b <nil>}`; a downstream project reported
+/// it). They print as Sky values, with the printer `Debug.toString` uses.
+#[test]
+fn a_failing_equal_prints_sky_values() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = scratch("skyvalues");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"tvals\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Shapes.sky"),
+        "module Shapes exposing (Shape(..), User)\n\nimport Sky.Core.Prelude exposing (..)\n\n\n\
+         type Shape\n    = Circle Float\n    | Rect { w : Int, h : Int }\n    | Empty\n\n\n\
+         type alias User =\n    { name : String, age : Int, tags : List String }\n",
+    )
+    .unwrap();
+    let suite = dir.join("tests/ValuesTest.sky");
+    std::fs::write(
+        &suite,
+        "module ValuesTest exposing (tests)\n\n\
+         import Sky.Core.Error as Error\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Shapes exposing (Shape(..), User)\n\
+         import Sky.Test as Test exposing (Test)\n\n\n\
+         user : User\nuser =\n    { name = \"Ada\", age = 40, tags = [ \"a\", \"b\" ] }\n\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"result\" (\\_ -> Test.equal (Ok \"a\") (Ok \"b\"))\n    \
+         , Test.test \"error\" (\\_ -> Test.equal (Err (Error.io \"x\")) (Ok 1))\n    \
+         , Test.test \"record\" (\\_ -> Test.equal user { user | age = 41 })\n    \
+         , Test.test \"adt\" (\\_ -> Test.equal [ Circle 1.5, Empty ] [ Rect { w = 1, h = 2 } ])\n    \
+         , Test.test \"maybe\" (\\_ -> Test.equal (Just ( 1, 'c' )) Nothing)\n    \
+         ]\n",
+    )
+    .unwrap();
+    let (code, out, _) = run_test(&dir, &suite);
+    assert_eq!(code, 1, "{out}");
+    for want in [
+        "expected Ok \"a\" but got Ok \"b\"",
+        "expected Err (Io \"x\") but got Ok 1",
+        "expected { age = 40, name = \"Ada\", tags = [\"a\", \"b\"] } but got { age = 41, name = \"Ada\", tags = [\"a\", \"b\"] }",
+        "expected [Circle 1.5, Empty] but got [Rect { h = 2, w = 1 }]",
+        "expected Just (1, 'c') but got Nothing",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+    assert!(!out.contains("<nil>"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

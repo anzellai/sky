@@ -430,9 +430,10 @@ pub static GATES: &[Gate] = &[
                 // v0.27.0 canvas and terminal surfaces (+9 cases, 510 → 519),
                 // and the v0.27.0 round-3 language strata as_pattern_nesting,
                 // task_slot, let_polymorphism and qualified_field (+95 cases,
-                // 519 → 614).
-                from: "n_min = 614",
-                to: "n_min = 615",
+                // 519 → 614), and the v0.27.0 Std.Sync surface (+2 cases,
+                // 614 → 616).
+                from: "n_min = 616",
+                to: "n_min = 617",
             },
         }]),
         body: bodies::corpus_manifest,

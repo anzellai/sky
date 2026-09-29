@@ -125,6 +125,41 @@ mod tests {
         assert!(r.class_a.is_empty(), "class-a: {:?}", r.class_a);
     }
 
+    /// A constructor of an OPAQUE type (`exposing (Msg)`, no `(..)`) matched in
+    /// a pattern (a downstream project hit it on `Std.Ui.Terminal.Msg`): the
+    /// naming error carries the user's span and says why, instead of a bare
+    /// "Undefined name" with no file or line. The expression position too.
+    #[test]
+    fn hidden_qualified_ctor_is_located_and_explained() {
+        let dep = "module Lib exposing (Msg, make)\n\
+                   type Msg = Ready | Input String\n\
+                   make = Ready\n";
+        let main = "module Main exposing (describe, build)\n\
+                    import Lib as L\n\n\
+                    describe msg =\n    case msg of\n        L.Ready ->\n            1\n\n        _ ->\n            2\n\n\
+                    build =\n    L.Input \"x\"\n";
+        let db = db_with(&[("Lib", dep), ("Main", main)]);
+        let m = db.module_by_name("Main").unwrap();
+        let r = resolve(&db, m);
+        let errs: Vec<_> = r
+            .diagnostics
+            .iter()
+            .filter(|d| d.code.0 == "E1001")
+            .collect();
+        assert_eq!(errs.len(), 2, "{:?}", r.diagnostics);
+        for (d, want) in errs.iter().zip(["L.Ready", "L.Input"]) {
+            assert!(d.message.contains(want), "{}", d.message);
+            assert!(d.message.contains("opaque type"), "{}", d.message);
+            let label = d.labels.first().expect("the error is located");
+            let (start, end) = (label.span.range.0 as usize, label.span.range.1 as usize);
+            assert_eq!(
+                &main[start..end],
+                want,
+                "the span covers the qualified name"
+            );
+        }
+    }
+
     #[test]
     fn unknown_bare_name_under_prelude_open_is_rejected() {
         // Regression for the `kernel_open` soundness hole: `import Sky.Core.Prelude

@@ -13259,6 +13259,23 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
     // 2. check + build — type-checks + `go build`s + emits the (production)
     //    binary. This single build covers both "type checking" and "production
     //    build": `sky check` ≡ `sky build` minus the artefact.
+    //
+    //    A LIBRARY package (no `entry`, and a `[lib]` table or no `Main`
+    //    module) has no entry to build: every module under its source root is
+    //    checked instead, and only the entry binary is skipped.
+    if is_verify_library(dir) {
+        match check_library_modules(&repo_root, dir) {
+            Ok(n) => println!(
+                "  ✓ check    (library: {n} module(s) type-check and build; no entry binary)"
+            ),
+            Err(e) => {
+                println!("  ✗ check    {}", e.trim());
+                failed.push("check");
+            }
+        }
+        run_verify_tests(dir, &out_dir_name, &mut failed);
+        return verify_verdict(&failed);
+    }
     let opts = BuildOptions {
         repo_root,
         example_dir: dir.to_path_buf(),
@@ -13287,15 +13304,22 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
 
     // 3. tests — run every tests/*.sky suite (only when a build succeeded, so a
     //    type error isn't reported twice).
+    run_verify_tests(dir, &out_dir_name, &mut failed);
+    verify_verdict(&failed)
+}
+
+/// `sky verify`'s test phase: every `tests/*.sky` suite, skipped when the
+/// check phase failed (its error is already on screen).
+fn run_verify_tests(dir: &Path, out_dir_name: &str, failed: &mut Vec<&str>) {
     let suites = test_suites(dir);
     if suites.is_empty() {
         println!("  – tests    (none under tests/)");
     } else if failed.contains(&"check") {
-        println!("  – tests    (skipped — fix the type error first)");
+        println!("  – tests    (skipped — fix the check failure first)");
     } else {
         let mut test_fail = 0;
         for suite in &suites {
-            match testrunner::run_test(suite, &out_dir_name) {
+            match testrunner::run_test(suite, out_dir_name) {
                 Ok(run) if run.exit_code == Some(0) => {}
                 Ok(run) => {
                     println!(
@@ -13321,7 +13345,10 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
             failed.push("tests");
         }
     }
+}
 
+/// `sky verify`'s closing line and exit code.
+fn verify_verdict(failed: &[&str]) -> ExitCode {
     println!();
     if failed.is_empty() {
         println!("✓ verify passed — ready to ship");
@@ -13330,6 +13357,92 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
         println!("✗ verify failed: {}", failed.join(", "));
         ExitCode::FAILURE
     }
+}
+
+/// True when `sky verify` should treat `dir` as a LIBRARY package: sky.toml
+/// names no `entry`, and it declares a `[lib]` table or no module under the
+/// source root is a `Main` (the modules are imported by other projects, never
+/// run). A project with an explicit `entry` is always an application.
+fn is_verify_library(dir: &Path) -> bool {
+    if toml_entry(dir).is_some() {
+        return false;
+    }
+    if is_library_project(dir) {
+        return true;
+    }
+    let mut files = Vec::new();
+    walk_sky(&dir.join(project::configured_source_root(dir)), &mut files);
+    !files.iter().any(|f| {
+        project::declared_module_name(f)
+            .is_some_and(|n| n == "Main" || n == "main" || n.ends_with(".Main"))
+    })
+}
+
+/// The module `sky verify` synthesises to check a library: it imports every
+/// module under the source root, so the whole package is type-checked,
+/// lowered and `go build`t exactly as an application's modules are.
+const LIBRARY_CHECK_ENTRY: &str = "SkyLibraryCheck__";
+
+/// Check every module of a library package (see [`is_verify_library`]):
+/// build a synthesised entry that imports each of them into a scratch output
+/// directory (the project tree is not written). Returns the module count.
+fn check_library_modules(repo_root: &Path, dir: &Path) -> Result<usize, String> {
+    let root = project::configured_source_root(dir);
+    let mut files = Vec::new();
+    walk_sky(&dir.join(&root), &mut files);
+    let mut modules: Vec<String> = files
+        .iter()
+        .filter_map(|f| project::declared_module_name(f))
+        .collect();
+    modules.sort();
+    modules.dedup();
+    if modules.is_empty() {
+        return Err(format!("no .sky modules under {root}/"));
+    }
+    let scratch = std::env::temp_dir().join(format!(
+        "sky-verify-lib-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let entry_dir = scratch.join("entry");
+    std::fs::create_dir_all(&entry_dir).map_err(|e| format!("scratch dir: {e}"))?;
+    let mut body = format!("module {LIBRARY_CHECK_ENTRY} exposing (main)\n\n");
+    for m in &modules {
+        body.push_str(&format!("import {m}\n"));
+    }
+    body.push_str("import Std.Log as SkyLibraryCheckLog__\n\n\nmain =\n    SkyLibraryCheckLog__.println \"ok\"\n");
+    let entry_file = entry_dir.join(format!("{LIBRARY_CHECK_ENTRY}.sky"));
+    if let Err(e) = std::fs::write(&entry_file, body) {
+        let _ = std::fs::remove_dir_all(&scratch);
+        return Err(format!("write {}: {e}", entry_file.display()));
+    }
+    let opts = BuildOptions {
+        repo_root: repo_root.to_path_buf(),
+        example_dir: dir.to_path_buf(),
+        out_dir_name: "sky-out".to_string(),
+        out_dir_abs: Some(scratch.join("sky-out")),
+        run: false,
+        stdin: None,
+        entry_module: None,
+        progress: false,
+        embed_bundle: None,
+        wasm: false,
+    };
+    let report = project::build_project(&opts, &[entry_dir], Some(LIBRARY_CHECK_ENTRY));
+    let _ = std::fs::remove_dir_all(&scratch);
+    if !report.emitted {
+        return Err(report.note);
+    }
+    if !report.go_build_ok {
+        return Err(format!(
+            "go build failed:\n{}",
+            report.go_build_stderr.trim()
+        ));
+    }
+    Ok(modules.len())
 }
 
 /// Project `.sky` files under the configured source root + `tests/`, skipping

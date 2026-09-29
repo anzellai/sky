@@ -627,6 +627,47 @@ fn install_path_deps(
     }
 }
 
+/// The build half of a Go path dependency: re-inspect every local Go module
+/// whose generated surface is stale ([`crate::path_deps::stale_go_surfaces`]:
+/// absent, unfingerprinted, or its exported API changed) and rewrite its
+/// `sky-ffi/` files, exactly as `sky install` does. A path dependency is the
+/// user's own code and changes without a version bump, so `sky build` /
+/// `sky check` / `sky test` pick up an added or removed function by
+/// themselves; a registry dependency keeps its pinned surface (it is never
+/// re-inspected here). Returns one note per refreshed module. An inspection
+/// failure is an error that names the module, never a stale build.
+pub fn refresh_stale_path_surfaces(
+    project_dir: &Path,
+    repo_root: &Path,
+) -> Result<Vec<String>, String> {
+    let stale = crate::path_deps::stale_go_surfaces(project_dir);
+    if stale.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sky_out = project_dir.join("sky-out");
+    ensure_go_mod(repo_root, &sky_out)
+        .and_then(|()| crate::path_deps::apply_go_path_deps(project_dir, &sky_out))?;
+    let bin = ffi::ensure_inspector(repo_root)?;
+    let mut notes = Vec::new();
+    for d in stale {
+        let dir = d.resolve(project_dir);
+        let (slug, _note) = regenerate_committed_reporting(&bin, &sky_out, project_dir, &d.key)
+            .map_err(|e| {
+                format!(
+                    "path dependency \"{}\" ({}): its FFI surface is out of date and \
+                     re-inspecting it failed: {e}",
+                    d.key, d.path
+                )
+            })?;
+        crate::path_deps::record_signature(project_dir, &d.key, &dir)?;
+        notes.push(format!(
+            "{}: local Go module at {} changed its exported API → sky-ffi/{slug}.* refreshed",
+            d.key, d.path
+        ));
+    }
+    Ok(notes)
+}
+
 // ---------------------------------------------------------------------------
 // sky add  (smart go-vs-sky resolution — the no-flag default)
 // ---------------------------------------------------------------------------

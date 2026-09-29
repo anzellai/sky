@@ -84,6 +84,16 @@ Output format:
 5 passed, 1 failed (6 total)
 ```
 
+A failing `Test.equal` / `notEqual` / `ok` / `err` prints its values in Sky
+syntax, with the printer `toString` uses (a String quoted):
+
+```
+  FAIL  a Result that differs
+          expected Ok "a" but got Ok "b"
+  FAIL  an Error that differs
+          expected Err (Io "x") but got Ok 1
+```
+
 ## Machine-readable output (`SKY_TEST_JSON`)
 
 Set `SKY_TEST_JSON` to a path and the run additionally writes a per-case JSON

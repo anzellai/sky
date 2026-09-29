@@ -703,6 +703,7 @@ fn render_source(src: &str) -> String {
         .unwrap_or_else(|| "<anonymous module>".to_string());
 
     let exposed = exposing_set(src, &tree);
+    let with_ctors = ctor_exposing_set(&tree);
     let docs = doc_comments(src);
 
     // Collect declarations in source order, keyed by name so a value binding and
@@ -732,13 +733,8 @@ fn render_source(src: &str) -> String {
                 }
             }
             Decl::Union(d) => {
-                if let Some(name) = d.name() {
-                    let variants: Vec<String> = d.variants().iter().map(variant_text).collect();
-                    if variants.is_empty() {
-                        types.push(format!("type {}", name.text()));
-                    } else {
-                        types.push(format!("type {} = {}", name.text(), variants.join(" | ")));
-                    }
+                if d.name().is_some() {
+                    types.push(union_signature(&d, with_ctors.as_ref()));
                 }
             }
             _ => {}
@@ -835,6 +831,11 @@ fn module_symbols_with(src: &str, apply_exposing: bool) -> Vec<DocSym> {
     } else {
         None
     };
+    let with_ctors = if apply_exposing {
+        ctor_exposing_set(&tree)
+    } else {
+        None
+    };
     let docs = doc_comments(src);
     let is_exported = |name: &str| exposed.as_ref().map(|s| s.contains(name)).unwrap_or(true);
 
@@ -872,13 +873,7 @@ fn module_symbols_with(src: &str, apply_exposing: bool) -> Vec<DocSym> {
             Decl::Union(d) => {
                 if let Some(name) = d.name() {
                     let n = name.text().to_string();
-                    let variants: Vec<String> = d.variants().iter().map(variant_text).collect();
-                    let sig = if variants.is_empty() {
-                        format!("type {}", name.text())
-                    } else {
-                        format!("type {} = {}", name.text(), variants.join(" | "))
-                    };
-                    sigs.insert(n.clone(), sig);
+                    sigs.insert(n.clone(), union_signature(&d, with_ctors.as_ref()));
                     note(n, &mut order, &mut seen);
                 }
             }
@@ -1040,6 +1035,56 @@ fn exposing_set(
     Some(names)
 }
 
+/// The union types whose CONSTRUCTORS the module exports (`Type(..)` in its
+/// `exposing` list), or `None` when the module exposes `(..)` (everything). A
+/// type exported by name alone (`exposing (Msg)`) is OPAQUE: an importer can
+/// name the type but cannot build or match its constructors.
+fn ctor_exposing_set(tree: &syntax::ast::SourceFile) -> Option<std::collections::BTreeSet<String>> {
+    let exposing = tree.module_header()?.exposing()?;
+    let raw = exposing.syntax().text().to_string();
+    let trimmed = raw.trim();
+    let trimmed = trimmed
+        .strip_prefix("exposing")
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    let inner = trimmed
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .unwrap_or(trimmed);
+    let mut names = std::collections::BTreeSet::new();
+    for item in inner.split(',') {
+        let item = item.trim();
+        if item == ".." {
+            return None;
+        }
+        if let Some((name, _)) = item.split_once('(') {
+            let name = name.trim();
+            if !name.is_empty() {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    Some(names)
+}
+
+/// A union's documented signature: `type T = A | B Int` when its constructors
+/// are exported (`with_ctors` is `None` for an `exposing (..)` module, else the
+/// set from [`ctor_exposing_set`]), `type T` when the type is opaque — listing
+/// constructors an importer cannot use sent users to a naming error.
+fn union_signature(
+    d: &syntax::ast::UnionDecl,
+    with_ctors: Option<&std::collections::BTreeSet<String>>,
+) -> String {
+    let name = d.name().map(|n| n.text().to_string()).unwrap_or_default();
+    let open = with_ctors.is_none_or(|s| s.contains(&name));
+    let variants: Vec<String> = d.variants().iter().map(variant_text).collect();
+    if variants.is_empty() || !open {
+        format!("type {name}")
+    } else {
+        format!("type {name} = {}", variants.join(" | "))
+    }
+}
+
 /// Map a binding name → its leading `-- |` doc summary (the first line of the
 /// doc block, comment marker stripped). The special key `"\0module"` holds the
 /// module-level doc block (the `-- |` above the `module` keyword). A doc block
@@ -1183,7 +1228,7 @@ mod tests {
 
     #[test]
     fn extracts_signatures_and_docs() {
-        let src = "-- | A little module.\nmodule M exposing (add, Color)\n\n\
+        let src = "-- | A little module.\nmodule M exposing (add, Color(..))\n\n\
                    -- | `add a b` — sum.\nadd : Int -> Int -> Int\nadd a b = a + b\n\n\
                    type Color = Red | Green\n";
         let page = render_source(src);
@@ -1193,6 +1238,33 @@ mod tests {
             page.contains("type Color = Red | Green"),
             "union missing:\n{page}"
         );
+    }
+
+    /// A type exported by name alone (`exposing (Msg)`) is opaque: its
+    /// constructors are not importable, so `sky doc` must not list them (it
+    /// listed `Std.Ui.Terminal.Msg`'s, and matching on one was a naming error).
+    #[test]
+    fn an_opaque_union_hides_its_constructors() {
+        let src = "module M exposing (Msg, Open(..))\n\n\
+                   type Msg = Ready | Input String\n\n\
+                   type Open = A | B Int\n";
+        let page = render_source(src);
+        assert!(page.contains("type Msg\n"), "opaque type:\n{page}");
+        assert!(
+            !page.contains("Ready"),
+            "hidden constructor listed:\n{page}"
+        );
+        assert!(page.contains("type Open = A | B Int"), "{page}");
+        let syms = module_symbols_with(src, true);
+        let msg = syms.iter().find(|s| s.name == "Msg").expect("Msg listed");
+        assert_eq!(msg.signature, "type Msg");
+        // The whole-module view (every declaration) still has them.
+        let all = module_symbols_with(src, false);
+        let msg = all.iter().find(|s| s.name == "Msg").unwrap();
+        assert!(msg.signature.contains("Ready"), "{}", msg.signature);
+        // `exposing (..)` exports every constructor.
+        let page = render_source("module M exposing (..)\n\ntype Msg = Ready | Input String\n");
+        assert!(page.contains("type Msg = Ready | Input String"), "{page}");
     }
 
     /// A record alias is printed with its fields (text, HTML and the
@@ -1368,7 +1440,7 @@ mod tests {
     fn module_symbols_lists_exported_bindings_in_order() {
         // Annotated value, unannotated exported value, a type, and an
         // unexposed helper (must be excluded).
-        let src = "module M exposing (add, plain, Color)\n\n\
+        let src = "module M exposing (add, plain, Color(..))\n\n\
                    -- | sums two ints.\nadd : Int -> Int -> Int\nadd a b = a + b\n\n\
                    plain = 42\n\n\
                    type Color = Red | Green\n\n\

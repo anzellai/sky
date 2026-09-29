@@ -194,6 +194,24 @@ fn completion_qualified_insert_text() {
     );
 }
 
+/// `Std.Ui.Terminal` exports `Msg` without its constructors (opaque): a
+/// qualified completion offers the type and never `Terminal.Ready`, which
+/// would only lead to a naming error (the downstream report was about
+/// `sky doc`; completion is locked the same way).
+#[test]
+fn completion_qualified_omits_opaque_constructors() {
+    let src = "module Main exposing (x)\n\nimport Std.Ui.Terminal as Terminal\n\nx = Terminal.\n";
+    let items = completion_labels(&Analysis::new(), Some(src), 4, 13);
+    assert!(
+        items.iter().any(|(l, _)| l == "Terminal.Msg"),
+        "the opaque type is offered; got {items:?}"
+    );
+    assert!(
+        !items.iter().any(|(l, _)| l == "Terminal.Ready"),
+        "a hidden constructor is offered; got {items:?}"
+    );
+}
+
 #[test]
 fn completion_field() {
     let src =

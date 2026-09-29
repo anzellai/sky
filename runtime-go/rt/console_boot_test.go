@@ -341,7 +341,12 @@ func TestAssertConsoleInvariant_FatalWhenNeitherHealthyAndAuthSet(t *testing.T) 
 	if !strings.Contains(body, "/_sky/console") {
 		t.Errorf("expected FATAL line to reference /_sky/console; got:\n%s", body)
 	}
-	if !strings.Contains(body, "console_app blank import") {
-		t.Errorf("expected FATAL line to hint at the blank-import fix; got:\n%s", body)
+	// The fix it names is what a Sky user runs (`sky build`) or sets, never
+	// the Go blank import the build writes for them.
+	if !strings.Contains(body, "Rebuild it with `sky build`") || !strings.Contains(body, "SKY_CONSOLE_AUTH=off") {
+		t.Errorf("expected FATAL line to name `sky build` and SKY_CONSOLE_AUTH=off; got:\n%s", body)
+	}
+	if strings.Contains(body, "blank import") {
+		t.Errorf("the FATAL line names a Go-level fix; got:\n%s", body)
 	}
 }

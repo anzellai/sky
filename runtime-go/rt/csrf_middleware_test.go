@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,6 +85,29 @@ func TestCSRF_PostWithoutCookieOrHeader_403(t *testing.T) {
 	}
 	if !strings.Contains(resp.Body.String(), "csrf_missing") {
 		t.Errorf("response should mention csrf_missing, got %s", resp.Body.String())
+	}
+}
+
+// The 403 body is JSON, and its hint names what a Sky program writes
+// (`Server.api`, `Live.api`, `App.api`), never the runtime's Go function
+// `WithoutCsrf` (a downstream project was told to call it).
+func TestCSRF_RejectHintNamesTheSkyAPI(t *testing.T) {
+	resetCsrf(t)
+	resp := serveCsrf(http.MethodPost, "/hook", nil, nil)
+	var body struct{ Status, Reason, Hint string }
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("403 body is not JSON: %v: %s", err, resp.Body.String())
+	}
+	if body.Status != "csrf_missing" {
+		t.Errorf("status = %q", body.Status)
+	}
+	for _, want := range []string{"Server.api \"POST /path\" handler", "Live.api", "App.api", "SKY_CSRF=off"} {
+		if !strings.Contains(body.Hint, want) {
+			t.Errorf("hint lacks %q: %s", want, body.Hint)
+		}
+	}
+	if strings.Contains(body.Hint, "WithoutCsrf") {
+		t.Errorf("hint names a Go function: %s", body.Hint)
 	}
 }
 

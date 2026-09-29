@@ -2807,7 +2807,17 @@ impl<'a> Resolver<'a> {
                     .iter()
                     .map(|p| self.resolve_pattern(p))
                     .collect();
-                let ctor = self.resolve_qual_ctor(&qual, &name);
+                // The qualified head `M.Ctor` (not its arguments): the span a
+                // naming error points at.
+                let head_span = cst::first_upper_tok(c.syntax())
+                    .zip(cst::last_upper_tok(c.syntax()))
+                    .map(|(first, last)| {
+                        self.span_of(syntax::TextRange::new(
+                            first.text_range().start(),
+                            last.text_range().end(),
+                        ))
+                    });
+                let ctor = self.resolve_qual_ctor(&qual, &name, head_span);
                 if let (Some(cr), Some(tok)) = (&ctor, cst::last_upper_tok(c.syntax())) {
                     self.record_ref(tok.text_range(), Res::Ctor(cr.clone()));
                 }
@@ -3192,6 +3202,27 @@ impl<'a> Resolver<'a> {
                         )),
                     );
                     Res::Error
+                } else if let Some(ty) = hidden_ctor_type(self.db.module_parse(dep), name) {
+                    // A constructor of a type the module exports opaquely (or
+                    // not at all): name the reason at the use site.
+                    let dep_name = self.db.module_name(dep).to_string();
+                    let how = if exports.type_(&ty).is_some() {
+                        format!(
+                            "type `{ty}` is exported by `{dep_name}` without its constructors \
+                             (an opaque type), so `{name}` cannot be matched or built outside it"
+                        )
+                    } else {
+                        format!("constructor of `{ty}`, which `{dep_name}` does not export")
+                    };
+                    self.track_class_a_detail(
+                        Some(qual.to_string()),
+                        name,
+                        RefKind::Ctor,
+                        "constructor not exported by module",
+                        span,
+                        Some(how),
+                    );
+                    Res::Error
                 } else {
                     self.track_class_a(
                         Some(qual.to_string()),
@@ -3221,7 +3252,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn resolve_qual_ctor(&mut self, qual: &str, name: &str) -> Option<CtorRef> {
+    fn resolve_qual_ctor(&mut self, qual: &str, name: &str, span: Option<Span>) -> Option<CtorRef> {
         if let Some(c) = self.qual_ctors.get(qual).and_then(|m| m.get(name)) {
             return Some(c.clone());
         }
@@ -3230,6 +3261,29 @@ impl<'a> Resolver<'a> {
             let exports = self.db.module_exports(dep);
             if let Some((_, ct)) = exports.ctor(name) {
                 return Some(to_ctor_ref(ct));
+            }
+            // A constructor the module declares but does not export: its type
+            // is exported by name alone (opaque), or not at all. Say so, at the
+            // user's pattern, rather than a bare "undefined".
+            if let Some(ty) = hidden_ctor_type(self.db.module_parse(dep), name) {
+                let dep_name = self.db.module_name(dep).to_string();
+                let how = if exports.type_(&ty).is_some() {
+                    format!(
+                        "type `{ty}` is exported by `{dep_name}` without its constructors \
+                         (an opaque type), so `{name}` cannot be matched or built outside it"
+                    )
+                } else {
+                    format!("constructor of `{ty}`, which `{dep_name}` does not export")
+                };
+                self.track_class_a_detail(
+                    Some(qual.to_string()),
+                    name,
+                    RefKind::Ctor,
+                    "constructor not exported by module",
+                    span,
+                    Some(how),
+                );
+                return None;
             }
         }
         if let Some(ImportSource::Foreign(pkg)) = self.import_aliases.get(qual).cloned() {
@@ -3244,7 +3298,7 @@ impl<'a> Resolver<'a> {
             name,
             RefKind::Ctor,
             "unknown qualified constructor",
-            None,
+            span,
         );
         None
     }
@@ -3529,6 +3583,25 @@ fn collect_pattern_binders(p: &ast::Pattern, acc: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+/// The union type in `parse` that declares constructor `name`, if any. Used to
+/// explain a qualified constructor the module declares but does not export.
+fn hidden_ctor_type(parse: &syntax::Parse, name: &str) -> Option<String> {
+    parse.tree().decls().find_map(|d| match d {
+        ast::Decl::Union(u) => {
+            let declares = u
+                .variants()
+                .iter()
+                .any(|v| cst::first_upper(v.syntax()).as_deref() == Some(name));
+            if declares {
+                u.name().map(|n| n.text().to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    })
 }
 
 fn to_ctor_ref(ct: &crate::exports::ExportedCtor) -> CtorRef {

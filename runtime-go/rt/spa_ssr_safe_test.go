@@ -65,14 +65,14 @@ func TestSsrSettle_SuppressesCopyRenameAndStoreWrites(t *testing.T) {
 
 	// (1) File.copy inside a settle: suppressed, destination never created.
 	enterSsrSettle()
-	if res := File_copy(src, filepath.Join(dir, "copy.txt")); !isErrResult(res) {
+	if res := forceAuthTask(File_copy(src, filepath.Join(dir, "copy.txt"))); !isErrResult(res) {
 		t.Fatalf("File.copy in a settle must yield Err, got %#v", res)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "copy.txt")); !os.IsNotExist(err) {
 		t.Fatalf("suppressed File.copy must not create the destination")
 	}
 	// (2) File.rename inside a settle: suppressed, source untouched.
-	if res := File_rename(src, filepath.Join(dir, "moved.txt")); !isErrResult(res) {
+	if res := forceAuthTask(File_rename(src, filepath.Join(dir, "moved.txt"))); !isErrResult(res) {
 		t.Fatalf("File.rename in a settle must yield Err, got %#v", res)
 	}
 	if _, err := os.Stat(src); err != nil {

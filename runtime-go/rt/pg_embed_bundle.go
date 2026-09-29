@@ -322,8 +322,8 @@ func ensureBundleExtracted(dest string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf(
 			"sky --embed: this binary carries an embedded-PostgreSQL bundle but %q is not\n"+
-				"in it (%v). The build set rt.EmbeddedPostgresBundleName to a name the\n"+
-				"go:embed did not include.", want, err)
+				"in it (%v). The binary was built inconsistently: rebuild it with\n"+
+				"`sky build --embed`.", want, err)
 	}
 	defer f.Close()
 	id, err := bundleIdentity(want)
@@ -361,8 +361,8 @@ func bundleIdentity(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf(
 			"sky --embed: this binary carries an embedded-PostgreSQL bundle but %q is not\n"+
-				"in it (%v). The build set rt.EmbeddedPostgresBundleName to a name the\n"+
-				"go:embed did not include.", name, err)
+				"in it (%v). The binary was built inconsistently: rebuild it with\n"+
+				"`sky build --embed`.", name, err)
 	}
 	defer f.Close()
 	h := sha256.New()

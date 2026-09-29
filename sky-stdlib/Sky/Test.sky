@@ -20,6 +20,7 @@ module Sky.Test exposing
     )
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Error exposing (Error(..), ErrorKind(..))
@@ -431,12 +432,19 @@ writeJsonReport path results =
         File.writeFile path (jsonReport results)
 
 
--- | Minimal value-to-string for test diagnostics. `errorToString`
--- is the universal Sky stringifier — works on primitives, records,
--- ADTs, lists, tuples via Go's fmt.Sprintf fallback.
+-- | A value in Sky syntax for test diagnostics (`Ok "a"`, `{ age = 40 }`,
+-- `[Circle 1.5, Empty]`): the printer `Debug.toString` uses, with a String
+-- quoted.
 debugShow : a -> String
 debugShow v =
-    errorToString v
+    showValue v
+
+
+-- One kernel call site, so each assertion that prints a value pays no
+-- runtime narrowing of its own.
+showValue : a -> String
+showValue =
+    Ffi.kernel "Debug_show"
 
 
 -- | Convenience entry-point. A test module can declare:

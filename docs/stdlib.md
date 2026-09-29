@@ -44,7 +44,7 @@ Implicitly available everywhere via `Sky.Core.Prelude exposing (..)`. Nothing to
 | `identity` | `a -> a` | The identity function |
 | `always` | `a -> b -> a` | Const; ignores second arg |
 | `not` | `Bool -> Bool` | Logical not |
-| `toString` | `a -> String` | Debug-formatted string of any value |
+| `toString` | `a -> String` | Any value in Sky syntax: `Ok "a"`, `Just (1, 'c')`, `{ age = 40, name = "Ada" }`, `[Circle 1.5, Empty]`, `Dict.fromList [(1, "a")]` (record fields in name order). A top-level `String` is its text unquoted, and a top-level `Error` reads `<Kind>: <message>` (as `Error.toString`). A union whose constructors all take no arguments prints its constructor name inside a record field and its index elsewhere (it is an `Int` at run time). `sky test` prints assertion values with the same printer |
 | `modBy` | `Int -> Int -> Int` | Math modulo (divisor-first argument order, matches Elm) |
 | `clamp` | `comparable -> comparable -> comparable -> comparable` | Constrain to range |
 | `fst`, `snd` | `(a, b) -> a` / `(a, b) -> b` | Tuple accessors |
@@ -933,9 +933,50 @@ readme =
         |> Task.andThen (\content -> println content)
 ```
 
-`readFile`, `readFileLimit`, `readFileBytes`, `writeFile`, `append`, `mkdirAll`, `readDir`, `exists`, `remove`, `isDir`, `tempFile`, `tempDir`, `copy`, `rename`.
+`readFile`, `readFileLimit`, `readFileBytes`, `writeFile`, `append`, `mkdirAll`, `readDir`, `exists`, `remove`, `isDir`, `tempFile`, `tempDir`, `copy`, `rename`, `stat`, `lstat`, `realPath`, `readLink`, `chmod`, `permissions`, `resolveWithin`.
 
-`exists` / `isDir` return `Task Error Bool` (effects — the disk could be unmounted between successive calls).  `tempFile` / `tempDir` create uniquely-named entries in the system temp dir and return the absolute path; caller is responsible for `remove`-ing when done.
+`exists` / `isDir` return `Task Error Bool` (effects — the disk could be unmounted between successive calls).  `tempFile` / `tempDir` create uniquely-named entries in the system temp dir and return the absolute path; caller is responsible for `remove`-ing when done. Every function is a Task: nothing touches the disk until the Task runs. A missing path fails with `NotFound`, a refused one with `PermissionDenied`, anything else with `Io`.
+
+#### Metadata, links and confinement (v0.27.0)
+
+```elm
+-- doc-example: skip  (signatures)
+type FileKind = File | Directory | Symlink | Other
+type alias FileInfo = { kind : FileKind, size : Int, modified : Int, mode : Int }
+
+stat          : String -> Task Error FileInfo     -- follows a symlink
+lstat         : String -> Task Error FileInfo     -- a symlink is Symlink
+realPath      : String -> Task Error String       -- every link and .. resolved
+readLink      : String -> Task Error String       -- the target a link stores
+chmod         : Int -> String -> Task Error ()    -- chmod (permissions 6 0 0) path
+permissions   : Int -> Int -> Int -> Int          -- permissions 6 4 4 == 420 (octal 644)
+resolveWithin : String -> String -> Task Error String
+```
+
+`size` is in bytes, `modified` is Unix milliseconds (the unit of `Time.now`),
+`mode` is the permission bits as an Int. Sky has no octal literal, so build a
+mode with `permissions owner group other`.
+
+`resolveWithin root path` keeps a path a client sent inside a directory. It
+resolves `path` (relative to `root` when relative) the way the kernel does,
+following every symlink and `..`, and returns the resolved absolute path only
+when it is `root` or below it; a path that leads out through `..`, an absolute
+path, or a symlink pointing outside is `Err PermissionDenied`. The last
+components may not exist yet (a file about to be written); `root` must exist.
+
+```elm
+-- doc-example: skip  (fragment)
+serveFile : String -> String -> Task Error String
+serveFile workspace requested =
+    File.resolveWithin workspace requested
+        |> Task.andThen File.readFile
+```
+
+The check holds at the moment of the call: use the path it returns (not the
+input), and do not let untrusted code create links inside the root between
+the check and the use. On Windows, symlinks and junctions are reported as the
+operating system reports them (a junction is not a `Symlink`) and `mode` keeps
+only what Windows stores (a read-only file has no write bits).
 
 ### `Io` — stdin / stdout / stderr
 
@@ -2140,6 +2181,91 @@ batch.
 
 `Task.lazy : (() -> a) -> Task err a` — defer a pure computation
 so it can be sequenced with other tasks.
+
+### `Std.Sync` — shared state between concurrent Tasks (v0.27.0)
+
+Pure code needs none of this: a Sky value never changes, so two
+computations cannot race on it. `Std.Sync` is for Task programs and servers
+where several Tasks run at the same time (`Task.parallel`, `Task.spawn`,
+concurrent HTTP handlers) and must share a counter, a cache or a work queue.
+
+```elm
+-- doc-example: skip  (signatures)
+newRef         : a -> Task Error (Ref a)
+get            : Ref a -> Task Error a
+set            : a -> Ref a -> Task Error ()
+update         : (a -> a) -> Ref a -> Task Error a        -- atomic; returns the new value
+compareAndSwap : a -> a -> Ref a -> Task Error Bool        -- expected, new
+
+newMutex : () -> Task Error Mutex
+withLock : Mutex -> Task e a -> Task e a                   -- released however the task ends
+
+newQueue  : Int -> Task Error (Queue a)                    -- a capacity of 1 or more
+push      : a -> Queue a -> Task Error ()                  -- waits while full
+pop       : Queue a -> Task Error (Maybe a)                -- waits; Nothing once closed and empty
+popWithin : Int -> Queue a -> Task Error (Maybe a)         -- Err Timeout after the ms
+close     : Queue a -> Task Error ()                       -- pushes then fail with Unavailable
+size      : Queue a -> Task Error Int
+```
+
+A worker pool fed through a bounded queue, and a shared counter:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task exposing (Step(..))
+import Sky.Core.Tuple as Tuple
+import Std.Log exposing (println)
+import Std.Sync as Sync
+
+
+worker : Sync.Queue Int -> Sync.Ref Int -> Task Error ()
+worker jobs done =
+    Task.loop
+        (\_ ->
+            Sync.pop jobs
+                |> Task.andThen
+                    (\job ->
+                        case job of
+                            Just n ->
+                                Sync.update (\total -> total + n) done
+                                    |> Task.map (\_ -> Loop ())
+
+                            Nothing ->
+                                Task.succeed (Done ())
+                    )
+        )
+        ()
+
+
+producer : Sync.Queue Int -> Task Error ()
+producer jobs =
+    List.range 1 100
+        |> List.map (\n -> Sync.push n jobs)
+        |> Task.sequence
+        |> Task.andThen (\_ -> Sync.close jobs)
+
+
+main =
+    Task.run
+        (Task.map2 Tuple.pair (Sync.newQueue 8) (Sync.newRef 0)
+            |> Task.andThen
+                (\( jobs, done ) ->
+                    Task.parallel [ producer jobs, worker jobs done, worker jobs done ]
+                        |> Task.andThen (\_ -> Sync.get done)
+                )
+            |> Task.andThen (\total -> println ("total " ++ String.fromInt total))
+        )
+```
+
+A `Ref`, `Mutex` or `Queue` lives in this process only: it does not survive
+a restart, is not shared between replicas, and cannot be stored in a
+Sky.Live model (the session store cannot save it). Two values are equal only
+when they are the same `Ref` / `Mutex` / `Queue`. `withLock` is not
+re-entrant. In a Sky.Spa app these calls run on the server.
 
 ---
 

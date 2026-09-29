@@ -471,10 +471,24 @@ func csrfReject(w http.ResponseWriter, status, reason string) {
 	// The hint names the escape hatches so a machine client isn't left
 	// guessing why a POST 403'd: CSRF only guards cookie-session browser
 	// requests. An API caller either sends an Authorization header (auto-
-	// exempt), sets SKY_CSRF=off, or exempts the route via WithoutCsrf(path).
-	w.Write([]byte(`{"status":"` + status + `","reason":"` + reason +
-		`","hint":"CSRF guards cookie-session browser POSTs. API clients: send an Authorization header (auto-exempt), or set SKY_CSRF=off, or exempt the route with WithoutCsrf(path)."}`))
+	// exempt), or the route is declared as an API route in Sky
+	// (`Server.api` / `Live.api` / `App.api`, which exempt it), or the app
+	// sets SKY_CSRF=off. It names what a Sky program writes, never the Go
+	// function behind it (csrfRejectHint).
+	body, _ := json.Marshal(struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+		Hint   string `json:"hint"`
+	}{status, reason, csrfRejectHint})
+	w.Write(body)
 }
+
+// csrfRejectHint is the 403 body's hint. It names the Sky API only: a Sky
+// program cannot call the runtime's Go functions (`WithoutCsrf`).
+const csrfRejectHint = "CSRF guards cookie-session browser POSTs. API clients: send an Authorization header (auto-exempt), " +
+	"or declare the route as an API route: Server.api \"POST /path\" handler in Sky.Http.Server, " +
+	"Live.api or App.api \"POST /path\" handler in a Sky.Live or Std.App app. " +
+	"SKY_CSRF=off turns the check off for the whole app."
 
 // isObservabilityPath — true for paths the CSRF middleware skips
 // because they're read-only (GET) or are the SSE connection (which
