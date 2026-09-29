@@ -1149,7 +1149,8 @@ jobs:
         env:
           SKY_LIVE_TESTS: require
           # A failed emulator step saves its evidence here (logcat, focus,
-          # screenshot, UI tree, backend log); the next step uploads it.
+          # screenshot, UI tree, backend log), beside the samplers' device and
+          # host log; the last step uploads it when the job fails.
           SKYTEST_EVIDENCE_DIR: ${{ github.workspace }}/native-evidence
         with:
           api-level: 35
@@ -1159,9 +1160,18 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated
           disable-animations: true
           emulator-boot-timeout: 900
-          # Each line runs on its own. Close a system dialog a cold boot left
-          # (an ANR over SystemUI) and wake the screen before the tests.
+          # Each line runs on its own. The two background samplers keep what a
+          # failure needs for its root cause: every 3 s the adb transport
+          # state, the host load and memory, the guest uptime (a reboot resets
+          # it) and system_server's pid (a soft restart changes it); and the
+          # whole device log. The first CI run of this gate lost its emulator's
+          # transport for over 40 s and left nothing to say why. Then close a
+          # system dialog a cold boot left (an ANR over SystemUI) and wake the
+          # screen before the tests.
           script: |
+            mkdir -p "$SKYTEST_EVIDENCE_DIR"
+            sh -c 'while true; do date -u +%T; adb devices | tail -n +2; uptime; free -m | sed -n 2p; echo "guest $(timeout 5 adb shell cat /proc/uptime) system_server $(timeout 5 adb shell pidof system_server)"; sleep 3; done' > "$SKYTEST_EVIDENCE_DIR/devices.log" 2>&1 &
+            sh -c 'while true; do adb logcat -v threadtime; sleep 1; done' > "$SKYTEST_EVIDENCE_DIR/logcat-all.txt" 2>&1 &
             adb wait-for-device
             adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
             adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
