@@ -1,0 +1,81 @@
+module Main exposing (main)
+
+import Shape
+import Sky.Core.Http as Http
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Native as Native
+import Std.Ui as Ui
+
+{-| A wire record with a field whose type comes from another module.
+-}
+type alias Tagged =
+    { url : String
+    , at : Shape.Point
+    }
+
+type alias Model =
+    { out : String }
+
+type Msg
+    = Go
+    | Fetch (Result Error String)
+    | Got (Result Error Tagged)
+    | Buzzed (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { out = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Go ->
+            ( model, Cmd.perform (Task.succeed "http://127.0.0.1:1/") Fetch )
+
+        Fetch (Ok url) ->
+            ( model
+            , Cmd.perform
+                  (Http.get url
+                      |> Task.map
+                             (\r -> { url = url, at = { x = r.status, y = 0 } }))
+                  Got
+            )
+
+        Fetch (Err _) ->
+            ( model, Cmd.none )
+
+        Got (Ok t) ->
+            ( { model | out = t.url ++ " " ++ String.fromInt t.at.x }
+            , Cmd.perform (Native.vibrate 10) Buzzed
+            )
+
+        Got (Err _) ->
+            ( { model | out = "failed" }, Cmd.none )
+
+        Buzzed _ ->
+            ( model, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text
+                              ("OUT=" ++ m.out ++ " "
+                                  ++ String.fromInt (.x Shape.origin))
+                        , Ui.button
+                              []
+                              { onPress = Just Go, label = Ui.text "go" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

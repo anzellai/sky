@@ -375,6 +375,26 @@ impl<'a> CodecResolver<'a> {
                     });
                 }
             }
+            // (b'''') The stdlib `Sky.Core.Http.HttpResponse` record (`{ status,
+            // body, headers }`), the result of every `Http` request. It is not
+            // a project record, so the auto-derive below cannot see it; derive
+            // its `Codec.auto` codec from the stdlib shape. A `Cmd.perform
+            // (Http.get url) Got` whose `Got` arm runs in the client carries it.
+            let stdlib_http_response =
+                name.as_str() == "HttpResponse" || name.as_str().ends_with("Http.HttpResponse");
+            if args.is_empty()
+                && tail == "HttpResponse"
+                && stdlib_http_response
+                && !self.shapes.records.contains_key(tail)
+                && !self.shapes.unions.contains_key(tail)
+            {
+                return Ok(ResolvedCodec {
+                    codec: "(Codec.auto { status = 0, body = \"\", headers = Dict.empty })"
+                        .to_string(),
+                    surface: "{ status : Int, body : String, headers : Dict String String }"
+                        .to_string(),
+                });
+            }
             // (b''') A NOMINAL that resolves to a project RECORD declaration
             // (`ty::Ty::App(name, [])` the solver left un-expanded) — auto-derive
             // a `Codec.auto` codec for it (§14 #2, option B).
@@ -691,6 +711,62 @@ fn is_server_only_module(module_path: &str) -> bool {
 /// Render `s` as a Sky string literal (`redis://h:6379` → `"redis://h:6379"`),
 /// escaping the two characters that would otherwise break the literal. Used to
 /// bake the `--broker` URL into the generated backend's `spaBroker` binding.
+/// The server-tainted top-level defs of the report, by `DefId`.
+fn tainted_def_ids(db: &SkyDatabase, report: &SpaPartitionReport) -> HashSet<DefId> {
+    let mut want: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for t in &report.tainted {
+        want.entry(t.module.as_str())
+            .or_default()
+            .insert(t.name.as_str());
+    }
+    let mut out = HashSet::new();
+    for (mname, names) in want {
+        let Some(mid) = db.module_by_name(mname) else {
+            continue;
+        };
+        for td in &db.resolve(mid).top_defs {
+            if names.contains(td.name.as_str()) {
+                out.insert(td.def);
+            }
+        }
+    }
+    out
+}
+
+/// The names module `m` writes BARE that resolve to a server-tainted def: its
+/// own tainted top-level defs, and a tainted def of another module that `m`
+/// imports `exposing` it. Identity comes from the resolver (`ref_occs`), never
+/// from a bare name shared across modules: before v0.27.0 the split excluded
+/// every def whose bare name matched any tainted def, so a server-only
+/// `Net.send` removed the entry's own pure `send` from the client. A qualified
+/// reference (`Net.send`) is not a bare name; the module routing handles it.
+fn tainted_in_scope(db: &SkyDatabase, tainted: &HashSet<DefId>, m: ModuleId) -> HashSet<String> {
+    let resolved = db.resolve(m);
+    let mut out: HashSet<String> = resolved
+        .top_defs
+        .iter()
+        .filter(|td| tainted.contains(&td.def))
+        .map(|td| td.name.as_str().to_string())
+        .collect();
+    let parse = db.module_parse(m);
+    let text = parse.syntax().text().to_string();
+    for occ in &resolved.ref_occs {
+        let hir::Res::Def(d) = &occ.res else {
+            continue;
+        };
+        if !tainted.contains(d) {
+            continue;
+        }
+        let (a, b) = occ.span.range;
+        if let Some(word) = text.get(a as usize..b as usize) {
+            if !word.contains('.') && !word.is_empty() {
+                out.insert(word.to_string());
+            }
+        }
+    }
+    out
+}
+
 fn sky_string_literal(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -1609,7 +1685,13 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
     // the server binds its real value here rather than `init ()`'s default.
     let whole = io.request_whole_model();
     let req_fields = io.request_fields();
-    if whole && io.msg_args.is_empty() {
+    if req_fields == [spa_partition::BOXED_MODEL_FIELD] && !whole {
+        // A non-record model rides whole in its one wire field.
+        format!(
+            "                m =\n                    p.{}\n",
+            spa_partition::BOXED_MODEL_FIELD
+        )
+    } else if whole && io.msg_args.is_empty() {
         // Req IS the whole model.
         "                m =\n                    p\n".to_string()
     } else if whole {
@@ -1686,7 +1768,13 @@ pub(crate) fn emit_build_req(
         let mut parts: Vec<String> = io
             .request_fields()
             .iter()
-            .map(|f| format!("{f} = {model_param}.{f}"))
+            .map(|f| {
+                if f == spa_partition::BOXED_MODEL_FIELD {
+                    format!("{f} = {model_param}")
+                } else {
+                    format!("{f} = {model_param}.{f}")
+                }
+            })
             .collect();
         for a in &io.msg_args {
             // Same collision-safe wire name as build_wire + the handler.
@@ -1721,7 +1809,11 @@ pub(crate) fn emit_write_set_encode(
             .enumerate()
             .map(|(i, f)| {
                 let sep = if i == 0 { "" } else { ", " };
-                format!("{sep}{f} = {result_model}.{f}")
+                if f == spa_partition::BOXED_MODEL_FIELD {
+                    format!("{sep}{f} = {result_model}")
+                } else {
+                    format!("{sep}{f} = {result_model}.{f}")
+                }
             })
             .collect::<String>();
         format!("{{ {sets} }}")
@@ -1736,6 +1828,11 @@ pub(crate) fn emit_write_set_encode(
 pub(crate) fn emit_apply_delta(io: &BranchIo, model_param: &str) -> String {
     if io.writes_whole_model {
         format!("            ( resp, Cmd.none )")
+    } else if io.write_fields == [spa_partition::BOXED_MODEL_FIELD] {
+        format!(
+            "            ( resp.{}, Cmd.none )",
+            spa_partition::BOXED_MODEL_FIELD
+        )
     } else if io.write_fields.is_empty() {
         format!("            ( {model_param}, Cmd.none )")
     } else {
@@ -2092,6 +2189,30 @@ fn strip_names_from_import_exposing(text: &str, names: &HashSet<String>) -> Stri
     }
 }
 
+/// Drop, from every `import M exposing (…)` line of a frontend module text, the
+/// server-tainted names of `M`: the client copy of `M` (a subset, kept for its
+/// types and pure defs) does not define them. Per imported module, so a name
+/// tainted in `M` never removes the same name exposed by another module.
+fn strip_tainted_from_imports(
+    src: &str,
+    tainted_by_module: &HashMap<String, HashSet<String>>,
+) -> String {
+    let parse = syntax::parse(src, base::FileId(0));
+    let mut out = src.to_string();
+    for imp in parse.tree().imports() {
+        let path = imp.name().map(|n| n.text()).unwrap_or_default();
+        let Some(names) = tainted_by_module.get(&path) else {
+            continue;
+        };
+        let text = slice(src, imp.syntax());
+        let stripped = strip_names_from_import_exposing(text, names);
+        if stripped != text {
+            out = out.replacen(text, &stripped, 1);
+        }
+    }
+    out
+}
+
 /// A module name → its `src/`-relative file path (`Domain` → `Domain.sky`,
 /// `Data.Todo` → `Data/Todo.sky`), matching the compiler's dotted-module layout.
 fn module_relpath(name: &str) -> String {
@@ -2281,6 +2402,72 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             }
         }
     }
+    // A TYPE a frontend module names keeps its module in the client too, even
+    // when every function of that module is server-side (v0.27.0: `Got (Result
+    // Error Shape.Batch)` in the client `Msg` lost `Shape.Batch` when `Shape`'s
+    // only function used `Http`). Read from the resolver: every type-name
+    // occurrence (`type_occs`) and constructor reference of a frontend module,
+    // mapped to its defining module. A subset copy keeps the module's type
+    // declarations and its pure defs, so the fixpoint also follows the subset
+    // modules' own type and pure-def references.
+    // Modules kept ONLY because a frontend module names one of their types:
+    // (type name, written qualified). When every such type is copied into
+    // `Shared` and named bare, the client needs no copy of the module (the
+    // copy in `Shared` serves), and it stays backend-only (see below, after
+    // the copy set is known).
+    let mut type_only_needs: HashMap<ModuleId, Vec<(String, bool)>> = HashMap::new();
+    let mut needs_module_copy: HashSet<ModuleId> = referenced_subset_mods.clone();
+    {
+        let tainted_set: HashSet<ModuleId> = tainted_mods.iter().copied().collect();
+        let mut frontier: Vec<ModuleId> = std::iter::once(entry)
+            .chain(pure_sibling_mods.iter().copied())
+            .chain(referenced_subset_mods.iter().copied())
+            .collect();
+        let mut visited: HashSet<ModuleId> = HashSet::new();
+        while let Some(fm) = frontier.pop() {
+            if !visited.insert(fm) {
+                continue;
+            }
+            let resolved = db.resolve(fm);
+            let fm_text = db.module_parse(fm).syntax().text().to_string();
+            let mut owners: Vec<ModuleId> = Vec::new();
+            for occ in &resolved.type_occs {
+                if let Some(loc) = db.def_loc(occ.con) {
+                    if loc.module.index() != u32::MAX
+                        && loc.module != fm
+                        && tainted_set.contains(&loc.module)
+                    {
+                        let at = occ.span.range.0 as usize;
+                        let qualified = at > 0 && fm_text.as_bytes().get(at - 1) == Some(&b'.');
+                        type_only_needs
+                            .entry(loc.module)
+                            .or_default()
+                            .push((occ.name.as_str().to_string(), qualified));
+                        owners.push(loc.module);
+                    }
+                }
+            }
+            for occ in &resolved.ref_occs {
+                let target = match &occ.res {
+                    hir::Res::Ctor(c) => Some(c.type_),
+                    hir::Res::Def(d) if tainted_pure_defs.contains_key(d) => Some(*d),
+                    _ => None,
+                };
+                if let Some(loc) = target.and_then(|d| db.def_loc(d)) {
+                    if loc.module != fm && tainted_set.contains(&loc.module) {
+                        needs_module_copy.insert(loc.module);
+                    }
+                    owners.push(loc.module);
+                }
+            }
+            for owner in owners {
+                if owner != fm && tainted_set.contains(&owner) {
+                    referenced_subset_mods.insert(owner);
+                    frontier.push(owner);
+                }
+            }
+        }
+    }
 
     // SERVER-INTERNAL Msgs (server-internal effect chaining) are dispatched ONLY
     // from a server `Cmd.perform` and settle inside the triggering branch's RPC —
@@ -2402,37 +2589,41 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             no_frontend_mods.push(m);
         }
     }
-    // Modules with NO frontend copy — the security spine drops any import of one.
-    let no_frontend_names: HashSet<String> = no_frontend_mods
-        .iter()
-        .map(|m| db.module_name(*m).to_string())
-        .collect();
-    if !tainted_mods.is_empty() || !pure_sibling_mods.is_empty() {
-        let pure: Vec<String> = pure_sibling_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        let subset: Vec<String> = subset_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        let back: Vec<String> = no_frontend_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        notes.push(format!(
-            "multi-module split (per-binding): pure module(s) {pure:?} copied to BOTH trees; server-only module(s) {back:?} routed backend-only; mixed module(s) {subset:?} split per-binding (client-safe bindings copied to the frontend; server bindings kept backend-only)."
-        ));
-    }
-
     let parse = db.module_parse(entry);
     let src = parse.syntax().text().to_string();
     let file = parse.tree();
 
     let imports = collect_imports(&file, &src);
 
-    // Tainted binding names → excluded from the frontend.
-    let tainted_names: Vec<String> = report.tainted.iter().map(|t| t.name.clone()).collect();
+    // Tainted binding names → excluded from the frontend, per module: the
+    // names each module writes bare that resolve to a tainted def (never a
+    // bare-name match across modules).
+    let tainted_defs = tainted_def_ids(&db, &report);
+    let scope_tainted: HashMap<ModuleId, HashSet<String>> = check_ids
+        .iter()
+        .map(|m| (*m, tainted_in_scope(&db, &tainted_defs, *m)))
+        .collect();
+    let sorted_scope = |m: ModuleId| -> Vec<String> {
+        let mut v: Vec<String> = scope_tainted
+            .get(&m)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+    let tainted_names: Vec<String> = sorted_scope(entry);
+    // The report lists every excluded binding qualified by its module.
+    let excluded_names: Vec<String> = report
+        .tainted
+        .iter()
+        .map(|t| {
+            if t.module == entry_name {
+                t.name.clone()
+            } else {
+                format!("{}.{}", t.module, t.name)
+            }
+        })
+        .collect();
 
     // ---- resolve the wire codecs (§14 #2) ----
     // Registry of the project's own `Codec <T>` bindings, scanned across the
@@ -2653,6 +2844,134 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             })
             .and_then(|d| decl_name(&d))
     });
+    // A copied type may name a type of ANOTHER module (`at : Shape.Point`).
+    // `Shared` must see that type too (v0.27.0: the copy lost it, and the
+    // client reported `Undefined name: Chan.Batch`). Read the references from
+    // the resolver (`type_occs` inside the copied declarations):
+    //   * a type of a PURE sibling is imported (the module is in both trees),
+    //     under the qualifier the copied text uses;
+    //   * a type of a server-tainted module is COPIED too (importing that
+    //     module into `Shared` would put its effects in the wasm client), and
+    //     each qualified reference to it is rewritten to the bare name;
+    //   * a stdlib type keeps the source module's own import line.
+    let pure_sibling_names: HashMap<ModuleId, String> = pure_sibling_mods
+        .iter()
+        .map(|m| (*m, db.module_name(*m).to_string()))
+        .collect();
+    let project_mods: HashSet<ModuleId> = check_ids.iter().copied().collect();
+    let copy_types_of = |m: ModuleId, seed: &BTreeSet<String>| -> BTreeSet<String> {
+        let mparse = db.module_parse(m);
+        let mfile = mparse.tree();
+        let mtypes = project_type_decls(&mfile);
+        let mut values: BTreeSet<String> =
+            copied_values_by_mod.get(&m).cloned().unwrap_or_default();
+        values.retain(|n| !mtypes.contains_key(n));
+        compute_type_copy(&mfile, &mtypes, seed, &values)
+    };
+    // The type-name occurrences inside module `m`'s declarations named `names`:
+    // (occurrence byte range, the text as written, the defining module, the
+    // type's own name).
+    let foreign_type_occs = |m: ModuleId, names: &BTreeSet<String>| {
+        let mparse = db.module_parse(m);
+        let mfile = mparse.tree();
+        let text = mparse.syntax().text().to_string();
+        let ranges: Vec<(u32, u32)> = mfile
+            .decls()
+            .filter(|d| decl_name(d).is_some_and(|n| names.contains(&n)))
+            .map(|d| {
+                let r = d.syntax().text_range();
+                (u32::from(r.start()), u32::from(r.end()))
+            })
+            .collect();
+        let mut out: Vec<(u32, u32, String, ModuleId, String)> = Vec::new();
+        for occ in &db.resolve(m).type_occs {
+            let (a, b) = occ.span.range;
+            if !ranges.iter().any(|(s, e)| a >= *s && b <= *e) {
+                continue;
+            }
+            let Some(loc) = db.def_loc(occ.con) else {
+                continue;
+            };
+            // Builtin and kernel-implicit types live in the sentinel module
+            // `ModuleId(u32::MAX)`, which is not a real module.
+            if loc.module == m || loc.module.index() == u32::MAX {
+                continue;
+            }
+            // The occurrence span covers the type's own name; a qualifier
+            // (`S.` in `S.Point`) sits right before it.
+            let mut start = a as usize;
+            let bytes = text.as_bytes();
+            while start > 0 && bytes[start - 1] == b'.' {
+                let mut q = start - 1;
+                while q > 0 && (bytes[q - 1].is_ascii_alphanumeric() || bytes[q - 1] == b'_') {
+                    q -= 1;
+                }
+                if q == start - 1 || !bytes[q].is_ascii_uppercase() {
+                    break;
+                }
+                start = q;
+            }
+            let written = text.get(start..b as usize).unwrap_or("").to_string();
+            out.push((
+                start as u32,
+                b,
+                written,
+                loc.module,
+                occ.name.as_str().to_string(),
+            ));
+        }
+        out
+    };
+    loop {
+        let mut grew = false;
+        for m in copy_mods.clone() {
+            let types = copy_types_of(m, &seed_ty);
+            for (_, _, _, owner, tname) in foreign_type_occs(m, &types) {
+                let tainted_owner = project_mods.contains(&owner)
+                    && !pure_sibling_names.contains_key(&owner)
+                    && owner != entry;
+                if tainted_owner {
+                    grew |= copy_mods.insert(owner);
+                    grew |= seed_ty.insert(tname);
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    // Per copy module: the qualified references to a type `Shared` now owns
+    // (rewritten to the bare name), and the imports `Shared` needs.
+    let mut copied_rewrites: HashMap<ModuleId, Vec<(u32, u32, String)>> = HashMap::new();
+    let mut foreign_sibling_imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut foreign_stdlib_imports: Vec<String> = Vec::new();
+    for m in copy_mods.iter().copied() {
+        let types = copy_types_of(m, &seed_ty);
+        let mparse = db.module_parse(m);
+        let mimports = collect_imports(&mparse.tree(), &mparse.syntax().text().to_string());
+        for (a, b, written, owner, tname) in foreign_type_occs(m, &types) {
+            let qual = written.rsplit_once('.').map(|(q, _)| q.to_string());
+            if copy_mods.contains(&owner) {
+                if qual.is_some() {
+                    copied_rewrites.entry(m).or_default().push((a, b, tname));
+                }
+            } else if let Some(name) = pure_sibling_names.get(&owner) {
+                let aliases = foreign_sibling_imports.entry(name.clone()).or_default();
+                if let Some(q) = qual.filter(|q| q != name) {
+                    aliases.insert(q);
+                }
+            } else if !project_mods.contains(&owner) && m != entry {
+                let oname = db.module_name(owner).to_string();
+                if let Some(i) = mimports.iter().find(|i| i.module_path == oname) {
+                    if !imports.iter().any(|e| e.module_path == oname)
+                        && !foreign_stdlib_imports.contains(&i.text)
+                    {
+                        foreign_stdlib_imports.push(i.text.clone());
+                    }
+                }
+            }
+        }
+    }
     let mut moved_unions: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in copy_mods.iter().copied() {
         let mparse = db.module_parse(m);
@@ -2691,7 +3010,24 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         if names.is_empty() {
             continue;
         }
-        copied_decls.push_str(&render_copied_decls(&mfile, &msrc, &names));
+        let rewritten_src = match copied_rewrites.get(&m) {
+            Some(rw) => {
+                let mut rw = rw.clone();
+                rw.sort_by(|x, y| y.0.cmp(&x.0));
+                let mut t = msrc.clone();
+                for (a, b, bare) in rw {
+                    t.replace_range(a as usize..b as usize, &bare);
+                }
+                t
+            }
+            None => msrc.clone(),
+        };
+        if rewritten_src != msrc {
+            let rparse = syntax::parse(&rewritten_src, base::FileId(0));
+            copied_decls.push_str(&render_copied_decls(&rparse.tree(), &rewritten_src, &names));
+        } else {
+            copied_decls.push_str(&render_copied_decls(&mfile, &msrc, &names));
+        }
         for e in copied_exposing_list(&mtypes, &types, &values) {
             copied_exposing.push(e);
         }
@@ -2704,6 +3040,45 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // De-dup the exposing list (a name never appears twice across modules).
     let mut seen_exp: HashSet<String> = HashSet::new();
     copied_exposing.retain(|e| seen_exp.insert(e.clone()));
+
+    // A module kept only for types that `Shared` now owns, each named bare,
+    // needs no client copy: the frontend reads those types from `Shared`.
+    for m in subset_mods.clone() {
+        let only_copied_types = !needs_module_copy.contains(&m)
+            && m != update_module
+            && Some(m) != msg_module
+            && type_only_needs.get(&m).is_some_and(|needs| {
+                needs
+                    .iter()
+                    .all(|(name, qualified)| !qualified && copied_names.contains(name))
+            });
+        if only_copied_types {
+            subset_mods.retain(|x| *x != m);
+            no_frontend_mods.push(m);
+        }
+    }
+    // Modules with NO frontend copy — the security spine drops any import of one.
+    let no_frontend_names: HashSet<String> = no_frontend_mods
+        .iter()
+        .map(|m| db.module_name(*m).to_string())
+        .collect();
+    if !tainted_mods.is_empty() || !pure_sibling_mods.is_empty() {
+        let pure: Vec<String> = pure_sibling_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        let subset: Vec<String> = subset_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        let back: Vec<String> = no_frontend_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        notes.push(format!(
+            "multi-module split (per-binding): pure module(s) {pure:?} copied to BOTH trees; server-only module(s) {back:?} routed backend-only; mixed module(s) {subset:?} split per-binding (client-safe bindings copied to the frontend; server bindings kept backend-only)."
+        ));
+    }
 
     // ---- pure sibling modules the wire references (Shared imports them) ----
     // A referenced codec or a wire-field type DECLARED in a PURE sibling module
@@ -2772,12 +3147,36 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .filter(|m| *m != entry)
         .map(|m| db.module_name(m).to_string())
         .collect();
-    let shared_imports = shared_import_lines(
+    for name in foreign_sibling_imports.keys() {
+        needed_siblings.insert(name.clone());
+    }
+    let mut shared_imports = shared_import_lines(
         &imports,
         &needed_siblings,
         &no_frontend_names,
         &all_project_sibling_names,
     );
+    // A pure sibling a copied type names under an import alias
+    // (`import Shape as S` … `at : S.Point`) is imported under that alias.
+    for (name, aliases) in &foreign_sibling_imports {
+        if aliases.len() > 1 {
+            return Err(format!(
+                "sky.spa: the wire types copied into `Shared` name module `{name}` under \
+                 several import aliases ({}). Use one alias for `{name}` in the modules \
+                 that declare the wire types.",
+                aliases.iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
+        }
+        if let Some(alias) = aliases.iter().next() {
+            let canonical = format!("import {name} exposing (..)");
+            for line in shared_imports.iter_mut() {
+                if *line == canonical {
+                    *line = format!("import {name} as {alias} exposing (..)");
+                }
+            }
+        }
+    }
+    shared_imports.extend(foreign_stdlib_imports);
 
     // ---- `update`'s DECLARING module (GAP-1) ----
     // `update` may live in the entry OR a sibling. Read its param names +
@@ -2800,9 +3199,18 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| "msg".into()),
+                // A wildcard or a pattern cannot be read as an expression; the
+                // regenerated `update` binds the model as `spaModel_` then.
                 ps.get(1)
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
+                    .map(|s| {
+                        if is_plain_param(&s) {
+                            s
+                        } else {
+                            spa_partition::BOXED_MODEL_FIELD.to_string()
+                        }
+                    })
                     .unwrap_or_else(|| "model".into()),
             )
         })
@@ -2906,8 +3314,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // it here from the RESOLVED init module so a sibling init is stripped in its
     // own module copy (below), exactly as an entry init is stripped in
     // `gen_frontend`.
+    let init_tainted = sorted_scope(init_mod);
     let strip_init_cmd = init_cmd_is_get_safe(&init_src)
-        && tainted_names.iter().any(|t| references_word(&init_src, t));
+        && init_tainted.iter().any(|t| references_word(&init_src, t));
     // `init`'s PURE model expr — the client SSR model decoder is derived from it
     // (`Codec.fromJson (Codec.auto <model>)`). Read from whichever module
     // declares `init`, so the decoder is emitted for a sibling init too.
@@ -2933,7 +3342,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 // the SSR seed boot and persistence, for such an app.
                 !init_model_refs(d)
                     .iter()
-                    .any(|r| tainted_names.iter().any(|t| t == r))
+                    .any(|r| init_tainted.iter().any(|t| t == r))
             })
             .and_then(|d| init_pure_model_expr(&isrc, &d))
     };
@@ -3041,14 +3450,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let static_mount = static_mount_override.or_else(|| app_static_mount(&src, project_dir));
     // SPA-3: the follow-up context seen from one module (its Msg qualifier, its
     // Std.Native alias) + the tainted names a client residual may not use.
-    let tainted_set: HashSet<String> = tainted_names.iter().cloned().collect();
+    let no_tainted: HashSet<String> = HashSet::new();
     let fc_q = |fc: &FollowCtx, m: ModuleId| -> &'static str { fc.q(m) };
     let follow_here = |m: ModuleId| -> Option<FollowHere<'_>> {
         follow_ctx.as_ref().map(|fc| FollowHere {
             ctx: fc,
             q: fc.q(m),
             native_alias: fc.native_alias.get(&m).map(|s| s.as_str()),
-            tainted: &tainted_set,
+            tainted: scope_tainted.get(&m).unwrap_or(&no_tainted),
         })
     };
     let settle_plan = build_settle_plan(&db, &check_ids, entry, &report, &model_field_names);
@@ -3148,6 +3557,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     write("backend/src/Shared.sky", &shared_src, &mut files)?;
     write("frontend/src/Shared.sky", &shared_src, &mut files)?;
     write("backend/src/Main.sky", &backend_src, &mut files)?;
+    let frontend_src = strip_tainted_from_imports(&frontend_src, &tainted_by_module);
     write("frontend/src/Main.sky", &frontend_src, &mut files)?;
     // The generated projects must be able to REBUILD any third-party imports the
     // app uses: carry the `[dependencies]` (Sky packages) + `["go.dependencies"]`
@@ -3241,6 +3651,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         } else {
             own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions)
         };
+        let frontend_text = strip_tainted_from_imports(&frontend_text, &tainted_by_module);
         write(&format!("frontend/src/{rel}"), &frontend_text, &mut files)?;
     }
     for m in &tainted_mods {
@@ -3305,6 +3716,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             } else {
                 subset
             };
+            let subset = strip_tainted_from_imports(&subset, &tainted_by_module);
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
     }
@@ -3338,7 +3750,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         files,
         server_branches: server.iter().map(|(n, _)| n.clone()).collect(),
         client_branches: client_names,
-        excluded: tainted_names,
+        excluded: excluded_names,
         notes,
         warnings,
     })
@@ -7785,10 +8197,31 @@ fn gen_frontend_update(
         }
         _ => String::new(),
     };
+    // The model parameter as `update` binds it: the generated arms name the
+    // model `model_param`, so a wildcard (`update msg _ =`) or a pattern
+    // (`update msg { n } =`) keeps its bindings under an `as`.
+    let raw_model = value_params(&update_val)
+        .get(1)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let model_binder = if raw_model.is_empty() || raw_model == model_param {
+        model_param.to_string()
+    } else if raw_model == "_" {
+        model_param.to_string()
+    } else {
+        format!("({raw_model} as {model_param})")
+    };
     Ok(format!(
-        "{update_anno}\nupdate {msg_param} {model_param} =\n    case {msg_param} of\n{}{follow_decls}",
+        "{update_anno}\nupdate {msg_param} {model_binder} =\n    case {msg_param} of\n{}{follow_decls}",
         arms_out.trim_end()
     ))
+}
+
+/// A parameter usable as an expression: a plain lower-case name.
+fn is_plain_param(p: &str) -> bool {
+    let p = p.trim();
+    p.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// SPA-3: the [`FollowCtx`] seen from ONE module — its Msg qualifier, its

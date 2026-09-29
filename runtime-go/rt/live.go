@@ -2924,6 +2924,26 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg, ok := sess.resolveHandler(req.View, req.HandlerID)
+	// Sub.onFragment (sub_fragment.go): the browser reports the URL fragment
+	// at load and on every hashchange. It reaches `update` only through the
+	// app's own `Sub.onFragment toMsg` leaf; without one it is a no-op.
+	if req.Msg == "__skyFragment" && req.HandlerID == "" {
+		var toMsg any
+		if app.subscriptions != nil {
+			toMsg = fragmentToMsg(sky_call(app.subscriptions, sess.model))
+		}
+		var frag string
+		if len(req.Args) > 0 {
+			_ = json.Unmarshal(req.Args[0], &frag)
+		}
+		if toMsg == nil {
+			sess.mu.Unlock()
+			w.Header().Set("X-Sky-Live", "1")
+			w.WriteHeader(200)
+			return
+		}
+		msg, ok = sky_call(toMsg, fragmentOf(frag)), true
+	}
 	if !ok && req.Msg != "" && req.HandlerID == "" {
 		// Direct-send path: the frontend called __sky_send("MsgName", args)
 		// without a handler ID (e.g. Firebase auth callback, subscription

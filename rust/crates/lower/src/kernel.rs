@@ -580,6 +580,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Sub", "every", "rt.Sub_every"),
     ("Sub", "batch", "rt.Sub_batch"),
     ("Sub", "subscribeTopic", "rt.Sub_subscribeTopic"),
+    ("Sub", "onFragment", "rt.Sub_onFragment"),
     ("Sub", "subscribeStream", "rt.Sub_subscribeStream"),
     ("HttpStream", "open", "rt.HttpStream_open"),
     ("HttpStream", "close", "rt.HttpStream_close"),

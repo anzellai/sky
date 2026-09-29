@@ -104,6 +104,41 @@ func TestNoiseWasmInitiatorInteropsWithNativeResponder(t *testing.T) {
 		transport = tp.V0
 		_, _ = io.WriteString(w, hex.EncodeToString([]byte(tp.V1.(string))))
 	})
+	// The keyed Crypto primitives under a key both sides derive (the wasm
+	// side's `TestWasmAeadAndMacInteropWithNative`).
+	aeadKey := cryOk(t, Kdf_expand(Kdf_extract("salt", Secret_fromString("input key material")), "info", 32))
+	mux.HandleFunc("/aead", func(w http.ResponseWriter, r *http.Request) {
+		body, good := readHex(w, r)
+		if !good {
+			return
+		}
+		parts := strings.Split(body, "\n")
+		if len(parts) != 3 {
+			http.Error(w, "want 3 lines", 400)
+			return
+		}
+		res := Crypto_xchachaOpen(aeadKey, parts[0])
+		if tag, _, _ := anyResultView(res); tag != 0 || cryOk(t, res).(string) != "random nonce" {
+			fail(w, "xchachaOpen", res)
+			return
+		}
+		sealed, err := hex.DecodeString(parts[1])
+		if err != nil {
+			http.Error(w, "not hex", 400)
+			return
+		}
+		res = Crypto_chacha20Poly1305Open(aeadKey, "000000000000", "ad", string(sealed))
+		if tag, _, _ := anyResultView(res); tag != 0 || cryOk(t, res).(string) != "explicit nonce" {
+			fail(w, "chacha20Poly1305Open", res)
+			return
+		}
+		if parts[2] != Crypto_hmacSha256("key", "hello").(string) {
+			http.Error(w, "the wasm MAC differs from the native one", 500)
+			return
+		}
+		out := cryOk(t, Crypto_chacha20Poly1305Seal(aeadKey, "111111111111", "ad", "pong")).(string)
+		_, _ = io.WriteString(w, hex.EncodeToString([]byte(out)))
+	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -129,7 +164,7 @@ func TestNoiseWasmInitiatorInteropsWithNativeResponder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the wasm initiator failed: %v\n%s", err, out)
 	}
-	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder"} {
+	for _, name := range []string{"TestWasmKeysAreRandom", "TestWasmInitiatorTalksToNativeResponder", "TestWasmAeadAndMacInteropWithNative"} {
 		if !strings.Contains(string(out), "--- PASS: "+name) {
 			t.Fatalf("the wasm test %s did not pass:\n%s", name, out)
 		}

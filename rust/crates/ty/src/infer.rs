@@ -815,7 +815,23 @@ impl<'a> Infer<'a> {
                 for &arg in args {
                     let ta = self.infer_expr(body, arg);
                     let res = self.uf.fresh_flex();
-                    let want = self.fun(ta, res);
+                    // A record-literal argument (`App.app { init = init, … }`):
+                    // unify each field against the parameter's field first, at
+                    // the field's value, so a clash names the field instead of
+                    // the whole call. Only the diagnostic's place changes: the
+                    // same fields are unified either way.
+                    let before = self.errors.len();
+                    if let Expr::Record(fields) = &body.exprs[arg] {
+                        self.unify_record_arg_fields(body, *callee, tf, ta, fields);
+                    }
+                    let want = if self.errors.len() > before {
+                        // Already reported at the field; bind the result
+                        // without a second report of the same clash.
+                        let param = self.uf.fresh_flex();
+                        self.fun(param, res)
+                    } else {
+                        self.fun(ta, res)
+                    };
                     self.unify(tf, want);
                     tf = res;
                 }
@@ -919,6 +935,62 @@ impl<'a> Infer<'a> {
     /// A displayable name for a callee reference — `Module.func` for a kernel,
     /// the def's own name for a user def. `None` for anything unnameable (locals,
     /// foreign, errors), which suppresses the arity gate (no name to blame).
+    /// Unify the fields of a record-literal argument against the callee's
+    /// parameter record, one field at a time, each at its value's span. A
+    /// clash names the field and the function (`init` of `Std.App.app`), so a
+    /// wrong `init` is reported at `init`, not at the call or at a runner the
+    /// build rewrote the call to. No-op unless the callee's type is already a
+    /// function of a record.
+    fn unify_record_arg_fields(
+        &mut self,
+        body: &Body,
+        callee: ExprId,
+        tf: TyVarId,
+        ta: TyVarId,
+        fields: &[(Name, ExprId)],
+    ) {
+        let Content::Structure(FlatTy::Fun(param, _)) = self.uf.content(tf) else {
+            return;
+        };
+        let Content::Structure(FlatTy::Record(pf, pext)) = self.uf.content(param) else {
+            return;
+        };
+        let (pf, _) = self.uf.normalize_record(pf, pext);
+        let Content::Structure(FlatTy::Record(af, _)) = self.uf.content(ta) else {
+            return;
+        };
+        let callee_label = match &body.exprs[callee] {
+            Expr::Var(Res::Def(d)) => self
+                .db
+                .def_loc(*d)
+                .map(|l| format!("{}.{}", self.db.module_name(l.module), l.name.as_str())),
+            Expr::Var(res) => self.callee_name(res),
+            _ => None,
+        };
+        for (n, val) in fields {
+            let (Some(&want), Some(&got)) = (pf.get(n), af.get(n)) else {
+                continue;
+            };
+            let prev = self.cur_span;
+            self.cur_span = body.expr_span(*val).or(prev);
+            let before = self.errors.len();
+            self.unify(got, want);
+            if self.errors.len() > before {
+                if let Some(err) = self.errors.last_mut() {
+                    err.message = match &callee_label {
+                        Some(c) => format!(
+                            "{}, in the `{}` field of the record passed to `{c}`",
+                            err.message,
+                            n.as_str()
+                        ),
+                        None => format!("{}, in the `{}` field", err.message, n.as_str()),
+                    };
+                }
+            }
+            self.cur_span = prev;
+        }
+    }
+
     fn callee_name(&self, res: &Res) -> Option<String> {
         match res {
             Res::Kernel { module, func } => Some(format!("{}.{}", module.as_str(), func.as_str())),

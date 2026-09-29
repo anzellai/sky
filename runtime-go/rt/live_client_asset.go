@@ -2135,6 +2135,16 @@ window.addEventListener("popstate", function() {
     })
     .catch(function() { /* Back/Forward fetch failed; leave URL alone. */ });
 });
+// Sub.onFragment: a browser never sends the URL fragment in a request, so the
+// client reports it — once at load when the page has one, and on every
+// hashchange. The server delivers it only to the app's Sub.onFragment leaf.
+function __skySendFragment() {
+  var h = String(window.location.hash || "");
+  if (h.charAt(0) === "#") h = h.slice(1);
+  __skySend("__skyFragment", [h], "", { noLoader: true });
+}
+window.addEventListener("hashchange", __skySendFragment);
+if (String(window.location.hash || "").length > 1) __skySendFragment();
 // ── Status banner (connection state) ─────────────────────────
 // Single bottom-pinned element rendered by the runtime (NOT by the
 // user's view) showing connection health. State machine:

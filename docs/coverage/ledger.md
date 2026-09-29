@@ -27,7 +27,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 83 |
 | stdlib modules (denominator) | 111 |
-| stdlib entries (denominator) | 2184 |
+| stdlib entries (denominator) | 2185 |
 
 ## Uncovered
 
@@ -59,7 +59,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 24 |
-| stdlib modules owned by exactly one unit of any role | 19 |
+| stdlib modules owned by exactly one unit of any role | 17 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |

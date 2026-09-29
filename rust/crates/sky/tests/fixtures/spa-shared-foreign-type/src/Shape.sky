@@ -1,0 +1,13 @@
+module Shape exposing (Point, origin)
+
+import Sky.Core.Prelude exposing (..)
+
+type alias Point =
+    { x : Int
+    , y : Int
+    }
+
+
+origin : Point
+origin =
+    { x = 0, y = 0 }
