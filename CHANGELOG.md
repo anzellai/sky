@@ -1122,8 +1122,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     `Compression`, `Std.Db.Decode` decoders, `Csv` parsing, `Money`
     formatting, `Std.Config` decoders, `Std.Db.Table` descriptions and
     `Time` formatting and calendar arithmetic run in the client; the clock,
-    `Money`'s FX-rate table, `Cache`, `Email`, `PubSub`, `Trace`, streams
-    and sockets stay server. `Ffi.callPure` symbols are now read too, so
+    `Money`'s FX-rate table, `Cache`, `Email`, `PubSub`, `Trace`, HTTP
+    streams and the server side of a socket stay server (a client
+    `WebSocket` runs in the client). `Ffi.callPure` symbols are now read too, so
     `Money.convert` (the server's rate table) no longer ran in the client.
   - **A server-only `Net.send` removed the client's own `Main.send`.**
     Exclusion was by bare name across modules; it is now per module scope,

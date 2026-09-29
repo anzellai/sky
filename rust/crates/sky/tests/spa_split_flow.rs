@@ -7262,6 +7262,24 @@ fn live_press_and_read(port: u16, jar: &std::path::Path, i: usize, prefix: &str)
     rest[..rest.find('<').unwrap_or(rest.len())].to_string()
 }
 
+/// The value the client's `Got` arm writes to `out` after a `Fetch` RPC, for
+/// the fixtures whose `Got` is a client arm. Since v0.27.0 such a continuation
+/// is never settled on the server (docs/skyspa/auto-split.md §18, "only server
+/// continuations chain"): the RPC answers the task's `result`, the client
+/// dispatches `Got result` through its own `update`. Both fixtures' `Got` arms
+/// write `"failed"` for an `Err`; an `Ok` is not expected (port 1 refuses).
+fn client_got_out(front: &str, posted: &(u32, String)) -> String {
+    assert!(
+        front.contains("update (Got resp.result)"),
+        "the client dispatches the RPC's result to its own `Got` arm:\n{front}"
+    );
+    let v: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+    match v["result"][0].as_str() {
+        Some("Err") => "failed".to_string(),
+        other => panic!("the RPC must answer the task's Err result, got {other:?}: {posted:?}"),
+    }
+}
+
 /// With `App.withClientCrypto`, a client arm seals under a key it derived with
 /// `Kdf` (the explicit-nonce AEAD) and computes a MAC: both run in the wasm
 /// client. Before, the build refused the arm as "client-held crypto (Kdf) and
@@ -7373,16 +7391,16 @@ fn a_server_only_function_excludes_only_itself_not_a_same_named_client_function(
     )
     .expect("POST /_rpc/Fetch");
     assert_eq!(posted.0, 200, "{posted:?}");
-    let rpc: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
     drop(back);
+    let client_out = client_got_out(&front, &posted);
     let (live, live_port) = start_live_app(&proj);
     let jar = proj.join("jar.txt");
     let live_out = live_press_and_read(live_port, &jar, 0, "OUT=");
     drop(live);
     assert_eq!(
-        format!("{} COUNT=0", rpc["out"].as_str().unwrap_or("?")),
+        format!("{client_out} COUNT=0"),
         live_out,
-        "the server arm must answer what the Live app renders"
+        "the split must end where the Live app renders"
     );
     let _ = std::fs::remove_dir_all(&proj);
 }
@@ -7584,12 +7602,13 @@ fn app_fields_in_any_form_build_with_a_server_branch() {
         .expect("POST /_rpc/Fetch");
         drop(back);
         assert_eq!(posted.0, 200, "{posted:?}");
-        let rpc: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+        let front = split_file(&proj, "frontend/src/Main.sky");
+        let client_out = client_got_out(&front, &posted);
         let (live, live_port) = start_live_app(&proj);
         let jar = proj.join("jar.txt");
         let live_out = live_press_and_read(live_port, &jar, 0, "OUT=");
         drop(live);
-        assert_eq!(rpc["out"].as_str(), Some(live_out.as_str()), "{posted:?}");
+        assert_eq!(client_out, live_out, "{posted:?}");
     }
     let _ = std::fs::remove_dir_all(&proj);
 

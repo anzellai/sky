@@ -1177,9 +1177,10 @@ fail-closed default (server), so a pure `Bytes.slice` became an RPC. Now:
 
 | Side | Families |
 |---|---|
+| Client effect | `Native`, `WebSocket` (the client holds its own socket, §20) |
 | Client (pure) | `Bytes`, `Decimal`, `Compression`, `DbDec` (Std.Db.Decode decoders), `Spa`, the `Std.Html` render helpers |
 | Client members of a mixed family | `Csv` parse / encode; `Money` formatting and allocation; `Std.Config` decoders; `Std.Db.Table` descriptions; `Time` formatting, parsing and calendar arithmetic (UTC or a named zone; the runtime embeds `time/tzdata`); `Std.App` view conversions |
-| Server | `Schema`, `Analytics`, `Cache`, `Email`, `PubSub`, `HttpStream`, `ServerStream`, `ServerWebSocket`, `WebSocket`, `Trace`; `Money`'s FX-rate table (`setRate`, `getRate`, `hasRate`, `clearRates`, so `convert`); `Csv.parseStreamFromFile`; `Config.loadFromFile` and the `Sky.Config` builders; the `Table` queries; `Time.now` / `unixMillis` / `sleep` / `every`; `Std_App_livePort` |
+| Server | `Schema`, `Analytics`, `Cache`, `Email`, `PubSub`, `HttpStream`, `ServerStream`, `ServerWebSocket`, `Trace`; `Money`'s FX-rate table (`setRate`, `getRate`, `hasRate`, `clearRates`, so `convert`); `Csv.parseStreamFromFile`; `Config.loadFromFile` and the `Sky.Config` builders; the `Table` queries; `Time.now` / `unixMillis` / `sleep` / `every`; `Std_App_livePort` |
 
 `spa_partition` `ffi_symbol_families_are_all_decided` fails on a family that is
 in none of the lists, and on a listed member no stdlib module binds.

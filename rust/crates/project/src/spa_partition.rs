@@ -161,7 +161,6 @@ const EFFECT_KERNELS: &[&str] = &[
     //   * `PubSub` — the server's topic broker;
     //   * `HttpStream`, `ServerStream`, `ServerWebSocket` — an outbound HTTP
     //     stream and the server side of a response stream / WebSocket;
-    //   * `WebSocket` — an outbound socket, a network effect like `Http`;
     //   * `Trace` — spans and events for the server's collector.
     "Schema",
     "Analytics",
@@ -171,7 +170,6 @@ const EFFECT_KERNELS: &[&str] = &[
     "HttpStream",
     "ServerStream",
     "ServerWebSocket",
-    "WebSocket",
     "Trace",
 ];
 
@@ -6750,6 +6748,11 @@ mod tests {
             "`Ffi.kernel` symbol families not classified for the Sky.Spa split: {undecided:?}. \
              Add each to EFFECT_KERNELS, KNOWN_PURE_KERNELS or MIXED_KERNELS."
         );
+        // `Sky.Core.WebSocket` is a client effect (the wasm client holds its
+        // own socket), never a server kernel.
+        let mut acc = Refs::default();
+        record_ffi_symbol("WebSocket_connect", &mut acc, false);
+        assert!(acc.server_kernels.is_empty() && acc.client_kernels.len() == 1);
         // Every client-safe member of a mixed family is a real symbol (a
         // renamed kernel must not leave a stale entry behind).
         for (m, fs) in MIXED_KERNELS {
@@ -6796,7 +6799,6 @@ mod tests {
             "Schema_createTable",
             "Cache_get",
             "Std_App_livePort",
-            "WebSocket_connect",
             "Money_hasRate",
             "Money_clearRates",
             "Time_now",
