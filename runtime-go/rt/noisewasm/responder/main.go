@@ -56,7 +56,7 @@ func main() {
 		raw, herr := hex.DecodeString(os.Args[2])
 		if herr != nil {
 			fmt.Fprintln(os.Stderr, "secret key:", herr)
-			os.Exit(1)
+			rt.ExitProcess(1)
 		}
 		key, err = ok(rt.Kx_secretKeyFromBytes(rt.Secret_fromString(string(raw))))
 	} else {
@@ -64,7 +64,7 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "static key:", err)
-		os.Exit(1)
+		rt.ExitProcess(1)
 	}
 	pub := rt.Kx_publicKeyToBytes(rt.Kx_publicKey(key)).(string)
 
@@ -146,7 +146,7 @@ func main() {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen:", err)
-		os.Exit(1)
+		rt.ExitProcess(1)
 	}
 	fmt.Printf("PUB %s\nLISTEN %s\n", hex.EncodeToString([]byte(pub)), ln.Addr())
 	_ = http.Serve(ln, mux)
