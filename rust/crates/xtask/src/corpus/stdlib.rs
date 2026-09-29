@@ -786,7 +786,16 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// `Std.Watch` landed covered (`watch` surface), so the dark set shrank by one.
 /// A ceiling that stays above the measured number would let a module go dark
 /// again unnoticed.
-pub const DARK_MODULE_CEILING: usize = 73;
+///
+/// Raised 73 -> 74 (v0.27.0 downstream round 5): the new `Std.Nav`. Its whole
+/// surface is `Cmd` values (`pushUrl`, `replaceUrl`, `clearFragment`); a
+/// command has no pure String rendering for a Family-S assertion, and what it
+/// does happens in a browser. It is covered instead by
+/// `runtime-go/rt/nav_test.go` (the URL rule, the Sky.Live tab delivery),
+/// `nav_client_test.go` (the browser client in node), the `spa_split_flow.rs`
+/// `a_server_arm_navigation_*` tests and the browser e2e `scripts/nav-e2e.sh`
+/// (Sky.Live and web:app, Chrome and WebKit, strict CSP).
+pub const DARK_MODULE_CEILING: usize = 74;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
