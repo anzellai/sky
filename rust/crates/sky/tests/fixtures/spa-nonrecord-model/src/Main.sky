@@ -1,0 +1,38 @@
+module Main exposing (main)
+
+-- The model is a String (not a record) and one branch runs on the server.
+
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui
+
+type Msg
+    = Mac
+
+
+update : Msg -> String -> ( String, Cmd Msg )
+update msg _ =
+    case msg of
+
+        Mac ->
+            ( Crypto.hmacSha256 "key" "hello", Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = \_ -> ( "", Cmd.none )
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text ("MAC=" ++ m)
+                        , Ui.button
+                              []
+                              { onPress = Just Mac, label = Ui.text "mac" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

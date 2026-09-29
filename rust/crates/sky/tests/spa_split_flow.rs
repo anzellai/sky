@@ -4793,10 +4793,12 @@ fn curl_status_ctype(port: u16, path: &str) -> Option<(u32, String)> {
     Some((code, ctype))
 }
 
-/// BUG-3. When the SYNTHESISED client entry fails to type-check, the failure
-/// must surface the actual diagnostic (file:line + caret), plus a pointer to the
-/// staged entry — not a bare `1 type error(s)` count that discards where the
-/// error is. Type-checking happens before any `go build`, so no Go is needed.
+/// BUG-3. A type error must surface as the actual diagnostic (file:line +
+/// caret), not a bare `1 type error(s)` count that discards where the error
+/// is. Since v0.27.0 the build type-checks the user's own source before it
+/// synthesises the client entry, so the error is reported at the user's line
+/// (the `view` field of `App.app`), never in the synthesised entry.
+/// Type-checking happens before any `go build`, so no Go is needed.
 #[test]
 fn web_app_type_error_reports_file_line_not_just_a_count() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -4879,11 +4881,12 @@ main =
         log.contains("TYPE ERROR") && log.contains("[E2"),
         "BUG-3: the actual type diagnostic (file:line + code) must be shown, not just a count:\n{log}"
     );
-    // …and the user must be told WHERE the synthesised entry is, so the
-    // file:line resolves to a real path they can open.
+    // …at the user's own line, the `view` field, not in a synthesised file.
     assert!(
-        log.contains(".skyapp/web-app") && log.contains("sky check"),
-        "BUG-3: the staged synthesised-entry path + a `sky check` hint must be printed:\n{log}"
+        log.contains("src/Main.sky:")
+            && log.contains("in the `view` field of the record passed to `Std.App.app`")
+            && !log.contains("SYNTHESISED"),
+        "the error is reported at the user's `view` field:\n{log}"
     );
 
     let _ = std::fs::remove_dir_all(&proj);
@@ -6977,4 +6980,602 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
     drop(back_child);
     let _ = std::fs::remove_dir_all(&proj);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
+// v0.27.0 split fixes found by a downstream project (each fixture reproduces
+// one report; before the fix every one of them failed to build or built the
+// wrong split).
+// ---------------------------------------------------------------------------
+
+/// A scratch copy of `fixtures/<name>` with `edits` applied (`(file, from, to)`,
+/// each `from` occurring exactly once), built with `sky build --target web:app`.
+fn web_app_build(
+    name: &str,
+    edits: &[(&str, &str, &str)],
+) -> (PathBuf, std::process::Output, String) {
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name),
+        &proj,
+    );
+    for (file, from, to) in edits {
+        let p = proj.join(file);
+        let src = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(
+            src.matches(from).count(),
+            1,
+            "`{from}` must occur once in {file}"
+        );
+        std::fs::write(&p, src.replacen(from, to, 1)).unwrap();
+    }
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (proj, out, log)
+}
+
+fn split_file(proj: &std::path::Path, rel: &str) -> String {
+    std::fs::read_to_string(proj.join(".skyapp/web-app/.split").join(rel)).unwrap_or_default()
+}
+
+/// Start the split backend of `proj` on a free port.
+fn start_split_backend(proj: &std::path::Path) -> (Killed, u16) {
+    let port = free_port();
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    let log = dir.join("server.log");
+    let child = Killed(
+        Command::new(dir.join("sky-out/app"))
+            .current_dir(&dir)
+            .env("PORT", port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log).unwrap())
+            .stderr(std::fs::File::create(dir.join("server.err")).unwrap())
+            .spawn()
+            .expect("start the split backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&log, 120),
+        "the split backend did not start:\n{}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    (child, port)
+}
+
+/// Build `proj` as a Sky.Live app and start it on a free port.
+fn start_live_app(proj: &std::path::Path) -> (Killed, u16) {
+    let live = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(proj)
+        .output()
+        .expect("run sky build (Sky.Live)");
+    assert!(
+        live.status.success(),
+        "the Sky.Live build failed:\n{}{}",
+        String::from_utf8_lossy(&live.stdout),
+        String::from_utf8_lossy(&live.stderr)
+    );
+    let port = free_port();
+    let log = proj.join("live.log");
+    let child = Killed(
+        Command::new(proj.join("sky-out/app"))
+            .current_dir(proj)
+            .env("SKY_LIVE_PORT", port.to_string())
+            .env("PORT", port.to_string())
+            .env_remove("SKY_LIVE_STORE")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log).unwrap())
+            .stderr(std::fs::File::create(proj.join("live.err")).unwrap())
+            .spawn()
+            .expect("start the Sky.Live app"),
+    );
+    assert!(
+        wait_for_log(&log, &format!("listening on :{port}"), 120),
+        "the Sky.Live app did not start:\n{}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    (child, port)
+}
+
+/// Press the `i`-th button of the Live app and return the text that follows
+/// `prefix` in the re-rendered page, up to the next `<`.
+fn live_press_and_read(port: u16, jar: &std::path::Path, i: usize, prefix: &str) -> String {
+    let page = curl_get_jar(port, "/", jar);
+    let hids = handler_ids(&page);
+    let hid = hids
+        .get(i)
+        .unwrap_or_else(|| panic!("no button {i} in the Live page:\n{page}"));
+    assert_eq!(live_event(port, jar, hid), "200", "Live event {i}");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let body = curl_get_jar(port, "/", jar);
+    let rest = &body[body
+        .find(prefix)
+        .unwrap_or_else(|| panic!("`{prefix}` not rendered:\n{body}"))
+        + prefix.len()..];
+    rest[..rest.find('<').unwrap_or(rest.len())].to_string()
+}
+
+/// With `App.withClientCrypto`, a client arm seals under a key it derived with
+/// `Kdf` (the explicit-nonce AEAD) and computes a MAC: both run in the wasm
+/// client. Before, the build refused the arm as "client-held crypto (Kdf) and
+/// a server effect (… Crypto.chacha20Poly1305Seal)", and `Crypto.hmacSha256`
+/// forced an RPC. Without the opt-in both stay server branches (the client
+/// holds no keys by default).
+#[test]
+fn client_crypto_seals_and_macs_in_the_client_under_the_opt_in() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-client-crypto-aead", &[]);
+    assert!(
+        log.contains("server branches (→ RPC): (none)")
+            && log.contains("client branches (local): Seal, Mac"),
+        "Seal and Mac must be client branches under the opt-in:\n{log}"
+    );
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("Crypto.chacha20Poly1305Seal") && front.contains("Crypto.hmacSha256"),
+        "the client update keeps the AEAD and the MAC:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(out.status.success(), "the web:app build failed:\n{log}");
+        assert!(dist_has_wasm(
+            &proj.join(".skyapp/web-app/.split/frontend/dist")
+        ));
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let (proj, _, log) = web_app_build(
+        "spa-client-crypto-aead",
+        &[(
+            "src/Main.sky",
+            "\n            |> App.withClientCrypto)",
+            ")",
+        )],
+    );
+    assert!(
+        log.contains("server branches (→ RPC): Seal, Mac"),
+        "without the opt-in the keyed crypto stays on the server:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// Pure stdlib kernels with no pseudo-module (`Bytes.slice`, `Bytes.length`,
+/// `Bytes.toHex`) and pure time formatting run in the client. Before, each
+/// sent its branch to the server: `server branches (→ RPC): Slice, Length,
+/// Hex`.
+#[test]
+fn pure_stdlib_kernels_stay_in_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-pure-kernels", &[]);
+    assert!(
+        log.contains("server branches (→ RPC): (none)")
+            && log.contains("client branches (local): Slice, Length, Hex, Stamp, Plain"),
+        "every branch is pure and must stay in the client:\n{log}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(out.status.success(), "the web:app build failed:\n{log}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A comment with parentheses above a server arm does not change how the
+/// split reads the arm. Before, the pattern's span started at the comment and
+/// the split refused the arm ("could not read the argument types or the
+/// pattern of this branch").
+#[test]
+fn a_comment_above_a_server_arm_does_not_change_the_split() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-arm-comment", &[]);
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("Fetch ((Ok url) as spaArg0_) ->"),
+        "the server arm is read and rewritten positionally:\n{log}\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(out.status.success(), "the web:app build failed:\n{log}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A server-only `Net.send` excludes only itself: the entry's own pure `send`
+/// stays in the client. Before, exclusion was by bare name, so both were
+/// dropped and the client failed with `Undefined name: send`. The server arm
+/// answers as the Live app does.
+#[test]
+fn a_server_only_function_excludes_only_itself_not_a_same_named_client_function() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-tainted-name-scope", &[]);
+    assert!(
+        log.contains("excluded from frontend (server-tainted): Net.send"),
+        "the excluded binding is named with its module:\n{log}"
+    );
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("\nsend model =") && front.contains("( send model, Cmd.none )"),
+        "the entry's own `send` stays in the client:\n{front}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (back, back_port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(
+        back_port,
+        "/_rpc/Fetch",
+        r#"{"spaArg0_":["Ok","http://127.0.0.1:1/"]}"#,
+    )
+    .expect("POST /_rpc/Fetch");
+    assert_eq!(posted.0, 200, "{posted:?}");
+    let rpc: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+    drop(back);
+    let (live, live_port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let live_out = live_press_and_read(live_port, &jar, 0, "OUT=");
+    drop(live);
+    assert_eq!(
+        format!("{} COUNT=0", rpc["out"].as_str().unwrap_or("?")),
+        live_out,
+        "the server arm must answer what the Live app renders"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A module whose only function runs on the server keeps its TYPES in the
+/// client. Before, the whole module was left out of the client and the client
+/// `Msg` lost `Shape.Batch` (`Undefined name: Shape.Batch`). The client-result
+/// RPC answers the batch the Live app renders.
+#[test]
+fn a_server_only_module_keeps_its_types_in_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-server-module-types", &[]);
+    let shape = split_file(&proj, "frontend/src/Shape.sky");
+    assert!(
+        shape.contains("module Shape exposing (Batch") && !shape.contains("fetch n ="),
+        "the client keeps `Shape`'s type and drops its server function:\n{log}\n{shape}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (back, back_port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(back_port, "/_rpc/Ask", r#"{"spaArg0_":["Ok",1]}"#)
+        .expect("POST /_rpc/Ask");
+    drop(back);
+    assert_eq!(posted.0, 200, "{posted:?}");
+    assert!(
+        posted.1.contains("\"next\":2") && posted.1.contains("\"ready\":false"),
+        "the RPC answers the batch `Shape.fetch 1` returns: {posted:?}"
+    );
+    let (live, live_port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let live_out = live_press_and_read(live_port, &jar, 0, "NEXT=");
+    drop(live);
+    assert_eq!(
+        live_out, "2 not ready",
+        "the Live app renders the same batch"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A wire record copied into `Shared` that names another module's type gets
+/// what that type needs: an import of a pure module (under the alias the
+/// source uses), or a copy of a type from a server-only module. Before, the
+/// copy lost it (`Undefined name: Chan.Batch`; in this fixture a type
+/// mismatch). The client-result RPC answers the nested record.
+#[test]
+fn a_copied_wire_record_brings_the_types_it_names() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let go = required(Need::Go, have_go());
+    let (proj, out, log) = web_app_build("spa-shared-foreign-type", &[]);
+    let shared = split_file(&proj, "shared/Shared.sky");
+    assert!(
+        shared.contains("import Shape exposing (..)") && shared.contains("at : Shape.Point"),
+        "Shared imports the pure module the copied record names:\n{shared}"
+    );
+    if go {
+        assert!(out.status.success(), "the web:app build failed:\n{log}");
+        let (back, back_port) = start_split_backend(&proj);
+        let url = format!("http://127.0.0.1:{back_port}/");
+        let posted = curl_post_status_body(
+            back_port,
+            "/_rpc/Fetch",
+            &format!(r#"{{"spaArg0_":["Ok","{url}"]}}"#),
+        )
+        .expect("POST /_rpc/Fetch");
+        drop(back);
+        assert_eq!(posted.0, 200, "{posted:?}");
+        assert!(
+            posted.1.contains("\"at\"") && posted.1.contains("\"y\":0") && posted.1.contains(&url),
+            "the answer carries the nested `Shape.Point`: {posted:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+
+    // The same record under an import alias.
+    let (proj, out, log) = web_app_build(
+        "spa-shared-foreign-type",
+        &[
+            ("src/Main.sky", "import Shape\n", "import Shape as S\n"),
+            (
+                "src/Main.sky",
+                "    , at : Shape.Point\n",
+                "    , at : S.Point\n",
+            ),
+            ("src/Main.sky", "(.x Shape.origin)", "(.x S.origin)"),
+        ],
+    );
+    let shared = split_file(&proj, "shared/Shared.sky");
+    assert!(
+        shared.contains("import Shape as S exposing (..)"),
+        "Shared imports the module under the alias the copied record uses:\n{shared}"
+    );
+    if go {
+        assert!(
+            out.status.success(),
+            "the aliased web:app build failed:\n{log}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+
+    // The named type lives in a module with a server function: it is copied.
+    let (proj, out, log) = web_app_build(
+        "spa-shared-foreign-type",
+        &[
+            (
+                "src/Shape.sky",
+                "module Shape exposing (Point, origin)\n\nimport Sky.Core.Prelude exposing (..)\n",
+                "module Shape exposing (Point, origin, ping)\n\nimport Sky.Core.Http as Http\nimport Sky.Core.Prelude exposing (..)\n\n\nping : String -> Task Error Int\nping url =\n    Http.get url |> Task.map .status\n",
+            ),
+        ],
+    );
+    let shared = split_file(&proj, "shared/Shared.sky");
+    assert!(
+        shared.contains("type alias Point")
+            && shared.contains("at : Point")
+            && !shared.contains("import Shape"),
+        "a server module's type is copied into Shared, its references made bare:\n{shared}"
+    );
+    if go {
+        assert!(
+            out.status.success(),
+            "the web:app build with a server module failed:\n{log}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A result Msg that the server arm applies to a captured argument
+/// (`Cmd.perform (Http.get url) (Got url)`) crosses whole: the RPC answers
+/// the follow-up `Got url result`, which the client dispatches. Before, the
+/// split made a client-result RPC and the client called `update (Got
+/// resp.result)`, without `url`, which did not type-check.
+#[test]
+fn a_result_msg_with_a_captured_argument_crosses_with_the_argument() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-captured-result-msg", &[]);
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        !front.contains("update (Got resp.result)"),
+        "the client must not rebuild `Got` from the result alone:\n{front}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (back, back_port) = start_split_backend(&proj);
+    let url = "http://127.0.0.1:1/";
+    let posted = curl_post_status_body(
+        back_port,
+        "/_rpc/Fetch",
+        &format!(r#"{{"spaArg0_":["Ok","{url}"]}}"#),
+    )
+    .expect("POST /_rpc/Fetch");
+    drop(back);
+    assert_eq!(posted.0, 200, "{posted:?}");
+    let v: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+    let follow = v["spaFollow_"].as_str().unwrap_or_default().to_string();
+    assert!(
+        follow.contains("Got") && follow.contains(url) && follow.contains("Err"),
+        "the follow-up carries `Got` with its captured url and the result: {posted:?}"
+    );
+    let (live, live_port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let live_out = live_press_and_read(live_port, &jar, 0, "OUT=");
+    drop(live);
+    assert_eq!(
+        live_out,
+        format!("{url} failed"),
+        "the Live app runs `Got url (Err _)`"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// `init` and `update` given to `App.app` in any form: an inline lambda, a
+/// function under another name, a `let`-bound lambda, an eta-expanded
+/// `update`. Before, an inline `init` with a server branch gave a backend
+/// that called an undefined `init`. The inline form is also run: its server
+/// arm answers as the Live app does.
+#[test]
+fn app_fields_in_any_form_build_with_a_server_branch() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let go = required(Need::Go, have_go());
+    let (proj, out, log) = web_app_build("spa-inline-init", &[]);
+    assert!(log.contains("server branches (→ RPC): Fetch"), "{log}");
+    if go {
+        assert!(
+            out.status.success(),
+            "the inline-init web:app build failed:\n{log}"
+        );
+        let (back, back_port) = start_split_backend(&proj);
+        let posted = curl_post_status_body(
+            back_port,
+            "/_rpc/Fetch",
+            r#"{"spaArg0_":["Ok","http://127.0.0.1:1/"]}"#,
+        )
+        .expect("POST /_rpc/Fetch");
+        drop(back);
+        assert_eq!(posted.0, 200, "{posted:?}");
+        let rpc: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+        let (live, live_port) = start_live_app(&proj);
+        let jar = proj.join("jar.txt");
+        let live_out = live_press_and_read(live_port, &jar, 0, "OUT=");
+        drop(live);
+        assert_eq!(rpc["out"].as_str(), Some(live_out.as_str()), "{posted:?}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let variants: [(&str, &[(&str, &str, &str)]); 3] = [
+        (
+            "a named init and a renamed update",
+            &[
+                (
+                    "src/Main.sky",
+                    "            { init = \\_ -> ( { out = \"\" }, Cmd.none )\n            , update = update\n",
+                    "            { init = start\n            , update = step\n",
+                ),
+                ("src/Main.sky", "update : Msg -> Model", "step : Msg -> Model"),
+                ("src/Main.sky", "update msg model =", "step msg model ="),
+                ("src/Main.sky", "\nmain =\n", "\nstart : () -> ( Model, Cmd Msg )\nstart _ =\n    ( { out = \"\" }, Cmd.none )\n\n\nmain =\n"),
+            ],
+        ),
+        (
+            "a let-bound init",
+            &[
+                (
+                    "src/Main.sky",
+                    "main =\n    App.run\n",
+                    "main =\n    let\n        start =\n            \\_ -> ( { out = \"\" }, Cmd.none )\n    in\n    App.run\n",
+                ),
+                (
+                    "src/Main.sky",
+                    "            { init = \\_ -> ( { out = \"\" }, Cmd.none )\n",
+                    "            { init = start\n",
+                ),
+            ],
+        ),
+        (
+            "an eta-expanded update",
+            &[(
+                "src/Main.sky",
+                "            , update = update\n",
+                "            , update = \\msg model -> update msg model\n",
+            )],
+        ),
+    ];
+    for (what, edits) in variants {
+        let (proj, out, log) = web_app_build("spa-inline-init", edits);
+        assert!(!log.contains("Undefined name: init"), "{what}:\n{log}");
+        if go {
+            assert!(
+                out.status.success(),
+                "{what}: the web:app build failed:\n{log}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&proj);
+    }
+}
+
+/// A model that is not a record (`String`) with a server branch: the model
+/// rides the wire whole. Before, the generated RPC handler treated it as a
+/// record (`[macHandler] type mismatch: String vs record`). The RPC answers
+/// the MAC the Live app renders.
+#[test]
+fn a_non_record_model_crosses_the_wire_whole() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-nonrecord-model", &[]);
+    assert!(log.contains("server branches (→ RPC): Mac"), "{log}");
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (back, back_port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(back_port, "/_rpc/Mac", r#"{"spaModel_":""}"#)
+        .expect("POST /_rpc/Mac");
+    drop(back);
+    assert_eq!(posted.0, 200, "{posted:?}");
+    let rpc: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+    let (live, live_port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let live_out = live_press_and_read(live_port, &jar, 0, "MAC=");
+    drop(live);
+    assert_eq!(
+        rpc["spaModel_"].as_str(),
+        Some(live_out.as_str()),
+        "{posted:?}"
+    );
+    assert_eq!(live_out.len(), 64, "a hex HMAC-SHA256: {live_out}");
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// An `init` whose seed is not `()` is reported once, at the `init` field of
+/// `App.app`, for every target, and the user's own text is shown. Before,
+/// `sky check` / `sky build` put the caret on a rewritten `App.runLive` line
+/// in `main`, a `--target web:app` build compiled a backend and then failed
+/// in the generated `spaModelBlank_`, and the terminal and client runners
+/// accepted the program.
+#[test]
+fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/std-app-init-seed-error"),
+        &proj,
+    );
+    for args in [
+        vec!["check", "src/Main.sky"],
+        vec!["build", "src/Main.sky"],
+        vec!["build", "--target", "web:app", "src/Main.sky"],
+        vec!["check", "--target", "web:app", "src/Main.sky"],
+        vec!["check", "--target", "terminal:tui", "src/Main.sky"],
+        vec!["check", "--target", "mobile:android", "src/Main.sky"],
+    ] {
+        let out = Command::new(SKY)
+            .args(&args)
+            .current_dir(&proj)
+            .output()
+            .expect("run sky");
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!out.status.success(), "{args:?} must fail:\n{log}");
+        assert!(
+            log.contains("src/Main.sky:23:22 [E2001]")
+                && log.contains("in the `init` field of the record passed to `Std.App.app`"),
+            "{args:?}: the error is at `init`:\n{log}"
+        );
+        assert_eq!(
+            log.matches("[E2001]").count(),
+            1,
+            "{args:?}: one error:\n{log}"
+        );
+        for bad in [
+            "runLive",
+            "runSpa",
+            "spaModelBlank_",
+            "SYNTHESISED",
+            "Compilation successful",
+        ] {
+            assert!(
+                !log.contains(bad),
+                "{args:?}: `{bad}` must not appear:\n{log}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&proj);
 }

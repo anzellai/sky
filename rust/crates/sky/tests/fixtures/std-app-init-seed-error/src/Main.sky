@@ -1,0 +1,29 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui
+
+type Page
+    = Home
+    | Deep
+
+type alias Model =
+    { page : Page }
+
+
+init : Page -> ( Model, Cmd () )
+init page =
+    ( { page = page }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = \_ m -> ( m, Cmd.none )
+            , view = \_ -> Ui.text "x"
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withRoutes [ App.route "/" Home, App.route "/deep" Deep ]
+            |> App.withNotFound Home)

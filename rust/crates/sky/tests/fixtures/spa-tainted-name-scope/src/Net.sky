@@ -1,0 +1,11 @@
+module Net exposing (send)
+
+import Sky.Core.Http as Http
+import Sky.Core.Prelude exposing (..)
+
+
+{-| Server-only (Http).
+-}
+send : String -> Task Error Int
+send url =
+    Http.get url |> Task.map .status

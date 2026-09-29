@@ -1,0 +1,76 @@
+module Main exposing (main)
+
+import Net
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui
+
+type alias Model =
+    { out : String
+    , count : Int
+    }
+
+type Msg
+    = Go
+    | Fetch (Result Error String)
+    | Got (Result Error Int)
+    | Bump
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { out = "", count = 0 }, Cmd.none )
+
+
+{-| A pure client helper that happens to share its name with Net.send.
+-}
+send : Model -> Model
+send model =
+    { model | count = model.count + 1 }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Go ->
+            ( model, Cmd.perform (Task.succeed "http://127.0.0.1:1/") Fetch )
+
+        Fetch (Ok url) ->
+            ( model, Cmd.perform (Net.send url) Got )
+
+        Fetch (Err _) ->
+            ( model, Cmd.none )
+
+        Got r ->
+            ( { model | out = Result.map String.fromInt r |> Result.withDefault "failed"
+              }
+            , Cmd.none
+            )
+
+        Bump ->
+            ( send model, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text
+                              ("OUT=" ++ m.out ++ " COUNT="
+                                  ++ String.fromInt m.count)
+                        , Ui.button
+                              []
+                              { onPress = Just Go, label = Ui.text "go" }
+                        , Ui.button
+                              []
+                              { onPress = Just Bump, label = Ui.text "bump" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

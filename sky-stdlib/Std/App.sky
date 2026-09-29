@@ -25,9 +25,12 @@
 -- capability flag — `withNotFound` flips it to `HasFallback`, and `runLive`
 -- (web) requires it, so a web app with no fallback page is a COMPILE error
 -- (users never write the type; inference handles it). `seed` is `init`'s
--- argument (Live passes a request record; the native backends pass unit — so a
--- portable app's `init` must NOT read its seed, or it pins `seed` and only
--- builds for `web`). `page` is the routing page type (unconstrained when there
+-- argument, and every builder fixes it to `()`: each runner calls `init ()`
+-- (the request reaches `init`'s model through `withRequest`). An `init` that
+-- takes anything else is a type error at the `init` field of `app` / `web` /
+-- `cli` / `tui`, on every target (before v0.27.0 the terminal and client
+-- runners accepted any seed, so `init : Page -> …` compiled for them and the
+-- error, if any, surfaced in the runner). `page` is the routing page type (unconstrained when there
 -- are no routes). `key` is the terminal key-event type ([`withOnKey`]);
 -- unconstrained until a handler is attached.
 --
@@ -440,11 +443,11 @@ noDurableWiring =
 -- | Describe an app from the shared TEA core. Routing, config, and function
 -- knobs are added by the `with…` builders below (each is target-relevant and
 -- ignored by targets that have no use for it).
-app : { init : seed -> ( model, Cmd msg )
+app : { init : () -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> Element msg
 , subscriptions : model -> Sub msg
-} -> App NoFallback seed page model msg key
+} -> App NoFallback () page model msg key
 app cfg =
     App
         { init = cfg.init
@@ -473,11 +476,11 @@ app cfg =
 -- backends (Live/Spa/Webview) render the `Html` natively, while the terminal
 -- backends (Tui/Cli) reject it (they require a `Std.Ui` view — use [`app`] for a
 -- cross-platform view).
-web : { init : seed -> ( model, Cmd msg )
+web : { init : () -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> Html msg
 , subscriptions : model -> Sub msg
-} -> App NoFallback seed page model msg key
+} -> App NoFallback () page model msg key
 web cfg =
     App
         { init = cfg.init
@@ -505,11 +508,11 @@ web cfg =
 -- with [`withOnLine`]. A `String` view is terminal-only: the web / desktop /
 -- mobile runners reject it at boot (use [`app`] for a cross-platform `Std.Ui`
 -- view). This is the first-class home of what used to be `Std.Cli.program`.
-cli : { init : seed -> ( model, Cmd msg )
+cli : { init : () -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> String
 , subscriptions : model -> Sub msg
-} -> App NoFallback seed page model msg key
+} -> App NoFallback () page model msg key
 cli cfg =
     App
         { init = cfg.init
@@ -539,11 +542,11 @@ cli cfg =
 -- view is terminal-only (the web / desktop / mobile runners reject it at boot).
 -- Use [`app`] instead when you want a `Std.Ui` view that renders full-screen
 -- ANSI *and* the web. This is the first-class home of `Std.Tui.program`.
-tui : { init : seed -> ( model, Cmd msg )
+tui : { init : () -> ( model, Cmd msg )
 , update : msg -> model -> ( model, Cmd msg )
 , view : model -> String
 , subscriptions : model -> Sub msg
-} -> App NoFallback seed page model msg key
+} -> App NoFallback () page model msg key
 tui cfg =
     App
         { init = cfg.init
