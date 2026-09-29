@@ -161,7 +161,7 @@ on the link's page.
 |---|---|
 | iOS / iPadOS | The associated-domains entitlement. The shell takes the universal link (`onOpenURL`, `NSUserActivityTypeBrowsingWeb`) and opens the link's path, query and fragment on the backend's own address, where the app's router shows the page. |
 | Android | An App Links intent filter on the activity: `android:autoVerify="true"`, `VIEW`, `DEFAULT` + `BROWSABLE`, `https` and the host (and port). The activity is `singleTask`. `onCreate` opens a link that starts the app; `onNewIntent` navigates the running app in place (`history.pushState` + `popstate`, as Back does), so its state and an open scanner stay. |
-| macOS | The entitlement. The desktop window does not route the link to its page yet: the app opens on its first page, and the build prints a note. |
+| macOS | The entitlement, and the hosts in the app's `Info.plist` (`SkyLinkHosts`). The desktop window takes a universal link (`application:continueUserActivity:`, `NSUserActivityTypeBrowsingWeb`) and a link sent to the app (the GetURL event, `open -a <app> <url>`). A link that launches the app is its first page; a link to the running app navigates in place (`history.pushState` + `popstate`). Only `sky package --release --target desktop:mac` makes an `.app`, so only the packaged app takes links. |
 
 Only a declared host is routed. A `*.example.com` domain matches its
 subdomains. The link's host is not the backend's: the app loads the link's
@@ -180,8 +180,12 @@ Other services on Android:
   Android build leaves them out and prints a note naming each one.
 
 **The site must vouch for the app.** Android verifies an App Link against
-`https://<host>/.well-known/assetlinks.json`; iOS against the site's
-`apple-app-site-association` file. The Android build writes the exact
+`https://<host>/.well-known/assetlinks.json`; iOS and macOS against the site's
+`apple-app-site-association` file. On macOS the app also needs a signature
+that carries the associated-domains entitlement (`SKY_MACOS_SIGN_IDENTITY`
+and a provisioning profile that grants it): an ad hoc signed app leaves the
+entitlement out, and macOS then hands it no universal link (the build says
+so). A link sent to the app with `open -a` still opens its page. The Android build writes the exact
 `assetlinks.json` for the app, with the SHA-256 digest of the certificate that
 signed the APK, and prints where it is and where to serve it:
 

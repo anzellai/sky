@@ -1094,8 +1094,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   shared sign-in (`asset_statements` in the app, `get_login_creds` in the
   site's file); `activitycontinuation:` and `appclips:` have no Android
   equivalent and the build names each one it leaves out. The macOS desktop
-  window does not route a universal link to its page yet, and its release
-  build says so. The Android build writes the site's
+  window routes a link the same way: the release `.app` lists the hosts in
+  `Info.plist` (`SkyLinkHosts`), and the window takes a universal link
+  (`application:continueUserActivity:restorationHandler:`, added to the
+  webview library's app delegate) and a URL sent to the app (the GetURL
+  Apple event, `open -a <app> <url>`), as the first page at launch and in
+  place while it runs. An ad hoc signature leaves the associated-domains
+  entitlement out, and the build says that macOS then hands the app no
+  universal link. The Android build writes the site's
   `/.well-known/assetlinks.json` with the SHA-256 digest of the signing
   certificate (`build/assetlinks.json` with the debug key,
   `sky-out/release/assetlinks.json` with the upload key under `sky package
@@ -1106,7 +1112,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   and manifest unit tests, and the native release gates: the Android
   emulator test opens `https://example.com/probe/deep` to start the app and
   `/probe/again` in the running app, and reads the routes the app reports;
-  the app without the domain does not take the link.)
+  the app without the domain does not take the link; the macOS test
+  `macos_desktop_app_opens_a_universal_link_on_its_page` opens links on the
+  packaged `.app` with `open -a`, and sends the app delegate a universal-link
+  activity through a hook built only with `-tags skytest_links`; the routing
+  rule is `runtime-go/rt/native_links_test.go`.)
 - **A Sky.Spa server branch can match inside its Msg's arguments.** The split
   sent the names a server arm binds and rebuilt the Msg on the backend from
   them, so an arm such as `Report (Ok line) -> (model, Cmd.perform

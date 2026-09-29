@@ -302,6 +302,39 @@ fn simctl(args: &[&str]) -> std::process::Output {
 /// the backend's output, so it asserts what the app on the device saw.
 /// `bundle_steps` are the `|> Bundle.with…` lines after the name and id.
 fn probe_app(dir: &Path, bundle_steps: &str) {
+    probe_app_with(dir, bundle_steps, Flow::Native);
+}
+
+/// What the probe does after it starts.
+#[derive(Clone, Copy, PartialEq)]
+enum Flow {
+    /// The secure-store round trip, then `Native.scanCode`, then
+    /// `Native.authenticate` (the full native-capability probe).
+    Native,
+    /// The secure-store round trip, then `Native.notify` (`notify=ok` or
+    /// `notify=err:<error>`).
+    Notify,
+    /// No native capability: `start=ok` when the client starts, and each
+    /// route. A reload of the page reports a second `start=ok`.
+    Links,
+}
+
+fn probe_app_with(dir: &Path, bundle_steps: &str, flow: Flow) {
+    let init_cmd = match flow {
+        Flow::Links => "Cmd.perform (Task.succeed \"start=ok\") Report",
+        _ => "Cmd.perform roundTrip Got",
+    };
+    let got_next = match flow {
+        Flow::Native => "\n                , Cmd.perform (Native.scanCode { formats = [ Native.Qr ], prompt = \"Scan the probe code\" }) Scanned",
+        Flow::Notify => "\n                , Cmd.perform (Native.notify \"Sky Probe\" \"probe-notification\") Notified",
+        Flow::Links => "",
+    };
+    let scanned_next = match flow {
+        Flow::Native => {
+            "\n                , Cmd.perform (Native.authenticate \"Confirm the probe\") Authed"
+        }
+        _ => "",
+    };
     let src = format!(
         r#"module Main exposing (main, bundle)
 
@@ -337,6 +370,7 @@ type Msg
     | Authed (Result Error Bool)
     | Report (Result Error String)
     | Reported (Result Error ())
+    | Notified (Result Error ())
 
 
 roundTrip : Task Error (Maybe Secret)
@@ -371,6 +405,16 @@ scanText r =
             "scan=err:" ++ Error.toString e
 
 
+notifyText : Result Error () -> String
+notifyText r =
+    case r of
+        Ok _ ->
+            "notify=ok"
+
+        Err e ->
+            "notify=err:" ++ Error.toString e
+
+
 authText : Result Error Bool -> String
 authText r =
     case r of
@@ -386,7 +430,7 @@ authText r =
 
 init : () -> ( Model, Cmd.Cmd Msg )
 init _ =
-    ( {{ status = "running", page = "home" }}, Cmd.perform roundTrip Got )
+    ( {{ status = "running", page = "home" }}, {init_cmd} )
 
 
 update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
@@ -398,16 +442,14 @@ update msg model =
         Got r ->
             ( {{ model | status = secureText r }}
             , Cmd.batch
-                [ Cmd.perform (Task.succeed (secureText r)) Report
-                , Cmd.perform (Native.scanCode {{ formats = [ Native.Qr ], prompt = "Scan the probe code" }}) Scanned
+                [ Cmd.perform (Task.succeed (secureText r)) Report{got_next}
                 ]
             )
 
         Scanned r ->
             ( {{ model | status = scanText r }}
             , Cmd.batch
-                [ Cmd.perform (Task.succeed (scanText r)) Report
-                , Cmd.perform (Native.authenticate "Confirm the probe") Authed
+                [ Cmd.perform (Task.succeed (scanText r)) Report{scanned_next}
                 ]
             )
 
@@ -424,6 +466,9 @@ update msg model =
 
         Reported _ ->
             ( model, Cmd.none )
+
+        Notified r ->
+            ( {{ model | status = notifyText r }}, Cmd.perform (Task.succeed (notifyText r)) Report )
 
 
 view : Model -> Element Msg
@@ -756,6 +801,245 @@ fn ios_simulator_app_launches_and_round_trips_the_keychain() {
     if booted_here {
         let _ = simctl(&["shutdown", &udid]);
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The first `.app` bundle under `root`.
+#[cfg(target_os = "macos")]
+fn find_app_bundle(root: &Path) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).ok()?.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            if p.extension().is_some_and(|x| x == "app") {
+                return Some(p);
+            }
+            stack.push(p);
+        }
+    }
+    None
+}
+
+/// The macOS desktop app, launched from its `.app` bundle with `open`; it is
+/// stopped (by its own executable path) when dropped.
+#[cfg(target_os = "macos")]
+struct MacApp {
+    app: PathBuf,
+    exe: PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+impl MacApp {
+    /// `open -a <app> --env …` with the links to hand it, if any.
+    fn open(&self, env: &[(&str, &str)], links: &[&str], log: &Path) -> std::process::Output {
+        let mut cmd = Command::new("open");
+        cmd.arg("-a").arg(&self.app);
+        for (k, v) in env {
+            cmd.arg("--env").arg(format!("{k}={v}"));
+        }
+        cmd.arg("--stdout").arg(log).arg("--stderr").arg(log);
+        cmd.args(links).output().expect("open")
+    }
+
+    fn stop(&self) {
+        let _ = Command::new("pkill")
+            .arg("-f")
+            .arg(self.exe.to_str().unwrap())
+            .output();
+        for _ in 0..40 {
+            let alive = Command::new("pgrep")
+                .arg("-f")
+                .arg(self.exe.to_str().unwrap())
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !alive {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        let _ = Command::new("pkill")
+            .args(["-9", "-f", self.exe.to_str().unwrap()])
+            .output();
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MacApp {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// A `desktop:mac` app that declares `Bundle.AssociatedDomain
+/// "applinks:example.com"` opens a link to that host on the link's page, as
+/// the iOS and Android shells do. Before v0.27.0 the desktop window took no
+/// link at all: the app opened on its first page and the release build
+/// printed a note saying so.
+///
+/// Both ways a link reaches a macOS app are driven on the packaged `.app`:
+///
+/// * `application:openURLs:` — `open -a <app> <url>`. A link the app is
+///   launched with is its first page (the app never shows `/` first); a link
+///   sent to the running app navigates in place (pushState + popstate: the
+///   client does not restart); a link to a host the app did not declare is
+///   ignored.
+/// * `application:continueUserActivity:restorationHandler:` — a universal
+///   link. macOS delivers one only to an app signed with the
+///   associated-domains entitlement after Apple has checked the site, which
+///   an ad hoc test build cannot have, so the shell is built with
+///   `-tags skytest_links` and a test hook sends the app delegate the same
+///   NSUserActivityTypeBrowsingWeb activity macOS sends
+///   (runtime-go/rt/native_desktop_links_testhook_darwin.go): one while the
+///   app starts, one while it runs.
+///
+/// Each result is the route the app reports through its backend.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "native smoke: needs Go + Xcode and a macOS desktop session (release gate-native)"]
+fn macos_desktop_app_opens_a_universal_link_on_its_page() {
+    if !required(Need::Go, have_go()) || !required(Need::Xcode, have_xcode()) {
+        return;
+    }
+    let dir = scratch("macos-links");
+    probe_app_with(&dir, DECLARED, Flow::Links);
+    let (ok, out) = run(
+        &dir,
+        &["package", "--release", "--target", "desktop:mac"],
+        &[
+            ("SKY_APP_URL", "https://probe.example.test/"),
+            ("GOFLAGS", "-tags=skytest_links"),
+        ],
+    );
+    assert!(
+        ok,
+        "sky package --release --target desktop:mac failed:\n{out}"
+    );
+    assert!(
+        !out.contains("opens the app on its first page"),
+        "the build must not say links are not routed:\n{out}"
+    );
+    let app = find_app_bundle(&dir.join(".skyapp")).expect("no .app bundle");
+    let info = std::fs::read_to_string(app.join("Contents/Info.plist")).unwrap();
+    assert!(
+        info.contains("<key>SkyLinkHosts</key>") && info.contains("<string>example.com</string>"),
+        "Info.plist must name the applinks hosts:\n{info}"
+    );
+    let exe_name = std::fs::read_dir(app.join("Contents/MacOS"))
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let mac = MacApp {
+        app: app.clone(),
+        exe: exe_name,
+    };
+    let split = dir.join(".skyapp/desktop-mac/.split");
+    let log = dir.join("app.log");
+    let mut failures = Vec::new();
+
+    // 1. `application:openURLs:` at launch, while running, and for a host the
+    //    app did not declare.
+    {
+        let port = free_port();
+        let backend = Backend::start(&split, port);
+        let base = format!("http://127.0.0.1:{port}/");
+        let o = mac.open(
+            &[("SKY_APP_URL", &base)],
+            &["https://example.com/probe/deep?x=1"],
+            &log,
+        );
+        let deep = backend.saw("route=probe:deep", 120);
+        let again = deep && {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            mac.open(&[], &["https://example.com/probe/again"], &log);
+            backend.saw("route=probe:again", 60)
+        };
+        let nope = again && {
+            mac.open(&[], &["https://other.example.org/probe/nope"], &log);
+            backend.saw("route=probe:nope", 8)
+        };
+        mac.stop();
+        let output = backend.output();
+        let starts = output.matches("SKY-PROBE start=ok").count();
+        let applog = std::fs::read_to_string(&log).unwrap_or_default();
+        if !o.status.success() {
+            failures.push(format!(
+                "open failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        } else if !deep {
+            failures.push(format!(
+                "a link the app is launched with must open /probe/deep:\n{output}\n{applog}"
+            ));
+        } else if output.contains("SKY-PROBE route=home") {
+            failures.push(format!(
+                "a link the app is launched with is its first page, not `/`:\n{output}"
+            ));
+        } else if !again {
+            failures.push(format!(
+                "a link sent to the running app must open /probe/again:\n{output}\n{applog}"
+            ));
+        } else if starts != 1 {
+            failures.push(format!(
+                "a link sent to the running app navigates in place, the client must start \
+                 once, started {starts} times:\n{output}"
+            ));
+        } else if nope {
+            failures.push(format!(
+                "a link to a host the app did not declare must be ignored:\n{output}"
+            ));
+        }
+    }
+
+    // 2. `application:continueUserActivity:restorationHandler:`: a universal
+    //    link while the app starts, and one while it runs.
+    {
+        let port = free_port();
+        let backend = Backend::start(&split, port);
+        let base = format!("http://127.0.0.1:{port}/");
+        let o = mac.open(
+            &[
+                ("SKY_APP_URL", &base),
+                (
+                    "SKY_TEST_LINK_ACTIVITIES",
+                    "https://example.com/probe/act1,https://example.com/probe/act2",
+                ),
+            ],
+            &[],
+            &log,
+        );
+        let act1 = backend.saw("route=probe:act1", 120);
+        let starts_at_act1 = backend.output().matches("SKY-PROBE start=ok").count();
+        let act2 = act1 && backend.saw("route=probe:act2", 60);
+        mac.stop();
+        let output = backend.output();
+        let starts = output.matches("SKY-PROBE start=ok").count();
+        let applog = std::fs::read_to_string(&log).unwrap_or_default();
+        if !o.status.success() {
+            failures.push(format!(
+                "open failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        } else if !act1 {
+            failures.push(format!(
+                "a universal link while the app starts must open /probe/act1:\n{output}\n{applog}"
+            ));
+        } else if !act2 {
+            failures.push(format!(
+                "a universal link to the running app must open /probe/act2:\n{output}\n{applog}"
+            ));
+        } else if starts != starts_at_act1 {
+            failures.push(format!(
+                "a universal link to the running app navigates in place, not a reload:\n{output}"
+            ));
+        }
+    }
+    drop(mac);
+    let _ = std::fs::remove_dir_all(&dir);
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 

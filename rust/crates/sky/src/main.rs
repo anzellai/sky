@@ -4732,6 +4732,15 @@ fn package_macos_release(
     if icon.is_some() {
         generated.push(("CFBundleIconFile".to_string(), S("AppIcon".into())));
     }
+    // The `applinks:` hosts the window routes a universal link for, onto the
+    // link's page (runtime-go/rt/native_desktop_links_darwin.go reads them).
+    let app_links = native_pkg::link_domains(&decl.entitlements).app_links;
+    if !app_links.is_empty() {
+        generated.push((
+            "SkyLinkHosts".to_string(),
+            plist::Value::Array(app_links.iter().map(|d| S(d.host.clone())).collect()),
+        ));
+    }
     let native_dirs = collect_native_dirs(project_dir, "macos");
     let mut info_layers = vec![
         plist::Layer {
@@ -4755,16 +4764,6 @@ fn package_macos_release(
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
 
-    // The desktop window does not route an incoming universal link to its
-    // page (the iOS and Android shells do): say so, never drop it silently.
-    for d in &native_pkg::link_domains(&decl.entitlements).app_links {
-        eprintln!(
-            "  note: Bundle.AssociatedDomain \"applinks:{}\": the macOS app carries the \
-             entitlement, but a universal link opens the app on its first page, not on the \
-             link's page.",
-            d.host
-        );
-    }
     let mut ent_layers = vec![plist::Layer {
         origin: "Bundle.withEntitlement".to_string(),
         rank: plist::Rank::Declared,
@@ -4799,6 +4798,21 @@ fn package_macos_release(
                     dropped.join(", "),
                     native_pkg::MACOS_SIGN_IDENTITY,
                     native_pkg::MACOS_PROVISIONING_PROFILE
+                );
+            }
+            // The window routes every link it receives to its page, but macOS
+            // hands a universal link only to an app whose signature carries
+            // the associated-domains entitlement, after Apple has checked the
+            // site's apple-app-site-association file.
+            if dropped
+                .iter()
+                .any(|k| k == "com.apple.developer.associated-domains")
+            {
+                eprintln!(
+                    "  note: without the associated-domains entitlement macOS does not hand \
+                     the app a universal link (the app still opens a link sent to it, \
+                     `open -a`). A signed build also needs apple-app-site-association on \
+                     each `applinks:` host."
                 );
             }
             entitlements.clone()
