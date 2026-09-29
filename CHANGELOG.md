@@ -456,6 +456,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Added
 
+- **Let-polymorphism.** A let-bound function, lambda or syntactic value is
+  now generalised, so one local helper can be used at two types:
+  `field name decoder = Decode.decodeString (Decode.field name decoder) raw`
+  works with `Decode.int` and `Decode.string`, and `twice x = ( x, x )` with
+  `"a"` and `2`. Before, a let binding was monomorphic and the second use was
+  `[E2001] type mismatch: Int vs String`, although
+  `docs/language/types.md` promised full HM with generalisation. Sky keeps
+  ML's value restriction: an application (`r = Task.run t`,
+  `d = identity []`) stays monomorphic (doc 06 "Let-generalisation" gives the
+  reason). A helper used at one type still compiles to the same typed Go; one
+  used at two types compiles once, erased, like a polymorphic top-level
+  function (`ty/tests/let_generalisation.rs`,
+  `let_application_not_generalised.sky`).
+- **`Module.value.field`.** `Shape.origin.x` reads the field `x` of the value
+  `Shape.origin`. It was read as one name and failed
+  `[E1001] Undefined name: Shape.origin.x`. A qualified path now ends at its
+  first lower-case segment and the rest is field access, as in Elm
+  (`qualified_value_then_field_is_field_access`).
 - **Sky.Spa: several server RPCs in flight together.** Independent server
   Msgs no longer queue behind each other: an async RPC is sent when its Msg
   runs, and results run in the order they arrive. Two 1.5 s calls answer in
@@ -1054,6 +1072,31 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **An `as` binding around a nested constructor pattern failed `go build`.**
+  `Wrap ((Ok req) as whole) ->` type-checked, and the Go read `.Tag` off an
+  `any` payload (`_subj.Fields[0].Tag undefined`) when the union was on the
+  `rt.SkyADT` bag, for example because another constructor names a type two
+  stdlib modules define (`Keyed (Result Error Kx.SecretKey)`). The Sky.Spa
+  split writes this form for every server arm that matches inside its
+  argument, so a `withClientCrypto` app could not build its client. A
+  constructor pattern on an erased subject now narrows it to the
+  constructor's own type first, and the `as` name binds that narrowed value
+  (`lower.rs` `narrow_ctor_subject`). The same fix covers `as` over a nested
+  Maybe, user-union or tuple pattern, which failed the same way.
+- **A Task-returning function in a Task slot inference leaves open failed
+  `go build`.** `f : Int -> Task Error ()` called as
+  `Task.andThen (\_ -> f c) |> Task.andThen (\_ -> …)` returned
+  `rt.SkyTask[E, struct{}]` into a `rt.SkyTask[E, any]` slot. The call was
+  labelled with the inferred type, not with `f`'s own Go type, so no
+  conversion was emitted. A call of a parameter, a record field or a
+  let-bound function now carries its real result type, and the slot's
+  conversion (`rt.TaskCoerceT`, and the same for every other shape) follows.
+  An audit found the same break in a `Task.sequence` list, an `if` branch, a
+  record-field call and an `Int`-result Task.
+- **`corpus/repro/` is now executed.** The pinned historical repros were
+  listed in `coordinates.toml` but no gate built them, so a repro that stopped
+  matching its `expect_stdout` stayed green. `pinned_repros_flow.rs` builds and
+  runs every entry (and checks the file is well formed).
 - **Sky.Spa: a client arm that used a Noise state failed after an RPC.** Under
   `withClientCrypto`, a `Seal` (a client arm that calls `Noise.encrypt` on the
   model's transport) clicked while a server RPC was in flight showed

@@ -1,0 +1,29 @@
+-- PINNED REPRO — v0.27.0 downstream round 3 (a downstream project's reduction)
+--
+-- A Task-returning PARAMETER called in a middle `Task.andThen` link whose next
+-- link ignores its result. Inference leaves that link's result `Task Error a`,
+-- so the call was labelled `rt.SkyTask[E, any]` while `f` returns
+-- `rt.SkyTask[E, struct{}]`, and no conversion was emitted: `sky check` passed
+-- and `go build` failed ("cannot use v_0(v_1) … in return statement").
+--
+-- coordinate: task_callee=param task_link=middle task_result=unit
+-- expect: accept, stdout "open\n1\nclose"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log as Log
+
+
+with : (Int -> Task Error ()) -> Task Error ()
+with f =
+    Task.succeed 1
+        |> Task.andThen
+               (\c ->
+                   Log.println "open" |> Task.andThen (\_ -> f c)
+                       |> Task.andThen (\_ -> Log.println "close"))
+
+
+main =
+    with (\n -> Log.println (String.fromInt n))

@@ -1,0 +1,9 @@
+module Main exposing (main)
+
+import Shape
+import Sky.Core.Prelude exposing (..)
+import Std.Log as Log
+
+
+main =
+    Log.println (String.fromInt Shape.origin.x)

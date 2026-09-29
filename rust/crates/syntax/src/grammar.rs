@@ -826,12 +826,23 @@ fn atom(p: &mut Parser) -> CompletedMarker {
         UpperIdent => {
             let m = p.start();
             p.bump();
+            // A qualified path is `Upper(.Upper)*` optionally ended by ONE
+            // `.lower` value segment. Module names are upper-case segments, so
+            // the qualifier ends at the first lower-case segment: in
+            // `Shape.origin.x` the value is `Shape.origin` and `.x` is a field
+            // access, which `postfix` (via `primary_expr`) parses as it does for
+            // `record.field`. Without the stop, the whole run became one
+            // `QualRefExpr` and resolved as the undefined name `Shape.origin.x`.
             let mut qualified = false;
             while p.at(Dot) && !p.ws_before() && (p.nth(1) == LowerIdent || p.nth(1) == UpperIdent)
             {
+                let value_segment = p.nth(1) == LowerIdent;
                 p.bump(); // .
                 p.bump(); // name
                 qualified = true;
+                if value_segment {
+                    break;
+                }
             }
             m.complete(p, if qualified { QualRefExpr } else { RefExpr })
         }

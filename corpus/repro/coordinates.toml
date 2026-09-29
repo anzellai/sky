@@ -113,3 +113,39 @@ coordinate    = { erasure = "poly_return", position = "inline_apply" }
 expect        = "accept"
 expect_stdout = "42"
 summary       = "inline application of a polymorphic-return call ((id2 fn) x) omitted the func-slot coercion on the any result; sky check passed, go build failed"
+
+[[repro]]
+file          = "as-pattern-nested-ctor.sky"
+issue         = "v0.27.0 downstream round 3"
+stratum       = "as_pattern_nesting"
+coordinate    = { as_binder = "as_inner", nested_payload = "result", union_rep = "bag" }
+expect        = "accept"
+expect_stdout = "x some"
+summary       = "FIXED: `Wrap ((Ok req) as whole)` type-checked, and `go build` failed (`_subj.Fields[0].Tag undefined (type any …)`) when the union also had a constructor whose field type is ambiguous across stdlib modules (`Kx.SecretKey`), which keeps the union on the `rt.SkyADT` bag. The `as` arm bound the raw `any` payload and never narrowed it. The Sky.Spa split writes this form for every server arm that matches inside its argument."
+
+[[repro]]
+file          = "task-param-andthen.sky"
+issue         = "v0.27.0 downstream round 3"
+stratum       = "task_slot"
+coordinate    = { task_callee = "param", task_link = "middle", task_result = "unit" }
+expect        = "accept"
+expect_stdout = "open\n1\nclose"
+summary       = "FIXED: a `f : Int -> Task Error ()` parameter called in a middle `Task.andThen` link type-checked, and `go build` failed: the call was labelled with the inferred `SkyTask[E, any]` instead of `f`'s own `SkyTask[E, struct{}]`, so no conversion was emitted into the lambda's return slot."
+
+[[repro]]
+file          = "let-polymorphism.sky"
+issue         = "v0.27.0 downstream round 3"
+stratum       = "let_polymorphism"
+coordinate    = { let_binding = "closure", let_uses = "two_types", let_site = "in_def" }
+expect        = "accept"
+expect_stdout = "one 1 a2"
+summary       = "FIXED: a let-bound function was monomorphic (`[E2001] type mismatch: Int vs String`) although docs/language/types.md promised full HM with generalisation. Let bindings now generalise under the value restriction."
+
+[[repro]]
+file          = "qualified-value-field/"
+issue         = "v0.27.0 downstream round 3"
+stratum       = "qualified_field"
+coordinate    = { qual_path = "alias", qual_use = "arg" }
+expect        = "accept"
+expect_stdout = "3"
+summary       = "FIXED: `Shape.origin.x` was one qualified name and failed `[E1001] Undefined name: Shape.origin.x`. The parser now ends a qualified path at its first lower-case segment and reads the rest as field access. A directory, because the second module IS the reproduction."

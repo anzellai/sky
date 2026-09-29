@@ -34,8 +34,8 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.1% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 756 | 34.6% |
-| symbols unreferenced under the generous rule | 667 | 30.5% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 750 | 34.3% |
+| symbols unreferenced under the generous rule | 661 | 30.3% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover

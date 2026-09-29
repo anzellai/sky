@@ -801,6 +801,21 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
                 Some(body),
             )
         }
+        // ---- v0.27.0 round 3: bodies that carry their own imports ---------
+        "as_pattern_nesting" | "task_slot" | "let_polymorphism" | "qualified_field" => {
+            let (body, out) = match stratum.name {
+                "as_pattern_nesting" => super::lang_shapes::as_pattern_nesting(assignment),
+                "task_slot" => super::lang_shapes::task_slot(assignment),
+                "let_polymorphism" => super::lang_shapes::let_polymorphism(assignment),
+                _ => super::lang_shapes::qualified_field(assignment),
+            };
+            (
+                vec![("Main".to_string(), standalone_module(&body))],
+                "Main".to_string(),
+                out,
+                Some(body),
+            )
+        }
         "dict_key_crossing" => {
             let (body, out) = super::dict_crossing::case(assignment);
             (

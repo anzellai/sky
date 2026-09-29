@@ -33,6 +33,7 @@ pub mod dict_crossing;
 pub mod emit_shape;
 pub mod gen;
 pub mod isolation;
+pub mod lang_shapes;
 pub mod manifest;
 pub mod reject_matrix;
 pub mod runner;

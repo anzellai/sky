@@ -17,15 +17,15 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 519
+n_min = 614
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 518
+class_v = 613
 class_d = 1
 family_S = 168
-family_L = 206
+family_L = 301
 family_E = 10
 family_R = 135
 family_F = 0
@@ -4892,6 +4892,1241 @@ axes       = { dict_access = "poly_value", dict_key = "bool" }
 coordinate = "anzellai/sky#174 — key TYPE x iteration OPERATION"
 expect     = "accept"
 stdout     = "F,T|F=p,T=q|p,q|FT|Fp,Tq|2|q|T|z|1|F|b|1|L|F,T|T|0|0"
+
+[[case]]
+id         = "as_pattern_nesting/plain-result-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "result", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/plain-result-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "result", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/plain-maybe-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "maybe", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/plain-maybe-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "maybe", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/plain-adt-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "adt", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/plain-adt-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "adt", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/plain-tuple-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "tuple", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/plain-tuple-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "plain", nested_payload = "tuple", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-result-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "result", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-result-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "result", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-maybe-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "maybe", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-maybe-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "maybe", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-adt-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "adt", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-adt-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "adt", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-tuple-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "tuple", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_inner-tuple-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_inner", nested_payload = "tuple", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-result-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "result", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-result-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "result", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-maybe-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "maybe", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-maybe-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "maybe", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-adt-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "adt", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-adt-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "adt", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-tuple-bag"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "tuple", union_rep = "bag" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "as_pattern_nesting/as_outer-tuple-sealed"
+family     = "L"
+stratum    = "as_pattern_nesting"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { as_binder = "as_outer", nested_payload = "tuple", union_rep = "sealed" }
+coordinate = "v0.27.0 downstream: `as` over a nested ctor pattern"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-middle-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "middle", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-middle-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "middle", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-in_sequence-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "in_sequence", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-in_sequence-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "in_sequence", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-on_error-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "on_error", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-on_error-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "on_error", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-in_branch-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "in_branch", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/param-in_branch-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "param", task_link = "in_branch", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-middle-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "middle", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-middle-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "middle", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-in_sequence-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "in_sequence", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-in_sequence-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "in_sequence", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-on_error-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "on_error", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-on_error-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "on_error", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-in_branch-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "in_branch", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/record_field-in_branch-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "record_field", task_link = "in_branch", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-middle-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "middle", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-middle-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "middle", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-in_sequence-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "in_sequence", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-in_sequence-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "in_sequence", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-on_error-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "on_error", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-on_error-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "on_error", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-in_branch-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "in_branch", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/let_fn-in_branch-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "let_fn", task_link = "in_branch", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-middle-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "middle", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-middle-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "middle", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-in_sequence-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "in_sequence", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-in_sequence-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "in_sequence", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-on_error-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "on_error", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-on_error-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "on_error", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-in_branch-unit"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "in_branch", task_result = "unit" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "task_slot/lambda_arg-in_branch-int"
+family     = "L"
+stratum    = "task_slot"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { task_callee = "lambda_arg", task_link = "in_branch", task_result = "int" }
+coordinate = "v0.27.0 downstream: Task-returning param in an andThen chain"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/function-in_def-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "function", let_site = "in_def", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/function-in_case_branch-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "function", let_site = "in_case_branch", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/function-in_lambda-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "function", let_site = "in_lambda", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/function-in_def-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "function", let_site = "in_def", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/function-in_case_branch-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "function", let_site = "in_case_branch", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/function-in_lambda-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "function", let_site = "in_lambda", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/lambda-in_def-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "lambda", let_site = "in_def", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/lambda-in_case_branch-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "lambda", let_site = "in_case_branch", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/lambda-in_lambda-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "lambda", let_site = "in_lambda", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/lambda-in_def-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "lambda", let_site = "in_def", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/lambda-in_case_branch-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "lambda", let_site = "in_case_branch", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/lambda-in_lambda-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "lambda", let_site = "in_lambda", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/closure-in_def-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "closure", let_site = "in_def", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/closure-in_case_branch-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "closure", let_site = "in_case_branch", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/closure-in_lambda-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "closure", let_site = "in_lambda", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/closure-in_def-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "closure", let_site = "in_def", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/closure-in_case_branch-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "closure", let_site = "in_case_branch", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/closure-in_lambda-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "closure", let_site = "in_lambda", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/value-in_def-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "value", let_site = "in_def", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/value-in_case_branch-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "value", let_site = "in_case_branch", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/value-in_lambda-one_type"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "value", let_site = "in_lambda", let_uses = "one_type" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "let_polymorphism/value-in_def-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "value", let_site = "in_def", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/value-in_case_branch-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "value", let_site = "in_case_branch", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "let_polymorphism/value-in_lambda-two_types"
+family     = "L"
+stratum    = "let_polymorphism"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { let_binding = "value", let_site = "in_lambda", let_uses = "two_types" }
+coordinate = "v0.27.0 downstream: let-bound function used at two types"
+expect     = "accept"
+stdout     = "42!"
+
+[[case]]
+id         = "qualified_field/alias-arg"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "alias", qual_use = "arg" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/alias-operand"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "alias", qual_use = "operand" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/alias-pipeline"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "alias", qual_use = "pipeline" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/alias-in_lambda"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "alias", qual_use = "in_lambda" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/alias-bool_field"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "alias", qual_use = "bool_field" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/last_segment-arg"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "last_segment", qual_use = "arg" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/last_segment-operand"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "last_segment", qual_use = "operand" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/last_segment-pipeline"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "last_segment", qual_use = "pipeline" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/last_segment-in_lambda"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "last_segment", qual_use = "in_lambda" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/last_segment-bool_field"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "last_segment", qual_use = "bool_field" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/short_alias-arg"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "short_alias", qual_use = "arg" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/short_alias-operand"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "short_alias", qual_use = "operand" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/short_alias-pipeline"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "short_alias", qual_use = "pipeline" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/short_alias-in_lambda"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "short_alias", qual_use = "in_lambda" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
+
+[[case]]
+id         = "qualified_field/short_alias-bool_field"
+family     = "L"
+stratum    = "qualified_field"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { qual_path = "short_alias", qual_use = "bool_field" }
+coordinate = "v0.27.0 downstream: `Module.value.field`"
+expect     = "accept"
+stdout     = "42"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

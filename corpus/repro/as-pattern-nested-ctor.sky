@@ -1,0 +1,57 @@
+-- PINNED REPRO — v0.27.0 downstream round 3 (a downstream project's reduction)
+--
+-- An `as` binding around a nested constructor pattern, `Wrap ((Ok req) as
+-- whole)`, in a union that also has a constructor whose field type is ambiguous
+-- across stdlib modules (`Kx.SecretKey` / `Sign.SecretKey`). That constructor
+-- keeps the union on the `rt.SkyADT` bag, whose payload fields are `any`. The
+-- `as` arm bound the raw `any` and read `.Tag` off it: `sky check` passed and
+-- `go build` failed. Without the `as`, or without the ambiguous constructor, it
+-- built.
+--
+-- coordinate: as_binder=as_inner nested_payload=result union_rep=bag
+-- expect: accept, stdout "x some"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Crypto.Kx as Kx
+import Std.Log as Log
+
+type alias Req =
+    { url : String }
+
+type Msg
+    = Start
+    | Wrap (Result Error Req)
+    | Count Int
+    | Keyed (Result Error Kx.SecretKey)
+
+
+describe : Msg -> String
+describe msg =
+    case msg of
+
+        Wrap ((Ok req) as whole) ->
+            req.url
+                ++ (if Result.toMaybe whole == Nothing then
+                       " none"
+
+                   else
+                       " some")
+
+        Wrap (Err _) ->
+            "error"
+
+        Start ->
+            "start"
+
+        Count n ->
+            String.fromInt n
+
+        Keyed _ ->
+            "key"
+
+
+main =
+    Log.println (describe (Wrap (Ok { url = "x" })))

@@ -472,7 +472,9 @@ main = println (String.fromInt (update Increment 0))
 `|>` `<|` pipelines · `::` cons · `\x -> x + 1` lambdas · `let…in` ·
 `case…of` (exhaustiveness-checked) · `{ rec | field = value }` update ·
 `import M as Alias exposing (name)`. Triple-quoted multiline strings support
-`{{expr}}` interpolation (escape as `\{{`).
+`{{expr}}` interpolation (escape as `\{{`). A let-bound helper function is
+polymorphic (`twice x = ( x, x )` works at two types in one body), and
+`Module.value.field` reads a field of another module's value.
 
 Every non-aliased `import M exposing (..)` also binds `M.<name>` as an
 auto-qualifier. An `exposing` name that the module doesn't export is a hard

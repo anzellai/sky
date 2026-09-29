@@ -123,6 +123,7 @@ Annotations are load-bearing:
 
 - If a function is annotated, the annotation *is* the scheme used by callers. The body is checked against it, not just inferred and cross-referenced.
 - Missing annotations fall back to inferred types (full HM, including generalisation).
+- `let` bindings generalise too, under ML's value restriction. A let-bound function, lambda or syntactic value (`[]`, a literal, a constructor applied to values) is polymorphic: `twice x = ( x, x )` can be used at `String` and at `Int` in the same body. An application (`r = Task.run t`) stays monomorphic. Type variables the binding shares with the enclosing scope (an outer parameter it captures) are never generalised.
 - Type variables in annotations are distinct: `f : a -> b -> a` gets fresh TVars for `a` and `b`.
 
 ## Generics

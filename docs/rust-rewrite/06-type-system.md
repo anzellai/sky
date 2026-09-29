@@ -38,7 +38,9 @@ Two things the Haskell code does that violate our laws, fixed here:
 - **`Descriptor._rank/_mark/_copy`** (`Type.hs:42-47`) are vestigial elm/compiler
   let-generalisation-pool machinery — **unused** in Sky, which generalises via
   annotations, not by rank (`docs/self-host/00-feasibility-and-architecture.md:112-114`).
-  We drop them. The *only* rank we keep is the union-by-rank weight
+  We drop them. Let bindings DO generalise (v0.27.0), but by an explicit
+  `ftv(τ) \ ftv(Γ)` computation over the union-find, not by rank pools — see
+  [Let-generalisation](#let-generalisation). The *only* rank we keep is the union-by-rank weight
   (`UnionFind.hs:33`, `Word32` in `PointInfo`).
 
 ## Two levels of type, exactly as today
@@ -524,6 +526,54 @@ re-instantiation"). In the query world, `same_mod_annots` is just
 
 Each polymorphic def's quantifiers are α-renamed with `fresh_name` per def
 (`Constrain/Expression.hs:1337-1346`) so sibling defs' `a`s don't unify.
+
+### Let-generalisation
+
+Implemented in v0.27.0 (`rust/crates/ty/src/infer.rs`, the `Expr::Let` arm and
+`generalise_let_group`). Before it, every let binder was ONE shared type var,
+so a local helper could be used at one type only, and
+`docs/language/types.md` over-promised "full HM, including generalisation".
+
+**Order.** A `let`'s defs are split into strongly connected components of
+their references to each other (`let_def_groups`, Tarjan) and inferred
+callees-first, so `y = twice 1` beside `twice x = …` sees `twice`'s scheme.
+Recursion inside a group stays monomorphic, as at top level.
+
+**Quantifiers.** After a group is inferred, each binder's quantifiers are the
+unbound `Flex` / `FlexSuper` roots reachable from its type that are NOT
+reachable from Γ. Γ is every local typed so far EXCEPT the ones bound inside
+the group (its binders, their parameters, and every lambda / case / nested-let
+binder in their bodies). That rule matters on the check path, which types a
+def's parameters lazily at their first reference: an outer parameter first
+typed inside the group is still Γ. `Rigid` annotation vars never generalise.
+
+**Instantiation.** A reference to a generalised binder copies its type graph
+(`instantiate_local`), replacing each quantifier with a fresh var (a super-var
+keeps its constraint) and sharing every sub-graph that holds no quantifier.
+
+**The value restriction.** Only a binding whose right-hand side is a function
+(`f x = …`) or a syntactic value (lambda, literal, reference, constructor
+applied to values, list / tuple / record of values) generalises. An
+application stays monomorphic. Sky is pure, so this is not the ML reference
+problem; it is the erased Go ABI. A value is computed ONCE, at one erased Go
+type, and a lenient kernel signature whose result is an unconstrained var
+could otherwise hand the same computed value to two slots of incompatible
+types — a runtime narrowing failure instead of a type error. A function is
+re-entered per call, so each call narrows its own result, exactly as a
+polymorphic top-level def does. Pinned by
+`ty/tests/reject/corpus/let_application_not_generalised.sky`.
+
+**Lowering.** There is no specialisation (07 §5.1). At the end of a def
+(`collapse_let_poly`), a generalised binder whose every instance read back to
+the SAME type is unified with that instance: it is used monomorphically, and
+it lowers to the same typed closure it always did (coerce-floor unchanged
+across the corpus). A binder used at two types stays generic; its closure
+lowers once with `any` for its quantifiers (doc 14 R12, as for a polymorphic
+top-level def) and each call site narrows the result at R1. For that, a call
+of a non-`Def` callee reports its real Go result type (`lower_call`), not the
+use site's inferred type. Collapsing identical instances binds only the
+quantifiers, which nothing outside the binder mentions, so no type in the
+enclosing scope changes.
 
 ## Strict-HM arity gate (E2007, Limitation #7) — keep
 

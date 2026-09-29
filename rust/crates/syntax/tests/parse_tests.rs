@@ -276,3 +276,15 @@ fn char_literal_strictness_matches_oracle() {
         "should REJECT multi-char literal in a pattern"
     );
 }
+
+#[test]
+fn qualified_value_then_field_is_field_access() {
+    // `Shape.origin.x`: the module qualifier ends at the first lower-case
+    // segment, so the value is `Shape.origin` (one QualRefExpr) and `.x` is a
+    // field access on it. A module path `Html.Attributes.class` stays one
+    // QualRefExpr with no field access.
+    let parse = assert_clean("x =\n    f Shape.origin.x Html.Attributes.class A.B.v.w.z\n");
+    assert_eq!(count(&parse, SyntaxKind::QualRefExpr), 3);
+    // `.x` on `Shape.origin`, then `.w` and `.z` on `A.B.v`.
+    assert_eq!(count(&parse, SyntaxKind::FieldAccess), 3);
+}

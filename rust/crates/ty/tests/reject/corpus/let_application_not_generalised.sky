@@ -1,0 +1,22 @@
+-- defect: a let binding whose right-hand side is an APPLICATION, used at two
+-- types. Let bindings generalise under the value restriction (doc 06
+-- "Let-generalisation"): a function binding or a syntactic value (`[]`, a
+-- lambda, a constructor applied to values) is polymorphic, an application is
+-- not. `identity []` is an application, so `none` has ONE element type, and
+-- using it as both `List Int` and `List String` is a type error. The accepted
+-- twin (`none = []`) is `let_value_empty_list_used_at_two_types_accepts` in
+-- ty/tests/let_generalisation.rs.
+--
+-- rust: reject [E2001] — the value restriction keeps an application monomorphic.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+main =
+    let
+        none = identity []
+    in
+        println
+            (String.fromInt (List.length (1 :: none) + List.length ("a" :: none)))

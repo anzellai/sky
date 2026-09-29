@@ -121,6 +121,15 @@ pub struct Infer<'a> {
     /// A skyType is parsed only when a reference to it is first instantiated,
     /// and at most once per run — never the whole surface.
     ffi_schemes: HashMap<(Name, Name), Scheme>,
+    /// Let-generalisation (doc 06 §"Let-generalisation"): a let binder that
+    /// passes the value restriction (a function, or a syntactic value),
+    /// generalised over the flex vars its type does not share with the
+    /// enclosing scope. Maps the binder to its generic type var and the
+    /// quantified roots; every reference instantiates a fresh copy.
+    poly_locals: HashMap<LocalId, (TyVarId, Vec<TyVarId>)>,
+    /// Every instantiation of a `poly_locals` binder, in order. Read by
+    /// [`Infer::collapse_let_poly`] at the end of the def.
+    poly_insts: Vec<(LocalId, TyVarId)>,
 }
 
 impl<'a> Infer<'a> {
@@ -139,6 +148,8 @@ impl<'a> Infer<'a> {
             expected: None,
             cur_span: None,
             ffi_schemes: HashMap::new(),
+            poly_locals: HashMap::new(),
+            poly_insts: Vec::new(),
         }
     }
 
@@ -210,6 +221,7 @@ impl<'a> Infer<'a> {
     pub fn infer_def(&mut self, body: &Body) -> Option<Ty> {
         let root = body.root?;
         let v = self.infer_expr(body, root);
+        self.collapse_let_poly();
         Some(self.read_back(v))
     }
 
@@ -348,6 +360,7 @@ impl<'a> Infer<'a> {
         if let Some(ev) = expected_result {
             self.unify(v, ev);
         }
+        self.collapse_let_poly();
         Some((v, param_vars))
     }
 
@@ -529,6 +542,7 @@ impl<'a> Infer<'a> {
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
         let rv = self.infer_expr(body, root);
+        self.collapse_let_poly();
         let full = param_vars
             .into_iter()
             .rev()
@@ -574,6 +588,7 @@ impl<'a> Infer<'a> {
             }
         }
         let rv = self.infer_expr(body, root);
+        self.collapse_let_poly();
         let full = param_vars
             .into_iter()
             .rev()
@@ -848,35 +863,13 @@ impl<'a> Infer<'a> {
                             .or_insert_with(|| self.uf.fresh_flex());
                     }
                 }
-                for d in defs {
-                    // parameters (function let-binding) get fresh vars, then body.
-                    let param_vars: Vec<TyVarId> = d
-                        .params
-                        .iter()
-                        .map(|&p| self.infer_pat_fresh(body, p))
-                        .collect();
-                    let tv = self.infer_expr(body, d.body);
-                    let full = param_vars
-                        .into_iter()
-                        .rev()
-                        .fold(tv, |acc, pv| self.fun(pv, acc));
-                    if let Some(pat) = d.pat {
-                        // destructure binding: pattern typed against the value.
-                        self.infer_pat_against(body, pat, full);
-                    }
-                    for (_, lid) in &d.binders {
-                        if let Some(&placeholder) = self.locals.get(lid) {
-                            self.unify(placeholder, full);
-                            // Tooling table only (inlay hints / hover on a let
-                            // binding): record the binder's type var so the
-                            // per-local table carries it. Guarded by
-                            // `record_exprs`, so the check/build path (which never
-                            // sets it) is byte-for-byte unchanged.
-                            if self.record_exprs {
-                                self.local_vars.push((*lid, placeholder));
-                            }
-                        }
-                    }
+                // Infer the defs one dependency group (SCC) at a time, callees
+                // first, so a group is generalised before the defs that use it
+                // are inferred (`y = twice 1` and `z = twice "a"` beside `twice`).
+                for group in let_def_groups(body, defs) {
+                    let group_defs: Vec<&hir::LocalDef> = group.iter().map(|&i| &defs[i]).collect();
+                    self.infer_let_defs(body, &group_defs);
+                    self.generalise_let_group(body, defs, &group);
                 }
                 self.infer_expr(body, *lb)
             }
@@ -916,6 +909,257 @@ impl<'a> Infer<'a> {
         }
     }
 
+    /// Infer the defs of ONE let dependency group (see [`let_def_groups`]).
+    fn infer_let_defs(&mut self, body: &Body, defs: &[&hir::LocalDef]) {
+        for &d in defs {
+            // parameters (function let-binding) get fresh vars, then body.
+            let param_vars: Vec<TyVarId> = d
+                .params
+                .iter()
+                .map(|&p| self.infer_pat_fresh(body, p))
+                .collect();
+            let tv = self.infer_expr(body, d.body);
+            let full = param_vars
+                .into_iter()
+                .rev()
+                .fold(tv, |acc, pv| self.fun(pv, acc));
+            if let Some(pat) = d.pat {
+                // destructure binding: pattern typed against the value.
+                self.infer_pat_against(body, pat, full);
+            }
+            for (_, lid) in &d.binders {
+                if let Some(&placeholder) = self.locals.get(lid) {
+                    self.unify(placeholder, full);
+                    // Tooling table only (inlay hints / hover on a let
+                    // binding): record the binder's type var so the
+                    // per-local table carries it. Guarded by
+                    // `record_exprs`, so the check/build path (which never
+                    // sets it) is byte-for-byte unchanged.
+                    if self.record_exprs {
+                        self.local_vars.push((*lid, placeholder));
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- let-generalisation (doc 06 §"Let-generalisation") ---------------
+
+    /// Generalise one let dependency group once it is inferred, under the
+    /// VALUE RESTRICTION: a binding generalises only when it is a function
+    /// (`f x = …`) or its right-hand side is a syntactic value (a lambda, a
+    /// literal, a reference, a constructor applied to values, a list / tuple /
+    /// record of values). An application (`r = Task.run t`, `d = decode s`)
+    /// stays monomorphic, and so does a destructuring binding. See doc 06
+    /// §"Let-generalisation" for why Sky keeps the restriction.
+    ///
+    /// The quantified vars are the unbound flex vars of each binder's type that
+    /// are NOT reachable from the enclosing scope or from the let's other
+    /// binders — HM's `ftv(τ) \ ftv(Γ)`.
+    fn generalise_let_group(&mut self, body: &Body, defs: &[hir::LocalDef], group: &[usize]) {
+        let generalisable = |d: &hir::LocalDef| {
+            d.pat.is_none()
+                && d.binders.len() == 1
+                && (!d.params.is_empty() || is_syntactic_value(body, d.body))
+        };
+        if !group.iter().all(|&i| generalisable(&defs[i])) {
+            return;
+        }
+        let group_binders: Vec<LocalId> = group.iter().map(|&i| defs[i].binders[0].1).collect();
+        // Candidate quantifiers first: a binder with no unbound flex var (the
+        // common, fully-concrete helper) needs no scope walk at all.
+        let mut candidates: Vec<(LocalId, TyVarId, Vec<TyVarId>)> = Vec::new();
+        for &b in &group_binders {
+            let Some(&v) = self.locals.get(&b) else {
+                continue;
+            };
+            let mut fv = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            self.collect_flex(v, &mut fv, &mut seen);
+            if !fv.is_empty() {
+                candidates.push((b, v, fv));
+            }
+        }
+        if candidates.is_empty() {
+            return;
+        }
+        // Γ: every local typed so far EXCEPT the ones bound inside this group
+        // (its binders, their parameters, and every lambda / case / let binder
+        // in their bodies). That is the enclosing scope — including a scope
+        // local first typed while inferring this group, as an outer parameter
+        // is on the check path, which types parameters lazily at their first
+        // reference — plus the let's other binders. Locals of sibling scopes
+        // typed earlier are included too, which is conservative, never unsound.
+        let mut bound_inside: std::collections::HashSet<LocalId> =
+            group_binders.iter().copied().collect();
+        for &i in group {
+            let d = &defs[i];
+            for &p in &d.params {
+                collect_pat_binders(body, p, &mut bound_inside);
+            }
+            collect_expr_binders(body, d.body, &mut bound_inside);
+        }
+        let mut env_seen = std::collections::HashSet::new();
+        let mut env_fv = Vec::new();
+        let env_locals: Vec<LocalId> = self
+            .locals
+            .keys()
+            .copied()
+            .filter(|l| !bound_inside.contains(l))
+            .collect();
+        for l in env_locals {
+            if let Some(&v) = self.locals.get(&l) {
+                self.collect_flex(v, &mut env_fv, &mut env_seen);
+            }
+        }
+        let env: std::collections::HashSet<TyVarId> = env_fv.into_iter().collect();
+        for (b, v, fv) in candidates {
+            let quantified: Vec<TyVarId> = fv.into_iter().filter(|r| !env.contains(r)).collect();
+            if !quantified.is_empty() {
+                self.poly_locals.insert(b, (v, quantified));
+            }
+        }
+    }
+
+    /// The unbound (`Flex` / `FlexSuper`) roots reachable from `v`, in first-
+    /// visit order. Rigid annotation vars never generalise here: they belong to
+    /// the enclosing def's signature.
+    fn collect_flex(
+        &mut self,
+        v: TyVarId,
+        out: &mut Vec<TyVarId>,
+        seen: &mut std::collections::HashSet<TyVarId>,
+    ) {
+        let r = self.uf.find(v);
+        if !seen.insert(r) {
+            return;
+        }
+        match self.uf.content(r) {
+            Content::Flex | Content::FlexSuper(_) => out.push(r),
+            Content::Structure(ft) => {
+                for k in crate::unify::flat_children(&ft) {
+                    self.collect_flex(k, out, seen);
+                }
+            }
+            Content::Rigid(_) | Content::Error => {}
+        }
+    }
+
+    /// A fresh instance of a generalised let binder: copy its type graph,
+    /// replacing each quantified root by a fresh var (keeping a super-var's
+    /// constraint) and sharing everything else.
+    fn instantiate_local(&mut self, generic: TyVarId, quantified: &[TyVarId]) -> TyVarId {
+        let mut memo: HashMap<TyVarId, TyVarId> = HashMap::new();
+        for &q in quantified {
+            let r = self.uf.find(q);
+            let fresh = match self.uf.content(r) {
+                Content::FlexSuper(s) => self.uf.fresh(Content::FlexSuper(s)),
+                _ => self.uf.fresh_flex(),
+            };
+            memo.insert(r, fresh);
+        }
+        self.copy_generic(generic, &mut memo)
+    }
+
+    fn copy_generic(&mut self, v: TyVarId, memo: &mut HashMap<TyVarId, TyVarId>) -> TyVarId {
+        let r = self.uf.find(v);
+        if let Some(&c) = memo.get(&r) {
+            return c;
+        }
+        let out = match self.uf.content(r) {
+            Content::Structure(ft) => {
+                let copied = match &ft {
+                    FlatTy::App(n, args) => {
+                        let a: Vec<TyVarId> =
+                            args.iter().map(|&x| self.copy_generic(x, memo)).collect();
+                        FlatTy::App(n.clone(), a)
+                    }
+                    FlatTy::Fun(a, b) => {
+                        let (a, b) = (*a, *b);
+                        FlatTy::Fun(self.copy_generic(a, memo), self.copy_generic(b, memo))
+                    }
+                    FlatTy::Record(fs, ext) => {
+                        let mut m = std::collections::BTreeMap::new();
+                        for (n, &t) in fs {
+                            m.insert(n.clone(), self.copy_generic(t, memo));
+                        }
+                        let e = ext.map(|e| self.copy_generic(e, memo));
+                        FlatTy::Record(m, e)
+                    }
+                    FlatTy::Tuple(xs) => {
+                        FlatTy::Tuple(xs.iter().map(|&x| self.copy_generic(x, memo)).collect())
+                    }
+                    FlatTy::Unit => FlatTy::Unit,
+                };
+                // Share a sub-graph that holds no quantified var.
+                let old = crate::unify::flat_children(&ft);
+                let new = crate::unify::flat_children(&copied);
+                let unchanged = old.len() == new.len()
+                    && old
+                        .iter()
+                        .zip(&new)
+                        .all(|(&a, &b)| self.uf.find(a) == self.uf.find(b));
+                if unchanged {
+                    r
+                } else {
+                    self.uf.fresh(Content::Structure(copied))
+                }
+            }
+            _ => r,
+        };
+        memo.insert(r, out);
+        out
+    }
+
+    /// End-of-def step for the lowering table: a generalised let binder whose
+    /// every instance solved to the SAME type is used monomorphically, so bind
+    /// its quantifiers to that type. The binder (and every expression inside
+    /// it) then reads back concrete, and the lowerer emits the typed closure it
+    /// always emitted for a helper used at one type. A binder used at two
+    /// different types stays generic and lowers erased, like a polymorphic
+    /// top-level def (doc 07 §5.1: one emit per definition, no specialisation).
+    ///
+    /// Sound by construction: identical instances mean the unification binds
+    /// only the quantified vars, which nothing outside the binder mentions, so
+    /// no type in the enclosing scope changes. Repeated to a fixpoint, because
+    /// collapsing an outer binder can make an inner binder's instances equal.
+    fn collapse_let_poly(&mut self) {
+        loop {
+            let mut progressed = false;
+            let mut by_local: Vec<(LocalId, Vec<TyVarId>)> = Vec::new();
+            for &(lid, inst) in &self.poly_insts {
+                match by_local.iter_mut().find(|(l, _)| *l == lid) {
+                    Some((_, v)) => v.push(inst),
+                    None => by_local.push((lid, vec![inst])),
+                }
+            }
+            for (lid, insts) in by_local {
+                let Some((generic, _)) = self.poly_locals.get(&lid).cloned() else {
+                    continue;
+                };
+                if self.uf.find(generic) == self.uf.find(insts[0]) {
+                    continue;
+                }
+                let first = self.read_back_scheme(insts[0], false);
+                let same = insts[1..]
+                    .iter()
+                    .all(|&i| self.read_back_scheme(i, false) == first);
+                if !same {
+                    continue;
+                }
+                let snapshot = self.uf.clone();
+                if self.uf.unify(generic, insts[0]).is_ok() {
+                    progressed = true;
+                } else {
+                    self.uf = snapshot;
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+    }
+
     /// A displayable name for a callee reference — `Module.func` for a kernel,
     /// the def's own name for a user def. `None` for anything unnameable (locals,
     /// foreign, errors), which suppresses the arity gate (no name to blame).
@@ -929,10 +1173,18 @@ impl<'a> Infer<'a> {
 
     fn infer_res(&mut self, res: Res) -> TyVarId {
         match res {
-            Res::Local(id) => *self
-                .locals
-                .entry(id)
-                .or_insert_with(|| self.uf.fresh_flex()),
+            Res::Local(id) => {
+                // A generalised let-bound function: a fresh instance per use.
+                if let Some((generic, quantified)) = self.poly_locals.get(&id).cloned() {
+                    let inst = self.instantiate_local(generic, &quantified);
+                    self.poly_insts.push((id, inst));
+                    return inst;
+                }
+                *self
+                    .locals
+                    .entry(id)
+                    .or_insert_with(|| self.uf.fresh_flex())
+            }
             Res::Def(def) => {
                 // D1 (wildcard-`any` result pin) — CHECK-ONLY. When a def's
                 // declared result contains `any` and its body returns a concrete
@@ -1465,6 +1717,292 @@ impl<'a> Infer<'a> {
         };
         seen.remove(&r);
         out
+    }
+}
+
+/// Every local a pattern binds.
+fn collect_pat_binders(body: &Body, p: PatId, out: &mut std::collections::HashSet<LocalId>) {
+    match &body.pats[p] {
+        Pattern::Var(l) => {
+            out.insert(*l);
+        }
+        Pattern::Alias(inner, l) => {
+            out.insert(*l);
+            collect_pat_binders(body, *inner, out);
+        }
+        Pattern::Record(fs) => {
+            for (_, l) in fs {
+                out.insert(*l);
+            }
+        }
+        Pattern::Tuple(ps) | Pattern::List(ps) => {
+            for &q in ps {
+                collect_pat_binders(body, q, out);
+            }
+        }
+        Pattern::Cons(h, t) => {
+            collect_pat_binders(body, *h, out);
+            collect_pat_binders(body, *t, out);
+        }
+        Pattern::Ctor { args, .. } => {
+            for &q in args {
+                collect_pat_binders(body, q, out);
+            }
+        }
+        Pattern::Anything
+        | Pattern::Unit
+        | Pattern::Bool(_)
+        | Pattern::Chr(_)
+        | Pattern::Str(_)
+        | Pattern::Int(_)
+        | Pattern::Float(_)
+        | Pattern::Error => {}
+    }
+}
+
+/// Every local bound INSIDE expression `e`: lambda parameters, case-branch
+/// patterns, and nested let binders, parameters and destructuring patterns.
+fn collect_expr_binders(body: &Body, e: ExprId, out: &mut std::collections::HashSet<LocalId>) {
+    match &body.exprs[e] {
+        Expr::Var(_)
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Chr(_)
+        | Expr::Bool(_)
+        | Expr::Unit
+        | Expr::Accessor(_)
+        | Expr::Error => {}
+        Expr::List(xs) | Expr::Tuple(xs) => {
+            for &x in xs {
+                collect_expr_binders(body, x, out);
+            }
+        }
+        Expr::Record(fs) => {
+            for (_, x) in fs {
+                collect_expr_binders(body, *x, out);
+            }
+        }
+        Expr::Update { base, fields } => {
+            collect_expr_binders(body, *base, out);
+            for (_, x) in fields {
+                collect_expr_binders(body, *x, out);
+            }
+        }
+        Expr::Negate(x) | Expr::Access(x, _) => collect_expr_binders(body, *x, out),
+        Expr::Lambda { params, body: b } => {
+            for &p in params {
+                collect_pat_binders(body, p, out);
+            }
+            collect_expr_binders(body, *b, out);
+        }
+        Expr::Call(f, args) => {
+            collect_expr_binders(body, *f, out);
+            for &a in args {
+                collect_expr_binders(body, a, out);
+            }
+        }
+        Expr::Binop { lhs, rhs, .. } => {
+            collect_expr_binders(body, *lhs, out);
+            collect_expr_binders(body, *rhs, out);
+        }
+        Expr::If { arms, els } => {
+            for (c, t) in arms {
+                collect_expr_binders(body, *c, out);
+                collect_expr_binders(body, *t, out);
+            }
+            collect_expr_binders(body, *els, out);
+        }
+        Expr::Let { defs, body: b } => {
+            for d in defs {
+                for (_, l) in &d.binders {
+                    out.insert(*l);
+                }
+                if let Some(p) = d.pat {
+                    collect_pat_binders(body, p, out);
+                }
+                for &p in &d.params {
+                    collect_pat_binders(body, p, out);
+                }
+                collect_expr_binders(body, d.body, out);
+            }
+            collect_expr_binders(body, *b, out);
+        }
+        Expr::Case { subject, branches } => {
+            collect_expr_binders(body, *subject, out);
+            for br in branches {
+                collect_pat_binders(body, br.pat, out);
+                collect_expr_binders(body, br.body, out);
+            }
+        }
+    }
+}
+
+/// ML's syntactic-value test (the value restriction): an expression whose
+/// evaluation cannot run a computation. Only such a let binding generalises.
+fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
+    match &body.exprs[e] {
+        Expr::Lambda { .. }
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Chr(_)
+        | Expr::Bool(_)
+        | Expr::Unit
+        | Expr::Accessor(_)
+        | Expr::Var(_) => true,
+        Expr::Negate(x) => is_syntactic_value(body, *x),
+        Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(|&x| is_syntactic_value(body, x)),
+        Expr::Record(fs) => fs.iter().all(|(_, x)| is_syntactic_value(body, *x)),
+        // A constructor applied to values builds data; it runs nothing.
+        Expr::Call(f, args) => {
+            matches!(body.exprs[*f], Expr::Var(Res::Ctor(_)))
+                && args.iter().all(|&a| is_syntactic_value(body, a))
+        }
+        _ => false,
+    }
+}
+
+/// The defs of one `let`, grouped into strongly connected components of their
+/// references to each other and ordered callees-first (Tarjan). Each inner vec
+/// keeps source order. A def that references no sibling is its own group.
+fn let_def_groups(body: &Body, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
+    let owner: HashMap<LocalId, usize> = defs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, d)| d.binders.iter().map(move |(_, l)| (*l, i)))
+        .collect();
+    let edges: Vec<Vec<usize>> = defs
+        .iter()
+        .map(|d| {
+            let mut refs = Vec::new();
+            collect_local_refs(body, d.body, &mut refs);
+            let mut out: Vec<usize> = refs.iter().filter_map(|l| owner.get(l).copied()).collect();
+            out.sort_unstable();
+            out.dedup();
+            out
+        })
+        .collect();
+    struct Tarjan<'e> {
+        edges: &'e [Vec<usize>],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        on_stack: Vec<bool>,
+        stack: Vec<usize>,
+        next: usize,
+        out: Vec<Vec<usize>>,
+    }
+    impl Tarjan<'_> {
+        fn visit(&mut self, v: usize) {
+            self.index[v] = Some(self.next);
+            self.low[v] = self.next;
+            self.next += 1;
+            self.stack.push(v);
+            self.on_stack[v] = true;
+            for k in 0..self.edges[v].len() {
+                let w = self.edges[v][k];
+                match self.index[w] {
+                    None => {
+                        self.visit(w);
+                        self.low[v] = self.low[v].min(self.low[w]);
+                    }
+                    Some(iw) if self.on_stack[w] => self.low[v] = self.low[v].min(iw),
+                    Some(_) => {}
+                }
+            }
+            if Some(self.low[v]) == self.index[v] {
+                let mut group = Vec::new();
+                while let Some(w) = self.stack.pop() {
+                    self.on_stack[w] = false;
+                    group.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                group.sort_unstable();
+                self.out.push(group);
+            }
+        }
+    }
+    let n = defs.len();
+    let mut t = Tarjan {
+        edges: &edges,
+        index: vec![None; n],
+        low: vec![0; n],
+        on_stack: vec![false; n],
+        stack: Vec::new(),
+        next: 0,
+        out: Vec::new(),
+    };
+    for v in 0..n {
+        if t.index[v].is_none() {
+            t.visit(v);
+        }
+    }
+    t.out
+}
+
+/// Every `Res::Local` referenced in expression `e` (including nested lets,
+/// lambdas and case branches).
+fn collect_local_refs(body: &Body, e: ExprId, out: &mut Vec<LocalId>) {
+    match &body.exprs[e] {
+        Expr::Var(Res::Local(l)) => out.push(*l),
+        Expr::Var(_)
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Chr(_)
+        | Expr::Bool(_)
+        | Expr::Unit
+        | Expr::Accessor(_)
+        | Expr::Error => {}
+        Expr::List(xs) | Expr::Tuple(xs) => {
+            for &x in xs {
+                collect_local_refs(body, x, out);
+            }
+        }
+        Expr::Record(fs) => {
+            for (_, x) in fs {
+                collect_local_refs(body, *x, out);
+            }
+        }
+        Expr::Update { base, fields } => {
+            collect_local_refs(body, *base, out);
+            for (_, x) in fields {
+                collect_local_refs(body, *x, out);
+            }
+        }
+        Expr::Negate(x) | Expr::Access(x, _) => collect_local_refs(body, *x, out),
+        Expr::Lambda { body: b, .. } => collect_local_refs(body, *b, out),
+        Expr::Call(f, args) => {
+            collect_local_refs(body, *f, out);
+            for &a in args {
+                collect_local_refs(body, a, out);
+            }
+        }
+        Expr::Binop { lhs, rhs, .. } => {
+            collect_local_refs(body, *lhs, out);
+            collect_local_refs(body, *rhs, out);
+        }
+        Expr::If { arms, els } => {
+            for (c, t) in arms {
+                collect_local_refs(body, *c, out);
+                collect_local_refs(body, *t, out);
+            }
+            collect_local_refs(body, *els, out);
+        }
+        Expr::Let { defs, body: b } => {
+            for d in defs {
+                collect_local_refs(body, d.body, out);
+            }
+            collect_local_refs(body, *b, out);
+        }
+        Expr::Case { subject, branches } => {
+            collect_local_refs(body, *subject, out);
+            for br in branches {
+                collect_local_refs(body, br.body, out);
+            }
+        }
     }
 }
 

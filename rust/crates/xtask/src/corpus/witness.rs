@@ -28,8 +28,8 @@
 //! always the latter.
 
 use super::axes::{
-    Assignment, Axis, Stratum, COLLIDER, COLLISION, DICT_KEY, EDGE, ERASURE, IMPORT_SHAPE, INNER,
-    POSITION, SHADOW,
+    Assignment, Axis, Stratum, AS_BINDER, COLLIDER, COLLISION, DICT_KEY, EDGE, ERASURE,
+    IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
 };
 use super::gen;
 use super::runner;
@@ -76,6 +76,15 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         // per routed key kind), so this axis IS witnessed by emit shape while
         // the VALUE assertion stays independent.
         "dict_key_crossing" => (DICT_KEY, "string"),
+        // v0.27.0 round 3. Each neutral is the shape that always built: a
+        // nested ctor pattern with no `as`; a Task function bound in a `let`
+        // (typed where it is defined); a let binding used at one type; and a
+        // plain operand read (every use broke, so the use axis is the one whose
+        // values emit different Go — the import spelling is erased).
+        "as_pattern_nesting" => (AS_BINDER, "plain"),
+        "task_slot" => (TASK_CALLEE, "let_fn"),
+        "let_polymorphism" => (LET_USES, "one_type"),
+        "qualified_field" => (QUAL_USE, "operand"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }
