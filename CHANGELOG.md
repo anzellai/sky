@@ -1029,6 +1029,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `android_emulator_notify_at_first_launch_waits_for_the_notification_prompt`:
   no answer while the prompt shows, Allow posts it (it is in `dumpsys
   notification`), Don't allow is `Err PermissionDenied`.)
+- **A permission the user refused is not asked for again in the same run.**
+  The Android permission broker asked again when an operation came after the
+  answer: "Don't allow" at the start-up prompt, then `Native.notify`, showed
+  a second prompt and notify waited on it. Whether the call came before or
+  after the user's tap decided the result, which made the notify emulator
+  test fail once with no answer in 60 s. Reproduced by pressing "Don't
+  allow" the moment the prompt shows (the broker's log: `result 23730
+  [POST_NOTIFICATIONS] [-1]`, `ensure … waiting`, `request 23731`, and the
+  prompt in front again). A refusal now holds for the rest of the run: an
+  operation that asks after it is refused at once, as one that asked before
+  it was; Settings can still grant it, and the next start asks again. The
+  broker logs each request, answer and wait under the `SkyPermissions` tag.
+  (Tests: `a_refused_permission_is_not_asked_for_again_in_the_same_run`; the
+  notify emulator test presses "Don't allow" both after notify waits and the
+  moment the prompt shows, and fails if a second prompt shows; 20 runs, 4
+  from a cold boot, all green, with the answer both before and after the
+  call in the broker's log.)
 - **The Android emulator gates wait for a usable emulator, not only a booted
   one.** On a cold boot a SystemUI "isn't responding" dialog can cover the
   app, and a UI step (the permission prompt, Back to close the scanner) went
@@ -1039,7 +1056,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   broadcast) before each app step; a UI lookup is retried once, and only
   after a dialog was found and dismissed. The `gate-native-android` job sets
   a 15-minute boot timeout, closes system dialogs and wakes the screen
-  before the tests. (Test: `android_emulator_a_system_dialog_is_dismissed_before_app_steps`
+  before the tests. A `uiautomator dump` that fails (on a freshly booted
+  emulator it can time out) left the previous screen's file behind, and a
+  lookup read that file and reported the prompt missing while it was on
+  screen; the old file is now removed first and a failed dump is taken
+  again. A failed emulator step saves evidence (the app's, ActivityManager's
+  and the permission controller's log lines, the focused window, a
+  screenshot, the UI tree and the backend log) under `SKYTEST_EVIDENCE_DIR`,
+  which the job uploads when it fails. (Test: `android_emulator_a_system_dialog_is_dismissed_before_app_steps`
   raises a real crash dialog and checks it is found and dismissed; the four
   emulator tests passed after three cold boots, `-no-snapshot-load`.)
 - **`Std.Ui.Terminal`: the server's screen could stay at the spawn size, so

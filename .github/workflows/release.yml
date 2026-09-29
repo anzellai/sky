@@ -1140,6 +1140,9 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           SKY_LIVE_TESTS: require
+          # A failed emulator step saves its evidence here (logcat, focus,
+          # screenshot, UI tree, backend log); the next step uploads it.
+          SKYTEST_EVIDENCE_DIR: ${{ github.workspace }}/native-evidence
         with:
           api-level: 35
           arch: x86_64
@@ -1156,6 +1159,13 @@ jobs:
             adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
             adb shell input keyevent KEYCODE_WAKEUP
             cd rust && cargo test -p sky --locked --test native_shell_flow android_emulator -- --ignored --test-threads=1
+      - name: Upload the emulator evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-emulator-evidence
+          path: native-evidence
+          if-no-files-found: ignore
 
   # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.

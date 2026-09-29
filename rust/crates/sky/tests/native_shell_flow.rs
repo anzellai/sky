@@ -1417,6 +1417,70 @@ impl Emulator {
         None
     }
 
+    /// Evidence for a failed emulator step, taken while the device is still
+    /// in the failed state: the log lines of the app, the shell's permission
+    /// broker (`SkyPermissions`, `SkyNative`), ActivityManager and the
+    /// permission controller; the focused window; a screenshot and the UI
+    /// tree; and the backend's report log. Saved under SKYTEST_EVIDENCE_DIR
+    /// (else the temp dir); the returned text names the folder and carries
+    /// the focus and the broker's log.
+    fn capture_evidence(&self, tag: &str, backend: &str) -> String {
+        let root = std::env::var_os("SKYTEST_EVIDENCE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let dir = root.join(format!("sky-native-evidence-{tag}-{stamp}"));
+        let _ = std::fs::create_dir_all(&dir);
+        let pid = self
+            .shell_text(&["pidof", "com.example.probe"])
+            .trim()
+            .to_string();
+        let full = self.shell_text(&["logcat", "-d", "-v", "threadtime"]);
+        let keep = |l: &str| {
+            [
+                "SkyPermissions",
+                "SkyNative",
+                "ActivityManager",
+                "ActivityTaskManager",
+                "PermissionController",
+                "permissioncontroller",
+                "GrantPermissions",
+                "com.example.probe",
+            ]
+            .iter()
+            .any(|k| l.contains(k))
+                || (!pid.is_empty() && l.split_whitespace().nth(2) == Some(pid.as_str()))
+        };
+        let filtered: Vec<&str> = full.lines().filter(|l| keep(l)).collect();
+        let broker: Vec<&str> = full
+            .lines()
+            .filter(|l| l.contains("SkyPermissions") || l.contains("SkyNative"))
+            .collect();
+        let focus: Vec<String> = self
+            .shell_text(&["dumpsys", "window"])
+            .lines()
+            .filter(|l| l.contains("mCurrentFocus=") || l.contains("mFocusedApp="))
+            .map(|l| l.trim().to_string())
+            .collect();
+        let _ = std::fs::write(dir.join("logcat.txt"), filtered.join("\n"));
+        let _ = std::fs::write(dir.join("logcat-full.txt"), &full);
+        let _ = std::fs::write(dir.join("focus.txt"), focus.join("\n"));
+        let _ = std::fs::write(dir.join("backend.txt"), backend);
+        let shot = self.adb(&["exec-out", "screencap", "-p"]);
+        let _ = std::fs::write(dir.join("screen.png"), &shot.stdout);
+        let _ = std::fs::write(dir.join("ui.xml"), ui_dump(self).unwrap_or_default());
+        format!(
+            "evidence in {}\n--- focus\n{}\n--- SkyPermissions / SkyNative\n{}\n--- backend\n{}",
+            dir.display(),
+            focus.join("\n"),
+            broker.join("\n"),
+            backend
+        )
+    }
+
     /// Send a key to the app, after dismissing a system dialog that would
     /// take it instead.
     fn key(&self, key: &str) {
@@ -1678,13 +1742,37 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// The emulator's UI tree, from `uiautomator dump`. A dump can fail (on a
+/// freshly booted emulator it can time out waiting for the UI to go idle),
+/// and it then leaves the previous file behind: reading that file gave the
+/// last screen's nodes, or none, and a lookup reported an element missing
+/// that was on screen. So the old file is removed first, and a failed dump
+/// is taken again (up to three times); `None` only when every dump failed.
+#[cfg(unix)]
+fn ui_dump(emu: &Emulator) -> Option<String> {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        let _ = emu.adb(&["shell", "rm", "-f", "/sdcard/sky-ui.xml"]);
+        let _ = emu.adb(&["shell", "uiautomator", "dump", "/sdcard/sky-ui.xml"]);
+        let xml = emu.shell_text(&["cat", "/sdcard/sky-ui.xml"]);
+        if xml.contains("<hierarchy") {
+            return Some(xml);
+        }
+        eprintln!(
+            "uiautomator dump failed (attempt {}), dumping again",
+            attempt + 1
+        );
+    }
+    None
+}
+
 /// The centre of the first node in the emulator's UI whose `resource-id`
 /// ends with one of `ids`, from a uiautomator dump.
 #[cfg(unix)]
 fn ui_node_centre(emu: &Emulator, ids: &[&str]) -> Option<(i32, i32)> {
-    let _ = emu.adb(&["shell", "uiautomator", "dump", "/sdcard/sky-ui.xml"]);
-    let xml = String::from_utf8_lossy(&emu.adb(&["shell", "cat", "/sdcard/sky-ui.xml"]).stdout)
-        .into_owned();
+    let xml = ui_dump(emu)?;
     for node in xml.split("<node ") {
         let attr = |name: &str| -> Option<String> {
             let key = format!("{name}=\"");
@@ -1838,6 +1926,18 @@ const NOTIFY: &str = "        |> Bundle.withPermission Bundle.Notifications";
 /// notification (it is in `dumpsys notification`) and answers `Ok`, and
 /// "Don't allow" answers `Err PermissionDenied`. The app is installed without
 /// `-g`, and the permission revoked, so it is not granted.
+///
+/// "Don't allow" is also pressed the moment the prompt shows, usually before
+/// the app has called notify. This case used to hang: the broker asked again
+/// for a permission the user had just refused, a second prompt showed, and
+/// notify waited on it (the gate's one unexplained failure, reproduced by
+/// tapping at once, SkyPermissions log: `result 23730 … [-1]`, then `ensure …
+/// waiting`, then `request 23731`). A refusal now holds for the rest of the
+/// run, so notify answers `Err PermissionDenied` whichever came first, and no
+/// second prompt shows. On a failure the test saves evidence (the app's,
+/// ActivityManager's and the permission controller's log lines, the focused
+/// window, a screenshot, the UI tree and the backend's log) under
+/// SKYTEST_EVIDENCE_DIR, else the temp dir.
 #[cfg(unix)]
 #[test]
 #[ignore = "native emulator: needs Go + the Android SDK + a running emulator or an AVD (release gate-native-android)"]
@@ -1877,11 +1977,23 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
         "the notification prompt needs Android 13 (API 33) or later; the emulator runs API {sdk}"
     );
     let mut failures = Vec::new();
-    // (the prompt button to press, the notify result it must lead to)
-    for (button, want) in [
-        ("permission_allow_button", "notify=ok"),
-        ("permission_deny_button", "notify=err:PermissionDenied"),
+    // (the prompt button to press, the notify result it must lead to, and
+    // whether the button is pressed the moment the prompt shows, which is
+    // usually before the app has called notify)
+    for (button, want, race) in [
+        ("permission_allow_button", "notify=ok", false),
+        (
+            "permission_deny_button",
+            "notify=err:PermissionDenied",
+            false,
+        ),
+        (
+            "permission_deny_button",
+            "notify=err:PermissionDenied",
+            true,
+        ),
     ] {
+        let case = format!("{button}{}", if race { " (at once)" } else { "" });
         let _ = emu.adb(&["uninstall", "com.example.probe"]);
         let inst = emu.adb(&["install", "-r", apk.to_str().unwrap()]);
         assert!(
@@ -1898,6 +2010,7 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
         ]);
         let backend = Backend::start(&split, port);
         emu.dismiss_system_dialogs();
+        let _ = emu.adb(&["logcat", "-c"]);
         let _ = emu.adb(&[
             "shell",
             "am",
@@ -1906,46 +2019,70 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
             "-n",
             "com.example.probe/.MainActivity",
         ]);
-        let secure = backend.probe_line("secure", 180);
-        // notify has been called; the prompt is still up, so it must not
-        // have answered yet.
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        let early = backend.probe_line("notify", 1);
-        let tap = emu.find_ui(&[button]);
-        if let Some((x, y)) = tap {
-            let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
-        }
+        let (secure, early, tap) = if race {
+            // Tap the moment the prompt is on screen: the answer can come
+            // before the app has called notify.
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            let mut tap = None;
+            while tap.is_none() && std::time::Instant::now() < until {
+                tap = ui_node_centre(&emu, &[button]);
+            }
+            if let Some((x, y)) = tap {
+                let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+            }
+            (backend.probe_line("secure", 180), None, tap)
+        } else {
+            let secure = backend.probe_line("secure", 180);
+            // notify has been called; the prompt is still up, so it must not
+            // have answered yet.
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let early = backend.probe_line("notify", 1);
+            let tap = emu.find_ui(&[button]);
+            if let Some((x, y)) = tap {
+                let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+            }
+            (secure, early, tap)
+        };
         let notify = backend.probe_line("notify", 60);
+        // An answer is final for the run: no second prompt follows it.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let prompt_again = emu
+            .shell_text(&["dumpsys", "window"])
+            .lines()
+            .any(|l| l.contains("mCurrentFocus=") && l.contains("GrantPermissionsActivity"));
         // The posted notification, as the system holds it.
         let posted = emu
             .shell_text(&["dumpsys", "notification", "--noredact"])
             .lines()
             .any(|l| l.contains("probe-notification"));
-        let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
         let output = backend.output();
-        drop(backend);
-        if secure.as_deref() != Some("secure=ok:probe-value") {
-            failures.push(format!(
-                "{button}: the app did not start: {secure:?}\n{output}"
-            ));
+        let failure = if secure.as_deref() != Some("secure=ok:probe-value") {
+            Some(format!("the app did not start: {secure:?}"))
         } else if early.is_some() {
-            failures.push(format!(
-                "{button}: notify answered {early:?} while the notification prompt showed\n{output}"
-            ));
+            Some(format!(
+                "notify answered {early:?} while the notification prompt showed"
+            ))
         } else if tap.is_none() {
-            failures.push(format!(
-                "{button}: the notification prompt was not on screen\n{output}"
-            ));
+            Some("the notification prompt was not on screen".to_string())
         } else if !notify.as_deref().is_some_and(|s| s.starts_with(want)) {
-            failures.push(format!(
-                "{button}: notify read {notify:?}, want {want}\n{output}"
-            ));
+            Some(format!("notify read {notify:?}, want {want}"))
+        } else if prompt_again {
+            Some("the permission prompt showed again after the user answered it".to_string())
         } else if posted != (want == "notify=ok") {
-            failures.push(format!(
-                "{button}: the notification is {} in `dumpsys notification`",
+            Some(format!(
+                "the notification is {} in `dumpsys notification`",
                 if posted { "posted" } else { "not posted" }
-            ));
+            ))
+        } else {
+            None
+        };
+        if let Some(f) = failure {
+            // Taken before the app is stopped, so it shows the stuck state.
+            let evidence = emu.capture_evidence(&format!("notify-{button}-{race}"), &output);
+            failures.push(format!("{case}: {f}\n{evidence}"));
         }
+        let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
+        drop(backend);
     }
     let _ = emu.adb(&["uninstall", "com.example.probe"]);
     drop(emu);

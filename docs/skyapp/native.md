@@ -336,7 +336,11 @@ call asks the user for permission, and the Task waits for the answer:
 On Android 13 and later POST_NOTIFICATIONS is a run-time permission, which
 the shell asks for when the app starts. A notify made while that prompt shows
 waits for the answer through the same permission broker as `Native.scanCode`,
-so a notification at first launch is posted after Allow, not dropped.
+so a notification at first launch is posted after Allow, not dropped. A
+refusal holds for the rest of the run: a `Native.notify` (or `scanCode`,
+camera or location request) made after the user pressed "Don't allow" is
+`Err PermissionDenied` at once, not a second prompt. The next start asks
+again, and a grant in Settings counts at once.
 Declare `Bundle.withPermission Bundle.Notifications`: the Android build
 refuses the call without it. iOS needs no declaration. In a browser and in
 the desktop window, `Native.notify` uses the Web Notification API.
