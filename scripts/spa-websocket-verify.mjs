@@ -43,9 +43,8 @@ function check(step, ok, detail) {
   if (!ok) failures.push(step);
 }
 
-const proc = guardChild(
-  spawn(APP, [], { cwd: dirname(dirname(APP)), env: { ...process.env, PORT: String(PORT), SKY_CSP: "strict" } }),
-);
+const env = { ...process.env, PORT: String(PORT), SKY_CSP: "strict" };
+const proc = guardChild(spawn(APP, [], { cwd: dirname(dirname(APP)), env }));
 let log = "";
 proc.stdout.on("data", (d) => (log += d));
 proc.stderr.on("data", (d) => (log += d));
