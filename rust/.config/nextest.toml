@@ -15,9 +15,10 @@
 # The robust fix without rewriting every test's port logic: put the
 # server-spawning binaries in a test-group capped at one thread, so at most one
 # of them runs at a time within a nextest invocation — the "one server at a
-# time" invariant the tests were written against. They are split across the two
-# `test-sky` shards (separate CI runners, no shared ports), so overall wall time
-# still roughly halves. Everything else runs fully parallel.
+# time" invariant the tests were written against. They are split across the
+# `test-sky` shards (separate CI runners, no shared ports), so this serial chain
+# divided by the shard count is what sets each shard's time (rust-ci.yml,
+# `test-sky-5`). Everything else runs fully parallel.
 
 [test-groups]
 serial-servers = { max-threads = 1 }

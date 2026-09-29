@@ -317,9 +317,8 @@ jobs:
   # NOT repeated (test-rest's `--all-targets` clippy and `--workspace --doc`
   # already cover sky). Setup-dependent (needs: setup) — NOT in
   # SETUP_INDEPENDENT_JOBS.
-  # test-sky is SHARDED across five sibling jobs (`test-sky` + `test-sky-2` +
-  # `test-sky-3` + `test-sky-4` + `test-sky-5`), `cargo nextest --partition
-  # slice:1/5` .. `5/5`.
+  # test-sky is SHARDED across seven sibling jobs (`test-sky`, `test-sky-2` ..
+  # `test-sky-7`), `cargo nextest --partition slice:1/7` .. `7/7`.
   # nextest partitions at TEST granularity, so it is disjoint-and-total by
   # construction (every non-ignored test runs in exactly one shard, no manifest
   # to maintain). `count` (round-robin over the sorted test list) — not `hash`
@@ -338,13 +337,14 @@ jobs:
   # spa_split_flow block still spreads evenly. Still disjoint-and-total.
   # Four shards were added when the
   # 3-shard split reached ~1006-1035s at v0.25.1; the 5th when v0.27.0's tests
-  # took the slowest of four to 979s (see `test-sky-5`).
-  # Five explicitly-named jobs, NOT a `matrix` (a matrix leg reports to the REST
+  # took the slowest of four to 979s; seven since the serial-servers group
+  # was measured as the per-shard pole (see `test-sky-5`).
+  # Seven explicitly-named jobs, NOT a `matrix` (a matrix leg reports to the REST
   # API as `name (leg)`, and the budget assertion matches whole space-separated
   # job names — a name with a space could never match SETUP_INDEPENDENT_JOBS).
   # `#[ignore]`d heavy e2e legs still run nightly via `--ignored`.
   # sky is bin-only so there are no doctests to run. Deliberately NO `needs:
-  # setup` (same reasoning as `build-corpus`); all five shards are in
+  # setup` (same reasoning as `build-corpus`); all seven shards are in
   # SETUP_INDEPENDENT_JOBS.
   test-sky:
     runs-on: ubuntu-latest
@@ -389,11 +389,11 @@ jobs:
       # test -p sky` never ran any, and nextest (unit + integration) covers
       # exactly what the old `cargo test -p sky` did. No `--doc` step (it would
       # error "no library targets found").
-      - name: Tests — sky crate shard 1/5 (nextest partition; postgres-live + integration)
+      - name: Tests — sky crate shard 1/7 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:1/5
+        run: cargo nextest run -p sky --locked --partition slice:1/7
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -438,11 +438,11 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - name: Tests — sky crate shard 2/5 (nextest partition; postgres-live + integration)
+      - name: Tests — sky crate shard 2/7 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:2/5
+        run: cargo nextest run -p sky --locked --partition slice:2/7
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -487,11 +487,11 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - name: Tests — sky crate shard 3/5 (nextest partition; postgres-live + integration)
+      - name: Tests — sky crate shard 3/7 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:3/5
+        run: cargo nextest run -p sky --locked --partition slice:3/7
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -541,21 +541,25 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - name: Tests — sky crate shard 4/5 (nextest partition; postgres-live + integration)
+      - name: Tests — sky crate shard 4/7 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:4/5
+        run: cargo nextest run -p sky --locked --partition slice:4/7
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # test-sky shard 5/5. Added at v0.27.0: the new split flow, terminal/process
-  # and e2e tests took the slowest of four shards to 979 s against the 990 s
-  # ceiling (run 36615007321; 810 s of that was the nextest run, most of it the
-  # `serial-servers` group, which runs one server test at a time per shard). A
-  # 5th shard cuts each shard's share of that serial group with no coverage
+  # test-sky shards 5/7 to 7/7. Added at v0.27.0: the new split flow,
+  # terminal/process and e2e tests took the slowest of four shards to 979 s
+  # against the 990 s ceiling (run 36615007321). Each shard's time is set by
+  # its share of the `serial-servers` group (.config/nextest.toml,
+  # max-threads = 1), not by its test count: at five evenly-sliced shards of
+  # ~120 tests each, the serial chain alone was ~780 s of shard 3's 824 s
+  # nextest run (run 36622777637, spa_split_flow 16 tests = 563 s plus
+  # auth_revocation_flow 168 s), and the tier sat at 988 s of 990 s. Seven
+  # shards cut each shard's serial share to ~5/7 of that, with no coverage
   # change. Registered in SETUP_INDEPENDENT_JOBS + ci-green `needs` below.
   test-sky-5:
     runs-on: ubuntu-latest
@@ -596,11 +600,111 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - name: Tests — sky crate shard 5/5 (nextest partition; postgres-live + integration)
+      - name: Tests — sky crate shard 5/7 (nextest partition; postgres-live + integration)
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:5/5
+        run: cargo nextest run -p sky --locked --partition slice:5/7
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # test-sky shard 6/7 (see test-sky-5 for why the shard count grew).
+  test-sky-6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-test-sky-
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Tests — sky crate shard 6/7 (nextest partition; postgres-live + integration)
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:6/7
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # test-sky shard 7/7 (see test-sky-5 for why the shard count grew).
+  test-sky-7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-test-sky-
+      - name: PostgreSQL + sqlite3 for the live tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 sqlite3
+          for b in initdb pg_ctl postgres psql; do
+            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
+              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
+          done
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Tests — sky crate shard 7/7 (nextest partition; postgres-live + integration)
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:7/7
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1748,6 +1852,8 @@ jobs:
       - test-sky-3
       - test-sky-4
       - test-sky-5
+      - test-sky-6
+      - test-sky-7
       - runtime-rt
       - parity-accept
       - parity-reject
@@ -1808,7 +1914,7 @@ jobs:
           # These do NOT `needs: setup` — `integration-postgres` builds no Rust
           # at all, `build-corpus` consumes none of setup's OUTPUT (it runs its
           # own `cargo build --workspace`, restoring the shared cargo cache by
-          # `restore-keys` like every other job), the five `test-sky` shards run
+          # `restore-keys` like every other job), the seven `test-sky` shards run
           # alongside setup, `runtime-rt` is Go only (no Rust build), and
           # `licence-gate-linux` runs shell scripts.
           # They start alongside `setup`, so charging them its time would
@@ -1826,7 +1932,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 runtime-rt licence-gate-linux'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 runtime-rt licence-gate-linux'
           MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour licence-gate-macos'
         run: |
           set -euo pipefail
