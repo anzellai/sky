@@ -13,9 +13,11 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Rec =
-    { a : Int, b : String, c : Int }
+    { a : Int
+    , b : String
+    , c : Int
+    }
 
 
 bump : { r | a : Int } -> { r | a : Int }
@@ -25,10 +27,7 @@ bump r =
 
 main =
     let
-        base =
-            { a = 1, b = "x", c = 42 }
-
-        res =
-            List.foldr (\x _ -> bump x) (bump base) [ base ]
+        base = { a = 1, b = "x", c = 42 }
+        res = List.foldr (\x _ -> bump x) (bump base) [ base ]
     in
-    println (String.fromInt res.a ++ "/" ++ String.fromInt res.c)
+        println (String.fromInt res.a ++ "/" ++ String.fromInt res.c)

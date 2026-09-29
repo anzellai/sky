@@ -15,9 +15,11 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Rec =
-    { a : Int, b : String, c : Int }
+    { a : Int
+    , b : String
+    , c : Int
+    }
 
 
 nested : Dict String (List Rec)
@@ -29,10 +31,11 @@ main =
     let
         res =
             case Dict.get "k" nested of
+
                 Just xs ->
                     List.foldl (\e _ -> e.c) 0 xs
 
                 Nothing ->
                     0
     in
-    println (String.fromInt res)
+        println (String.fromInt res)

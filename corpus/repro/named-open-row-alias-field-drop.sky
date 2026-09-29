@@ -18,7 +18,6 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Named a =
     { a | name : String }
 
@@ -35,21 +34,10 @@ rename r =
 
 main =
     let
-        base =
-            { name = "old", age = 5, city = "Rome" }
-
-        t =
-            tag base
-
-        u =
-            rename base
+        base = { name = "old", age = 5, city = "Rome" }
+        t = tag base
+        u = rename base
     in
-    println
-        (String.fromInt t.age
-            ++ "/"
-            ++ t.city
-            ++ "/"
-            ++ u.name
-            ++ "/"
-            ++ String.fromInt u.age
-        )
+        println
+            (String.fromInt t.age ++ "/" ++ t.city ++ "/" ++ u.name ++ "/"
+                ++ String.fromInt u.age)

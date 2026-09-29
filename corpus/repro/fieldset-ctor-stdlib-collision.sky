@@ -62,9 +62,10 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Kv =
-    { key : String, value : String }
+    { key : String
+    , value : String
+    }
 
 
 mk : String -> String -> Kv

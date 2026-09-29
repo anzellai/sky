@@ -20,27 +20,22 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias KvA =
-    { key : String, value : Int }
-
+    { key : String
+    , value : Int
+    }
 
 type alias KvB =
-    { key : String, value : String }
+    { key : String
+    , value : String
+    }
 
 
 main =
     let
-        a0 =
-            { key = "k", value = 42 }
-
-        b0 =
-            { key = "k", value = "s" }
-
-        av =
-            (fst ( a0, 0 )).value
-
-        bv =
-            (fst ( b0, 0 )).value
+        a0 = { key = "k", value = 42 }
+        b0 = { key = "k", value = "s" }
+        av = (fst ( a0, 0 )).value
+        bv = (fst ( b0, 0 )).value
     in
-    println (String.fromInt av ++ "/" ++ bv)
+        println (String.fromInt av ++ "/" ++ bv)

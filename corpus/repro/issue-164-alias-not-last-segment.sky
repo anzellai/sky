@@ -24,11 +24,8 @@ import Std.Log exposing (println)
 
 main =
     let
-        upper =
-            Core.toUpper "hi"
-
+        upper = Core.toUpper "hi"
         -- 42 characters: four "0123456789" runs plus "01".
-        n =
-            Core.length "012345678901234567890123456789012345678901"
+        n = Core.length "012345678901234567890123456789012345678901"
     in
-    println (upper ++ "/" ++ String.fromInt n)
+        println (upper ++ "/" ++ String.fromInt n)

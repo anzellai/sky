@@ -543,8 +543,9 @@ jobs:
   # gate-t2-rest. `--require-proofs` matches the rigor of the T1 line.
   gate-t2-corpus:
     runs-on: ubuntu-latest
-    # The gate budget is 3000 s (registry.rs); the job needs setup on top.
-    timeout-minutes: 65
+    # The gate budget is 4000 s (registry.rs, 468 behavioural cases); the job
+    # needs setup on top, so the job limit stays above the gate budget.
+    timeout-minutes: 80
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:

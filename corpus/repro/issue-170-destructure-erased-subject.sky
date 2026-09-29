@@ -13,24 +13,21 @@ module Main exposing (main)
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
-
 type alias Rec =
-    { a : Int, b : String, c : Int }
+    { a : Int
+    , b : String
+    , c : Int
+    }
 
 
 main =
     let
-        base =
-            { a = 1, b = "x", c = 42 }
-
-        p =
-            List.foldr (\x _ -> x) ( base, 1 ) [ ( base, 1 ) ]
-
+        base = { a = 1, b = "x", c = 42 }
+        p = List.foldr (\x _ -> x) ( base, 1 ) [ ( base, 1 ) ]
         res =
             let
-                ( rr, _ ) =
-                    p
+                ( rr, _ ) = p
             in
-            rr.c
+                rr.c
     in
-    println (String.fromInt res)
+        println (String.fromInt res)
