@@ -936,6 +936,7 @@ How the two paths fit (v0.27.0, `rust-ci.yml`):
 |---|---|---|---|---|---|
 | 36615007321 (before) | warm | 403 s | codegen-build 630 s | test-sky 979 s | **1033 s — FAIL** |
 | 36628077129 (all keys forced to miss) | cold | 178 s | test-rest 605 s | test-sky-3 884 s | **884 s — pass** |
+| 36630493577 (after the probe was reverted) | warm | 13 s | repro-2 581 s | test-sky-3 864 s | **864 s — pass** |
 
 The cold run is the binding one: its test-sky shards pay a cold Rust compile
 (3 min against 2 min 15 s warm) and a cold Go build cache.
