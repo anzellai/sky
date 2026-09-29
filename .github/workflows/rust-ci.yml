@@ -89,8 +89,16 @@ jobs:
   # CONCURRENTLY with it. Serialising one short build in front of the fan-out
   # makes the restore a cache HIT for all of them.
   #
-  # It builds the workspace AND `cargo test --no-run`, so the cache also covers
-  # dev-dependencies and the test harnesses that `test-ty` / `test-rest` need.
+  # It builds the workspace only. It used to run `cargo test --workspace
+  # --no-run` as well, to put dev-dependencies in the cache. Measured, that
+  # step primed almost nothing: 270 s cold against 253 s on an exact cache hit
+  # (runs 36618730833 and 36615007321), so ~17 s of it was dependencies and the
+  # rest compiled and linked the workspace's own test targets, which
+  # rust-cache prunes before saving. The dev-dependencies are `insta` and
+  # `serde_yaml` (serde_json is already a normal dependency); test-ty and
+  # test-rest compile them in their own build. Dropping the step keeps the
+  # cache-COLD setup inside §8.1's `setup <= 6 min`, which it was not (457 s in
+  # run 36618730833).
   #
   # HONEST ACCOUNTING: this trades wall clock for billed minutes. It removes the
   # duplicate dependency builds (a large billing win) but adds `setup` to the
@@ -130,15 +138,13 @@ jobs:
       # setup-dependent job waited. rust-cache prunes the workspace's own
       # crates before saving, so those builds were never shared either; each
       # dependent job compiles them itself. On a partial or no match (a
-      # lockfile or toolchain bump) both builds run and prime the cache exactly
-      # as before. No check is dropped: every dependent job builds the
+      # lockfile or toolchain bump, or the first run in a new cache scope such
+      # as the first push to main after a release merge) the build runs and
+      # primes the cache. No check is dropped: every dependent job builds the
       # workspace, and test-ty / test-rest build the test binaries.
       - name: Build workspace (primes the shared cache for every dependent job)
         if: steps.rust-cache.outputs.cache-hit != 'true'
         run: cargo build --workspace --locked
-      - name: Build test binaries (primes dev-dependencies for test-ty/test-rest)
-        if: steps.rust-cache.outputs.cache-hit != 'true'
-        run: cargo test --workspace --locked --no-run
 
   # ── ty crate tests (the heavy corpus tests — each recompiles the stdlib, so
   #    this crate is the bulk of the old 30-min test step; on its own runner) ──
