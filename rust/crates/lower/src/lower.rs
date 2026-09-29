@@ -4757,6 +4757,19 @@ impl<'a> Ctx<'a> {
 
     /// Declaration-order tag for `cname` in a resolved union `go` (falls back to
     /// the bare-name `ctor_tag` map when the union-scoped entry is absent).
+    /// The Go name of `ty` when it is a union whose constructors all take no
+    /// arguments (emitted as a named int, `GoTypeDef::IotaEnum`).
+    fn iota_go_type(&self, ty: &GoTy) -> Option<String> {
+        match ty {
+            GoTy::Named(n, a) if a.is_empty() => self
+                .ctor_in_union
+                .iter()
+                .any(|((g, _), (k, _))| g == n && *k == NominalKind::Iota)
+                .then(|| n.clone()),
+            _ => None,
+        }
+    }
+
     fn union_ctor_tag(&self, go: &str, cname: &str) -> usize {
         self.ctor_in_union
             .get(&(go.to_string(), cname.to_string()))
@@ -5760,6 +5773,15 @@ impl<'a> Ctx<'a> {
             let a = GoExpr::new(GoExprKind::Ident(format!("a{i}")), GoTy::Any);
             if *in_ty == GoTy::Any {
                 a
+            } else if self.iota_go_type(in_ty).is_some() {
+                // An enum Msg / model (`type Msg = Inc | Dec`) is a named int;
+                // a value the driver built from the wire may be its plain
+                // `int` ordinal. `rt.EnumOf` is the same one assertion,
+                // accepting either shape.
+                GoExpr::new(
+                    GoExprKind::GenericCall("rt.EnumOf".into(), vec![in_ty.clone()], vec![a]),
+                    in_ty.clone(),
+                )
             } else {
                 GoExpr::new(
                     GoExprKind::TypeAssert(Box::new(a), in_ty.clone()),
@@ -8306,17 +8328,33 @@ impl<'a> Ctx<'a> {
                 let owner: Option<(String, NominalKind)> =
                     self.ctor_union_owner(ctor_ty, cname, _subj_ty);
                 if let Some((go, NominalKind::Iota)) = &owner {
-                    let cond = GoExpr::new(
-                        GoExprKind::Binary(
-                            GoBin::Eq,
-                            Box::new(subj.clone()),
-                            Box::new(GoExpr::new(
-                                GoExprKind::Ident(format!("{go}_{cname}")),
-                                GoTy::Any,
-                            )),
-                        ),
-                        GoTy::Bare(Prim::Bool),
-                    );
+                    // A subject typed as the enum compares with `==`. A subject
+                    // that is `any` (a payload in the ADT bag, a runtime-built
+                    // value) may hold the enum's named int or a plain `int`
+                    // ordinal: `any == Named_Const` would be false for the
+                    // latter, so the tag test goes through `rt.EnumTagIs`, which
+                    // compares by kind (not a coerce, not a narrowing).
+                    let typed = matches!(&subj.ty, GoTy::Named(n, a) if n == go && a.is_empty());
+                    let cond = if typed {
+                        GoExpr::new(
+                            GoExprKind::Binary(
+                                GoBin::Eq,
+                                Box::new(subj.clone()),
+                                Box::new(GoExpr::new(
+                                    GoExprKind::Ident(format!("{go}_{cname}")),
+                                    GoTy::Any,
+                                )),
+                            ),
+                            GoTy::Bare(Prim::Bool),
+                        )
+                    } else {
+                        let tag = self.union_ctor_tag(go, cname);
+                        call_rt(
+                            "rt.EnumTagIs",
+                            vec![subj.clone(), int_lit(tag as i64)],
+                            GoTy::Bare(Prim::Bool),
+                        )
+                    };
                     return (Some(cond), vec![]);
                 }
                 // Sealed-ADT NESTED ctor pattern (`SendMessage (Inner x)` reached

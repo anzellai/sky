@@ -175,6 +175,27 @@ type Shape
     | Label String
 
 
+type Color
+    = Red
+    | Green
+    | Blue
+
+
+-- The kind inside a runtime-built Error is the plain Int ordinal the runtime
+-- wrote; a nested pattern on it must still match (the enum is a named Go int).
+missingKind : String
+missingKind =
+    case Task.run (File.stat "/definitely/not/here") of
+        Err (Error.Error Error.NotFound _) ->
+            "notfound"
+
+        Err _ ->
+            "other error"
+
+        Ok _ ->
+            "ok"
+
+
 tests : List Test
 tests =
     [ -- ─── Sky.Core.File ───────────────────────────────────────────
@@ -253,6 +274,12 @@ tests =
         (\_ -> Test.equal "[Circle 1.5, Label \"x\"]" (toString [ Circle 1.5, Label "x" ]))
     , Test.test "toString: a top-level String is its text"
         (\_ -> Test.equal "plain" (toString "plain"))
+    , Test.test "toString: a union of nullary constructors prints names, nested"
+        (\_ -> Test.equal "Just [(Red, 1), (Blue, 2)]" (toString (Just [ ( Red, 1 ), ( Blue, 2 ) ])))
+    , Test.test "toString: a nullary constructor at the top level"
+        (\_ -> Test.equal "Green" (toString Green))
+    , Test.test "a nested pattern matches a runtime-built enum value"
+        (\_ -> Test.equal "notfound" missingKind)
     ]
 
 

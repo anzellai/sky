@@ -27,10 +27,11 @@ import (
 // tag, else the Go name with its first letter lowered), `Dict` (a string-keyed
 // map, keys decoded and ordered as `Dict.toList` orders them) and `Set`.
 //
-// One representation carries no name at run time: a union whose constructors
-// all take no arguments lowers to a plain Go `int` (`type Main_Color = int`).
-// Inside a record its field tag names the type and the constructor name is
-// recovered from the enum registry; anywhere else it prints as its index.
+// A union whose constructors all take no arguments lowers to a named Go int
+// (`type Main_Color int`) whose generated `SkyEnumName` returns the
+// constructor name, so it prints `Red` wherever it sits. A plain `int` that
+// reached a record field typed as such an enum (runtime-built values) is named
+// from the field's `sky:` tag and the enum registry.
 //
 // A value that is not a Sky shape but implements `fmt.Stringer` (a `Secret`,
 // a crypto key, a `Decimal`) prints through `String()`, so a secret stays
@@ -101,6 +102,15 @@ func skyShow(rv reflect.Value, depth int, enumType string) (string, bool) {
 		// Sky `Char` is a Go `rune`.
 		return skyQuoteChar(rune(rv.Int())), true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int64:
+		// A union whose constructors all take no arguments is a named Go
+		// int with a generated `SkyEnumName`.
+		if rv.CanInterface() {
+			if en, ok := rv.Interface().(interface{ SkyEnumName() string }); ok {
+				if name := en.SkyEnumName(); name != "" {
+					return name, true
+				}
+			}
+		}
 		n := rv.Int()
 		if enumType != "" {
 			if name, ok := enumNameForOrdinal(enumType, int(n)); ok {

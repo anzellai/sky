@@ -1167,8 +1167,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   interpolation) uses the same printer (`rt.SkyShow`, `sky_show.go`). A
   top-level String stays its text and a top-level Error stays
   `<Kind>: <message>`. Before, `toString (Just 5)` printed `5` and a `Bool`
-  printed `true`. A union whose constructors all take no arguments is an
-  `Int` at run time, so it prints by name only inside a record field.
+  printed `true`. A union whose constructors all take no arguments
+  (`type Color = Red | Green`) prints its constructor name everywhere, also
+  inside a Maybe, a List or a tuple: it now lowers to a named Go int
+  (`type Main_Color int`, it was the alias `= int`) with a generated
+  `SkyEnumName` method, so the value keeps its Sky type at run time. The
+  conversion to and from `int` is free, `rt.Coerce` and `rt.AsInt` convert
+  by kind, and `%v` (Dict key encoding, logs) still prints the ordinal, so no
+  narrowing was added (coerce-floor unchanged at narrow 12171, adapter 0).
 - **`sky doc` listed an opaque type's constructors, and matching one was a
   naming error with no location.** `Std.Ui.Terminal` exports `Msg` without
   `(..)`, yet `sky doc` showed `type Msg = Ready | …`, and

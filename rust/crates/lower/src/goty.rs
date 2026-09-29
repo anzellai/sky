@@ -25,9 +25,9 @@ pub struct Nominal {
     pub type_arity: usize,
     /// A phantom opaque-handle type: a single-variant iota enum whose sole
     /// constructor follows the stdlib `<Name>_OPAQUE` convention (`Route`,
-    /// `Server`, `Cookie`). The Go type decl renders as `type X = int` (a
+    /// `Server`, `Cookie`). The Go type decl renders as `type X int` (a
     /// placeholder), but the *runtime value* is a kernel struct handle
-    /// (`rt.SkyRoute`, …) produced by an FFI kernel — never an `int`. So at a
+    /// (`rt.SkyRoute`, …) produced by an FFI kernel — never an int. So at a
     /// value/type position these resolve to `any`, exactly like the other
     /// kernel-opaque handles (`Decoder`, `Value`, `Cmd`, `Sub`). Coercing the
     /// handle to the `int` alias would panic (`rt.Coerce: expected int, got

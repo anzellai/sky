@@ -44,7 +44,7 @@ Implicitly available everywhere via `Sky.Core.Prelude exposing (..)`. Nothing to
 | `identity` | `a -> a` | The identity function |
 | `always` | `a -> b -> a` | Const; ignores second arg |
 | `not` | `Bool -> Bool` | Logical not |
-| `toString` | `a -> String` | Any value in Sky syntax: `Ok "a"`, `Just (1, 'c')`, `{ age = 40, name = "Ada" }`, `[Circle 1.5, Empty]`, `Dict.fromList [(1, "a")]` (record fields in name order). A top-level `String` is its text unquoted, and a top-level `Error` reads `<Kind>: <message>` (as `Error.toString`). A union whose constructors all take no arguments prints its constructor name inside a record field and its index elsewhere (it is an `Int` at run time). `sky test` prints assertion values with the same printer |
+| `toString` | `a -> String` | Any value in Sky syntax: `Ok "a"`, `Just (1, 'c')`, `{ age = 40, name = "Ada" }`, `[Circle 1.5, Empty]`, `Dict.fromList [(1, "a")]` (record fields in name order). A top-level `String` is its text unquoted, and a top-level `Error` reads `<Kind>: <message>` (as `Error.toString`). A union whose constructors all take no arguments prints its constructor name (`Just [Red, Blue]`). `sky test` prints assertion values with the same printer |
 | `modBy` | `Int -> Int -> Int` | Math modulo (divisor-first argument order, matches Elm) |
 | `clamp` | `comparable -> comparable -> comparable -> comparable` | Constrain to range |
 | `fst`, `snd` | `(a, b) -> a` / `(a, b) -> b` | Tuple accessors |

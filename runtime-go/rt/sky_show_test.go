@@ -1,6 +1,9 @@
 package rt
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 type showShape interface{ SkyVariantTag() int }
 
@@ -91,5 +94,70 @@ func TestDebugToStringAndShow(t *testing.T) {
 	}
 	if got := Debug_toString(Just[any](5)); got != `Just 5` {
 		t.Errorf("Debug_toString(Just 5) = %v", got)
+	}
+}
+
+// showColor mirrors what the compiler emits for `type Color = Red | Green |
+// Blue` (a union whose constructors take no arguments): a named int with a
+// generated SkyEnumName.
+type showColor int
+
+func (v showColor) SkyEnumName() string { return EnumName("SkyShowTest_Nullary", int(v)) }
+
+// A nullary union prints its constructor name wherever it sits — the top
+// level, a Maybe, a List, a tuple, a record, a Dict value — not its index.
+func TestSkyShowNamesANullaryUnionEverywhere(t *testing.T) {
+	RegisterEnum("SkyShowTest_Nullary", []string{"Red", "Green", "Blue"})
+	type rec struct {
+		Color showColor `sky:"color,SkyShowTest_Nullary"`
+		Tone  showColor
+	}
+	cases := []struct {
+		name string
+		v    any
+		want string
+	}{
+		{"top level", showColor(2), `Blue`},
+		{"in a Maybe", Just[showColor](1), `Just Green`},
+		{"in a List", []showColor{0, 1, 2}, `[Red, Green, Blue]`},
+		{"in an any List", []any{showColor(0), showColor(2)}, `[Red, Blue]`},
+		{"in a tuple", T2[showColor, int]{V0: 0, V1: 1}, `(Red, 1)`},
+		{"in a record", rec{Color: 1, Tone: 2}, `{ color = Green, tone = Blue }`},
+		{"a Dict value", Dict_fromList([]any{SkyTuple2{V0: "a", V1: showColor(1)}}), `Dict.fromList [("a", Green)]`},
+		{"in a Result", Ok[any, showColor](0), `Ok Red`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := SkyShow(c.v); got != c.want {
+				t.Errorf("SkyShow = %s, want %s", got, c.want)
+			}
+		})
+	}
+	// A kernel that reads the tag as an Int still can.
+	if AsInt(any(showColor(2))) != 2 || AsIntOrZero(any(showColor(1))) != 1 {
+		t.Error("AsInt / AsIntOrZero read a named int by kind")
+	}
+	// rt.Coerce turns a runtime-built int into the named type.
+	if Coerce[showColor](any(1)) != showColor(1) {
+		t.Error("Coerce int -> named int")
+	}
+	// `%v` (Dict key encoding, logs) still prints the ordinal.
+	if s := fmt.Sprintf("%v", showColor(2)); s != "2" {
+		t.Errorf("%%v of a named enum = %q, want the ordinal", s)
+	}
+}
+
+// A runtime-built value of a nullary union is a plain int ordinal; code
+// typed against the named int reads it through rt.EnumOf / rt.EnumTagIs /
+// rt.Coerce, never a raw assertion that would fail on the int.
+func TestNamedEnumAcceptsARuntimeBuiltOrdinal(t *testing.T) {
+	if EnumOf[showColor](any(2)) != showColor(2) || EnumOf[showColor](any(showColor(1))) != showColor(1) {
+		t.Error("EnumOf accepts the named int and its int ordinal")
+	}
+	if !EnumTagIs(any(1), 1) || !EnumTagIs(any(showColor(1)), 1) || EnumTagIs(any(showColor(2)), 1) {
+		t.Error("EnumTagIs compares a named int and an int by value")
+	}
+	if !deepEq(showColor(1), 1) {
+		t.Error("Sky == treats a named enum and its ordinal as equal")
 	}
 }

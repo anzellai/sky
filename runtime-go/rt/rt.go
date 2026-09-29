@@ -2577,6 +2577,11 @@ func AsInt(v any) int {
 			return AsInt(u)
 		}
 	}
+	// A named int (a Sky union whose constructors take no arguments,
+	// `type Main_Color int`) is an Int by kind.
+	if rv := reflect.ValueOf(v); rv.IsValid() && rv.CanInt() {
+		return int(rv.Int())
+	}
 	// REACHABLE-FROM-SKY (heterogeneous slice / untyped FFI return):
 	// a non-numeric value flowed into a numeric position. Top-level
 	// recover (Cycle 6 PC) classifies as `TypeMismatch`. The display
@@ -2610,6 +2615,9 @@ func AsIntOrZero(v any) int {
 		return int(n)
 	case float32:
 		return int(n)
+	}
+	if rv := reflect.ValueOf(v); rv.IsValid() && rv.CanInt() {
+		return int(rv.Int())
 	}
 	return 0
 }
@@ -4454,6 +4462,20 @@ type skyErrorAdt = SkyADT
 // Codegen emits `rt.EnumTagIs(__subject, N)` for Can.Enum case
 // branches so both representations flow cleanly through user
 // pattern matches.
+// EnumOf returns `v` as the enum `T` (a Sky union whose constructors all take
+// no arguments, emitted as a named int) whether `v` holds a `T` or the plain
+// `int` ordinal a runtime decoder built. One assertion, like the `v.(T)` it
+// replaces at a typed adapter's parameter.
+func EnumOf[T ~int](v any) T {
+	switch x := v.(type) {
+	case T:
+		return x
+	case int:
+		return T(x)
+	}
+	return T(AsInt(v))
+}
+
 func EnumTagIs(subject any, tag int) bool {
 	if sv, ok := subject.(SkyVariant); ok {
 		return sv.SkyVariantTag() == tag
