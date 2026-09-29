@@ -76,7 +76,7 @@ tests =
         "Maybe.toResult: Nothing becomes Err with the given error"
         (\_ -> Test.equal (Err Error.notFound) (Maybe.toResult Error.notFound (List.head [])))
     , Test.test
-        "Maybe.toResult and Result.fromMaybe agree, and undo Result.toMaybe on Ok"
+        "Maybe.toResult and Result.fromMaybe agree on Just and Nothing"
         (\_ ->
             Test.equal
                 (List.map (\s -> Maybe.toResult Error.notFound (String.toInt s)) [ "1", "x", "3" ])
