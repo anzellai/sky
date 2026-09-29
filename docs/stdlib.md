@@ -676,6 +676,7 @@ update msg model =
 | `Sub.none` | `Sub msg` | No subscription |
 | `Sub.every` | `Int -> msg -> Sub msg` | Dispatch `msg` every N ms |
 | `Sub.subscribeTopic` | `String -> (any -> msg) -> Sub msg` | Receive pub/sub broadcasts on topic; decoder turns payload into a Msg |
+| `Sub.onFragment` | `(String -> msg) -> Sub msg` | Receive the URL fragment (after `#`) at load and on every change, on Sky.Live, Sky.Spa and the `Std.App` web targets |
 | `Sub.batch` | `List (Sub msg) -> Sub msg` | Combine timer + topic + others |
 
 ### `Time` — clock + duration

@@ -1,0 +1,38 @@
+module Main exposing (main)
+
+-- Sub.onFragment: the URL fragment reaches `update` on every web target.
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Ui as Ui
+
+type alias Model =
+    { frag : String }
+
+type Msg
+    = FragmentChanged String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { frag = "none" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        FragmentChanged f ->
+            ( { model | frag = f }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = \m -> Ui.text ("FRAG=" ++ m.frag)
+            , subscriptions = \_ -> Sub.onFragment FragmentChanged
+            }
+            |> App.withNotFound ())

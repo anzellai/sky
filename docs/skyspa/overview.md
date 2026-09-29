@@ -414,7 +414,9 @@ These are real, current scope boundaries — not roadmap optimism:
   forward-compatible with it.
 - **Client effect surface is bounded in v1.** Client effects run through a
   single-threaded wasm interpreter: `Cmd.perform` (sync kernels like
-  `Time.now` / `Random` inline; async `Http` via `fetch`) and `Sub.every` timers.
+  `Time.now` / `Random` inline; async `Http` via `fetch`), `Sub.every` timers
+  and `Sub.onFragment` (the client reads `location.hash` at load and on every
+  `hashchange`).
   `Cmd.publish` is a documented client no-op (no peer/session bus in a single
   tab); `Sub.subscribeTopic` / stream / websocket subscriptions are not wired on
   the client in v1.

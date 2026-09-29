@@ -7579,3 +7579,80 @@ fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
     }
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+/// `Sub.onFragment`: the Sky.Live app receives the fragment its browser
+/// client reports (the `__skyFragment` event, the path the client JS takes at
+/// load and on hashchange) and renders it; the same source builds as a
+/// Sky.Spa client whose subscriptions keep the leaf (the wasm client reads
+/// `location.hash`), and checks for a terminal target, where it is inert.
+#[test]
+fn the_url_fragment_reaches_update_on_live_and_builds_for_every_target() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("std-app-fragment", &[]);
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("Sub.onFragment FragmentChanged"),
+        "the client keeps the fragment subscription:\n{log}\n{front}"
+    );
+    let tui = Command::new(SKY)
+        .args(["check", "--target", "terminal:tui", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky check --target terminal:tui");
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    assert!(
+        tui.status.success(),
+        "the terminal check failed:\n{}{}",
+        String::from_utf8_lossy(&tui.stdout),
+        String::from_utf8_lossy(&tui.stderr)
+    );
+    let (live, port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let page = curl_get_jar(port, "/", &jar);
+    assert!(page.contains("FRAG=none"), "{page}");
+    let jar_text = std::fs::read_to_string(&jar).unwrap_or_default();
+    let csrf = jar_text
+        .lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            (cols.len() >= 7 && cols[5] == "__sky_csrf").then(|| cols[6].to_string())
+        })
+        .last()
+        .unwrap_or_default();
+    let posted = Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "30",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            &format!("X-Sky-Csrf: {csrf}"),
+            "-X",
+            "POST",
+            "-d",
+            r#"{"sessionId":"","msg":"__skyFragment","args":["part-2"],"handlerId":""}"#,
+            "-b",
+        ])
+        .arg(&jar)
+        .arg(format!("http://127.0.0.1:{port}/_sky/event"))
+        .output()
+        .expect("curl POST __skyFragment");
+    assert_eq!(String::from_utf8_lossy(&posted.stdout).trim(), "200");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let page = curl_get_jar(port, "/", &jar);
+    drop(live);
+    assert!(
+        page.contains("FRAG=part-2"),
+        "the fragment reaches update:\n{page}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}

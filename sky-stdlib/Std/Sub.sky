@@ -4,7 +4,7 @@
 -- delivered to `update`.  Use `Sub.every` for periodic ticks
 -- (animation, polling, …) and `Sub.none` when there's nothing
 -- to subscribe to.
-module Std.Sub exposing (none, every, batch, subscribeTopic)
+module Std.Sub exposing (none, every, batch, subscribeTopic, onFragment)
 
 import Sky.Ffi as Ffi
 
@@ -53,3 +53,19 @@ batch =
 subscribeTopic : String -> (any -> msg) -> Sub msg
 subscribeTopic =
     Ffi.kernel "Sub_subscribeTopic"
+
+
+-- | `onFragment toMsg` — receive the URL fragment (the text after `#`, as
+-- written in the URL, without the `#`) on Sky.Live, Sky.Spa and every
+-- `Std.App` web / desktop / mobile target. The fragment arrives when the page
+-- loads with one, and on every change of it in the browser (`hashchange`: a
+-- link to `#section`, Back, or a script setting `location.hash`); a removed
+-- fragment arrives as `""`. A browser never sends the fragment to the server,
+-- so it is not known to `init`: keep a default in the model and let this
+-- subscription fill it. A terminal app has no URL; there it never fires.
+--
+--     subscriptions _ =
+--         Sub.onFragment FragmentChanged
+onFragment : (String -> msg) -> Sub msg
+onFragment =
+    Ffi.kernel "Sub_onFragment"

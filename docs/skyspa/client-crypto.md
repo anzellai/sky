@@ -55,11 +55,30 @@ With the opt-in, these members run in the **wasm client**:
 | `Std.Crypto.Kdf` | `extract`, `expand` |
 
 Keys are generated from Go's `crypto/rand`, which in the wasm client reads the
-browser's `crypto.getRandomValues`. Everything else is classified as before:
-`Crypto.*` (AEAD, random bytes, keyed MACs), `Secret.fromEnv`, and any member
+browser's `crypto.getRandomValues`.
+
+With the opt-in, the `Sky.Core.Crypto` primitives that are pure over a key the
+caller holds may run on **either side**: a client arm uses them under a key it
+derived with `Kdf`, and a server arm may still use them under a server key.
+
+| `Sky.Core.Crypto` | Members |
+|---|---|
+| AEAD, explicit nonce | `chacha20Poly1305Seal` / `Open`, `xchacha20Poly1305Seal` / `Open` |
+| AEAD, random nonce (a `Task` that draws the nonce from `crypto/rand`) | `xchachaSeal`, `xchachaSealWith`, `aesGcmEncrypt`, `chacha20Encrypt` |
+| AEAD, open | `xchachaOpen`, `xchachaOpenWith`, `aesGcmDecrypt`, `chacha20Decrypt` |
+| Keyed MACs | `hmacSha256`, `hmacSha512` |
+| Password KDFs, RSA signing | `aesKeyFromPassword`, `chachaKeyFromPassword`, `rsaSha256Sign` |
+
+Without the opt-in these stay **server** effects. The reason: by default the
+client holds no key material, so the key such a function takes is a server
+secret (`Secret.fromEnv`, a constant in the source), and running it in the
+client would compile that key, and the code that obtains it, into the wasm
+bundle. Hashes, `constantTimeEqual` and `rsaSha256Verify` run in the client
+either way. `randomBytes` / `randomToken`, `Secret.fromEnv`, and any member
 added to these modules later stay on the server until they are listed
-(`CLIENT_CRYPTO_MEMBERS` in `rust/crates/project/src/spa_partition.rs`; a test
-fails when a new key-holding kernel is not placed).
+(`CLIENT_CRYPTO_MEMBERS` and `CLIENT_CRYPTO_PURE_MEMBERS` in
+`rust/crates/project/src/spa_partition.rs`; a test fails when a new
+key-holding kernel is not placed).
 
 ## What the build refuses
 
@@ -147,6 +166,12 @@ them.
   Go Noise responder (`runtime-go/rt/noisewasm/responder`): the wasm client
   completes the handshake and a transport round trip through two relay steps,
   and each relay request carries only hex.
+- `runtime-go/rt/noise_wasm_interop_test.go` with `noisewasm/aead_js_test.go`:
+  under a key both sides derive with `Kdf`, the wasm build's random-nonce seal
+  (two seals differ), explicit-nonce AEAD and HMAC agree with the native build.
+- `spa_split_flow.rs` `client_crypto_seals_and_macs_in_the_client_under_the_opt_in`:
+  a client arm that seals under a `Kdf` key and a MAC arm are client branches
+  with the opt-in, server branches without it.
 - `runtime-go/rt/noise_wasm_interop_test.go`: a Noise IK (BLAKE2s) handshake
   and a transport round trip between the Go wasm build (under Node.js, with the
   client's own `fetch` kernel) and a native Go responder, and a check that keys

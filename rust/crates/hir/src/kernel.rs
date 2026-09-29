@@ -756,6 +756,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "subscribeTopic",
             "subscribeStream",
             "subscribeWebSocket",
+            "onFragment",
         ],
     ),
     (

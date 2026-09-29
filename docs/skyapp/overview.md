@@ -174,12 +174,17 @@ time the signed-in user changes (session-id rotation, see
 over HTTPS its name is `__Host-sky_sid`. For a per-session key that stays the
 same for the session's whole life, use `Cmd.perform (Live.sessionKey ()) GotKey`.
 
-The point is portability. `init` stays `seed -> …` and **ignores its seed**, so
-the same source still builds for Tui / Cli / Webview (which have no HTTP request
-and skip this hook). The request arrives *only* through this web-only channel —
-which is why using `withRequest` fixes the app's `seed` to `()` (write
-`init : a -> …` or `init : () -> …`; a concrete non-unit seed is rejected). Only
-the Live/web runner consumes it.
+The point is portability. `init` takes `()` on every target (`App.app`, `web`,
+`cli` and `tui` all type it `init : () -> ( model, Cmd msg )`), so the same
+source builds for Tui / Cli / Webview (which have no HTTP request and skip this
+hook). The request arrives *only* through this web-only channel. An `init` that
+takes anything else (`init : Page -> …`) is one type error at the `init` field
+of `App.app`, on every target. Only the Live/web runner consumes the request.
+
+The URL fragment (the text after `#`) never reaches the server, so no request
+hook can read it. Subscribe to it instead: `subscriptions = \_ -> Sub.onFragment
+FragmentChanged` delivers it when the page loads with one and on every change,
+on `web`, `web:app`, desktop and mobile.
 
 At session init the `Sky.Http.Server.Request` carries `method` / `path` /
 `headers` / `params` / `query` / `cookies`. `body` and `remoteAddr` are empty —
