@@ -7096,10 +7096,6 @@ fn websocket_calls_stay_in_the_client() {
         !back.contains("POST /_rpc/"),
         "no WebSocket arm may become an RPC:\n{back}"
     );
-    assert!(
-        back.contains("apiServerRoute") && back.contains("Ws.upgrade"),
-        "the backend must mount the `App.api \"GET /ws\"` upgrade handler:\n{back}"
-    );
 }
 
 /// The WebSocket fixture builds for `--target web:app`: the wasm client links
@@ -7131,9 +7127,17 @@ fn websocket_fixture_builds_both_trees() {
     let ok = out.status.success()
         && split.join("backend/sky-out/app").is_file()
         && dist_has_wasm(&split.join("frontend/dist"));
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&proj);
     assert!(
         ok,
         "the web:app build must produce the backend and the wasm client:\n{log}"
+    );
+    // `withRoutes routes` names ONE table that mixes a page route with the
+    // `App.api "GET /ws"` upgrade: the endpoint must be mounted on the backend
+    // (it used to stay in the client route table, and `/ws` answered 404).
+    assert!(
+        back.contains("spaApiRoutes_") && back.contains("App.apiServerRoute"),
+        "the backend must mount the `App.api \"GET /ws\"` endpoint:\n{back}"
     );
 }

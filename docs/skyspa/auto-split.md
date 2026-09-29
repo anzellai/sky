@@ -829,8 +829,8 @@ runs the server task server-side but hands its **result** to the client, because
 the result Msg is a **client** arm.
 
 **The shape.** A server branch returns `Cmd.perform serverTask ResultMsg` —
-often **through a guard/HOF wrapper** (`requireAdmin model (\_ -> …)`), the shape
-the direct-tuple chain walk of §18 misses — where `serverTask` reaches a real
+directly or **through a guard/HOF wrapper** (`requireAdmin model (\_ -> …)`) —
+where `serverTask` reaches a real
 server effect and `ResultMsg`'s own arm is **client-pure** (a model update over
 the task result):
 
@@ -877,8 +877,11 @@ through the guard-aware walk `collect_guarded_tail_cmd_exprs` — is a **single*
 **Fail-closed.** The branch is not pattern-2 when `ResultMsg`'s arm **reaches a
 server effect** (a deeper chain), the task is a `Std.Native` **client** effect,
 or the command is not a single clean server perform. It is then a **follow-up
-branch** (§20) — its command runs; nothing is discarded. A pattern-2 root's pattern-1 twin (the
-direct-tuple `Reload`/`Reloaded` of §18) is untouched — it stays server-internal.
+branch** (§20) — its command runs; nothing is discarded. Since v0.27.0 the
+direct-tuple shape (`Reload` → `Reloaded` of §18, with no wrapper) is pattern-2
+too: a client-pure `ResultMsg` runs in the client whether or not the perform
+sits behind a wrapper. Only when `ResultMsg`'s argument has no wire codec does
+it still settle server-side as a §18 chain (the build prints a note).
 
 **Runtime.** `runtime-go/rt/spa_perform_notjs.go`'s `Spa_runServerPerform`
 (`Ffi.kernel "Spa_runServerPerform"`, the `spaRunPerform_` alias) walks the

@@ -847,6 +847,16 @@ again (TCP slows the peer), and the heartbeat and the idle reaper treat the
 waiting socket as alive. A socket whose heartbeat pings are answered is never
 closed as idle.
 
+**Client side in a Sky.Spa client (v0.27).** Under `--target web:app` (and the
+other client targets) the same functions run in the wasm client over the
+browser WebSocket API, and an arm that uses them runs in the client, not
+behind an RPC. `Ws.connect "/ws"` connects to the page's own origin (`ws:` /
+`wss:` after the page's scheme), so it passes a strict `connect-src 'self'`;
+serve it from the backend with `App.api "GET /ws"` and the server `upgrade`
+below. A browser socket cannot send request headers (`withHeaders` is an
+`Err`) and may close only with `Normal` or `Custom 3000`-`4999`; the browser
+answers pings itself. See docs/skyspa/overview.md, "WebSocket from the client".
+
 **Server side (Sky.Http.Server.WebSocket):** turn any
 `Sky.Http.Server` route into a WebSocket upgrade endpoint.
 

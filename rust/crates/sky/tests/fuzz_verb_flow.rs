@@ -279,7 +279,9 @@ fn flag_values_before_the_entry_are_not_read_as_the_entry() {
 /// server arm of every pattern shape, with client arms of the same
 /// constructors between them. The harness keeps the `case` order, diffs each
 /// server arm through the split's wire (the whole argument, positionally) and
-/// does not diff a client arm. `Any` chains a command, so it is fenced out.
+/// does not diff a client arm. `Any` performs into `Reported`, a client arm: since
+/// v0.27.0 that continuation runs in the client (a follow-up), not in a server
+/// chain, so `Any` is an ordinary route and is diffed too.
 #[test]
 fn the_split_oracle_diffs_server_arms_that_match_inside_their_arguments() {
     if !required(Need::Go, have_go()) {
@@ -292,7 +294,7 @@ fn the_split_oracle_diffs_server_arms_that_match_inside_their_arguments() {
     let (code, text) = run_fuzz_target(&dir, 200, "web:app");
     assert_eq!(code, 0, "{text}");
     assert!(
-        text.contains("6 checkable branch(es): Report, Pick, Named, Pair, Take, Wrap")
+        text.contains("7 checkable branch(es): Report, Pick, Named, Pair, Take, Wrap, Any")
             && text.contains("split oracle PASS"),
         "the oracle must diff every non-chaining server route:\n{text}"
     );

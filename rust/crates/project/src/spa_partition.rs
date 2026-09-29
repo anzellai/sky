@@ -1421,8 +1421,8 @@ pub struct SpaPartitionReport {
     /// sets already carry the UNION over every server-internal continuation arm.
     pub chaining_branches: Vec<String>,
     /// PATTERN-2 client-result performs (docs/skyspa/auto-split.md). Each
-    /// `(root, result_msg)`: a SERVER branch `root` whose command (through a
-    /// guard/HOF wrapper) is a single `Cmd.perform serverTask result_msg` with a
+    /// `(root, result_msg)`: a SERVER branch `root` whose command (directly or
+    /// through a guard/HOF wrapper) is a single `Cmd.perform serverTask result_msg` with a
     /// server task and a CLIENT-pure `result_msg`. The `root` RPC runs the task
     /// and returns its RESULT; the frontend `Applied<root>` dispatches
     /// `result_msg result` client-side. `result_msg` stays a client arm.
@@ -4312,16 +4312,16 @@ fn compute_server_chaining(
     }
 
     // PATTERN-2 (client-result perform). A server branch pattern-1 did NOT settle
-    // (its `Cmd.perform` is returned THROUGH a guard/HOF wrapper, so the direct
-    // tail walk missed it and it fell to a plain wire branch, with the perform
-    // effect dropped) whose single command is `Cmd.perform serverTask ResultMsg`
+    // (its `Cmd.perform` is returned directly or THROUGH a guard/HOF wrapper, to
+    // a Msg whose arm is CLIENT — pattern-1 leaves those, see the DIRECT perform
+    // rule above) whose single command is `Cmd.perform serverTask ResultMsg`
     // with a SERVER task and a CLIENT-pure `ResultMsg`. The `ResultMsg` result
     // must cross to the client and be dispatched there — the effect runs
     // server-side inside the root's RPC, its RESULT is returned, and the frontend
-    // `Applied<root>` dispatches `ResultMsg result`. This is DISTINCT from
-    // pattern-1 (a direct-tuple chain settling server-side, untouched above) and
-    // from a plain wire branch. FAIL-CLOSED: any shape that is not a single clean
-    // server perform to a client-pure result Msg is left exactly as today.
+    // `Applied<root>` dispatches `ResultMsg result`, which runs on the model the
+    // client holds when it arrives. FAIL-CLOSED: any shape that is not a single
+    // clean server perform to a client-pure result Msg is left to the follow-up
+    // path below.
     let already_owned: HashSet<String> = out
         .chaining_branches
         .iter()
