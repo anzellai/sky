@@ -7,8 +7,8 @@
 // rust/crates/sky/tests/fixtures/spa-rpc-consistency in headless Chromium:
 //
 //   race      Inc twice (slow RPC) -> count=2; a draft typed while Save is in
-//             flight survives the response (SPA-1)
-//   order     the 1st of two RPCs answers last -> the 2nd still wins (SPA-2)
+//             flight is applied after it (a hold RPC holds later Msgs)
+//   order     the 1st of two hold RPCs answers last -> the 2nd still wins
 //   guard     a guarded client Msg is rejected; the server guard sees the
 //             field it reads (SPA-4)
 //   follow-up a server branch's `Cmd.perform … (\_ -> Load)` runs Load (SPA-3)

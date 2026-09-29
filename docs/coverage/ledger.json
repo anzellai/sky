@@ -702,7 +702,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2183,
+    "stdlib_entries": 2184,
     "stdlib_modules": 111,
     "surfaces_covered": 166,
     "surfaces_covered_pct": 93.3,
@@ -13208,7 +13208,7 @@
           ]
         },
         "Sky.Core.WebSocket": {
-          "count": 9,
+          "count": 8,
           "symbols": [
             "WebSocketCfg",
             "closeWithCode",
@@ -13216,7 +13216,6 @@
             "forEachMessage",
             "onClose",
             "onError",
-            "onMessage",
             "onOpen",
             "receive"
           ]
@@ -13814,7 +13813,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 18,
+          "count": 19,
           "symbols": [
             "AppConfig",
             "Route",
@@ -13823,6 +13822,7 @@
             "route",
             "routeInt",
             "rpc",
+            "rpcHold",
             "rpcWith",
             "withGuard",
             "withHead",
@@ -14072,7 +14072,7 @@
         }
       },
       "count": 667,
-      "pct_of_denominator": 30.6
+      "pct_of_denominator": 30.5
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14318,7 +14318,7 @@
           ]
         },
         "Sky.Core.WebSocket": {
-          "count": 12,
+          "count": 11,
           "symbols": [
             "CloseCode",
             "WebSocket",
@@ -14329,7 +14329,6 @@
             "forEachMessage",
             "onClose",
             "onError",
-            "onMessage",
             "onOpen",
             "receive"
           ]
@@ -14997,7 +14996,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 18,
+          "count": 19,
           "symbols": [
             "AppConfig",
             "Route",
@@ -15006,6 +15005,7 @@
             "route",
             "routeInt",
             "rpc",
+            "rpcHold",
             "rpcWith",
             "withGuard",
             "withHead",
@@ -15291,10 +15291,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 56,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 375,
-      "refs_qualified": 351,
+      "refs_generous": 379,
+      "refs_qualified": 355,
       "role": "Layer2",
-      "sky_files": 166,
+      "sky_files": 168,
       "sky_toml_sections": []
     },
     {

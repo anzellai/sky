@@ -1077,7 +1077,7 @@ fn cmd_spa_partition(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
-    match project::spa_partition::analyze(
+    match project::spa_split::analyze_project(
         &repo_root,
         &project_dir,
         entry_module_name(file).as_deref(),
@@ -2075,16 +2075,18 @@ fn is_api_route_head(head: &str, q: &str) -> bool {
     head == format!("{q}.api") || head == "App.api" || head == "Std.App.api"
 }
 
-/// Names of ENTRY top-level bindings whose value is a list literal of ONLY
-/// `App.api …` elements — the "api route table" bindings (`apiRoutes = [ App.api
-/// … ]`, the sky-lang.org shape). Used by [`partition_routes`] to route such a
-/// binding, referenced from `withRoutes`, to the backend-only api mount rather
-/// than the client route table. A binding that mixes `App.api` with page routes
-/// is NOT classified here (it is left on the client side, where the page routes
-/// belong; splitting a mixed binding would need to rewrite its declaration).
-fn api_route_binding_names(src: &str, q: &str) -> std::collections::HashSet<String> {
+/// ENTRY top-level bindings whose value is a list literal, with its elements —
+/// the route tables `withRoutes` may name (`apiRoutes = [ App.api … ]`, the
+/// sky-lang.org shape, or a table that MIXES page routes with `App.api`
+/// endpoints). Used by [`partition_routes`]: a table of only `App.api` elements
+/// goes to the backend-only api mount by name; a mixed table is partitioned
+/// element by element (its page routes to the client, its api endpoints to the
+/// backend). Before v0.27.0 a mixed table stayed whole on the client side, and
+/// its api endpoints were silently not mounted (a `GET /ws` upgrade answered
+/// 404).
+fn route_list_bindings(src: &str) -> std::collections::HashMap<String, Vec<String>> {
     let lines: Vec<&str> = src.lines().collect();
-    let mut out = std::collections::HashSet::new();
+    let mut out = std::collections::HashMap::new();
     let mut i = 0usize;
     while i < lines.len() {
         let line = lines[i];
@@ -2116,12 +2118,8 @@ fn api_route_binding_names(src: &str, q: &str) -> std::collections::HashSet<Stri
                 j += 1;
             }
             if let Some(elems) = split_list_elements(body.trim()) {
-                if !elems.is_empty()
-                    && elems
-                        .iter()
-                        .all(|e| is_api_route_head(route_element_head(e), q))
-                {
-                    out.insert(name);
+                if !elems.is_empty() {
+                    out.insert(name, elems);
                 }
             }
             i = j;
@@ -2158,7 +2156,7 @@ fn strip_line_comment_run(s: &str) -> String {
 /// `(routes_arg, None)` when no api routes are found (no behaviour change for the
 /// common page-only app).
 fn partition_routes(routes_arg: &str, src: &str, q: &str) -> (String, Option<String>) {
-    let api_bindings = api_route_binding_names(src, q);
+    let list_bindings = route_list_bindings(src);
     let stripped = strip_outer_parens(routes_arg);
     // Normalise a cons chain into `++` of singletons so `withRoutes` written
     // `App.route "/" Home :: apiRoutes` (idiomatic prepend) partitions the same as
@@ -2187,8 +2185,21 @@ fn partition_routes(routes_arg: &str, src: &str, q: &str) -> (String, Option<Str
             if !api_elems.is_empty() {
                 api_parts.push(format!("[ {} ]", api_elems.join(", ")));
             }
-        } else if api_bindings.contains(o.trim()) {
-            api_parts.push(o);
+        } else if let Some(elems) = list_bindings.get(o.trim()) {
+            let is_api = |e: &String| is_api_route_head(route_element_head(e), q);
+            if elems.iter().all(is_api) {
+                // An api-only table: mount it on the backend by name.
+                api_parts.push(o);
+            } else if elems.iter().any(is_api) {
+                // A mixed table: its page routes to the client, its api
+                // endpoints to the backend, element by element.
+                let page: Vec<String> = elems.iter().filter(|e| !is_api(e)).cloned().collect();
+                let api: Vec<String> = elems.iter().filter(|e| is_api(e)).cloned().collect();
+                client_parts.push(format!("[ {} ]", page.join(", ")));
+                api_parts.push(format!("[ {} ]", api.join(", ")));
+            } else {
+                client_parts.push(o);
+            }
         } else {
             client_parts.push(o);
         }
@@ -13930,6 +13941,31 @@ mod tests {
     // `App.api` binding with cons (`App.route "/" Home :: apiRoutes`) must send the
     // api binding to the backend mount, not leave the whole cons expression
     // client-side (which dropped the api routes → no same-port JSON API).
+    // A `withRoutes` that names ONE table mixing page routes with `App.api`
+    // endpoints (`routes = [ App.route "/" Home, App.api "GET /ws" h ]`) must
+    // mount the endpoints on the backend. The whole table used to stay on the
+    // client side, so the endpoint was silently not mounted (404).
+    #[test]
+    fn partition_routes_splits_a_named_table_that_mixes_pages_and_api() {
+        let src = "routes =\n    [ App.route \"/\" Home, App.api \"GET /ws\" wsHandler ]\n";
+        let (client, api) = partition_routes("routes", src, "App");
+        assert_eq!(
+            client, "[ App.route \"/\" Home ]",
+            "the page route stays client-side"
+        );
+        assert_eq!(
+            api.as_deref(),
+            Some("[ App.api \"GET /ws\" wsHandler ]"),
+            "the api endpoint must mount on the backend"
+        );
+        // A page-only table stays whole, by name.
+        let src = "routes =\n    [ App.route \"/\" Home ]\n";
+        assert_eq!(
+            partition_routes("routes", src, "App"),
+            ("routes".to_string(), None)
+        );
+    }
+
     #[test]
     fn partition_routes_handles_cons_of_page_route_and_api_binding() {
         let src = "apiRoutes =\n    [ App.api \"/health\" h ]\n";

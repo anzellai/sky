@@ -127,6 +127,34 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### ⚠ Breaking changes
 
+- **Sky.Spa: a server RPC no longer replays the Msgs that arrived during it.**
+  The client ran one RPC at a time, applied every Msg that arrived meanwhile,
+  and on the answer re-ran those Msgs on top of it, without their Cmds. Now
+  every Msg's `update` runs exactly once, in arrival order, with its Cmds, as
+  on Sky.Live. A server arm whose own model write reads no server data is an
+  async RPC: the client makes that write when the Msg runs, the request goes out
+  at once, and the answer arrives later as its own Msg. A server arm whose own
+  write needs server data (an inline `Task.run`, a server value) is a hold RPC:
+  Msgs that arrive while it is in flight now WAIT until it answers, as they wait
+  on a Sky.Live session during a synchronous update, instead of running at once
+  and again later. Put a long wait (a long poll, a slow relay read) in a
+  `Cmd.perform` from an arm whose write reads no server data. The contract is
+  in `docs/skyspa/overview.md`, "Msg order and server calls".
+- **`Spa.rpc` / `Spa.rpcWith` take the request body as a value.** The
+  generated frontend builds it from the model the Msg ran on; `build : model ->
+  body` is now `body : body`, and `rpcWith`'s residual is a `Cmd msg`. New
+  `Spa.rpcHold` sends a hold RPC. Generated code needs no change (rebuild);
+  a hand-written call passes the body instead of a function.
+- **Sky.Spa: a continuation whose arm is client runs in the client.** A server
+  arm `Cmd.perform serverTask ResultMsg` whose `ResultMsg` arm reaches no server
+  effect used to settle on the server inside the RPC, from the request's copy
+  of the model, and its write overwrote what the client did meanwhile. The RPC
+  now answers with the task's result and the client runs `ResultMsg` when it
+  arrives, on the model it holds then. `ResultMsg`'s argument now crosses the
+  wire; when it has no wire codec, the continuation still settles on the server
+  and the build says so in a note. `sky spa-partition` and `sky doc --diagram`
+  report the split as it is built, with that rule applied.
+
 - **`Std.Bundle.Permission` has six new constructors** (`LocationAlways`,
   `PhotoLibrary`, `Contacts`, `FaceId`, `LocalNetwork`, `Bluetooth`). A
   `case` over `Permission` in app code must handle them.
@@ -427,6 +455,23 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `scripts/ui-canvas-terminal-e2e.sh`.)
 
 ### Added
+
+- **Sky.Spa: several server RPCs in flight together.** Independent server
+  Msgs no longer queue behind each other: an async RPC is sent when its Msg
+  runs, and results run in the order they arrive. Two 1.5 s calls answer in
+  about 1.5 s (`scripts/spa-rpc-order-e2e.sh`, Chromium and WebKit).
+- **Sky.Spa: the client holds its own WebSocket.** `Sky.Core.WebSocket`
+  (`connect`, `send`, `sendBinary`, `receive`, `receiveWithin`,
+  `forEachMessage`, `close`, `closeWithCode` and the `onOpen` / `onMessage` /
+  `onClose` / `onError` Subs) runs in the wasm client over the browser
+  WebSocket API (`runtime-go/rt/websocket_wasm.go`), and the split classifies it
+  as a client effect. `connect "/ws"` is same-origin (`ws:`/`wss:` after the
+  page), so it passes a strict `connect-src 'self'`; serve it with
+  `App.api "GET /ws"` and `Ws.upgrade`. A browser socket cannot send request
+  headers or close with a code other than `Normal` / `Custom 3000-4999`; both
+  are an `Err`, not ignored. Text and binary frames through a Sub-read and a
+  Task-read socket are proven in Chromium and WebKit under `SKY_CSP=strict`
+  (`scripts/spa-websocket-e2e.sh`).
 
 - **Sky.Spa: keys on the device with `App.withClientCrypto` /
   `Spa.withClientCrypto`.** By default the split runs every Std.Crypto
@@ -1009,6 +1054,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **Sky.Spa: a client arm that used a Noise state failed after an RPC.** Under
+  `withClientCrypto`, a `Seal` (a client arm that calls `Noise.encrypt` on the
+  model's transport) clicked while a server RPC was in flight showed
+  `STALE after 0 seals: InvalidInput: Noise.encrypt: this state value was
+  already used` once the RPC answered, where Sky.Live showed `rpc done
+  SEALS=1`: the client re-ran the arm on the request's copy of the model, with
+  the spent transport. It now runs once (`TestSpaSched_ClientArmDuringRpcRunsOnce`,
+  `scripts/spa-rpc-order-e2e.sh`).
+- **Sky.Spa: a timer that starts a call only when none runs stalled.** Ticks
+  that arrived during a call were re-run after the call's result, without
+  their Cmds: the first saw `busy = False`, set it, and its new call never ran,
+  so the page stayed at `BUSY=True STARTED=2 DONE=1` while Sky.Live kept
+  calling. Each tick now runs once, when it arrives (`TestSpaSched_TimerKeepsCalling`;
+  web:app and Sky.Live reach the same counts in `scripts/spa-rpc-order-e2e.sh`).
+- **A `withRoutes` table that mixed page routes and `App.api` endpoints did
+  not mount the endpoints on a client target.** `App.withRoutes routes`, with
+  `routes = [ App.route "/" Home, App.api "GET /ws" h ]`, kept the whole table
+  on the client side, and the backend answered 404 for `/ws`. The table is now
+  split element by element (`partition_routes_splits_a_named_table_that_mixes_pages_and_api`).
 - **`Native.notify` waits for the notification prompt, and a refusal is
   `Err PermissionDenied`.** The Android shell's notify bridge was a
   synchronous JavaScript call: at first launch it answered `Ok` while the

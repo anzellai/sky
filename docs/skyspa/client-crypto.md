@@ -98,9 +98,18 @@ with its result, and the client runs `GotEcho` on the model it holds. Every
 step has that shape, whatever the next client arm does (before v0.27.0 a step
 whose client arm ended with `Cmd.none` was run on the server as a chain, and
 the build refused it because the chain would hold `tr`). A relay arm that
-also writes the model (`{ model | status = "sending" }`) answers with the
-write and the result together; one that reads or writes a key field is
-refused.
+also writes the model (`{ model | status = "sending" }`) makes that write in
+the client when the Msg runs, and its answer carries the result; one that
+reads or writes a key field is refused.
+
+Client arms that use the transport are safe while a relay step is in flight:
+every Msg's `update` runs exactly once, in arrival order
+([overview.md](overview.md), "Msg order and server calls"). A `Seal` clicked
+during a relay step runs once, on the transport the model holds, and the
+relay's result runs when it arrives. Before v0.27.0 the client re-ran such an
+arm on top of the relay's answer and the Noise guard refused the spent state
+("this state value was already used"). The relay steps can also overlap: a
+long read and a send are separate RPCs in flight together.
 
 A `Maybe` key field needs no type annotation on `init` or `update`: the build
 reads its type from the model's `type alias`. The first paint's encoder is

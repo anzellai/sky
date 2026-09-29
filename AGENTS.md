@@ -164,7 +164,14 @@ Task's `Err` (`docs/skylive/embedded.md`). To also STOP it, use `App.serve app`
 (`host:port`; port `0` picks a free one) and `App.stop running` (graceful,
 bounded, idempotent); two served apps keep their own sessions and store, and the
 Sky Console is one per process. A server that needs the frame type uses
-`Ws.withOnFrame` (`Text` / `Binary`) instead of `withOnMessage`.
+`Ws.withOnFrame` (`Text` / `Binary`) instead of `withOnMessage`. A Sky.Spa
+client (`web:app` and the other client targets) holds its own socket over the
+browser WebSocket API: `WebSocket.connect "/ws"` runs in the client and is
+same-origin (it passes `connect-src 'self'`); serve it with `App.api "GET /ws"`
+and `Ws.upgrade`. A Sky.Spa client runs every Msg once, in arrival order, and
+several server RPCs can be in flight together; an arm whose model write needs
+server data holds later Msgs until it answers (`docs/skyspa/overview.md`, "Msg
+order and server calls").
 
 **A host that cannot keep cookies** (a native shell whose custom scheme drops
 `Set-Cookie`, some embedded web views) uses `App.withSessionTransport

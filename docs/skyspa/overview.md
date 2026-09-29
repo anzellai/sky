@@ -192,6 +192,106 @@ work, or a static host) the client applies it once at boot, from the first
 model, as Sky.Live does on its first load. Before v0.27.0 the head was dropped
 on the static shell.
 
+## Msg order and server calls — the ordering contract
+
+The client keeps Sky.Live's TEA contract: **every Msg's `update` runs exactly
+once, in arrival order, and the Cmds it returns run.** A server branch (an
+auto-split `POST /_rpc/<Msg>`) keeps that contract; it never makes another Msg
+run twice or out of order, and it never drops a Cmd. There are two kinds, and
+the split picks the kind from the arm (`runtime-go/rt/spa_rpcqueue.go`):
+
+- **Async** (`Spa.rpc`) — the arm's own model write is empty or reads no server
+  data. The client runs that write itself when the Msg runs, exactly as Sky.Live
+  does, and sends the request at once. The response comes back later as a Msg of
+  its own (`Applied<Msg>`, then the result Msg of a `Cmd.perform serverTask
+  ResultMsg`) and runs in arrival order, like any `Cmd.perform` result. Msgs that
+  arrive meanwhile run at once, once each, against the current model, with their
+  Cmds. Several async RPCs can be in flight together, and their results run in
+  the order they arrive.
+
+  ```elm
+  Poll ->                                    -- async: the client sets `polling`
+      ( { model | polling = True }
+      , Cmd.perform (Relay.read model.room) Got )
+
+  Got (Ok data) ->                           -- a client arm: runs when the read
+      ( { model | polling = False, inbox = data :: model.inbox }, Cmd.none )
+  ```
+
+- **Hold** (`Spa.rpcHold`) — the arm's own model write needs server data (an
+  inline `Task.run`, a server-tainted value), or its continuation arms settle on
+  the server (a server-internal chain). Sky.Live runs such an update as one
+  synchronous step: nothing else runs on the session until it returns. The client
+  does the same: Msgs that arrive while a hold RPC is in flight wait, in order,
+  and run once each, with their Cmds, after its response. The response's
+  follow-up Msgs (the results of the branch's own server Cmds) run first. So two
+  quick `Inc` clicks count to 2, and a draft typed during a `Save` is applied
+  after it.
+
+What this rules out, and why it matters: before v0.27.0 the client applied Msgs
+during an RPC and then re-ran them on top of the response. A client arm that
+spends a single-use value (a `Noise.encrypt` on the model's transport) failed
+the second time ("this state value was already used"), and a Msg that decided
+on a field the response changed (a timer tick that starts a call when `busy`
+is False) decided again, differently, and its new Cmd never ran.
+
+Per-arm guarantees, in one list:
+
+- a client arm runs once, when its Msg arrives, with its Cmds;
+- an async server arm's own write runs in the client when its Msg arrives; its
+  result runs when the response arrives;
+- a hold server arm holds every later Msg until its response has run;
+- a server arm's continuation whose own arm is client (reaches no server
+  effect) runs in the client when the task's result arrives, on the model the
+  client holds then, never on the server from a send-time copy;
+- a request is built from the model the Msg ran on, and a retry re-sends the
+  same request (the backend's dedupe cache answers it without running the
+  effect twice).
+
+**Write a long wait as an async arm.** A long poll or a slow relay read belongs
+in a `Cmd.perform` from an arm whose model write reads no server data; the
+client then keeps running while it waits, and other server calls go out beside
+it. An arm that writes a server value into the model holds the client for its
+whole round trip.
+
+## WebSocket from the client
+
+A Sky.Spa client can hold its own WebSocket: `Sky.Core.WebSocket` (`connect`,
+`send`, `sendBinary`, `receive`, `receiveWithin`, `forEachMessage`, `close`,
+and the `onOpen` / `onMessage` / `onClose` / `onError` Subs) runs in the wasm
+client over the browser WebSocket API. The split classifies it as a client
+effect, so an arm that connects or sends runs in the client, not behind an RPC.
+
+```elm
+Connect ->
+    ( model, Cmd.perform (WebSocket.connect "/ws") Connected )
+
+subscriptions model =
+    case model.sock of
+        Just s -> WebSocket.onMessage s Got
+        Nothing -> Sub.none
+```
+
+A path URL (`"/ws"`) connects to the page's own origin (`ws:` or `wss:` after
+the page's scheme), so it passes a strict `connect-src 'self'`. Serve it from
+the backend with the server API, mounted with `App.api`:
+
+```elm
+wsHandler req =
+    Ws.upgrade req (Ws.defaultCfg |> Ws.withOnFrame echo)
+
+App.withRoutes [ App.route "/" Home, App.api "GET /ws" wsHandler ]
+```
+
+The upgrade's origin check admits the page's own origin; in production set
+`Ws.withOriginPatterns`. What a browser socket cannot do returns an `Err`
+instead of being ignored: request headers (`withHeaders`; the browser sends the
+session cookie itself, or use a query parameter) and a close code other than
+`Normal` or `Custom 3000-4999`. The browser answers pings itself, so
+`withPingInterval` has no effect. One reader per socket, as on the server: a
+Sub or a Task, not both. Proven in Chromium and WebKit by
+`scripts/spa-websocket-e2e.sh`.
+
 ## Routing — `App.withRoutes` (History API)
 
 Routing is opt-in via the `App.withX` builders (a single-view app needs none).
@@ -412,12 +512,13 @@ These are real, current scope boundaries — not roadmap optimism:
   The compiler-derived client/server partition ("no hand-written API routes") is
   the v2 target, specified in [auto-split.md](auto-split.md); v1-dialect apps are
   forward-compatible with it.
-- **Client effect surface is bounded in v1.** Client effects run through a
+- **Client effect surface is bounded.** Client effects run through a
   single-threaded wasm interpreter: `Cmd.perform` (sync kernels like
-  `Time.now` / `Random` inline; async `Http` via `fetch`) and `Sub.every` timers.
-  `Cmd.publish` is a documented client no-op (no peer/session bus in a single
-  tab); `Sub.subscribeTopic` / stream / websocket subscriptions are not wired on
-  the client in v1.
+  `Time.now` / `Random` inline; async `Http` via `fetch`), `Sub.every` timers,
+  `Sub.subscribeTopic` (an `EventSource` on the backend's push endpoint) and
+  `Sky.Core.WebSocket` (the browser WebSocket API, above). `Cmd.publish` is a
+  documented client no-op (no peer/session bus in a single tab);
+  `Http.Stream` subscriptions are not wired on the client.
 
 ## See also
 

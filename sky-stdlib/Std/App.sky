@@ -311,9 +311,11 @@ routeParam path make =
 -- | A raw HTTP endpoint alongside the TEA routes: `api "/webhook" handler`,
 -- where `handler : Request -> Task Error Response` (JSON/webhook endpoints that
 -- return a `Response` directly, not a `page`). Attach it in [`withRoutes`].
--- SERVER-side, for the `web`/`desktop` (Live) targets. The terminal backends
--- drop it; the client (Spa) targets cannot carry it at all — the handler is
--- server-side, so keep raw endpoints in a `web`-target app.
+-- SERVER-side: the `web`/`desktop` (Live) targets serve it, and on the client
+-- (Spa) targets the split mounts it on the generated backend (the handler never
+-- reaches the wasm client), so a `web:app` client can call it same-origin, or
+-- open a WebSocket to an `api "GET /ws"` that upgrades. The terminal backends
+-- drop it.
 api : String -> (Request -> Task Error Response) -> Route page
 api path handler =
     RouteApi path handler

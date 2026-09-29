@@ -1,161 +1,173 @@
 package rt
 
 import (
-	"fmt"
 	"strconv"
 )
 
-// spa_rpcqueue.go — the Sky.Spa client's RPC consistency core (portable, no
-// build tag, so it is unit-tested on the host; the js wiring that sends a job
-// and paints the result lives in live_wasm.go).
+// spa_rpcqueue.go — the Sky.Spa client's Msg scheduler: the order in which Msgs
+// and server-branch RPC results run through `update` (portable, no build tag,
+// so it is unit-tested on the host; the js wiring that sends a request and
+// paints the result lives in live_wasm.go).
 //
-// Why it exists. Sky.Live runs the whole TEA loop on the server: every Msg is
-// applied to the current model, in the order it was dispatched, one at a time.
-// The auto-split moves each SERVER branch behind a `POST /_rpc/<Msg>` round
-// trip, and before this core the client got that ordering wrong three ways:
+// The contract is Sky.Live's TEA loop: every Msg's `update` runs EXACTLY ONCE,
+// in arrival order, and the Cmd it returns runs. A server branch does not break
+// that contract; it is a Msg whose `update` runs on the backend:
 //
-//   - two quick server Msgs each built their request from the model at DISPATCH
-//     time, so the second request carried a stale read-set (Inc twice -> 1);
-//   - every perform ran on its own goroutine and dispatched in COMPLETION order,
-//     so a slow first response overwrote a fast second one (name "a" after "ab");
-//   - a response folded its write-set over the CURRENT model, so a client edit
-//     made while the request was in flight was erased (a draft typed during Save).
+//   - An ASYNC RPC (the default) behaves like a `Cmd.perform` whose task is the
+//     round trip. The server branch's own model write, if any, was computed in
+//     the client when the Msg ran (the auto-split emits it there when it reads
+//     no server data). The request is sent at once; several RPCs can be in
+//     flight together. The response arrives as its own Msg (Applied<Msg>) and
+//     joins the queue in arrival order, like any perform result. Msgs that
+//     arrive while it is in flight run at once, against the current model, with
+//     their Cmds.
+//   - A HOLD RPC is a server branch whose own model write needs server data
+//     (an inline `Task.run`, a server-tainted value), or whose continuation
+//     chain settles on the server. Sky.Live runs such an update as one
+//     synchronous step: nothing else runs on the session until it returns. The
+//     client does the same: Msgs that arrive while a hold RPC is in flight wait
+//     in the queue, in order, and run (once, with their Cmds) after the response
+//     has been applied. The response's follow-up Msgs run first, as the
+//     completions of the server branch's own Cmds.
 //
-// The fix gives the client Live's semantics exactly:
+// There is no optimistic apply, no snapshot and no replay. Before this the
+// client applied Msgs during an RPC, then re-applied them on top of the answer.
+// A re-run is not safe (a `Noise.encrypt` on a single-use state fails the
+// second time), it moved the re-run Msgs after the result (a timer tick that
+// saw `busy = True` saw `busy = False` in the replay), and it dropped the
+// re-run Msgs' Cmds. Every Msg now runs once.
 //
-//  1. Server-branch RPCs are SERIALISED per client: one job in flight, the rest
-//     queued in dispatch order.
-//  2. A job's request is built when it is SENT, from the then-current model
-//     (`mk snapshot rid`), never from the model at dispatch.
-//  3. While a job is in flight every other Msg the client dispatches is applied
-//     optimistically (the user sees it at once) AND recorded. When the response
-//     arrives, the result Msg is applied to the SNAPSHOT the request was built
-//     from — the model Live would have held at that point — and the recorded
-//     Msgs are then REPLAYED on top, in order. The result is the model Live
-//     computes for the same Msg sequence: a field the server branch writes takes
-//     the server's value, and every later client edit is re-applied after it.
-//     Replay is sound because a client arm is pure (the auto-split rule: pure ->
-//     client, any effect -> server), so re-running it only recomputes a model;
-//     its Cmd already ran on the first application and is discarded on replay.
-//
-// Each job carries a request id (`rid`) that is reused on a retry, so the
-// backend can answer a re-sent request from its dedupe cache instead of running
-// a non-idempotent effect twice (spa_rpc_dedupe.go).
+// Each RPC carries a request id (`rid`) that a retry reuses, so the backend
+// answers a re-sent request from its dedupe cache instead of running a
+// non-idempotent effect twice (spa_rpc_dedupe.go).
 
-// spaRpcJob is one queued server-branch RPC.
+// spaRpcJob is one server-branch RPC in flight.
 type spaRpcJob struct {
-	// mk builds the request task from the model snapshot + the request id:
-	// `model -> String -> Task Error a` (the generated `Spa.rpc` wraps the
-	// branch's read-set build, the shared codec and the POST).
+	// mk builds the request task from the request id: `String -> Task Error a`
+	// (the generated `Spa.rpc` has already encoded the read-set + Msg args with
+	// the shared codec, from the model the Msg ran on).
 	mk any
 	// toMsg maps the RPC Result to the Applied<Msg> constructor.
 	toMsg any
-	// residual is the optional CLIENT part of the server branch's command
-	// (`model -> Cmd msg`, a Std.Native effect), run with the snapshot when the
-	// job is sent (Spa.rpcWith).
-	residual any
+	// hold is true for a hold RPC: later Msgs wait until it answers.
+	hold bool
 	// rid is the stable request id, reused verbatim by every retry.
 	rid string
-	// sent is true once the job left the queue head for the network.
-	sent bool
-	// snapshot is the model the request was built from (set when sent).
-	snapshot any
-	// log is every Msg the client dispatched after the job was sent, in order.
-	log []any
 }
 
-// spaRpcQueue is the per-client FIFO of server-branch RPCs. jobs[0] is the job
-// in flight once it is sent.
-type spaRpcQueue struct {
-	jobs  []*spaRpcJob
-	nonce string
-	seq   int
+// spaQueued is one Msg waiting to run. urgent marks a runtime-internal Msg
+// that runs ahead of a hold: the hold RPC's own result (or its transport-error
+// report), which must run to release the hold.
+type spaQueued struct {
+	msg    any
+	urgent bool
 }
 
-// newSpaRpcQueue builds a queue whose request ids are `<nonce>-<seq>`. The
+// spaSched is the per-client Msg scheduler.
+type spaSched struct {
+	queue    []spaQueued
+	hold     *spaRpcJob
+	running  bool
+	inflight map[string]*spaRpcJob
+	nonce    string
+	seq      int
+}
+
+// newSpaSched builds a scheduler whose request ids are `<nonce>-<seq>`. The
 // nonce is a per-page-load random value (the js driver supplies it), so ids
 // from two tabs or two reloads never collide.
-func newSpaRpcQueue(nonce string) *spaRpcQueue {
-	return &spaRpcQueue{nonce: nonce}
+func newSpaSched(nonce string) *spaSched {
+	return &spaSched{nonce: nonce, inflight: map[string]*spaRpcJob{}}
 }
 
-// enqueue appends a job built from an `rpc` Cmd leaf and returns it.
-func (q *spaRpcQueue) enqueue(mk, residual, toMsg any) *spaRpcJob {
-	q.seq++
-	j := &spaRpcJob{mk: mk, residual: residual, toMsg: toMsg, rid: q.nonce + "-" + strconv.Itoa(q.seq)}
-	q.jobs = append(q.jobs, j)
-	return j
+// dispatch queues msg behind every Msg that arrived before it and runs the
+// queue. run is the TEA step (update, render, Cmds, subscriptions).
+func (s *spaSched) dispatch(msg any, run func(any)) {
+	s.queue = append(s.queue, spaQueued{msg: msg})
+	s.drain(run)
 }
 
-// pending reports whether any server-branch RPC is queued or in flight — i.e.
-// whether the model still lacks a write the server has not answered yet.
-func (q *spaRpcQueue) pending() bool {
-	return len(q.jobs) > 0
-}
-
-// inFlight returns the job currently on the network, or nil.
-func (q *spaRpcQueue) inFlight() *spaRpcJob {
-	if len(q.jobs) > 0 && q.jobs[0].sent {
-		return q.jobs[0]
+// dispatchFirst puts msgs at the HEAD of the queue, in order, and runs the
+// queue: the follow-up Msgs of a server branch, which are the completions of
+// its own Cmds and run before the Msgs that waited behind it.
+func (s *spaSched) dispatchFirst(msgs []any, run func(any)) {
+	if len(msgs) == 0 {
+		return
 	}
-	return nil
+	head := make([]spaQueued, 0, len(msgs)+len(s.queue))
+	for _, m := range msgs {
+		head = append(head, spaQueued{msg: m})
+	}
+	s.queue = append(head, s.queue...)
+	s.drain(run)
 }
 
-// startHead marks the queue head as sent with `model` as its snapshot and
-// returns it — or nil when a job is already in flight or the queue is empty.
-// The caller then builds + sends the request from job.snapshot.
-func (q *spaRpcQueue) startHead(model any) *spaRpcJob {
-	if len(q.jobs) == 0 || q.jobs[0].sent {
-		return nil
+// drain runs queued Msgs in order until the queue is empty or a hold RPC is in
+// flight. It is not re-entrant: a Msg dispatched while a step runs (a DOM event
+// a render fires, a follow-up) is queued and run by the outer loop, after the
+// current step.
+func (s *spaSched) drain(run func(any)) {
+	if s.running {
+		return
 	}
-	j := q.jobs[0]
-	j.sent = true
-	j.snapshot = model
-	j.log = nil
-	return j
-}
-
-// record appends a dispatched Msg to the in-flight job's replay log. A no-op
-// when nothing is in flight (the Msg then needs no rebase).
-func (q *spaRpcQueue) record(msg any) {
-	if j := q.inFlight(); j != nil {
-		j.log = append(j.log, msg)
-	}
-}
-
-// complete settles the in-flight job with its result Msg. It applies `result`
-// to the job's snapshot with `apply` (the unguarded update — a result Msg is
-// runtime-internal), then replays the recorded Msgs with `replay` (the guarded
-// update, so a replayed Msg is re-checked against the model Live would hold).
-// It returns the rebased model and the result Msg's Cmd (which the caller must
-// interpret: it is new work, e.g. a follow-up the server returned). The job is
-// removed from the queue. If the replay panics (a client arm that is not pure
-// after all), it falls back to applying `result` to `current` — the pre-fix
-// behaviour — and returns the recovered panic in err so the caller reports it.
-func (q *spaRpcQueue) complete(
-	result, current any,
-	apply func(msg, model any) SkyTuple2,
-	replay func(msg, model any) SkyTuple2,
-) (model any, cmd any, err error) {
-	j := q.inFlight()
-	if j == nil {
-		pair := apply(result, current)
-		return pair.V0, pair.V1, nil
-	}
-	q.jobs = q.jobs[1:]
-	defer func() {
-		if r := recover(); r != nil {
-			pair := apply(result, current)
-			model, cmd = pair.V0, pair.V1
-			err = fmt.Errorf("rpc rebase replay panicked: %v", r)
+	s.running = true
+	defer func() { s.running = false }()
+	for len(s.queue) > 0 {
+		if s.hold != nil && !s.queue[0].urgent {
+			return
 		}
-	}()
-	pair := apply(result, j.snapshot)
-	m := pair.V0
-	for _, msg := range j.log {
-		m = replay(msg, m).V0
+		q := s.queue[0]
+		s.queue = s.queue[1:]
+		run(q.msg)
 	}
-	return m, pair.V1, nil
+}
+
+// issue registers an RPC the running step's Cmd started and returns its job.
+// A hold RPC holds the queue from now until it settles.
+func (s *spaSched) issue(mk, toMsg any, hold bool) *spaRpcJob {
+	s.seq++
+	j := &spaRpcJob{mk: mk, toMsg: toMsg, hold: hold, rid: s.nonce + "-" + strconv.Itoa(s.seq)}
+	s.inflight[j.rid] = j
+	if hold && s.hold == nil {
+		s.hold = j
+	}
+	return j
+}
+
+// settle delivers an RPC's result Msg. An async result joins the queue in
+// arrival order. A hold result runs first and releases the hold, and the Msgs
+// that waited behind it then run in order.
+func (s *spaSched) settle(j *spaRpcJob, resultMsg any, run func(any)) {
+	delete(s.inflight, j.rid)
+	if s.hold == j {
+		s.hold = nil
+		s.queue = append([]spaQueued{{msg: resultMsg, urgent: true}}, s.queue...)
+	} else {
+		s.queue = append(s.queue, spaQueued{msg: resultMsg})
+	}
+	s.drain(run)
+}
+
+// report delivers a transport-error Msg for an RPC that stays in flight (a
+// network failure the Retry overlay will re-send). A hold RPC's report runs
+// ahead of the Msgs it holds, so the app can show the failure; the hold stays.
+func (s *spaSched) report(j *spaRpcJob, errMsg any, run func(any)) {
+	if s.hold == j {
+		s.queue = append([]spaQueued{{msg: errMsg, urgent: true}}, s.queue...)
+	} else {
+		s.queue = append(s.queue, spaQueued{msg: errMsg})
+	}
+	s.drain(run)
+}
+
+// pending reports whether any server-branch RPC is in flight.
+func (s *spaSched) pending() bool {
+	return len(s.inflight) > 0
+}
+
+// held reports whether a hold RPC is in flight (later Msgs wait).
+func (s *spaSched) held() bool {
+	return s.hold != nil
 }
 
 // spaGuardedUpdate runs `guard msg model` (when set) before `update`, the

@@ -240,6 +240,14 @@ jobs:
           npx playwright install --with-deps webkit
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
+      # Sky.Spa Msg order: each Msg runs once, in arrival order, with its Cmds,
+      # as on Sky.Live (web:app compared with Live); RPCs overlap; the wasm
+      # client holds its own WebSocket. Chromium + WebKit, strict CSP.
+      - name: Gate — Sky.Spa Msg order + client WebSocket e2e (strict CSP)
+        run: |
+          set -euo pipefail
+          scripts/spa-rpc-order-e2e.sh
+          scripts/spa-websocket-e2e.sh
       # Sky.Live without cookies: the header session transport in a browser
       # that blocks every cookie — counter, pushes, a dropped stream, a
       # sign-in rotation and the SSE ticket fallback, strict CSP.

@@ -3,12 +3,14 @@ module Main exposing (main)
 -- Server-internal effect chaining, both directions, in one Sky.Spa app:
 --
 --   * `Reload` is a SERVER branch (its `Cmd.perform` task reads a File). Its
---     `toMsg` `Reloaded` is dispatched ONLY here — never from `view`,
---     `subscriptions`, nor a client arm — so `Reloaded` is SERVER-INTERNAL: the
---     whole read -> `Reloaded (Ok raw)` -> `{ model | note = raw }` chain must
---     settle server-side inside `Reload`'s RPC, and `Reload`'s response write-set
---     must gain `note` (the field the continuation writes). Dropping that write
---     is the bug this feature fixes.
+--     `toMsg` `Reloaded` has a CLIENT arm, so it runs in the client when the
+--     read ends, on the model the client holds then (as on Sky.Live): `Reload`
+--     answers with the read's result and the client dispatches `Reloaded`.
+--
+--   * `Ship` returns its read through a helper to `Shipped`, whose own arm
+--     reaches a SERVER effect (`Log`): `Shipped` is SERVER-INTERNAL, the whole
+--     chain settles inside `Ship`'s RPC, and `Ship`'s response write-set gains
+--     `note` (the field the continuation writes).
 --
 --   * `SyncCopy` is a SERVER branch (File) whose command BATCHES a server read
 --     with a `Std.Native` CLIENT effect (`clipboardWrite`). A client effect

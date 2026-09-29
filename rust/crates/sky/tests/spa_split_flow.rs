@@ -891,7 +891,9 @@ fn generalises_to_a_real_app_with_msg_args_and_nonprimitive_codecs() {
     );
     // Frontend SENDS the Msg arg.
     assert!(
-        front.contains("Spa.rpc toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" (\\spaM_ -> { id = id }) AppliedToggle"),
+        front.contains(
+            "Spa.rpcHold toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"
+        ),
         "frontend must send the Msg arg to the RPC:\n{front}"
     );
 
@@ -1074,7 +1076,9 @@ fn splits_a_multi_module_app_routing_pure_and_effectful_modules() {
         "backend must reconstruct `update (Toggle p.id) m`:\n{back}"
     );
     assert!(
-        front.contains("Spa.rpc toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" (\\spaM_ -> { id = id }) AppliedToggle"),
+        front.contains(
+            "Spa.rpcHold toggleReqCodec toggleRespCodec \"/_rpc/Toggle\" { id = id } AppliedToggle"
+        ),
         "frontend must send the Msg arg to the RPC:\n{front}"
     );
 
@@ -3098,7 +3102,7 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
             .expect("generated frontend entry must exist");
     assert!(
-        frontend.contains("note = spaM_.note"),
+        frontend.contains("note = model.note"),
         "bug #1: the client must send its own `note` in the request:\n{frontend}"
     );
 
@@ -5507,13 +5511,14 @@ fn server_read_deferred_to_init_command_is_not_refused() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// Server-internal effect chaining — the end-to-end behaviour gate. `Reload`
+/// A server branch's command runs — the end-to-end behaviour gate. `Reload`
 /// returns `Cmd.perform (File.readFile "data/note.txt") Reloaded`, and
-/// `Reloaded (Ok raw)` writes `raw` into `note`. Before this feature the
-/// generated handler DISCARDED the command, so `POST /_rpc/Reload` answered with
-/// an empty `note`. Now the whole chain settles server-side inside the RPC, so
-/// the response carries the file's contents. Builds + RUNS the backend, then
-/// POSTs — Go-gated (needs the toolchain + curl).
+/// `Reloaded (Ok raw)` writes `raw` into `note`. Before server chaining the
+/// generated handler DISCARDED the command, so `POST /_rpc/Reload` answered
+/// with nothing. `Reloaded` is a client arm, so the RPC runs the read and
+/// answers with its result, which the client dispatches as `Reloaded` (it runs
+/// in the client, on the model the client holds when the read ends). Builds +
+/// RUNS the backend, then POSTs — Go-gated (needs the toolchain + curl).
 #[test]
 fn server_internal_chain_e2e_post_reload_returns_file_note() {
     if !required(Need::Go, have_go()) {
@@ -5591,8 +5596,8 @@ fn server_internal_chain_e2e_post_reload_returns_file_note() {
     let body = body.expect("POST /_rpc/Reload should return a body");
     assert!(
         body.contains(note_body),
-        "POST /_rpc/Reload must settle the File read chain server-side and return \
-         `note` = the file contents (`{note_body}`), but the response was:\n{body}"
+        "POST /_rpc/Reload must run the File read server-side and return its result \
+         (`{note_body}`), but the response was:\n{body}"
     );
 }
 
@@ -5699,7 +5704,7 @@ fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
         "Edit's frontend request MUST NOT be bare `model` (misses `id`, and carries untouched fields):\n{front}"
     );
     assert!(
-        front.contains("session = spaM_.session"),
+        front.contains("session = model.session"),
         "Edit's narrowed request reads only the guard's field `session`:\n{front}"
     );
 
@@ -6977,4 +6982,162 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
     drop(back_child);
     let _ = std::fs::remove_dir_all(&proj);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// ── Msg order: async and hold RPCs (docs/skyspa/overview.md, "Msg order and
+// server calls"; runtime-go/rt/spa_rpcqueue.go) ──────────────────────────────
+
+fn named_fixture_entry(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+        .join("src/Main.sky")
+}
+
+/// Run `sky spa-split` on a named fixture; returns (frontend, backend) sources.
+fn split_named(name: &str) -> (String, String) {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+    let res = Command::new(SKY)
+        .args([
+            "spa-split",
+            named_fixture_entry(name).to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        res.status.success(),
+        "sky spa-split {name} failed:\n{}{}",
+        String::from_utf8_lossy(&res.stdout),
+        String::from_utf8_lossy(&res.stderr)
+    );
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    (front, back)
+}
+
+/// The two downstream repro shapes (a timer that starts a call only when none
+/// runs; a client arm that spends a Noise state during a slow RPC) and two
+/// independent slow calls. Each server arm writes nothing itself and performs
+/// a server task into a CLIENT arm, so each is an ASYNC RPC (`Spa.rpc`, no
+/// hold) whose result Msg runs in the client when it arrives. Before v0.27.0
+/// `Call` → `Answered` settled on the server as a chain (from the send-time
+/// model) and the client replayed the ticks after the result.
+#[test]
+fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
+    let (front, back) = split_named("spa-rpc-order");
+    for ctor in ["slow", "call", "slowA", "slowB"] {
+        assert!(
+            front.contains(&format!("Spa.rpc {ctor}ReqCodec")),
+            "`{ctor}` must be an async RPC (Spa.rpc):\n{front}"
+        );
+    }
+    assert!(
+        !front.contains("Spa.rpcHold"),
+        "no arm of this fixture needs server data for its own write — nothing may hold:\n{front}"
+    );
+    for (root, result) in [
+        ("Call", "Answered"),
+        ("Slow", "SlowDone"),
+        ("SlowA", "GotA"),
+        ("SlowB", "GotB"),
+    ] {
+        assert!(
+            front.contains(&format!("update ({result} resp.result) model")),
+            "`{root}`'s result must be dispatched as `{result}` in the client:\n{front}"
+        );
+        assert!(
+            front.contains(&format!("        {result} ")),
+            "`{result}` must stay a client arm:\n{front}"
+        );
+    }
+    assert!(
+        front.contains("Noise.encrypt") && !back.contains("POST /_rpc/Seal"),
+        "`Seal` is a client arm (the device holds the transport)"
+    );
+    assert!(
+        !back.contains("spaChainSettle_ m2 cmd update"),
+        "no continuation of this fixture may settle on the server:\n{back}"
+    );
+}
+
+/// An arm whose own model write needs server data (an inline `Task.run`) is a
+/// HOLD RPC: later Msgs wait for its answer, as they wait on a Sky.Live session
+/// during a synchronous update, so `Inc` twice counts to 2 and a draft typed
+/// during `Save` is applied after it.
+#[test]
+fn rpc_consistency_fixture_holds_arms_whose_write_needs_server_data() {
+    let (front, _) = split_named("spa-rpc-consistency");
+    for ctor in ["inc", "save", "setName", "hit", "touch"] {
+        assert!(
+            front.contains(&format!("Spa.rpcHold {ctor}ReqCodec")),
+            "`{ctor}` writes a server value into the model: it must hold (Spa.rpcHold):\n{front}"
+        );
+    }
+}
+
+/// `Sky.Core.WebSocket` is a client effect: an arm that connects, sends or
+/// receives runs in the wasm client (over the browser WebSocket API), never
+/// behind an RPC, and the backend serves the socket through `App.api`.
+#[test]
+fn websocket_calls_stay_in_the_client() {
+    let (front, back) = split_named("spa-websocket");
+    assert!(
+        front.contains("WebSocket.connect \"/ws\"")
+            && front.contains("WebSocket.onMessage s Got")
+            && front.contains("WebSocket.receiveWithin 5000 s"),
+        "the socket calls must stay in the client:\n{front}"
+    );
+    assert!(
+        !back.contains("POST /_rpc/"),
+        "no WebSocket arm may become an RPC:\n{back}"
+    );
+}
+
+/// The WebSocket fixture builds for `--target web:app`: the wasm client links
+/// the browser WebSocket kernels (runtime-go websocket_wasm.go) and the model's
+/// `Maybe WebSocket` field. Go-gated.
+#[test]
+fn websocket_fixture_builds_both_trees() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-websocket"),
+        &proj,
+    );
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    let ok = out.status.success()
+        && split.join("backend/sky-out/app").is_file()
+        && dist_has_wasm(&split.join("frontend/dist"));
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        ok,
+        "the web:app build must produce the backend and the wasm client:\n{log}"
+    );
+    // `withRoutes routes` names ONE table that mixes a page route with the
+    // `App.api "GET /ws"` upgrade: the endpoint must be mounted on the backend
+    // (it used to stay in the client route table, and `/ws` answered 404).
+    assert!(
+        back.contains("spaApiRoutes_") && back.contains("App.apiServerRoute"),
+        "the backend must mount the `App.api \"GET /ws\"` endpoint:\n{back}"
+    );
 }

@@ -63,6 +63,15 @@
 --             )
 --
 -- See `examples/33-websocket-echo` for the canonical pattern.
+--
+-- Sky.Spa client (`--target web:app` and the other client targets): the
+-- same functions run in the wasm client over the browser WebSocket API, and
+-- an arm that uses them runs in the client, not behind an RPC.  A path URL
+-- (`connect "/ws"`) connects to the page's own origin (`ws:`/`wss:` after
+-- the page's scheme), so it passes a strict `connect-src 'self'`.  A browser
+-- socket cannot send request headers (`withHeaders` returns `Err`) and may
+-- close only with `Normal` or `Custom 3000`-`4999`; the browser answers
+-- pings itself.  See docs/skyspa/overview.md, "WebSocket from the client".
 module Sky.Core.WebSocket exposing
     ( WebSocket(..)
     , WebSocketMessage(..)

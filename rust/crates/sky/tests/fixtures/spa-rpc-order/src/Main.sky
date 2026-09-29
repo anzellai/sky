@@ -1,0 +1,294 @@
+module Main exposing (main)
+
+-- Sky.Spa Msg-order fixture (scripts/spa-rpc-order-e2e.sh). Every scenario has
+-- a Sky.Live answer that the web:app client must match:
+--
+--   seal   `Seal` (a client arm) spends a single-use Noise state while a server
+--          RPC is in flight. It runs ONCE: SEALS=1 and STATUS=rpc done. (The
+--          old client re-ran it after the RPC answered, on a spent state.)
+--   timer  a tick that runs while the call is in flight sees busy = True and
+--          starts nothing; the result clears busy; the next tick starts the
+--          next call and its Cmd runs. The calls keep coming.
+--   pair   two independent server Msgs are in flight together: both answer in
+--          about one server delay, not two.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Crypto.Kx as Kx
+import Std.Crypto.Noise as Noise
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { tr : Maybe Noise.Transport
+    , seals : Int
+    , status : String
+    , timerOn : Bool
+    , busy : Bool
+    , started : Int
+    , done : Int
+    , ticks : Int
+    , pairA : String
+    , pairB : String
+    }
+
+type Msg
+    = Start
+    | Built (Result Error Noise.Transport)
+    | Go
+    | Slow (Result Error String)
+    | SlowDone (Result Error String)
+    | Seal
+    | TimerOn
+    | Tick
+    | Call (Result Error String)
+    | Answered (Result Error String)
+    | Pair
+    | SlowA (Result Error String)
+    | SlowB (Result Error String)
+    | GotA (Result Error String)
+    | GotB (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { tr = Nothing
+      , seals = 0
+      , status = "idle"
+      , timerOn = False
+      , busy = False
+      , started = 0
+      , done = 0
+      , ticks = 0
+      , pairA = "-"
+      , pairB = "-"
+      }
+    , Cmd.none
+    )
+
+
+-- A server task that answers after `ms` milliseconds.
+nap : Int -> String -> Task Error String
+nap ms label =
+    Time.sleep ms |> Task.map (\_ -> label)
+
+
+-- Both ends of an IK handshake, in the client; the initiator's transport.
+build : Task Error Noise.Transport
+build =
+    Task.map2 (\a b -> ( a, b )) Kx.generate Kx.generate
+        |> Task.andThen
+               (\( i, r ) ->
+                   Task.map2
+                       (\hi hr -> ( hi, hr ))
+                       (Noise.initiator i (Kx.publicKey r) "p")
+                       (Noise.responder r "p")
+                       |> Task.andThen
+                              (\( hi, hr ) ->
+                                  (Noise.writeMessage "" hi
+                                      |> Result.andThen
+                                             (\( hi2, m1 ) ->
+                                                 Noise.readMessage m1 hr
+                                                     |> Result.map
+                                                            (\( hr2, _ ) ->
+                                                                ( hi2, hr2 )))
+                                      |> Result.andThen
+                                             (\( hi2, hr2 ) ->
+                                                 Noise.writeMessage "" hr2
+                                                     |> Result.map
+                                                            (\( _, m2 ) ->
+                                                                ( hi2, m2 )))
+                                      |> Result.andThen
+                                             (\( hi2, m2 ) ->
+                                                 Noise.readMessage m2 hi2)
+                                      |> Result.andThen
+                                             (\( hi3, _ ) -> Noise.transport hi3))
+                                      |> Task.fromResult))
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Start ->
+            ( model, Cmd.perform build Built )
+
+        Built (Ok t) ->
+            ( { model | tr = Just t, status = "ready" }, Cmd.none )
+
+        Built (Err e) ->
+            ( { model | status = "build failed: " ++ errorToString e }
+            , Cmd.none
+            )
+
+        Go ->
+            ( { model | status = "rpc in flight" }
+            , Cmd.perform (Task.succeed "slow") Slow
+            )
+
+        Slow r ->
+            case r of
+
+                Ok label ->
+                    ( model, Cmd.perform (nap 2000 label) SlowDone )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        SlowDone _ ->
+            ( { model | status =
+                  if String.startsWith "STALE" model.status then
+                      model.status
+
+                  else
+                      "rpc done"
+              }
+            , Cmd.none
+            )
+
+        Seal ->
+            case model.tr of
+
+                Just t ->
+                    case Noise.encrypt "hello" t of
+
+                        Ok ( next, _ ) ->
+                            ( { model | tr = Just next
+                              , seals = model.seals + 1
+                              }
+                            , Cmd.none
+                            )
+
+                        Err e ->
+                            ( { model | status =
+                                  "STALE after " ++ String.fromInt model.seals
+                                      ++ " seals: "
+                                      ++ errorToString e
+                              }
+                            , Cmd.none
+                            )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        TimerOn ->
+            ( { model | timerOn = True }, Cmd.none )
+
+        Tick ->
+            if model.busy then
+                ( { model | ticks = model.ticks + 1 }, Cmd.none )
+
+            else
+                ( { model | ticks = model.ticks + 1
+                  , busy = True
+                  , started = model.started + 1
+                  }
+                , Cmd.perform (Task.succeed "call") Call
+                )
+
+        Call r ->
+            case r of
+
+                Ok label ->
+                    ( model, Cmd.perform (nap 1000 label) Answered )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        Answered _ ->
+            ( { model | busy = False, done = model.done + 1 }, Cmd.none )
+
+        Pair ->
+            ( { model | pairA = "waiting", pairB = "waiting" }
+            , Cmd.batch
+                  [ Cmd.perform (Task.succeed "a") SlowA
+                  , Cmd.perform (Task.succeed "b") SlowB
+                  ]
+            )
+
+        SlowA r ->
+            case r of
+
+                Ok label ->
+                    ( model, Cmd.perform (nap 1500 label) GotA )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        SlowB r ->
+            case r of
+
+                Ok label ->
+                    ( model, Cmd.perform (nap 1500 label) GotB )
+
+                Err _ ->
+                    ( model, Cmd.none )
+
+        GotA r ->
+            ( { model | pairA = Result.withDefault "err" r }, Cmd.none )
+
+        GotB r ->
+            ( { model | pairB = Result.withDefault "err" r }, Cmd.none )
+
+
+row : String -> String -> Element Msg
+row id txt =
+    Ui.el [ Ui.htmlAttribute "id" id ] (Ui.text txt)
+
+
+btn : String -> Msg -> Element Msg
+btn id m =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just m, label = Ui.text id }
+
+
+view : Model -> Element Msg
+view m =
+    Ui.column
+        [ Ui.spacing 4 ]
+        [ row
+              "seal"
+              ("STATUS=" ++ m.status ++ " SEALS=" ++ String.fromInt m.seals)
+        , row
+              "timer"
+              ("BUSY="
+                  ++ (if m.busy then
+                         "True"
+
+                     else
+                         "False")
+                  ++ " STARTED="
+                  ++ String.fromInt m.started
+                  ++ " DONE="
+                  ++ String.fromInt m.done
+                  ++ " TICKS="
+                  ++ String.fromInt m.ticks)
+        , row "pair" ("A=" ++ m.pairA ++ " B=" ++ m.pairB)
+        , btn "start" Start
+        , btn "go" Go
+        , btn "sealbtn" Seal
+        , btn "timeron" TimerOn
+        , btn "pairbtn" Pair
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions m =
+    if m.timerOn then
+        Sub.every 200 Tick
+
+    else
+        Sub.none
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withNotFound (Ui.text "nf")
+            |> App.withClientCrypto)

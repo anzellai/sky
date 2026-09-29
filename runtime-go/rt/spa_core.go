@@ -209,22 +209,17 @@ func Spa_withPersistSeedFields(fields, cfg any) any {
 func Spa_withGuard(fn, cfg any) any { return spaCfgSet(cfg, "Guard", fn) }
 
 // Spa_rpc is the auto-split's server-branch RPC Cmd (`Spa.rpc`). `mk` is
-// `model -> String -> Task Error a`: given the model SNAPSHOT at send time and
-// the request id, it builds the request task (read-set + Msg args encoded with
-// the shared codec, POSTed to `/_rpc/<Msg>?rid=<id>`). The wasm client queues
-// it (spa_rpcqueue.go): one RPC in flight per client, each request built when it
-// is sent, each response rebased onto its snapshot. `to` maps the Result to the
-// generated Applied<Msg> constructor.
-func Spa_rpc(mk, to any) SkyCmd { return cmdT{kind: "rpc", task: mk, toMsg: to} }
+// `String -> Task Error a`: given the request id, it builds the request task
+// (the read-set + Msg args, already encoded with the shared codec from the model
+// the server Msg ran on, POSTed to `/_rpc/<Msg>?rid=<id>`). The wasm client
+// sends it at once and delivers `to result` as a Msg when it answers
+// (spa_rpcqueue.go); several can be in flight. `payload` carries the hold flag.
+func Spa_rpc(mk, to any) SkyCmd { return cmdT{kind: "rpc", task: mk, toMsg: to, payload: false} }
 
-// Spa_rpcWith is Spa_rpc plus a CLIENT residual (`model -> Cmd msg`): the part
-// of the server branch's command that can only run in the client (a
-// `Std.Native` effect). The client runs `residual snapshot` when it SENDS the
-// RPC, from the same model snapshot the request is built from, so the effect
-// sees the model the server branch sees (SPA-3). Carried in `payload`.
-func Spa_rpcWith(mk, residual, to any) SkyCmd {
-	return cmdT{kind: "rpc", task: mk, toMsg: to, payload: residual}
-}
+// Spa_rpcHold is Spa_rpc for a server branch whose own model write needs server
+// data (`Spa.rpcHold`): while it is in flight, later Msgs wait, as they wait on
+// a Sky.Live session during a synchronous update.
+func Spa_rpcHold(mk, to any) SkyCmd { return cmdT{kind: "rpc", task: mk, toMsg: to, payload: true} }
 
 // Spa_followUps dispatches a list of Msgs, in order, through the client
 // `update` — the follow-up Msgs a server branch's command produced on the

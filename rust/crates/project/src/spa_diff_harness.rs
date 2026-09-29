@@ -632,6 +632,7 @@ mod tests {
             forces_effect: forces,
             effect_families: vec![],
             arm: None,
+            own_model_client: false,
         }
     }
     fn report_with(branches: Vec<BranchVerdict>) -> SpaPartitionReport {
