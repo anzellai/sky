@@ -1210,7 +1210,44 @@ struct Emulator {
 
 #[cfg(unix)]
 impl Emulator {
+    /// Run `adb -s <serial> <args>`. When adb answers that the emulator is
+    /// offline or gone (its transport dropped, for example while the host is
+    /// saturated), wait for the emulator to come back and run the command
+    /// once more; any other failure is returned as it is. There is no retry
+    /// without a detected offline transport.
     fn adb(&self, args: &[&str]) -> std::process::Output {
+        let out = self.adb_once(args);
+        let err = String::from_utf8_lossy(&out.stderr);
+        // adb's own transport errors, never a command's output.
+        let transport = err.lines().any(|l| {
+            let l = l.trim();
+            l == "adb: device offline"
+                || l == "error: device offline"
+                || (l.starts_with("adb: device '") && l.ends_with("' not found"))
+                || (l.starts_with("error: device '") && l.ends_with("' not found"))
+                || l.ends_with("no devices/emulators found")
+        });
+        if !transport {
+            return out;
+        }
+        let started = std::time::Instant::now();
+        let back = self.wait_online(180);
+        eprintln!(
+            "adb {:?}: {} was offline ({}); {} after {} s",
+            args,
+            self.serial,
+            err.trim(),
+            if back { "back" } else { "still offline" },
+            started.elapsed().as_secs()
+        );
+        if back {
+            self.adb_once(args)
+        } else {
+            out
+        }
+    }
+
+    fn adb_once(&self, args: &[&str]) -> std::process::Output {
         Command::new(&self.adb)
             .arg("-s")
             .arg(&self.serial)
@@ -1219,13 +1256,30 @@ impl Emulator {
             .expect("adb")
     }
 
-    /// A running emulator's serial, from `adb devices`.
+    /// Wait up to `secs` for the emulator's adb transport to be `device`.
+    fn wait_online(&self, secs: u64) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        while std::time::Instant::now() < until {
+            let state = self.adb_once(&["get-state"]);
+            if String::from_utf8_lossy(&state.stdout).trim() == "device" {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        false
+    }
+
+    /// The serial of the emulator adb knows, in any state (`device`,
+    /// `offline` while it boots or reconnects, `unauthorized`). An emulator
+    /// that is offline for a moment is still the one to use: starting a
+    /// second one beside it (from the same AVD, on a small CI runner) is what
+    /// made the gate fail, so this never reports "none" while one is listed.
     fn running(adb: &Path) -> Option<String> {
         let out = Command::new(adb).arg("devices").output().ok()?;
         String::from_utf8_lossy(&out.stdout).lines().find_map(|l| {
             let mut parts = l.split_whitespace();
             match (parts.next(), parts.next()) {
-                (Some(serial), Some("device")) if serial.starts_with("emulator-") => {
+                (Some(serial), Some(_state)) if serial.starts_with("emulator-") => {
                     Some(serial.to_string())
                 }
                 _ => None,
@@ -1274,7 +1328,10 @@ impl Emulator {
     /// manager and a resumed launcher, turns the animations off, and dismisses
     /// a system dialog.
     fn wait_booted(&self) -> bool {
-        let _ = self.adb(&["wait-for-device"]);
+        if !self.wait_online(600) {
+            eprintln!("the emulator's adb transport did not come online");
+            return false;
+        }
         let until = std::time::Instant::now() + std::time::Duration::from_secs(600);
         let wait_for = |what: &dyn Fn() -> bool| -> bool {
             while std::time::Instant::now() < until {
@@ -2050,11 +2107,30 @@ fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
             .shell_text(&["dumpsys", "window"])
             .lines()
             .any(|l| l.contains("mCurrentFocus=") && l.contains("GrantPermissionsActivity"));
-        // The posted notification, as the system holds it.
-        let posted = emu
-            .shell_text(&["dumpsys", "notification", "--noredact"])
-            .lines()
-            .any(|l| l.contains("probe-notification"));
+        // The posted notification, as the system holds it. NotificationManager
+        // posts asynchronously: the shell answers when `notify` returns, and
+        // the record reaches `dumpsys notification` a moment later. On the CI
+        // emulator a check made at once missed a notification the system
+        // posted 0.2 s later (the device log shows it posted and its sound
+        // played), so the check waits for it (up to 20 s). A refusal must
+        // post nothing: it is checked after the same kind of wait.
+        let posted_now = || {
+            emu.shell_text(&["dumpsys", "notification", "--noredact"])
+                .lines()
+                .any(|l| l.contains("probe-notification"))
+        };
+        let posted = if want == "notify=ok" && notify.as_deref() == Some("notify=ok") {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut seen = posted_now();
+            while !seen && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                seen = posted_now();
+            }
+            seen
+        } else {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            posted_now()
+        };
         let output = backend.output();
         let failure = if secure.as_deref() != Some("secure=ok:probe-value") {
             Some(format!("the app did not start: {secure:?}"))
