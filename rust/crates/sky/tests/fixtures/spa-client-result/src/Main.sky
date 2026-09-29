@@ -13,7 +13,10 @@ module Main exposing (main)
 --     client `update`, so `Saved`'s arm runs in the wasm client. `Saved` gets NO
 --     `/_rpc/Saved` route and NO `SavedReq` — it stays a client arm, and the
 --     WHOLE `Result` value crosses (never decomposed into Ok/Err binders, the
---     `missing field(s): url` bug).
+--     `missing field(s): url` bug). `Upload` returns `model` unchanged: the
+--     pattern-2 answer is the task result alone, so a root that also writes
+--     the model takes the follow-up path instead (spa_client_crypto.rs
+--     `a_relay_root_that_writes_the_model_keeps_its_write`).
 --
 --   * `Store` is a SERVER branch whose result Msg `Stored` ITSELF reaches a
 --     server effect (`persist`). That is a deeper chain — out of pattern-2's
@@ -77,7 +80,7 @@ update msg model =
             guard
                 model
                 (\_ ->
-                    ( { model | busy = True }
+                    ( model
                     , Cmd.perform (saveBlob data) Saved
                     ))
 

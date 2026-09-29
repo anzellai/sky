@@ -1,0 +1,65 @@
+module Main exposing (main)
+
+-- `withClientCrypto` with a device-only key field (`hs : Maybe
+-- Noise.Handshake`) and a server branch, with no type annotations: `init`
+-- sets `hs = Nothing` and `update` never touches it, so only the declared
+-- `Model` alias gives the field its type. The backend's first-paint encoder
+-- used to derive `Codec.auto` from `init`'s value, where `hs` is a free
+-- `Maybe a`, and the build stopped with [E2009]. spa_split_flow.rs builds it
+-- and reads the first paint.
+
+import Sky.Core.Http as Http
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Crypto.Noise as Noise
+import Std.Ui as Ui
+
+type Page
+    = Home
+
+type Msg
+    = Fetch
+    | Got (Result Error Http.HttpResponse)
+
+type alias Model =
+    { hs : Maybe Noise.Handshake
+    , note : String
+    }
+
+
+init _ =
+    ( { hs = Nothing, note = "" }, Cmd.none )
+
+
+update msg model =
+    case msg of
+
+        Fetch ->
+            ( model, Cmd.perform (Http.get "http://127.0.0.1:9/pub") Got )
+
+        Got _ ->
+            ( { model | note = "got" }, Cmd.none )
+
+
+view model =
+    Ui.column
+        []
+        [ Ui.button [] { onPress = Just Fetch, label = Ui.text "fetch" }
+        , Ui.text model.note
+        ]
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withRoutes [ App.route "/" Home ]
+        |> App.withNotFound Home
+        |> App.withClientCrypto
+
+
+main =
+    App.run appDef

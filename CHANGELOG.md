@@ -1031,14 +1031,113 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   CFBundleDisplayName keep the name as written. An app with no `withName`
   takes its product name from the project name, as its display name already
   did.
-- **A Sky.Spa server branch that matches inside its Msg's argument is refused
-  by name.** The split sends the names a server arm binds and rebuilds the
-  Msg on the backend from them, so an arm such as `Report (Ok line) -> (model,
-  Cmd.perform (Log.println line) Reported)` became `update (Report p.line)`
-  and the backend failed to compile with a type error in generated code,
-  reported against the derived project. The split now stops with an error
-  that names the arm and the form that works (`Report value -> case value of
-  …`).
+- **`withClientCrypto`: a device key field and a server branch build, and a
+  relay step always stays a client-result RPC.** An app with a `Maybe`
+  key field (`hs : Maybe Noise.Handshake`) and any server branch did not
+  build: the backend's first-paint encoder derived `Codec.auto` from `init`'s
+  value, where a field `update` never sets is a free `Maybe a`, and the
+  backend stopped with `[E2009]` (with no server branch there is no first
+  paint, which is why the existing test passed). The encoder is now a
+  top-level function typed with the model's alias, the key field is found
+  from the alias even when the inferred model does not list it (before, such
+  a field was not cleared at all), it is written `Nothing` in the first paint
+  and the saved model, and it is set to `Nothing` again after every client
+  decode. Second: of two relay steps of the same shape (a server arm that
+  forwards hex and returns `model`, whose result reaches a client arm doing
+  the Noise operation), `SendHello` → `GotMsg2` became a client-result RPC and
+  `SendEcho` → `GotEcho` a server-internal chain, because `GotEcho` ends with
+  `Cmd.none`; the chain's I/O then held the transport and the build refused
+  it. A Msg whose arm reaches client-only code (a device-key operation, a
+  `Std.Native` effect) is never settled on the server now, so both steps are
+  client-result RPCs; the refusal stays for an arm that reads or writes a key
+  field. Found on the way: a client-result root that also wrote the model lost
+  that write (the answer carried only the task result); such a root takes the
+  follow-up path, which applies the write and then the result Msg. Tests:
+  `spa_client_crypto.rs`, `spa_split_flow.rs`
+  `a_device_key_field_with_a_server_branch_builds_and_paints_nothing`, and a
+  browser e2e, `scripts/spa-client-crypto-e2e.sh` (release and nightly): the
+  wasm client completes a Noise IK handshake and a transport round trip
+  through two relay steps against a Go responder
+  (`runtime-go/rt/noisewasm/responder`).
+- **Android: `Native.scanCode` at first launch waits for the camera prompt.**
+  The shell asks for the declared run-time permissions when it starts, and a
+  scan in `init` then asked for CAMERA again while that prompt showed. Android
+  answers such a request at once with empty arrays, which the scanner read as
+  a denial: `Err PermissionDenied` before the user answered, and the next
+  launch scanned (found downstream on an Android 16 device). Every
+  permission-gated operation now goes through one broker in the shell
+  (`sky.perm.SkyPermissions`): a held permission answers at once, otherwise
+  the caller waits for a prompt that covers it (joining the start-up request),
+  the shell asks only when no prompt shows, and only a real denial is
+  `PermissionDenied`. The same holds for the page's camera and microphone
+  requests (`getUserMedia`, which were granted in the page without the app
+  holding the permission) and for location (`onGeolocationPermissionsShowPrompt`
+  granted before the app held it). Test: `native_shell_flow.rs`
+  `android_emulator_scan_at_first_launch_waits_for_the_camera_prompt`
+  (installed without the grant; scanCode does not answer while the prompt
+  shows; "While using the app" opens the scanner, "Don't allow" is
+  `PermissionDenied`), in the emulator release gate.
+- **`Bundle.AssociatedDomain "applinks:…"` opens the app on the link's page,
+  on Android and iOS.** On Android it did nothing: the manifest had no App
+  Links filter. It now gets one `android:autoVerify` intent filter per
+  `applinks:` host (`VIEW`, `DEFAULT` + `BROWSABLE`, `https`, the host and an
+  optional port; a repeated domain or its `?mode=developer` form adds none),
+  beside the filters and permissions the structured manifest merge keeps. The
+  activity is `singleTask`: a link that starts the app opens its path on the
+  backend's own address, and a link sent to the running app navigates it in
+  place (`history.pushState` + `popstate`), so the app keeps its state. A
+  first cut reloaded the page there, which left an open scanner dialog
+  behind and made the next `Native.scanCode` fail with "a code scan is
+  already open". The iOS shell had the entitlement but took no link either;
+  it now handles `onOpenURL` / `NSUserActivityTypeBrowsingWeb` the same way.
+  Only a declared host is routed. `webcredentials:` maps onto Android's
+  shared sign-in (`asset_statements` in the app, `get_login_creds` in the
+  site's file); `activitycontinuation:` and `appclips:` have no Android
+  equivalent and the build names each one it leaves out. The macOS desktop
+  window does not route a universal link to its page yet, and its release
+  build says so. The Android build writes the site's
+  `/.well-known/assetlinks.json` with the SHA-256 digest of the signing
+  certificate (`build/assetlinks.json` with the debug key,
+  `sky-out/release/assetlinks.json` with the upload key under `sky package
+  --release`) and prints where to serve it. The build also checks an
+  associated domain's host (`<service>:<host>[:port][?mode=…]`).
+  (`docs/skyapp/native.md` "Links into the app";
+  `rust/crates/sky/src/native_pkg.rs` `link_domains`; tests: the native_pkg
+  and manifest unit tests, and the native release gates: the Android
+  emulator test opens `https://example.com/probe/deep` to start the app and
+  `/probe/again` in the running app, and reads the routes the app reports;
+  the app without the domain does not take the link.)
+- **A Sky.Spa server branch can match inside its Msg's arguments.** The split
+  sent the names a server arm binds and rebuilt the Msg on the backend from
+  them, so an arm such as `Report (Ok line) -> (model, Cmd.perform
+  (Log.println line) Reported)` became `update (Report p.line)` and the
+  backend failed to compile with a type error in generated code. The first
+  cut on this branch refused such an arm. The split now supports every
+  pattern shape: nested constructors, literals, tuples, records, `as`
+  bindings and wildcards. A constructor whose server arm matches inside an
+  argument, or that has more than one server arm, sends each whole argument
+  under a positional name: the client arm becomes `Report ((Ok line) as
+  spaArg0_)` and the backend runs `update (Report p.spaArg0_) m`, so the
+  app's own `case` picks the arm. Routing is per arm: a client arm of the
+  same constructor (`Report (Err _) -> ( { model | status = "failed" },
+  Cmd.none )`) stays in the client, and the backend takes the arm the client
+  took, because the arms keep their order and Sky patterns are pure. The
+  route's request and response are the union over the constructor's server
+  arms. A plain-name server arm keeps the named wire form, so an app that
+  split before builds the same code. A tuple-typed Msg argument now has a
+  wire codec too (a JSON object keyed `"0"`, `"1"`, …). `sky doc --diagram
+  wire` / `--api openapi` list one `/_rpc/<Msg>` endpoint per constructor
+  from the same routes, and `sky fuzz --target web:app` diffs such arms
+  (it skipped them before). The rule and the one remaining refusal are in
+  `docs/skyspa/auto-split.md` §22. (`rust/crates/project/src/spa_partition.rs`
+  `server_routes`; tests: `project/tests/spa_server_arm_args.rs`,
+  `spa_split_flow.rs`
+  `server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app`,
+  which builds `tests/fixtures/spa-arm-patterns` both ways and compares each
+  message over RPC with the Sky.Live app, and `fuzz_verb_flow.rs`.)
+- **`sky fuzz --target web:app src/Main.sky` read `web:app` as the entry
+  file** ("no such file: web:app"): the value of `--target`, `--iters` or
+  `--seed` given before the file was taken as the file.
 - **`sky add ./dir` works for a fresh local Go module.** A module whose
   `go.mod` declares a `go` line newer than the generated one (`go 1.26`
   against `go 1.25.0`), or requirements of its own, was not loadable after

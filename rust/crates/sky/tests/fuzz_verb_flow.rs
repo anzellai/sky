@@ -245,3 +245,56 @@ fn spa_client_target_routes_into_the_oracle_and_no_op_is_not_a_failure() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A flag's value is not the entry file: `sky fuzz --target web:app <file>`
+/// read `web:app` as the file ("sky: no such file: web:app"), so the
+/// documented flags worked only after the file. Toolchain-free: the entry here
+/// does not exist, and the error must name it.
+#[test]
+fn flag_values_before_the_entry_are_not_read_as_the_entry() {
+    let dir = scratch("flagorder");
+    let out = Command::new(SKY)
+        .args([
+            "fuzz", "--target", "web:app", "--iters", "5", "--seed", "3", "nope.sky",
+        ])
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky fuzz");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "{text}");
+    assert!(
+        text.contains("nope.sky") && !text.contains("no such file: web:app"),
+        "the entry is `nope.sky`, not a flag's value:\n{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The differential split oracle applies to server arms that match inside
+/// their Msg arguments (v0.27.0). `tests/fixtures/spa-arm-patterns` has a
+/// server arm of every pattern shape, with client arms of the same
+/// constructors between them. The harness keeps the `case` order, diffs each
+/// server arm through the split's wire (the whole argument, positionally) and
+/// does not diff a client arm. `Any` chains a command, so it is fenced out.
+#[test]
+fn the_split_oracle_diffs_server_arms_that_match_inside_their_arguments() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-arm-patterns");
+    let dir = scratch("armpatterns");
+    std::fs::copy(fixture.join("sky.toml"), dir.join("sky.toml")).unwrap();
+    std::fs::copy(fixture.join("src/Main.sky"), dir.join("src/Main.sky")).unwrap();
+    let (code, text) = run_fuzz_target(&dir, 200, "web:app");
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("6 checkable branch(es): Report, Pick, Named, Pair, Take, Wrap")
+            && text.contains("split oracle PASS"),
+        "the oracle must diff every non-chaining server route:\n{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

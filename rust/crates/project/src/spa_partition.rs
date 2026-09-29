@@ -936,13 +936,319 @@ pub struct BranchVerdict {
     /// it, and so does the client-crypto refusal (a server branch that reaches a
     /// client-held crypto family); the split and the fuzzer never do.
     pub effect_families: Vec<String>,
-    /// A SERVER arm that matches INSIDE one of its Msg's arguments
-    /// (`Report (Ok line)`, `Pick { id }`, `Report _`) instead of binding each
-    /// argument to a plain name. The split sends the names an arm binds and
-    /// rebuilds the Msg from them on the backend (`update (Report p.line)`), so
-    /// such an arm cannot be rebuilt; the split refuses it, naming the arm
-    /// (see [`msg_args_are_plain_names`]). Always `false` for a client arm.
-    pub matches_inside_msg_args: bool,
+    /// Where this arm sits in `update`'s `case msg of` and how its Msg pattern
+    /// reads. `None` for a verdict that is not a case arm (a whole-`update`
+    /// verdict). The split routes each ARM, not each constructor: see
+    /// [`server_routes`].
+    pub arm: Option<ArmShape>,
+}
+
+/// One `case msg of` arm's position and pattern, for routing it (see
+/// [`server_routes`]).
+#[derive(Clone, Debug, Default)]
+pub struct ArmShape {
+    /// The arm's index in `update`'s `case msg of` (source order).
+    pub index: usize,
+    /// The pattern as written (`Report (Ok line)`).
+    pub pat_src: String,
+    /// Every argument of the Msg constructor is a plain name (`Report line`):
+    /// the split can send the bound names and rebuild the Msg from them.
+    pub plain_args: bool,
+    /// The pattern with each constructor argument also bound to a positional
+    /// name (`Report ((Ok line) as spaArg0_)`), so the arm keeps its match and
+    /// also holds each whole argument to send. `None` when the pattern is not a
+    /// constructor with arguments, or its source could not be read.
+    pub positional_pat: Option<String>,
+    /// The constructor's declared argument types, named positionally
+    /// (`spaArg0_ : Result Error String`). Only for a SERVER arm; empty when a
+    /// type could not be read (the split then reports the unwireable field).
+    pub ctor_args: Vec<ModelFieldTy>,
+}
+
+/// The source text [`classify_case_arms`] needs beside the HIR: the module
+/// source (pattern text), the typed locals, the `case` subject's type (to
+/// instantiate a polymorphic Msg constructor) and the typer (constructor
+/// schemes).
+struct ArmCtx<'a> {
+    src: &'a str,
+    locals: &'a ty::BodyTypes,
+    subject_ty: Option<ty::Ty>,
+    typer: ty::Typer<'a>,
+}
+
+/// The wire name of a Msg constructor's `i`-th argument when the split sends
+/// whole arguments ([`ArmShape::positional_pat`]).
+pub fn positional_arg_name(i: usize) -> String {
+    format!("spaArg{i}_")
+}
+
+fn pat_text(body: &Body, pat: PatId, src: &str) -> Option<String> {
+    let span = body.pat_span(pat)?;
+    let (start, end) = (span.range.0 as usize, span.range.1 as usize);
+    let t = src.get(start..end)?.trim();
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+/// Replace each type variable of `t` by its binding in `sub`.
+fn subst_ty(t: &ty::Ty, sub: &HashMap<String, ty::Ty>) -> ty::Ty {
+    match t {
+        ty::Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| t.clone()),
+        ty::Ty::Fun(a, b) => ty::Ty::Fun(Box::new(subst_ty(a, sub)), Box::new(subst_ty(b, sub))),
+        ty::Ty::App(n, xs) => ty::Ty::App(n.clone(), xs.iter().map(|x| subst_ty(x, sub)).collect()),
+        ty::Ty::Record(fs, ext) => ty::Ty::Record(
+            fs.iter()
+                .map(|(n, x)| (n.clone(), subst_ty(x, sub)))
+                .collect(),
+            ext.clone(),
+        ),
+        ty::Ty::Tuple(xs) => ty::Ty::Tuple(xs.iter().map(|x| subst_ty(x, sub)).collect()),
+        ty::Ty::Unit | ty::Ty::Error => t.clone(),
+    }
+}
+
+/// The declared argument types of the constructor `ctor`, instantiated at the
+/// `case` subject's type (`Msg a` at `Msg Int`).
+fn ctor_arg_types(actx: &ArmCtx<'_>, ctor: &hir::CtorRef) -> Option<Vec<ty::Ty>> {
+    let scheme = actx.typer.ctor_sig_by_def(ctor.def)?;
+    let mut args = Vec::new();
+    let mut t = scheme.ty.clone();
+    while let ty::Ty::Fun(a, b) = t {
+        args.push(*a);
+        t = *b;
+    }
+    if args.len() != ctor.arity as usize {
+        return None;
+    }
+    let mut sub: HashMap<String, ty::Ty> = HashMap::new();
+    if let (ty::Ty::App(_, formal), Some(ty::Ty::App(_, actual))) = (&t, &actx.subject_ty) {
+        for (f, a) in formal.iter().zip(actual) {
+            if let ty::Ty::Var(v) = f {
+                sub.insert(v.as_str().to_string(), a.clone());
+            }
+        }
+    }
+    let args: Vec<ty::Ty> = args.iter().map(|a| subst_ty(a, &sub)).collect();
+    // A variable left free is a type the wire cannot carry.
+    if args.iter().any(|a| !a.free_vars().is_empty()) {
+        return None;
+    }
+    Some(args)
+}
+
+/// One `/_rpc/<Ctor>` route of the Sky.Spa split: the SERVER arms of one Msg
+/// constructor, sent as one request.
+///
+/// The split routes each ARM. A client arm stays in the wasm client; a server
+/// arm sends the message to the backend, which runs the app's own `update` on
+/// it. Sky patterns are pure, so the backend takes the same arm the client
+/// took: every arm before it failed to match on the client and fails on the
+/// backend too. The route's I/O is the union over the constructor's server
+/// arms, as any of them can be the one that runs.
+#[derive(Clone, Debug)]
+pub struct ServerRoute {
+    pub ctor: String,
+    /// The union of the server arms' I/O. `msg_args` is the positional names
+    /// when [`ServerRoute::positional`].
+    pub io: BranchIo,
+    /// The request's Msg-argument fields, with their types.
+    pub msg_arg_tys: Vec<ModelFieldTy>,
+    /// The request carries each whole constructor argument under a positional
+    /// name ([`positional_arg_name`]), not the names an arm binds. Set when an
+    /// arm matches inside an argument or the constructor has more than one
+    /// server arm.
+    pub positional: bool,
+    pub effect_families: Vec<String>,
+    pub forces_effect: bool,
+    /// Every arm of the constructor, client and server, in `case` order.
+    pub arms: Vec<RouteArm>,
+}
+
+/// One arm of a [`ServerRoute`]'s constructor.
+#[derive(Clone, Debug)]
+pub struct RouteArm {
+    /// The arm's index in `update`'s `case msg of`.
+    pub index: Option<usize>,
+    pub server: bool,
+    /// The pattern to write for this arm in a generated `case`: the positional
+    /// form for a server arm of a positional route, else the source pattern.
+    pub pat: String,
+}
+
+fn union_sorted(a: &[String], b: &[String]) -> Vec<String> {
+    let mut v: Vec<String> = a.iter().chain(b).cloned().collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// The server routes of `branches`, one per constructor with a server arm, in
+/// order of the first server arm. Constructors in `skip` (server-internal Msgs,
+/// which have no route) are left out. An error names an arm the split cannot
+/// send (its constructor's argument types could not be read).
+pub fn server_routes(
+    branches: &[BranchVerdict],
+    skip: &HashSet<String>,
+) -> Result<Vec<ServerRoute>, String> {
+    let ctor_of = |b: &BranchVerdict| -> String {
+        b.msg
+            .split_whitespace()
+            .next()
+            .unwrap_or(&b.msg)
+            .to_string()
+    };
+    let mut order: Vec<String> = Vec::new();
+    for b in branches.iter().filter(|b| b.server) {
+        let c = ctor_of(b);
+        if !skip.contains(&c) && !order.contains(&c) {
+            order.push(c);
+        }
+    }
+    let mut routes = Vec::new();
+    for ctor in order {
+        let all: Vec<&BranchVerdict> = branches.iter().filter(|b| ctor_of(b) == ctor).collect();
+        let servers: Vec<&BranchVerdict> = all.iter().copied().filter(|b| b.server).collect();
+        let positional = servers.len() > 1
+            || servers
+                .iter()
+                .any(|b| b.arm.as_ref().is_some_and(|a| !a.plain_args));
+        let mut io: Option<BranchIo> = None;
+        for b in &servers {
+            let bio =
+                b.io.clone()
+                    .ok_or_else(|| format!("server branch `{ctor}` has no derived RPC I/O"))?;
+            io = Some(match io {
+                None => bio,
+                Some(acc) => BranchIo {
+                    reads_whole_model: acc.reads_whole_model || bio.reads_whole_model,
+                    read_fields: union_sorted(&acc.read_fields, &bio.read_fields),
+                    msg_args: acc.msg_args,
+                    writes_whole_model: acc.writes_whole_model || bio.writes_whole_model,
+                    write_fields: union_sorted(&acc.write_fields, &bio.write_fields),
+                    always_written: acc
+                        .always_written
+                        .iter()
+                        .filter(|f| bio.always_written.contains(f))
+                        .cloned()
+                        .collect(),
+                    fresh_response: acc.fresh_response && bio.fresh_response,
+                },
+            });
+        }
+        let mut io = io.expect("a route has a server arm");
+        let mut msg_arg_tys = servers[0].msg_arg_tys.clone();
+        if positional {
+            let first = servers[0].arm.as_ref();
+            let args = first.map(|a| a.ctor_args.clone()).unwrap_or_default();
+            for b in &servers {
+                let ok = b
+                    .arm
+                    .as_ref()
+                    .is_some_and(|a| a.positional_pat.is_some() && !a.ctor_args.is_empty());
+                if !ok {
+                    return Err(format!(
+                        "the SERVER branch `{}` of `update`: the split sends each argument of \
+                         `{ctor}` whole, and could not read the argument types or the pattern \
+                         of this branch",
+                        b.msg
+                    ));
+                }
+            }
+            io.msg_args = args.iter().map(|a| a.name.clone()).collect();
+            msg_arg_tys = args;
+        }
+        let mut effect_families: Vec<String> = servers
+            .iter()
+            .flat_map(|b| b.effect_families.iter().cloned())
+            .collect();
+        effect_families.sort();
+        effect_families.dedup();
+        let arms = all
+            .iter()
+            .map(|b| {
+                let a = b.arm.as_ref();
+                let pat = match a {
+                    Some(a) if b.server && positional => a
+                        .positional_pat
+                        .clone()
+                        .unwrap_or_else(|| a.pat_src.clone()),
+                    Some(a) => a.pat_src.clone(),
+                    None => b.msg.clone(),
+                };
+                RouteArm {
+                    index: a.map(|a| a.index),
+                    server: b.server,
+                    pat,
+                }
+            })
+            .collect();
+        routes.push(ServerRoute {
+            forces_effect: servers.iter().any(|b| b.forces_effect),
+            ctor,
+            io,
+            msg_arg_tys,
+            positional,
+            effect_families,
+            arms,
+        });
+    }
+    Ok(routes)
+}
+
+/// The [`ArmShape`] of arm `index` (`server`: also read the constructor's
+/// argument types).
+fn arm_shape(body: &Body, index: usize, pat: PatId, actx: &ArmCtx<'_>, server: bool) -> ArmShape {
+    let pat_src = pat_text(body, pat, actx.src).unwrap_or_default();
+    let plain_args = msg_args_are_plain_names(body, pat);
+    let mut positional_pat = None;
+    let mut ctor_args = Vec::new();
+    if let Pattern::Ctor { ctor, args, .. } = &body.pats[pat] {
+        if !args.is_empty() {
+            let texts: Option<Vec<String>> =
+                args.iter().map(|a| pat_text(body, *a, actx.src)).collect();
+            let start = body.pat_span(pat).map(|s| s.range.0 as usize);
+            let first = body.pat_span(args[0]).map(|s| s.range.0 as usize);
+            if let (Some(texts), Some(start), Some(first)) = (texts, start, first) {
+                if let Some(head) = actx.src.get(start..first) {
+                    // `(Report (Ok line))`: an arg span may start inside
+                    // its own parentheses, and the whole pattern may be
+                    // parenthesised; the head is the constructor alone.
+                    let head = head
+                        .trim()
+                        .trim_start_matches('(')
+                        .trim_end_matches(|c: char| c == '(' || c.is_whitespace())
+                        .trim();
+                    if !head.is_empty() && !head.contains(['(', ')']) {
+                        let wrapped: Vec<String> = texts
+                            .iter()
+                            .enumerate()
+                            .map(|(i, t)| format!("({t} as {})", positional_arg_name(i)))
+                            .collect();
+                        positional_pat = Some(format!("{head} {}", wrapped.join(" ")));
+                    }
+                }
+            }
+            if server {
+                if let Some(tys) = ctor.as_ref().and_then(|c| ctor_arg_types(actx, c)) {
+                    ctor_args = tys
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| {
+                            let mut f = field_ty_codec(t);
+                            f.name = positional_arg_name(i);
+                            f
+                        })
+                        .collect();
+                }
+            }
+        }
+    }
+    ArmShape {
+        index,
+        pat_src,
+        plain_args,
+        positional_pat,
+        ctor_args,
+    }
 }
 
 /// A server-tainted top-level binding (excluded from the client build).
@@ -1427,6 +1733,7 @@ pub fn analyze_loaded(
                 let extra_client = client_hook_ctors(db, &check_ids, entry);
                 let chaining = compute_server_chaining(
                     db,
+                    &graph,
                     umod,
                     body,
                     view_def,
@@ -2557,7 +2864,11 @@ fn classify_update_body(
         );
     }
 
-    if let Expr::Case { branches: arms, .. } = &body.exprs[case_expr] {
+    if let Expr::Case {
+        subject,
+        branches: arms,
+    } = &body.exprs[case_expr]
+    {
         // Msg-constant precision. `def` IS the `update` DefId — thread it in so a
         // direct `update <LiteralMsg> …` call in an arm composes another arm
         // (scoped) rather than dragging in `update`-as-a-whole (server). Helpers
@@ -2568,6 +2879,12 @@ fn classify_update_body(
             update_def: Some(def),
             client_crypto: graph.client_crypto,
         };
+        let arm_ctx = ArmCtx {
+            src: &src,
+            locals: &types,
+            subject_ty: types.expr(*subject),
+            typer: ty::Typer::new(db),
+        };
         classify_case_arms(
             db,
             graph,
@@ -2576,8 +2893,7 @@ fn classify_update_body(
             &shared,
             &ctx,
             model_local,
-            &src,
-            &types,
+            &arm_ctx,
             branches,
         );
     }
@@ -2608,10 +2924,11 @@ fn classify_case_arms(
     shared: &Refs,
     ctx: &CollectCtx,
     model_local: Option<LocalId>,
-    src: &str,
-    locals: &ty::BodyTypes,
+    actx: &ArmCtx<'_>,
     out: &mut Vec<BranchVerdict>,
 ) {
+    let src = actx.src;
+    let locals = actx.locals;
     let facts: Vec<ArmFacts> = arms
         .iter()
         .map(|arm| {
@@ -2723,7 +3040,7 @@ fn classify_case_arms(
                 client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
-                matches_inside_msg_args: !msg_args_are_plain_names(body, arms[i].pat),
+                arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -2742,7 +3059,7 @@ fn classify_case_arms(
                 client_io: None,
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
-                matches_inside_msg_args: !msg_args_are_plain_names(body, arms[i].pat),
+                arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -2765,7 +3082,7 @@ fn classify_case_arms(
                 msg_arg_tys: Vec::new(),
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
-                matches_inside_msg_args: false,
+                arm: Some(arm_shape(body, i, arms[i].pat, actx, false)),
             });
         }
     }
@@ -3306,6 +3623,31 @@ fn collect_delegate_tail_cmd_leaves(
     visited.remove(&d);
 }
 
+/// Whether an `update` arm reaches code that runs only in the client: a
+/// client-effect kernel (`Std.Native`, and with `withClientCrypto` the
+/// device-key members), directly or through a callee.
+fn arm_reaches_client_only(db: &dyn SkyDb, graph: &Graph, body: &Body, e: ExprId) -> bool {
+    let mut acc = Refs::default();
+    let ctx = CollectCtx {
+        client_crypto: graph.client_crypto,
+        ..CollectCtx::default()
+    };
+    collect(body, e, &mut acc, &ctx);
+    if !acc.client_kernels.is_empty() {
+        return true;
+    }
+    if graph.families_for(&acc).iter().any(|f| {
+        CLIENT_EFFECT_KERNELS.contains(&f.as_str())
+            || (graph.client_crypto && CLIENT_CRYPTO_FAMILIES.contains(&f.as_str()))
+    }) {
+        return true;
+    }
+    let mut visited: HashSet<DefId> = HashSet::new();
+    acc.callees
+        .iter()
+        .any(|c| def_reaches_client_effect(db, *c, &mut visited))
+}
+
 /// Whether a task's collected refs reach a `Std.Native` CLIENT effect — directly
 /// (`client_kernels`) or transitively through a callee. A client effect cannot
 /// run server-side (its `!js` stub returns `Err`), so a chain containing one is
@@ -3514,6 +3856,7 @@ fn expr_constructed_ctors(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTre
 #[allow(clippy::too_many_arguments)]
 fn compute_server_chaining(
     db: &skydb::SkyDatabase,
+    graph: &Graph,
     umod: ModuleId,
     body: &Body,
     view_def: Option<DefId>,
@@ -3726,14 +4069,37 @@ fn compute_server_chaining(
         }
     }
 
+    // `client_only` — a Msg whose arm reaches code that runs only in the client:
+    // a `Std.Native` effect, or, with `withClientCrypto`, a device-key
+    // operation (`Noise.decrypt` on the model's transport). Such an arm cannot
+    // run inside a server chain: the server would need the device's key or a
+    // device API. It stays a client arm, and the Msg that performs to it answers
+    // the client with the result (pattern-2), as `SendHello` → `GotMsg2` does.
+    // Before this, a continuation that happened not to perform a
+    // client-dispatched Msg (`GotEcho`, which ends with `Cmd.none`) was settled
+    // on the server, and the build then refused the root because the chain's
+    // I/O held the key field.
+    let client_only: HashSet<String> = all_heads
+        .iter()
+        .filter(|h| {
+            arms_by_ctor.get(*h).is_some_and(|idxs| {
+                idxs.iter()
+                    .any(|&ai| arm_reaches_client_only(db, graph, body, arms[ai].body))
+            })
+        })
+        .cloned()
+        .collect();
+
     // `settleable` (S) — the greatest set of Msgs that fully settle server-side: a
-    // continuation, not client-dispatched, not dirty, and whose own clean
-    // continuations are all settleable. Iterative removal to the fixpoint.
+    // continuation, not client-dispatched, not client-only, not dirty, and whose
+    // own clean continuations are all settleable. Iterative removal to the
+    // fixpoint.
     let mut settleable: HashSet<String> = all_heads
         .iter()
         .filter(|h| {
             is_continuation.contains(*h)
                 && !client_dispatched.contains(*h)
+                && !client_only.contains(*h)
                 && info.get(*h).map(|i| !i.dirty).unwrap_or(false)
         })
         .cloned()
@@ -3975,6 +4341,21 @@ fn compute_server_chaining(
         if server_head_set.contains(&rm) {
             // SPA-3: a deeper chain — the FOLLOW-UP path returns `rm result` to
             // the client, whose `rm` arm then runs as its own RPC.
+            continue;
+        }
+        // The pattern-2 answer is the task result alone: the client dispatches
+        // `rm result` on the model it holds. A root arm that also writes the
+        // model (`{ model | status = "sending" }`) would lose that write, so it
+        // takes the follow-up path (SPA-3), which applies the write-set and
+        // then dispatches `rm result`.
+        let root_writes = branches.iter().any(|b| {
+            b.server
+                && pattern_head_ctor(&b.msg) == *bn
+                && b.io
+                    .as_ref()
+                    .is_none_or(|io| io.writes_whole_model || !io.write_fields.is_empty())
+        });
+        if root_writes {
             continue;
         }
         out.client_result.push((bn.clone(), rm));
@@ -5495,7 +5876,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             // Whole-update path: io is None → never phase-2 checkable regardless.
             forces_effect: acc.inline_force,
             effect_families: graph.families_for(acc),
-            matches_inside_msg_args: false,
+            arm: None,
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -5525,7 +5906,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             msg_arg_tys: Vec::new(),
             forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
             effect_families: graph.families_for(acc),
-            matches_inside_msg_args: false,
+            arm: None,
         };
     }
     // Client — note a client effect if present.
@@ -5542,7 +5923,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         msg_arg_tys: Vec::new(),
         forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
         effect_families: graph.families_for(acc),
-        matches_inside_msg_args: false,
+        arm: None,
     }
 }
 

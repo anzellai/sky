@@ -391,6 +391,39 @@ impl<'a> CodecResolver<'a> {
                 return Err(bare_union_no_codec_msg(tail, &render_ty(t)));
             }
         }
+        // (b''''') A TUPLE, as a JSON object keyed by position (`{"0": …,
+        // "1": …}`), built from the element codecs with `Codec.object` /
+        // `Codec.field` / `Codec.buildObject`. A tuple-typed Msg argument
+        // (`Pair ( Int, String )`) then crosses the wire with no app codec.
+        if let ty::Ty::Tuple(items) = t {
+            if items.len() >= 2 {
+                let mut elems = Vec::new();
+                for it in items {
+                    elems.push(self.resolve(it)?);
+                }
+                let n = elems.len();
+                let names: Vec<String> = (0..n).map(|i| format!("spaT{i}_")).collect();
+                let ctor = format!("(\\{} -> ( {} ))", names.join(" "), names.join(", "));
+                let mut codec = format!("(Codec.object {ctor}");
+                for (i, e) in elems.iter().enumerate() {
+                    let pat: Vec<&str> = (0..n)
+                        .map(|j| if j == i { names[i].as_str() } else { "_" })
+                        .collect();
+                    codec.push_str(&format!(
+                        " |> Codec.field \"{i}\" (\\( {} ) -> {}) {}",
+                        pat.join(", "),
+                        names[i],
+                        e.codec
+                    ));
+                }
+                codec.push_str(" |> Codec.buildObject)");
+                let surface: Vec<String> = elems.iter().map(|e| e.surface.clone()).collect();
+                return Ok(ResolvedCodec {
+                    codec,
+                    surface: format!("( {} )", surface.join(", ")),
+                });
+            }
+        }
         // (b'''') A STRUCTURAL record — the common case, because the solver
         // expands a record alias to an un-named `ty::Ty::Record` row. Recover the
         // nominal name by matching the field SET, then auto-derive `Codec.auto`.
@@ -777,6 +810,74 @@ fn device_only_fields(model_fields: &[ModelFieldTy]) -> Result<Vec<String>, Stri
         }
     }
     Ok(out)
+}
+
+/// The fields of the record alias `ty_name` (qualified or not) as the program
+/// declares it, with each field type resolved in the declaring module. Empty
+/// when no project module declares a record alias of that name.
+fn declared_record_fields(
+    db: &SkyDatabase,
+    check_ids: &[ModuleId],
+    ty_name: &str,
+) -> Vec<(String, ty::Ty)> {
+    use ty::TyDb;
+    let tail = tail_seg(ty_name.trim());
+    let world = db.type_world();
+    for m in check_ids {
+        for d in db.module_parse(*m).tree().decls() {
+            if let syntax::ast::Decl::Alias(a) = d {
+                if a.name().is_some_and(|n| n.text() == tail) {
+                    let fields = world.record_alias_fields_resolved(db, *m, a.syntax());
+                    if !fields.is_empty() {
+                        return fields;
+                    }
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// The model fields with a field's type taken from the declared alias when
+/// the inferred one holds no device key but the declared one does. An app
+/// whose `init` sets `hs = Nothing` and whose `update` never touches `hs`
+/// infers `hs : Maybe a`; its `type alias Model` says `Maybe
+/// Noise.Handshake`, and that is the type the client build gives the field.
+///
+/// A declared field the inferred model does not list at all (`update` only
+/// updates other fields, so its row leaves `hs` out) is added with its
+/// declared type.
+fn with_declared_field_types(
+    fields: &[ModelFieldTy],
+    declared: &[(String, ty::Ty)],
+) -> Vec<ModelFieldTy> {
+    let mut out: Vec<ModelFieldTy> = fields
+        .iter()
+        .map(|f| {
+            let mut f = f.clone();
+            let inferred_key = f.ty.as_ref().and_then(device_key_in);
+            if inferred_key.is_none() {
+                if let Some((_, t)) = declared.iter().find(|(n, _)| *n == f.name) {
+                    if device_key_in(t).is_some() {
+                        f.ty = Some(t.clone());
+                        f.ty_name = render_ty(t);
+                    }
+                }
+            }
+            f
+        })
+        .collect();
+    for (n, t) in declared {
+        if !out.iter().any(|f| f.name == *n) {
+            out.push(ModelFieldTy {
+                name: n.clone(),
+                ty_name: render_ty(t),
+                codec: None,
+                ty: Some(t.clone()),
+            });
+        }
+    }
+    out
 }
 
 /// `{ <base> | f1 = Nothing, f2 = Nothing }` — the model with its device-only
@@ -2194,45 +2295,27 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // are pruned from the frontend below.
     let server_internal_names: HashSet<String> = report.server_internal.iter().cloned().collect();
 
-    // SERVER branches, keyed by ctor name, with their RPC I/O + typed Msg args.
-    let mut server: Vec<(String, BranchIo)> = Vec::new();
-    let mut server_args: HashMap<String, Vec<ModelFieldTy>> = HashMap::new();
+    // SERVER routes, one per Msg constructor with a server arm, with the RPC
+    // I/O (the union over that constructor's server arms) + the typed Msg args.
+    // Routing is per ARM (see `spa_partition::server_routes`): a client arm of
+    // the same constructor stays in the client, and a server arm whose pattern
+    // matches inside an argument sends each whole argument positionally.
+    let routes = spa_partition::server_routes(&report.branches, &server_internal_names)?;
+    let mut server: Vec<(String, BranchIo)> = routes
+        .iter()
+        .map(|r| (r.ctor.clone(), r.io.clone()))
+        .collect();
+    let server_args: HashMap<String, Vec<ModelFieldTy>> = routes
+        .iter()
+        .map(|r| (r.ctor.clone(), r.msg_arg_tys.clone()))
+        .collect();
+    let arm_routes = ArmRoutes::from_report(&report.branches, &routes);
     let mut client_names: Vec<String> = Vec::new();
-    for b in &report.branches {
+    for b in report.branches.iter().filter(|b| !b.server) {
         let name = ctor_name(&b.msg).to_string();
-        if server_internal_names.contains(&name) {
-            // Server-internal — settled server-side in its trigger's RPC; no wire
-            // route, no client arm. Deduped across its (Ok/Err) arms.
-            continue;
-        }
-        if b.server {
-            if b.matches_inside_msg_args {
-                return Err(format!(
-                    "the SERVER branch `{label}` of `update` matches inside its message's \
-                     arguments. A server branch runs on the backend from the message the \
-                     client sends, and the build rebuilds that message from the names the \
-                     branch binds, so bind each argument to a plain name and match it in \
-                     the branch:\n\n    {name} value ->\n        case value of\n            \
-                     …\n",
-                    label = b.msg
-                ));
-            }
-            let io =
-                b.io.clone()
-                    .ok_or_else(|| format!("server branch `{name}` has no derived RPC I/O"))?;
-            server.push((name.clone(), io));
-            server_args.insert(name, b.msg_arg_tys.clone());
-        } else {
+        if !server_internal_names.contains(&name) && !client_names.contains(&name) {
             client_names.push(name);
         }
-    }
-    // A Msg may have several arms (Ok/Err); keep ONE wire entry per ctor (a Msg
-    // is one RPC route). Robust to non-consecutive arms.
-    {
-        let mut seen: HashSet<String> = HashSet::new();
-        server.retain(|(n, _)| seen.insert(n.clone()));
-        let mut seen_c: HashSet<String> = HashSet::new();
-        client_names.retain(|n| seen_c.insert(n.clone()));
     }
     if server.is_empty() {
         notes.push("no SERVER branches — the frontend is fully client-local and the backend only serves static assets.".into());
@@ -2382,7 +2465,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `withClientCrypto`: the model fields the first paint and the saved model
     // leave out (a `Maybe` key); any other key-holding field is refused here.
     let device_only: Vec<String> = if report.client_crypto {
-        device_only_fields(&report.model_fields)?
+        let declared = ssr_model_anno(&file, &src)
+            .map(|t| declared_record_fields(&db, &check_ids, &t))
+            .unwrap_or_default();
+        device_only_fields(&with_declared_field_types(&report.model_fields, &declared))?
     } else {
         Vec::new()
     };
@@ -2991,6 +3077,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         follow_ctx.as_ref().map(|fc| (fc, fc_q(fc, entry))),
         &settle_plan,
         &device_only,
+        ssr_model_anno(&file, &src).as_deref(),
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
@@ -3034,6 +3121,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         follow_here(entry),
         pure_whole_update && update_in_entry,
         &device_only,
+        &arm_routes,
     )?;
 
     // Enforce the client-builder invariant: every synthesised `spa*_` wrapper the
@@ -3209,6 +3297,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &model_field_names,
                 &client_result_map,
                 follow_here(*m),
+                &arm_routes,
             )?;
             // Bug #4b: a regenerated SIBLING `update` references `spaRpcError_`,
             // which the synthesis placed in the ENTRY. The sibling cannot import
@@ -5733,6 +5822,9 @@ fn gen_backend(
     // `withClientCrypto`: the `Maybe` key fields the first paint writes as
     // `Nothing` (see [`device_only_fields`]).
     device_only: &[String],
+    // The model's type as the entry can name it (see [`ssr_model_anno`]):
+    // the first-paint encoder is annotated with it.
+    model_anno: Option<&str>,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -6717,15 +6809,40 @@ fn gen_backend(
             "        initFields_ =\n            if initDone_ then\n                spaInitSeedFields_\n\n            else\n                []\n\n",
         );
         // `withClientCrypto`: the device-only key fields are embedded as `Nothing`.
-        let embedded = clear_device_only("resolved", device_only);
-        lets.push_str(&format!(
-            "        modelJson =\n            Codec.toJson (Codec.auto resolved) {}\n",
-            if device_only.is_empty() {
-                embedded
-            } else {
-                format!("({embedded})")
+        // The encoder is a top-level function annotated with the model's
+        // declared type when the entry can name it: `init`'s value alone leaves
+        // a field that nothing constrains (`hs = Nothing` that `update` never
+        // sets) a free `Maybe a`, and `Codec.auto` cannot derive a codec for
+        // that element ([E2009]); the declared type pins it (`Maybe
+        // Noise.Handshake`, always written `Nothing` here).
+        match model_anno {
+            Some(anno) => {
+                let cleared = clear_device_only("m_", device_only);
+                handlers.push_str(&format!(
+                    "-- The first-paint model as JSON (device-held keys written `Nothing`).\n\
+                     spaSsrModelJson_ : {anno} -> String\n\
+                     spaSsrModelJson_ m_ =\n    \
+                     Codec.toJson (Codec.auto m_) {}\n\n\n",
+                    if device_only.is_empty() {
+                        cleared
+                    } else {
+                        format!("({cleared})")
+                    }
+                ));
+                lets.push_str("        modelJson =\n            spaSsrModelJson_ resolved\n");
             }
-        ));
+            None => {
+                let embedded = clear_device_only("resolved", device_only);
+                lets.push_str(&format!(
+                    "        modelJson =\n            Codec.toJson (Codec.auto resolved) {}\n",
+                    if device_only.is_empty() {
+                        embedded
+                    } else {
+                        format!("({embedded})")
+                    }
+                ));
+            }
+        }
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -6970,6 +7087,8 @@ fn gen_frontend(
     // `withClientCrypto`: the `Maybe` key fields the saved model writes as
     // `Nothing` (see [`device_only_fields`]).
     device_only: &[String],
+    // Per-arm routing of `update`'s case (see [`ArmRoutes`]).
+    arm_routes: &ArmRoutes,
 ) -> Result<String, String> {
     // Imports: drop server-only effect modules AND any backend-only project
     // module (the security spine — an effectful module never reaches the client),
@@ -7156,13 +7275,23 @@ fn gen_frontend(
     // fields to their declared element types, so the decoder's `Codec.auto` matches
     // the encoder's byte-for-byte and hydration is lossless.
     if let Some(model) = &decoder_blank {
+        // `withClientCrypto`: a device-only key field is `Nothing` whatever the
+        // page or localStorage holds, so no key can be planted from outside.
+        let decoded = if device_only.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n        |> Result.map (\\m_ -> {})",
+                clear_device_only("m_", device_only)
+            )
+        };
         body.push_str(&format!(
             "spaModelBlank_ : {model_ty}\n\
              spaModelBlank_ =\n    \
              {model}\n\n\n\
              spaModelDecoder_ : String -> Result Error {model_ty}\n\
              spaModelDecoder_ jsonStr_ =\n    \
-             Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_\n\n\n"
+             Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_{decoded}\n\n\n"
         ));
         // P2: the SYMMETRIC encoder — byte-compatible with the decoder (the SAME
         // `Codec.auto spaModelBlank_`). The wasm client applies it to the WHOLE
@@ -7200,6 +7329,7 @@ fn gen_frontend(
             model_field_names,
             client_result,
             follow,
+            arm_routes,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -7310,6 +7440,46 @@ model in `view`."
     Ok(out)
 }
 
+/// Which arm of `update`'s `case msg of` runs where, for the regenerated
+/// client `update`. Built from the partition's per-arm verdicts; empty when the
+/// report carries no arm positions (then the head constructor decides).
+#[derive(Default)]
+pub(crate) struct ArmRoutes {
+    /// Server arm index → the positional pattern to write (a positional
+    /// route), or `None` to keep the source pattern.
+    server: HashMap<usize, Option<String>>,
+    /// Client arm indices.
+    client: HashSet<usize>,
+}
+
+impl ArmRoutes {
+    fn from_report(
+        branches: &[spa_partition::BranchVerdict],
+        routes: &[spa_partition::ServerRoute],
+    ) -> ArmRoutes {
+        let mut out = ArmRoutes::default();
+        for r in routes {
+            for a in &r.arms {
+                if let (Some(i), true) = (a.index, a.server) {
+                    out.server.insert(i, r.positional.then(|| a.pat.clone()));
+                }
+            }
+        }
+        for b in branches {
+            if let Some(a) = &b.arm {
+                if !out.server.contains_key(&a.index) {
+                    out.client.insert(a.index);
+                }
+            }
+        }
+        out
+    }
+
+    fn is_empty(&self) -> bool {
+        self.server.is_empty() && self.client.is_empty()
+    }
+}
+
 fn gen_frontend_update(
     // The module that DECLARES `update` — the ENTRY, or a SIBLING module (GAP-1).
     // `update` is read + rewritten from THIS file/src.
@@ -7340,6 +7510,8 @@ fn gen_frontend_update(
     // `Std.Native` import alias) + the server-tainted names (a client residual
     // may not use them).
     follow: Option<FollowHere<'_>>,
+    // Per-arm routing (server arm → positional pattern); empty → head rule.
+    arm_routes: &ArmRoutes,
 ) -> Result<String, String> {
     // Find update's ValueDecl → its `case msg of`.
     let update_val = file
@@ -7360,7 +7532,15 @@ fn gen_frontend_update(
     // the hook, keep the loud-log floor (model kept, perform site reports). The
     // presence flag is resolved by the caller against the ENTRY (see the param).
     let mut arms_out = String::new();
-    for arm in case.arms() {
+    let arm_count = case.arms().count();
+    if !arm_routes.is_empty() && arm_routes.server.len() + arm_routes.client.len() != arm_count {
+        return Err(format!(
+            "sky.spa: `update`'s `case` has {arm_count} arms but the analysis classified {}; \
+             the split cannot tell which arm runs where",
+            arm_routes.server.len() + arm_routes.client.len()
+        ));
+    }
+    for (arm_index, arm) in case.arms().enumerate() {
         let pat = arm.pattern().map(|p| p.syntax().clone());
         let head = pat.as_ref().and_then(first_upper);
         // SERVER-INTERNAL arm: dispatched only server-side (its ctor was pruned
@@ -7372,16 +7552,29 @@ fn gen_frontend_update(
         {
             continue;
         }
-        let is_server = head
+        let head_is_server = head
             .as_ref()
             .map(|h| server_ctors.contains(&h.as_str()))
             .unwrap_or(false);
+        let is_server = if arm_routes.is_empty() {
+            head_is_server
+        } else {
+            arm_routes.server.contains_key(&arm_index)
+        };
+        if is_server && !head_is_server {
+            return Err(format!(
+                "sky.spa: arm {arm_index} of `update` is a server arm, but its pattern names no \
+                 server constructor"
+            ));
+        }
         if is_server {
             let m = head.unwrap();
             let io = &server.iter().find(|(n, _)| *n == m).unwrap().1;
-            let pat_text = pat
-                .map(|p| slice(src, &p).to_string())
-                .unwrap_or_else(|| m.clone());
+            let positional = arm_routes.server.get(&arm_index).cloned().flatten();
+            let pat_text = positional.unwrap_or_else(|| {
+                pat.map(|p| slice(src, &p).to_string())
+                    .unwrap_or_else(|| m.clone())
+            });
             let req_codec = format!("{}ReqCodec", lower_first(&m));
             let resp_codec = format!("{}RespCodec", lower_first(&m));
             // Request payload — the shared client-leg build-req (also emitted by
@@ -7566,6 +7759,8 @@ fn render_module_client_subset(
     client_result: &HashMap<String, ClientResultInfo>,
     // SPA-3: the follow-up context seen from THIS module.
     follow: Option<FollowHere<'_>>,
+    // Per-arm routing of `update`'s case (see [`ArmRoutes`]).
+    arm_routes: &ArmRoutes,
 ) -> Result<String, String> {
     let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -7625,6 +7820,7 @@ fn render_module_client_subset(
             model_field_names,
             client_result,
             follow,
+            arm_routes,
         )?;
         body.push_str(&update_src);
         body.push_str("\n");
@@ -7991,6 +8187,20 @@ fn model_type_name(file: &SourceFile, src: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The model's type as the ENTRY can name it, for annotating generated code:
+/// the type the entry's own `view` / `update` annotation names, else `Model`
+/// when the entry declares a `type alias Model`. `None` when neither holds
+/// (the generated code then stays unannotated, as before).
+fn ssr_model_anno(file: &SourceFile, src: &str) -> Option<String> {
+    model_type_name(file, src).or_else(|| {
+        file.decls()
+            .any(|d| {
+                matches!(&d, syntax::ast::Decl::Alias(a) if a.name().is_some_and(|n| n.text() == "Model"))
+            })
+            .then(|| "Model".to_string())
+    })
 }
 
 /// The `n`th top-level (paren-aware) `->` segment of a type annotation, trimmed.
@@ -8374,6 +8584,7 @@ mod fix7_tests {
             &[],
             &HashMap::new(),
             None,
+            &ArmRoutes::default(),
         )
         .expect("gen_frontend_update")
     }

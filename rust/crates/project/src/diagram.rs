@@ -1410,41 +1410,34 @@ pub fn analyze_wire(
 
     let report = crate::spa_partition::analyze(repo_root, project_dir, entry_module)?;
 
+    // One `/_rpc/<Msg>` endpoint per constructor with a SERVER arm: the route
+    // the split generates (the union of the constructor's server arms, whose
+    // request names each whole argument positionally when an arm matches
+    // inside one). CLIENT arms run in the browser with no round-trip.
+    // Server-internal Msgs settle inside their trigger's RPC and have no route.
+    let internal: HashSet<String> = report.server_internal.iter().cloned().collect();
+    let routes = crate::spa_partition::server_routes(&report.branches, &internal)?;
     let mut endpoints: Vec<WireEndpoint> = Vec::new();
-    for b in &report.branches {
-        // Only SERVER branches carry an `/_rpc` endpoint; CLIENT arms run in the
-        // browser with no round-trip (`io == None`).
-        let Some(io) = &b.io else { continue };
-        if !b.server {
-            continue;
-        }
-        // `b.msg` is the arm pattern (`"SaveVia _"`); the endpoint is named by
-        // the constructor alone (`SaveVia`).
-        let ctor = b
-            .msg
-            .split_whitespace()
-            .next()
-            .unwrap_or(&b.msg)
-            .to_string();
-        // The effect families the branch reaches (`Db`, `Http`, `Auth`, …), now
-        // surfaced by the partition report per branch.
-        let effects = if b.effect_families.is_empty() {
+    for r in &routes {
+        let io = &r.io;
+        // The effect families the route reaches (`Db`, `Http`, `Auth`, …).
+        let effects = if r.effect_families.is_empty() {
             None
         } else {
-            Some(b.effect_families.join(", "))
+            Some(r.effect_families.join(", "))
         };
         endpoints.push(WireEndpoint {
-            msg: ctor,
+            msg: r.ctor.clone(),
             request: wire_request(io),
             response: wire_response(io),
             effects,
-            effect_families: b.effect_families.clone(),
+            effect_families: r.effect_families.clone(),
             read_fields: io.read_fields.clone(),
             write_fields: io.write_fields.clone(),
             always_written: io.always_written.clone(),
             reads_whole_model: io.request_whole_model(),
             writes_whole_model: io.writes_whole_model,
-            msg_arg_tys: b.msg_arg_tys.clone(),
+            msg_arg_tys: r.msg_arg_tys.clone(),
         });
     }
     endpoints.sort_by(|a, b| a.msg.cmp(&b.msg));

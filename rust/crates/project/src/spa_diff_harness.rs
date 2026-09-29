@@ -68,69 +68,48 @@ impl TypeResolver for MapTypeResolver {
     }
 }
 
-/// The tail ctor NAME of a branch label (`GotTodos (Ok _)` → `GotTodos`,
-/// `SetRegion` → `SetRegion`).
-fn ctor_of(label: &str) -> &str {
-    label.split_whitespace().next().unwrap_or(label)
-}
-
-/// One server branch the fuzzer will diff.
+/// One server route the fuzzer will diff.
 #[derive(Clone, Debug)]
 pub struct CheckableBranch {
     /// The Msg ctor name (`SetRegion`).
     pub ctor: String,
-    /// The branch's derived RPC read-set / write-set.
+    /// The route's derived RPC read-set / write-set (the union over the
+    /// constructor's server arms).
     pub io: BranchIo,
-    /// The Msg args this branch binds, with types — for `genMsg_<Ctor>`.
+    /// The request's Msg-argument fields, with types — for `genMsg_<Ctor>`.
     pub msg_arg_tys: Vec<ModelFieldTy>,
+    /// The constructor's arms in `case` order: a server arm is diffed, a client
+    /// arm (the message never leaves the client) is not. Empty when the report
+    /// carries no arm positions: one arm `<Ctor> <msg_args…>` is diffed.
+    pub arms: Vec<crate::spa_partition::RouteArm>,
 }
 
-/// Apply the phase-2 fence to a partition report, returning the checkable branches
-/// plus loud notes for every server branch that was skipped and why.
+/// Apply the phase-2 fence to a partition report, returning the checkable
+/// routes plus loud notes for every server route that was skipped and why.
 pub fn select_checkable(report: &SpaPartitionReport) -> (Vec<CheckableBranch>, Vec<String>) {
     let mut out = Vec::new();
     let mut notes = Vec::new();
 
-    // Branches excluded by the chaining / client-result analysis (grill fix 4).
+    // Routes excluded by the chaining / client-result analysis (grill fix 4).
+    // Server-internal Msgs have no route at all.
     let excluded: std::collections::BTreeSet<String> = report
-        .server_internal
+        .chaining_branches
         .iter()
         .cloned()
-        .chain(report.chaining_branches.iter().cloned())
         .chain(report.client_result.iter().map(|(root, _)| root.clone()))
         .collect();
-
-    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for b in &report.branches {
-        if !b.server {
-            continue; // client branch: no round-trip, nothing to diff
+    let internal: std::collections::HashSet<String> =
+        report.server_internal.iter().cloned().collect();
+    let routes = match crate::spa_partition::server_routes(&report.branches, &internal) {
+        Ok(r) => r,
+        Err(e) => {
+            notes.push(format!("skip every route: {e}"));
+            return (out, notes);
         }
-        let ctor = ctor_of(&b.msg).to_string();
-        // A ctor that appears in more than one arm (`GotTodos (Ok _)` /
-        // `GotTodos (Err _)`) would emit a duplicate `genMsg_<Ctor>` — diff it once.
-        if !seen.insert(ctor.clone()) {
-            continue;
-        }
-        let Some(io) = &b.io else {
-            notes.push(format!("skip `{ctor}`: server branch with no derived I/O"));
-            continue;
-        };
-        // The harness rebinds the arm as `case msg of <Ctor> <arg…>` using the
-        // arm's own binder names (`io.msg_args`), so the pattern must be a SIMPLE
-        // top-level ctor application whose args are plain binders. A nested or
-        // literal pattern (`GotTodos (Ok _)`, `SetMode "dark"`) binds args the
-        // emitters cannot reconstruct from the wire — defer to phase 3. The label
-        // renders binders as `_`, so detect nesting/literals structurally: any
-        // `(` or `"` in the label means a non-simple pattern.
-        let simple = !b.msg.contains('(') && !b.msg.contains('"');
-        if !simple {
-            notes.push(format!(
-                "skip `{}`: non-simple arm pattern (nested / literal binders the wire cannot reconstruct) — deferred to phase 3",
-                b.msg
-            ));
-            continue;
-        }
-        if b.forces_effect {
+    };
+    for r in routes {
+        let ctor = r.ctor.clone();
+        if r.forces_effect {
             notes.push(format!(
                 "skip `{ctor}`: forces a run-position effect (DB / clock / fresh Uuid) — deferred to the phase-3 effect-mock harness"
             ));
@@ -138,14 +117,29 @@ pub fn select_checkable(report: &SpaPartitionReport) -> (Vec<CheckableBranch>, V
         }
         if excluded.contains(&ctor) {
             notes.push(format!(
-                "skip `{ctor}`: server-internal / chaining / client-result root (field-excluding its writes would make the check vacuous)"
+                "skip `{ctor}`: chaining / client-result root (field-excluding its writes would make the check vacuous)"
+            ));
+            continue;
+        }
+        // The harness re-emits each arm's pattern; an arm with no source
+        // position (a report without arm shapes) is emitted as one simple
+        // `<Ctor> <msg_args…>` arm, which is only sound when it is the only arm.
+        let positioned = r.arms.iter().all(|a| a.index.is_some());
+        if !positioned && r.arms.len() > 1 {
+            notes.push(format!(
+                "skip `{ctor}`: its arms carry no source position, so the harness cannot keep their order"
             ));
             continue;
         }
         out.push(CheckableBranch {
             ctor,
-            io: io.clone(),
-            msg_arg_tys: b.msg_arg_tys.clone(),
+            io: r.io.clone(),
+            msg_arg_tys: r.msg_arg_tys.clone(),
+            arms: if positioned {
+                r.arms.clone()
+            } else {
+                Vec::new()
+            },
         });
     }
     (out, notes)
@@ -277,12 +271,20 @@ fn emit_check_one(
     s.push_str("    case msg of\n");
 
     for b in checked {
-        // The case pattern rebinds the args by their source names (io.msg_args),
-        // so `emit_build_req`'s bare-arg references resolve.
-        let pattern = if b.io.msg_args.is_empty() {
-            b.ctor.clone()
+        // The case patterns rebind the args by the names the request carries
+        // (io.msg_args: an arm's own binders, or the positional names its
+        // positional pattern binds), so `emit_build_req`'s bare-arg references
+        // resolve. A client arm of the constructor is emitted first-match in
+        // its place and not diffed: that message never reaches the backend.
+        let arms: Vec<(String, bool)> = if b.arms.is_empty() {
+            let pattern = if b.io.msg_args.is_empty() {
+                b.ctor.clone()
+            } else {
+                format!("{} {}", b.ctor, b.io.msg_args.join(" "))
+            };
+            vec![(pattern, true)]
         } else {
-            format!("{} {}", b.ctor, b.io.msg_args.join(" "))
+            b.arms.iter().map(|a| (a.pat.clone(), a.server)).collect()
         };
         let build_req = emit_build_req(&b.io, "model", model_field_names);
         // reconstruct: `m = …` (+ `( base, _ ) = init ()` in the narrow shapes) at
@@ -300,31 +302,39 @@ fn emit_check_one(
         let apply = emit_apply_delta(&b.io, "model");
         let apply = apply.trim_start();
 
-        s.push_str(&format!("        {pattern} ->\n"));
-        s.push_str("            let\n");
-        s.push_str(&format!(
+        let mut body = String::new();
+        body.push_str("            let\n");
+        body.push_str(&format!(
             "                p =\n                    {build_req}\n\n"
         ));
-        s.push_str(&reconstruct);
-        s.push('\n');
-        s.push_str(&format!(
+        body.push_str(&reconstruct);
+        body.push('\n');
+        body.push_str(&format!(
             "                ( m2, _ ) =\n                    update {ctor_app} m\n\n"
         ));
-        s.push_str(&format!(
+        body.push_str(&format!(
             "                resp =\n                    {write_set}\n\n"
         ));
-        s.push_str(&format!(
+        body.push_str(&format!(
             "                ( applied, _ ) =\n                    {apply}\n\n"
         ));
-        s.push_str("                ( direct, _ ) =\n                    update msg model\n");
-        s.push_str("            in\n");
-        s.push_str("            if direct == applied then\n");
-        s.push_str("                Ok ()\n\n");
-        s.push_str("            else\n");
-        s.push_str(&format!(
+        body.push_str("                ( direct, _ ) =\n                    update msg model\n");
+        body.push_str("            in\n");
+        body.push_str("            if direct == applied then\n");
+        body.push_str("                Ok ()\n\n");
+        body.push_str("            else\n");
+        body.push_str(&format!(
             "                Err \"{}: split-leg model diverged from the direct update (a read/write-set drop or a Msg-arg collision)\"\n\n",
             b.ctor
         ));
+        for (pattern, server) in &arms {
+            s.push_str(&format!("        {pattern} ->\n"));
+            if *server {
+                s.push_str(&body);
+            } else {
+                s.push_str("            Ok ()\n\n");
+            }
+        }
     }
 
     // A catch-all: any ctor the generator did not produce is not diffed.
@@ -537,6 +547,7 @@ mod tests {
             ctor: "SetScaleArg".to_string(),
             io,
             msg_arg_tys: vec![f("scale", "Int")],
+            arms: vec![],
         }];
         let e = env();
         let out = emit_harness("Model", "Msg", &model_fields, &checkable, &e, 50, 7);
@@ -583,6 +594,7 @@ mod tests {
             ctor: "Inc".to_string(),
             io,
             msg_arg_tys: vec![],
+            arms: vec![],
         }];
         let e = env();
         let out = emit_harness("Model", "Msg", &model_fields, &checkable, &e, 50, 1);
@@ -619,7 +631,7 @@ mod tests {
             msg_arg_tys: vec![],
             forces_effect: forces,
             effect_families: vec![],
-            matches_inside_msg_args: false,
+            arm: None,
         }
     }
     fn report_with(branches: Vec<BranchVerdict>) -> SpaPartitionReport {
@@ -666,26 +678,74 @@ mod tests {
             bv("Internal", true, Some(io_args(&[])), false), // server-internal → skip
             bv("Chained", true, Some(io_args(&[])), false),  // chaining → skip
             bv("ClientRoot", true, Some(io_args(&[])), false), // client-result root → skip
-            bv("GotTodos (Ok _)", true, Some(io_args(&[])), false), // nested pattern → skip
         ];
         let (checkable, _notes) = select_checkable(&report_with(branches));
         let ctors: Vec<&str> = checkable.iter().map(|c| c.ctor.as_str()).collect();
         assert_eq!(
             ctors,
             vec!["SetRegion"],
-            "only the effect-free simple server branch is checkable"
+            "only the effect-free server branch is checkable"
         );
+    }
+
+    /// A case arm at `index` with pattern `pat` (and its positional form).
+    fn arm_bv(msg: &str, server: bool, index: usize, pat: &str, positional: &str) -> BranchVerdict {
+        let mut b = bv(msg, server, server.then(|| io_args(&["x"])), false);
+        b.arm = Some(crate::spa_partition::ArmShape {
+            index,
+            pat_src: pat.to_string(),
+            plain_args: false,
+            positional_pat: Some(positional.to_string()),
+            ctor_args: if server {
+                vec![f("spaArg0_", "Int")]
+            } else {
+                vec![]
+            },
+        });
+        b
     }
 
     #[test]
     fn fence_dedups_a_ctor_appearing_in_multiple_arms() {
-        // Same ctor in two arms → diffed once (no duplicate genMsg_<Ctor>).
+        // Same ctor in two server arms → one route, diffed once (no duplicate
+        // genMsg_<Ctor>), sending the whole argument positionally.
         let branches = vec![
-            bv("Toggle id", true, Some(io_args(&["id"])), false),
-            bv("Toggle id", true, Some(io_args(&["id"])), false),
+            arm_bv("Toggle 0", true, 0, "Toggle 0", "Toggle (0 as spaArg0_)"),
+            arm_bv("Toggle _", true, 1, "Toggle n", "Toggle (n as spaArg0_)"),
         ];
         let (checkable, _) = select_checkable(&report_with(branches));
         assert_eq!(checkable.len(), 1, "a repeated ctor is selected once");
+        assert_eq!(checkable[0].io.msg_args, vec!["spaArg0_".to_string()]);
+    }
+
+    /// A constructor with a client arm before and after its server arm: the
+    /// harness keeps the `case` order and diffs only the server arm (a message
+    /// the client arm takes never reaches the backend).
+    #[test]
+    fn a_client_arm_of_a_server_ctor_keeps_its_place_and_is_not_diffed() {
+        let branches = vec![
+            arm_bv("Pick 1", false, 0, "Pick 1", "Pick (1 as spaArg0_)"),
+            arm_bv("Pick 0", true, 1, "Pick 0", "Pick (0 as spaArg0_)"),
+            arm_bv("Pick _", false, 2, "Pick n", "Pick (n as spaArg0_)"),
+        ];
+        let (checkable, _) = select_checkable(&report_with(branches));
+        assert_eq!(checkable.len(), 1);
+        let model_fields = vec![f("a", "Int")];
+        let e = env();
+        let out = emit_harness("Model", "Msg", &model_fields, &checkable, &e, 5, 1);
+        let one = out
+            .snippet
+            .split("spaDiffCheckOne model msg =")
+            .nth(1)
+            .unwrap_or("");
+        let at = |needle: &str| {
+            one.find(needle)
+                .unwrap_or_else(|| panic!("missing `{needle}`:\n{}", out.snippet))
+        };
+        assert!(at("        Pick 1 ->\n            Ok ()") < at("        Pick (0 as spaArg0_) ->"));
+        assert!(at("        Pick (0 as spaArg0_) ->") < at("        Pick n ->\n            Ok ()"));
+        assert!(one.contains("update (Pick p.spaArg0_) m"), "{one}");
+        well_formed(&out.snippet);
     }
 
     #[test]

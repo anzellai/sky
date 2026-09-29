@@ -522,7 +522,7 @@ fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
         "the backend must have no RPC for a key operation:\n{back}"
     );
     assert!(
-        back.contains("({ resolved | handshake = Nothing })"),
+        back.contains("Codec.toJson (Codec.auto m_) ({ m_ | handshake = Nothing })"),
         "the SSR first paint must write the device handshake as Nothing:\n{back}"
     );
     assert!(
@@ -532,6 +532,79 @@ fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
     assert!(
         !log.contains("Codec.auto` cannot round-trip"),
         "a cleared device-only field must not raise the SSR-embed warning:\n{log}"
+    );
+}
+
+/// `withClientCrypto` with a device-only key field AND a server branch, in an
+/// app with no type annotations (`tests/fixtures/spa-client-crypto-ssr`). The
+/// backend's first-paint encoder derived `Codec.auto` from `init`'s value,
+/// where `hs = Nothing` is a free `Maybe a` because `update` never sets it, so
+/// the backend failed with [E2009] "cannot derive an element codec for this
+/// `Maybe` field". With no server branch there is no first paint to encode,
+/// which is why `client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint`
+/// passed. The encoder is now a top-level function annotated with the declared
+/// `Model`, the key field is found from that alias (the inferred model did
+/// not list it), and the running backend's first paint carries `"hs":null`.
+#[test]
+fn a_device_key_field_with_a_server_branch_builds_and_paints_nothing() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-client-crypto-ssr"),
+        &proj,
+    );
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap_or_default();
+    let front = std::fs::read_to_string(split.join("frontend/src/Main.sky")).unwrap_or_default();
+    assert!(
+        back.contains("spaSsrModelJson_ : Model -> String")
+            && back.contains("Codec.toJson (Codec.auto m_) ({ m_ | hs = Nothing })"),
+        "the first-paint encoder is pinned to Model and clears the key:\n{back}\n{log}"
+    );
+    assert!(
+        front.contains("|> Result.map (\\m_ -> { m_ | hs = Nothing })")
+            && front.contains("({ m_ | hs = Nothing })"),
+        "the client clears the key after a decode and in the saved model:\n{front}"
+    );
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let port = free_port();
+    let back_dir = split.join("backend");
+    let log_path = back_dir.join("server.log");
+    let child = Killed(
+        Command::new(back_dir.join("sky-out/app"))
+            .current_dir(&back_dir)
+            .env("PORT", port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap())
+            .spawn()
+            .expect("start the backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 120),
+        "the backend did not start"
+    );
+    let page = curl_body_p(port, "/").unwrap_or_default();
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        page.contains(r#"{"hs":null,"note":""}"#),
+        "the first paint writes the device key as null:\n{page}"
     );
 }
 
@@ -4217,7 +4290,10 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     for needle in [
         "spaSsrResolveModel spaRoutes_ spaNotFound_ model0 req.path",
         "spaSsrSettleFull routed cmd0 update",
-        "Codec.toJson (Codec.auto resolved) resolved",
+        // The first-paint encoder is typed with the app's model (so a field
+        // `init` leaves unconstrained still has a codec element).
+        "Codec.toJson (Codec.auto m_) m_",
+        "spaSsrModelJson_ resolved",
     ] {
         assert!(
             backend.contains(needle),
@@ -6602,4 +6678,303 @@ fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
         empty_topic.0, 403,
         "an empty topic is refused: {empty_topic:?}"
     );
+}
+
+fn spa_arm_patterns_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-arm-patterns")
+}
+
+/// A port nothing listens on.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// A child process that is killed when dropped (a failed assertion must not
+/// leave a server holding its port).
+struct Killed(std::process::Child);
+
+impl Drop for Killed {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn wait_for_log(path: &std::path::Path, needle: &str, tries: u32) -> bool {
+    for _ in 0..tries {
+        if std::fs::read_to_string(path).is_ok_and(|s| s.contains(needle)) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    false
+}
+
+/// `curl` GET with a cookie jar (read and written).
+fn curl_get_jar(port: u16, path: &str, jar: &std::path::Path) -> String {
+    let out = Command::new("curl")
+        .args(["-s", "--max-time", "30", "-b"])
+        .arg(jar)
+        .arg("-c")
+        .arg(jar)
+        .arg(format!("http://127.0.0.1:{port}{path}"))
+        .output()
+        .expect("curl GET");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Dispatch the Sky.Live handler `hid` (a button's `onPress`), as the browser
+/// does; returns the HTTP status.
+fn live_event(port: u16, jar: &std::path::Path, hid: &str) -> String {
+    let jar_text = std::fs::read_to_string(jar).unwrap_or_default();
+    let csrf = jar_text
+        .lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            (cols.len() >= 7 && cols[5] == "__sky_csrf").then(|| cols[6].to_string())
+        })
+        .last()
+        .unwrap_or_default();
+    let body = format!("{{\"sessionId\":\"\",\"msg\":\"\",\"args\":[],\"handlerId\":\"{hid}\"}}");
+    let out = Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "30",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            &format!("X-Sky-Csrf: {csrf}"),
+            "-X",
+            "POST",
+            "-d",
+            &body,
+            "-b",
+        ])
+        .arg(jar)
+        .arg(format!("http://127.0.0.1:{port}/_sky/event"))
+        .output()
+        .expect("curl POST event");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Every `data-sky-hid` in the page, in document order.
+fn handler_ids(body: &str) -> Vec<String> {
+    body.split("data-sky-hid=\"")
+        .skip(1)
+        .filter_map(|r| r.split('"').next().map(str::to_string))
+        .collect()
+}
+
+/// The `STATUS=…|` text the fixture's view renders.
+fn rendered_status(body: &str) -> Option<String> {
+    let rest = &body[body.find("STATUS=")? + "STATUS=".len()..];
+    Some(rest[..rest.find('|')?].to_string())
+}
+
+/// Server branches that match inside their Msg arguments (v0.27.0). Before,
+/// the split rebuilt a server arm's Msg from the names the arm binds, so an arm
+/// such as `Report (Ok line)` produced a backend that did not compile, and the
+/// split then refused it. The fixture's `update` has a server arm of every
+/// pattern shape — a nested constructor, Int and String literals, a tuple, a
+/// record, an `as` binding and a wildcard — with client and server arms of one
+/// constructor mixed.
+///
+/// The same source is built twice: as a Sky.Live app (`sky build`, the
+/// monolithic reference, where every arm runs on the server) and as a split
+/// Sky.Spa app (`sky build --target web:app`: backend + wasm client). Each
+/// message is dispatched to the Live app through its button and sent to the
+/// split backend over `POST /_rpc/<Msg>` with the whole argument (what the
+/// client sends from the arm's positional pattern); the model each returns must
+/// agree. A server arm's status carries the tag the server reads from its
+/// environment, and `Any _` also chains a logged command (an `ARM …` line),
+/// which must run in both. `Named
+/// "guest"` is a CLIENT arm placed before the server arm `Named other`: the
+/// backend reaches it too when sent the message, which proves the backend keeps
+/// `case` order (the first matching arm wins), as it must for the client's
+/// routing to be sound.
+#[test]
+fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&spa_arm_patterns_fixture_dir(), &proj);
+
+    let split = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let split_log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&split.stdout),
+        String::from_utf8_lossy(&split.stderr)
+    );
+    let split_dir = proj.join(".skyapp/web-app/.split");
+    let front = std::fs::read_to_string(split_dir.join("frontend/src/Main.sky"))
+        .unwrap_or_else(|_| panic!("the frontend entry must be generated:\n{split_log}"));
+    for want in [
+        "Report ((Ok line) as spaArg0_) ->",
+        "Pick (0 as spaArg0_) ->",
+        "Named (\"admin\" as spaArg0_) ->",
+        "Pair (( 0, s ) as spaArg0_) ->",
+        "Take ({ id, label } as spaArg0_) ->",
+        "Wrap (((Just n) as whole) as spaArg0_) ->",
+        "Any (_ as spaArg0_) ->",
+        "Named \"guest\" ->",
+    ] {
+        assert!(front.contains(want), "client arm `{want}`:\n{front}");
+    }
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        split.status.success(),
+        "the web:app build failed:\n{split_log}"
+    );
+    assert!(
+        dist_has_wasm(&split_dir.join("frontend/dist")),
+        "the wasm client must be built:\n{split_log}"
+    );
+    let live = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build (Sky.Live)");
+    assert!(
+        live.status.success(),
+        "the Sky.Live build failed:\n{}{}",
+        String::from_utf8_lossy(&live.stdout),
+        String::from_utf8_lossy(&live.stderr)
+    );
+
+    // The monolithic Sky.Live app.
+    let live_port = free_port();
+    let live_log = proj.join("live.log");
+    let live_child = Killed(
+        Command::new(proj.join("sky-out/app"))
+            .current_dir(&proj)
+            .env("SKY_LIVE_PORT", live_port.to_string())
+            .env("PORT", live_port.to_string())
+            .env("SKY_ARM_TAG", "srv")
+            .env_remove("SKY_LIVE_STORE")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&live_log).unwrap())
+            .stderr(std::fs::File::create(proj.join("live.err")).unwrap())
+            .spawn()
+            .expect("start the Sky.Live app"),
+    );
+    assert!(
+        wait_for_log(&live_log, &format!("listening on :{live_port}"), 120),
+        "the Sky.Live app did not start:\n{}",
+        std::fs::read_to_string(&live_log).unwrap_or_default()
+    );
+    // The split backend.
+    let back_port = free_port();
+    let back_dir = split_dir.join("backend");
+    let back_log = back_dir.join("server.log");
+    let back_child = Killed(
+        Command::new(back_dir.join("sky-out/app"))
+            .current_dir(&back_dir)
+            .env("PORT", back_port.to_string())
+            .env("SKY_ARM_TAG", "srv")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&back_log).unwrap())
+            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap())
+            .spawn()
+            .expect("start the split backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&back_log, 120),
+        "the split backend did not start:\n{}",
+        std::fs::read_to_string(&back_log).unwrap_or_default()
+    );
+
+    // (button index in the view, constructor, the whole argument as JSON, the
+    // status the arm sets, the server effect's log line or "" for none).
+    // A server arm's status starts with the `SKY_ARM_TAG` the server process
+    // reads ("srv"); a client arm's does not.
+    let cases: [(usize, &str, &str, &str, &str); 11] = [
+        (0, "Report", r#"["Ok","a"]"#, "srv report a", ""),
+        (1, "Pick", "0", "srv pick zero", ""),
+        (2, "Pick", "7", "srv pick 7", ""),
+        (3, "Named", r#""admin""#, "srv named admin", ""),
+        (4, "Named", r#""guest""#, "named guest", ""),
+        (5, "Named", r#""bob""#, "srv named bob", ""),
+        (6, "Pair", r#"{"0":0,"1":"x"}"#, "srv pair zero x", ""),
+        (7, "Take", r#"{"id":3,"label":"l"}"#, "srv take 3 l", ""),
+        (8, "Wrap", "5", "srv wrap 5 5", ""),
+        (9, "Any", "null", "srv any", "ARM any"),
+        (10, "Any", "1", "srv any", "ARM any"),
+    ];
+    let jar = proj.join("jar.txt");
+    let mut failures = Vec::new();
+    for (i, ctor, arg, want, effect) in cases {
+        // The monolith: press the case's button, then read the rendered status.
+        let live_before = std::fs::read_to_string(&live_log).unwrap_or_default();
+        let page = curl_get_jar(live_port, "/", &jar);
+        let hids = handler_ids(&page);
+        let live_status = match hids.get(i) {
+            Some(hid) => {
+                let code = live_event(live_port, &jar, hid);
+                assert_eq!(code, "200", "Live event for case {i} ({ctor})");
+                rendered_status(&curl_get_jar(live_port, "/", &jar))
+            }
+            None => None,
+        };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let live_after = std::fs::read_to_string(&live_log).unwrap_or_default();
+        let live_effect = live_after
+            .get(live_before.len()..)
+            .unwrap_or_default()
+            .lines()
+            .find_map(|l| l.find("ARM ").map(|i| l[i..].trim().to_string()))
+            .unwrap_or_default();
+        // The split: the whole argument over the RPC.
+        let before = std::fs::read_to_string(&back_log).unwrap_or_default();
+        let posted = curl_post_status_body(
+            back_port,
+            &format!("/_rpc/{ctor}"),
+            &format!("{{\"status\":\"ready\",\"spaArg0_\":{arg}}}"),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let after = std::fs::read_to_string(&back_log).unwrap_or_default();
+        let new_lines = after.get(before.len()..).unwrap_or_default().to_string();
+        let rpc_status = posted.as_ref().and_then(|(code, body)| {
+            (*code == 200)
+                .then(|| serde_json::from_str::<serde_json::Value>(body).ok())
+                .flatten()
+                .and_then(|v| v["status"].as_str().map(str::to_string))
+        });
+        if live_status.as_deref() != Some(want) || rpc_status.as_deref() != Some(want) {
+            failures.push(format!(
+                "case {i} {ctor} {arg}: Live rendered {live_status:?}, the split RPC answered \
+                 {rpc_status:?} ({posted:?}); both must be {want:?}"
+            ));
+        }
+        let rpc_effect = new_lines
+            .lines()
+            .find_map(|l| l.find("ARM ").map(|i| l[i..].trim().to_string()))
+            .unwrap_or_default();
+        if rpc_effect != effect || live_effect != effect {
+            failures.push(format!(
+                "case {i} {ctor} {arg}: the server effect must be {effect:?} in both: the \
+                 backend logged {rpc_effect:?}, the Live app {live_effect:?}"
+            ));
+        }
+    }
+    drop(live_child);
+    drop(back_child);
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

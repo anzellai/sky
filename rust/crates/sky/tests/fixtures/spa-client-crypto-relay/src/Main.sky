@@ -1,0 +1,183 @@
+module Main exposing (main)
+
+-- A device that holds its own Noise IK (BLAKE2s) session with `withClientCrypto`:
+-- the wasm client creates the key, runs the handshake and encrypts; the
+-- backend only relays public bytes (hex) to a responder, in two steps of the
+-- same shape. `SendHello` relays message 1 and `GotMsg2` completes the
+-- handshake in the client; `SendEcho` relays a transport ciphertext and
+-- `GotEcho` decrypts the answer in the client. Both relay steps are
+-- client-result RPCs: the device's handshake and transport never leave it.
+--
+-- scripts/spa-client-crypto-e2e.sh builds it and drives it in a browser
+-- against a Go responder (runtime-go/rt/noisewasm/responder) started with the
+-- test-only static key 0x01…0x20, whose public key `serverPublicHex` pins,
+-- with RELAY_URL naming the responder; the
+-- project test rust/crates/project/tests/spa_client_crypto.rs checks the split.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Http as Http
+import Sky.Core.Result as Result
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Crypto.Kx as Kx
+import Std.Crypto.Noise as Noise
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { hs : Maybe Noise.Handshake
+    , tr : Maybe Noise.Transport
+    , status : String
+    }
+
+type Msg
+    = Start
+    | Began (Result Error Noise.Handshake)
+    | SendHello (Result Error String)
+    | GotMsg2 (Result Error String)
+    | SendEcho (Result Error String)
+    | GotEcho (Result Error String)
+
+
+serverPublicHex : String
+serverPublicHex =
+    "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c"
+
+
+begin : Task Error Noise.Handshake
+begin =
+    Kx.generate
+        |> Task.andThen
+               (\key ->
+                   Encoding.hexDecode serverPublicHex
+                       |> Result.andThen Kx.publicKeyFromBytes
+                       |> Task.fromResult
+                       |> Task.andThen
+                              (\pub ->
+                                  Noise.initiatorWith
+                                      Noise.Blake2s
+                                      key
+                                      pub
+                                      "relay v1"))
+
+
+relay : String -> String -> Task Error String
+relay path hex =
+    Http.post (System.getenvOr "RELAY_URL" "http://127.0.0.1:8797" ++ path) hex
+        |> Task.map .body
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { hs = Nothing, tr = Nothing, status = "ready" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Start ->
+            ( model, Cmd.perform begin Began )
+
+        Began (Ok hs) ->
+            case Noise.writeMessage "hello" hs of
+
+                Ok ( next, m1 ) ->
+                    ( { model | hs = Just next }
+                    , Cmd.perform
+                          (Task.succeed (Encoding.hexEncode m1))
+                          SendHello
+                    )
+
+                Err _ ->
+                    ( { model | status = "failed" }, Cmd.none )
+
+        Began (Err _) ->
+            ( { model | status = "failed" }, Cmd.none )
+
+        SendHello (Ok hex) ->
+            ( model, Cmd.perform (relay "/handshake" hex) GotMsg2 )
+
+        SendHello (Err _) ->
+            ( { model | status = "failed" }, Cmd.none )
+
+        GotMsg2 (Ok hex) ->
+            case model.hs of
+
+                Just hs ->
+                    case Encoding.hexDecode hex
+                             |> Result.andThen (\m2 -> Noise.readMessage m2 hs)
+                             |> Result.andThen
+                                    (\( done, _ ) -> Noise.transport done) of
+
+                        Ok t ->
+                            case Noise.encrypt "ping" t of
+
+                                Ok ( t2, ct ) ->
+                                    ( { model | hs = Nothing, tr = Just t2 }
+                                    , Cmd.perform
+                                          (Task.succeed (Encoding.hexEncode ct))
+                                          SendEcho
+                                    )
+
+                                Err _ ->
+                                    ( { model | status = "failed" }, Cmd.none )
+
+                        Err _ ->
+                            ( { model | status = "failed" }, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GotMsg2 (Err _) ->
+            ( { model | status = "failed" }, Cmd.none )
+
+        SendEcho (Ok hex) ->
+            ( model, Cmd.perform (relay "/echo" hex) GotEcho )
+
+        SendEcho (Err _) ->
+            ( { model | status = "failed" }, Cmd.none )
+
+        GotEcho (Ok hex) ->
+            case ( model.tr, Encoding.hexDecode hex ) of
+
+                ( Just t, Ok ct ) ->
+                    case Noise.decrypt ct t of
+
+                        Ok ( t2, text ) ->
+                            ( { model | tr = Just t2, status = "echo " ++ text }
+                            , Cmd.none
+                            )
+
+                        Err _ ->
+                            ( { model | status = "failed" }, Cmd.none )
+
+                _ ->
+                    ( { model | status = "failed" }, Cmd.none )
+
+        GotEcho (Err _) ->
+            ( { model | status = "failed" }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("STATUS=" ++ model.status ++ "|")
+        , Ui.button [] { onPress = Just Start, label = Ui.text "start" }
+        ]
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ()
+            |> App.withClientCrypto)

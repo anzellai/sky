@@ -3642,8 +3642,22 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse().ok())
         .unwrap_or(20260912);
+    // The entry is the one argument that is neither a flag nor a flag's value:
+    // `sky fuzz --target web:app src/Main.sky` must not read `web:app` as the
+    // entry file.
+    let mut positional: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--target" | "--iters" | "--seed" => {
+                it.next();
+            }
+            s if s.starts_with("--") => {}
+            s => positional.push(s.to_string()),
+        }
+    }
     let file = match resolve_entry_arg(
-        &args.iter().filter(|a| !a.starts_with("--")).cloned().collect::<Vec<_>>(),
+        &positional,
         "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  (or run inside a Sky app project)",
     ) {
         Ok(f) => f,
@@ -4741,6 +4755,16 @@ fn package_macos_release(
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
 
+    // The desktop window does not route an incoming universal link to its
+    // page (the iOS and Android shells do): say so, never drop it silently.
+    for d in &native_pkg::link_domains(&decl.entitlements).app_links {
+        eprintln!(
+            "  note: Bundle.AssociatedDomain \"applinks:{}\": the macOS app carries the \
+             entitlement, but a universal link opens the app on its first page, not on the \
+             link's page.",
+            d.host
+        );
+    }
     let mut ent_layers = vec![plist::Layer {
         origin: "Bundle.withEntitlement".to_string(),
         rank: plist::Rank::Declared,
@@ -5280,7 +5304,7 @@ fn android_runtime_request(perms: &[native_pkg::Declared]) -> String {
         .map(|p| format!("\"{p}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("        requestPermissions(new String[]{{{arr}}}, 1);\n")
+    format!("        sky.perm.SkyPermissions.requestAtStart(this, new String[]{{{arr}}});\n")
 }
 
 /// Build the MainActivity Java for the declared permissions: (extra imports, the
@@ -5298,13 +5322,13 @@ fn android_permission_java(perms: &[native_pkg::Declared]) -> (String, String, S
     if want_location {
         imports.push_str("\nimport android.webkit.GeolocationPermissions;");
         overrides.push_str(
-            "\n            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {\n                callback.invoke(origin, true, false);\n            }",
+            "\n            @Override public void onGeolocationPermissionsShowPrompt(final String origin, final GeolocationPermissions.Callback callback) {\n                // Wait for the location permission's answer (the start-up prompt may still show).\n                sky.perm.SkyPermissions.ensure(MainActivity.this, android.Manifest.permission.ACCESS_FINE_LOCATION, new sky.perm.SkyPermissions.Done() {\n                    @Override public void done(boolean granted) { callback.invoke(origin, granted, false); }\n                });\n            }",
         );
     }
     if want_media {
         imports.push_str("\nimport android.webkit.PermissionRequest;");
         overrides.push_str(
-            "\n            @Override public void onPermissionRequest(final PermissionRequest request) {\n                request.grant(request.getResources());\n            }",
+            "\n            @Override public void onPermissionRequest(final PermissionRequest request) {\n                // Grant the page's camera / microphone request once the app holds the\n                // matching permission; wait for the prompt's answer if it still shows.\n                sky.perm.SkyPermissions.ensureMedia(MainActivity.this, request);\n            }",
         );
     }
     let mut webchrome = format!(
@@ -5641,26 +5665,41 @@ fn build_android_apk(
             .map_err(|e| format!("write network_security_config.xml: {e}"))?;
     }
 
+    // Bundle.AssociatedDomain on Android: an `applinks:` domain becomes an
+    // App Links intent filter (`autoVerify`) on the activity, and a
+    // `webcredentials:` domain the `asset_statements` that let the site share
+    // its sign-in credentials with the app. A domain with no Android
+    // equivalent is named, never dropped silently.
+    let links = native_pkg::link_domains(&decl.entitlements);
+    for d in &links.unmapped {
+        eprintln!(
+            "  note: Bundle.AssociatedDomain {d:?} has no Android equivalent; the Android \
+             build leaves it out (it applies to the Apple builds)."
+        );
+    }
     std::fs::write(
         root.join("app/src/main/AndroidManifest.xml"),
-        ANDROID_MANIFEST
-            .replace("{{PACKAGE}}", package)
-            .replace("{{LABEL}}", &xml_escape(&id.display_name))
-            .replace("{{VERSION_NAME}}", &xml_escape(&id.short_version))
-            .replace("{{VERSION_CODE}}", &version_code)
-            .replace("{{ICON_ATTR}}", icon_attr)
-            .replace("{{CLEARTEXT_ATTR}}", &cleartext_attr)
-            .replace("{{USES_PERMISSIONS}}", &manifest_perms),
+        render_android_manifest(&AndroidManifestParts {
+            package,
+            label: &id.display_name,
+            version_name: &id.short_version,
+            version_code: &version_code,
+            icon_attr,
+            cleartext_attr: &cleartext_attr,
+            uses_permissions: &manifest_perms,
+            links: &links,
+        }),
     )
     .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
     std::fs::write(
         res_dir.join("strings.xml"),
-        ANDROID_STRINGS.replace("{{LABEL}}", &xml_escape(&id.display_name)),
+        render_android_strings(&id.display_name, &links),
     )
     .map_err(|e| format!("write strings.xml: {e}"))?;
     std::fs::write(
         java_dir.join("MainActivity.java"),
         render_android_main_activity(package, url)
+            .replace("{{LINK_HOSTS}}", &native_pkg::link_host_literals(&links))
             .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
             .replace("{{WEBCHROME}}", &webchrome)
             .replace("{{RUNTIME_REQUEST}}", &runtime_request)
@@ -5674,6 +5713,14 @@ fn build_android_apk(
     // Std.Native.scanCode: the camera scanner and its ZXing decoder, only for
     // an app that calls it (a pinned jar from Maven Central, verified by its
     // SHA-256 and cached); every other app gets a stub and no extra jar.
+    let perm_dir = root.join("app/src/main/java/sky/perm");
+    std::fs::create_dir_all(&perm_dir)
+        .map_err(|e| format!("create {}: {e}", perm_dir.display()))?;
+    std::fs::write(
+        perm_dir.join("SkyPermissions.java"),
+        ANDROID_PERMISSIONS_JAVA,
+    )
+    .map_err(|e| format!("write SkyPermissions.java: {e}"))?;
     let scan_dir = root.join("app/src/main/java/sky/scan");
     std::fs::create_dir_all(&scan_dir)
         .map_err(|e| format!("create {}: {e}", scan_dir.display()))?;
@@ -5759,6 +5806,10 @@ fn build_android_apk(
         }
         let apk =
             native_pkg::publish_artefact(&root.join("release").join(&apk_name), &release_dir)?;
+        if let Some(file) = write_assetlinks(&root.join("release"), package, &links)? {
+            native_pkg::publish_artefact(&file, &release_dir)?;
+            print_assetlinks_note(&release_dir.join("assetlinks.json"), &links, "upload key");
+        }
         let aab = root.join("release").join(&aab_name);
         if aab.is_file() {
             native_pkg::publish_artefact(&aab, &release_dir)?;
@@ -5785,7 +5836,51 @@ fn build_android_apk(
     if !status.success() {
         return Err("the APK build failed (see the errors above)".to_string());
     }
+    if let Some(file) = write_assetlinks(&root.join("build"), package, &links)? {
+        print_assetlinks_note(&file, &links, "debug key");
+    }
     Ok(root.join("build").join(&apk_name))
+}
+
+/// Write `<dir>/assetlinks.json` for an app that declares App Links or shared
+/// sign-in (`Bundle.AssociatedDomain`), with the certificate digest of the
+/// signer the build script recorded in `<dir>/signer.txt`. `None` when the
+/// app declares neither.
+fn write_assetlinks(
+    dir: &Path,
+    package: &str,
+    links: &native_pkg::LinkDomains,
+) -> Result<Option<PathBuf>, String> {
+    if links.is_empty() {
+        return Ok(None);
+    }
+    let signer = std::fs::read_to_string(dir.join("signer.txt"))
+        .map_err(|e| format!("read {}: {e}", dir.join("signer.txt").display()))?;
+    let fp = native_pkg::apksigner_sha256(&signer).ok_or_else(|| {
+        format!(
+            "no SHA-256 certificate digest in {}: {signer}",
+            dir.join("signer.txt").display()
+        )
+    })?;
+    let file = dir.join("assetlinks.json");
+    std::fs::write(&file, native_pkg::assetlinks_json(package, &fp, links))
+        .map_err(|e| format!("write {}: {e}", file.display()))?;
+    Ok(Some(file))
+}
+
+/// Tell the user where the site-association file is and where to serve it.
+fn print_assetlinks_note(file: &Path, links: &native_pkg::LinkDomains, key: &str) {
+    let urls: Vec<String> = links
+        .hosts()
+        .iter()
+        .map(|h| format!("https://{h}/.well-known/assetlinks.json"))
+        .collect();
+    eprintln!(
+        "  App Links: {} (signed with the {key}). Serve it, as application/json with no \
+         redirect, at {}. Android verifies the links against it when the app is installed.",
+        file.display(),
+        urls.join(" and ")
+    );
 }
 
 /// Generate a SwiftUI + WKWebView iOS shell for the client and build it for the
@@ -6076,6 +6171,10 @@ fn build_ios_app(
     std::fs::write(
         src.join("App.swift"),
         render_ios_app_swift(name, url)
+            .replace(
+                "{{LINK_HOSTS}}",
+                &native_pkg::link_host_literals(&native_pkg::link_domains(&decl.entitlements)),
+            )
             .replace("{{LOCATION_IMPORT}}", loc_import)
             .replace("{{LOCATION_MANAGER}}", loc_manager)
             .replace("{{LOCATION_ONAPPEAR}}", loc_onappear),
@@ -6415,6 +6514,80 @@ fn render_ios_ats(url: &app_url::AppUrl) -> String {
     app_url::ios_ats_plist(url)
 }
 
+/// The values the Android shell's `AndroidManifest.xml` is made from.
+struct AndroidManifestParts<'a> {
+    package: &'a str,
+    label: &'a str,
+    version_name: &'a str,
+    version_code: &'a str,
+    /// ` android:icon=…` or empty.
+    icon_attr: &'a str,
+    /// The cleartext attribute for the backend address, or empty.
+    cleartext_attr: &'a str,
+    /// The `<uses-permission>` elements after INTERNET: Std.Bundle's and the
+    /// merged `native/android/permissions.xml` fragments.
+    uses_permissions: &'a str,
+    /// The associated domains (App Links, shared sign-in).
+    links: &'a native_pkg::LinkDomains,
+}
+
+/// The shell's `AndroidManifest.xml`. An `applinks:` domain adds an
+/// `autoVerify` App Links intent filter to the activity (which is then
+/// `singleTask`, so a link that arrives while the app runs reaches
+/// `onNewIntent` in the same WebView); a `webcredentials:` domain adds the
+/// `asset_statements` meta-data.
+fn render_android_manifest(m: &AndroidManifestParts<'_>) -> String {
+    let asset_statements = native_pkg::android_asset_statements(m.links).is_some();
+    ANDROID_MANIFEST
+        .replace(
+            "{{LAUNCH_MODE}}",
+            if m.links.app_links.is_empty() {
+                ""
+            } else {
+                "\n            android:launchMode=\"singleTask\""
+            },
+        )
+        .replace(
+            "{{APP_LINK_FILTERS}}",
+            &native_pkg::android_link_filters(m.links),
+        )
+        .replace(
+            "{{ASSET_STATEMENTS}}",
+            if asset_statements {
+                "\n        <meta-data android:name=\"asset_statements\" \
+                 android:resource=\"@string/asset_statements\" />"
+            } else {
+                ""
+            },
+        )
+        .replace("{{PACKAGE}}", m.package)
+        .replace("{{LABEL}}", &xml_escape(m.label))
+        .replace("{{VERSION_NAME}}", &xml_escape(m.version_name))
+        .replace("{{VERSION_CODE}}", m.version_code)
+        .replace("{{ICON_ATTR}}", m.icon_attr)
+        .replace("{{CLEARTEXT_ATTR}}", m.cleartext_attr)
+        .replace("{{USES_PERMISSIONS}}", m.uses_permissions)
+}
+
+/// The shell's `res/values/strings.xml`: the app name, and the
+/// `asset_statements` a `webcredentials:` domain needs.
+fn render_android_strings(label: &str, links: &native_pkg::LinkDomains) -> String {
+    ANDROID_STRINGS
+        .replace("{{LABEL}}", &xml_escape(label))
+        .replace(
+            "{{EXTRA_STRINGS}}",
+            &native_pkg::android_asset_statements(links)
+                .map(|json| {
+                    // A string resource keeps a `"` only escaped as `\"`.
+                    format!(
+                    "\n    <string name=\"asset_statements\" translatable=\"false\">{}</string>",
+                    xml_escape(&json).replace("&quot;", "\\\"")
+                )
+                })
+                .unwrap_or_default(),
+        )
+}
+
 /// `MainActivity.java` with the package and the backend address filled in.
 /// The permission placeholders are left for the caller.
 fn render_android_main_activity(package: &str, url: &app_url::AppUrl) -> String {
@@ -6445,6 +6618,11 @@ const IOS_APP_SWIFT: &str = r#"import SwiftUI
 @main
 struct {{NAME}}App: App {
     static let appURL = URL(string: {{APP_URL}})!
+    // The hosts of the app's `applinks:` associated domains
+    // (Bundle.AssociatedDomain): a universal link to one of them opens the
+    // app on the link's path. A `*.` entry matches any subdomain.
+    static let linkHosts: [String] = [{{LINK_HOSTS}}]
+    @State private var link: URL? = nil
 {{LOCATION_MANAGER}}
     var body: some Scene {
         WindowGroup {
@@ -6454,9 +6632,37 @@ struct {{NAME}}App: App {
             // indicator. Only the KEYBOARD safe area is ignored, so the web view
             // keeps its own height when the keyboard appears (the page scrolls
             // its own content) rather than being shoved upward.
-            WebView(url: Self.appURL)
-                .ignoresSafeArea(.keyboard, edges: .bottom){{LOCATION_ONAPPEAR}}
+            WebView(url: Self.appURL, link: link)
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let u = activity.webpageURL, let t = Self.linkTarget(u) { link = t }
+                }
+                .onOpenURL { u in
+                    if let t = Self.linkTarget(u) { link = t }
+                }{{LOCATION_ONAPPEAR}}
         }
+    }
+
+    // The backend address a universal link opens: the link's path, query and
+    // fragment on the backend's own origin (the app is served there, so its
+    // router shows the linked page). Nil for a link to a host the app did not
+    // declare.
+    static func linkTarget(_ u: URL) -> URL? {
+        guard let scheme = u.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = u.host?.lowercased() else { return nil }
+        let declared = linkHosts.contains { h in
+            h.hasPrefix("*.") ? (host.hasSuffix(String(h.dropFirst(1))) || host == String(h.dropFirst(2)))
+                              : host == h
+        }
+        guard declared,
+              var c = URLComponents(url: appURL, resolvingAgainstBaseURL: false),
+              let incoming = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return nil }
+        var base = c.percentEncodedPath
+        if base.hasSuffix("/") { base.removeLast() }
+        c.percentEncodedPath = base + (incoming.percentEncodedPath.isEmpty ? "/" : incoming.percentEncodedPath)
+        c.percentEncodedQuery = incoming.percentEncodedQuery
+        c.percentEncodedFragment = incoming.percentEncodedFragment
+        return c.url
     }
 }
 "#;
@@ -6483,6 +6689,9 @@ import LocalAuthentication
 /// banner while the app is in the foreground.
 struct WebView: UIViewRepresentable {
     let url: URL
+    // A universal link's page on the backend (App.swift), loaded when it
+    // changes.
+    var link: URL? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
@@ -6506,13 +6715,36 @@ struct WebView: UIViewRepresentable {
         return web
     }
 
-    func updateUIView(_ web: WKWebView, context: Context) {}
+    // A universal link that arrives while the app runs opens its page in the
+    // running app: the client router navigates in place (history.pushState +
+    // popstate, as Back / Forward does), so the app keeps its state. A web
+    // view that is still loading, or shows no app page (the load-error page),
+    // loads it.
+    func updateUIView(_ web: WKWebView, context: Context) {
+        guard let link = link, link != context.coordinator.lastLink else { return }
+        context.coordinator.lastLink = link
+        if !web.isLoading, let cur = web.url, cur.scheme == link.scheme, cur.host == link.host,
+           cur.port == link.port,
+           let c = URLComponents(url: link, resolvingAgainstBaseURL: false),
+           let data = try? JSONSerialization.data(withJSONObject: [
+               c.percentEncodedPath
+                   + (c.percentEncodedQuery.map { "?" + $0 } ?? "")
+                   + (c.percentEncodedFragment.map { "\u{23}" + $0 } ?? "")
+           ]),
+           let arr = String(data: data, encoding: .utf8) {
+            web.evaluateJavaScript("history.pushState(null, '', \(arr)[0]); "
+                + "dispatchEvent(new PopStateEvent('popstate', { state: null }));")
+        } else {
+            web.load(URLRequest(url: link))
+        }
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(url: url) }
 
     final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate,
         WKScriptMessageHandlerWithReply, UNUserNotificationCenterDelegate {
         let url: URL
+        var lastLink: URL? = nil
         init(url: URL) { self.url = url }
 
         // A load that fails (the backend is down, the address is wrong, ATS
@@ -6746,19 +6978,19 @@ const ANDROID_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"{{LAUNCH_MODE}}
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            </intent-filter>{{APP_LINK_FILTERS}}
+        </activity>{{ASSET_STATEMENTS}}
     </application>
 </manifest>
 "#;
 
 const ANDROID_STRINGS: &str = r#"<resources>
-    <string name="app_name">{{LABEL}}</string>
+    <string name="app_name">{{LABEL}}</string>{{EXTRA_STRINGS}}
 </resources>
 "#;
 
@@ -6778,7 +7010,9 @@ import android.webkit.JavascriptInterface;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.content.Context;{{PERMISSION_IMPORTS}}
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;{{PERMISSION_IMPORTS}}
 
 /**
  * Native Android WebView shell for a Sky.Spa client (generated by
@@ -6794,6 +7028,75 @@ import android.content.Context;{{PERMISSION_IMPORTS}}
 public class MainActivity extends Activity {
 
     private static final String APP_URL = {{APP_URL}};
+
+    // The hosts of the app's `applinks:` associated domains
+    // (Bundle.AssociatedDomain): an App Link to one of them opens the app on
+    // the link's path. A `*.` entry matches any subdomain.
+    private static final String[] LINK_HOSTS = { {{LINK_HOSTS}} };
+
+    private WebView webView;
+
+    // The backend address an incoming App Link opens: the link's path, query
+    // and fragment on the backend's own origin (the app is served there, so its
+    // router shows the linked page). Null for any other intent, or a link to a
+    // host the app did not declare: the app then opens as usual.
+    static String linkTarget(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return null;
+        Uri data = intent.getData();
+        if (data == null || data.getHost() == null) return null;
+        String scheme = data.getScheme();
+        if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) return null;
+        String host = data.getHost().toLowerCase(java.util.Locale.ROOT);
+        boolean declared = false;
+        for (String h : LINK_HOSTS) {
+            if (h.startsWith("*.") ? (host.endsWith(h.substring(1)) || host.equals(h.substring(2)))
+                                   : host.equals(h)) {
+                declared = true;
+            }
+        }
+        if (!declared) return null;
+        Uri base = Uri.parse(APP_URL);
+        String basePath = base.getEncodedPath() == null ? "" : base.getEncodedPath();
+        if (basePath.endsWith("/")) basePath = basePath.substring(0, basePath.length() - 1);
+        String path = data.getEncodedPath();
+        if (path == null || path.isEmpty()) path = "/";
+        return base.buildUpon()
+            .encodedPath(basePath + path)
+            .encodedQuery(data.getEncodedQuery())
+            .encodedFragment(data.getEncodedFragment())
+            .build()
+            .toString();
+    }
+
+    // A link that arrives while the app runs (the activity is singleTask when
+    // the app declares App Links) opens its page in the running app: the
+    // client router navigates in place (history.pushState + popstate, as a
+    // Back / Forward does), so the app keeps its state and anything it has
+    // open. A WebView that is still loading, or shows no app page (the
+    // load-error page), loads it.
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String link = linkTarget(intent);
+        if (link == null || webView == null) return;
+        Uri target = Uri.parse(link);
+        String current = webView.getUrl();
+        Uri cur = current == null ? null : Uri.parse(current);
+        if (cur != null && webView.getProgress() == 100 && target.getScheme() != null
+                && target.getScheme().equalsIgnoreCase(cur.getScheme())
+                && target.getAuthority() != null
+                && target.getAuthority().equalsIgnoreCase(cur.getAuthority())) {
+            String path = target.getEncodedPath()
+                + (target.getEncodedQuery() == null ? "" : "?" + target.getEncodedQuery())
+                + (target.getEncodedFragment() == null ? "" : "\u0023" + target.getEncodedFragment());
+            webView.evaluateJavascript("history.pushState(null, '', "
+                + org.json.JSONObject.quote(path)
+                + "); dispatchEvent(new PopStateEvent('popstate', { state: null }));", null);
+        } else {
+            webView.loadUrl(link);
+        }
+    }
 
     // HTML-escape a string for the load-error page.
     private static String html(String s) {
@@ -6861,7 +7164,10 @@ public class MainActivity extends Activity {
         // background thread and may return a value synchronously to JS.
         web.addJavascriptInterface(new SkyNativeBridge(this, web), "SkyNative");
         sky.nativeext.SkyNativeExtInstall.installAll();   // register native/android/* handlers
-        web.loadUrl(APP_URL);
+        webView = web;
+        // An App Link that launched the app opens its page; else the app's root.
+        String link = linkTarget(getIntent());
+        web.loadUrl(link != null ? link : APP_URL);
     }
 
     // The camera permission Native.scanCode asks for when it is not yet
@@ -6869,7 +7175,7 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
-        sky.scan.SkyScanner.onPermissionResult(requestCode, results);
+        sky.perm.SkyPermissions.onResult(this, requestCode, permissions, results);
     }
 
     /** JS-reachable native capabilities. Method names are the JS API. */
@@ -7216,9 +7522,6 @@ public final class SkyScanner {
         void err(String message);
     }
 
-    /** The request code of the camera permission request (MainActivity). */
-    public static final int PERMISSION_REQUEST = 23721;
-
     private static SkyScanner current;
     private static SkyScanner pendingPermission;
 
@@ -7286,29 +7589,24 @@ public final class SkyScanner {
             reply.err("invalid: no code format to scan for");
             return;
         }
-        if (act.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            pendingPermission = s;
-            act.runOnUiThread(new Runnable() {
-                @Override public void run() {
-                    act.requestPermissions(new String[] {Manifest.permission.CAMERA}, PERMISSION_REQUEST);
+        // The camera permission: granted, or parked until the user answers the
+        // prompt (the app's start-up request or one asked for here). A scan
+        // started while the prompt shows waits for the answer instead of
+        // failing; only a real denial is `Err PermissionDenied`.
+        pendingPermission = s;
+        sky.perm.SkyPermissions.ensure(act, Manifest.permission.CAMERA,
+            new sky.perm.SkyPermissions.Done() {
+                @Override public void done(boolean granted) {
+                    synchronized (SkyScanner.class) {
+                        pendingPermission = null;
+                    }
+                    if (granted) {
+                        s.start();
+                    } else {
+                        s.finish(null, "denied: the user did not allow the camera");
+                    }
                 }
             });
-            return;
-        }
-        s.start();
-    }
-
-    /** MainActivity.onRequestPermissionsResult forwards here. */
-    public static synchronized boolean onPermissionResult(int requestCode, int[] results) {
-        if (requestCode != PERMISSION_REQUEST || pendingPermission == null) return false;
-        SkyScanner s = pendingPermission;
-        pendingPermission = null;
-        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-            s.start();
-        } else {
-            s.finish(null, "denied: the user did not allow the camera");
-        }
-        return true;
     }
 
     private void start() {
@@ -7530,6 +7828,172 @@ public final class SkyScanner {
 
 /// The `sky.scan.SkyScanner` of an app that does not call `Native.scanCode`:
 /// no camera code, no ZXing.
+/// The shell's run-time permission broker (`sky.perm.SkyPermissions`). Android
+/// shows one permission prompt at a time: a second `requestPermissions` while
+/// one shows is answered at once with empty arrays, which the scanner used to
+/// read as a denial, so `Native.scanCode` at first launch failed with
+/// `PermissionDenied` while the app's start-up prompt was still on screen.
+/// Every permission-gated operation now asks the broker, which answers at
+/// once when the permission is held and otherwise parks the caller until a
+/// prompt that covers the permission is answered, joining the start-up
+/// request when it is in flight and asking only when no prompt shows.
+const ANDROID_PERMISSIONS_JAVA: &str = r#"package sky.perm;
+
+import android.app.Activity;
+import android.content.pm.PackageManager;
+import android.webkit.PermissionRequest;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Run-time permissions for the native shell. Android shows one permission
+ * prompt at a time, and a request made while one shows is answered at once
+ * with empty arrays. So an operation never asks on its own: it calls
+ * `ensure`, which answers at once when the permission is held and otherwise
+ * waits for a prompt that covers it (the start-up request, or one asked for
+ * when no prompt shows). Only a real denial answers `false`. Generated by
+ * `sky build`; do not edit.
+ */
+public final class SkyPermissions {
+    /** The answer for one permission. */
+    public interface Done {
+        void done(boolean granted);
+    }
+
+    /** Request code → the permissions that request asks for (in flight). */
+    private static final Map<Integer, String[]> inFlight = new HashMap<>();
+    /** Permission → the callers waiting for its answer. */
+    private static final Map<String, List<Done>> waiting = new LinkedHashMap<>();
+    private static int nextCode = 23730;
+
+    private SkyPermissions() {}
+
+    private static boolean held(Activity act, String perm) {
+        return act.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** The shell's own start-up request (MainActivity.onCreate). */
+    public static void requestAtStart(Activity act, String[] perms) {
+        List<String> missing = new ArrayList<>();
+        for (String p : perms) {
+            if (!held(act, p)) missing.add(p);
+        }
+        if (missing.isEmpty()) return;
+        int code;
+        synchronized (SkyPermissions.class) {
+            code = nextCode++;
+            inFlight.put(code, missing.toArray(new String[0]));
+        }
+        act.requestPermissions(missing.toArray(new String[0]), code);
+    }
+
+    /** Answer `done` once `perm` is held or refused. */
+    public static void ensure(final Activity act, String perm, Done done) {
+        if (held(act, perm)) {
+            done.done(true);
+            return;
+        }
+        synchronized (SkyPermissions.class) {
+            List<Done> list = waiting.get(perm);
+            if (list == null) {
+                list = new ArrayList<>();
+                waiting.put(perm, list);
+            }
+            list.add(done);
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() { askForWaiting(act); }
+        });
+    }
+
+    /** A page's camera / microphone request (WebChromeClient.onPermissionRequest). */
+    public static void ensureMedia(final Activity act, final PermissionRequest request) {
+        final List<String> resources = new ArrayList<>();
+        final List<String> perms = new ArrayList<>();
+        for (String r : request.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) {
+                resources.add(r);
+                perms.add(android.Manifest.permission.CAMERA);
+            } else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) {
+                resources.add(r);
+                perms.add(android.Manifest.permission.RECORD_AUDIO);
+            }
+        }
+        if (perms.isEmpty()) {
+            request.deny();
+            return;
+        }
+        final boolean[] ok = {true};
+        final int[] left = {perms.size()};
+        for (String p : perms) {
+            ensure(act, p, new Done() {
+                @Override public void done(boolean granted) {
+                    boolean last;
+                    synchronized (ok) {
+                        ok[0] = ok[0] && granted;
+                        last = --left[0] == 0;
+                    }
+                    if (!last) return;
+                    act.runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            if (ok[0]) request.grant(resources.toArray(new String[0]));
+                            else request.deny();
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    /** MainActivity.onRequestPermissionsResult forwards every answer here. */
+    public static void onResult(Activity act, int requestCode, String[] perms, int[] results) {
+        List<Done> granted = new ArrayList<>();
+        List<Done> refused = new ArrayList<>();
+        synchronized (SkyPermissions.class) {
+            inFlight.remove(requestCode);
+            List<String> answered = new ArrayList<>();
+            for (int i = 0; i < perms.length && i < results.length; i++) {
+                answered.add(perms[i]);
+            }
+            for (String p : new ArrayList<>(waiting.keySet())) {
+                if (held(act, p)) {
+                    granted.addAll(waiting.remove(p));
+                } else if (answered.contains(p)) {
+                    refused.addAll(waiting.remove(p));
+                }
+                // Otherwise the permission is still in another prompt, or this
+                // answer was the empty one of a request made while a prompt
+                // showed: keep waiting.
+            }
+        }
+        for (Done d : granted) d.done(true);
+        for (Done d : refused) d.done(false);
+        askForWaiting(act);
+    }
+
+    /** Ask for every waited-for permission no prompt covers, when none shows. */
+    private static void askForWaiting(Activity act) {
+        String[] ask;
+        int code;
+        synchronized (SkyPermissions.class) {
+            if (!inFlight.isEmpty() || waiting.isEmpty()) return;
+            List<String> missing = new ArrayList<>();
+            for (String p : waiting.keySet()) {
+                if (!held(act, p)) missing.add(p);
+            }
+            if (missing.isEmpty()) return;
+            ask = missing.toArray(new String[0]);
+            code = nextCode++;
+            inFlight.put(code, ask);
+        }
+        act.requestPermissions(ask, code);
+    }
+}
+"#;
+
 const ANDROID_SCANNER_STUB_JAVA: &str = r#"package sky.scan;
 
 import android.app.Activity;
@@ -7587,7 +8051,9 @@ javac --release 11 -cp "$PLAT:$LIBS" -d build/classes \
 "$BT/zipalign" -f 4 build/base.apk build/aligned.apk
 "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
   --min-sdk-version 24 --out build/{{APK}} build/aligned.apk
-"$BT/apksigner" verify build/{{APK}} && echo "OK -> build/{{APK}}"
+# The signer's certificate digest (for the App Links assetlinks.json).
+"$BT/apksigner" verify --print-certs build/{{APK}} > build/signer.txt
+echo "OK -> build/{{APK}}"
 "#;
 
 /// The release build (`sky package --release --target mobile:android`): the
@@ -7624,7 +8090,7 @@ javac --release 11 -cp "$PLAT:$LIBS" -d release/classes \
 "$BT/apksigner" sign --ks "$SKY_ANDROID_KEYSTORE" --ks-key-alias "$SKY_ANDROID_KEY_ALIAS" \
   --ks-pass env:SKY_ANDROID_KEYSTORE_PASSWORD --key-pass env:SKY_ANDROID_KEY_PASSWORD \
   --min-sdk-version 24 --out release/{{APK}} release/aligned.apk
-"$BT/apksigner" verify release/{{APK}}
+"$BT/apksigner" verify --print-certs release/{{APK}} > release/signer.txt
 echo "OK -> release/{{APK}}"
 
 # The Play Store takes an Android App Bundle. aapt2 links the resources in
@@ -14460,6 +14926,139 @@ mod tests {
     /// An ordinary app name with XML-significant characters must NOT break — or
     /// inject into — the generated plist / manifest / strings.xml. Regression for
     /// the unescaped-`withName` codegen defect.
+    /// `Bundle.AssociatedDomain` on Android: the whole generated manifest,
+    /// with a `native/android/permissions.xml` fragment merged in, keeps the
+    /// launcher filter, has one verified App Links filter per `applinks:`
+    /// host (a repeated or `?mode=` variant of a domain adds none), makes the
+    /// activity `singleTask`, and points `asset_statements` at the string that
+    /// a `webcredentials:` domain adds.
+    #[test]
+    fn the_android_manifest_carries_app_links_beside_merged_fragments() {
+        let dir = std::env::temp_dir().join(format!("sky-applinks-{}", std::process::id()));
+        let own = dir.join("native/android");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(
+            own.join("permissions.xml"),
+            "<uses-permission android:name=\"android.permission.NFC\" />\n\
+             <uses-permission android:name=\"android.permission.NFC\" />",
+        )
+        .unwrap();
+        let frags = native_pkg::fragments(&[own.clone()], &dir, "permissions.xml");
+        let perms =
+            native_pkg::merge_android_fragments(&frags, &dir, &["android.permission.INTERNET"])
+                .expect("merge");
+        let ents = native_pkg::scan_entitlements(
+            "b = Bundle.default\n\
+             \x20   |> Bundle.withEntitlement (Bundle.AssociatedDomain \"applinks:example.com\")\n\
+             \x20   |> Bundle.withEntitlement (Bundle.AssociatedDomain \"applinks:example.com?mode=developer\")\n\
+             \x20   |> Bundle.withEntitlement (Bundle.AssociatedDomain \"applinks:*.example.org\")\n\
+             \x20   |> Bundle.withEntitlement (Bundle.AssociatedDomain \"webcredentials:example.com\")\n",
+        )
+        .expect("scan");
+        let links = native_pkg::link_domains(&ents);
+        let manifest = render_android_manifest(&AndroidManifestParts {
+            package: "com.example.probe",
+            label: "Sky Probe",
+            version_name: "1.0",
+            version_code: "1",
+            icon_attr: "",
+            cleartext_attr: "",
+            uses_permissions: &perms,
+            links: &links,
+        });
+        let nodes = xmlmini::parse_nodes(&manifest).expect("the manifest is valid XML");
+        let [xmlmini::Node::Element(root)] = nodes.as_slice() else {
+            panic!("{manifest}")
+        };
+        let perms: Vec<&str> = root
+            .elements()
+            .filter(|e| e.name == "uses-permission")
+            .filter_map(|e| e.attr("android:name"))
+            .collect();
+        assert_eq!(
+            perms,
+            vec!["android.permission.INTERNET", "android.permission.NFC"]
+        );
+        let app = root
+            .elements()
+            .find(|e| e.name == "application")
+            .expect("<application>");
+        let activity = app
+            .elements()
+            .find(|e| e.name == "activity")
+            .expect("<activity>");
+        assert_eq!(activity.attr("android:launchMode"), Some("singleTask"));
+        let filters: Vec<&xmlmini::Element> = activity
+            .elements()
+            .filter(|e| e.name == "intent-filter")
+            .collect();
+        assert_eq!(
+            filters.len(),
+            3,
+            "the launcher filter + one per host:\n{manifest}"
+        );
+        assert!(filters[0]
+            .elements()
+            .any(|e| e.attr("android:name") == Some("android.intent.action.MAIN")));
+        let hosts: Vec<&str> = filters[1..]
+            .iter()
+            .map(|f| {
+                assert_eq!(f.attr("android:autoVerify"), Some("true"));
+                f.elements()
+                    .find(|e| e.name == "data")
+                    .and_then(|d| d.attr("android:host"))
+                    .unwrap_or("")
+            })
+            .collect();
+        assert_eq!(hosts, vec!["example.com", "*.example.org"]);
+        let meta = app
+            .elements()
+            .find(|e| e.name == "meta-data")
+            .expect("<meta-data>");
+        assert_eq!(meta.attr("android:name"), Some("asset_statements"));
+        assert_eq!(
+            meta.attr("android:resource"),
+            Some("@string/asset_statements")
+        );
+
+        let strings = render_android_strings("Sky Probe", &links);
+        let nodes = xmlmini::parse_nodes(&strings).expect("strings.xml is valid XML");
+        let [xmlmini::Node::Element(res)] = nodes.as_slice() else {
+            panic!("{strings}")
+        };
+        let stmt = res
+            .elements()
+            .find(|e| e.attr("name") == Some("asset_statements"))
+            .expect("asset_statements");
+        assert_eq!(
+            stmt.text(),
+            "[{\\\"include\\\": \\\"https://example.com/.well-known/assetlinks.json\\\"}]"
+        );
+
+        // An app with no associated domain gets the manifest it had.
+        let plain = render_android_manifest(&AndroidManifestParts {
+            links: &native_pkg::LinkDomains::default(),
+            uses_permissions: "",
+            ..AndroidManifestParts {
+                package: "com.example.probe",
+                label: "Sky Probe",
+                version_name: "1.0",
+                version_code: "1",
+                icon_attr: "",
+                cleartext_attr: "",
+                uses_permissions: "",
+                links: &links,
+            }
+        });
+        assert!(
+            !plain.contains("launchMode")
+                && !plain.contains("autoVerify")
+                && !plain.contains("asset_statements")
+        );
+        assert!(!plain.contains("{{"), "{plain}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn xml_escape_neutralises_dangerous_app_names() {
         assert_eq!(xml_escape("Ben & Jerry's"), "Ben &amp; Jerry&apos;s");
@@ -14933,6 +15532,28 @@ mod tests {
                 && webchrome.contains("onPermissionRequest")
         );
         assert!(runtime.contains("ACCESS_FINE_LOCATION") && runtime.contains("CAMERA"));
+        // Every request goes through the permission broker, so an operation
+        // that needs the permission joins the start-up prompt instead of
+        // asking again while it shows (Android answers that at once, empty).
+        assert!(
+            runtime.contains("sky.perm.SkyPermissions.requestAtStart(this"),
+            "{runtime}"
+        );
+        assert!(!runtime.contains("requestPermissions("), "{runtime}");
+        assert!(
+            webchrome.contains("SkyPermissions.ensure(")
+                && webchrome.contains("SkyPermissions.ensureMedia("),
+            "{webchrome}"
+        );
+        assert!(
+            !webchrome.contains("callback.invoke(origin, true"),
+            "{webchrome}"
+        );
+        assert!(
+            ANDROID_SCANNER_JAVA.contains("SkyPermissions.ensure(act, Manifest.permission.CAMERA")
+        );
+        assert!(!ANDROID_SCANNER_JAVA.contains("requestPermissions("));
+        assert!(ANDROID_MAIN_ACTIVITY.contains("SkyPermissions.onResult(this, requestCode"));
 
         // Notifications-only: no WebChromeClient plumbing, just the runtime request.
         let (i2, wc2, rt2) = android_permission_java(&declared(&["Notifications"]));
