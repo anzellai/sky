@@ -318,15 +318,48 @@ fn frontend_has_no_wire_leak_for_the_server_internal_msg() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// A client continuation whose argument has no wire codec (`Got (Result Error
-/// Http.HttpResponse)` in `tests/fixtures/spa-client-crypto-ssr`) cannot run in
-/// the client, so the split keeps it in a server chain (a hold RPC) instead of
+/// A client continuation whose argument has no wire codec cannot run in the
+/// client, so the split keeps it in a server chain (a hold RPC) instead of
 /// failing the build. `sky spa-partition` and the diagrams report the split as
 /// it is built (`spa_split::analyze_project`), not the classification before
 /// that rule.
+///
+/// The argument is a data-carrying union with no `Codec` (`Got (Result Error
+/// Status)`, a variant of `tests/fixtures/spa-client-crypto-ssr`). The fixture
+/// itself carries `Http.HttpResponse`, which has a wire codec since v0.27.0,
+/// so there `Got` is a client-result continuation (asserted below).
 #[test]
 fn a_continuation_whose_argument_cannot_cross_stays_in_a_server_chain() {
-    let fixture = repo_root().join("rust/crates/sky/tests/fixtures/spa-client-crypto-ssr");
+    let base = repo_root().join("rust/crates/sky/tests/fixtures/spa-client-crypto-ssr");
+    let as_built = spa_split::analyze_project(&repo_root(), &base, None)
+        .unwrap_or_else(|e| panic!("analyze_project failed: {e}"));
+    assert!(
+        as_built
+            .client_result
+            .iter()
+            .any(|(root, m)| root == "Fetch" && m == "Got"),
+        "`Http.HttpResponse` crosses the wire: `Got` runs in the client; got {:?}",
+        as_built.client_result
+    );
+    let fixture =
+        std::env::temp_dir().join(format!("sky-spa-chain-nocodec-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&fixture);
+    std::fs::create_dir_all(fixture.join("src")).unwrap();
+    std::fs::copy(base.join("sky.toml"), fixture.join("sky.toml")).unwrap();
+    let src = std::fs::read_to_string(base.join("src/Main.sky"))
+        .unwrap()
+        .replacen(
+            "    | Got (Result Error Http.HttpResponse)\n",
+            "    | Got (Result Error Status)\n\n\ntype Status\n    = Up Int\n    | Down\n",
+            1,
+        )
+        .replacen(
+            "(Http.get \"http://127.0.0.1:9/pub\")",
+            "(Http.get \"http://127.0.0.1:9/pub\" |> Task.map (\\r -> Up r.status))",
+            1,
+        );
+    assert!(src.contains("type Status") && src.contains("Up r.status"));
+    std::fs::write(fixture.join("src/Main.sky"), src).unwrap();
     let plain = spa_partition::analyze(&repo_root(), &fixture, None)
         .unwrap_or_else(|e| panic!("analyze failed: {e}"));
     assert!(
@@ -343,10 +376,11 @@ fn a_continuation_whose_argument_cannot_cross_stays_in_a_server_chain() {
         built.chaining_branches.contains(&"Fetch".to_string())
             && built.server_internal.contains(&"Got".to_string())
             && built.client_result.is_empty(),
-        "`Got (Result Error HttpResponse)` has no wire codec: it must settle in `Fetch`'s \
+        "`Got (Result Error Status)` has no wire codec: it must settle in `Fetch`'s \
          server chain; got chaining={:?} internal={:?} client_result={:?}",
         built.chaining_branches,
         built.server_internal,
         built.client_result
     );
+    let _ = std::fs::remove_dir_all(&fixture);
 }

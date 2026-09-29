@@ -578,12 +578,6 @@
       "Std.Ui.Transition": "examples/26-ui-showcase"
     },
     "stdlib_modules_repo_wide": {
-      "Sky.Core.Bytes": {
-        "path": "tests/conformance",
-        "units": [
-          "tests/conformance"
-        ]
-      },
       "Sky.Core.Char": {
         "path": "tests/Core",
         "units": [
@@ -644,12 +638,6 @@
           "tests/conformance"
         ]
       },
-      "Std.Crypto.Kdf": {
-        "path": "tests/conformance",
-        "units": [
-          "tests/conformance"
-        ]
-      },
       "Std.Crypto.Sign": {
         "path": "tests/conformance",
         "units": [
@@ -702,7 +690,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2184,
+    "stdlib_entries": 2185,
     "stdlib_modules": 111,
     "surfaces_covered": 166,
     "surfaces_covered_pct": 93.3,
@@ -2802,6 +2790,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -2867,6 +2860,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
@@ -8575,6 +8573,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
@@ -15292,12 +15295,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 56,
+      "modules_imported": 59,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 379,
-      "refs_qualified": 355,
+      "refs_generous": 388,
+      "refs_qualified": 364,
       "role": "Layer2",
-      "sky_files": 168,
+      "sky_files": 182,
       "sky_toml_sections": []
     },
     {

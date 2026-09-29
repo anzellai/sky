@@ -1,0 +1,67 @@
+module Main exposing (main)
+
+-- withClientCrypto: a key derived in the client (Std.Crypto.Kdf) seals with
+-- the AEAD of Sky.Core.Crypto in the client, and the MAC runs there too.
+
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Secret as Secret
+import Std.App as App
+import Std.Crypto.Kdf as Kdf
+import Std.Ui as Ui
+
+type Msg
+    = Seal
+    | Mac
+
+
+nonce : String
+nonce =
+    "000000000000"
+
+
+update : Msg -> String -> ( String, Cmd Msg )
+update msg _ =
+    case msg of
+
+        Seal ->
+            case Kdf.derive
+                     "salt"
+                     "info"
+                     32
+                     (Secret.fromString "input key material")
+                     |> Result.andThen
+                            (\k ->
+                                Crypto.chacha20Poly1305Seal k nonce "ad" "hello") of
+
+                Ok sealed ->
+                    ( String.fromInt (String.length sealed), Cmd.none )
+
+                Err _ ->
+                    ( "err", Cmd.none )
+
+        Mac ->
+            ( Crypto.hmacSha256 "key" "hello", Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = \_ -> ( "", Cmd.none )
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text m
+                        , Ui.button
+                              []
+                              { onPress = Just Seal, label = Ui.text "seal" }
+                        , Ui.button
+                              []
+                              { onPress = Just Mac, label = Ui.text "mac" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ()
+            |> App.withClientCrypto)

@@ -155,6 +155,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   and the build says so in a note. `sky spa-partition` and `sky doc --diagram`
   report the split as it is built, with that rule applied.
 
+- **`App.app` / `App.web` / `App.cli` / `App.tui` take `init : () -> …`.**
+  The builders fixed `init`'s seed to `()`, which every runner passes. Before,
+  the terminal and client runners accepted any seed, so an `init : Page -> …`
+  compiled for `terminal:*` and `web:app` and ran with a unit it read as a
+  `Page`, and the `web` build reported the error at the `App.runLive` the
+  build had written into `main`. Now it is one `[E2001]` at the `init` field
+  on every target. An `init : a -> …` or `init _ = …` is unchanged. See
+  Migration below.
 - **`Std.Bundle.Permission` has six new constructors** (`LocationAlways`,
   `PhotoLibrary`, `Contacts`, `FaceId`, `LocalNetwork`, `Bluetooth`). A
   `case` over `Permission` in app code must handle them.
@@ -267,6 +275,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Migration
 
+- **An `init` that reads its seed.** Write `init : () -> ( Model, Cmd Msg )`
+  (or leave the seed unused, `init _ = …`). Read the request with
+  `App.withRequest`, and the route with `App.withRoutes` /
+  `App.withOnNavigate`. An annotation of the app value with a seed variable
+  (`app : App.App HasFallback a Page Model Msg key`) names `()` instead
+  (`App.App HasFallback () Page Model Msg key`).
 - **An Android app that calls `Native.notify` declares the notification
   permission.** Add `|> Bundle.withPermission Bundle.Notifications` to the
   app's `bundle`. iOS needs nothing. `Native.notify` keeps its type
@@ -491,6 +505,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   Task-read socket are proven in Chromium and WebKit under `SKY_CSP=strict`
   (`scripts/spa-websocket-e2e.sh`).
 
+- **`Sub.onFragment : (String -> msg) -> Sub msg`: the URL fragment on
+  every web target.** The text after `#` reaches `update` when the page loads
+  with one and on every `hashchange` (a link to `#section`, Back, a script);
+  a removed fragment arrives as `""`. A browser never sends the fragment to
+  the server, so the client reports it: Sky.Live's browser client posts it as
+  the `__skyFragment` event, which the server delivers only to the app's
+  `Sub.onFragment` leaf (a no-op without one), and the Sky.Spa wasm client
+  reads `location.hash` itself. `Std.App` passes it through on `web`,
+  `web:app`, desktop and mobile; a terminal app has no URL and the leaf does
+  nothing there. (`runtime-go/rt/sub_fragment.go`, `live.go`,
+  `live_client_asset.go`, `live_wasm.go`; tests `sub_fragment_test.go`,
+  `live_fragment_test.go`, `spa_split_flow.rs`
+  `the_url_fragment_reaches_update_on_live_and_builds_for_every_target`.)
 - **Sky.Spa: keys on the device with `App.withClientCrypto` /
   `Spa.withClientCrypto`.** By default the split runs every Std.Crypto
   function that holds a secret key on the server. An app whose device must
@@ -1116,6 +1143,58 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `routes = [ App.route "/" Home, App.api "GET /ws" h ]`, kept the whole table
   on the client side, and the backend answered 404 for `/ws`. The table is now
   split element by element (`partition_routes_splits_a_named_table_that_mixes_pages_and_api`).
+- **Sky.Spa auto-split: ten defects a downstream app found.** Each has a
+  fixture under `rust/crates/sky/tests/fixtures` and a `spa_split_flow.rs`
+  test that builds the backend and the wasm client; where a server branch
+  runs, the test also runs the split backend and the Sky.Live build of the
+  same source and compares their answers.
+  - **`withClientCrypto` ran no AEAD or MAC in the client.** A client arm
+    that sealed under a `Kdf` key was refused as "client-held crypto and a
+    server effect", and `Crypto.hmacSha256` forced an RPC. With the opt-in,
+    the AEAD ciphers (explicit nonce, and the random-nonce seals that draw
+    from `crypto/rand`), the keyed MACs, the password KDFs and RSA signing
+    may run on either side; a wasm interop test proves the random-nonce seal
+    and the explicit-nonce AEAD agree with the native build. Without the
+    opt-in they stay server effects: the client then holds no key, so the key
+    they take is a server secret. (`spa_partition.rs`
+    `CLIENT_CRYPTO_PURE_MEMBERS`; `noisewasm/aead_js_test.go`.)
+  - **Pure stdlib kernels were sent to the server.** `Ffi.kernel` families
+    with no pseudo-module fell to the fail-closed default: `Bytes.slice`,
+    `length` and `toHex` became RPCs. Every symbol family in the stdlib is
+    now decided, and a test fails on a new one: `Bytes`, `Decimal`,
+    `Compression`, `Std.Db.Decode` decoders, `Csv` parsing, `Money`
+    formatting, `Std.Config` decoders, `Std.Db.Table` descriptions and
+    `Time` formatting and calendar arithmetic run in the client; the clock,
+    `Money`'s FX-rate table, `Cache`, `Email`, `PubSub`, `Trace`, HTTP
+    streams and the server side of a socket stay server (a client
+    `WebSocket` runs in the client). `Ffi.callPure` symbols are now read too, so
+    `Money.convert` (the server's rate table) no longer ran in the client.
+  - **A server-only `Net.send` removed the client's own `Main.send`.**
+    Exclusion was by bare name across modules; it is now per module scope,
+    read from the resolver, and the report names `Net.send`.
+  - **A module whose functions all run on the server lost its types in the
+    client** (`Undefined name: Shape.Batch`). A module whose type or
+    constructor a client module names keeps a client copy with its types.
+  - **A wire record copied into `Shared` lost the imports its fields need**
+    (`Undefined name: Chan.Batch`). `Shared` now imports a pure module under
+    the alias the record uses, and copies a type of a server module.
+  - **A partly applied result Msg lost its argument.** `Cmd.perform task
+    (Got url)` made the client call `update (Got resp.result)`. Such a
+    command now crosses as a follow-up, the whole `Got url result`, and the
+    stdlib `Http.HttpResponse` has a wire codec.
+  - **A comment with parentheses above a server arm made the split refuse
+    it.** Patterns are read with the lexer, so comments never matter.
+  - **An inline `init` gave a backend that called an undefined `init`.** The
+    synthesised client entry defines `init` and `update` at top level
+    whatever the `App.app` record held: an inline, `let`-bound or hoisted
+    lambda, a function under another name, an eta-expanded `update`.
+  - **A model that is not a record broke the backend** (`String vs record`).
+    It crosses the wire whole, in one `spaModel_` field.
+  - **A wrong `init` seed was reported at `App.runLive`, or in generated
+    code.** A `Std.App` build checks the user's own source first, for every
+    target, and a record-literal argument that does not fit is reported at
+    the field ("in the `init` field of the record passed to
+    `Std.App.app`"); see the breaking change above.
 - **`Native.notify` waits for the notification prompt, and a refusal is
   `Err PermissionDenied`.** The Android shell's notify bridge was a
   synchronous JavaScript call: at first launch it answered `Ok` while the

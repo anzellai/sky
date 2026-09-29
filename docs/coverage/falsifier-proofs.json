@@ -81,7 +81,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1790667270
+      "proven_at_unix": 1790667868
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",
@@ -144,15 +144,15 @@
       "proven_at_unix": 1790272664
     },
     "corpus-manifest": {
-      "inputs_files": 125,
-      "inputs_hash": "4e321e1affd1b069f3d7bae8941e79f873bb3ff2",
+      "inputs_files": 126,
+      "inputs_hash": "cf7d41e1c1f9dc9d3182b127fe6bd7ab591936dc",
       "mutation": "corpus-manifest.drift",
       "mutations": [
         "corpus-manifest.drift"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790667270
+      "proven_at_unix": 1790667868
     },
     "corpus-reject": {
       "mutation": "corpus-reject.break-the-twin",

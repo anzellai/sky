@@ -18,9 +18,10 @@
 //! secret to the browser, and is a bug the over-approximation forbids.
 //!
 //! Pure crypto (hashing, a constant-time compare, verification with a public
-//! key, QR encoding) stays CLIENT. The clock, random draws (`Time.*`,
-//! `Random.*`, `Uuid.*`, `Crypto.randomBytes`) and every function that holds a
-//! secret key go to the SERVER (see [`EFFECT_KERNELS`] and [`MIXED_KERNELS`]).
+//! key, QR encoding, `Bytes`, `Decimal`, time formatting) stays CLIENT. The
+//! clock, random draws (`Time.now`, `Random.*`, `Uuid.*`,
+//! `Crypto.randomBytes`) and every function that holds a secret key go to the
+//! SERVER (see [`EFFECT_KERNELS`] and [`MIXED_KERNELS`]).
 //!
 //! This file walks `hir::resolve(module).bodies` and reads the typed HIR
 //! (`ty::Typer::body_types`, whose `BodyTypes.exprs` is the same table the
@@ -30,6 +31,7 @@ use base::{DefId, FileId, ModuleId};
 use hir::{Body, Expr, ExprId, LocalDef, LocalId, PatId, Pattern, Res, SkyDb};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
+use syntax::SyntaxKind;
 
 /// A `diagnostics::SourceProvider` over an already-loaded source db, keyed the
 /// same way the build driver keys its own (`FileId(module_id.index())`), so a
@@ -128,7 +130,6 @@ const EFFECT_KERNELS: &[&str] = &[
     "RateLimit",
     "Middleware",
     "Http",
-    "Time",
     "Random",
     "Uuid",
     "Log",
@@ -150,6 +151,26 @@ const EFFECT_KERNELS: &[&str] = &[
     // browser cannot perform at all.
     "Subprocess",
     "Watch",
+    // `Ffi.kernel` symbol families with no `hir::KERNEL_MODULES` pseudo-module
+    // (audited v0.27.0; `ffi_symbol_families_are_all_decided` keeps the list
+    // complete). Each is an effect or process state the client cannot share:
+    //   * `Schema` — DDL run on a `Db` handle (`createTable`, `createSchema`);
+    //   * `Analytics` — the server's event store and sinks;
+    //   * `Cache` — a process-wide cache, one per server;
+    //   * `Email` — sends mail with the server's credentials;
+    //   * `PubSub` — the server's topic broker;
+    //   * `HttpStream`, `ServerStream`, `ServerWebSocket` — an outbound HTTP
+    //     stream and the server side of a response stream / WebSocket;
+    //   * `Trace` — spans and events for the server's collector.
+    "Schema",
+    "Analytics",
+    "Cache",
+    "Email",
+    "PubSub",
+    "HttpStream",
+    "ServerStream",
+    "ServerWebSocket",
+    "Trace",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -172,10 +193,48 @@ const EFFECT_KERNELS: &[&str] = &[
 /// effect is the **symbol prefix**, classified by [`record_ffi_symbol`] (which is
 /// itself fail-closed: an unknown prefix → server). Raw Go FFI is caught
 /// separately as a `Res::Foreign` reference (`Refs::foreign` → server).
+///
+/// `Bytes` (Sky.Core.Bytes), `Decimal` (Std.Decimal), `Compression`
+/// (Std.Compression) and `DbDec` (Std.Db.Decode, decoder values only) are
+/// `Ffi.kernel` symbol families with no pseudo-module: pure computations that
+/// hold no secret and build for wasm (no build tag in `runtime-go/rt`). Until
+/// v0.27.0 they fell to the fail-closed default and sent a pure branch to the
+/// server. `Spa` (Std.Spa) is the client framework itself; its defs are
+/// short-circuited as client leaves in [`build_graph`], and the prefix agrees.
 const KNOWN_PURE_KERNELS: &[&str] = &[
-    "Basics", "String", "List", "Dict", "Set", "Maybe", "Result", "Task", "Math", "Regex",
-    "Encoding", "Char", "Path", "Cmd", "Sub", "JsonEnc", "JsonDec", "JsonDecP", "Fmt", "Ffi",
-    "Codec", "Qr",
+    "Basics",
+    "String",
+    "List",
+    "Dict",
+    "Set",
+    "Maybe",
+    "Result",
+    "Task",
+    "Math",
+    "Regex",
+    "Encoding",
+    "Char",
+    "Path",
+    "Cmd",
+    "Sub",
+    "JsonEnc",
+    "JsonDec",
+    "JsonDecP",
+    "Fmt",
+    "Ffi",
+    "Codec",
+    "Qr",
+    "Bytes",
+    "Decimal",
+    "Compression",
+    "DbDec",
+    "Spa",
+    // `Std.Html` rendering helpers called as `Ffi.callPure "<name>"` (no
+    // family prefix): pure string builders for a view.
+    "htmlRender",
+    "htmlEscapeText",
+    "htmlEscapeAttr",
+    "htmlAttrToString",
 ];
 
 /// **MIXED** kernel families — classified per FUNCTION. Only the members listed
@@ -215,6 +274,114 @@ const MIXED_KERNELS: &[(&str, &[&str])] = &[
     // the server: a Secret has no codec, so none crosses the wire. `fromEnv`
     // reads the SERVER's environment and stays server (fail-closed).
     ("Secret", &["fromString", "reveal"]),
+    // `Sky.Core.Time` / `Std.Time`: reading the clock (`now`, `unixMillis`),
+    // `sleep` and `every` stay server (the v1 rule for effects). Formatting,
+    // parsing and calendar arithmetic are pure: every formatter pins UTC or
+    // takes a named zone, and the runtime embeds `time/tzdata`, so the client
+    // computes what the server computes. Until v0.27.0 the whole family was
+    // server, so a branch that formatted a timestamp became an RPC.
+    (
+        "Time",
+        &[
+            "timeString",
+            "format",
+            "formatHTTP",
+            "formatISO8601",
+            "formatRFC3339",
+            "parse",
+            "parseISO8601",
+            "addMillis",
+            "diffMillis",
+            "addDays",
+            "addHours",
+            "addMinutes",
+            "addMonths",
+            "addSeconds",
+            "addYears",
+            "day",
+            "dayOfWeek",
+            "dayOfYear",
+            "daysInMonth",
+            "diffDays",
+            "diffHours",
+            "diffMinutes",
+            "diffSeconds",
+            "endOfDay",
+            "endOfMonth",
+            "endOfYear",
+            "inZone",
+            "isLeapYear",
+            "isWeekend",
+            "month",
+            "startOfDay",
+            "startOfMonth",
+            "startOfWeek",
+            "startOfYear",
+            "weekOfYear",
+            "year",
+            "zoneName",
+            "zoneOffset",
+        ],
+    ),
+    // `Std.Csv`: parsing and encoding text are pure; `parseStreamFromFile`
+    // reads the server's file system.
+    (
+        "Csv",
+        &[
+            "parse",
+            "parseWithDelimiter",
+            "encode",
+            "encodeWithDelimiter",
+        ],
+    ),
+    // `Std.Money`: formatting and allocation are pure. The FX-rate table
+    // (`setRate`, `getRate`, `hasRate`, `clearRates`, and `convert` through
+    // `getRate`) is process state the server registers at startup; the client
+    // would read an empty table of its own.
+    (
+        "Money",
+        &[
+            "allocate",
+            "currencyName",
+            "format",
+            "formatWithCode",
+            "isKnownCurrency",
+            "minorUnits",
+            "symbol",
+        ],
+    ),
+    // `Std.Config` decoders and the pure `decodeJson` / `decodeToml` /
+    // `decodeYaml`. `loadFromFile` reads a file; the `Sky.Config` runtime
+    // builders (`default`, `apply`, `with*`) configure the server process.
+    (
+        "Config",
+        &[
+            "andThen",
+            "at",
+            "bool",
+            "decodeJson",
+            "decodeToml",
+            "decodeYaml",
+            "fail",
+            "field",
+            "float",
+            "int",
+            "list",
+            "map",
+            "nullable",
+            "string",
+            "succeed",
+        ],
+    ),
+    // `Std.Db.Table` table descriptions are pure values; every member that
+    // takes a `Db` handle runs a query on the server.
+    (
+        "Table",
+        &["codec", "enum", "index", "primaryKey", "table", "unique"],
+    ),
+    // `Std.App` view conversions are pure; `Std_App_livePort` reads the
+    // server's environment and `sky.toml`.
+    ("Std", &["App_asElement", "App_htmlDocOrDefault"]),
 ];
 
 /// The client-safe members of a [`MIXED_KERNELS`] family, or `None` when
@@ -286,6 +453,50 @@ const CLIENT_CRYPTO_MEMBERS: &[(&str, &[&str])] = &[
     ("Kdf", &["extract", "expand"]),
 ];
 
+/// **CLIENT-CRYPTO PURE** — `Sky.Core.Crypto` members that are pure over a
+/// key the caller holds: the AEAD ciphers (explicit nonce, and the
+/// random-nonce seals, which draw the nonce from `crypto/rand`; Go's wasm
+/// port reads `crypto.getRandomValues`), the keyed MACs, the password KDFs and
+/// RSA signing. By default they are SERVER effects ([`MIXED_KERNELS`]): without
+/// the opt-in the client holds no key material, so the key they take is a
+/// server secret (`Secret.fromEnv`, a server constant), and running them in the
+/// client would compile that key, and the code that obtains it, into the wasm
+/// bundle. With the opt-in the device holds its own keys, so these members may
+/// run on either side ([`KernelClass::Neutral`]): a client arm seals under a
+/// `Kdf` key, and a server arm may still MAC with a server key. The key itself
+/// never crosses (the key-type refusals in the split).
+///
+/// `randomBytes` / `randomToken` are not listed: a nonce is not secret, and the
+/// random-nonce seals cover the case where the client needs a fresh one.
+const CLIENT_CRYPTO_PURE_MEMBERS: &[(&str, &[&str])] = &[(
+    "Crypto",
+    &[
+        "hmacSha256",
+        "hmacSha512",
+        "chacha20Poly1305Seal",
+        "chacha20Poly1305Open",
+        "xchacha20Poly1305Seal",
+        "xchacha20Poly1305Open",
+        "xchachaSeal",
+        "xchachaSealWith",
+        "xchachaOpen",
+        "xchachaOpenWith",
+        "aesGcmEncrypt",
+        "aesGcmDecrypt",
+        "chacha20Encrypt",
+        "chacha20Decrypt",
+        "aesKeyFromPassword",
+        "chachaKeyFromPassword",
+        "rsaSha256Sign",
+    ],
+)];
+
+fn is_client_crypto_pure_member(module: &str, func: &str) -> bool {
+    CLIENT_CRYPTO_PURE_MEMBERS
+        .iter()
+        .any(|(m, fs)| *m == module && fs.contains(&func))
+}
+
 /// The families of [`CLIENT_CRYPTO_MEMBERS`] (for the mixed-branch refusal).
 const CLIENT_CRYPTO_FAMILIES: &[&str] = &["Noise", "Cpace", "Kx", "Sign", "Kdf"];
 
@@ -301,6 +512,9 @@ fn is_client_crypto_member(module: &str, func: &str) -> bool {
 fn classify_kernel_in(client_crypto: bool, module: &str, func: &str) -> KernelClass {
     if client_crypto && is_client_crypto_member(module, func) {
         return KernelClass::ClientEffect;
+    }
+    if client_crypto && is_client_crypto_pure_member(module, func) {
+        return KernelClass::Neutral;
     }
     classify_kernel(module, func)
 }
@@ -534,7 +748,12 @@ fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
                 // `Res::Def`, NOT `Res::Kernel` — the consult's "key off
                 // Res::Kernel.module" would miss every one. The identity is the
                 // symbol string's prefix (`Db_`, `Http_`, `System_`, …).
-                if m == "Ffi" && func.as_str() == "kernel" {
+                // `Ffi.callPure "<Symbol>" [ args ]` / `Ffi.call` name a
+                // runtime symbol the same way; before v0.27.0 they were not
+                // read, so `Money.getRate` (process state) ran in the client.
+                if m == "Ffi"
+                    && matches!(func.as_str(), "kernel" | "callPure" | "call" | "callTask")
+                {
                     if let Some(first) = args.first() {
                         if let Expr::Str(sym) = &body.exprs[*first] {
                             record_ffi_symbol(sym, acc, ctx.client_crypto);
@@ -999,10 +1218,72 @@ pub fn positional_arg_name(i: usize) -> String {
 }
 
 fn pat_text(body: &Body, pat: PatId, src: &str) -> Option<String> {
+    let (start, end) = pat_range(body, pat, src)?;
+    let t = src.get(start..end)?;
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+fn is_trivia(k: SyntaxKind) -> bool {
+    matches!(
+        k,
+        SyntaxKind::Whitespace
+            | SyntaxKind::Newline
+            | SyntaxKind::LineComment
+            | SyntaxKind::BlockComment
+    )
+}
+
+/// The byte range of a pattern WITHOUT the trivia its CST node carries. A
+/// pattern node can own the comment lines above it (`-- the relay step (a
+/// server arm)` before `Fetch (Ok url) ->`), so its raw span starts at the
+/// comment. The range is cut at the first and last non-trivia token, read with
+/// the Sky lexer, so a comment never changes how an arm is read (before
+/// v0.27.0 a parenthesis in such a comment made the split refuse the arm).
+fn pat_range(body: &Body, pat: PatId, src: &str) -> Option<(usize, usize)> {
     let span = body.pat_span(pat)?;
     let (start, end) = (span.range.0 as usize, span.range.1 as usize);
-    let t = src.get(start..end)?.trim();
-    (!t.is_empty()).then(|| t.to_string())
+    let text = src.get(start..end)?;
+    let toks: Vec<_> = syntax::lex(text)
+        .into_iter()
+        .filter(|t| !is_trivia(t.kind))
+        .collect();
+    let first = toks.first()?;
+    let last = toks.last()?;
+    Some((start + first.start as usize, start + last.end as usize))
+}
+
+/// The constructor of a constructor pattern as written (`Report`,
+/// `Msg.Report`), read from the tokens between the pattern's start and its
+/// first argument: optional opening parentheses, then a dotted `UpperIdent`
+/// path. `None` for anything else.
+fn ctor_head_text(src: &str, start: usize, first_arg: usize) -> Option<String> {
+    let text = src.get(start..first_arg)?;
+    let mut head = String::new();
+    let mut toks = syntax::lex(text)
+        .into_iter()
+        .filter(|t| !is_trivia(t.kind))
+        .peekable();
+    while toks.peek().is_some_and(|t| t.kind == SyntaxKind::LParen) {
+        toks.next();
+    }
+    let mut want_ident = true;
+    for t in toks {
+        let piece = &text[t.start as usize..t.end as usize];
+        match t.kind {
+            SyntaxKind::UpperIdent if want_ident => {
+                head.push_str(piece);
+                want_ident = false;
+            }
+            SyntaxKind::Dot if !want_ident => {
+                head.push('.');
+                want_ident = true;
+            }
+            // The first argument's own opening parenthesis.
+            SyntaxKind::LParen if !want_ident => break,
+            _ => return None,
+        }
+    }
+    (!head.is_empty() && !want_ident).then_some(head)
 }
 
 /// Replace each type variable of `t` by its binding in `sub`.
@@ -1221,26 +1502,19 @@ fn arm_shape(body: &Body, index: usize, pat: PatId, actx: &ArmCtx<'_>, server: b
         if !args.is_empty() {
             let texts: Option<Vec<String>> =
                 args.iter().map(|a| pat_text(body, *a, actx.src)).collect();
-            let start = body.pat_span(pat).map(|s| s.range.0 as usize);
-            let first = body.pat_span(args[0]).map(|s| s.range.0 as usize);
+            let start = pat_range(body, pat, actx.src).map(|r| r.0);
+            let first = pat_range(body, args[0], actx.src).map(|r| r.0);
             if let (Some(texts), Some(start), Some(first)) = (texts, start, first) {
-                if let Some(head) = actx.src.get(start..first) {
-                    // `(Report (Ok line))`: an arg span may start inside
-                    // its own parentheses, and the whole pattern may be
-                    // parenthesised; the head is the constructor alone.
-                    let head = head
-                        .trim()
-                        .trim_start_matches('(')
-                        .trim_end_matches(|c: char| c == '(' || c.is_whitespace())
-                        .trim();
-                    if !head.is_empty() && !head.contains(['(', ')']) {
-                        let wrapped: Vec<String> = texts
-                            .iter()
-                            .enumerate()
-                            .map(|(i, t)| format!("({t} as {})", positional_arg_name(i)))
-                            .collect();
-                        positional_pat = Some(format!("{head} {}", wrapped.join(" ")));
-                    }
+                // `(Report (Ok line))`: an arg span may start inside its own
+                // parentheses, and the whole pattern may be parenthesised; the
+                // head is the constructor alone, read token by token.
+                if let Some(head) = ctor_head_text(actx.src, start, first) {
+                    let wrapped: Vec<String> = texts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| format!("({t} as {})", positional_arg_name(i)))
+                        .collect();
+                    positional_pat = Some(format!("{head} {}", wrapped.join(" ")));
                 }
             }
             if server {
@@ -1351,6 +1625,43 @@ fn render_ty_name(t: &ty::Ty) -> String {
 
 /// The Model's fields — name + type + codec — recovered from the `update`
 /// result type `( Model, Cmd msg )`. Empty when the shape is not the TEA tuple.
+/// The one wire field that carries a model which is NOT a record (a `String`,
+/// a union, a `List`, …). The split's wire contract is per model field; a
+/// non-record model is carried whole under this name (`{ spaModel_ = model }`),
+/// and every server branch reads and writes it whole. Before v0.27.0 such a
+/// model reached the generated backend as an empty record (`[macHandler] type
+/// mismatch: String vs record`).
+pub const BOXED_MODEL_FIELD: &str = "spaModel_";
+
+/// The boxed-model pseudo field when `update`'s model type is not a record.
+fn boxed_model_field(result: &Option<ty::Ty>) -> Option<ModelFieldTy> {
+    let Some(ty::Ty::Tuple(xs)) = result else {
+        return None;
+    };
+    if xs.len() != 2 {
+        return None;
+    }
+    match &xs[0] {
+        ty::Ty::Record(..) | ty::Ty::Var(_) => None,
+        t => {
+            let mut f = field_ty_codec(t);
+            f.name = BOXED_MODEL_FIELD.to_string();
+            Some(f)
+        }
+    }
+}
+
+/// A server branch of a boxed (non-record) model reads and writes the model
+/// whole, through [`BOXED_MODEL_FIELD`].
+fn box_branch_io(io: &mut BranchIo) {
+    io.reads_whole_model = false;
+    io.read_fields = vec![BOXED_MODEL_FIELD.to_string()];
+    io.writes_whole_model = false;
+    io.write_fields = vec![BOXED_MODEL_FIELD.to_string()];
+    io.always_written = Vec::new();
+    io.fresh_response = false;
+}
+
 fn model_fields_typed(result: &Option<ty::Ty>) -> Vec<ModelFieldTy> {
     if let Some(ty::Ty::Tuple(xs)) = result {
         if xs.len() == 2 {
@@ -1746,6 +2057,10 @@ pub fn analyze_loaded_keeping(
                 // type — the raw material for the generator's wire records.
                 let types = ty::Typer::new(db).body_types(umod, update_def, body);
                 model_fields = model_fields_typed(&types.result);
+                let boxed = boxed_model_field(&types.result);
+                if let Some(f) = &boxed {
+                    model_fields = vec![f.clone()];
+                }
                 classify_update_body(
                     db,
                     &graph,
@@ -1780,6 +2095,16 @@ pub fn analyze_loaded_keeping(
                 server_chain_warnings = chaining.warnings;
                 follow_up = chaining.follow_up;
                 msg_continuations = chaining.continuations;
+                if boxed.is_some() {
+                    for b in branches.iter_mut() {
+                        if let Some(io) = b.io.as_mut() {
+                            box_branch_io(io);
+                        }
+                        if let Some(io) = b.client_io.as_mut() {
+                            box_branch_io(io);
+                        }
+                    }
+                }
             } else {
                 return Err("update def has no body".into());
             }
@@ -3170,6 +3495,10 @@ enum CmdLeaf {
         /// need exactly one perform (server chaining, the client-result perform)
         /// treat a repeated leaf as unresolved (fail closed).
         repeated: bool,
+        /// The toMsg is a constructor applied to arguments the arm captures
+        /// (`Cmd.perform task (Got url)`): the result Msg is `Got url result`,
+        /// so the task result alone does not rebuild it.
+        captures: bool,
     },
     /// `Cmd.publish` / `Cmd.publishNoEcho` — a server→client push leaf (not a
     /// server-runnable read; a chain containing one is not chained).
@@ -3325,6 +3654,10 @@ fn resolve_cmd_leaves_rec(
                     CmdDefKind::Perform => {
                         if args.len() == 2 {
                             let to_msg = literal_ctor_name(body, db, args[1]);
+                            let captures = matches!(
+                                &body.exprs[args[1]],
+                                Expr::Call(_, captured) if !captured.is_empty()
+                            );
                             let mut tref = Refs::default();
                             collect(body, args[0], &mut tref, &CollectCtx::default());
                             let client = task_refs_client_effect(db, &tref);
@@ -3332,6 +3665,7 @@ fn resolve_cmd_leaves_rec(
                                 to_msg,
                                 task_client_effect: client,
                                 repeated: false,
+                                captures,
                             });
                         } else {
                             out.push(CmdLeaf::Unresolvable);
@@ -3491,11 +3825,13 @@ fn resolve_cmd_list_leaves(
                     CmdLeaf::Perform {
                         to_msg,
                         task_client_effect,
+                        captures,
                         ..
                     } => CmdLeaf::Perform {
                         to_msg,
                         task_client_effect,
                         repeated: true,
+                        captures,
                     },
                     other => other,
                 });
@@ -4362,10 +4698,20 @@ fn compute_server_chaining(
                     to_msg,
                     task_client_effect,
                     repeated,
+                    captures,
                 } => {
                     perform_count += 1;
                     if *repeated {
                         clean = false; // runs once per element: not ONE perform.
+                    }
+                    if *captures {
+                        // `Cmd.perform task (Got url)`: the answer must carry
+                        // `url` too. The follow-up path (SPA-3) returns the
+                        // whole Msg `Got url result`, captured arguments
+                        // included; the client-result answer is the task
+                        // result alone (v0.27.0: the client called
+                        // `update (Got resp.result)` without `url`).
+                        clean = false;
                     }
                     if *task_client_effect {
                         clean = false; // a client Std.Native task cannot run server-side.
@@ -5760,9 +6106,8 @@ fn collect_binder_names(body: &Body, pat: PatId, src: &str, out: &mut Vec<String
 /// span. Returns `None` if the span is absent or the sliced text is not a plain
 /// identifier (e.g. a recovery node) — never fabricates a name.
 fn slice_binder_name(body: &Body, pat: PatId, src: &str) -> Option<String> {
-    let span = body.pat_span(pat)?;
-    let (start, end) = (span.range.0 as usize, span.range.1 as usize);
-    let text = src.get(start..end)?.trim();
+    let (start, end) = pat_range(body, pat, src)?;
+    let text = src.get(start..end)?;
     if !text.is_empty()
         && text
             .chars()
@@ -6257,7 +6602,7 @@ mod tests {
             ("Kx", "aNewFunction"),
             ("Secret", "fromEnv"),
             ("Crypto", "randomBytes"),
-            ("Crypto", "xchachaSeal"),
+            ("Crypto", "randomToken"),
             ("Db", "query"),
             ("Http", "get"),
         ] {
@@ -6278,6 +6623,196 @@ mod tests {
         let mut off = Refs::default();
         record_ffi_symbol("Noise_initiatorSuite", &mut off, false);
         assert!(off.client_kernels.is_empty() && off.server_kernels.len() == 1);
+    }
+
+    /// A constructor pattern's head is read token by token, so a comment the
+    /// pattern's CST node owns (the line above the arm) never matters. Before
+    /// v0.27.0 a parenthesis in such a comment made the split refuse the arm.
+    #[test]
+    fn a_comment_above_an_arm_is_not_part_of_its_constructor() {
+        for (src, want) in [
+            (
+                "-- the relay step (a server arm)\n        Fetch (Ok url)",
+                Some("Fetch"),
+            ),
+            ("{- (a) -} Fetch (Ok url)", Some("Fetch")),
+            ("(Msg.Report (Ok line))", Some("Msg.Report")),
+            ("Report line", Some("Report")),
+            ("-- (x)\n        f (Ok url)", None),
+        ] {
+            let first = src.rfind("(Ok").or_else(|| src.rfind("line")).unwrap();
+            assert_eq!(ctor_head_text(src, 0, first).as_deref(), want, "{src}");
+        }
+    }
+
+    /// With the opt-in the AEAD ciphers (explicit and random nonce), the keyed
+    /// MACs, the password KDFs and RSA signing are pure over a key the caller
+    /// holds, so they may run on either side (Neutral). Without it they stay
+    /// server effects. Before v0.27.0 a client arm that sealed under a `Kdf`
+    /// key was refused as "client-held crypto and a server effect".
+    #[test]
+    fn client_crypto_opt_in_makes_the_keyed_crypto_primitives_placement_neutral() {
+        for (m, fs) in CLIENT_CRYPTO_PURE_MEMBERS {
+            for f in *fs {
+                assert_eq!(
+                    classify_kernel_in(true, m, f),
+                    KernelClass::Neutral,
+                    "{m}.{f} with the opt-in"
+                );
+                assert_eq!(
+                    classify_kernel_in(false, m, f),
+                    KernelClass::ServerOnly,
+                    "{m}.{f} without the opt-in"
+                );
+            }
+        }
+        let mut on = Refs::default();
+        for sym in [
+            "Crypto_chacha20Poly1305Seal",
+            "Crypto_xchacha20Poly1305Open",
+            "Crypto_xchachaSeal",
+            "Crypto_hmacSha256",
+        ] {
+            record_ffi_symbol(sym, &mut on, true);
+        }
+        assert!(
+            on.server_kernels.is_empty() && on.client_kernels.is_empty(),
+            "{:?} {:?}",
+            on.server_kernels,
+            on.client_kernels
+        );
+        // Every listed member is a real `Sky.Core.Crypto` symbol.
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../sky-stdlib/Sky/Core/Crypto.sky"),
+        )
+        .unwrap();
+        for (m, fs) in CLIENT_CRYPTO_PURE_MEMBERS {
+            for f in *fs {
+                assert!(
+                    src.contains(&format!("Ffi.kernel \"{m}_{f}\"")),
+                    "`{m}.{f}` is not a Sky.Core.Crypto kernel"
+                );
+            }
+        }
+    }
+
+    /// Every `Ffi.kernel` symbol family in the stdlib is decided: a pure
+    /// family, an effect family, a mixed family or a client effect. Before
+    /// v0.27.0 families with no `hir::KERNEL_MODULES` pseudo-module (`Bytes`,
+    /// `Decimal`, `Csv`, `Money`, …) were never checked, fell to the
+    /// fail-closed default, and sent a pure branch (`Bytes.slice`) to the
+    /// server.
+    #[test]
+    fn ffi_symbol_families_are_all_decided() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sky-stdlib");
+        let mut syms: BTreeSet<String> = BTreeSet::new();
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for e in std::fs::read_dir(&dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| x == "sky") {
+                    let src = std::fs::read_to_string(&p).unwrap();
+                    // `Ffi.kernel "S"`, `Ffi.callPure "S" [ … ]` and
+                    // `Ffi.call "S"`, the symbol possibly on the next line.
+                    for form in ["Ffi.kernel", "Ffi.callPure", "Ffi.call", "Ffi.callTask"] {
+                        for part in src.split(form).skip(1) {
+                            if !part.starts_with(char::is_whitespace) {
+                                continue;
+                            }
+                            let rest = part.trim_start();
+                            if let Some(r) = rest.strip_prefix('"') {
+                                syms.insert(r.split('"').next().unwrap().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(syms.len() > 300, "read only {} kernel symbols", syms.len());
+        let mut undecided: BTreeSet<String> = BTreeSet::new();
+        for sym in &syms {
+            let prefix = sym.split('_').next().unwrap();
+            if !(EFFECT_KERNELS.contains(&prefix)
+                || KNOWN_PURE_KERNELS.contains(&prefix)
+                || CLIENT_EFFECT_KERNELS.contains(&prefix)
+                || mixed_client_safe(prefix).is_some())
+            {
+                undecided.insert(prefix.to_string());
+            }
+        }
+        assert!(
+            undecided.is_empty(),
+            "`Ffi.kernel` symbol families not classified for the Sky.Spa split: {undecided:?}. \
+             Add each to EFFECT_KERNELS, KNOWN_PURE_KERNELS or MIXED_KERNELS."
+        );
+        // `Sky.Core.WebSocket` is a client effect (the wasm client holds its
+        // own socket), never a server kernel.
+        let mut acc = Refs::default();
+        record_ffi_symbol("WebSocket_connect", &mut acc, false);
+        assert!(acc.server_kernels.is_empty() && acc.client_kernels.len() == 1);
+        // Every client-safe member of a mixed family is a real symbol (a
+        // renamed kernel must not leave a stale entry behind).
+        for (m, fs) in MIXED_KERNELS {
+            for f in *fs {
+                assert!(
+                    syms.contains(&format!("{m}_{f}")),
+                    "MIXED_KERNELS lists `{m}_{f}`, which no stdlib module binds"
+                );
+            }
+        }
+        // The pure ones the report named, and the mixed members.
+        for sym in [
+            "Bytes_slice",
+            "Bytes_length",
+            "Bytes_toHex",
+            "Bytes_fromBase64",
+            "Decimal_add",
+            "Compression_gzip",
+            "Csv_parse",
+            "Money_format",
+            "Config_decodeJson",
+            "DbDec_int",
+            "Table_primaryKey",
+            "Time_formatISO8601",
+            "Time_addDays",
+            "Time_inZone",
+            "htmlRender",
+        ] {
+            assert!(syms.contains(sym), "`{sym}` is not a stdlib kernel");
+            let mut acc = Refs::default();
+            record_ffi_symbol(sym, &mut acc, false);
+            assert!(
+                acc.server_kernels.is_empty() && acc.client_kernels.is_empty(),
+                "`{sym}` is pure: it must stay on the client"
+            );
+        }
+        for sym in [
+            "Csv_parseStreamFromFile",
+            "Money_setRate",
+            "Money_getRate",
+            "Config_loadFromFile",
+            "Config_apply",
+            "Table_insert",
+            "Schema_createTable",
+            "Cache_get",
+            "Std_App_livePort",
+            "Money_hasRate",
+            "Money_clearRates",
+            "Time_now",
+            "Time_sleep",
+        ] {
+            assert!(syms.contains(sym), "`{sym}` is not a stdlib kernel");
+            let mut acc = Refs::default();
+            record_ffi_symbol(sym, &mut acc, false);
+            assert_eq!(
+                acc.server_kernels.len(),
+                1,
+                "`{sym}` is an effect or server state: it must stay on the server"
+            );
+        }
     }
 
     /// Every key-holding `Ffi.kernel` symbol of the Std.Crypto modules the

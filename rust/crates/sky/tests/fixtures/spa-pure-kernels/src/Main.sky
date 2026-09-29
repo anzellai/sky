@@ -1,0 +1,72 @@
+module Main exposing (main)
+
+import Sky.Core.Bytes as Bytes
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Ui as Ui
+
+type alias Model =
+    { out : String }
+
+type Msg
+    = Slice
+    | Length
+    | Hex
+    | Stamp
+    | Plain
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Slice ->
+            ( { model | out = Bytes.slice 1 3 "abcd" }, Cmd.none )
+
+        Length ->
+            ( { model | out = String.fromInt (Bytes.length "héllo") }
+            , Cmd.none
+            )
+
+        Hex ->
+            ( { model | out = Bytes.toHex "ab" }, Cmd.none )
+
+        Stamp ->
+            ( { model | out = Time.formatISO8601 0 }, Cmd.none )
+
+        Plain ->
+            ( { model | out = String.slice 1 3 "abcd" }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = \_ -> ( { out = "" }, Cmd.none )
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text ("OUT=" ++ m.out)
+                        , Ui.button
+                              []
+                              { onPress = Just Slice, label = Ui.text "slice" }
+                        , Ui.button
+                              []
+                              { onPress = Just Length
+                              , label = Ui.text "length"
+                              }
+                        , Ui.button
+                              []
+                              { onPress = Just Hex, label = Ui.text "hex" }
+                        , Ui.button
+                              []
+                              { onPress = Just Stamp, label = Ui.text "stamp" }
+                        , Ui.button
+                              []
+                              { onPress = Just Plain, label = Ui.text "plain" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

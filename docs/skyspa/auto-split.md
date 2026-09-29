@@ -1163,3 +1163,87 @@ diffed); `spa_split_flow.rs`
 `web:app`, each message sent to both, the models compared); and
 `fuzz_verb_flow.rs`
 `the_split_oracle_diffs_server_arms_that_match_inside_their_arguments`.
+
+## 23. Scope, types and shapes the split must carry (2026-09-29)
+
+A downstream app found ten places where the split lost or misplaced part of a
+program that builds as Sky.Live. Each rule below replaces a text or bare-name
+heuristic with a fact from the resolver or the lexer.
+
+**Every kernel symbol family is decided.** The partition reads the runtime
+symbol of `Ffi.kernel "<Family>_<fn>"` and of `Ffi.callPure` / `Ffi.call`.
+Families without a `hir::KERNEL_MODULES` pseudo-module used to fall to the
+fail-closed default (server), so a pure `Bytes.slice` became an RPC. Now:
+
+| Side | Families |
+|---|---|
+| Client effect | `Native`, `WebSocket` (the client holds its own socket, §20) |
+| Client (pure) | `Bytes`, `Decimal`, `Compression`, `DbDec` (Std.Db.Decode decoders), `Spa`, the `Std.Html` render helpers |
+| Client members of a mixed family | `Csv` parse / encode; `Money` formatting and allocation; `Std.Config` decoders; `Std.Db.Table` descriptions; `Time` formatting, parsing and calendar arithmetic (UTC or a named zone; the runtime embeds `time/tzdata`); `Std.App` view conversions |
+| Server | `Schema`, `Analytics`, `Cache`, `Email`, `PubSub`, `HttpStream`, `ServerStream`, `ServerWebSocket`, `Trace`; `Money`'s FX-rate table (`setRate`, `getRate`, `hasRate`, `clearRates`, so `convert`); `Csv.parseStreamFromFile`; `Config.loadFromFile` and the `Sky.Config` builders; the `Table` queries; `Time.now` / `unixMillis` / `sleep` / `every`; `Std_App_livePort` |
+
+`spa_partition` `ffi_symbol_families_are_all_decided` fails on a family that is
+in none of the lists, and on a listed member no stdlib module binds.
+
+**Exclusion is by definition, per module scope.** A server-tainted binding is
+removed from the client by its `DefId`. The names a module writes bare that
+resolve to a tainted def are read from the resolver (`ref_occs`), so a
+server-only `Net.send` no longer removes the entry's own `send`. The report
+names the excluded binding with its module (`Net.send`).
+
+**A type the client names keeps its module in the client.** A module with a
+server function used to be left out of the client whole unless the client
+reached one of its pure functions. Now any type or constructor a client module
+names (`type_occs`, constructor references) keeps a client copy of the module:
+its type declarations and pure defs, never a tainted def.
+
+**`Shared` brings the types its copied records name.** A wire record copied
+into `Shared` can name a type of another module (`at : Shape.Point`). The
+references are read from `type_occs` inside the copied declarations: a pure
+module is imported under the alias the record uses (`import Shape as S
+exposing (..)`); a type of a server module is copied into `Shared` too, and
+each qualified reference to it is rewritten to the bare name; a stdlib type
+keeps its module's import line.
+
+**A result Msg with captured arguments crosses whole.** `Cmd.perform task (Got
+url)` is not a client-result RPC (§19), whose answer is the task result alone:
+it is a follow-up (§20), whose answer is the Msg `Got url result`. The stdlib
+`Http.HttpResponse` has a wire codec (`Codec.auto` over its three fields).
+
+**Patterns are read with the lexer.** A constructor pattern's CST node can own
+the comment lines above the arm. The split reads the head and the arguments
+from non-trivia tokens, so a comment never changes how an arm is read.
+
+**`init` and `update` in any form.** The generated backend and frontend call
+`init ()` and `update msg model` by name. The synthesis defines them at top
+level whatever the `App.app` record held: an inline, `let`-bound or hoisted
+lambda becomes a function (its body kept, so the split reads its `case` and its
+model expression); a function under another name is copied under the canonical
+name; an eta-expanded `update` is `update` itself; anything else is
+eta-expanded. A module that already defines a different top-level `update` is
+an error naming both.
+
+**A model that is not a record crosses whole.** The wire contract is per model
+field. A `String`, union or `List` model rides in one field, `spaModel_`, and
+every server branch reads and writes it whole. A wildcard or pattern model
+parameter (`update msg _ =`) is bound under an `as` in the regenerated
+`update`.
+
+**The user's source is checked first.** A `Std.App` build for any target first
+type-checks the entry as written (`App.run` not rewritten), so an error in it
+is reported at the user's line, never at a rewritten `App.runLive` or in the
+synthesised or generated code. A record-literal argument whose field does not
+fit is reported at the field. The `Std.App` builders fix `init`'s seed to
+`()`, so `init : Page -> …` is that one error, on every target.
+
+Tests: the fixtures `spa-client-crypto-aead`, `spa-pure-kernels`,
+`spa-tainted-name-scope`, `spa-server-module-types`, `spa-shared-foreign-type`,
+`spa-captured-result-msg`, `spa-arm-comment`, `spa-inline-init`,
+`spa-nonrecord-model` and `std-app-init-seed-error`, each driven by a
+`spa_split_flow.rs` test that builds the backend and the wasm client; where a
+server branch runs, the test sends it to the split backend and to the Sky.Live
+build of the same source and compares the answers. Unit tests:
+`spa_partition` `ffi_symbol_families_are_all_decided`,
+`client_crypto_opt_in_makes_the_keyed_crypto_primitives_placement_neutral`,
+`a_comment_above_an_arm_is_not_part_of_its_constructor`; `app_entry`
+`config_fields_get_their_canonical_top_level_name`.

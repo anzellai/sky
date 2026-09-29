@@ -115,6 +115,7 @@ See [architecture.md](architecture.md) for the detailed flow and session managem
 - Auth-gated pages: check `session` in `update` or in the route handler.
 - Async work: `Cmd.perform (Http.get url) GotResponse` dispatches a task, the result comes back as `GotResponse (Result Error Response)`.
 - Scheduled updates: `Sub.every 1000 Tick` emits `Tick` every second.
+- The URL fragment: `Sub.onFragment FragmentChanged` sends the text after `#` when the page loads with one and on every change of it (a `#section` link, Back). The browser never sends the fragment to the server, so the client reports it; `init` cannot see it.
 - Multi-page: `routes` maps URL paths to route messages; `update` responds to navigation.
 - **Real-time multi-session updates**: `Cmd.publish topic payload` broadcasts to every session subscribed via `Sub.subscribeTopic topic toMsg`. Chatrooms, collaborative editors, live dashboards — push delivery without polling. See [`pubsub.md`](pubsub.md) for the tutorial and [`examples/27-multi-session-chat`](../../examples/27-multi-session-chat/) for the worked example.
 

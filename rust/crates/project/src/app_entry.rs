@@ -372,6 +372,168 @@ impl ArgText {
     }
 }
 
+/// The top-level definition a Sky.Spa client build needs for an `App.app`
+/// field (`init`, `update`, `subscriptions`) under its canonical name.
+///
+/// The split's generated backend and frontend call these by name (`init ()`,
+/// `update msg model`), so the synthesised entry must define them at top level
+/// whatever the App record held (v0.27.0: an inline `init = \_ -> …` gave a
+/// backend that called an undefined `init`). `value` is the field as the
+/// synthesis writes it: a name (a top-level definition of `src` or of
+/// `hoisted`, or an imported name), or a parenthesised one-line expression.
+///
+/// * `value` is already `canonical` → `Ok(None)`;
+/// * a lambda (inline, or a binding whose value is a lambda) becomes a function
+///   `canonical p1 … pn = body`, the body's layout kept, so the split reads its
+///   `case msg of` and its model expression as if the user had written it;
+/// * a top-level function of the entry is copied under `canonical` (its type
+///   annotation too);
+/// * any other expression becomes `canonical a0 … = (value) a0 …` with the
+///   field's arity.
+///
+/// `Err` when the module already defines a DIFFERENT top-level `canonical`: the
+/// client build cannot give the app's field that name.
+pub fn canonical_config_binding(
+    src: &str,
+    hoisted: &str,
+    value: &str,
+    canonical: &str,
+    arity: usize,
+) -> Result<Option<String>, String> {
+    let v = value.trim();
+    let bare = v.trim_start_matches('(').trim_end_matches(')').trim();
+    if v == canonical || bare == canonical {
+        return Ok(None);
+    }
+    // `\msg model -> update msg model` is the canonical function itself.
+    if let Some(copy) = copy_definition_as(
+        &format!("spaCanonical_ =\n    {v}\n"),
+        "spaCanonical_",
+        canonical,
+    ) {
+        let words: Vec<&str> = copy.split_whitespace().collect();
+        if let Some(eq) = words.iter().position(|w| *w == "=") {
+            let (params, body) = (&words[1..eq], &words[eq + 1..]);
+            if !params.is_empty()
+                && body.len() == params.len() + 1
+                && body[0] == canonical
+                && body[1..] == *params
+            {
+                return Ok(None);
+            }
+        }
+    }
+    let file = parse(src);
+    if file
+        .decls()
+        .any(|d| decl_name_of(&d).as_deref() == Some(canonical))
+    {
+        return Err(format!(
+            "the `App.app` field `{canonical}` is `{v}`, and this module also defines a \
+             different top-level `{canonical}`. A client (Sky.Spa) build needs the app's \
+             `{canonical}` under that name: rename the other `{canonical}`, or pass it \
+             as the field"
+        ));
+    }
+    let is_name = !v.is_empty()
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        && v.chars().next().is_some_and(|c| c.is_ascii_lowercase());
+    if is_name && !v.contains('.') {
+        for defs in [src, hoisted] {
+            if let Some(copy) = copy_definition_as(defs, v, canonical) {
+                return Ok(Some(copy));
+            }
+        }
+    }
+    if !is_name {
+        let tmp = format!("spaCanonical_ =\n    {v}\n");
+        if let Some(copy) = copy_definition_as(&tmp, "spaCanonical_", canonical) {
+            return Ok(Some(copy));
+        }
+    }
+    let args: Vec<String> = (0..arity).map(|i| format!("spaA{i}_")).collect();
+    Ok(Some(format!(
+        "{canonical} {a} =\n    ({v}) {a}\n",
+        a = args.join(" ")
+    )))
+}
+
+fn decl_name_of(d: &ast::Decl) -> Option<String> {
+    match d {
+        ast::Decl::Value(v) => v.name().map(|t| t.text().to_string()),
+        ast::Decl::TypeAnno(a) => a.name().map(|t| t.text().to_string()),
+        _ => None,
+    }
+}
+
+/// The top-level definition `from` of `src` (with its type annotation),
+/// renamed to `to`. A definition with no parameters whose body is a lambda
+/// (`start = \_ -> …`) is written as a function (`to _ = …`). `None` when
+/// `src` does not define `from`.
+fn copy_definition_as(src: &str, from: &str, to: &str) -> Option<String> {
+    let file = parse(src);
+    let mut out = String::new();
+    let mut found = false;
+    for d in file.decls() {
+        if decl_name_of(&d).as_deref() != Some(from) {
+            continue;
+        }
+        match &d {
+            ast::Decl::TypeAnno(a) => {
+                let name = a.name()?;
+                let start = usize::from(name.text_range().end());
+                let end = usize::from(a.syntax().text_range().end());
+                out.push_str(&format!("{to}{}\n", src[start..end].trim_end()));
+            }
+            ast::Decl::Value(v) => {
+                found = true;
+                let no_params = v.params().is_none_or(|pl| pl.params().next().is_none());
+                let lambda = if no_params {
+                    v.body().map(strip_parens).and_then(|b| match b {
+                        Expr::Lambda(l) => Some(l),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
+                if let Some(l) = lambda {
+                    let params: Vec<String> = l
+                        .params()
+                        .map(|pl| pl.params().map(|p| node_text(p.syntax())).collect())
+                        .unwrap_or_default();
+                    let body = l.body()?;
+                    let off = content_start(body.syntax());
+                    let line_start = src[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    let end = usize::from(body.syntax().text_range().end());
+                    let arg = ArgText {
+                        text: src[off..end].trim_end().to_string(),
+                        col: off - line_start,
+                    };
+                    let head = if params.is_empty() {
+                        to.to_string()
+                    } else {
+                        format!("{to} {}", params.join(" "))
+                    };
+                    out.push_str(&arg.render_binding(&head));
+                } else if no_params {
+                    // A value alias (`start = realStart`): a zero-parameter
+                    // binding of a function value cannot be applied like a
+                    // function in the generated code; the caller eta-expands.
+                    return None;
+                } else {
+                    let name = v.name()?;
+                    let start = usize::from(name.text_range().end());
+                    let end = usize::from(v.syntax().text_range().end());
+                    out.push_str(&format!("{to}{}\n", src[start..end].trim_end()));
+                }
+            }
+            _ => {}
+        }
+    }
+    found.then_some(out)
+}
+
 /// Truncate `s` at its first `--` that is not inside a `"…"` string literal.
 fn strip_line_comment(s: &str) -> &str {
     let bytes = s.as_bytes();
@@ -1520,5 +1682,52 @@ mod tests {
             "a =\n    b\n\n\nb =\n    a\n\n\n",
         );
         assert!(builder_string_arg(&src, "withAppUrl").is_err());
+    }
+
+    /// The split calls `init` / `update` by name, so the synthesised client
+    /// entry defines them whatever form the App record held (v0.27.0: an
+    /// inline `init` gave `Undefined name: init` in the backend).
+    #[test]
+    fn config_fields_get_their_canonical_top_level_name() {
+        let src = "module Main exposing (main)\n\n\nstep : Msg -> Model -> ( Model, Cmd Msg )\nstep msg model =\n    case msg of\n        Go ->\n            ( model, Cmd.none )\n";
+        // Already canonical, and its eta-expansion.
+        assert_eq!(
+            canonical_config_binding(src, "", "init", "init", 1),
+            Ok(None)
+        );
+        assert_eq!(
+            canonical_config_binding(src, "", "(\\msg model -> update msg model)", "update", 2),
+            Ok(None)
+        );
+        // An inline lambda becomes a function, its body kept.
+        let b =
+            canonical_config_binding(src, "", "(\\_ -> ( { out = \"\" }, Cmd.none ))", "init", 1)
+                .unwrap()
+                .unwrap();
+        assert_eq!(b, "init _ =\n    ( { out = \"\" }, Cmd.none )\n");
+        // A function under another name is copied, annotation included.
+        let b = canonical_config_binding(src, "", "step", "update", 2)
+            .unwrap()
+            .unwrap();
+        assert!(
+            b.starts_with(
+                "update : Msg -> Model -> ( Model, Cmd Msg )\nupdate msg model =\n    case msg of"
+            ),
+            "{b}"
+        );
+        // A hoisted multi-line lambda binding.
+        let hoisted = "spaHoist_init_ =\n    \\_ ->\n        ( 0, Cmd.none )\n";
+        let b = canonical_config_binding(src, hoisted, "spaHoist_init_", "init", 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(b, "init _ =\n    ( 0, Cmd.none )\n");
+        // An imported or opaque function is eta-expanded to the field's arity.
+        let b = canonical_config_binding(src, "", "start", "init", 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(b, "init spaA0_ =\n    (start) spaA0_\n");
+        // A different top-level `update` cannot be displaced.
+        let clash = format!("{src}\n\nupdate : Int\nupdate =\n    1\n");
+        assert!(canonical_config_binding(&clash, "", "step", "update", 2).is_err());
     }
 }

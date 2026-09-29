@@ -515,10 +515,11 @@ These are real, current scope boundaries — not roadmap optimism:
 - **Client effect surface is bounded.** Client effects run through a
   single-threaded wasm interpreter: `Cmd.perform` (sync kernels like
   `Time.now` / `Random` inline; async `Http` via `fetch`), `Sub.every` timers,
-  `Sub.subscribeTopic` (an `EventSource` on the backend's push endpoint) and
-  `Sky.Core.WebSocket` (the browser WebSocket API, above). `Cmd.publish` is a
-  documented client no-op (no peer/session bus in a single tab);
-  `Http.Stream` subscriptions are not wired on the client.
+  `Sub.subscribeTopic` (an `EventSource` on the backend's push endpoint),
+  `Sub.onFragment` (the client reads `location.hash` at load and on every
+  `hashchange`) and `Sky.Core.WebSocket` (the browser WebSocket API, above).
+  `Cmd.publish` is a documented client no-op (no peer/session bus in a single
+  tab); `Http.Stream` subscriptions are not wired on the client.
 
 ## See also
 

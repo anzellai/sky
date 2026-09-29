@@ -1,0 +1,75 @@
+module Main exposing (main)
+
+import Shape
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Native as Native
+import Std.Ui as Ui
+
+type alias Model =
+    { next : Int
+    , note : String
+    }
+
+type Msg
+    = Go
+    | Ask (Result Error Int)
+    | Got (Result Error Shape.Batch)
+    | Buzzed (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { next = 1, note = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Go ->
+            ( model, Cmd.perform (Task.succeed model.next) Ask )
+
+        Ask (Ok n) ->
+            ( model, Cmd.perform (Shape.fetch n) Got )
+
+        Ask (Err _) ->
+            ( model, Cmd.none )
+
+        Got (Ok batch) ->
+            ( { model | next = batch.next
+              , note =
+                  if batch.ready then
+                      "ready"
+
+                  else
+                      "not ready"
+              }
+            , Cmd.perform (Native.vibrate 10) Buzzed
+            )
+
+        Got (Err _) ->
+            ( model, Cmd.none )
+
+        Buzzed _ ->
+            ( model, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text
+                              ("NEXT=" ++ String.fromInt m.next ++ " " ++ m.note)
+                        , Ui.button
+                              []
+                              { onPress = Just Go, label = Ui.text "go" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

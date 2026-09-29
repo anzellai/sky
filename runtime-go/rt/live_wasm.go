@@ -51,6 +51,12 @@ var (
 	// backend mounts `GET /_sky/sub?topic=<topic>` and emits each broker publish
 	// as an SSE `data: <json>` frame (docs/skyspa/auto-split.md §16).
 	spaTopics = map[string]*spaTopicSub{}
+	// spaFragmentToMsg is the `toMsg` of the app's Sub.onFragment leaf (nil when
+	// it has none), refreshed by reconcileSubs. spaFragmentListener is the one
+	// `hashchange` listener, installed the first time a fragment leaf appears.
+	spaFragmentToMsg    any
+	spaFragmentListener js.Func
+	spaFragmentListens  bool
 	// Routing (P4). spaRoutes is the registered client-side routes (empty ⇒ no
 	// routing; a route-less app keeps native <a href> behaviour). spaNotFound is
 	// the 404 page value (nil ⇒ leave the model's Page unchanged on a miss).
@@ -268,6 +274,8 @@ func spaRun(cfg any) any {
 		interpretCmd(asCmdT(navCmd), spaDispatch)
 	}
 	reconcileSubs()
+	// Sub.onFragment: the page loaded with a fragment the server never saw.
+	spaDeliverFragment(true)
 
 	// Install link interception + Back/Forward only when the app routes — a
 	// route-less app (a counter) must keep native <a href> behaviour, so we
@@ -1055,10 +1063,20 @@ func reconcileSubs() {
 	desired := map[int]any{}          // interval ms -> msg (last-write-wins per interval)
 	desiredTopics := map[string]any{} // topic -> toMsg (last-write-wins per topic)
 	root := subT{kind: "none"}
+	spaFragmentToMsg = nil
 	if spaSubs != nil {
 		root = asSubT(spaSubs(spaModel))
 		collectEvery(root, desired)
 		collectTopics(root, desiredTopics)
+		spaFragmentToMsg = fragmentToMsg(root)
+	}
+	if spaFragmentToMsg != nil && !spaFragmentListens {
+		spaFragmentListens = true
+		spaFragmentListener = js.FuncOf(func(this js.Value, args []js.Value) any {
+			spaDeliverFragment(false)
+			return nil
+		})
+		js.Global().Call("addEventListener", "hashchange", spaFragmentListener)
 	}
 	// WebSocket Subs (WebSocket.onOpen / onMessage / onClose / onError) on the
 	// client's own sockets (websocket_wasm.go).
@@ -1093,6 +1111,22 @@ func reconcileSubs() {
 		}
 		openTopic(topic, toMsg)
 	}
+}
+
+// spaDeliverFragment dispatches the URL fragment to the app's Sub.onFragment
+// leaf (sub_fragment.go). At boot (`atLoad`) only a non-empty fragment is
+// delivered, as Sky.Live's client does; on a `hashchange` every value is,
+// including "" when the fragment was removed.
+func spaDeliverFragment(atLoad bool) {
+	toMsg := spaFragmentToMsg
+	if toMsg == nil {
+		return
+	}
+	frag := fragmentOf(js.Global().Get("location").Get("hash").String())
+	if atLoad && frag == "" {
+		return
+	}
+	step(sky_call(toMsg, frag))
 }
 
 // collectTopics flattens a Sub tree into the topic->toMsg map, recursing through

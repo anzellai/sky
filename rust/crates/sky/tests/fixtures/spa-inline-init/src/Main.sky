@@ -1,0 +1,54 @@
+module Main exposing (main)
+
+import Sky.Core.Http as Http
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Ui as Ui
+
+type alias Model =
+    { out : String }
+
+type Msg
+    = Go
+    | Fetch (Result Error String)
+    | Got (Result Error Http.HttpResponse)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Go ->
+            ( model, Cmd.perform (Task.succeed "http://127.0.0.1:1/") Fetch )
+
+        -- the relay step, a server arm
+        Fetch (Ok url) ->
+            ( model, Cmd.perform (Http.get url) Got )
+
+        Fetch (Err e) ->
+            ( { model | out = errorToString e }, Cmd.none )
+
+        Got (Ok r) ->
+            ( { model | out = String.fromInt r.status }, Cmd.none )
+
+        Got (Err _) ->
+            ( { model | out = "failed" }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = \_ -> ( { out = "" }, Cmd.none )
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text ("OUT=" ++ m.out)
+                        , Ui.button
+                              []
+                              { onPress = Just Go, label = Ui.text "go" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())
