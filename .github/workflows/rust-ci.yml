@@ -42,6 +42,11 @@ on:
     branches: [main, 'rewrite/rust-compiler']
   pull_request:
     branches: [main]
+  # Manual run on any branch: `gh workflow run rust-ci.yml --ref <branch>`.
+  # A PR into a `release/*` branch does not match `pull_request` above, so this
+  # is how a branch aimed at a release branch gets the per-commit suite,
+  # including the ci-green tier budget.
+  workflow_dispatch:
 
 # One in-flight run per ref; a newer push cancels the older.
 concurrency:
