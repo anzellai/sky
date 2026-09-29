@@ -199,6 +199,26 @@ impl World {
         out
     }
 
+    /// The argument types of one union VARIANT, with every type reference
+    /// resolved through HIR in the DECLARING module's scope (`m`), exactly as
+    /// [`World::record_alias_fields_resolved`] resolves record fields. A
+    /// reference to a declared alias or union becomes its module-qualified key
+    /// (`Std.Crypto.Cpace.Pending`), so a `Msg` payload that names an imported
+    /// type can never be confused with a same-named type of the program's own
+    /// (`type alias Pending`). The syntactic [`variant_arg_types`] yields BARE
+    /// names and must not be used to decide type identity.
+    pub fn variant_arg_types_resolved(
+        &self,
+        db: &dyn SkyDb,
+        m: ModuleId,
+        variant_syntax: &SyntaxNode,
+    ) -> Vec<Ty> {
+        child_types(variant_syntax)
+            .iter()
+            .map(|t| resolve_type_names(db, m, t, self.type_keys()))
+            .collect()
+    }
+
     /// The two module-qualified key sets, bundled for reference resolution.
     fn type_keys(&self) -> TypeKeys<'_> {
         TypeKeys {

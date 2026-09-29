@@ -200,7 +200,7 @@ fn is_session_identity_ty(t: &ty::Ty, shapes: &ProjectShapes) -> bool {
             shapes
                 .record_by_fields
                 .get(&set)
-                .map(|n| n == "Session")
+                .map(|k| ProjectShapes::bare(k) == "Session")
                 .unwrap_or(false)
         }
         _ => false,
@@ -221,10 +221,12 @@ enum FieldKind {
     ListLike,
     /// `Maybe _` → `Nothing`.
     MaybeLike,
-    /// A nested project RECORD → recurse an inline `{ … }` blank.
+    /// A nested project RECORD → recurse an inline `{ … }` blank. Carries
+    /// the record's module-qualified key (`Main.Todo`).
     Record(String),
     /// A project data union / enum → its FIRST nullary constructor (or the
-    /// fallback error when the union has no nullary constructor).
+    /// fallback error when the union has no nullary constructor). Carries the
+    /// union's module-qualified key.
     Union(String),
     /// Any shape with no synthesisable default (a function, a tuple, `Result`,
     /// `Dict`, `Secret`, `Set`, `Decimal`, an anonymous inline record, …). Carries
@@ -240,15 +242,125 @@ enum FieldKind {
 ///   * synthesise a sound nominal blank for `Codec.auto` from the record's
 ///     declared fields, recursing into nested records and defaulting a union
 ///     field to its first nullary constructor.
+///
+/// Every type is keyed by its MODULE-QUALIFIED name (`Main.Pending`,
+/// `Geo.Shape.Point`), the identity the resolver (`ty::nominal`) gives a
+/// declared alias or union, never by its bare name. v0.27.0: the shapes were
+/// keyed by bare name and every lookup took a type's last segment, so a `Msg`
+/// payload of the stdlib's `Cpace.Pending` (a device key, which never crosses
+/// the wire) was derived a codec as the app's own `type alias Pending`.
+///
+/// The shapes cover the project's modules AND its Sky dependency packages
+/// (`[dependencies]`, path or registry). A dependency type is EXTERNAL: both
+/// generated projects carry the dependency, so `Shared` imports its module
+/// under a generated alias ([`external_alias`]) and names it qualified, never
+/// copying the declaration.
 struct ProjectShapes {
-    /// Nominal record name → its declared fields (source order) + default class.
+    /// Qualified record key → its declared fields (source order) + default class.
     records: HashMap<String, Vec<(String, FieldKind)>>,
-    /// Field-NAME set → the unique nominal record with exactly those fields. A
-    /// set shared by two records is AMBIGUOUS and omitted (recovery then fails
-    /// closed to the actionable error rather than guess).
+    /// Field-NAME set → the unique record key with exactly those fields. A set
+    /// shared by two project records (or, with no project record, by two
+    /// dependency records) is AMBIGUOUS and omitted (recovery then fails closed
+    /// to the actionable error rather than guess).
     record_by_fields: HashMap<BTreeSet<String>, String>,
-    /// Union name → its constructors `(name, is_nullary)` in declared order.
+    /// Qualified union key → its constructors `(name, is_nullary)` in declared order.
     unions: HashMap<String, Vec<(String, bool)>>,
+    /// Bare name → every record / union key declaring it. A BARE type name
+    /// (declaring module unknown, see `ty::nominal`) resolves only when exactly
+    /// one declaration carries it.
+    by_bare: HashMap<String, Vec<String>>,
+    /// The module names of the Sky dependency packages (external types).
+    external_modules: HashSet<String>,
+    /// The module names of the project's own modules.
+    project_modules: HashSet<String>,
+}
+
+/// The import alias under which a generated module names a Sky DEPENDENCY
+/// module's types (`Geo.Shape` → `SpaTy_Geo_Shape_`). Generated, so it never
+/// collides with an alias the app wrote.
+fn external_alias(module: &str) -> String {
+    format!("SpaTy_{}_", module.replace('.', "_"))
+}
+
+impl ProjectShapes {
+    /// The declaration key a type NAME refers to: a qualified name must be a
+    /// declared key exactly (a same-named type of another module is a
+    /// different type); a bare name must be unique among the declarations.
+    fn key_of(&self, name: &str) -> Option<&str> {
+        if name.contains('.') {
+            if let Some((k, _)) = self.records.get_key_value(name) {
+                return Some(k.as_str());
+            }
+            return self.unions.get_key_value(name).map(|(k, _)| k.as_str());
+        }
+        match self.by_bare.get(name) {
+            Some(keys) if keys.len() == 1 => Some(keys[0].as_str()),
+            _ => None,
+        }
+    }
+
+    fn record_key(&self, name: &str) -> Option<String> {
+        self.key_of(name)
+            .filter(|k| self.records.contains_key(*k))
+            .map(str::to_string)
+    }
+
+    fn union_key(&self, name: &str) -> Option<String> {
+        self.key_of(name)
+            .filter(|k| self.unions.contains_key(*k))
+            .map(str::to_string)
+    }
+
+    fn bare(key: &str) -> &str {
+        tail_seg(key)
+    }
+
+    fn module_of(key: &str) -> &str {
+        key.rsplit_once('.').map(|(m, _)| m).unwrap_or("")
+    }
+
+    fn is_external(&self, key: &str) -> bool {
+        self.external_modules.contains(Self::module_of(key))
+    }
+
+    /// How generated source names the type `key`: its bare name for a project
+    /// type (copied into or imported by `Shared`), `SpaTy_<Mod>_.<Name>` for a
+    /// dependency type.
+    fn type_ref(&self, key: &str) -> String {
+        if self.is_external(key) {
+            format!(
+                "{}.{}",
+                external_alias(Self::module_of(key)),
+                Self::bare(key)
+            )
+        } else {
+            Self::bare(key).to_string()
+        }
+    }
+
+    /// An identifier fragment for the type `key` (the auto-derived codec and
+    /// blank names): the bare name for a project type, module-mangled for a
+    /// dependency type.
+    fn ident(&self, key: &str) -> String {
+        if self.is_external(key) {
+            format!(
+                "{}_{}",
+                Self::module_of(key).replace('.', "_"),
+                Self::bare(key)
+            )
+        } else {
+            Self::bare(key).to_string()
+        }
+    }
+
+    /// How generated source names constructor `ctor` of union `key`.
+    fn ctor_ref(&self, key: &str, ctor: &str) -> String {
+        if self.is_external(key) {
+            format!("{}.{ctor}", external_alias(Self::module_of(key)))
+        } else {
+            ctor.to_string()
+        }
+    }
 }
 
 /// Resolves the `Std.Codec` expression for a field type, accumulating which user
@@ -264,17 +376,30 @@ struct CodecResolver<'a> {
     shapes: &'a ProjectShapes,
     /// Names of user codec bindings referenced (→ copied into `Shared`).
     needed: BTreeSet<String>,
-    /// Record names the resolver AUTO-DERIVED a `Codec.auto` codec for → the
-    /// synthesised nominal blank RECORD literal body. Rendered into `Shared` as
-    /// `blank<N>_ : <N>` + `auto<N>Codec_ = Codec.auto blank<N>_`; the names are
-    /// also fed into the type-copy seed so `<N>` reaches `Shared`.
-    auto_records: BTreeMap<String, String>,
-    /// The records currently being blank-synthesised — the recursion guard for a
-    /// self-referential record (`{ next : Node }`), which has no finite blank.
+    /// The records the resolver AUTO-DERIVED a `Codec.auto` codec for, by
+    /// identifier fragment ([`ProjectShapes::ident`]). Rendered into `Shared`
+    /// as `blank<N>_ : <T>` + `auto<N>Codec_ = Codec.auto blank<N>_`; a
+    /// project record's name is also fed into the type-copy seed so it
+    /// reaches `Shared`.
+    auto_records: BTreeMap<String, AutoRecord>,
+    /// The records currently being blank-synthesised (qualified keys) — the
+    /// recursion guard for a self-referential record (`{ next : Node }`),
+    /// which has no finite blank.
     synth_stack: Vec<String>,
+    /// The dependency modules whose types the generated `Shared` names
+    /// (imported there under [`external_alias`]).
+    external_modules: BTreeSet<String>,
     /// The app opted in to client-held crypto: a device key type is refused on
     /// every wire this resolver builds a codec for.
     device_keys: bool,
+}
+
+/// One auto-derived record codec: the record's qualified key, how `Shared`
+/// names the type, and the synthesised blank literal.
+struct AutoRecord {
+    key: String,
+    type_ref: String,
+    blank: String,
 }
 
 impl<'a> CodecResolver<'a> {
@@ -285,6 +410,7 @@ impl<'a> CodecResolver<'a> {
             needed: BTreeSet::new(),
             auto_records: BTreeMap::new(),
             synth_stack: Vec::new(),
+            external_modules: BTreeSet::new(),
             device_keys: false,
         }
     }
@@ -385,8 +511,7 @@ impl<'a> CodecResolver<'a> {
             if args.is_empty()
                 && tail == "HttpResponse"
                 && stdlib_http_response
-                && !self.shapes.records.contains_key(tail)
-                && !self.shapes.unions.contains_key(tail)
+                && self.shapes.key_of(name.as_str()).is_none()
             {
                 return Ok(ResolvedCodec {
                     codec: "(Codec.auto { status = 0, body = \"\", headers = Dict.empty })"
@@ -398,8 +523,10 @@ impl<'a> CodecResolver<'a> {
             // (b''') A NOMINAL that resolves to a project RECORD declaration
             // (`ty::Ty::App(name, [])` the solver left un-expanded) — auto-derive
             // a `Codec.auto` codec for it (§14 #2, option B).
-            if args.is_empty() && self.shapes.records.contains_key(tail) {
-                return self.auto_derive_record(tail.to_string());
+            if args.is_empty() {
+                if let Some(key) = self.shapes.record_key(name.as_str()) {
+                    return self.auto_derive_record(key);
+                }
             }
             // A bare data-carrying / enum UNION cannot cross the wire under
             // `Codec.auto`: `codecAutoDecodeVal` has NO rebuild path for a
@@ -407,8 +534,11 @@ impl<'a> CodecResolver<'a> {
             // fail closed with the actionable "declare a Codec" instruction
             // (option A). A union nested INSIDE a record is fine — that path is
             // reached via the record blank, not here.
-            if self.shapes.unions.contains_key(tail) {
-                return Err(bare_union_no_codec_msg(tail, &render_ty(t)));
+            if let Some(key) = self.shapes.union_key(name.as_str()) {
+                return Err(bare_union_no_codec_msg(
+                    &self.shapes.type_ref(&key),
+                    &render_ty(t),
+                ));
             }
         }
         // (b''''') A TUPLE, as a JSON object keyed by position (`{"0": …,
@@ -450,8 +580,8 @@ impl<'a> CodecResolver<'a> {
         if let ty::Ty::Record(fields, _) = t {
             let set: BTreeSet<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
-            if let Some(name) = self.shapes.record_by_fields.get(&set).cloned() {
-                return self.auto_derive_record(name);
+            if let Some(key) = self.shapes.record_by_fields.get(&set).cloned() {
+                return self.auto_derive_record(key);
             }
             // A record whose nominal name we cannot recover (an anonymous inline
             // record, or a field-set shared by two named records) — fail closed
@@ -469,29 +599,58 @@ impl<'a> CodecResolver<'a> {
         ))
     }
 
-    /// Record that record `name` needs an auto-derived `Codec.auto` codec, and
-    /// return the reference to emit (`auto<N>Codec_`) + the nominal surface. The
-    /// synthesised nominal blank (`blank<N>_ : <N>`) is built once and cached in
-    /// [`CodecResolver::auto_records`]; a self-referential record is refused
-    /// (fail closed) rather than looped.
-    fn auto_derive_record(&mut self, name: String) -> Result<ResolvedCodec, String> {
-        if !self.auto_records.contains_key(&name) {
-            let body = self.synth_blank_literal(&name)?;
-            self.auto_records.insert(name.clone(), body);
+    /// Record that record `key` (qualified) needs an auto-derived `Codec.auto`
+    /// codec, and return the reference to emit (`auto<N>Codec_`) + how
+    /// `Shared` names the type. The synthesised nominal blank (`blank<N>_ :
+    /// <T>`) is built once and cached in [`CodecResolver::auto_records`]; a
+    /// self-referential record is refused (fail closed) rather than looped.
+    /// Two DIFFERENT records that `Shared` would name alike (two project
+    /// modules each declaring `Item`) are refused too: the generated module
+    /// names a project type by its bare name, so it could not tell them apart.
+    fn auto_derive_record(&mut self, key: String) -> Result<ResolvedCodec, String> {
+        let shapes: &'a ProjectShapes = self.shapes;
+        let ident = shapes.ident(&key);
+        match self.auto_records.get(&ident) {
+            Some(existing) if existing.key != key => {
+                return Err(format!(
+                    "two record types named `{}` cross the Sky.Spa wire (`{}` and `{}`). The generated wire module names a project type by its bare name, so it cannot tell them apart. Rename one of them.",
+                    ProjectShapes::bare(&key),
+                    existing.key,
+                    key
+                ));
+            }
+            Some(_) => {}
+            None => {
+                let blank = self.synth_blank_literal(&key)?;
+                if shapes.is_external(&key) {
+                    self.external_modules
+                        .insert(ProjectShapes::module_of(&key).to_string());
+                }
+                self.auto_records.insert(
+                    ident.clone(),
+                    AutoRecord {
+                        key: key.clone(),
+                        type_ref: shapes.type_ref(&key),
+                        blank,
+                    },
+                );
+            }
         }
         Ok(ResolvedCodec {
-            codec: format!("auto{name}Codec_"),
-            surface: name,
+            codec: format!("auto{ident}Codec_"),
+            surface: shapes.type_ref(&key),
         })
     }
 
-    /// Synthesise the sound blank RECORD literal for a named project record —
-    /// `{ f1 = <default>, … }`. Recurses into nested records (an inline blank,
-    /// its element types coerced by the enclosing top-level annotation) and
-    /// defaults a union field to its first nullary constructor. Fails closed if
-    /// any field has no synthesisable default, or on a self-referential record.
-    fn synth_blank_literal(&mut self, name: &str) -> Result<String, String> {
-        if self.synth_stack.iter().any(|n| n == name) || self.synth_stack.len() > 32 {
+    /// Synthesise the sound blank RECORD literal for a named record (qualified
+    /// `key`) — `{ f1 = <default>, … }`. Recurses into nested records (an
+    /// inline blank, its element types coerced by the enclosing top-level
+    /// annotation) and defaults a union field to its first nullary
+    /// constructor. Fails closed if any field has no synthesisable default, or
+    /// on a self-referential record.
+    fn synth_blank_literal(&mut self, key: &str) -> Result<String, String> {
+        let name = ProjectShapes::bare(key).to_string();
+        if self.synth_stack.iter().any(|n| n == key) || self.synth_stack.len() > 32 {
             return Err(format!(
                 "no auto-derivable codec for the self-referential record `{name}` — `Codec.auto` needs a finite blank. Define a top-level `Codec {name}` binding in the project (spa-split copies it into Shared)."
             ));
@@ -500,16 +659,16 @@ impl<'a> CodecResolver<'a> {
         // call, so copying the reference out lets the recursive
         // `default_for_kind(&mut self, …)` run while we read the field list.
         let shapes: &'a ProjectShapes = self.shapes;
-        let fields = shapes.records.get(name).ok_or_else(|| {
+        let fields = shapes.records.get(key).ok_or_else(|| {
             format!("no codec for `{name}` — it is not a project record type; define a top-level `Codec {name}` binding in the project.")
         })?;
         if fields.is_empty() {
             return Ok("{}".to_string());
         }
-        self.synth_stack.push(name.to_string());
+        self.synth_stack.push(key.to_string());
         let mut parts: Vec<String> = Vec::with_capacity(fields.len());
         for (fname, kind) in fields {
-            let default = self.default_for_kind(kind, name, fname)?;
+            let default = self.default_for_kind(kind, &name, fname)?;
             parts.push(format!("{fname} = {default}"));
         }
         self.synth_stack.pop();
@@ -533,18 +692,25 @@ impl<'a> CodecResolver<'a> {
             FieldKind::MaybeLike => "Nothing".to_string(),
             FieldKind::Record(inner) => self.synth_blank_literal(inner)?,
             FieldKind::Union(u) => {
-                let ctor = self
-                    .shapes
+                let shapes: &'a ProjectShapes = self.shapes;
+                let ctor = shapes
                     .unions
                     .get(u)
                     .and_then(|cs| cs.iter().find(|(_, nullary)| *nullary))
                     .map(|(n, _)| n.clone());
                 match ctor {
-                    Some(c) => c,
+                    Some(c) => {
+                        if shapes.is_external(u) {
+                            self.external_modules
+                                .insert(ProjectShapes::module_of(u).to_string());
+                        }
+                        shapes.ctor_ref(u, &c)
+                    }
                     None => {
+                        let u = ProjectShapes::bare(u);
                         return Err(format!(
                             "no auto-derivable blank for field `{field}` of `{owner}`: its type `{u}` is a union with no nullary constructor, so there is no default value. Define a top-level `Codec {owner}` binding in the project (spa-split copies it into Shared)."
-                        ))
+                        ));
                     }
                 }
             }
@@ -615,14 +781,15 @@ fn tail_seg(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }
 
-/// Structural type equality, tolerant of home-folding (compares nominal tails)
-/// and of type-variable renaming — enough to match a field's type against a
+/// Structural type equality, tolerant of type-variable renaming, with nominal
+/// identity decided by `ty::nominal::same` (two names both resolved to a
+/// module differ when the modules differ; a bare name is "module unknown") — enough to match a field's type against a
 /// user `Codec <T>` binding's T (`List Todo` ≡ `List Todo`).
 fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
     use ty::Ty;
     match (a, b) {
         (Ty::App(n1, a1), Ty::App(n2, a2)) => {
-            tail_seg(n1.as_str()) == tail_seg(n2.as_str())
+            ty::nominal::same(n1.as_str(), n2.as_str())
                 && a1.len() == a2.len()
                 && a1.iter().zip(a2).all(|(x, y)| ty_matches(x, y))
         }
@@ -643,29 +810,47 @@ fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
     }
 }
 
-/// Collect every nominal type NAME (tail-normalised) appearing in a type — used
-/// to discover which project type declarations a wire field drags in.
-fn collect_ty_names(t: &ty::Ty, out: &mut BTreeSet<String>) {
+/// Collect the bare name of every PROJECT type declaration a type names —
+/// used to discover which project declarations a wire field drags into
+/// `Shared` (the type-copy seed). Identity is by module: a qualified name is
+/// collected only when it names a project module's type, so a stdlib or
+/// dependency type never seeds a copy of a same-named project type. A bare
+/// name (declaring module unknown) is collected as written.
+fn collect_ty_names(t: &ty::Ty, shapes: &ProjectShapes, out: &mut BTreeSet<String>) {
     match t {
         ty::Ty::App(name, args) => {
-            out.insert(tail_seg(name.as_str()).to_string());
+            let n = name.as_str();
+            match shapes.key_of(n) {
+                Some(k) if !shapes.is_external(k) => {
+                    out.insert(ProjectShapes::bare(k).to_string());
+                }
+                Some(_) => {}
+                None if !n.contains('.') => {
+                    out.insert(n.to_string());
+                }
+                None => {
+                    if shapes.project_modules.contains(ProjectShapes::module_of(n)) {
+                        out.insert(tail_seg(n).to_string());
+                    }
+                }
+            }
             for a in args {
-                collect_ty_names(a, out);
+                collect_ty_names(a, shapes, out);
             }
         }
         ty::Ty::Tuple(xs) => {
             for x in xs {
-                collect_ty_names(x, out);
+                collect_ty_names(x, shapes, out);
             }
         }
         ty::Ty::Record(fields, _) => {
             for (_, ft) in fields {
-                collect_ty_names(ft, out);
+                collect_ty_names(ft, shapes, out);
             }
         }
         ty::Ty::Fun(a, b) => {
-            collect_ty_names(a, out);
-            collect_ty_names(b, out);
+            collect_ty_names(a, shapes, out);
+            collect_ty_names(b, shapes, out);
         }
         ty::Ty::Var(_) | ty::Ty::Unit | ty::Ty::Error => {}
     }
@@ -1005,11 +1190,24 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
     // itself in every JSON path, like `Secret`. `SecretKey` is matched on its
     // tail (Std.Crypto.Sign / Std.Crypto.Kx); the protocol states by their
     // module-qualified tail, so a user's own `Transport` is not flagged.
+    // A RESOLVED (module-qualified) name is matched exactly, so the app's own
+    // `SecretKey` or `Secret` type is not taken for the stdlib's; a bare name
+    // (declaring module unknown, or the surface fallback below) keeps the
+    // tail match, which errs toward flagging.
     fn is_crypto_secret(name: &str) -> bool {
+        if name.contains('.') && !name.starts_with("Noise.") && !name.starts_with("Cpace.") {
+            return DEVICE_KEY_TYPES.contains(&name) && name != "Sky.Core.Secret.Secret";
+        }
         tail(name) == "SecretKey"
             || ["Noise.Handshake", "Noise.Transport", "Cpace.Pending"]
                 .iter()
                 .any(|q| name == *q || name.ends_with(&format!(".{q}")))
+    }
+    fn is_secret(name: &str) -> bool {
+        if name.contains('.') {
+            return name == "Sky.Core.Secret.Secret";
+        }
+        name == "Secret"
     }
     fn scan(t: &ty::Ty) -> Option<&'static str> {
         match t {
@@ -1017,10 +1215,11 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
                 if is_crypto_secret(name.as_str()) {
                     return Some("SecretKey");
                 }
-                match tail(name.as_str()) {
-                    "Secret" => return Some("Secret"),
-                    "Set" => return Some("Set"),
-                    _ => {}
+                if is_secret(name.as_str()) {
+                    return Some("Secret");
+                }
+                if tail(name.as_str()) == "Set" {
+                    return Some("Set");
                 }
                 args.iter().find_map(scan)
             }
@@ -1216,7 +1415,7 @@ fn build_follow_ctx(
     let mut outside_wire: Vec<(String, usize)> = Vec::new();
     let mut outside_why: Vec<String> = Vec::new();
     'ctor: for c in &ctor_set {
-        let args = union_variant_arg_types(&msg_decl, c).ok_or_else(|| {
+        let args = union_variant_arg_types(db, msg_module, &msg_decl, c).ok_or_else(|| {
             format!("sky.spa: follow-up Msg `{c}` of server branch(es) {branch_list} is not a constructor of `{msg_ty}`")
         })?;
         let mut fields: Vec<ModelFieldTy> = Vec::new();
@@ -1286,7 +1485,7 @@ fn build_follow_ctx(
             .collect::<Vec<_>>()
             .join(", ");
         warnings.push(format!(
-            "warning [sky.spa]: the command of server branch(es) {unread} could not be read, so any `{msg_ty}` \
+            "the command of server branch(es) {unread} could not be read, so any `{msg_ty}` \
              may be its follow-up. These constructors have no wire codec and do not cross to the client: {}. \
              If the command produces one at run time, the backend drops it and logs the classified error \
              `SpaFollowUpOutsideWire`. Return the command directly (a `Cmd.perform … Ctor`, a `Cmd.batch` \
@@ -1998,15 +2197,18 @@ fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> St
 /// `kind interface` and drop nested collections on decode (the `spaModelBlank_`
 /// lesson). `<N>` itself is copied / imported into `Shared` via the type-copy
 /// seed.
-fn render_auto_codec_defs(auto_records: &BTreeMap<String, String>) -> String {
+fn render_auto_codec_defs(auto_records: &BTreeMap<String, AutoRecord>) -> String {
     let mut out = String::new();
-    for (name, blank) in auto_records {
+    for (name, rec) in auto_records {
+        let ty = &rec.type_ref;
+        let blank = &rec.blank;
+        let shown = ProjectShapes::bare(&rec.key);
         out.push_str(&format!(
-            "-- Auto-derived codec for the plain record `{name}` (no user `Codec {name}`).\n\
-             blank{name}_ : {name}\n\
+            "-- Auto-derived codec for the plain record `{shown}` (no user `Codec {shown}`).\n\
+             blank{name}_ : {ty}\n\
              blank{name}_ =\n    \
              {blank}\n\n\n\
-             auto{name}Codec_ : Codec {name}\n\
+             auto{name}Codec_ : Codec {ty}\n\
              auto{name}Codec_ =\n    \
              Codec.auto blank{name}_\n\n\n"
         ));
@@ -2639,7 +2841,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     codec_scan_mods.extend(pure_sibling_mods.iter().copied());
     codec_scan_mods.extend(tainted_mods.iter().copied());
     let registry = build_codec_registry(&db, &codec_scan_mods);
-    let shapes = build_project_shapes(&db, &codec_scan_mods);
+    let shapes = build_project_shapes(&db, &codec_scan_mods, &dependency_modules(&db, &check_ids));
     // PATTERN-2 (client-result perform): map each server root to its result Msg +
     // the task's result type (read from the result Msg's union-variant argument).
     // The map is the single source of truth consulted by build_wire / gen_backend
@@ -2735,7 +2937,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     for w in &wires {
         for f in w.req_fields.iter().chain(w.resp_fields.iter()) {
             if let Some(t) = &f.ty {
-                collect_ty_names(t, &mut seed_ty);
+                collect_ty_names(t, &shapes, &mut seed_ty);
             }
         }
     }
@@ -2744,8 +2946,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // appears in `collect_ty_names`. Seed each explicitly so `<N>` — and, via the
     // transitive type-copy closure, every nested type it mentions — reaches
     // `Shared`.
-    for n in resolver.auto_records.keys() {
-        seed_ty.insert(n.clone());
+    for rec in resolver.auto_records.values() {
+        if !shapes.is_external(&rec.key) {
+            seed_ty.insert(ProjectShapes::bare(&rec.key).to_string());
+        }
     }
 
     // ---- copy-vs-import: which modules feed `Shared` by COPY (§14 #2) ----
@@ -3177,6 +3381,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         }
     }
     shared_imports.extend(foreign_stdlib_imports);
+    // A dependency type a wire codec names (`Geo.Shape.Point`) is imported
+    // under a generated alias and named qualified: both generated projects
+    // carry the dependency, and a qualified reference cannot be captured by a
+    // same-named type the app declares or imports.
+    for m in &resolver.external_modules {
+        shared_imports.push(format!("import {m} as {}", external_alias(m)));
+    }
 
     // ---- `update`'s DECLARING module (GAP-1) ----
     // `update` may live in the entry OR a sibling. Read its param names +
@@ -3231,7 +3442,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // server branch; client-local branches then run unguarded, so say so.
     if tainted_names.iter().any(|t| t == "spaGuard_") {
         warnings.push(
-            "warning [sky.spa]: `App.withGuard`'s guard reaches a server effect, so it cannot run in the wasm client. The backend enforces it on every server branch; client-local Msgs are NOT guarded. Keep the guard pure (read only the model) to guard every Msg like Sky.Live.".into(),
+            "`App.withGuard`'s guard reaches a server effect, so it cannot run in the wasm client. The backend enforces it on every server branch; client-local Msgs are NOT guarded. Keep the guard pure (read only the model) to guard every Msg like Sky.Live.".into(),
         );
     }
 
@@ -3823,50 +4034,13 @@ pub fn generate_diff_fuzz(
 
     // Build the type resolver from the project's own declarations, so the value
     // generators can build the app's nominal record/union types (the DS `Page`
-    // route union, `BasketLine`, …). Walk every reachable module's `type` /
-    // `type alias` decls; `ty::variant_arg_types` gives a union ctor's arg types
-    // and `ty::record_alias_fields` a record alias's fields, both as `ty::Ty`.
-    let mut tymap: HashMap<String, crate::spa_diff_gen::TypeDef> = HashMap::new();
-    for m in &check_ids {
-        let tree = db.module_parse(*m).tree();
-        for decl in tree.decls() {
-            match decl {
-                syntax::ast::Decl::Union(u) => {
-                    if let Some(nm) = u.name() {
-                        let ctors: Vec<(String, Vec<ty::Ty>)> = u
-                            .variants()
-                            .into_iter()
-                            .filter_map(|v| {
-                                v.name().map(|cn| {
-                                    (cn.text().to_string(), ty::variant_arg_types(v.syntax()))
-                                })
-                            })
-                            .collect();
-                        tymap.insert(
-                            nm.text().to_string(),
-                            crate::spa_diff_gen::TypeDef::Union(ctors),
-                        );
-                    }
-                }
-                syntax::ast::Decl::Alias(a) => {
-                    if let Some(nm) = a.name() {
-                        let fields = ty::record_alias_fields(a.syntax());
-                        if !fields.is_empty() {
-                            tymap.insert(
-                                nm.text().to_string(),
-                                crate::spa_diff_gen::TypeDef::Record(fields),
-                            );
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    // route union, `BasketLine`, …), keyed by module-qualified identity.
+    let tymap = project_type_map(&db, &check_ids);
 
     // Fence + emit.
     let (checkable, fence_notes) = crate::spa_diff_harness::select_checkable(&report);
-    let resolver = crate::spa_diff_harness::MapTypeResolver(tymap);
+    let resolver =
+        crate::spa_diff_harness::MapTypeResolver::new(tymap, db.module_name(entry).to_string());
     let out = crate::spa_diff_harness::emit_harness(
         &model_ty,
         &msg_ty,
@@ -3983,45 +4157,10 @@ pub fn generate_model_fuzz(
     let msg_ty = nth_arrow_segment(&update_anno, 0).unwrap_or_else(|| "Msg".to_string());
 
     // Resolver over the project's own type decls (for the Msg union + nested types).
-    let mut tymap: HashMap<String, crate::spa_diff_gen::TypeDef> = HashMap::new();
-    for m in &check_ids {
-        let tree = db.module_parse(*m).tree();
-        for decl in tree.decls() {
-            match decl {
-                syntax::ast::Decl::Union(u) => {
-                    if let Some(nm) = u.name() {
-                        let ctors: Vec<(String, Vec<ty::Ty>)> = u
-                            .variants()
-                            .into_iter()
-                            .filter_map(|v| {
-                                v.name().map(|cn| {
-                                    (cn.text().to_string(), ty::variant_arg_types(v.syntax()))
-                                })
-                            })
-                            .collect();
-                        tymap.insert(
-                            nm.text().to_string(),
-                            crate::spa_diff_gen::TypeDef::Union(ctors),
-                        );
-                    }
-                }
-                syntax::ast::Decl::Alias(a) => {
-                    if let Some(nm) = a.name() {
-                        let fields = ty::record_alias_fields(a.syntax());
-                        if !fields.is_empty() {
-                            tymap.insert(
-                                nm.text().to_string(),
-                                crate::spa_diff_gen::TypeDef::Record(fields),
-                            );
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    let tymap = project_type_map(&db, &check_ids);
 
-    let resolver = crate::spa_diff_harness::MapTypeResolver(tymap);
+    let resolver =
+        crate::spa_diff_harness::MapTypeResolver::new(tymap, db.module_name(entry).to_string());
     let out = crate::spa_diff_harness::emit_model_fuzz(&model_ty, &msg_ty, &resolver, iters, seed);
     if out.covered.is_empty() {
         return Err(format!(
@@ -4076,6 +4215,61 @@ pub fn generate_model_fuzz(
 /// provide the bare `Cmd.none` / `String.fromInt` the emitted plumbing uses, so
 /// an existing import of the same module already provides them. The UNIQUE-alias
 /// lines (`as SpaDiffLog` / `as SpaDiffError`) are always added.
+/// The project's record aliases and unions for the fuzz value generators,
+/// keyed by MODULE-QUALIFIED name, with every constructor argument and record
+/// field type resolved in its declaring module. A bare-name map resolved a
+/// `Msg` payload of the stdlib's `Cpace.Pending` to an app type named
+/// `Pending`.
+fn project_type_map(
+    db: &SkyDatabase,
+    check_ids: &[ModuleId],
+) -> HashMap<String, crate::spa_diff_gen::TypeDef> {
+    use ty::TyDb;
+    let world = db.type_world();
+    let mut tymap: HashMap<String, crate::spa_diff_gen::TypeDef> = HashMap::new();
+    for m in check_ids {
+        let mname = db.module_name(*m).to_string();
+        let tree = db.module_parse(*m).tree();
+        for decl in tree.decls() {
+            match decl {
+                syntax::ast::Decl::Union(u) => {
+                    if let Some(nm) = u.name() {
+                        let ctors: Vec<(String, Vec<ty::Ty>)> = u
+                            .variants()
+                            .into_iter()
+                            .filter_map(|v| {
+                                v.name().map(|cn| {
+                                    (
+                                        cn.text().to_string(),
+                                        world.variant_arg_types_resolved(db, *m, v.syntax()),
+                                    )
+                                })
+                            })
+                            .collect();
+                        tymap.insert(
+                            ty::nominal::qualify(&mname, nm.text()),
+                            crate::spa_diff_gen::TypeDef::Union(ctors),
+                        );
+                    }
+                }
+                syntax::ast::Decl::Alias(a) => {
+                    if let Some(nm) = a.name() {
+                        let fields = world.record_alias_fields_resolved(db, *m, a.syntax());
+                        if !fields.is_empty() {
+                            tymap.insert(
+                                ty::nominal::qualify(&mname, nm.text()),
+                                crate::spa_diff_gen::TypeDef::Record(fields),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    tymap
+}
+
 fn inject_harness_imports(src: &str, existing: &[ImportInfo], required: &[String]) -> String {
     let mut to_add: Vec<String> = Vec::new();
     for line in required {
@@ -4580,15 +4774,47 @@ fn propagate_deps(project_dir: &Path, gen_dir: &Path) -> Result<(), String> {
 /// record codec (§14 #2, option B). Reads the CST only (no lowering), so a record
 /// alias's field kinds and a union's constructors are recovered without touching
 /// the type solver.
-fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId]) -> ProjectShapes {
+/// The Sky DEPENDENCY modules in `db` (`[dependencies]` packages, path or
+/// registry): every loaded module that is neither one of the project's own
+/// (`check_ids`) nor in the reserved stdlib namespaces.
+fn dependency_modules(db: &SkyDatabase, check_ids: &[ModuleId]) -> Vec<ModuleId> {
+    let own: HashSet<ModuleId> = check_ids.iter().copied().collect();
+    db.module_ids()
+        .into_iter()
+        .filter(|m| !own.contains(m))
+        .filter(|m| !hir::is_reserved_sky_namespace(db.module_name(*m)))
+        .collect()
+}
+
+fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId], deps: &[ModuleId]) -> ProjectShapes {
     use syntax::ast::Decl;
-    // Pass 1: collect the raw field lists (name + head-con + surface) and the
-    // union constructor tables, plus the record/union NAME sets.
-    let mut raw_records: Vec<(String, Vec<(String, Option<String>, String)>)> = Vec::new();
-    let mut record_names: HashSet<String> = HashSet::new();
-    let mut union_names: HashSet<String> = HashSet::new();
+    use ty::TyDb;
+    let world = db.type_world();
+    // Pass 1: every record alias (key, module, syntax, source-surface fields)
+    // and every union's constructor table, keyed by the qualified name.
+    struct RawRecord {
+        key: String,
+        module: ModuleId,
+        syntax: syntax::SyntaxNode,
+        surfaces: Vec<(String, String)>,
+    }
+    let mut raw_records: Vec<RawRecord> = Vec::new();
     let mut unions: HashMap<String, Vec<(String, bool)>> = HashMap::new();
-    for &mid in mods {
+    let mut by_bare: HashMap<String, Vec<String>> = HashMap::new();
+    let mut project_modules: HashSet<String> = HashSet::new();
+    let mut external_modules: HashSet<String> = HashSet::new();
+    let mut external_keys: HashSet<String> = HashSet::new();
+    for (&mid, external) in mods
+        .iter()
+        .map(|m| (m, false))
+        .chain(deps.iter().map(|m| (m, true)))
+    {
+        let mname = db.module_name(mid).to_string();
+        if external {
+            external_modules.insert(mname.clone());
+        } else {
+            project_modules.insert(mname.clone());
+        }
         let parse = db.module_parse(mid);
         let file = parse.tree();
         let src = parse.syntax().text().to_string();
@@ -4601,8 +4827,17 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId]) -> ProjectShapes {
                     let Some(fields) = record_alias_fields(&a, &src) else {
                         continue; // not a record alias (e.g. `type alias Id = Int`)
                     };
-                    record_names.insert(name.clone());
-                    raw_records.push((name, fields));
+                    let key = ty::nominal::qualify(&mname, &name);
+                    by_bare.entry(name).or_default().push(key.clone());
+                    if external {
+                        external_keys.insert(key.clone());
+                    }
+                    raw_records.push(RawRecord {
+                        key,
+                        module: mid,
+                        syntax: a.syntax().clone(),
+                        surfaces: fields.into_iter().map(|(f, _, surf)| (f, surf)).collect(),
+                    });
                 }
                 Decl::Union(u) => {
                     let Some(name) = u.name().map(|n| n.text().to_string()) else {
@@ -4622,39 +4857,67 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId]) -> ProjectShapes {
                             Some((cn, nullary))
                         })
                         .collect();
-                    union_names.insert(name.clone());
-                    unions.insert(name, ctors);
+                    let key = ty::nominal::qualify(&mname, &name);
+                    by_bare.entry(name).or_default().push(key.clone());
+                    if external {
+                        external_keys.insert(key.clone());
+                    }
+                    unions.insert(key, ctors);
                 }
                 _ => {}
             }
         }
     }
-    // Pass 2: classify each record field now that every record/union name is
-    // known, and build the field-SET → unique-name index (dropping any set
-    // shared by two records — an ambiguous match must fail closed, not guess).
+    let record_keys: HashSet<String> = raw_records.iter().map(|r| r.key.clone()).collect();
+    // A field's RESOLVED type names its target by key (the resolver's own
+    // identity); a bare name resolves only when unique.
+    let lookup = |n: &str| -> Option<String> {
+        if n.contains('.') {
+            return (record_keys.contains(n) || unions.contains_key(n)).then(|| n.to_string());
+        }
+        match by_bare.get(n) {
+            Some(keys) if keys.len() == 1 => Some(keys[0].clone()),
+            _ => None,
+        }
+    };
+    // Pass 2: classify each record field from its RESOLVED type (resolved in
+    // the declaring module), and build the field-SET → unique-key index.
     let mut records: HashMap<String, Vec<(String, FieldKind)>> = HashMap::new();
     let mut by_fields_multi: HashMap<BTreeSet<String>, Vec<String>> = HashMap::new();
-    for (name, raw) in raw_records {
-        let set: BTreeSet<String> = raw.iter().map(|(f, _, _)| f.clone()).collect();
-        by_fields_multi.entry(set).or_default().push(name.clone());
+    for raw in raw_records {
+        let resolved = world.record_alias_fields_resolved(db, raw.module, &raw.syntax);
+        let set: BTreeSet<String> = raw.surfaces.iter().map(|(f, _)| f.clone()).collect();
+        by_fields_multi
+            .entry(set)
+            .or_default()
+            .push(raw.key.clone());
         let classified: Vec<(String, FieldKind)> = raw
+            .surfaces
             .into_iter()
-            .map(|(f, head, surface)| {
-                (
-                    f,
-                    classify_field_kind(head.as_deref(), &surface, &record_names, &union_names),
-                )
+            .map(|(f, surface)| {
+                let kind = match resolved.iter().find(|(n, _)| *n == f) {
+                    Some((_, t)) => classify_field_kind(t, &surface, &lookup, &record_keys),
+                    None => FieldKind::Unsupported(surface),
+                };
+                (f, kind)
             })
             .collect();
-        records.insert(name, classified);
+        records.insert(raw.key, classified);
     }
+    // A field set shared by several records is ambiguous. A single PROJECT
+    // record among them still wins over dependency records (the project's
+    // own types are the ones its code builds); otherwise the set is dropped.
     let record_by_fields: HashMap<BTreeSet<String>, String> = by_fields_multi
         .into_iter()
-        .filter_map(|(set, names)| {
-            if names.len() == 1 {
-                Some((set, names.into_iter().next().unwrap()))
-            } else {
-                None
+        .filter_map(|(set, keys)| {
+            let own: Vec<&String> = keys
+                .iter()
+                .filter(|k| !external_keys.contains(*k))
+                .collect();
+            match (own.len(), keys.len()) {
+                (1, _) => Some((set, own[0].clone())),
+                (0, 1) => Some((set, keys[0].clone())),
+                _ => None,
             }
         })
         .collect();
@@ -4662,6 +4925,9 @@ fn build_project_shapes(db: &SkyDatabase, mods: &[ModuleId]) -> ProjectShapes {
         records,
         record_by_fields,
         unions,
+        by_bare,
+        external_modules,
+        project_modules,
     }
 }
 
@@ -4732,23 +4998,29 @@ fn type_head_name(t: &syntax::ast::Type) -> Option<String> {
     }
 }
 
-/// Classify one record field's declared type into its blank default class.
+/// Classify one record field's RESOLVED type into its blank default class.
+/// `lookup` maps a type name to the record / union key it declares.
 fn classify_field_kind(
-    head: Option<&str>,
+    t: &ty::Ty,
     surface: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
     records: &HashSet<String>,
-    unions: &HashSet<String>,
 ) -> FieldKind {
-    match head {
-        Some("String") => FieldKind::Str,
-        Some("Int") => FieldKind::Int,
-        Some("Float") => FieldKind::Float,
-        Some("Bool") => FieldKind::Bool,
-        Some("List") => FieldKind::ListLike,
-        Some("Maybe") => FieldKind::MaybeLike,
-        Some(h) if records.contains(h) => FieldKind::Record(h.to_string()),
-        Some(h) if unions.contains(h) => FieldKind::Union(h.to_string()),
-        _ => FieldKind::Unsupported(surface.to_string()),
+    let ty::Ty::App(name, args) = t else {
+        return FieldKind::Unsupported(surface.to_string());
+    };
+    match (name.as_str(), args.len()) {
+        ("String", 0) => FieldKind::Str,
+        ("Int", 0) => FieldKind::Int,
+        ("Float", 0) => FieldKind::Float,
+        ("Bool", 0) => FieldKind::Bool,
+        ("List", _) => FieldKind::ListLike,
+        ("Maybe", _) => FieldKind::MaybeLike,
+        (n, _) => match lookup(n) {
+            Some(k) if records.contains(&k) => FieldKind::Record(k),
+            Some(k) => FieldKind::Union(k),
+            None => FieldKind::Unsupported(surface.to_string()),
+        },
     }
 }
 
@@ -5913,7 +6185,7 @@ fn build_settle_plan(
     };
     plan.all_ctors = variants.len();
     for c in nav_ctors.iter().filter(|c| variants.contains(c)) {
-        let arity = union_variant_arg_types(&msg_decl, c).map_or(0, |a| a.len());
+        let arity = union_variant_arity(&msg_decl, c).unwrap_or(0);
         let fields = settle_closure(c, report, &mut memo, &mut HashSet::new()).map(keep_model);
         plan.nav.push((c.clone(), arity, fields));
     }
@@ -8475,11 +8747,37 @@ fn union_variant_names(d: &syntax::ast::Decl) -> Vec<String> {
 /// The declared argument types of a named union variant (`Saved (Result Error
 /// String)` → `[Result Error String]`), or `None` when `d` is not a union or has
 /// no variant named `name`.
-fn union_variant_arg_types(d: &syntax::ast::Decl, name: &str) -> Option<Vec<ty::Ty>> {
+/// How many arguments constructor `name` of union declaration `d` takes.
+fn union_variant_arity(d: &syntax::ast::Decl, name: &str) -> Option<usize> {
     if let syntax::ast::Decl::Union(u) = d {
         for v in u.variants() {
             if v.name().map(|t| t.text() == name).unwrap_or(false) {
-                return Some(ty::variant_arg_types(v.syntax()));
+                return Some(ty::variant_arg_types(v.syntax()).len());
+            }
+        }
+    }
+    None
+}
+
+/// The argument types of constructor `name` of union declaration `d` (declared
+/// in module `m`), each RESOLVED in `m`'s scope to its module-qualified
+/// identity (`Std.Crypto.Cpace.Pending`, never the bare `Pending` a
+/// same-named type of the app would capture). `None` when `d` is not a union
+/// with that constructor.
+fn union_variant_arg_types(
+    db: &SkyDatabase,
+    m: ModuleId,
+    d: &syntax::ast::Decl,
+    name: &str,
+) -> Option<Vec<ty::Ty>> {
+    use ty::TyDb;
+    if let syntax::ast::Decl::Union(u) = d {
+        for v in u.variants() {
+            if v.name().map(|t| t.text() == name).unwrap_or(false) {
+                return Some(
+                    db.type_world()
+                        .variant_arg_types_resolved(db, m, v.syntax()),
+                );
             }
         }
     }
@@ -8546,13 +8844,13 @@ fn unwireable_continuations(
     report: &SpaPartitionReport,
 ) -> BTreeSet<String> {
     let registry = build_codec_registry(db, check_ids);
-    let shapes = build_project_shapes(db, check_ids);
+    let shapes = build_project_shapes(db, check_ids, &dependency_modules(db, check_ids));
     let mut resolver = CodecResolver::new(&registry, &shapes);
     resolver.device_keys = report.client_crypto;
     let arg_tys = |name: &str| -> Option<Vec<ty::Ty>> {
         for m in check_ids {
             for d in db.module_parse(*m).tree().decls() {
-                if let Some(args) = union_variant_arg_types(&d, name) {
+                if let Some(args) = union_variant_arg_types(db, *m, &d, name) {
                     return Some(args);
                 }
             }
@@ -8589,7 +8887,7 @@ fn build_client_result_map(
         'mods: for m in check_ids {
             let parse = db.module_parse(*m);
             for d in parse.tree().decls() {
-                if let Some(args) = union_variant_arg_types(&d, result_msg) {
+                if let Some(args) = union_variant_arg_types(db, *m, &d, result_msg) {
                     result_ty = args.into_iter().next();
                     break 'mods;
                 }
@@ -9250,5 +9548,116 @@ mod fix7_tests {
             anon.ends_with("    in\n    base\n\n\n"),
             "no session projection: init's model:\n{anon}"
         );
+    }
+}
+
+#[cfg(test)]
+mod type_identity_tests {
+    use super::*;
+
+    fn app(n: &str) -> ty::Ty {
+        ty::Ty::App(base::Name::new(n), Vec::new())
+    }
+
+    fn shapes() -> ProjectShapes {
+        let mut records = HashMap::new();
+        records.insert(
+            "Main.Pending".to_string(),
+            vec![("id".to_string(), FieldKind::Int)],
+        );
+        records.insert(
+            "Geo.Shape.Point".to_string(),
+            vec![
+                ("x".to_string(), FieldKind::Int),
+                ("y".to_string(), FieldKind::Int),
+            ],
+        );
+        let mut unions = HashMap::new();
+        unions.insert(
+            "Geo.Shape.Kind".to_string(),
+            vec![("Round".to_string(), true)],
+        );
+        let mut by_bare: HashMap<String, Vec<String>> = HashMap::new();
+        by_bare.insert("Pending".into(), vec!["Main.Pending".into()]);
+        by_bare.insert("Point".into(), vec!["Geo.Shape.Point".into()]);
+        by_bare.insert("Kind".into(), vec!["Geo.Shape.Kind".into()]);
+        ProjectShapes {
+            records,
+            record_by_fields: HashMap::new(),
+            unions,
+            by_bare,
+            external_modules: HashSet::from(["Geo.Shape".to_string()]),
+            project_modules: HashSet::from(["Main".to_string()]),
+        }
+    }
+
+    /// A qualified name names exactly one declaration: the stdlib's
+    /// `Std.Crypto.Cpace.Pending` is not the app's `Main.Pending`.
+    #[test]
+    fn a_qualified_name_never_resolves_to_a_same_named_type_of_another_module() {
+        let s = shapes();
+        assert_eq!(
+            s.record_key("Main.Pending").as_deref(),
+            Some("Main.Pending")
+        );
+        assert_eq!(s.record_key("Std.Crypto.Cpace.Pending"), None);
+        assert_eq!(s.union_key("Std.Crypto.Cpace.Pending"), None);
+        // A bare name (module unknown) resolves only when one declaration has it.
+        assert_eq!(s.record_key("Pending").as_deref(), Some("Main.Pending"));
+    }
+
+    /// A dependency type is named through the generated import alias, and its
+    /// codec identifiers are module-mangled; a project type keeps its bare name.
+    #[test]
+    fn a_dependency_type_is_named_by_its_module() {
+        let s = shapes();
+        assert_eq!(s.type_ref("Geo.Shape.Point"), "SpaTy_Geo_Shape_.Point");
+        assert_eq!(s.ident("Geo.Shape.Point"), "Geo_Shape_Point");
+        assert_eq!(
+            s.ctor_ref("Geo.Shape.Kind", "Round"),
+            "SpaTy_Geo_Shape_.Round"
+        );
+        assert_eq!(s.type_ref("Main.Pending"), "Pending");
+        assert_eq!(s.ident("Main.Pending"), "Pending");
+    }
+
+    /// A user `Codec` binding matches a wire type by nominal identity, so the
+    /// app's `pendingCodec : Codec Pending` is never used for the stdlib's key.
+    #[test]
+    fn a_codec_binding_matches_by_module() {
+        assert!(!ty_matches(
+            &app("Main.Pending"),
+            &app("Std.Crypto.Cpace.Pending")
+        ));
+        assert!(ty_matches(&app("Main.Pending"), &app("Main.Pending")));
+        // A bare name is "module unknown" and still matches (`ty::nominal`).
+        assert!(ty_matches(&app("Pending"), &app("Main.Pending")));
+    }
+
+    /// The type-copy seed never takes a stdlib or dependency type for a
+    /// project type of the same bare name.
+    #[test]
+    fn the_copy_seed_collects_project_types_only() {
+        let s = shapes();
+        let mut out = BTreeSet::new();
+        collect_ty_names(
+            &ty::Ty::App(
+                base::Name::new("List"),
+                vec![
+                    app("Std.Crypto.Cpace.Pending"),
+                    app("Geo.Shape.Point"),
+                    app("Main.Pending"),
+                ],
+            ),
+            &s,
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            BTreeSet::from(["List".to_string(), "Pending".to_string()])
+        );
+        let mut only_key = BTreeSet::new();
+        collect_ty_names(&app("Std.Crypto.Cpace.Pending"), &s, &mut only_key);
+        assert!(only_key.is_empty(), "{only_key:?}");
     }
 }

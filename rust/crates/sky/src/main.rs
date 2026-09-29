@@ -50,6 +50,7 @@ mod leg_plan;
 mod native_pkg;
 mod plist;
 mod precompress;
+mod split_diag;
 mod target;
 mod xmlmini;
 
@@ -3036,6 +3037,7 @@ fn build_std_app(
             static_mount,
             !run,
             builder_app_url.as_deref(),
+            Some(project_dir),
         ) {
             Ok(od) => {
                 let t_static = project::timings::phase("stage static assets (dist + backend)");
@@ -3147,20 +3149,10 @@ fn build_std_app(
                     }
                 }
             }
-            // BUG-3: the entry that failed is the SYNTHESISED client build, not
-            // a file the user wrote — name it so any file:line the split
-            // reported resolves, and offer the direct `sky check` on it.
-            Err(code) => {
-                eprintln!(
-                    "sky build --target {}: the failure above is in the SYNTHESISED client entry\n  \
-                     staged at `{}`.\n  \
-                     Inspect it directly with:  sky check {}",
-                    tgt.canonical(),
-                    synth_entry.display(),
-                    synth_entry.display(),
-                );
-                code
-            }
+            // A located error in the derived client entry or the generated
+            // projects was already mapped back to the user's construct
+            // (`report_generated_failure`); a refusal names its own fix.
+            Err(code) => code,
         };
     }
 
@@ -3360,7 +3352,13 @@ fn spa_split_and_build(
     // `App.withAppUrl`, read from the Std.App entry, for the frontend leg's
     // native shell (`None` for a direct Spa entry, which has no such builder).
     builder_app_url: Option<&str>,
+    // The app's OWN project when `project_dir` is a project the build derived
+    // from it (the `Std.App` synthesised client entry under `.skyapp/`). An
+    // error the split reports in derived or generated code is then mapped
+    // back to the construct the user wrote (`split_diag`).
+    user_project: Option<&Path>,
 ) -> Result<PathBuf, ExitCode> {
+    let user_root = user_project.unwrap_or(project_dir);
     let t_split = project::timings::phase("spa split (partition + generate)");
     let report = match project::spa_split::generate(
         repo_root,
@@ -3373,6 +3371,18 @@ fn spa_split_and_build(
         Ok(r) => r,
         Err(e) => {
             eprintln!("sky spa-split: {e}");
+            // The app's own source checked clean before the split ran, so a
+            // located error here is in the entry the build DERIVED from it.
+            if user_project.is_some() {
+                report_generated_failure(
+                    &e,
+                    &split_diag::SplitSites {
+                        user_project: user_root,
+                        analysed: project_dir,
+                        legs: &[],
+                    },
+                );
+            }
             // The split refuses the app as a whole ("cannot auto-split: …"):
             // the generator reports no source span, so the message is the
             // diagnostic, unlocated.
@@ -3548,6 +3558,9 @@ fn spa_split_and_build(
     t_legs.end();
     // Each leg recorded its own `sky` and Go peaks in its `sky-out/` for the
     // next build's plan (`project::go_jobs::record_peaks`).
+    // Each failed leg's text output, for `split_diag` to map its diagnostics
+    // back to the user's source.
+    let leg_text = std::cell::RefCell::new(String::new());
     let report_leg = |label: &str,
                       half: &str,
                       leg_dir: &Path,
@@ -3557,6 +3570,12 @@ fn spa_split_and_build(
         println!("\n== {label} ==");
         match res {
             Ok(Ok(out)) => {
+                if !out.status.success() {
+                    let mut t = leg_text.borrow_mut();
+                    t.push_str(&format!("== {label} ==\n"));
+                    t.push_str(&String::from_utf8_lossy(&out.stdout));
+                    t.push_str(&String::from_utf8_lossy(&out.stderr));
+                }
                 if json_leg {
                     let _ = std::io::stderr().write_all(&out.stderr);
                     relay_split_leg(&out.stdout, half, leg_dir, project_dir);
@@ -3584,6 +3603,19 @@ fn spa_split_and_build(
         &frontend_dir,
         frontend_res,
     );
+    if !backend_ok || !frontend_ok {
+        report_generated_failure(
+            &leg_text.borrow(),
+            &split_diag::SplitSites {
+                user_project: user_root,
+                analysed: project_dir,
+                legs: &[
+                    ("backend", backend_dir.clone()),
+                    ("frontend", frontend_dir.clone()),
+                ],
+            },
+        );
+    }
     if !backend_ok {
         eprintln!("sky spa-split --build: backend failed to build");
         return Err(ExitCode::FAILURE);
@@ -3593,6 +3625,29 @@ fn spa_split_and_build(
         return Err(ExitCode::FAILURE);
     }
     Ok(od)
+}
+
+/// Say plainly that a type or name error reported from code the Sky.Spa split
+/// derived or generated is a defect of the split, and name, for each one, the
+/// user's construct it comes from (`split_diag`). Prints nothing when `output`
+/// holds no located diagnostic (a Go toolchain failure, a refusal message).
+fn report_generated_failure(output: &str, sites: &split_diag::SplitSites<'_>) {
+    let lines = split_diag::explain(output, sites);
+    if lines.is_empty() {
+        return;
+    }
+    eprintln!(
+        "\nsky build: the code the Sky.Spa split derived from your program does not build. \
+         Your program type-checks, so this is a defect in Sky, not in your code. \
+         The errors above come from:"
+    );
+    for l in &lines {
+        eprintln!("{l}");
+    }
+    eprintln!(
+        "  Please report it with the generated projects under {}.",
+        sites.analysed.display()
+    );
 }
 
 /// Relay one Sky.Spa split leg's `--format json` diagnostics (`half` is
@@ -3986,6 +4041,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
         None,
         true,
         None,
+        None,
     ) {
         Ok(od) => od,
         Err(code) => return code,
@@ -4238,6 +4294,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             None,
             precompress,
             builder_app_url.as_deref(),
+            None,
         ) {
             Ok(od) => {
                 let entry = positional
@@ -8662,6 +8719,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
             false,
+            None,
             None,
         ) {
             Ok(od) => od,

@@ -7832,3 +7832,211 @@ fn the_url_fragment_reaches_update_on_live_and_builds_for_every_target() {
     );
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+/// A record alias from a `[dependencies]` PATH package is a record in the
+/// `--target web:app` split, as `sky check` and the Sky.Live build say. The
+/// split's analysis loaded `.skydeps/` but not path packages, so `import
+/// Geo.Shape exposing (Point)` named a missing module and the build failed
+/// with `[update] type mismatch: Point vs record`. The fixture uses `Point`
+/// in the model, in a client Msg payload, in the result of a server arm and
+/// in the view; the server arm's result crosses the wire through a codec
+/// derived from the dependency's declaration (named by its module in
+/// `Shared`), and the RPC answers what the Sky.Live app renders.
+#[test]
+fn a_record_alias_from_a_path_dependency_crosses_the_split() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let root = scratch();
+    let _ = std::fs::remove_dir_all(&root);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-path-dep-record"),
+        &root,
+    );
+    let proj = root.join("app");
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !log.contains("type mismatch") && !log.contains("anonymous record"),
+        "the split must type-check the dependency's record alias:\n{log}"
+    );
+    assert!(
+        log.contains("server branches (→ RPC): Jump")
+            && log.contains("client branches (local): Move, Place, Landed"),
+        "{log}"
+    );
+    let shared = split_file(&proj, "shared/Shared.sky");
+    assert!(
+        shared.contains("import Geo.Shape as SpaTy_Geo_Shape_")
+            && shared.contains("at : SpaTy_Geo_Shape_.Point")
+            && shared.contains("Codec.auto blankGeo_Shape_Point_"),
+        "Shared names the dependency's type by its module and derives its codec:\n{shared}"
+    );
+    for leg in ["frontend", "backend"] {
+        let toml = split_file(&proj, &format!("{leg}/sky.toml"));
+        assert!(
+            toml.contains("\"geo\" = { path = \"/") && toml.contains("/lib\" }"),
+            "the {leg} project carries the path dependency by an absolute path:\n{toml}"
+        );
+    }
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let (back, back_port) = start_split_backend(&proj);
+    let posted = curl_post_status_body(back_port, "/_rpc/Jump", r#"{"at":{"x":1,"y":2},"log":""}"#)
+        .expect("POST /_rpc/Jump");
+    drop(back);
+    assert_eq!(posted.0, 200, "{posted:?}");
+    // `Jump` writes `log` and returns `Landed`, which the client dispatches:
+    // the RPC answers the write-set and the follow-up Msg, whose `Point`
+    // crossed through the codec derived from the dependency.
+    let v: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
+    assert_eq!(v["log"], "J", "{posted:?}");
+    let follow: serde_json::Value =
+        serde_json::from_str(v["spaFollow_"].as_str().unwrap_or("null")).unwrap();
+    assert_eq!(follow[0][0], "Landed", "{posted:?}");
+    let body: serde_json::Value =
+        serde_json::from_str(follow[0][1].as_str().unwrap_or("null")).unwrap();
+    assert_eq!(
+        body["a0"],
+        serde_json::json!(["Ok", { "x": 11, "y": 2 }]),
+        "the follow-up carries `Shape.shift 10 model.at`: {posted:?}"
+    );
+    let (live, live_port) = start_live_app(&proj);
+    let jar = proj.join("jar.txt");
+    let live_out = live_press_and_read(live_port, &jar, 2, "AT=");
+    drop(live);
+    assert_eq!(
+        live_out, "11,2 LOG=JL",
+        "the Live app lands on the same point"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Every type the split generates a codec for is resolved by its MODULE,
+/// never by its bare name, in both directions. The app declares `type alias
+/// Pending`, and a Msg carries the stdlib's `Cpace.Pending` (device key
+/// material under `App.withClientCrypto`). `Fetch`'s command cannot be read,
+/// so the split writes a follow-up codec for every Msg it can. Before, it
+/// resolved `Cpace.Pending` to the app's record: the build failed with
+/// `[spaEncodeFollow_] type mismatch: Pending vs record`, and the "no key on
+/// a wire" rule was decided on the wrong type. Now `Started` (the key) does
+/// not cross, and says why on the key's own name, while `Queued` (the app's
+/// `Pending`) crosses with a derived codec.
+#[test]
+fn a_follow_up_payload_type_is_resolved_by_its_module_not_its_bare_name() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-follow-bare-name", &[]);
+    assert!(
+        !log.contains("type mismatch"),
+        "the follow-up codecs must type-check:\n{log}"
+    );
+    assert!(
+        log.contains(
+            "`Started` (argument 1: `Std.Crypto.Cpace.Pending` is key material the device keeps"
+        ),
+        "the key-on-wire rule is decided on the stdlib key type:\n{log}"
+    );
+    let shared = split_file(&proj, "shared/Shared.sky");
+    assert!(
+        !shared.contains("SpaFollowStartedReq"),
+        "the key never gets a wire record:\n{shared}"
+    );
+    assert!(
+        shared.contains("type alias SpaFollowQueuedReq")
+            && shared.contains("a0 : Result Error Pending")
+            && shared.contains("autoPendingCodec_"),
+        "the app's own `Pending` crosses with a derived codec:\n{shared}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(out.status.success(), "the web:app build failed:\n{log}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A device key that a continuation would carry to the client is still
+/// refused: the key-on-wire rule reads the resolved identity
+/// (`Sky.Core.Secret.Secret`), so resolving by module does not open a way
+/// around it.
+#[test]
+fn a_device_key_on_a_continuation_is_still_refused() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app(
+        "spa-key-continuation",
+        r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Ui as Ui
+
+
+type alias Model =
+    { key : Maybe Secret
+    , out : String
+    }
+
+
+type Msg
+    = Fetch
+    | Revealed (Result Error Secret)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { key = Nothing, out = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Fetch ->
+            ( model, Cmd.perform (Time.sleep 1 |> Task.map (\_ -> Secret.fromString "k")) Revealed )
+
+        Revealed (Ok k) ->
+            ( { model | key = Just k, out = "revealed" }, Cmd.none )
+
+        Revealed (Err _) ->
+            ( { model | out = "failed" }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = \m -> Ui.column [] [ Ui.text ("OUT=" ++ m.out), Ui.button [] { onPress = Just Fetch, label = Ui.text "fetch" } ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ()
+            |> App.withClientCrypto
+        )
+"#,
+    );
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "a key on the wire must fail:\n{log}");
+    assert!(
+        log.contains("`Sky.Core.Secret.Secret` is key material the device keeps"),
+        "{log}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}

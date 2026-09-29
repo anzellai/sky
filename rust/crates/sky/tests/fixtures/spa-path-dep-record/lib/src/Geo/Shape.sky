@@ -1,0 +1,17 @@
+module Geo.Shape exposing (Point, origin, shift)
+
+{-| A record alias in a library package. -}
+type alias Point =
+    { x : Int
+    , y : Int
+    }
+
+
+origin : Point
+origin =
+    { x = 1, y = 2 }
+
+
+shift : Int -> Point -> Point
+shift d p =
+    { p | x = p.x + d }
