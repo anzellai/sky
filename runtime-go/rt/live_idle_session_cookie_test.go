@@ -30,7 +30,7 @@ package rt
 // Why these live in Go and not only in scripts/verify-live-resilience.mjs: the
 // Playwright gate runs only in scripts/preflight-tag.sh, never in rust-ci.yml,
 // so this whole class could regress unseen between tags. These run in the
-// codegen-build job on every push.
+// runtime-rt job on every push.
 
 import (
 	"context"

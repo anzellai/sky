@@ -908,6 +908,39 @@ path. A griller's realistic estimate was 13–20 min. 15 is provisional and is
 either confirmed or triggers §2.2's escalation at Phase 6 — the same abort
 discipline as case counts, applied to time.
 
+**One ceiling for a warm AND a cold cache — there is no cold allowance.** The
+`setup ≤ 6 min (≤ 3 cache-warm)` split puts the cold case inside the 15
+minutes, not beside it. A cache-cold run is not rare: it is every `Cargo.lock`
+or toolchain bump, every new cache scope (a push to `main` restores only
+`main`'s own caches, so the first run after a release merge is cold), and every
+eviction under the 10 GB repo cache limit. A budget that only a warm run meets
+fails on `main` at exactly those points, and a runtime "cold, so a larger
+ceiling" rule is the kind of silent scope change C15 deleted. So both paths are
+held to the same 990 s (900 s + 10 %), and a change to the job graph is proven
+on both: a warm run, and a run with every Rust and Go cache key forced to miss.
+
+How the two paths fit (v0.27.0, `rust-ci.yml`):
+
+- `setup` builds only on a rust-cache miss. On an exact hit the cache it would
+  prime already exists and rust-cache does not save again, so it restores and
+  exits. On a miss it runs `cargo build --workspace` only: the former
+  `cargo test --workspace --no-run` step was 270 s cold against 253 s warm,
+  so ~17 s of it primed dependencies and the rest built workspace test targets
+  that rust-cache prunes before saving.
+- The Go runtime tests (`runtime-rt`, split out of `codegen-build`) and the
+  seven `test-sky` shards (`nextest --partition slice:k/7`) do not wait for
+  `setup`. A test-sky shard's time is set by its share of the
+  `serial-servers` group, so the shard count is the lever.
+
+| Run | Cache | `setup` | slowest setup-dependent | slowest setup-independent | Tier |
+|---|---|---|---|---|---|
+| 36615007321 (before) | warm | 403 s | codegen-build 630 s | test-sky 979 s | **1033 s — FAIL** |
+| 36628077129 (all keys forced to miss) | cold | 178 s | test-rest 605 s | test-sky-3 884 s | **884 s — pass** |
+| 36630493577 (after the probe was reverted) | warm | 13 s | repro-2 581 s | test-sky-3 864 s | **864 s — pass** |
+
+The cold run is the binding one: its test-sky shards pay a cold Rust compile
+(3 min against 2 min 15 s warm) and a cold Go build cache.
+
 ### 8.2 Enforcement — because `timeout-minutes` alone does not
 
 **The v1 defect:** `timeout-minutes` = 1.5× the *tier* budget cannot enforce a
