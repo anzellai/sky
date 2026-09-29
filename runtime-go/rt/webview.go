@@ -127,6 +127,10 @@ func webviewURLRun(urlArg any, windowCfg any) any {
 	debug := os.Getenv("SKY_WEBVIEW_DEBUG") != "0" &&
 		os.Getenv("SKY_WEBVIEW_DEBUG") != "false"
 
+	// Universal links (Bundle.AssociatedDomain "applinks:…"): hook the app
+	// delegate before webview.New launches the app, so a link the app is
+	// launched with is not lost (native_desktop_links_darwin.go).
+	desktopLinksInstall(url)
 	w := webview.New(debug)
 	if w == nil {
 		msg := "Webview.url: webview.New returned nil — system webview backend unavailable " +
@@ -162,7 +166,13 @@ func webviewURLRun(urlArg any, windowCfg any) any {
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "[sky.webview] Bind __skyNativeStart failed: %v\n", err)
 	}
-	w.Navigate(url)
+	// The first page is the link the app was launched with, if any; a link
+	// that arrives later opens in the running window.
+	w.Navigate(desktopLinksStart(w.Window()))
+	defer desktopLinksStop()
+	if desktopLinkTestHook != nil {
+		desktopLinkTestHook()
+	}
 	// Blocks on the native event loop until the window closes; the loaded page
 	// (the Sky.Spa client) owns all rendering + interaction.
 	w.Run()

@@ -4732,6 +4732,15 @@ fn package_macos_release(
     if icon.is_some() {
         generated.push(("CFBundleIconFile".to_string(), S("AppIcon".into())));
     }
+    // The `applinks:` hosts the window routes a universal link for, onto the
+    // link's page (runtime-go/rt/native_desktop_links_darwin.go reads them).
+    let app_links = native_pkg::link_domains(&decl.entitlements).app_links;
+    if !app_links.is_empty() {
+        generated.push((
+            "SkyLinkHosts".to_string(),
+            plist::Value::Array(app_links.iter().map(|d| S(d.host.clone())).collect()),
+        ));
+    }
     let native_dirs = collect_native_dirs(project_dir, "macos");
     let mut info_layers = vec![
         plist::Layer {
@@ -4755,16 +4764,6 @@ fn package_macos_release(
     )
     .map_err(|e| format!("write Info.plist: {e}"))?;
 
-    // The desktop window does not route an incoming universal link to its
-    // page (the iOS and Android shells do): say so, never drop it silently.
-    for d in &native_pkg::link_domains(&decl.entitlements).app_links {
-        eprintln!(
-            "  note: Bundle.AssociatedDomain \"applinks:{}\": the macOS app carries the \
-             entitlement, but a universal link opens the app on its first page, not on the \
-             link's page.",
-            d.host
-        );
-    }
     let mut ent_layers = vec![plist::Layer {
         origin: "Bundle.withEntitlement".to_string(),
         rank: plist::Rank::Declared,
@@ -4799,6 +4798,21 @@ fn package_macos_release(
                     dropped.join(", "),
                     native_pkg::MACOS_SIGN_IDENTITY,
                     native_pkg::MACOS_PROVISIONING_PROFILE
+                );
+            }
+            // The window routes every link it receives to its page, but macOS
+            // hands a universal link only to an app whose signature carries
+            // the associated-domains entitlement, after Apple has checked the
+            // site's apple-app-site-association file.
+            if dropped
+                .iter()
+                .any(|k| k == "com.apple.developer.associated-domains")
+            {
+                eprintln!(
+                    "  note: without the associated-domains entitlement macOS does not hand \
+                     the app a universal link (the app still opens a link sent to it, \
+                     `open -a`). A signed build also needs apple-app-site-association on \
+                     each `applinks:` host."
                 );
             }
             entitlements.clone()
@@ -6681,7 +6695,7 @@ import LocalAuthentication
 ///
 /// The Coordinator ALSO installs the `skyNative` native bridge: a
 /// WKScriptMessageHandlerWithReply the wasm client calls as
-/// `window.webkit.messageHandlers.skyNative.postMessage({type:"notify",…})`.
+/// `window.webkit.messageHandlers.skyNative.postMessage({type:"sky:notify",…})`.
 /// This is how `Std.Native.notify` shows a REAL local notification on iOS, where
 /// the Web Notification API is disabled — the handler drives
 /// `UNUserNotificationCenter`, and its reply resolves/rejects the JS Promise so
@@ -6800,23 +6814,30 @@ struct WebView: UIViewRepresentable {
                 replyHandler(nil, "skyNative: malformed message"); return
             }
             switch type {
-            case "notify":
-                let title = dict["title"] as? String ?? ""
-                let body = dict["body"] as? String ?? ""
+            case "sky:notify":
+                // Std.Native.notify (runtime-go/rt/native_shell.go). The
+                // authorization request shows the prompt the first time and
+                // answers at once after that; the notification is posted only
+                // once the user has answered, and the reply waits for both.
+                let payload = dict["payload"] as? String ?? "{}"
+                let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
+                let reply: (Any?, String?) -> Void = { r, e in
+                    DispatchQueue.main.async { replyHandler(r, e) }
+                }
                 let center = UNUserNotificationCenter.current()
                 center.requestAuthorization(options: [.alert, .sound]) { granted, err in
-                    if let err = err { replyHandler(nil, err.localizedDescription); return }
-                    if !granted { replyHandler(nil, "notifications not authorized"); return }
+                    if let err = err { reply(nil, "failed: " + err.localizedDescription); return }
+                    if !granted { reply(nil, "denied: the user did not allow notifications"); return }
                     let content = UNMutableNotificationContent()
-                    content.title = title
-                    content.body = body
+                    content.title = p["title"] ?? ""
+                    content.body = p["body"] ?? ""
                     content.sound = .default
                     let req = UNNotificationRequest(
                         identifier: UUID().uuidString, content: content,
                         trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
                     center.add(req) { addErr in
-                        if let addErr = addErr { replyHandler(nil, addErr.localizedDescription) }
-                        else { replyHandler(nil, nil) }
+                        if let addErr = addErr { reply(nil, "failed: " + addErr.localizedDescription) }
+                        else { reply("", nil) }
                     }
                 }
             case "sky:secureSet", "sky:secureGet", "sky:secureRemove", "sky:authenticate":
@@ -7157,11 +7178,12 @@ public class MainActivity extends Activity {
 
         setContentView(web);
 {{RUNTIME_REQUEST}}
-        // The `skyNative` native bridge: the wasm client calls
-        // `window.SkyNative.notify(title, body)` and this shows a REAL system
-        // notification via NotificationManager. Std.Native.notify prefers this
-        // over the Web Notification API. @JavascriptInterface methods run on a
-        // background thread and may return a value synchronously to JS.
+        // The `SkyNative` native bridge: the wasm client calls
+        // `window.SkyNative.call(op, payload, cbId)` (Std.Native: the secure
+        // store, biometrics, the code scanner, notifications, and the app's
+        // own Native.bridge handlers) and the shell answers through
+        // window.__skyBridgeCb[cbId]. @JavascriptInterface methods run on a
+        // background thread.
         web.addJavascriptInterface(new SkyNativeBridge(this, web), "SkyNative");
         sky.nativeext.SkyNativeExtInstall.installAll();   // register native/android/* handlers
         webView = web;
@@ -7245,6 +7267,9 @@ public class MainActivity extends Activity {
                                 @Override public void ok(String json) { replyOk(cbId, json); }
                                 @Override public void err(String msg) { replyErr(cbId, msg); }
                             });
+                        break;
+                    case "sky:notify":
+                        notifyOp(p.optString("title", ""), p.optString("body", ""), cbId);
                         break;
                     default:
                         replyErr(cbId, "invalid: unknown op " + name);
@@ -7426,12 +7451,45 @@ public class MainActivity extends Activity {
             return b.append("\"").toString();
         }
 
-        @JavascriptInterface
-        public boolean notify(String title, String body) {
+        // Std.Native.notify. On Android 13 and later POST_NOTIFICATIONS is a
+        // run-time permission, and NotificationManager drops a notification
+        // posted without it, silently. So the reply waits for the permission:
+        // the broker answers at once when it is held, and otherwise waits for
+        // a prompt that covers it (the start-up request, or one it asks for
+        // when no prompt shows). Only a refusal is "denied:".
+        private void notifyOp(final String title, final String body, final String cbId) {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                sky.perm.SkyPermissions.ensure(act, "android.permission.POST_NOTIFICATIONS",
+                    new sky.perm.SkyPermissions.Done() {
+                        @Override public void done(boolean granted) {
+                            android.util.Log.i("SkyNative", "notify " + cbId + ": permission "
+                                + (granted ? "granted" : "refused"));
+                            if (granted) {
+                                postNotification(title, body, cbId);
+                            } else {
+                                replyErr(cbId, "denied: the user did not allow notifications");
+                            }
+                        }
+                    });
+            } else {
+                postNotification(title, body, cbId);
+            }
+        }
+
+        private void postNotification(String title, String body, String cbId) {
             try {
                 NotificationManager nm =
                     (NotificationManager) ctx().getSystemService(Context.NOTIFICATION_SERVICE);
-                if (nm == null) return false;
+                if (nm == null) {
+                    replyErr(cbId, "failed: this device has no notification service");
+                    return;
+                }
+                // The user can turn an app's notifications off in Settings
+                // (on any version): a post would then be dropped.
+                if (!nm.areNotificationsEnabled()) {
+                    replyErr(cbId, "denied: notifications are turned off for this app");
+                    return;
+                }
                 if (android.os.Build.VERSION.SDK_INT >= 26) {
                     nm.createNotificationChannel(new NotificationChannel(
                         CHANNEL, "Sky", NotificationManager.IMPORTANCE_DEFAULT));
@@ -7447,9 +7505,9 @@ public class MainActivity extends Activity {
                         .setSmallIcon(android.R.drawable.ic_dialog_info).build();
                 }
                 nm.notify((int) (System.currentTimeMillis() & 0x7fffffff), n);
-                return true;
+                replyOk(cbId, "");
             } catch (Throwable t) {
-                return false;
+                replyErr(cbId, "failed: " + t);
             }
         }
     }
@@ -7841,12 +7899,16 @@ const ANDROID_PERMISSIONS_JAVA: &str = r#"package sky.perm;
 
 import android.app.Activity;
 import android.content.pm.PackageManager;
+import android.util.Log;
 import android.webkit.PermissionRequest;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Run-time permissions for the native shell. Android shows one permission
@@ -7854,7 +7916,11 @@ import java.util.Map;
  * with empty arrays. So an operation never asks on its own: it calls
  * `ensure`, which answers at once when the permission is held and otherwise
  * waits for a prompt that covers it (the start-up request, or one asked for
- * when no prompt shows). Only a real denial answers `false`. Generated by
+ * when no prompt shows). Only a real denial answers `false`. A permission
+ * the user refused while the app runs stays refused for the rest of the run:
+ * an operation that asks after the answer gets `false` at once, as one that
+ * asked before it did, instead of a second prompt right after "Don't allow".
+ * (Settings can still grant it; the next start asks again.) Generated by
  * `sky build`; do not edit.
  */
 public final class SkyPermissions {
@@ -7865,11 +7931,16 @@ public final class SkyPermissions {
 
     /** Request code → the permissions that request asks for (in flight). */
     private static final Map<Integer, String[]> inFlight = new HashMap<>();
+    /** The permissions the user refused in a prompt during this run. */
+    private static final Set<String> refused = new HashSet<>();
     /** Permission → the callers waiting for its answer. */
     private static final Map<String, List<Done>> waiting = new LinkedHashMap<>();
     private static int nextCode = 23730;
 
     private SkyPermissions() {}
+
+    /** Every request, answer and wait is logged under this tag (logcat). */
+    private static final String TAG = "SkyPermissions";
 
     private static boolean held(Activity act, String perm) {
         return act.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED;
@@ -7887,15 +7958,25 @@ public final class SkyPermissions {
             code = nextCode++;
             inFlight.put(code, missing.toArray(new String[0]));
         }
+        Log.i(TAG, "request " + code + " at start " + missing);
         act.requestPermissions(missing.toArray(new String[0]), code);
     }
 
     /** Answer `done` once `perm` is held or refused. */
     public static void ensure(final Activity act, String perm, Done done) {
         if (held(act, perm)) {
+            Log.i(TAG, "ensure " + perm + ": held");
             done.done(true);
             return;
         }
+        synchronized (SkyPermissions.class) {
+            if (refused.contains(perm)) {
+                Log.i(TAG, "ensure " + perm + ": refused earlier in this run");
+                done.done(false);
+                return;
+            }
+        }
+        Log.i(TAG, "ensure " + perm + ": waiting");
         synchronized (SkyPermissions.class) {
             List<Done> list = waiting.get(perm);
             if (list == null) {
@@ -7951,26 +8032,31 @@ public final class SkyPermissions {
     /** MainActivity.onRequestPermissionsResult forwards every answer here. */
     public static void onResult(Activity act, int requestCode, String[] perms, int[] results) {
         List<Done> granted = new ArrayList<>();
-        List<Done> refused = new ArrayList<>();
+        List<Done> denied = new ArrayList<>();
+        Log.i(TAG, "result " + requestCode + " " + Arrays.toString(perms) + " "
+            + Arrays.toString(results));
         synchronized (SkyPermissions.class) {
             inFlight.remove(requestCode);
             List<String> answered = new ArrayList<>();
             for (int i = 0; i < perms.length && i < results.length; i++) {
                 answered.add(perms[i]);
+                if (results[i] != PackageManager.PERMISSION_GRANTED) refused.add(perms[i]);
             }
             for (String p : new ArrayList<>(waiting.keySet())) {
                 if (held(act, p)) {
                     granted.addAll(waiting.remove(p));
                 } else if (answered.contains(p)) {
-                    refused.addAll(waiting.remove(p));
+                    denied.addAll(waiting.remove(p));
                 }
                 // Otherwise the permission is still in another prompt, or this
                 // answer was the empty one of a request made while a prompt
                 // showed: keep waiting.
             }
         }
+        Log.i(TAG, "result " + requestCode + ": " + granted.size() + " granted, "
+            + denied.size() + " refused, still waiting " + waiting.keySet());
         for (Done d : granted) d.done(true);
-        for (Done d : refused) d.done(false);
+        for (Done d : denied) d.done(false);
         askForWaiting(act);
     }
 
@@ -7989,6 +8075,7 @@ public final class SkyPermissions {
             code = nextCode++;
             inFlight.put(code, ask);
         }
+        Log.i(TAG, "request " + code + " for waiting " + Arrays.toString(ask));
         act.requestPermissions(ask, code);
     }
 }
@@ -15727,12 +15814,12 @@ mod tests {
                 "iOS shell must wire the notification bridge: missing `{needle}`"
             );
         }
-        // Android: an @JavascriptInterface object "SkyNative" with notify(), driving
-        // NotificationManager.
+        // Android: the "SkyNative" @JavascriptInterface takes `sky:notify`
+        // through the permission broker, driving NotificationManager.
         for needle in [
             "addJavascriptInterface(new SkyNativeBridge(this, web), \"SkyNative\")",
             "@JavascriptInterface",
-            "public boolean notify(String title, String body)",
+            "case \"sky:notify\":",
             "NotificationManager",
             "NotificationChannel",
         ] {
@@ -15741,6 +15828,74 @@ mod tests {
                 "Android shell must wire the notification bridge: missing `{needle}`"
             );
         }
+    }
+
+    /// `Native.notify` waits for the user's answer to the notification prompt.
+    /// Before v0.27.0 the Android bridge was a synchronous
+    /// `SkyNative.notify(title, body)`: on Android 13 and later it answered
+    /// `Ok` while the POST_NOTIFICATIONS prompt still showed, and
+    /// NotificationManager dropped the notification. Both shells now take the
+    /// `sky:notify` op of the native-shell protocol and reply only once the
+    /// notification is posted; a refusal replies `denied:` (Err
+    /// PermissionDenied).
+    #[test]
+    fn native_notify_waits_for_the_notification_permission() {
+        assert!(
+            !ANDROID_MAIN_ACTIVITY.contains("public boolean notify("),
+            "the synchronous notify bridge answers before the prompt does"
+        );
+        for needle in [
+            "sky.perm.SkyPermissions.ensure(act, \"android.permission.POST_NOTIFICATIONS\"",
+            "replyErr(cbId, \"denied: the user did not allow notifications\")",
+            "nm.areNotificationsEnabled()",
+        ] {
+            assert!(
+                ANDROID_MAIN_ACTIVITY.contains(needle),
+                "Android notify: missing `{needle}`"
+            );
+        }
+        for needle in [
+            "case \"sky:notify\":",
+            "center.requestAuthorization(options: [.alert, .sound])",
+            "reply(nil, \"denied: the user did not allow notifications\")",
+        ] {
+            assert!(
+                IOS_WEBVIEW_SWIFT.contains(needle),
+                "iOS notify: missing `{needle}`"
+            );
+        }
+        assert!(!IOS_WEBVIEW_SWIFT.contains("case \"notify\":"));
+    }
+
+    /// A permission the user refused stays refused for the rest of the run.
+    /// The broker used to ask again when an operation came after the answer:
+    /// "Don't allow" at the start-up prompt, then `Native.notify`, showed a
+    /// second prompt and notify waited on it (reproduced on an API 35
+    /// emulator by pressing "Don't allow" the moment the prompt showed; the
+    /// broker's log read `result 23730 [POST_NOTIFICATIONS] [-1]`, then
+    /// `ensure … waiting`, then `request 23731`). Whether the operation came
+    /// before or after the answer decided the result.
+    #[test]
+    fn a_refused_permission_is_not_asked_for_again_in_the_same_run() {
+        for needle in [
+            "private static final Set<String> refused = new HashSet<>();",
+            "if (results[i] != PackageManager.PERMISSION_GRANTED) refused.add(perms[i]);",
+            "if (refused.contains(perm)) {",
+            "Log.i(TAG, \"ensure \" + perm + \": refused earlier in this run\");",
+        ] {
+            assert!(
+                ANDROID_PERMISSIONS_JAVA.contains(needle),
+                "SkyPermissions: missing `{needle}`"
+            );
+        }
+        // Held is checked first: a grant in Settings after a refusal counts.
+        let ensure = &ANDROID_PERMISSIONS_JAVA[ANDROID_PERMISSIONS_JAVA
+            .find("public static void ensure(")
+            .unwrap()..];
+        assert!(
+            ensure.find("if (held(act, perm))").unwrap()
+                < ensure.find("if (refused.contains(perm))").unwrap()
+        );
     }
 
     // ---- App.withAppUrl / SKY_APP_URL: the backend address the shells load ----

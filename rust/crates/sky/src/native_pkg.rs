@@ -1053,6 +1053,10 @@ pub const CAPABILITY_NEEDS: &[(&str, &[&str])] = &[
     ("authenticate", &["FaceId"]),
     ("capturePhoto", &["Camera"]),
     ("geolocation", &["Location", "LocationAlways"]),
+    // Android 13 and later drops a notification without POST_NOTIFICATIONS,
+    // and an undeclared permission is refused without a prompt. iOS asks
+    // with no Info.plist key, so the check applies to Android only.
+    ("notify", &["Notifications"]),
     ("scanCode", &["Camera"]),
 ];
 
@@ -1241,12 +1245,22 @@ pub fn check_usage(
                 Platform::Ios => spec.ios_keys.join(" / "),
                 _ => spec.android_perms.join(" / "),
             };
+            if what.is_empty() {
+                // The platform asks for this capability with no declaration.
+                continue;
+            }
             let at = sites
                 .calls
                 .get(func)
                 .map(|(f, l)| format!(" at {f}:{l}"))
                 .unwrap_or_default();
-            let fix = format!("`|> Bundle.withUsage Bundle.{ctor} \"<why the app needs it>\"`");
+            // A permission with no purpose string (Notifications) is declared
+            // with `withPermission`.
+            let fix = if spec.default_text.is_empty() {
+                format!("`|> Bundle.withPermission Bundle.{ctor}`")
+            } else {
+                format!("`|> Bundle.withUsage Bundle.{ctor} \"<why the app needs it>\"`")
+            };
             let place = match sites.bundle_line {
                 Some(l) => format!("to the `bundle` binding at {entry}:{l}"),
                 None => format!(
@@ -1896,6 +1910,40 @@ mod tests {
             "import Std.Native as N\nx = authenticate 1\n",
         ] {
             assert!(native_capabilities_used(src).is_empty(), "{src}");
+        }
+    }
+
+    /// `Native.notify` without `Bundle.Notifications` fails the Android build:
+    /// Android 13 and later refuses an undeclared POST_NOTIFICATIONS without a
+    /// prompt, so every notification was lost. The fix names `withPermission`
+    /// (the permission has no purpose string). iOS needs no declaration.
+    #[test]
+    fn native_notify_needs_the_notifications_permission_on_android_only() {
+        let used = BTreeSet::from(["notify"]);
+        let e = check_usage(&used, &[], Platform::Android, false, &Sites::default())
+            .expect_err("Android must refuse Native.notify without POST_NOTIFICATIONS");
+        assert!(
+            e.contains("Native.notify")
+                && e.contains("android.permission.POST_NOTIFICATIONS")
+                && e.contains("`|> Bundle.withPermission Bundle.Notifications`"),
+            "{e}"
+        );
+        // iOS and macOS ask with no declaration.
+        for p in [Platform::Ios, Platform::Macos] {
+            assert!(e_ok(check_usage(&used, &[], p, true, &Sites::default())));
+        }
+        let declared = vec![Declared {
+            ctor: "Notifications".into(),
+            text: None,
+        }];
+        for release in [false, true] {
+            assert!(e_ok(check_usage(
+                &used,
+                &declared,
+                Platform::Android,
+                release,
+                &Sites::default()
+            )));
         }
     }
 

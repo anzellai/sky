@@ -135,7 +135,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Native.authenticate` without `Bundle.FaceId`, `Native.capturePhoto` without
   `Bundle.Camera`, or `Native.geolocation` without `Bundle.Location` /
   `LocationAlways`. Before, the build succeeded and the OS denied the request
-  at run time. Add `|> Bundle.withUsage Bundle.<P> "<why>"`.
+  at run time. Add `|> Bundle.withUsage Bundle.<P> "<why>"`. The Android
+  build (`mobile:android`, `tablet:android`) also refuses `Native.notify`
+  without `Bundle.Notifications`: Android 13 and later refuses an undeclared
+  POST_NOTIFICATIONS without a prompt, so every notification was lost. Add
+  `|> Bundle.withPermission Bundle.Notifications` (see Migration).
 - **A native build refuses a native fragment that is not a valid property
   list or manifest fragment,** and one that sets a key Sky generates
   (`CFBundleIdentifier`, the version keys, transport security) to another
@@ -234,6 +238,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Crypto.xchachaSeal` follows the same rule. See Migration below.
 
 ### Migration
+
+- **An Android app that calls `Native.notify` declares the notification
+  permission.** Add `|> Bundle.withPermission Bundle.Notifications` to the
+  app's `bundle`. iOS needs nothing. `Native.notify` keeps its type
+  (`String -> String -> Task Error ()`); a caller that treated `Ok` as "shown"
+  is now right on Android 13 and later, and should handle
+  `Err PermissionDenied` for a user who refuses.
 
 - **A `Std.App` web app without a port setting now binds `sky.toml`'s
   port (8000 by default), not 8080.** To keep 8080, set `[live] port = 8080`
@@ -998,6 +1009,63 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`Native.notify` waits for the notification prompt, and a refusal is
+  `Err PermissionDenied`.** The Android shell's notify bridge was a
+  synchronous JavaScript call: at first launch it answered `Ok` while the
+  POST_NOTIFICATIONS prompt was still on screen, and NotificationManager
+  dropped the notification (on Android 13 and later it posts nothing without
+  the permission, and says nothing). Reproduced on an API 35 emulator:
+  `notify=ok` with the prompt showing, and nothing in `dumpsys
+  notification`. `Native.notify` now goes through the native-shell protocol
+  (`sky:notify`, `runtime-go/rt/native_shell.go`), and each shell replies only
+  when the notification is posted: the Android shell asks the permission
+  broker (`sky.perm.SkyPermissions`), which joins the start-up prompt, then
+  checks that the app's notifications are on; the iOS shell waits for
+  `requestAuthorization` before it adds the request. A refusal replies
+  `denied:` on both. In a browser and the desktop window the Web Notification
+  API runs as before. (Tests: `TestNotifyGoesThroughTheShellAndKeepsItsAnswer`
+  with a mock shell; `native_notify_waits_for_the_notification_permission` on
+  the shell templates; the emulator test
+  `android_emulator_notify_at_first_launch_waits_for_the_notification_prompt`:
+  no answer while the prompt shows, Allow posts it (it is in `dumpsys
+  notification`), Don't allow is `Err PermissionDenied`.)
+- **A permission the user refused is not asked for again in the same run.**
+  The Android permission broker asked again when an operation came after the
+  answer: "Don't allow" at the start-up prompt, then `Native.notify`, showed
+  a second prompt and notify waited on it. Whether the call came before or
+  after the user's tap decided the result, which made the notify emulator
+  test fail once with no answer in 60 s. Reproduced by pressing "Don't
+  allow" the moment the prompt shows (the broker's log: `result 23730
+  [POST_NOTIFICATIONS] [-1]`, `ensure … waiting`, `request 23731`, and the
+  prompt in front again). A refusal now holds for the rest of the run: an
+  operation that asks after it is refused at once, as one that asked before
+  it was; Settings can still grant it, and the next start asks again. The
+  broker logs each request, answer and wait under the `SkyPermissions` tag.
+  (Tests: `a_refused_permission_is_not_asked_for_again_in_the_same_run`; the
+  notify emulator test presses "Don't allow" both after notify waits and the
+  moment the prompt shows, and fails if a second prompt shows; 20 runs, 4
+  from a cold boot, all green, with the answer both before and after the
+  call in the broker's log.)
+- **The Android emulator gates wait for a usable emulator, not only a booted
+  one.** On a cold boot a SystemUI "isn't responding" dialog can cover the
+  app, and a UI step (the permission prompt, Back to close the scanner) went
+  to the dialog: the gate failed by luck of the boot. The emulator tests now
+  wait for `sys.boot_completed`, the package manager and a resumed launcher,
+  turn the animations off, and dismiss a focused system dialog ("Wait" on an
+  ANR, "Close app" on a crash dialog, else the close-system-dialogs
+  broadcast) before each app step; a UI lookup is retried once, and only
+  after a dialog was found and dismissed. The `gate-native-android` job sets
+  a 15-minute boot timeout, closes system dialogs and wakes the screen
+  before the tests. A `uiautomator dump` that fails (on a freshly booted
+  emulator it can time out) left the previous screen's file behind, and a
+  lookup read that file and reported the prompt missing while it was on
+  screen; the old file is now removed first and a failed dump is taken
+  again. A failed emulator step saves evidence (the app's, ActivityManager's
+  and the permission controller's log lines, the focused window, a
+  screenshot, the UI tree and the backend log) under `SKYTEST_EVIDENCE_DIR`,
+  which the job uploads when it fails. (Test: `android_emulator_a_system_dialog_is_dismissed_before_app_steps`
+  raises a real crash dialog and checks it is found and dismissed; the four
+  emulator tests passed after three cold boots, `-no-snapshot-load`.)
 - **`Std.Ui.Terminal`: the server's screen could stay at the spawn size, so
   a row went missing (for example after Escape in vim).** `Terminal.attach`
   sends the first `Process.screen` read and the `Process.resize` to the
@@ -1094,8 +1162,14 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   shared sign-in (`asset_statements` in the app, `get_login_creds` in the
   site's file); `activitycontinuation:` and `appclips:` have no Android
   equivalent and the build names each one it leaves out. The macOS desktop
-  window does not route a universal link to its page yet, and its release
-  build says so. The Android build writes the site's
+  window routes a link the same way: the release `.app` lists the hosts in
+  `Info.plist` (`SkyLinkHosts`), and the window takes a universal link
+  (`application:continueUserActivity:restorationHandler:`, added to the
+  webview library's app delegate) and a URL sent to the app (the GetURL
+  Apple event, `open -a <app> <url>`), as the first page at launch and in
+  place while it runs. An ad hoc signature leaves the associated-domains
+  entitlement out, and the build says that macOS then hands the app no
+  universal link. The Android build writes the site's
   `/.well-known/assetlinks.json` with the SHA-256 digest of the signing
   certificate (`build/assetlinks.json` with the debug key,
   `sky-out/release/assetlinks.json` with the upload key under `sky package
@@ -1106,7 +1180,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   and manifest unit tests, and the native release gates: the Android
   emulator test opens `https://example.com/probe/deep` to start the app and
   `/probe/again` in the running app, and reads the routes the app reports;
-  the app without the domain does not take the link.)
+  the app without the domain does not take the link; the macOS test
+  `macos_desktop_app_opens_a_universal_link_on_its_page` opens links on the
+  packaged `.app` with `open -a`, and sends the app delegate a universal-link
+  activity through a hook built only with `-tags skytest_links`; the routing
+  rule is `runtime-go/rt/native_links_test.go`.)
 - **A Sky.Spa server branch can match inside its Msg's arguments.** The split
   sent the names a server arm binds and rebuilt the Msg on the backend from
   them, so an arm such as `Report (Ok line) -> (model, Cmd.perform

@@ -237,6 +237,27 @@ fn an_app_entry_missing_a_purpose_string_names_its_own_bundle_binding() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `Native.notify` needs `Bundle.withPermission Bundle.Notifications` on
+/// Android: Android 13 and later refuses an undeclared POST_NOTIFICATIONS
+/// without a prompt, so every notification was lost. The build refuses the
+/// call without it, naming the fix, before any toolchain is needed.
+#[test]
+fn native_notify_without_the_notifications_permission_fails_the_android_build() {
+    let dir = scratch("notifyperm");
+    probe_app_with(&dir, "", Flow::Notify);
+    for target in ["mobile:android", "tablet:android"] {
+        let (ok, out) = run(&dir, &["build", "--target", target, "src/Main.sky"], &[]);
+        assert!(!ok, "sky build --target {target} must refuse:\n{out}");
+        assert!(
+            out.contains("`Native.notify` at src/Main.sky:")
+                && out.contains("android.permission.POST_NOTIFICATIONS")
+                && out.contains("Bundle.withPermission Bundle.Notifications"),
+            "the error must name the call and the fix:\n{out}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Native smoke (macOS; run by the release workflow's gate-native job)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,6 +323,39 @@ fn simctl(args: &[&str]) -> std::process::Output {
 /// the backend's output, so it asserts what the app on the device saw.
 /// `bundle_steps` are the `|> Bundle.with…` lines after the name and id.
 fn probe_app(dir: &Path, bundle_steps: &str) {
+    probe_app_with(dir, bundle_steps, Flow::Native);
+}
+
+/// What the probe does after it starts.
+#[derive(Clone, Copy, PartialEq)]
+enum Flow {
+    /// The secure-store round trip, then `Native.scanCode`, then
+    /// `Native.authenticate` (the full native-capability probe).
+    Native,
+    /// The secure-store round trip, then `Native.notify` (`notify=ok` or
+    /// `notify=err:<error>`).
+    Notify,
+    /// No native capability: `start=ok` when the client starts, and each
+    /// route. A reload of the page reports a second `start=ok`.
+    Links,
+}
+
+fn probe_app_with(dir: &Path, bundle_steps: &str, flow: Flow) {
+    let init_cmd = match flow {
+        Flow::Links => "Cmd.perform (Task.succeed \"start=ok\") Report",
+        _ => "Cmd.perform roundTrip Got",
+    };
+    let got_next = match flow {
+        Flow::Native => "\n                , Cmd.perform (Native.scanCode { formats = [ Native.Qr ], prompt = \"Scan the probe code\" }) Scanned",
+        Flow::Notify => "\n                , Cmd.perform (Native.notify \"Sky Probe\" \"probe-notification\") Notified",
+        Flow::Links => "",
+    };
+    let scanned_next = match flow {
+        Flow::Native => {
+            "\n                , Cmd.perform (Native.authenticate \"Confirm the probe\") Authed"
+        }
+        _ => "",
+    };
     let src = format!(
         r#"module Main exposing (main, bundle)
 
@@ -337,6 +391,7 @@ type Msg
     | Authed (Result Error Bool)
     | Report (Result Error String)
     | Reported (Result Error ())
+    | Notified (Result Error ())
 
 
 roundTrip : Task Error (Maybe Secret)
@@ -371,6 +426,16 @@ scanText r =
             "scan=err:" ++ Error.toString e
 
 
+notifyText : Result Error () -> String
+notifyText r =
+    case r of
+        Ok _ ->
+            "notify=ok"
+
+        Err e ->
+            "notify=err:" ++ Error.toString e
+
+
 authText : Result Error Bool -> String
 authText r =
     case r of
@@ -386,7 +451,7 @@ authText r =
 
 init : () -> ( Model, Cmd.Cmd Msg )
 init _ =
-    ( {{ status = "running", page = "home" }}, Cmd.perform roundTrip Got )
+    ( {{ status = "running", page = "home" }}, {init_cmd} )
 
 
 update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
@@ -398,16 +463,14 @@ update msg model =
         Got r ->
             ( {{ model | status = secureText r }}
             , Cmd.batch
-                [ Cmd.perform (Task.succeed (secureText r)) Report
-                , Cmd.perform (Native.scanCode {{ formats = [ Native.Qr ], prompt = "Scan the probe code" }}) Scanned
+                [ Cmd.perform (Task.succeed (secureText r)) Report{got_next}
                 ]
             )
 
         Scanned r ->
             ( {{ model | status = scanText r }}
             , Cmd.batch
-                [ Cmd.perform (Task.succeed (scanText r)) Report
-                , Cmd.perform (Native.authenticate "Confirm the probe") Authed
+                [ Cmd.perform (Task.succeed (scanText r)) Report{scanned_next}
                 ]
             )
 
@@ -424,6 +487,9 @@ update msg model =
 
         Reported _ ->
             ( model, Cmd.none )
+
+        Notified r ->
+            ( {{ model | status = notifyText r }}, Cmd.perform (Task.succeed (notifyText r)) Report )
 
 
 view : Model -> Element Msg
@@ -759,6 +825,245 @@ fn ios_simulator_app_launches_and_round_trips_the_keychain() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// The first `.app` bundle under `root`.
+#[cfg(target_os = "macos")]
+fn find_app_bundle(root: &Path) -> Option<PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).ok()?.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            if p.extension().is_some_and(|x| x == "app") {
+                return Some(p);
+            }
+            stack.push(p);
+        }
+    }
+    None
+}
+
+/// The macOS desktop app, launched from its `.app` bundle with `open`; it is
+/// stopped (by its own executable path) when dropped.
+#[cfg(target_os = "macos")]
+struct MacApp {
+    app: PathBuf,
+    exe: PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+impl MacApp {
+    /// `open -a <app> --env …` with the links to hand it, if any.
+    fn open(&self, env: &[(&str, &str)], links: &[&str], log: &Path) -> std::process::Output {
+        let mut cmd = Command::new("open");
+        cmd.arg("-a").arg(&self.app);
+        for (k, v) in env {
+            cmd.arg("--env").arg(format!("{k}={v}"));
+        }
+        cmd.arg("--stdout").arg(log).arg("--stderr").arg(log);
+        cmd.args(links).output().expect("open")
+    }
+
+    fn stop(&self) {
+        let _ = Command::new("pkill")
+            .arg("-f")
+            .arg(self.exe.to_str().unwrap())
+            .output();
+        for _ in 0..40 {
+            let alive = Command::new("pgrep")
+                .arg("-f")
+                .arg(self.exe.to_str().unwrap())
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !alive {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        let _ = Command::new("pkill")
+            .args(["-9", "-f", self.exe.to_str().unwrap()])
+            .output();
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MacApp {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// A `desktop:mac` app that declares `Bundle.AssociatedDomain
+/// "applinks:example.com"` opens a link to that host on the link's page, as
+/// the iOS and Android shells do. Before v0.27.0 the desktop window took no
+/// link at all: the app opened on its first page and the release build
+/// printed a note saying so.
+///
+/// Both ways a link reaches a macOS app are driven on the packaged `.app`:
+///
+/// * `application:openURLs:` — `open -a <app> <url>`. A link the app is
+///   launched with is its first page (the app never shows `/` first); a link
+///   sent to the running app navigates in place (pushState + popstate: the
+///   client does not restart); a link to a host the app did not declare is
+///   ignored.
+/// * `application:continueUserActivity:restorationHandler:` — a universal
+///   link. macOS delivers one only to an app signed with the
+///   associated-domains entitlement after Apple has checked the site, which
+///   an ad hoc test build cannot have, so the shell is built with
+///   `-tags skytest_links` and a test hook sends the app delegate the same
+///   NSUserActivityTypeBrowsingWeb activity macOS sends
+///   (runtime-go/rt/native_desktop_links_testhook_darwin.go): one while the
+///   app starts, one while it runs.
+///
+/// Each result is the route the app reports through its backend.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "native smoke: needs Go + Xcode and a macOS desktop session (release gate-native)"]
+fn macos_desktop_app_opens_a_universal_link_on_its_page() {
+    if !required(Need::Go, have_go()) || !required(Need::Xcode, have_xcode()) {
+        return;
+    }
+    let dir = scratch("macos-links");
+    probe_app_with(&dir, DECLARED, Flow::Links);
+    let (ok, out) = run(
+        &dir,
+        &["package", "--release", "--target", "desktop:mac"],
+        &[
+            ("SKY_APP_URL", "https://probe.example.test/"),
+            ("GOFLAGS", "-tags=skytest_links"),
+        ],
+    );
+    assert!(
+        ok,
+        "sky package --release --target desktop:mac failed:\n{out}"
+    );
+    assert!(
+        !out.contains("opens the app on its first page"),
+        "the build must not say links are not routed:\n{out}"
+    );
+    let app = find_app_bundle(&dir.join(".skyapp")).expect("no .app bundle");
+    let info = std::fs::read_to_string(app.join("Contents/Info.plist")).unwrap();
+    assert!(
+        info.contains("<key>SkyLinkHosts</key>") && info.contains("<string>example.com</string>"),
+        "Info.plist must name the applinks hosts:\n{info}"
+    );
+    let exe_name = std::fs::read_dir(app.join("Contents/MacOS"))
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let mac = MacApp {
+        app: app.clone(),
+        exe: exe_name,
+    };
+    let split = dir.join(".skyapp/desktop-mac/.split");
+    let log = dir.join("app.log");
+    let mut failures = Vec::new();
+
+    // 1. `application:openURLs:` at launch, while running, and for a host the
+    //    app did not declare.
+    {
+        let port = free_port();
+        let backend = Backend::start(&split, port);
+        let base = format!("http://127.0.0.1:{port}/");
+        let o = mac.open(
+            &[("SKY_APP_URL", &base)],
+            &["https://example.com/probe/deep?x=1"],
+            &log,
+        );
+        let deep = backend.saw("route=probe:deep", 120);
+        let again = deep && {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            mac.open(&[], &["https://example.com/probe/again"], &log);
+            backend.saw("route=probe:again", 60)
+        };
+        let nope = again && {
+            mac.open(&[], &["https://other.example.org/probe/nope"], &log);
+            backend.saw("route=probe:nope", 8)
+        };
+        mac.stop();
+        let output = backend.output();
+        let starts = output.matches("SKY-PROBE start=ok").count();
+        let applog = std::fs::read_to_string(&log).unwrap_or_default();
+        if !o.status.success() {
+            failures.push(format!(
+                "open failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        } else if !deep {
+            failures.push(format!(
+                "a link the app is launched with must open /probe/deep:\n{output}\n{applog}"
+            ));
+        } else if output.contains("SKY-PROBE route=home") {
+            failures.push(format!(
+                "a link the app is launched with is its first page, not `/`:\n{output}"
+            ));
+        } else if !again {
+            failures.push(format!(
+                "a link sent to the running app must open /probe/again:\n{output}\n{applog}"
+            ));
+        } else if starts != 1 {
+            failures.push(format!(
+                "a link sent to the running app navigates in place, the client must start \
+                 once, started {starts} times:\n{output}"
+            ));
+        } else if nope {
+            failures.push(format!(
+                "a link to a host the app did not declare must be ignored:\n{output}"
+            ));
+        }
+    }
+
+    // 2. `application:continueUserActivity:restorationHandler:`: a universal
+    //    link while the app starts, and one while it runs.
+    {
+        let port = free_port();
+        let backend = Backend::start(&split, port);
+        let base = format!("http://127.0.0.1:{port}/");
+        let o = mac.open(
+            &[
+                ("SKY_APP_URL", &base),
+                (
+                    "SKYTEST_LINK_ACTIVITIES",
+                    "https://example.com/probe/act1,https://example.com/probe/act2",
+                ),
+            ],
+            &[],
+            &log,
+        );
+        let act1 = backend.saw("route=probe:act1", 120);
+        let starts_at_act1 = backend.output().matches("SKY-PROBE start=ok").count();
+        let act2 = act1 && backend.saw("route=probe:act2", 60);
+        mac.stop();
+        let output = backend.output();
+        let starts = output.matches("SKY-PROBE start=ok").count();
+        let applog = std::fs::read_to_string(&log).unwrap_or_default();
+        if !o.status.success() {
+            failures.push(format!(
+                "open failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        } else if !act1 {
+            failures.push(format!(
+                "a universal link while the app starts must open /probe/act1:\n{output}\n{applog}"
+            ));
+        } else if !act2 {
+            failures.push(format!(
+                "a universal link to the running app must open /probe/act2:\n{output}\n{applog}"
+            ));
+        } else if starts != starts_at_act1 {
+            failures.push(format!(
+                "a universal link to the running app navigates in place, not a reload:\n{output}"
+            ));
+        }
+    }
+    drop(mac);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
 /// `sky package --release --target mobile:android` signs with the upload key
 /// from the environment (never the debug key) and the result verifies; the
 /// Java shell with the Keystore secure store and BiometricPrompt compiles.
@@ -959,18 +1264,228 @@ impl Emulator {
         })
     }
 
-    /// Wait until Android has finished booting.
+    /// Wait until Android is ready for an app.
+    ///
+    /// `sys.boot_completed` alone is not ready: on a cold boot the package
+    /// manager and the launcher are still starting, and SystemUI can show an
+    /// "isn't responding" dialog that covers the app, so a UI step (the
+    /// permission prompt, Back to close the scanner) went to the dialog and
+    /// the gate failed by luck of the boot. So this also waits for the package
+    /// manager and a resumed launcher, turns the animations off, and dismisses
+    /// a system dialog.
     fn wait_booted(&self) -> bool {
         let _ = self.adb(&["wait-for-device"]);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(600);
-        while std::time::Instant::now() < until {
-            let o = self.adb(&["shell", "getprop", "sys.boot_completed"]);
-            if String::from_utf8_lossy(&o.stdout).trim() == "1" {
-                return true;
+        let wait_for = |what: &dyn Fn() -> bool| -> bool {
+            while std::time::Instant::now() < until {
+                if what() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            false
+        };
+        if !wait_for(&|| self.shell_text(&["getprop", "sys.boot_completed"]).trim() == "1") {
+            eprintln!("the emulator did not set sys.boot_completed");
+            return false;
+        }
+        if !wait_for(&|| {
+            self.shell_text(&["pm", "path", "android"])
+                .contains("package:")
+        }) {
+            eprintln!("the emulator's package manager did not answer");
+            return false;
+        }
+        // The launcher: the package of the HOME activity is the resumed one.
+        let mut home = String::new();
+        let resolved = wait_for(&|| {
+            self.shell_text(&[
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.HOME",
+            ])
+            .lines()
+            .any(|l| l.contains('/'))
+        });
+        if resolved {
+            home = self
+                .shell_text(&[
+                    "cmd",
+                    "package",
+                    "resolve-activity",
+                    "--brief",
+                    "-a",
+                    "android.intent.action.MAIN",
+                    "-c",
+                    "android.intent.category.HOME",
+                ])
+                .lines()
+                .rev()
+                .find(|l| l.contains('/'))
+                .and_then(|l| l.trim().split('/').next().map(str::to_string))
+                .unwrap_or_default();
+        }
+        if home.is_empty()
+            || !wait_for(&|| {
+                self.shell_text(&["dumpsys", "activity", "activities"])
+                    .lines()
+                    .any(|l| l.contains("ResumedActivity") && l.contains(&home))
+            })
+        {
+            eprintln!("the emulator's launcher ({home:?}) did not resume");
+            return false;
+        }
+        for key in [
+            "window_animation_scale",
+            "transition_animation_scale",
+            "animator_duration_scale",
+        ] {
+            let _ = self.adb(&["shell", "settings", "put", "global", key, "0"]);
+        }
+        self.dismiss_system_dialogs();
+        true
+    }
+
+    fn shell_text(&self, args: &[&str]) -> String {
+        let mut all = vec!["shell"];
+        all.extend_from_slice(args);
+        String::from_utf8_lossy(&self.adb(&all).stdout).into_owned()
+    }
+
+    /// The system dialog that has the focus, if any: an "isn't responding"
+    /// (ANR) or crash dialog, read from the focused window (`dumpsys window`).
+    fn system_dialog(&self) -> Option<String> {
+        let focus = self
+            .shell_text(&["dumpsys", "window"])
+            .lines()
+            .find(|l| l.contains("mCurrentFocus="))?
+            .trim()
+            .to_string();
+        let lower = focus.to_lowercase();
+        (lower.contains("not responding")
+            || lower.contains("isn't responding")
+            || lower.contains("application error"))
+        .then_some(focus)
+    }
+
+    /// Dismiss the system dialogs that have the focus: "Wait" on an ANR
+    /// dialog, "Close app" on a crash dialog, else the system's close-dialogs
+    /// broadcast. Returns whether there was one.
+    fn dismiss_system_dialogs(&self) -> bool {
+        let mut seen = false;
+        for _ in 0..5 {
+            let Some(focus) = self.system_dialog() else {
+                break;
+            };
+            eprintln!("dismissing a system dialog: {focus}");
+            seen = true;
+            match ui_node_centre(self, &["aerr_wait", "aerr_close"]) {
+                Some((x, y)) => {
+                    let _ = self.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+                }
+                None => {
+                    let _ = self.adb(&[
+                        "shell",
+                        "am",
+                        "broadcast",
+                        "-a",
+                        "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                    ]);
+                }
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
-        false
+        seen
+    }
+
+    /// The centre of the first node whose `resource-id` ends with one of
+    /// `ids`. When it is not on screen because a system dialog covers it, the
+    /// dialog is dismissed and the lookup runs once more; there is no retry
+    /// without a detected dialog.
+    fn find_ui(&self, ids: &[&str]) -> Option<(i32, i32)> {
+        if let Some(c) = ui_node_centre(self, ids) {
+            return Some(c);
+        }
+        if self.dismiss_system_dialogs() {
+            return ui_node_centre(self, ids);
+        }
+        None
+    }
+
+    /// Evidence for a failed emulator step, taken while the device is still
+    /// in the failed state: the log lines of the app, the shell's permission
+    /// broker (`SkyPermissions`, `SkyNative`), ActivityManager and the
+    /// permission controller; the focused window; a screenshot and the UI
+    /// tree; and the backend's report log. Saved under SKYTEST_EVIDENCE_DIR
+    /// (else the temp dir); the returned text names the folder and carries
+    /// the focus and the broker's log.
+    fn capture_evidence(&self, tag: &str, backend: &str) -> String {
+        let root = std::env::var_os("SKYTEST_EVIDENCE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let dir = root.join(format!("sky-native-evidence-{tag}-{stamp}"));
+        let _ = std::fs::create_dir_all(&dir);
+        let pid = self
+            .shell_text(&["pidof", "com.example.probe"])
+            .trim()
+            .to_string();
+        let full = self.shell_text(&["logcat", "-d", "-v", "threadtime"]);
+        let keep = |l: &str| {
+            [
+                "SkyPermissions",
+                "SkyNative",
+                "ActivityManager",
+                "ActivityTaskManager",
+                "PermissionController",
+                "permissioncontroller",
+                "GrantPermissions",
+                "com.example.probe",
+            ]
+            .iter()
+            .any(|k| l.contains(k))
+                || (!pid.is_empty() && l.split_whitespace().nth(2) == Some(pid.as_str()))
+        };
+        let filtered: Vec<&str> = full.lines().filter(|l| keep(l)).collect();
+        let broker: Vec<&str> = full
+            .lines()
+            .filter(|l| l.contains("SkyPermissions") || l.contains("SkyNative"))
+            .collect();
+        let focus: Vec<String> = self
+            .shell_text(&["dumpsys", "window"])
+            .lines()
+            .filter(|l| l.contains("mCurrentFocus=") || l.contains("mFocusedApp="))
+            .map(|l| l.trim().to_string())
+            .collect();
+        let _ = std::fs::write(dir.join("logcat.txt"), filtered.join("\n"));
+        let _ = std::fs::write(dir.join("logcat-full.txt"), &full);
+        let _ = std::fs::write(dir.join("focus.txt"), focus.join("\n"));
+        let _ = std::fs::write(dir.join("backend.txt"), backend);
+        let shot = self.adb(&["exec-out", "screencap", "-p"]);
+        let _ = std::fs::write(dir.join("screen.png"), &shot.stdout);
+        let _ = std::fs::write(dir.join("ui.xml"), ui_dump(self).unwrap_or_default());
+        format!(
+            "evidence in {}\n--- focus\n{}\n--- SkyPermissions / SkyNative\n{}\n--- backend\n{}",
+            dir.display(),
+            focus.join("\n"),
+            broker.join("\n"),
+            backend
+        )
+    }
+
+    /// Send a key to the app, after dismissing a system dialog that would
+    /// take it instead.
+    fn key(&self, key: &str) {
+        self.dismiss_system_dialogs();
+        let _ = self.adb(&["shell", "input", "keyevent", key]);
     }
 }
 
@@ -1099,6 +1614,7 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
             String::from_utf8_lossy(&inst.stderr)
         );
         let backend = Backend::start(split, *port);
+        emu.dismiss_system_dialogs();
         let start = emu.adb(&[
             "shell",
             "am",
@@ -1110,7 +1626,7 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
         let secure = backend.probe_line("secure", 180);
         // The scanner is open over the app: Back closes it without a code.
         std::thread::sleep(std::time::Duration::from_secs(5));
-        let _ = emu.adb(&["shell", "input", "keyevent", "KEYCODE_BACK"]);
+        emu.key("KEYCODE_BACK");
         let scan = backend.probe_line("scan", 60);
         let auth = backend.probe_line("auth", 60);
         let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
@@ -1122,6 +1638,7 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
         // does in the app's settings. The plain variant declares no domain and
         // must not take the link.
         let open_link = |path: &str| {
+            emu.dismiss_system_dialogs();
             let o = emu.adb(&[
                 "shell",
                 "am",
@@ -1225,13 +1742,37 @@ fn android_emulator_app_launches_and_round_trips_the_keystore_scanner_and_biomet
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// The emulator's UI tree, from `uiautomator dump`. A dump can fail (on a
+/// freshly booted emulator it can time out waiting for the UI to go idle),
+/// and it then leaves the previous file behind: reading that file gave the
+/// last screen's nodes, or none, and a lookup reported an element missing
+/// that was on screen. So the old file is removed first, and a failed dump
+/// is taken again (up to three times); `None` only when every dump failed.
+#[cfg(unix)]
+fn ui_dump(emu: &Emulator) -> Option<String> {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        let _ = emu.adb(&["shell", "rm", "-f", "/sdcard/sky-ui.xml"]);
+        let _ = emu.adb(&["shell", "uiautomator", "dump", "/sdcard/sky-ui.xml"]);
+        let xml = emu.shell_text(&["cat", "/sdcard/sky-ui.xml"]);
+        if xml.contains("<hierarchy") {
+            return Some(xml);
+        }
+        eprintln!(
+            "uiautomator dump failed (attempt {}), dumping again",
+            attempt + 1
+        );
+    }
+    None
+}
+
 /// The centre of the first node in the emulator's UI whose `resource-id`
 /// ends with one of `ids`, from a uiautomator dump.
 #[cfg(unix)]
 fn ui_node_centre(emu: &Emulator, ids: &[&str]) -> Option<(i32, i32)> {
-    let _ = emu.adb(&["shell", "uiautomator", "dump", "/sdcard/sky-ui.xml"]);
-    let xml = String::from_utf8_lossy(&emu.adb(&["shell", "cat", "/sdcard/sky-ui.xml"]).stdout)
-        .into_owned();
+    let xml = ui_dump(emu)?;
     for node in xml.split("<node ") {
         let attr = |name: &str| -> Option<String> {
             let key = format!("{name}=\"");
@@ -1320,6 +1861,7 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
             "android.permission.CAMERA",
         ]);
         let backend = Backend::start(&split, port);
+        emu.dismiss_system_dialogs();
         let _ = emu.adb(&[
             "shell",
             "am",
@@ -1333,14 +1875,14 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
         // have answered yet.
         std::thread::sleep(std::time::Duration::from_secs(5));
         let early = backend.probe_line("scan", 1);
-        let tap = ui_node_centre(&emu, &[button]);
+        let tap = emu.find_ui(&[button]);
         if let Some((x, y)) = tap {
             let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
         }
         if want == "scan=cancelled" {
             // The scanner opens after Allow: Back closes it without a code.
             std::thread::sleep(std::time::Duration::from_secs(5));
-            let _ = emu.adb(&["shell", "input", "keyevent", "KEYCODE_BACK"]);
+            emu.key("KEYCODE_BACK");
         }
         let scan = backend.probe_line("scan", 60);
         let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
@@ -1368,4 +1910,279 @@ fn android_emulator_scan_at_first_launch_waits_for_the_camera_prompt() {
     drop(emu);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The probe's notification permission (`Native.notify`).
+const NOTIFY: &str = "        |> Bundle.withPermission Bundle.Notifications";
+
+/// `Native.notify` at first launch waits for the notification prompt's
+/// answer. On Android 13 and later POST_NOTIFICATIONS is a run-time
+/// permission: the shell asks for it when it starts, and the probe calls
+/// `Native.notify` right after its secure-store round trip, while that prompt
+/// still shows. The bridge used to be a synchronous call that answered `Ok`
+/// at once, and NotificationManager dropped the notification (no permission
+/// yet), so the first notification was lost with no error. The shell now
+/// routes `sky:notify` through the permission broker: "Allow" posts the
+/// notification (it is in `dumpsys notification`) and answers `Ok`, and
+/// "Don't allow" answers `Err PermissionDenied`. The app is installed without
+/// `-g`, and the permission revoked, so it is not granted.
+///
+/// "Don't allow" is also pressed the moment the prompt shows, usually before
+/// the app has called notify. This case used to hang: the broker asked again
+/// for a permission the user had just refused, a second prompt showed, and
+/// notify waited on it (the gate's one unexplained failure, reproduced by
+/// tapping at once, SkyPermissions log: `result 23730 … [-1]`, then `ensure …
+/// waiting`, then `request 23731`). A refusal now holds for the rest of the
+/// run, so notify answers `Err PermissionDenied` whichever came first, and no
+/// second prompt shows. On a failure the test saves evidence (the app's,
+/// ActivityManager's and the permission controller's log lines, the focused
+/// window, a screenshot, the UI tree and the backend's log) under
+/// SKYTEST_EVIDENCE_DIR, else the temp dir.
+#[cfg(unix)]
+#[test]
+#[ignore = "native emulator: needs Go + the Android SDK + a running emulator or an AVD (release gate-native-android)"]
+fn android_emulator_notify_at_first_launch_waits_for_the_notification_prompt() {
+    let _emulator = EMULATOR_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = android_home();
+    if !required(Need::Go, have_go()) || !required(Need::AndroidSdk, home.is_some()) {
+        return;
+    }
+    let home = home.unwrap();
+    let home_s = home.to_string_lossy().into_owned();
+    let dir = scratch("android-notify");
+    probe_app_with(&dir, NOTIFY, Flow::Notify);
+    let port = free_port();
+    let port_s = port.to_string();
+    let (ok, out) = run(
+        &dir,
+        &["build", "--target", "mobile:android", "src/Main.sky"],
+        &[("PORT", &port_s), ("ANDROID_HOME", &home_s)],
+    );
+    assert!(ok, "the Android build failed:\n{out}");
+    let split = dir.join(".skyapp/mobile-android/.split");
+    let apk = split.join("frontend/sky-out/android/build/skyprobe.apk");
+    let emu = Emulator::attach_or_start(&home, first_avd(&home).as_deref());
+    if !required(Need::AndroidEmulator, emu.is_some()) {
+        return;
+    }
+    let emu = emu.unwrap();
+    assert!(emu.wait_booted(), "the emulator did not finish booting");
+    let sdk: u32 = emu
+        .shell_text(&["getprop", "ro.build.version.sdk"])
+        .trim()
+        .parse()
+        .unwrap_or(0);
+    assert!(
+        sdk >= 33,
+        "the notification prompt needs Android 13 (API 33) or later; the emulator runs API {sdk}"
+    );
+    let mut failures = Vec::new();
+    // (the prompt button to press, the notify result it must lead to, and
+    // whether the button is pressed the moment the prompt shows, which is
+    // usually before the app has called notify)
+    for (button, want, race) in [
+        ("permission_allow_button", "notify=ok", false),
+        (
+            "permission_deny_button",
+            "notify=err:PermissionDenied",
+            false,
+        ),
+        (
+            "permission_deny_button",
+            "notify=err:PermissionDenied",
+            true,
+        ),
+    ] {
+        let case = format!("{button}{}", if race { " (at once)" } else { "" });
+        let _ = emu.adb(&["uninstall", "com.example.probe"]);
+        let inst = emu.adb(&["install", "-r", apk.to_str().unwrap()]);
+        assert!(
+            inst.status.success(),
+            "adb install: {}",
+            String::from_utf8_lossy(&inst.stderr)
+        );
+        let _ = emu.adb(&[
+            "shell",
+            "pm",
+            "revoke",
+            "com.example.probe",
+            "android.permission.POST_NOTIFICATIONS",
+        ]);
+        let backend = Backend::start(&split, port);
+        emu.dismiss_system_dialogs();
+        let _ = emu.adb(&["logcat", "-c"]);
+        let _ = emu.adb(&[
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-n",
+            "com.example.probe/.MainActivity",
+        ]);
+        let (secure, early, tap) = if race {
+            // Tap the moment the prompt is on screen: the answer can come
+            // before the app has called notify.
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            let mut tap = None;
+            while tap.is_none() && std::time::Instant::now() < until {
+                tap = ui_node_centre(&emu, &[button]);
+            }
+            if let Some((x, y)) = tap {
+                let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+            }
+            (backend.probe_line("secure", 180), None, tap)
+        } else {
+            let secure = backend.probe_line("secure", 180);
+            // notify has been called; the prompt is still up, so it must not
+            // have answered yet.
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let early = backend.probe_line("notify", 1);
+            let tap = emu.find_ui(&[button]);
+            if let Some((x, y)) = tap {
+                let _ = emu.adb(&["shell", "input", "tap", &x.to_string(), &y.to_string()]);
+            }
+            (secure, early, tap)
+        };
+        let notify = backend.probe_line("notify", 60);
+        // An answer is final for the run: no second prompt follows it.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let prompt_again = emu
+            .shell_text(&["dumpsys", "window"])
+            .lines()
+            .any(|l| l.contains("mCurrentFocus=") && l.contains("GrantPermissionsActivity"));
+        // The posted notification, as the system holds it.
+        let posted = emu
+            .shell_text(&["dumpsys", "notification", "--noredact"])
+            .lines()
+            .any(|l| l.contains("probe-notification"));
+        let output = backend.output();
+        let failure = if secure.as_deref() != Some("secure=ok:probe-value") {
+            Some(format!("the app did not start: {secure:?}"))
+        } else if early.is_some() {
+            Some(format!(
+                "notify answered {early:?} while the notification prompt showed"
+            ))
+        } else if tap.is_none() {
+            Some("the notification prompt was not on screen".to_string())
+        } else if !notify.as_deref().is_some_and(|s| s.starts_with(want)) {
+            Some(format!("notify read {notify:?}, want {want}"))
+        } else if prompt_again {
+            Some("the permission prompt showed again after the user answered it".to_string())
+        } else if posted != (want == "notify=ok") {
+            Some(format!(
+                "the notification is {} in `dumpsys notification`",
+                if posted { "posted" } else { "not posted" }
+            ))
+        } else {
+            None
+        };
+        if let Some(f) = failure {
+            // Taken before the app is stopped, so it shows the stuck state.
+            let evidence = emu.capture_evidence(&format!("notify-{button}-{race}"), &output);
+            failures.push(format!("{case}: {f}\n{evidence}"));
+        }
+        let _ = emu.adb(&["shell", "am", "force-stop", "com.example.probe"]);
+        drop(backend);
+    }
+    let _ = emu.adb(&["uninstall", "com.example.probe"]);
+    drop(emu);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+/// The emulator helpers find and dismiss a system dialog that covers the app.
+/// A cold boot can leave a SystemUI "isn't responding" dialog in front, and a
+/// UI step then went to the dialog. This raises a real one (a crash dialog for
+/// Settings, with the first-crash dialog turned on) and checks that it is seen
+/// as a system dialog and dismissed.
+#[cfg(unix)]
+#[test]
+#[ignore = "native emulator: needs the Android SDK + a running emulator or an AVD (release gate-native-android)"]
+fn android_emulator_a_system_dialog_is_dismissed_before_app_steps() {
+    let _emulator = EMULATOR_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let home = android_home();
+    if !required(Need::AndroidSdk, home.is_some()) {
+        return;
+    }
+    let home = home.unwrap();
+    let emu = Emulator::attach_or_start(&home, first_avd(&home).as_deref());
+    if !required(Need::AndroidEmulator, emu.is_some()) {
+        return;
+    }
+    let emu = emu.unwrap();
+    assert!(emu.wait_booted(), "the emulator did not finish booting");
+    assert!(
+        emu.system_dialog().is_none(),
+        "wait_booted must leave no system dialog in front"
+    );
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "put",
+        "global",
+        "show_first_crash_dialog",
+        "1",
+    ]);
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "put",
+        "secure",
+        "show_first_crash_dialog_dev_option",
+        "1",
+    ]);
+    // Android shows no crash dialog for an app that crashed less than a
+    // minute before (it marks it as crashing repeatedly), so a second try
+    // waits that minute out.
+    let mut shown = None;
+    for attempt in 0..2 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(65));
+        }
+        let _ = emu.adb(&[
+            "shell",
+            "am",
+            "start",
+            "-W",
+            "-n",
+            "com.android.settings/.Settings",
+        ]);
+        let _ = emu.adb(&["shell", "am", "crash", "com.android.settings"]);
+        for _ in 0..20 {
+            shown = emu.system_dialog();
+            if shown.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if shown.is_some() {
+            break;
+        }
+    }
+    let dismissed = emu.dismiss_system_dialogs();
+    let after = emu.system_dialog();
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "put",
+        "global",
+        "show_first_crash_dialog",
+        "0",
+    ]);
+    let _ = emu.adb(&[
+        "shell",
+        "settings",
+        "delete",
+        "secure",
+        "show_first_crash_dialog_dev_option",
+    ]);
+    let _ = emu.adb(&["shell", "am", "force-stop", "com.android.settings"]);
+    drop(emu);
+    let shown = shown.expect("the crash dialog did not take the focus");
+    assert!(
+        shown.contains("Application Error"),
+        "a crash dialog is a system dialog: {shown}"
+    );
+    assert!(dismissed, "the dialog was there, dismiss must say so");
+    assert!(after.is_none(), "the dialog is still in front: {after:?}");
 }

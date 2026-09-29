@@ -158,6 +158,14 @@ See `docs/skyapp/overview.md` and `docs/sky-toml.md` (`SKY_APP_URL`).
 > raw `Std.Webview` surface only when you are building the shell
 > plumbing itself.
 
+**Links into the app (macOS).** In a packaged `.app` whose `Info.plist`
+names hosts in `SkyLinkHosts` (the release build writes them from
+`Bundle.AssociatedDomain "applinks:…"`), `Webview.url` opens a universal link
+or a URL sent to the app (`open -a <app> <url>`) for one of those hosts on
+the link's path on the loaded address: as the first page when the link
+launches the app, in place (`history.pushState` + `popstate`) when the app
+runs. See "Links into the app" in `docs/skyapp/native.md`.
+
 ## Platform requirements
 
 | OS | What you need | v0.1 |

@@ -1,3 +1,9 @@
+//go:build !js
+
+// The hub is a server process: rt/hub is `!js` (net listeners, the
+// filesystem, SQL), so the command is too, and `GOOS=js go build ./...`
+// skips it rather than failing on the missing hub symbols.
+
 // sky-hub — standalone executable for the Sky Console Hub. Built
 // from the embedded runtime-go tree by `sky console-serve` (see
 // app/Main.hs runConsoleServe) and exec'd with flags forwarded

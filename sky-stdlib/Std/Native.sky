@@ -195,13 +195,16 @@ openUrl =
     Ffi.kernel "Native_openUrl"
 
 
--- | Show a system notification with a `title` and `body`. Requests permission on
--- first use; `Err` if the user denies it. On the generated iOS/Android shells
--- this goes through a NATIVE bridge (iOS `UNUserNotificationCenter`, Android
--- `NotificationManager`), so it posts a real local notification even where the
--- Web Notification API is unavailable (e.g. iOS WKWebView); in a browser it uses
--- the Web Notification API. Declare `Bundle.withPermission Bundle.Notifications`
--- for the Android runtime permission.
+-- | Show a system notification with a `title` and `body`. The first call asks
+-- the user for permission, and the Task waits for the answer: `Ok ()` once the
+-- notification is posted, `Err PermissionDenied` if the user refuses (or has
+-- turned the app's notifications off). On the generated iOS/Android shells
+-- this goes through the NATIVE shell (iOS `UNUserNotificationCenter`, Android
+-- `NotificationManager`, which waits for the POST_NOTIFICATIONS prompt on
+-- Android 13 and later), so it posts a real local notification even where the
+-- Web Notification API is unavailable (e.g. iOS WKWebView); in a browser and
+-- the desktop window it uses the Web Notification API. The Android build
+-- refuses the call without `Bundle.withPermission Bundle.Notifications`.
 notify : String -> String -> Task Error ()
 notify =
     Ffi.kernel "Native_notify"
