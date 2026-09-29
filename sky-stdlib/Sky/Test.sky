@@ -436,7 +436,14 @@ writeJsonReport path results =
 -- `[Circle 1.5, Empty]`): the printer `Debug.toString` uses, with a String
 -- quoted.
 debugShow : a -> String
-debugShow =
+debugShow v =
+    showValue v
+
+
+-- One kernel call site, so each assertion that prints a value pays no
+-- runtime narrowing of its own.
+showValue : a -> String
+showValue =
     Ffi.kernel "Debug_show"
 
 
