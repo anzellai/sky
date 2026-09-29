@@ -41,30 +41,6 @@ package rt
 
 import "time"
 
-// wsTaskOutcome is what one receive step produced.
-type wsTaskOutcome int
-
-const (
-	wsTaskFrame   wsTaskOutcome = iota // a message frame (value = WebSocketMessage)
-	wsTaskClosed                       // clean close / socket gone — Nothing
-	wsTaskFailed                       // read error (value = Sky Error)
-	wsTaskTimeout                      // receiveWithin expired
-)
-
-// wsTaskEvent maps one queued event to an outcome. Open events are skipped
-// (ok = false: keep waiting).
-func wsTaskEvent(ev wsEvent) (wsTaskOutcome, any, bool) {
-	switch ev.kind {
-	case wsMessageEv:
-		return wsTaskFrame, buildWebSocketMessageValue(ev), true
-	case wsCloseEv:
-		return wsTaskClosed, nil, true
-	case wsErrorEv:
-		return wsTaskFailed, ev.err, true
-	}
-	return 0, nil, false
-}
-
 // wsTaskNext waits for the next frame on sh. hasLimit selects receiveWithin
 // semantics (limit <= 0 polls).
 func wsTaskNext(sh *wsHandle, hasLimit bool, limit time.Duration) (wsTaskOutcome, any) {
@@ -115,9 +91,6 @@ func wsTaskNext(sh *wsHandle, hasLimit bool, limit time.Duration) (wsTaskOutcome
 		}
 	}
 }
-
-const wsSubOwnedMsg = ": a Sub (WebSocket.onMessage / onOpen / onClose / onError) reads this socket. " +
-	"A socket has one reader: use the Sub or receive, not both."
 
 // wsTaskReceive backs receive and receiveWithin.
 func wsTaskReceive(id int64, hasLimit bool, limit time.Duration, op string) any {

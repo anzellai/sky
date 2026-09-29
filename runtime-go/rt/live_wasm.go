@@ -67,8 +67,9 @@ var (
 	// spaGuard is the optional `msg -> model -> Result Error ()` guard
 	// (Spa.withGuard / App.withGuard), run before update for every Msg.
 	spaGuard any
-	// spaRpcQ serialises the auto-split's server-branch RPCs (spa_rpcqueue.go).
-	spaRpcQ = newSpaRpcQueue("boot")
+	// spaSch orders every Msg and server-branch RPC result through `update`
+	// (spa_rpcqueue.go): each runs once, in arrival order.
+	spaSch = newSpaSched("boot")
 )
 
 type spaTimer struct {
@@ -110,7 +111,7 @@ func spaRun(cfg any) any {
 	// the SSR model decoder; both nil/empty on an app with no encoder, in which
 	// case persistence is simply off. Read once here (spa_persist_wasm.go).
 	spaGuard = Field(cfg, "Guard")
-	spaRpcQ = newSpaRpcQueue(spaRpcNonce())
+	spaSch = newSpaSched(spaRpcNonce())
 	spaModelEncoder = Field(cfg, "ModelEncoder")
 	spaPersistProt = spaStringList(Field(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(Field(cfg, "PersistSeedFields"))
@@ -129,8 +130,10 @@ func spaRun(cfg any) any {
 	spaInjectBaseCSS(doc)
 
 	// Wire the DOM renderer's event callbacks back into this loop before the
-	// first render, so handlers built during render can dispatch.
-	spaDispatch = step
+	// first render, so handlers built during render can dispatch. Every Msg
+	// goes through the scheduler, which runs each one once, in arrival order,
+	// and holds the queue while a hold RPC is in flight (spa_rpcqueue.go).
+	spaDispatch = func(msg any) { spaSch.dispatch(msg, step) }
 
 	// init : () -> ( model, Cmd msg ) — the flags arg is Sky Unit, which lowers
 	// to Go `struct{}`; the reflect-free Init adapter asserts `a0.(struct{})`,
@@ -392,7 +395,7 @@ func spaFireOnNavigate() {
 		return
 	}
 	if msg := sky_call(spaOnNavigate, page); msg != nil {
-		step(msg)
+		spaDispatch(msg)
 	}
 }
 
@@ -531,10 +534,11 @@ func spaClosestAnchor(node js.Value) js.Value {
 }
 
 // step is the TEA transition: msg -> pure update -> re-render -> interpret Cmd
-// -> reconcile subscriptions. It is the single entry point for every event:
-// DOM handlers, async Cmd.perform completions, and Sub.every timer ticks all
-// funnel through here, so the model mutation + render + effect + subscription
-// reconciliation always happen together and in order.
+// -> reconcile subscriptions. Every event reaches it through the scheduler
+// (spaDispatch -> spaSch.dispatch): DOM handlers, async Cmd.perform
+// completions, Sub.every timer ticks, pushed topic frames and RPC results, so
+// each Msg runs once, in arrival order, and the model mutation + render +
+// effect + subscription reconciliation always happen together.
 func step(msg any) {
 	// The whole transition runs under the portable panic guard (spa_step.go):
 	// Sky.Live's server dispatch recovers a panicking update/view to a 500 and
@@ -545,9 +549,6 @@ func step(msg any) {
 	// is kept, the panic is logged with a [sky.spa] prefix, and the next event
 	// still dispatches. The perform / timer / topic paths already recover; this
 	// closes the primary path.
-	// While a server-branch RPC is in flight, record the Msg so the response
-	// can be rebased under it (spa_rpcqueue.go) — Live's dispatch order.
-	spaRpcQ.record(msg)
 	prevModel := spaModel
 	spaModel = spaTransition(
 		msg, spaModel,
@@ -606,26 +607,6 @@ func spaRpcNonce() string {
 	return fmt.Sprintf("%x-%x", int64(m.Call("random").Float()*1e15), int64(d.Call("now").Float()))
 }
 
-// spaRpcPump sends the queue head when no RPC is in flight. The request is
-// built from the CURRENT model — the send-time snapshot.
-func spaRpcPump() {
-	if j := spaRpcQ.startHead(spaModel); j != nil {
-		// The server branch's CLIENT residual (a Std.Native effect) runs now,
-		// from the same snapshot the request is built from (Spa.rpcWith).
-		if j.residual != nil {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						spaReportPanic("rpc-residual", r)
-					}
-				}()
-				interpretCmd(asCmdT(sky_call(j.residual, j.snapshot)), spaDispatch)
-			}()
-		}
-		go spaRpcSend(j)
-	}
-}
-
 // spaAsList reads a Sky List value as a Go slice (nil for anything else).
 func spaAsList(v any) []any {
 	if l, ok := v.([]any); ok {
@@ -634,19 +615,19 @@ func spaAsList(v any) []any {
 	return AsList(v)
 }
 
-// spaRpcSend runs one queued RPC (on its own goroutine: the fetch blocks it,
-// not the browser event loop) and settles it. A network failure keeps the job
-// at the queue head — later RPCs stay queued behind it, in order — and arms the
-// Retry overlay to re-send the SAME job (same snapshot, same request id, so the
-// backend's dedupe cache answers a request it already ran).
+// spaRpcSend runs one RPC (on its own goroutine: the fetch blocks it, not the
+// browser event loop) and delivers its result Msg to the scheduler. A network
+// failure keeps the RPC in flight and arms the Retry overlay to re-send the
+// SAME request (same request id, so the backend's dedupe cache answers a
+// request it already ran); the failure is reported to the app at once.
 func spaRpcSend(j *spaRpcJob) {
 	result := spaRunRpcTask(j)
 	if spaIsNetworkErr(result) {
 		spaShowRetryOverlay(func() { spaRpcSend(j) })
 		// Report the failure to the app (Applied<Msg> (Err _) keeps the model,
-		// or App.withRpcError routes it) without recording it for the rebase:
-		// the job is still pending and settles on retry.
-		spaDispatchUnrecorded(spaApplyToMsg(j.toMsg, result))
+		// or App.withRpcError routes it); the RPC stays in flight and settles
+		// on retry.
+		spaSch.report(j, spaApplyToMsg(j.toMsg, result), step)
 		return
 	}
 	if result.Tag == 0 {
@@ -658,13 +639,12 @@ func spaRpcSend(j *spaRpcJob) {
 				spaTransportErrText(result))
 		}
 	}
-	spaRpcComplete(spaApplyToMsg(j.toMsg, result))
-	spaRpcPump()
+	spaSch.settle(j, spaApplyToMsg(j.toMsg, result), step)
 }
 
-// spaRunRpcTask builds the request task from the job's snapshot + request id
-// and runs it to a Result. A panic while building or running is a classified
-// Err, never a dead client.
+// spaRunRpcTask builds the request task from the request id and runs it to a
+// Result. A panic while building or running is a classified Err, never a dead
+// client.
 func spaRunRpcTask(j *spaRpcJob) (result SkyResult[SkyADT, any]) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -672,47 +652,7 @@ func spaRunRpcTask(j *spaRpcJob) (result SkyResult[SkyADT, any]) {
 			result = SkyResult[SkyADT, any]{Tag: 1, ErrValue: ev}
 		}
 	}()
-	return spaRunTask(sky_call2(j.mk, j.snapshot, j.rid))
-}
-
-// spaRpcComplete settles the in-flight RPC with its result Msg: the result is
-// applied to the snapshot the request was built from, and every Msg dispatched
-// since is replayed on top (spaRpcQueue.complete) — the model Sky.Live computes
-// for the same Msg order. Then paint, run the result's Cmd, reconcile subs and
-// persist, exactly like step.
-func spaRpcComplete(resMsg any) {
-	prevModel := spaModel
-	defer func() {
-		if r := recover(); r != nil {
-			spaModel = prevModel
-			spaReportPanic("rpc-apply", r)
-		}
-	}()
-	m, cmd, err := spaRpcQ.complete(resMsg, spaModel, spaUpdate, spaGuardedStep)
-	if err != nil {
-		spaReportPanic("rpc-rebase", err)
-	}
-	spaModel = m
-	renderCurrent()
-	spaSyncURLFromDOM(true)
-	spaScrollOnNavigate()
-	interpretCmd(asCmdT(cmd), spaDispatch)
-	reconcileSubs()
-	spaPersistAfterStep(prevModel, spaModel)
-}
-
-// spaDispatchUnrecorded runs a Msg through the normal step path without
-// recording it in the in-flight RPC's replay log.
-func spaDispatchUnrecorded(msg any) {
-	j := spaRpcQ.inFlight()
-	var saved []any
-	if j != nil {
-		saved = j.log
-	}
-	step(msg)
-	if j != nil {
-		j.log = saved
-	}
+	return spaRunTask(sky_call(j.mk, j.rid))
 }
 
 // spaApplyToMsg maps a perform/RPC Result to its Msg (typed assertion first,
@@ -985,20 +925,18 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// mirrors the server's `go runPerform` (live.go), minus the SSE/lock.
 		go performTask(cmd.task, cmd.toMsg, dispatch)
 	case "rpc":
-		// An auto-split server-branch RPC (Spa.rpc): queue it; it is sent when
-		// every earlier RPC has settled, from the model current at that moment.
-		spaRpcQ.enqueue(cmd.task, cmd.payload, cmd.toMsg)
-		spaRpcPump()
+		// An auto-split server-branch RPC (Spa.rpc / Spa.rpcHold): the request
+		// was built from the model the Msg ran on, so it is sent now, and
+		// several can be in flight. A hold RPC holds the Msg queue until it
+		// answers (spa_rpcqueue.go).
+		hold, _ := cmd.payload.(bool)
+		j := spaSch.issue(cmd.task, cmd.toMsg, hold)
+		go spaRpcSend(j)
 	case "followUps":
-		// The Msgs a server branch's command produced on the backend (SPA-3),
-		// dispatched in order through the client `update` on one goroutine, so
-		// each settles before the next.
-		msgs := spaAsList(cmd.payload)
-		go func() {
-			for _, m := range msgs {
-				step(m)
-			}
-		}()
+		// The Msgs a server branch's command produced on the backend (SPA-3):
+		// the completions of its own Cmds. They run in order through the
+		// client `update`, ahead of the Msgs that waited behind the branch.
+		spaSch.dispatchFirst(spaAsList(cmd.payload), step)
 	case "island":
 		// Cmd.toIsland: straight to the island runtime (island_wasm.go).
 		if ic, ok := islandCmdOf(cmd); ok {
@@ -1110,16 +1048,21 @@ func performTask(task, toMsg any, dispatch func(any)) {
 //
 // "subscribeTopic" leaves are ALSO reconciled here (identity = the topic
 // string): each opens an EventSource to the auto-split backend's
-// `/_sky/sub?topic=<topic>` push endpoint (openTopic). Sub kinds "stream" /
-// "websocket" are still not wired on the client in v1.
+// `/_sky/sub?topic=<topic>` push endpoint (openTopic). "subscribeWebSocket"
+// leaves attach to the client's own browser sockets (websocket_wasm.go). The
+// Sub kind "stream" is not wired on the client.
 func reconcileSubs() {
 	desired := map[int]any{}          // interval ms -> msg (last-write-wins per interval)
 	desiredTopics := map[string]any{} // topic -> toMsg (last-write-wins per topic)
+	root := subT{kind: "none"}
 	if spaSubs != nil {
-		root := asSubT(spaSubs(spaModel))
+		root = asSubT(spaSubs(spaModel))
 		collectEvery(root, desired)
 		collectTopics(root, desiredTopics)
 	}
+	// WebSocket Subs (WebSocket.onOpen / onMessage / onClose / onError) on the
+	// client's own sockets (websocket_wasm.go).
+	wsReconcileSubs(root)
 
 	// Stop intervals no longer desired.
 	for ms, t := range spaTimers {
@@ -1217,7 +1160,7 @@ func openTopic(topic string, toMsg any) {
 				})
 			return nil
 		}
-		step(msg)
+		spaDispatch(msg)
 		return nil
 	})
 	sub.es.Call("addEventListener", "message", sub.onMsg)
@@ -1339,7 +1282,7 @@ func startTimer(ms int, msg any) {
 		if isFunc(m) {
 			m = sky_call(m, nowMillis())
 		}
-		step(m)
+		spaDispatch(m)
 		return nil
 	})
 	t.id = js.Global().Call("setInterval", t.fn, ms)

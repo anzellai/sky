@@ -348,8 +348,10 @@ fn a_relay_arm_that_writes_the_key_field_is_still_refused() {
 
 /// A relay root that also writes the model is not a client-result RPC: that
 /// answer carries only the task result, so the write (`status = "sending"`)
-/// would be lost. It takes the follow-up path, which applies the write-set and
-/// then dispatches the result Msg.
+/// would be lost. It takes the follow-up path. The write reads no server data,
+/// so it runs in the client when `SendHello` runs, as on Sky.Live; the answer
+/// applies no write (Msgs that ran meanwhile keep theirs) and dispatches the
+/// result Msg.
 #[test]
 fn a_relay_root_that_writes_the_model_keeps_its_write() {
     let dir = spa_variant(
@@ -376,8 +378,20 @@ fn a_relay_root_that_writes_the_model_keeps_its_write() {
         .and_then(|r| r.split("AppliedSendHello (Err").next())
         .unwrap_or_default();
     assert!(
-        applied.contains("status = resp.status") && applied.contains("spaDecodeFollows_"),
-        "the answer applies the write and then the follow-up:\n{applied}"
+        !applied.contains("status = resp.status") && applied.contains("spaDecodeFollows_"),
+        "the answer dispatches the follow-up and does not re-apply the write:\n{applied}"
+    );
+    // The client arm: from its pattern line to the RPC it sends.
+    let rpc_at = front.find("\"/_rpc/SendHello\"").expect("SendHello RPC");
+    let arm_start = front[..rpc_at]
+        .rfind("\n        SendHello")
+        .expect("SendHello arm");
+    let arm = &front[arm_start..rpc_at];
+    assert!(
+        arm.contains("status = \"sending\"")
+            && arm.contains("Spa.rpc ")
+            && !arm.contains("Spa.rpcHold"),
+        "the write runs in the client arm, with an async RPC:\n{arm}"
     );
     let _ = std::fs::remove_dir_all(&out);
     let _ = std::fs::remove_dir_all(&dir);

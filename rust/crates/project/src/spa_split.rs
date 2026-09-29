@@ -1643,10 +1643,6 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
     }
 }
 
-/// The lambda parameter the frontend's `Spa.rpc` request builder binds: the
-/// model snapshot the client passes when it SENDS the request.
-pub(crate) const SPA_RPC_MODEL: &str = "spaM_";
-
 /// SHARED WIRE EMIT — client leg: build the RPC `Req` value from the client
 /// model + Msg args. The exact inverse of [`emit_reconstruct`]'s read-set — what
 /// the frontend SENDS is what the backend reconstructs.
@@ -2148,8 +2144,7 @@ pub fn generate(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "app".to_string());
-    let report: SpaPartitionReport =
-        spa_partition::analyze_loaded(&db, entry, &check_ids, proj_name.clone())?;
+    let (report, chain_notes) = analyze_for_split(&db, entry, &check_ids, proj_name.clone())?;
 
     // The generator needs a per-branch `case msg of` split — EXCEPT for an
     // `update` with no `case` that is entirely PURE: every Msg then runs in the
@@ -2186,7 +2181,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         ));
     }
 
-    let mut notes: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = chain_notes;
     let mut warnings: Vec<String> = Vec::new();
 
     // ---- multi-module routing (§17) ----
@@ -2309,7 +2304,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .iter()
         .map(|r| (r.ctor.clone(), r.msg_arg_tys.clone()))
         .collect();
-    let arm_routes = ArmRoutes::from_report(&report.branches, &routes);
+    let arm_routes = ArmRoutes::from_report(&report.branches, &routes, &report.chaining_branches);
     let mut client_names: Vec<String> = Vec::new();
     for b in report.branches.iter().filter(|b| !b.server) {
         let name = ctor_name(&b.msg).to_string();
@@ -3381,7 +3376,7 @@ pub fn generate_diff_fuzz(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "app".to_string());
-    let report = spa_partition::analyze_loaded(&db, entry, &check_ids, proj_name.clone())?;
+    let (report, _) = analyze_for_split(&db, entry, &check_ids, proj_name.clone())?;
     if report.whole_update.is_some() || report.branches.is_empty() {
         return Err(
             "cannot fuzz: `update` has no resolvable `case msg of` (per-branch analysis unavailable)".into(),
@@ -7450,14 +7445,50 @@ pub(crate) struct ArmRoutes {
     server: HashMap<usize, Option<String>>,
     /// Client arm indices.
     client: HashSet<usize>,
+    /// Server constructors whose RPC is ASYNC (`Spa.rpc`): the arm's own model
+    /// write is empty or runs in the client, so the RPC holds nothing and its
+    /// result arrives as a Msg. Every other server constructor is a HOLD RPC
+    /// (`Spa.rpcHold`): its own write needs the server (or its continuation
+    /// chain settles there), so later Msgs wait for it, as they wait on a
+    /// Sky.Live session during a synchronous update (runtime-go
+    /// spa_rpcqueue.go). Empty (every server constructor holds, the sound
+    /// default) when the report carries no per-arm verdicts.
+    async_heads: HashSet<String>,
+    /// The async constructors whose server arms write the model: each arm keeps
+    /// its model half in the client (it reads no server data), and only its
+    /// command goes over the wire. Their `Applied<Msg>` arm then applies no
+    /// write-set: the client already made that write, and Msgs that ran since
+    /// must not be overwritten.
+    client_model: HashSet<String>,
 }
 
 impl ArmRoutes {
     fn from_report(
         branches: &[spa_partition::BranchVerdict],
         routes: &[spa_partition::ServerRoute],
+        chaining: &[String],
     ) -> ArmRoutes {
         let mut out = ArmRoutes::default();
+        for r in routes {
+            let head = &r.ctor;
+            if chaining.contains(head) {
+                continue; // the chain settles on the server from the request: hold.
+            }
+            let arms: Vec<&spa_partition::BranchVerdict> = branches
+                .iter()
+                .filter(|b| b.server && ctor_name(&b.msg) == head.as_str())
+                .collect();
+            let writes = arms.iter().any(|b| {
+                b.io.as_ref()
+                    .is_none_or(|io| io.writes_whole_model || !io.write_fields.is_empty())
+            });
+            if !writes {
+                out.async_heads.insert(head.clone());
+            } else if !arms.is_empty() && arms.iter().all(|b| b.own_model_client) {
+                out.async_heads.insert(head.clone());
+                out.client_model.insert(head.clone());
+            }
+        }
         for r in routes {
             for a in &r.arms {
                 if let (Some(i), true) = (a.index, a.server) {
@@ -7478,6 +7509,37 @@ impl ArmRoutes {
     fn is_empty(&self) -> bool {
         self.server.is_empty() && self.client.is_empty()
     }
+}
+
+/// The client body of a server arm whose model half runs in the client: the
+/// arm's own `( model, cmd )` tuple, verbatim, with the command half replaced by
+/// `call` (the RPC). `None` when the arm body is not a direct tuple (through
+/// parentheses) of two elements.
+fn client_model_arm_body(arm: &syntax::ast::MatchArm, src: &str, call: &str) -> Option<String> {
+    use syntax::ast::Expr as E;
+    let mut e = arm.body()?;
+    while let E::Paren(p) = &e {
+        e = p.syntax().children().find_map(E::cast)?;
+    }
+    let E::Tuple(t) = &e else {
+        return None;
+    };
+    let xs: Vec<E> = t.syntax().children().filter_map(E::cast).collect();
+    if xs.len() != 2 {
+        return None;
+    }
+    let body = e.syntax().text_range();
+    let cmd = xs[1].syntax().text_range();
+    let start: usize = body.start().into();
+    let cmd_start: usize = cmd.start().into();
+    let cmd_end: usize = cmd.end().into();
+    let end: usize = body.end().into();
+    Some(format!(
+        "{}{}{}",
+        &src[start..cmd_start],
+        call,
+        &src[cmd_end..end]
+    ))
 }
 
 fn gen_frontend_update(
@@ -7581,15 +7643,16 @@ fn gen_frontend_update(
             // the phase-2 differential fuzzer). The inverse of the backend's
             // reconstruct: what is sent is what is reconstructed.
             //
-            // SPA-1/SPA-2: the payload is a FUNCTION of the model (`\spaM_ ->
-            // …`), not a value built now. `Spa.rpc` queues the call; the client
-            // runs one RPC at a time in dispatch order and builds each request
-            // from the model current when it is SENT (a second `Inc` then reads
-            // the first `Inc`'s result), and rebases the response onto that
-            // snapshot with every later Msg replayed on top (runtime-go
-            // spa_rpcqueue.go) — Sky.Live's order. Msg args are captured by the
-            // closure, so they keep their dispatch-time values.
-            let payload = emit_build_req(io, SPA_RPC_MODEL, model_field_names);
+            // The payload is built from the model this Msg runs on, as Sky.Live
+            // runs the server `update` on the model current at dispatch. The
+            // request is sent at once (runtime-go spa_rpcqueue.go). A HOLD
+            // constructor (`Spa.rpcHold`) holds later Msgs until it answers, so
+            // a second `Inc` runs, and reads, after the first one's result; an
+            // ASYNC one (`Spa.rpc`) lets them run meanwhile, and its result
+            // arrives as its own Msg.
+            let payload = emit_build_req(io, model_param, model_field_names);
+            let hold = !arm_routes.async_heads.contains(&m);
+            let rpc_fn = if hold { "Spa.rpcHold" } else { "Spa.rpc" };
             // SPA-3: a follow-up branch whose command holds a `Std.Native`
             // client effect sends it with `Spa.rpcWith`: the client runs that
             // residual from the send-time snapshot (bound to the arm's model
@@ -7603,18 +7666,38 @@ fn gen_frontend_update(
                 let alias = f.native_alias.ok_or_else(|| {
                     format!("sky.spa: server branch `{m}` returns a Std.Native client effect, but its module does not import Std.Native")
                 })?;
+                // The residual runs in the client when the request is sent, on
+                // the model this Msg runs on.
                 let residual = native_residual(arm.syntax(), src, alias, f.tainted, &m)?;
                 format!(
-                    "Spa.rpcWith {req_codec} {resp_codec} \"/_rpc/{m}\" (\\{SPA_RPC_MODEL} -> {payload}) (\\{model_param} -> {residual}) Applied{m}"
+                    "Cmd.batch [ {residual}, {rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m} ]"
                 )
             } else {
-                format!(
-                    "Spa.rpc {req_codec} {resp_codec} \"/_rpc/{m}\" (\\{SPA_RPC_MODEL} -> {payload}) Applied{m}"
-                )
+                format!("{rpc_fn} {req_codec} {resp_codec} \"/_rpc/{m}\" {payload} Applied{m}")
             };
-            arms_out.push_str(&format!(
-                "        {pat_text} ->\n            ( {model_param}\n            , {call}\n            )\n\n"
-            ));
+            // An async constructor whose arm writes the model keeps that write
+            // in the client: the arm is written out as it stands, with only its
+            // command half replaced by the RPC. The model half reads no server
+            // data (spa_partition `own_model_client`), so it runs here once,
+            // when the Msg runs, exactly as on Sky.Live.
+            let client_model_text = if arm_routes.client_model.contains(&m) {
+                Some(
+                    client_model_arm_body(&arm, src, &call).ok_or_else(|| {
+                        format!(
+                            "sky.spa: server branch `{m}`: the analysis read a direct `( model, cmd )` \
+                             tuple, but the split could not find it in the source"
+                        )
+                    })?,
+                )
+            } else {
+                None
+            };
+            match client_model_text {
+                Some(body) => arms_out.push_str(&format!("        {pat_text} ->\n            {body}\n\n")),
+                None => arms_out.push_str(&format!(
+                    "        {pat_text} ->\n            ( {model_param}\n            , {call}\n            )\n\n"
+                )),
+            }
         } else {
             // Pure client-local branch — verbatim.
             let text = slice(src, arm.syntax());
@@ -7625,6 +7708,15 @@ fn gen_frontend_update(
     }
     // Generated Applied<Msg> apply arms.
     for (m, io) in server {
+        // The write-set the Applied arm folds back: none when the client already
+        // made the arm's own write (an async constructor with a client model
+        // half); the server's write-set otherwise.
+        let client_made_write = arm_routes.client_model.contains(m);
+        let apply_delta = if client_made_write {
+            format!("            ( {model_param}, Cmd.none )")
+        } else {
+            emit_apply_delta(io, model_param)
+        };
         // PATTERN-2 (client-result perform): the RPC answered with the task
         // RESULT (`resp.result : Result Error T`). DISPATCH the client result Msg
         // with the WHOLE result value into `update`, so its client arm runs in the
@@ -7643,7 +7735,7 @@ fn gen_frontend_update(
             // server branch's command produced, in order. A follow-up that cannot
             // be decoded is reported (App.withRpcError, else the console) — never
             // silently dropped.
-            let inner = emit_apply_delta(io, model_param).trim().to_string();
+            let inner = apply_delta.trim().to_string();
             let err_body = if has_rpc_error {
                 format!("update (spaRpcError_ e_) {model_param}")
             } else {
@@ -7662,7 +7754,7 @@ fn gen_frontend_update(
             )
         } else {
             // Shared client-leg apply-delta (also emitted by the phase-2 fuzzer).
-            emit_apply_delta(io, model_param)
+            apply_delta
         };
         // The Err arm. When the app declared `App.withRpcError`, route the error
         // INTO `update` via `spaRpcError_ e` so the app's own view can show it
@@ -7967,6 +8059,72 @@ fn union_variant_arg_types(d: &syntax::ast::Decl, name: &str) -> Option<Vec<ty::
 /// declares the `Msg` union. A pair whose type cannot be recovered is DROPPED
 /// (fail closed): the root then stays a plain wire branch everywhere, because
 /// every split-side consumer reads THIS map.
+/// The partition the split generates from. A continuation whose arm is client
+/// runs in the client when its task's result arrives, so its argument crosses
+/// the wire. One whose argument has no wire codec settles on the server instead
+/// (a server chain, a hold RPC), as every such continuation did before v0.27.0,
+/// rather than failing the build; the returned note says so.
+fn analyze_for_split(
+    db: &SkyDatabase,
+    entry: ModuleId,
+    check_ids: &[ModuleId],
+    project: String,
+) -> Result<(SpaPartitionReport, Vec<String>), String> {
+    let report = spa_partition::analyze_loaded(db, entry, check_ids, project.clone())?;
+    let keep_on_server = unwireable_continuations(db, check_ids, &report);
+    if keep_on_server.is_empty() {
+        return Ok((report, Vec::new()));
+    }
+    let report =
+        spa_partition::analyze_loaded_keeping(db, entry, check_ids, project, &keep_on_server)?;
+    let note = format!(
+        "continuation(s) {:?} run on the server inside the RPC that performs them: their argument has no wire codec, so they cannot run in the client. That RPC holds later Msgs until it answers; declare a `Codec` for the argument to run them in the client.",
+        keep_on_server.iter().collect::<Vec<_>>()
+    );
+    Ok((report, vec![note]))
+}
+
+/// The continuation Msgs whose client arm would run in the client (a
+/// client-result or follow-up Msg) but whose argument has no wire codec: they
+/// must settle on the server (see [`spa_partition::analyze_loaded_keeping`]).
+fn unwireable_continuations(
+    db: &SkyDatabase,
+    check_ids: &[ModuleId],
+    report: &SpaPartitionReport,
+) -> BTreeSet<String> {
+    let registry = build_codec_registry(db, check_ids);
+    let shapes = build_project_shapes(db, check_ids);
+    let mut resolver = CodecResolver::new(&registry, &shapes);
+    resolver.device_keys = report.client_crypto;
+    let arg_tys = |name: &str| -> Option<Vec<ty::Ty>> {
+        for m in check_ids {
+            for d in db.module_parse(*m).tree().decls() {
+                if let Some(args) = union_variant_arg_types(&d, name) {
+                    return Some(args);
+                }
+            }
+        }
+        None
+    };
+    let mut candidates: BTreeSet<String> = report
+        .client_result
+        .iter()
+        .map(|(_, rm)| rm.clone())
+        .collect();
+    for fu in &report.follow_up {
+        if let Some(ctors) = &fu.ctors {
+            candidates.extend(ctors.iter().cloned());
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|c| match arg_tys(c) {
+            Some(tys) => tys.iter().any(|t| resolver.resolve(t).is_err()),
+            None => false,
+        })
+        .collect()
+}
+
 fn build_client_result_map(
     db: &SkyDatabase,
     check_ids: &[ModuleId],

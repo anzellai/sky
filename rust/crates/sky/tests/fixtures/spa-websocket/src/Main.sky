@@ -1,0 +1,206 @@
+module Main exposing (main)
+
+-- A Sky.Spa (web:app) client that holds its own WebSocket to its backend
+-- (scripts/spa-websocket-e2e.sh). The client runs Sky.Core.WebSocket over the
+-- browser WebSocket API: `connect "/ws"` opens a same-origin socket (it passes
+-- a strict `connect-src 'self'`), and the backend serves it with
+-- `Sky.Http.Server.WebSocket.upgrade`, mounted with `App.api`.
+--
+--   * socket 1 is read by a Sub (`WebSocket.onMessage`): a text frame and a
+--     binary frame go out, and the echo of each comes back as a Msg;
+--   * socket 2 is read by a Task (`send` then `receiveWithin`).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.WebSocket as WebSocket exposing (WebSocket, WebSocketMessage(..))
+import Sky.Http.Server exposing (Request, Response)
+import Sky.Http.Server.WebSocket as Ws
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type Page
+    = HomePage
+
+type alias Model =
+    { page : Page
+    , sock : Maybe WebSocket
+    , log : String
+    , sock2 : Maybe WebSocket
+    , got2 : String
+    }
+
+type Msg
+    = Connect
+    | Connected (Result Error WebSocket)
+    | SendText
+    | SendBinary
+    | Sent (Result Error ())
+    | Got WebSocketMessage
+    | Connect2
+    | Connected2 (Result Error WebSocket)
+    | Ping2
+    | Received2 (Result Error (Maybe WebSocketMessage))
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { page = HomePage, sock = Nothing, log = "", sock2 = Nothing, got2 = "-" }
+    , Cmd.none
+    )
+
+
+note : String -> Model -> Model
+note line model =
+    { model | log = model.log ++ line ++ ";" }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Connect ->
+            ( model, Cmd.perform (WebSocket.connect "/ws") Connected )
+
+        Connected (Ok s) ->
+            ( note "open" { model | sock = Just s }, Cmd.none )
+
+        Connected (Err e) ->
+            ( note ("connect failed: " ++ errorToString e) model, Cmd.none )
+
+        SendText ->
+            case model.sock of
+
+                Just s ->
+                    ( model, Cmd.perform (WebSocket.send s "hello") Sent )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        SendBinary ->
+            case model.sock of
+
+                Just s ->
+                    ( model, Cmd.perform (WebSocket.sendBinary s "bé") Sent )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        Sent (Ok _) ->
+            ( model, Cmd.none )
+
+        Sent (Err e) ->
+            ( note ("send failed: " ++ errorToString e) model, Cmd.none )
+
+        Got (Text t) ->
+            ( note ("T:" ++ t) model, Cmd.none )
+
+        Got (Binary b) ->
+            ( note ("B:" ++ b) model, Cmd.none )
+
+        Connect2 ->
+            ( model, Cmd.perform (WebSocket.connect "/ws") Connected2 )
+
+        Connected2 (Ok s) ->
+            ( { model | sock2 = Just s, got2 = "open" }, Cmd.none )
+
+        Connected2 (Err e) ->
+            ( { model | got2 = "connect failed: " ++ errorToString e }
+            , Cmd.none
+            )
+
+        Ping2 ->
+            case model.sock2 of
+
+                Just s ->
+                    ( model
+                    , Cmd.perform
+                          (WebSocket.send s "ping2"
+                              |> Task.andThen
+                                     (\_ -> WebSocket.receiveWithin 5000 s))
+                          Received2
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        Received2 (Ok (Just (Text t))) ->
+            ( { model | got2 = t }, Cmd.none )
+
+        Received2 (Ok _) ->
+            ( { model | got2 = "no text frame" }, Cmd.none )
+
+        Received2 (Err e) ->
+            ( { model | got2 = "receive failed: " ++ errorToString e }
+            , Cmd.none
+            )
+
+
+row : String -> String -> Element Msg
+row id txt =
+    Ui.el [ Ui.htmlAttribute "id" id ] (Ui.text txt)
+
+
+btn : String -> Msg -> Element Msg
+btn id m =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just m, label = Ui.text id }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 4 ]
+        [ row "log" ("LOG=" ++ model.log)
+        , row "got2" ("GOT2=" ++ model.got2)
+        , btn "connect" Connect
+        , btn "sendText" SendText
+        , btn "sendBinary" SendBinary
+        , btn "connect2" Connect2
+        , btn "ping2" Ping2
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model.sock of
+
+        Just s ->
+            WebSocket.onMessage s Got
+
+        Nothing ->
+            Sub.none
+
+
+-- The backend's echo: a text frame comes back prefixed, a binary frame comes
+-- back twice (byte for byte).
+echo : Ws.WebSocketServer -> WebSocketMessage -> Task Error ()
+echo sock frame =
+    case frame of
+
+        Text s ->
+            Ws.sendToClient sock ("echo " ++ s)
+
+        Binary b ->
+            Ws.sendBinaryToClient sock (b ++ b)
+
+
+wsHandler : Request -> Task Error Response
+wsHandler req =
+    Ws.upgrade req (Ws.defaultCfg |> Ws.withOnFrame echo)
+
+
+routes : List any
+routes =
+    [ App.route "/" HomePage, App.api "GET /ws" wsHandler ]
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withRoutes routes
+            |> App.withNotFound HomePage)

@@ -316,7 +316,14 @@ fn classify_kernel_in(client_crypto: bool, module: &str, func: &str) -> KernelCl
 /// `hir::KERNEL_MODULES` pseudo-module, so it is not (and need not be) in the
 /// EFFECT/PURE exhaustiveness lists. Adding a family here is a deliberate
 /// statement that its effect is safe + correct to run client-side.
-const CLIENT_EFFECT_KERNELS: &[&str] = &["Native"];
+///
+/// `WebSocket` (`Sky.Core.WebSocket`, kernel prefix `WebSocket_`) is here since
+/// v0.27.0: a Sky.Spa client holds its own socket over the browser WebSocket
+/// API (runtime-go websocket_wasm.go), so a live connection to the backend (or
+/// any peer) is not a chain of short RPCs. The native client (websocket.go)
+/// stays for Live, Task programs and the backend itself. Its Subs
+/// (`Sub_subscribeWebSocket`) are `Sub` plumbing, already neutral.
+const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket"];
 
 /// Classify a kernel pseudo-module + function. `module` is the pseudo name
 /// (`Db`, `Http`, `System`, …) as produced by the resolver's `Res::Kernel`, or
@@ -941,6 +948,15 @@ pub struct BranchVerdict {
     /// verdict). The split routes each ARM, not each constructor: see
     /// [`server_routes`].
     pub arm: Option<ArmShape>,
+    /// A SERVER arm that returns a direct `( model, cmd )` tuple whose MODEL
+    /// half reaches no server effect and no server-tainted value: the client can
+    /// compute that model write itself, when the Msg runs, exactly as Sky.Live
+    /// does, and only the command needs the round trip. The split then emits
+    /// the model half in the client and an async `Spa.rpc`; otherwise the arm's
+    /// own write needs the server, and its RPC holds later Msgs until it
+    /// answers (`Spa.rpcHold`, runtime-go spa_rpcqueue.go). `false` for a
+    /// client arm and for every shape the analysis cannot read.
+    pub own_model_client: bool,
 }
 
 /// One `case msg of` arm's position and pattern, for routing it (see
@@ -1597,6 +1613,22 @@ pub fn analyze_loaded(
     check_ids: &[ModuleId],
     project: String,
 ) -> Result<SpaPartitionReport, String> {
+    analyze_loaded_keeping(db, entry, check_ids, project, &BTreeSet::new())
+}
+
+/// [`analyze_loaded`], with `keep_on_server`: the continuation Msgs whose CLIENT
+/// arm may still settle inside a server chain (§18). A continuation whose arm
+/// is client runs in the client when its task's result arrives (the
+/// client-result / follow-up paths), so its argument crosses the wire. The
+/// `spa-split` generator names here the ones whose argument has no wire codec,
+/// and they settle on the server as before, in a hold RPC.
+pub fn analyze_loaded_keeping(
+    db: &skydb::SkyDatabase,
+    entry: ModuleId,
+    check_ids: &[ModuleId],
+    project: String,
+    keep_on_server: &BTreeSet<String>,
+) -> Result<SpaPartitionReport, String> {
     let check_ids = check_ids.to_vec();
     let entry_module_name = db.module_name(entry).to_string();
 
@@ -1739,6 +1771,7 @@ pub fn analyze_loaded(
                     view_def,
                     subs_def,
                     &extra_client,
+                    keep_on_server,
                     &mut branches,
                 );
                 server_internal = chaining.server_internal;
@@ -3041,6 +3074,7 @@ fn classify_case_arms(
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
+                own_model_client: own_model_client(db, graph, body, arms[i].body, shared, ctx),
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -3060,6 +3094,7 @@ fn classify_case_arms(
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
+                own_model_client: own_model_client(db, graph, body, arms[i].body, shared, ctx),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -3083,6 +3118,7 @@ fn classify_case_arms(
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, false)),
+                own_model_client: false,
             });
         }
     }
@@ -3862,6 +3898,7 @@ fn compute_server_chaining(
     view_def: Option<DefId>,
     subs_def: Option<DefId>,
     extra_client: &BTreeSet<String>,
+    keep_on_server: &BTreeSet<String>,
     branches: &mut [BranchVerdict],
 ) -> ServerChaining {
     let mut out = ServerChaining::default();
@@ -4001,7 +4038,25 @@ fn compute_server_chaining(
                                         // A perform to a client-dispatched Msg is
                                         // ambiguous ownership — the chain escapes to
                                         // the client, so it cannot settle server-side.
-                                        if client_dispatched.contains(&m) {
+                                        //
+                                        // A perform to a Msg whose arm is CLIENT
+                                        // (reaches no server effect) does not join
+                                        // the chain either: that arm must run in the
+                                        // client, when the task's result arrives, on
+                                        // the model the client holds then — Sky.Live
+                                        // runs it at that time. Settled on the
+                                        // server it would read the send-time
+                                        // snapshot and overwrite what the client
+                                        // did meanwhile. The branch goes to the
+                                        // client-result (pattern-2) or follow-up
+                                        // path, whose result Msg runs in the client
+                                        // — unless its argument cannot cross the
+                                        // wire (`keep_on_server`, named by the
+                                        // generator): then it settles here.
+                                        if client_dispatched.contains(&m)
+                                            || (!server_head_set.contains(&m)
+                                                && !keep_on_server.contains(&m))
+                                        {
                                             dirty = true;
                                         } else {
                                             clean_conts.push(m);
@@ -5783,6 +5838,34 @@ fn arm_direct_reason(db: &dyn SkyDb, acc: &Refs, graph: &Graph) -> Option<String
     None
 }
 
+/// Whether a server arm's own MODEL write can run in the client (see
+/// [`BranchVerdict::own_model_client`]): the arm body is a direct `( model, cmd )`
+/// tuple, and the model half — collected on its own, with the refs the whole
+/// `update` shares — has no server reason, composes no other arm (`update X
+/// model`), and forces no effect. Anything else is `false`, the sound default:
+/// the arm then holds the queue while its RPC is in flight.
+fn own_model_client(
+    db: &dyn SkyDb,
+    graph: &Graph,
+    body: &Body,
+    arm_body: ExprId,
+    shared: &Refs,
+    ctx: &CollectCtx,
+) -> bool {
+    let Expr::Tuple(xs) = &body.exprs[arm_body] else {
+        return false;
+    };
+    if xs.len() != 2 {
+        return false;
+    }
+    let mut acc = shared.clone();
+    collect(body, xs[0], &mut acc, ctx);
+    arm_direct_reason(db, &acc, graph).is_none()
+        && acc.scoped_updates.is_empty()
+        && !acc.inline_force
+        && !acc.callees.iter().any(|c| graph.forces(*c))
+}
+
 /// The reason a composing arm is server: name the first scoped call it makes to
 /// a server arm, carrying that arm's origin ("composes DoServer (…)").
 fn compose_reason(
@@ -5877,6 +5960,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             forces_effect: acc.inline_force,
             effect_families: graph.families_for(acc),
             arm: None,
+            own_model_client: false,
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -5907,6 +5991,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
             effect_families: graph.families_for(acc),
             arm: None,
+            own_model_client: false,
         };
     }
     // Client — note a client effect if present.
@@ -5924,6 +6009,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         forces_effect: acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)),
         effect_families: graph.families_for(acc),
         arm: None,
+        own_model_client: false,
     }
 }
 
