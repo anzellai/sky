@@ -2,9 +2,12 @@ module Main exposing (main)
 
 {-| Std.Ui.Terminal e2e fixture, driven by scripts/ui-canvas-terminal-verify.mjs
 (see scripts/ui-canvas-terminal-e2e.sh) under a strict Content-Security-Policy,
-as a Sky.Live app. The page shows a terminal bound to `sh` on a PTY. The same
-program built for Sky.Spa (--target web:app) must be refused with a clear
-error: the PTY lives on the server.
+as a Sky.Live app. The page shows a terminal bound to `sh` on a PTY. The
+"new shell" button spawns a fresh `sh` and attaches it to the mounted widget
+(the attach path the terminal-race case repeats: the first screen read and
+the resize to the widget's size run at once); the old shell is closed. The
+same program built for Sky.Spa (--target web:app) must be refused with a
+clear error: the PTY lives on the server.
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -19,24 +22,31 @@ import Std.Ui.Terminal as Terminal exposing (Terminal)
 type alias Model =
     { term : Terminal
     , status : String
+    , shells : Int
     }
 
 type Msg
     = Spawned (Result Error Process)
+    | NewShell
+    | Closed (Result Error ())
     | Term Terminal.Msg
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { term = Terminal.init "shell", status = "starting" }
-    , Cmd.perform
-          (Process.command "sh"
-              |> Process.withEnv
-                     [ ( "PS1", "$ " ), ( "TERM", "xterm-256color" ) ]
-              |> Process.withPty { cols = 80, rows = 24 }
-              |> Process.spawn)
-          Spawned
+    ( { term = Terminal.init "shell", status = "starting", shells = 0 }
+    , spawnShell
     )
+
+
+spawnShell : Cmd Msg
+spawnShell =
+    Cmd.perform
+        (Process.command "sh"
+            |> Process.withEnv [ ( "PS1", "$ " ), ( "TERM", "xterm-256color" ) ]
+            |> Process.withPty { cols = 80, rows = 24 }
+            |> Process.spawn)
+        Spawned
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -46,8 +56,28 @@ update msg model =
         Spawned (Ok p) ->
             let
                 ( term, cmd ) = Terminal.attach Term p model.term
+                shells = model.shells + 1
+                closeOld =
+                    case Terminal.process model.term of
+
+                        Just old ->
+                            Cmd.perform (Process.close old) Closed
+
+                        Nothing ->
+                            Cmd.none
             in
-                ( { model | term = term, status = "running" }, cmd )
+                ( { model | term = term
+                  , status = "running " ++ String.fromInt shells
+                  , shells = shells
+                  }
+                , Cmd.batch [ cmd, closeOld ]
+                )
+
+        NewShell ->
+            ( model, spawnShell )
+
+        Closed _ ->
+            ( model, Cmd.none )
 
         Spawned (Err _) ->
             ( { model | status = "spawn failed" }, Cmd.none )
@@ -66,6 +96,9 @@ view model =
         [ Ui.el
               [ Ui.htmlAttribute "id" "status" ]
               (Ui.text ("status=" ++ model.status))
+        , Ui.button
+              [ Ui.htmlAttribute "id" "new-shell" ]
+              { onPress = Just NewShell, label = Ui.text "new shell" }
         , Ui.el
               [ Ui.htmlAttribute "id" "term-box", Ui.width Ui.fill ]
               (Terminal.view Term model.term [ Ui.height (Ui.px 300) ])

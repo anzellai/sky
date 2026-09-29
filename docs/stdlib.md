@@ -117,7 +117,9 @@ name : String
 name = Maybe.withDefault "Anonymous" maybeName
 ```
 
-`withDefault`, `map`, `andThen`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `isJust`, `isNothing`.
+`withDefault`, `map`, `andThen`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `isJust`, `isNothing`, `toResult`.
+
+`Maybe.toResult : e -> Maybe a -> Result e a` turns `Just a` into `Ok a` and `Nothing` into `Err err`: it gives a missing value the error that says why it is missing (`Dict.get id users |> Maybe.toResult Error.notFound`). It is the same function as `Result.fromMaybe`, and it works with or without `import Sky.Core.Maybe`.
 
 ### `Result` — fallible computations
 
@@ -133,9 +135,11 @@ id =
             println ("computation failed: " ++ Error.toString e) 
 ```
 
-`withDefault`, `map`, `andThen`, `mapError`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `toMaybe`.
+`withDefault`, `map`, `andThen`, `mapError`, `map2`, `map3`, `map4`, `map5`, `andMap`, `combine`, `toMaybe`, `fromMaybe`.
 
 `Result.toMaybe : Result e a -> Maybe a` turns `Ok a` into `Just a` and `Err _` into `Nothing`. It drops the error, so use it only where the reason for a failure does not matter. It works with or without `import Sky.Core.Result`.
+
+`Result.fromMaybe : e -> Maybe a -> Result e a` is the other direction: `Just a` becomes `Ok a`, `Nothing` becomes `Err err`. The error comes first, as in Elm, so a pipeline reads `String.toInt s |> Result.fromMaybe (Error.invalidInput "not a number")`. It is the same function as `Maybe.toResult`, and it works with or without the import.
 
 The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenResult`) — see [Result/Task bridges](../CLAUDE.md#resulttask-bridges).
 

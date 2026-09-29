@@ -70,9 +70,24 @@ func chanClosed(c <-chan struct{}) bool {
 	}
 }
 
+// termScreenMadeHook, when set (tests only), runs after a new screen took
+// the PTY size and before it is published.
+var termScreenMadeHook func(h *procHandle)
+
 // screen returns the process's screen, making it on first use.
+//
+// It is made under sizeMu, the lock every resize holds: a resize either
+// finishes before the screen reads the size, or waits until the screen is
+// published and then resizes it. (Without the lock, Terminal.attach's first
+// read and its resize, which run at once, could leave the screen at the
+// spawn size while the program drew for the widget's size.)
 func (h *procHandle) screen() *procScreen {
 	if sc := h.scr.Load(); sc != nil {
+		return sc
+	}
+	h.sizeMu.Lock()
+	if sc := h.scr.Load(); sc != nil {
+		h.sizeMu.Unlock()
 		return sc
 	}
 	h.mu.Lock()
@@ -82,11 +97,33 @@ func (h *procHandle) screen() *procScreen {
 		cols, rows = 80, 24
 	}
 	sc := &procScreen{h: h, vt: newVTScreen(cols, rows), changed: make(chan struct{}), shadows: map[string]*termView{}}
-	if !h.scr.CompareAndSwap(nil, sc) {
-		return h.scr.Load()
+	if termScreenMadeHook != nil {
+		termScreenMadeHook(h)
 	}
+	h.scr.Store(sc)
+	h.sizeMu.Unlock()
 	sc.catchUp()
 	return sc
+}
+
+// resize sets the PTY size: the screen's (if it is made), the size a new
+// screen takes, and the PTY's window size, as one step under sizeMu, so
+// concurrent resizes and the making of the screen cannot leave them apart.
+func (h *procHandle) resize(cols, rows int) error {
+	h.sizeMu.Lock()
+	defer h.sizeMu.Unlock()
+	// The screen takes the new size first: the output the process
+	// writes after it learns the size is laid out at that size.
+	if sc := h.scr.Load(); sc != nil {
+		sc.resize(cols, rows)
+	}
+	h.mu.Lock()
+	h.ptyCols, h.ptyRows = cols, rows
+	h.mu.Unlock()
+	if h.pty == nil {
+		return nil
+	}
+	return procSetWinsize(h.pty, cols, rows)
 }
 
 // feedScreen runs the new stdout bytes through the screen, if there is one.

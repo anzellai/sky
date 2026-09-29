@@ -938,6 +938,16 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `tests/conformance/tests/TaskLoopConformanceTest.sky`).
 - **`Result.toMaybe : Result e a -> Maybe a`.** Works with and without
   `import Sky.Core.Result`.
+- **`Result.fromMaybe : e -> Maybe a -> Result e a` and `Maybe.toResult :
+  e -> Maybe a -> Result e a`.** `Just a` becomes `Ok a`, `Nothing` becomes
+  `Err err`. The error comes first, as in Elm's `Result.fromMaybe`, so a
+  pipeline reads `maybe |> Maybe.toResult err`. They are the same function
+  under both modules. Like `Result.toMaybe`, each is a Sky definition plus a
+  runtime kernel (`rt.Result_fromMaybe`, `rt.Maybe_toResult`), so it works
+  with and without the import (a pure Sky definition alone is not reachable
+  as `Maybe.x` without `import Sky.Core.Maybe`). Tests:
+  `TestMaybeToResultKernels`, `CoreHelpersConformanceTest` (kernel path),
+  `JsonConformanceTest` (imported path).
 - **`Sky.Core.Tuple`**: `pair`, `first`, `second`, `mapFirst`, `mapSecond`,
   `mapBoth` (the Elm `Tuple` module). Pure Sky; import it as
   `import Sky.Core.Tuple as Tuple`. `fst` / `snd` stay.
@@ -988,6 +998,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`Std.Ui.Terminal`: the server's screen could stay at the spawn size, so
+  a row went missing (for example after Escape in vim).** `Terminal.attach`
+  sends the first `Process.screen` read and the `Process.resize` to the
+  widget's size in one `Cmd.batch`, and they run at once. The read made the
+  screen at the size it read (the spawn size, 80x24); a resize that ran in
+  between found no screen yet and resized only the PTY. The program then drew
+  for the widget's size on a screen of 80 columns: vim's `^[` in the showcmd
+  column wrapped at the bottom row and scrolled row 0 away, in about 3 runs in
+  10 in Chromium and WebKit. The PTY bytes were the same in good and bad runs;
+  a reload repainted the same wrong screen (its resize then corrected the
+  size, not the content). The screen is now made, and every resize applied
+  (the screen, the recorded size and the PTY's window size), under one lock
+  (`procHandle.sizeMu`), so the screen and the PTY always end at the same
+  size; concurrent resizes could also leave them apart before. The reported
+  second symptom (a live widget on a stale alternate screen after a byte
+  replay) did not reproduce here as such: in 2 of 10 replays on the old
+  runtime the live screen had the same 80x24 size, and in 12 replays with the
+  fix the live widget and the repaint agreed. (`runtime-go/rt/process_screen.go`, `process_spawn.go`;
+  tests: `process_terminal_race_test.go`: a screen made during a resize, 200
+  rounds of concurrent resizes, and a logged vim session fed with random cuts
+  and timings while frames, repaints, catch-ups and resizes run from other
+  goroutines, compared with a single-threaded feed, under `-race`;
+  `scripts/ui-canvas-terminal-e2e.sh` terminal-race case: 16 fresh shells and
+  a vim Escape in Chromium and WebKit, which fails on the old runtime.)
 - **The native product name is made from the whole display name.**
   `Bundle.withName "Sky Probe"` with id `com.example.probe` built `Probe.app`
   with the executable and CFBundleName `Probe`: the name was the capitalised

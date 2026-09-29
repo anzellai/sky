@@ -136,3 +136,30 @@ func TestResultToMaybe(t *testing.T) {
 	}()
 	Result_toMaybe(42)
 }
+
+// Result.fromMaybe / Maybe.toResult: Just -> Ok, Nothing -> Err with the given
+// error, whatever the Maybe's type arg; a non-Maybe is a CoerceFailure.
+func TestMaybeToResultKernels(t *testing.T) {
+	for name, f := range map[string]func(any, any) any{"Result.fromMaybe": Result_fromMaybe, "Maybe.toResult": Maybe_toResult} {
+		if r := f("e", Just[any](7)).(SkyResult[any, any]); r.Tag != 0 || r.OkValue != 7 {
+			t.Fatalf("%s: Just 7 -> %+v, want Ok 7", name, r)
+		}
+		if r := f("e", Nothing[any]()).(SkyResult[any, any]); r.Tag != 1 || r.ErrValue != "e" {
+			t.Fatalf("%s: Nothing -> %+v, want Err \"e\"", name, r)
+		}
+		// A typed Maybe from typed codegen reads the same way.
+		if r := f("e", Just[int](3)).(SkyResult[any, any]); r.Tag != 0 || r.OkValue != 3 {
+			t.Fatalf("%s: typed Just 3 -> %+v, want Ok 3", name, r)
+		}
+		func() {
+			defer func() {
+				r := recover()
+				msg, _ := r.(string)
+				if kind, _ := classifyPanic(msg); kind != "CoerceFailure" {
+					t.Fatalf("%s: non-Maybe input: panic %v classified %q, want CoerceFailure", name, r, kind)
+				}
+			}()
+			f("e", 42)
+		}()
+	}
+}

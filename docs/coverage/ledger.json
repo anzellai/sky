@@ -265,7 +265,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1398,
+      "expected_assertions": 1408,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -702,7 +702,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2181,
+    "stdlib_entries": 2183,
     "stdlib_modules": 111,
     "surfaces_covered": 166,
     "surfaces_covered_pct": 93.3,
@@ -15269,7 +15269,7 @@
         }
       },
       "count": 756,
-      "pct_of_denominator": 34.7
+      "pct_of_denominator": 34.6
     }
   },
   "units": [
@@ -15291,8 +15291,8 @@
       "id": "apps:cli-verbs",
       "modules_imported": 56,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 367,
-      "refs_qualified": 343,
+      "refs_generous": 369,
+      "refs_qualified": 345,
       "role": "Layer2",
       "sky_files": 163,
       "sky_toml_sections": []
@@ -16449,8 +16449,8 @@
       "id": "tests/conformance",
       "modules_imported": 53,
       "path": "tests/conformance",
-      "refs_generous": 710,
-      "refs_qualified": 694,
+      "refs_generous": 712,
+      "refs_qualified": 696,
       "role": "Conformance",
       "sky_files": 41,
       "sky_toml_sections": []

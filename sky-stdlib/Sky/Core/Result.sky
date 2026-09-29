@@ -22,6 +22,7 @@ module Sky.Core.Result exposing
     , andMap
     , combine
     , toMaybe
+    , fromMaybe
     )
 
 
@@ -245,3 +246,21 @@ toMaybe result =
 
         Err _ ->
             Nothing
+
+
+-- | `fromMaybe err maybe` — `Just a` becomes `Ok a`, `Nothing` becomes
+-- `Err err`. The error comes first, as in Elm's `Result.fromMaybe`, so a
+-- pipeline reads `maybe |> Result.fromMaybe err`. `Maybe.toResult` is the
+-- same function under `Maybe`.
+--
+--     Result.fromMaybe Error.notFound (Just 42)   -- Ok 42
+--     Result.fromMaybe Error.notFound Nothing     -- Err Error.notFound
+fromMaybe : e -> Maybe a -> Result e a
+fromMaybe err maybe =
+    case maybe of
+
+        Just x ->
+            Ok x
+
+        Nothing ->
+            Err err
