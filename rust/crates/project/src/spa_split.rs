@@ -2193,6 +2193,30 @@ fn strip_names_from_import_exposing(text: &str, names: &HashSet<String>) -> Stri
     }
 }
 
+/// Drop, from every `import M exposing (…)` line of a frontend module text, the
+/// server-tainted names of `M`: the client copy of `M` (a subset, kept for its
+/// types and pure defs) does not define them. Per imported module, so a name
+/// tainted in `M` never removes the same name exposed by another module.
+fn strip_tainted_from_imports(
+    src: &str,
+    tainted_by_module: &HashMap<String, HashSet<String>>,
+) -> String {
+    let parse = syntax::parse(src, base::FileId(0));
+    let mut out = src.to_string();
+    for imp in parse.tree().imports() {
+        let path = imp.name().map(|n| n.text()).unwrap_or_default();
+        let Some(names) = tainted_by_module.get(&path) else {
+            continue;
+        };
+        let text = slice(src, imp.syntax());
+        let stripped = strip_names_from_import_exposing(text, names);
+        if stripped != text {
+            out = out.replacen(text, &stripped, 1);
+        }
+    }
+    out
+}
+
 /// A module name → its `src/`-relative file path (`Domain` → `Domain.sky`,
 /// `Data.Todo` → `Data/Todo.sky`), matching the compiler's dotted-module layout.
 fn module_relpath(name: &str) -> String {
@@ -2391,6 +2415,13 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // mapped to its defining module. A subset copy keeps the module's type
     // declarations and its pure defs, so the fixpoint also follows the subset
     // modules' own type and pure-def references.
+    // Modules kept ONLY because a frontend module names one of their types:
+    // (type name, written qualified). When every such type is copied into
+    // `Shared` and named bare, the client needs no copy of the module (the
+    // copy in `Shared` serves), and it stays backend-only (see below, after
+    // the copy set is known).
+    let mut type_only_needs: HashMap<ModuleId, Vec<(String, bool)>> = HashMap::new();
+    let mut needs_module_copy: HashSet<ModuleId> = referenced_subset_mods.clone();
     {
         let tainted_set: HashSet<ModuleId> = tainted_mods.iter().copied().collect();
         let mut frontier: Vec<ModuleId> = std::iter::once(entry)
@@ -2403,10 +2434,20 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 continue;
             }
             let resolved = db.resolve(fm);
+            let fm_text = db.module_parse(fm).syntax().text().to_string();
             let mut owners: Vec<ModuleId> = Vec::new();
             for occ in &resolved.type_occs {
                 if let Some(loc) = db.def_loc(occ.con) {
-                    if loc.module.index() != u32::MAX {
+                    if loc.module.index() != u32::MAX
+                        && loc.module != fm
+                        && tainted_set.contains(&loc.module)
+                    {
+                        let at = occ.span.range.0 as usize;
+                        let qualified = at > 0 && fm_text.as_bytes().get(at - 1) == Some(&b'.');
+                        type_only_needs
+                            .entry(loc.module)
+                            .or_default()
+                            .push((occ.name.as_str().to_string(), qualified));
                         owners.push(loc.module);
                     }
                 }
@@ -2418,6 +2459,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                     _ => None,
                 };
                 if let Some(loc) = target.and_then(|d| db.def_loc(d)) {
+                    if loc.module != fm && tainted_set.contains(&loc.module) {
+                        needs_module_copy.insert(loc.module);
+                    }
                     owners.push(loc.module);
                 }
             }
@@ -2550,29 +2594,6 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             no_frontend_mods.push(m);
         }
     }
-    // Modules with NO frontend copy — the security spine drops any import of one.
-    let no_frontend_names: HashSet<String> = no_frontend_mods
-        .iter()
-        .map(|m| db.module_name(*m).to_string())
-        .collect();
-    if !tainted_mods.is_empty() || !pure_sibling_mods.is_empty() {
-        let pure: Vec<String> = pure_sibling_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        let subset: Vec<String> = subset_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        let back: Vec<String> = no_frontend_mods
-            .iter()
-            .map(|m| db.module_name(*m).to_string())
-            .collect();
-        notes.push(format!(
-            "multi-module split (per-binding): pure module(s) {pure:?} copied to BOTH trees; server-only module(s) {back:?} routed backend-only; mixed module(s) {subset:?} split per-binding (client-safe bindings copied to the frontend; server bindings kept backend-only)."
-        ));
-    }
-
     let parse = db.module_parse(entry);
     let src = parse.syntax().text().to_string();
     let file = parse.tree();
@@ -3024,6 +3045,45 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // De-dup the exposing list (a name never appears twice across modules).
     let mut seen_exp: HashSet<String> = HashSet::new();
     copied_exposing.retain(|e| seen_exp.insert(e.clone()));
+
+    // A module kept only for types that `Shared` now owns, each named bare,
+    // needs no client copy: the frontend reads those types from `Shared`.
+    for m in subset_mods.clone() {
+        let only_copied_types = !needs_module_copy.contains(&m)
+            && m != update_module
+            && Some(m) != msg_module
+            && type_only_needs.get(&m).is_some_and(|needs| {
+                needs
+                    .iter()
+                    .all(|(name, qualified)| !qualified && copied_names.contains(name))
+            });
+        if only_copied_types {
+            subset_mods.retain(|x| *x != m);
+            no_frontend_mods.push(m);
+        }
+    }
+    // Modules with NO frontend copy — the security spine drops any import of one.
+    let no_frontend_names: HashSet<String> = no_frontend_mods
+        .iter()
+        .map(|m| db.module_name(*m).to_string())
+        .collect();
+    if !tainted_mods.is_empty() || !pure_sibling_mods.is_empty() {
+        let pure: Vec<String> = pure_sibling_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        let subset: Vec<String> = subset_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        let back: Vec<String> = no_frontend_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        notes.push(format!(
+            "multi-module split (per-binding): pure module(s) {pure:?} copied to BOTH trees; server-only module(s) {back:?} routed backend-only; mixed module(s) {subset:?} split per-binding (client-safe bindings copied to the frontend; server bindings kept backend-only)."
+        ));
+    }
 
     // ---- pure sibling modules the wire references (Shared imports them) ----
     // A referenced codec or a wire-field type DECLARED in a PURE sibling module
@@ -3502,6 +3562,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     write("backend/src/Shared.sky", &shared_src, &mut files)?;
     write("frontend/src/Shared.sky", &shared_src, &mut files)?;
     write("backend/src/Main.sky", &backend_src, &mut files)?;
+    let frontend_src = strip_tainted_from_imports(&frontend_src, &tainted_by_module);
     write("frontend/src/Main.sky", &frontend_src, &mut files)?;
     // The generated projects must be able to REBUILD any third-party imports the
     // app uses: carry the `[dependencies]` (Sky packages) + `["go.dependencies"]`
@@ -3595,6 +3656,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         } else {
             own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions)
         };
+        let frontend_text = strip_tainted_from_imports(&frontend_text, &tainted_by_module);
         write(&format!("frontend/src/{rel}"), &frontend_text, &mut files)?;
     }
     for m in &tainted_mods {
@@ -3659,6 +3721,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             } else {
                 subset
             };
+            let subset = strip_tainted_from_imports(&subset, &tainted_by_module);
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
     }

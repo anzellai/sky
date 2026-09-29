@@ -250,7 +250,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - **An `init` that reads its seed.** Write `init : () -> ( Model, Cmd Msg )`
   (or leave the seed unused, `init _ = …`). Read the request with
   `App.withRequest`, and the route with `App.withRoutes` /
-  `App.withOnNavigate`.
+  `App.withOnNavigate`. An annotation of the app value with a seed variable
+  (`app : App.App HasFallback a Page Model Msg key`) names `()` instead
+  (`App.App HasFallback () Page Model Msg key`).
 - **An Android app that calls `Native.notify` declares the notification
   permission.** Add `|> Bundle.withPermission Bundle.Notifications` to the
   app's `bundle`. iOS needs nothing. `Native.notify` keeps its type
