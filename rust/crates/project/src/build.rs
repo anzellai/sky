@@ -332,12 +332,22 @@ fn assemble_and_emit_with(
     for note in crate::ffi_ops::refresh_stale_path_surfaces(example_dir, repo_root)? {
         eprintln!("  {note}");
     }
+    //
+    // A path dependency is local source the user edits, not a fetched, pinned
+    // package: its modules are APP modules — parse-gated, type-checked, and
+    // reported under their own path — registered before the project's own so
+    // a same-named local module still shadows them. Trusting them like
+    // `.skydeps` let a parse or type error in one pass `sky check` and panic
+    // at run time. They never provide the entry.
+    let mut dep_locals = Vec::new();
+    let mut dep_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for dir in crate::path_deps::sky_source_dirs(example_dir) {
-        for (n, file, _p) in load_dir(&db, &mut next_id, &dir) {
+        for (n, file, p) in load_dir(&db, &mut next_id, &dir) {
             if n == "Main" || n == "main" {
                 continue;
             }
-            db.add_module(&n, file);
+            dep_files.insert(p.clone());
+            dep_locals.push((n, file, p));
         }
     }
 
@@ -349,6 +359,8 @@ fn assemble_and_emit_with(
     if locals.is_empty() {
         return Err(format!("no .sky under {source_root}/").into());
     }
+    dep_locals.extend(locals);
+    let mut locals = dep_locals;
     if let (AppScope::EntryClosure, Some(want)) = (scope, entry_module) {
         locals = entry_import_closure(&db, locals, want);
     }
@@ -356,8 +368,9 @@ fn assemble_and_emit_with(
     // so each diagnostic header carries `src/Main.sky:line:col` (matching the
     // oracle) instead of a bare `line:col`. MUST be keyed by the module's
     // `ModuleId` — the id `db.add_module` returns and the id a diagnostic span's
-    // `file` carries — NOT by the `SourceFile`'s `file_id` (a load-order ordinal
-    // minted by `next_id`). The two coincide for a project with no Sky
+    // `file` carries (`add_module` now also stamps it on the `SourceFile`, so a
+    // parse error's span carries it too) — NOT by the load-order ordinal a file
+    // was minted with by `next_id`. The two coincide for a project with no Sky
     // dependencies, but a `.skydeps` module that shares a name with a local one
     // (`add_module` returns the EXISTING id on re-add) — or kernel pre-population
     // — shifts them apart, and a span then resolves to the WRONG file's path
@@ -382,8 +395,21 @@ fn assemble_and_emit_with(
     // stdlib + `.skydeps` parse clean (the `roundtrip` gate asserts 0 ERROR nodes
     // across the whole corpus) and are trusted, exactly like the type/name/
     // exhaustive gates scope to `check_ids`.
-    let mut parse_diags: Vec<diagnostics::Diagnostic> = Vec::new();
+    //
+    // Keyed by `ModuleId`: a module reached twice (two source roots, or a
+    // name declared twice) is checked once, against the file the db holds —
+    // the LAST one registered — so its parse errors, its display path and its
+    // source text (`src_map`, read from the db) all name that one file.
+    let mut parse_diags: std::collections::BTreeMap<u32, Vec<diagnostics::Diagnostic>> =
+        std::collections::BTreeMap::new();
     for (n, file, p) in locals {
+        // Registered FIRST: `add_module` sets the file's `file_id` to its
+        // `ModuleId`, so the parse below puts that id on every span — the id
+        // `path_map` / `src_map` are keyed by. Parsed before registration, a
+        // span carried the file's load-order ordinal, and when that differed
+        // (a module outside `sky test`'s import closure sorted before this
+        // one) the error was reported at the right offset in ANOTHER file.
+        let id = db.add_module(&n, file);
         // A parser that RECOVERS from a syntax error (e.g. a bare operator
         // section `(+)`, which Sky has no grammar for) emits an `Expr::Error`
         // node that lowers to Go `nil` and panics at runtime — while `sky check`
@@ -394,11 +420,12 @@ fn assemble_and_emit_with(
         // "if it compiles it works".
         {
             let parse = skydb::parse(&db, file);
+            let mut here = Vec::new();
             if !parse.errors().is_empty() || parse.error_node_count() > 0 {
                 if parse.errors().is_empty() {
                     // Recovery produced a structural ERROR node without an attached
                     // diagnostic (defensive — the recovery paths always pair the two).
-                    parse_diags.push(diagnostics::Diagnostic::error(
+                    here.push(diagnostics::Diagnostic::error(
                         "E0001",
                         format!(
                             "PARSE ERROR in module {n}: unstructured input (recovered ERROR node)"
@@ -407,13 +434,19 @@ fn assemble_and_emit_with(
                 } else {
                     for d in parse.errors() {
                         if d.severity == diagnostics::Severity::Error {
-                            parse_diags.push(d.clone());
+                            here.push(d.clone());
                         }
                     }
                 }
             }
+            parse_diags.insert(id.index(), here);
         }
-        let id = db.add_module(&n, file);
+        // Key the display-path map by the REAL `ModuleId` (`id.index()`) — the
+        // same id `src_map` and diagnostic spans use — so a Sky-frontend error
+        // always names the file the span actually points at (see the note where
+        // `path_map` is declared). Overwritten on a second registration, like
+        // the db's file.
+        path_map.insert(base::FileId(id.index()), display_path(example_dir, &p));
         // Every app-code module (the project's own `src/` + any `extra_dirs`
         // like `tests/`) is type-checked. Stdlib + `.skydeps` are trusted
         // signatures, never re-checked — mirrors the `xtask infer` gate, whose
@@ -424,24 +457,16 @@ fn assemble_and_emit_with(
             continue;
         }
         check_ids.push(id);
-        // Key the display-path map by the REAL `ModuleId` (`id.index()`) — the
-        // same id `src_map` and diagnostic spans use — so a Sky-frontend error
-        // always names the file the span actually points at (see the note where
-        // `path_map` is declared).
-        let disp = p
-            .strip_prefix(example_dir)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .replace('\\', "/");
-        path_map.insert(base::FileId(id.index()), disp);
-        let is_entry = match entry_module {
-            Some(want) => n == want,
-            None => n == "Main" || n.ends_with(".Main") || n == "main",
-        };
+        let is_entry = !dep_files.contains(&p)
+            && match entry_module {
+                Some(want) => n == want,
+                None => n == "Main" || n.ends_with(".Main") || n == "main",
+            };
         if is_entry {
             entry = Some(id);
         }
     }
+    let parse_diags: Vec<diagnostics::Diagnostic> = parse_diags.into_values().flatten().collect();
     // `FileId → source text` for every checked app module — feeds the Elm-style
     // renderer (`Diagnostic::render_cli`) so each Sky-frontend diagnostic shows
     // its offending source line + caret instead of a flat `[code] message`. A
@@ -2789,6 +2814,33 @@ pub fn enumerate_skydep_files(skydeps: &Path) -> Vec<PathBuf> {
 /// handle — the whole module set now lives in the salsa db (the resolve-stage
 /// port), so `resolve`/`module_exports` key off these handles rather than cloned
 /// `Parse`s. No `FileId`/span reaches emitted Go, so build + repro are unchanged.
+/// How a diagnostic names a source file: relative to the project root, with
+/// `/` separators — `src/Main.sky`, `tests/FooTest.sky`, or, for a path
+/// dependency outside the project, `../widgets/src/Widget.sky`. Falls back to
+/// the path as loaded when no relative form exists (another drive).
+fn display_path(project_dir: &Path, p: &Path) -> String {
+    let slash = |x: &Path| x.to_string_lossy().replace('\\', "/");
+    if let Ok(rel) = p.strip_prefix(project_dir) {
+        return slash(rel);
+    }
+    let canon = |x: &Path| x.canonicalize().unwrap_or_else(|_| x.to_path_buf());
+    let (base, target) = (canon(project_dir), canon(p));
+    let b: Vec<_> = base.components().collect();
+    let t: Vec<_> = target.components().collect();
+    let common = b.iter().zip(&t).take_while(|(x, y)| x == y).count();
+    if common == 0 {
+        return slash(p);
+    }
+    let mut rel = PathBuf::new();
+    for _ in common..b.len() {
+        rel.push("..");
+    }
+    for c in &t[common..] {
+        rel.push(c.as_os_str());
+    }
+    slash(&rel)
+}
+
 /// A CLI source provider: the `FileId → text` map for the caret excerpt PLUS a
 /// `FileId → display path` map so the header shows `src/Main.sky:line:col`
 /// (matching the oracle) rather than a bare `line:col`.

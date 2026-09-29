@@ -1185,6 +1185,11 @@ sky add ./libs/widgets  # has sky.toml or .sky sources → [dependencies] "widge
   `.sky` sources make it a Sky package, recorded under its `name` (else the
   directory name); every build loads its modules from its source root. A
   directory that is both is a Sky package; `--go` / `--sky` force the kind.
+- **A Sky path dependency is checked as your code.** Its modules are
+  parse-checked and type-checked by `sky check`, `sky build` and `sky test`,
+  and a diagnostic names the file in the dependency relative to the project
+  (`../widgets/src/Widget.sky:8:5`). A fetched registry package under
+  `.skydeps/` is pinned and is not re-checked.
 - **Paths are relative to the project root**, not the working directory, and
   are resolved against it at build time. An absolute argument is stored as
   given.
