@@ -235,7 +235,14 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
             }
         }
         GoTypeDef::IotaEnum(variants) => {
-            w.line(&format!("type {name} = int"));
+            // A NAMED int, not an alias: the value keeps its Sky type at run
+            // time, so `SkyEnumName` gives `toString` / `sky test` the
+            // constructor name wherever the value sits (a Maybe, a List, a
+            // tuple, the top level). A named int converts to and from `int`
+            // at no cost, and `rt.Coerce` / `rt.AsInt` convert by kind.
+            // `SkyEnumName` (not `String`) so `fmt`'s `%v` of the value — Dict
+            // key encoding, logs — still prints the ordinal it always did.
+            w.line(&format!("type {name} int"));
             w.line("const (");
             w.indent += 1;
             for (i, v) in variants.iter().enumerate() {
@@ -251,8 +258,11 @@ fn emit_type(w: &mut Writer, name: &str, def: &GoTypeDef) {
             // enum as a readable name rather than its ordinal int.
             let names: Vec<String> = variants.iter().map(|v| format!("\"{v}\"")).collect();
             w.line(&format!(
-                "func init() {{ rt.RegisterEnum(\"{name}\", []string{{{}}}) }}",
+                "func init() {{ rt.RegisterEnum(\"{name}\", []string{{{}}}); rt.GobRegister({name}(0)) }}",
                 names.join(", ")
+            ));
+            w.line(&format!(
+                "func (v {name}) SkyEnumName() string {{ return rt.EnumName(\"{name}\", int(v)) }}"
             ));
         }
         GoTypeDef::Struct(fields) => {

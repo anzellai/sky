@@ -248,7 +248,8 @@ pub enum GoTypeDef {
     /// Each entry: `(ctor_name, tag, field_go_types)`. Ctors / init-registration
     /// are emitted as `Raw` items by the lowerer (mirrors `AdtAlias`).
     SealedIface(Vec<(String, usize, Vec<GoTy>)>),
-    /// `type Name = int` + `const ( … = iota )`.
+    /// `type Name int` (a named int, so the value keeps its Sky type at run
+    /// time) + `const ( … = iota )` + a `SkyEnumName` method.
     IotaEnum(Vec<String>),
     /// `type Name struct { … }` (record `_R`).
     Struct(Vec<(String, GoTy)>),

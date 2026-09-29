@@ -184,10 +184,19 @@ entry). Module-level `Task.run` bindings still emit their explicit force.
 **Sealed-interface ADTs** (07 §3/§6) emit a Go `interface` with each variant a
 struct that embeds it; the zero value is `nil`, not `T{}` (the
 `_cg_sealedIfaceNames`→`goZeroValue` rule, `Go/Record.hs:142`). **iota enums**
-(nullary ADTs) emit `type X = int` + `const ( … = iota )` — the *alias* form, not
-a distinct type, so values flowing through `any` and asserted back to `X` succeed
-(`Builder.hs:113-123`). Both of these ABI quirks are load-bearing for round-trip
-soundness and are reproduced exactly (00 "compat first").
+(nullary ADTs) emit `type X int` + `const ( … = iota )` + a generated
+`func (v X) SkyEnumName() string`. The Haskell compiler emitted the *alias*
+`type X = int` (`Builder.hs:113-123`); since v0.27.0 the Rust compiler emits a
+NAMED int, so the value keeps its Sky type at run time and `toString` /
+`sky test` print the constructor name wherever it sits. A runtime-built value
+is still a plain `int` ordinal, so every place typed code meets one accepts
+both shapes: `rt.Coerce` converts by kind, `rt.AsInt` reads a named int, a
+nested pattern on an `any` subject tests with `rt.EnumTagIs`, and a typed
+Sky.Spa adapter parameter reads through `rt.EnumOf[X]` (one assertion, as the
+`.(X)` it replaced). `SkyEnumName` is deliberately not `String()`, so `%v`
+(Dict key encoding, logs) still prints the ordinal. The sealed-interface form is
+load-bearing for round-trip soundness and is reproduced exactly (00 "compat
+first").
 
 ### `_fieldIndex` ordering — the ABI's positional contract
 

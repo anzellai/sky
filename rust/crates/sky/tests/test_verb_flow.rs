@@ -442,7 +442,9 @@ fn verify_checks_a_library_package_and_runs_its_tests() {
 
 /// `sky test` printed a failing `Test.equal`'s values as Go structs
 /// (`expected {0 a <nil>} but got {0 b <nil>}`; a downstream project reported
-/// it). They print as Sky values, with the printer `Debug.toString` uses.
+/// it). They print as Sky values, with the printer `Debug.toString` uses. A
+/// union whose constructors take no arguments prints its constructor names,
+/// also inside a Maybe, a List and a tuple (it used to print its index).
 #[test]
 fn a_failing_equal_prints_sky_values() {
     if !required(Need::Go, have_go()) {
@@ -458,7 +460,8 @@ fn a_failing_equal_prints_sky_values() {
     .unwrap();
     std::fs::write(
         dir.join("src/Shapes.sky"),
-        "module Shapes exposing (Shape(..), User)\n\nimport Sky.Core.Prelude exposing (..)\n\n\n\
+        "module Shapes exposing (Shape(..), User, Color(..))\n\nimport Sky.Core.Prelude exposing (..)\n\n\n\
+         type Color\n    = Red\n    | Green\n    | Blue\n\n\n\
          type Shape\n    = Circle Float\n    | Rect { w : Int, h : Int }\n    | Empty\n\n\n\
          type alias User =\n    { name : String, age : Int, tags : List String }\n",
     )
@@ -469,7 +472,7 @@ fn a_failing_equal_prints_sky_values() {
         "module ValuesTest exposing (tests)\n\n\
          import Sky.Core.Error as Error\n\
          import Sky.Core.Prelude exposing (..)\n\
-         import Shapes exposing (Shape(..), User)\n\
+         import Shapes exposing (Color(..), Shape(..), User)\n\
          import Sky.Test as Test exposing (Test)\n\n\n\
          user : User\nuser =\n    { name = \"Ada\", age = 40, tags = [ \"a\", \"b\" ] }\n\n\n\
          tests : List Test\n\
@@ -479,6 +482,8 @@ fn a_failing_equal_prints_sky_values() {
          , Test.test \"record\" (\\_ -> Test.equal user { user | age = 41 })\n    \
          , Test.test \"adt\" (\\_ -> Test.equal [ Circle 1.5, Empty ] [ Rect { w = 1, h = 2 } ])\n    \
          , Test.test \"maybe\" (\\_ -> Test.equal (Just ( 1, 'c' )) Nothing)\n    \
+         , Test.test \"nullary\" (\\_ -> Test.equal Red Green)\n    \
+         , Test.test \"nullary nested\" (\\_ -> Test.equal (Just [ ( Red, 1 ) ]) (Just [ ( Blue, 2 ) ]))\n    \
          ]\n",
     )
     .unwrap();
@@ -490,6 +495,8 @@ fn a_failing_equal_prints_sky_values() {
         "expected { age = 40, name = \"Ada\", tags = [\"a\", \"b\"] } but got { age = 41, name = \"Ada\", tags = [\"a\", \"b\"] }",
         "expected [Circle 1.5, Empty] but got [Rect { h = 2, w = 1 }]",
         "expected Just (1, 'c') but got Nothing",
+        "expected Red but got Green",
+        "expected Just [(Red, 1)] but got Just [(Blue, 2)]",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }

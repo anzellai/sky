@@ -884,6 +884,15 @@ var enumRegistry = map[string][]string{}
 // RegisterEnum records an enum type's variant names, in ordinal order.
 func RegisterEnum(name string, variants []string) { enumRegistry[name] = variants }
 
+// EnumName is the constructor name of ordinal `ord` of the enum `typeName`
+// (a union whose constructors all take no arguments), or "" when unknown.
+// The generated `SkyEnumName` method of every such union calls it, so
+// `toString` prints `Red`, not `0`.
+func EnumName(typeName string, ord int) string {
+	name, _ := enumNameForOrdinal(typeName, ord)
+	return name
+}
+
 func isRegisteredEnum(typeName string) bool { _, ok := enumRegistry[typeName]; return ok }
 
 func enumNameForOrdinal(typeName string, ord int) (string, bool) {
