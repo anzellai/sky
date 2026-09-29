@@ -527,7 +527,7 @@ sky db provision --shared [--service] [--app <name>]           # one host cluste
 sky build --embed src/Main.sky   # bundle PostgreSQL INTO the binary; ./sky-out/app --embed
 sky spa-split src/Main.sky --out .split --build   # explicit Sky.Spa split (advanced)
 sky add <go/module> | remove | install | update                # Go FFI deps
-sky add ./local/dir              # local path dep: go.mod → Go module, sky.toml/src → Sky package
+sky add ./local/dir              # local path dep: go.mod → Go module, sky.toml/src → Sky package (type-checked with your code)
 sky package --release --target mobile:ios|mobile:android|desktop:mac   # store artefact → sky-out/release/
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
