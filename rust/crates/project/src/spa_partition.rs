@@ -4333,6 +4333,43 @@ fn compute_server_chaining(
         dirty: bool,
         has_perform: bool,
     }
+    // `mid_chain` — the server heads that a SERVER arm performs into and the
+    // client never dispatches: the hops of a multi-hop chain (`Navigated` ->
+    // `GotIndex`, where `GotIndex` reads a file). Such a chain's root is a hold
+    // RPC (§20): nothing runs on the client between its hops, so a client-pure
+    // continuation of a mid-chain hop reads no stale model when it settles on
+    // the server, and settling it there keeps the whole chain in ONE round trip.
+    // Only a ROOT's own client-pure continuation runs in the client (the rule in
+    // the DIRECT arm below), where it arrives while other Msgs may have run.
+    let mut mid_chain: HashSet<String> = HashSet::new();
+    for h in server_head_set.iter() {
+        let Some(idxs) = arms_by_ctor.get(h) else {
+            continue;
+        };
+        for &ai in idxs {
+            let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
+            let mut visited: HashSet<DefId> = HashSet::new();
+            collect_tail_cmd_leaves_tagged(
+                db,
+                body,
+                arms[ai].body,
+                false,
+                &mut leaves,
+                0,
+                &mut visited,
+            );
+            for (leaf, _) in leaves {
+                if let CmdLeaf::Perform {
+                    to_msg: Some(m), ..
+                } = leaf
+                {
+                    if server_head_set.contains(&m) && !client_dispatched.contains(&m) {
+                        mid_chain.insert(m);
+                    }
+                }
+            }
+        }
+    }
     let head_info = |head: &str| -> HeadInfo {
         let mut clean_conts: Vec<String> = Vec::new();
         let mut dirty = false;
@@ -4418,10 +4455,13 @@ fn compute_server_chaining(
                                         // path, whose result Msg runs in the client
                                         // — unless its argument cannot cross the
                                         // wire (`keep_on_server`, named by the
-                                        // generator): then it settles here.
+                                        // generator), or the head is a hop in the
+                                        // middle of a server chain (`mid_chain`,
+                                        // above): then it settles here.
                                         if client_dispatched.contains(&m)
                                             || (!server_head_set.contains(&m)
-                                                && !keep_on_server.contains(&m))
+                                                && !keep_on_server.contains(&m)
+                                                && !mid_chain.contains(head))
                                         {
                                             dirty = true;
                                         } else {

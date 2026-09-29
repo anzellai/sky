@@ -19,6 +19,9 @@
 //            (one /_rpc call); the items then load and `loads` ends at 1.
 //
 // Usage: node scripts/spa-seeded-nav-verify.mjs <settled|chain> <backend-app> [--port N]
+//   SKY_E2E_BROWSER=webkit  WebKit instead of Chromium
+//   SKY_E2E_CHANNEL         a Playwright Chromium channel, e.g. "chrome"
+//   SKY_E2E_HEADED=1        run the browser headed
 // Exit: 0 PASS · 2 FAIL · 1 harness error.
 import pw from "playwright";
 const { chromium } = pw;
@@ -88,7 +91,11 @@ try {
     check("SSR page is NOT marked nav: the chained read was not finished", !navMarked);
   }
 
-  browser = await chromium.launch();
+  const headless = process.env.SKY_E2E_HEADED !== "1";
+  browser =
+    process.env.SKY_E2E_BROWSER === "webkit"
+      ? await pw.webkit.launch({ headless })
+      : await chromium.launch({ headless, channel: process.env.SKY_E2E_CHANNEL || undefined });
   const page = await browser.newPage();
   const rpcs = [];
   page.on("request", (r) => {

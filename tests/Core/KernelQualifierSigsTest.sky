@@ -60,9 +60,10 @@ tests =
           , Test.test
                 "String.slugify / htmlEscape return strings, isValid a Bool"
                 (\_ ->
-                    -- `toString` on a Bool is Go-spelled (`true`).
+                    -- `toString` on a Bool prints the Sky value (`True`) since
+                    -- v0.27.0; it printed Go's spelling (`true`) before.
                     Test.equal
-                        "hello-world|&lt;b&gt;|true"
+                        "hello-world|&lt;b&gt;|True"
                         (String.slugify "Hello, World!" ++ "|"
                             ++ String.htmlEscape "<b>"
                             ++ "|"

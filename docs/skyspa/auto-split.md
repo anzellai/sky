@@ -796,7 +796,12 @@ client-result root (§19) or a follow-up branch (§20), whose result Msg runs in
 the client. `Reload` → `Reloaded (Ok raw) -> { model | note = raw }` above is
 therefore a client-result root today; a chain is `Ship` → `Shipped` where
 `Shipped` itself reaches a server effect (`tests/fixtures/spa-server-chain`).
-A chain root is a hold RPC (§20).
+A chain root is a hold RPC (§20). The rule applies to a ROOT's own
+continuation only: once a chain passes through a server hop (`Navigated` →
+`GotIndex`, where `GotIndex` reads a file), the client-pure continuation of that
+hop (`GotItems`) settles in the same chain, because the root holds the client
+and nothing runs between the hops. The whole chain is then ONE round trip
+(`tests/fixtures/spa-seeded-nav-chain`, `a_multi_hop_chain_settles_in_one_round_trip`).
 
 **Fail-closed (G5).** A branch is **not** chained when its transitive command
 chain contains a `Std.Native` **client** effect (which cannot run server-side),

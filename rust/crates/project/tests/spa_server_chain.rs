@@ -384,3 +384,32 @@ fn a_continuation_whose_argument_cannot_cross_stays_in_a_server_chain() {
     );
     let _ = std::fs::remove_dir_all(&fixture);
 }
+
+/// A chain whose continuation is itself a SERVER arm settles in ONE round trip
+/// (`tests/fixtures/spa-seeded-nav-chain`): `Navigated` performs into
+/// `GotIndex` (a server arm: it reads a file), whose client-pure continuation
+/// `GotItems` settles in the same chain. The root is a hold RPC, so nothing
+/// runs between the hops and the chain reads no stale model. Before this the
+/// client-pure tail made `GotIndex` its own RPC: two round trips per
+/// navigation. A root's OWN client-pure continuation still runs in the client
+/// (`reloaded_is_a_client_arm_and_reload_returns_its_result`).
+#[test]
+fn a_multi_hop_chain_settles_in_one_round_trip() {
+    let fixture = repo_root().join("rust/crates/sky/tests/fixtures/spa-seeded-nav-chain");
+    let r = spa_partition::analyze(&repo_root(), &fixture, None)
+        .unwrap_or_else(|e| panic!("analyze failed: {e}"));
+    assert!(
+        r.chaining_branches.contains(&"Navigated".to_string())
+            && r.server_internal.contains(&"GotIndex".to_string())
+            && r.server_internal.contains(&"GotItems".to_string()),
+        "Navigated -> GotIndex -> GotItems must settle in Navigated's RPC; got chaining={:?} \
+         internal={:?} client_result={:?} follow_up={:?}",
+        r.chaining_branches,
+        r.server_internal,
+        r.client_result,
+        r.follow_up
+            .iter()
+            .map(|f| f.branch.clone())
+            .collect::<Vec<_>>()
+    );
+}
