@@ -1150,6 +1150,14 @@ fn the_release_workflow_is_the_full_suite() {
             "scripts/spa-client-crypto-e2e.sh",
             "e2e: withClientCrypto Noise session through two relay steps",
         ),
+        (
+            "scripts/spa-rpc-order-e2e.sh",
+            "e2e: each Msg once, in arrival order; RPCs overlap (web:app vs Sky.Live)",
+        ),
+        (
+            "scripts/spa-websocket-e2e.sh",
+            "e2e: the Sky.Spa client's own WebSocket",
+        ),
         ("scripts/spa-restore-e2e.sh", "e2e: restore"),
         ("scripts/csp-e2e.sh", "e2e: strict Content-Security-Policy"),
         ("scripts/islands-e2e.sh", "e2e: widget islands"),

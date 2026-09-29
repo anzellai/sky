@@ -119,9 +119,10 @@ func (p *wsPeer) setSubs(subs map[string]any, dispatch func(any)) bool {
 	return true
 }
 
-// next waits for the next frame for a Task reader. hasLimit selects
+// awaitFrame waits for the next frame for a Task reader, on the Task's own
+// goroutine (a wait that returns, not a background loop). hasLimit selects
 // receiveWithin (limit <= 0 polls: a queued frame, else Timeout at once).
-func (p *wsPeer) next(hasLimit bool, limit time.Duration) (wsTaskOutcome, any) {
+func (p *wsPeer) awaitFrame(hasLimit bool, limit time.Duration) (wsTaskOutcome, any) {
 	var expired <-chan time.Time
 	if hasLimit && limit > 0 {
 		t := time.NewTimer(limit)

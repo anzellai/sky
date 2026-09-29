@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
 # scripts/spa-rpc-consistency-e2e.sh — browser e2e: a Sky.Spa (web:app) client
-# gives the answer Sky.Live gives for the same Msg sequence. Covers RPC
-# serialisation + send-time snapshots + ordered rebase (a draft typed during an
-# in-flight RPC survives), the client + server guard, a server branch's
+# gives the answer Sky.Live gives for the same Msg sequence. Covers hold RPCs
+# (an arm whose write needs server data holds later Msgs, so a draft typed
+# during an in-flight Save survives and Inc twice counts to 2; each Msg runs
+# once, see scripts/spa-rpc-order-e2e.sh), the client + server guard, a server branch's
 # follow-up Cmd, retry-without-double-apply (request-id dedupe), the ordered
 # retry queue, and reload persistence with server-only fields from the SSR seed.
 # See scripts/spa-rpc-consistency-verify.mjs for each check. Proven to FAIL on

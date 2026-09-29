@@ -21,18 +21,18 @@ func TestWsPeer_TaskReceivesInOrderThenNothing(t *testing.T) {
 	if !p.claim(wsOwnerTask) {
 		t.Fatal("a Task could not claim an unread socket")
 	}
-	out, v := p.next(false, 0)
+	out, v := p.awaitFrame(false, 0)
 	if out != wsTaskFrame || v.(SkyADT).SkyName != "Text" || v.(SkyADT).Fields[0] != "a" {
 		t.Fatalf("first = %v %v, want Text a (the Open event is skipped)", out, v)
 	}
-	out, v = p.next(false, 0)
+	out, v = p.awaitFrame(false, 0)
 	if out != wsTaskFrame || v.(SkyADT).SkyName != "Binary" || v.(SkyADT).Fields[0] != "\x00\xff" {
 		t.Fatalf("second = %v %v, want Binary", out, v)
 	}
-	if out, _ = p.next(false, 0); out != wsTaskClosed {
+	if out, _ = p.awaitFrame(false, 0); out != wsTaskClosed {
 		t.Fatalf("after the close = %v, want Nothing", out)
 	}
-	if out, _ = p.next(false, 0); out != wsTaskClosed {
+	if out, _ = p.awaitFrame(false, 0); out != wsTaskClosed {
 		t.Fatalf("again = %v, want Nothing", out)
 	}
 }
@@ -41,7 +41,7 @@ func TestWsPeer_WaitingReceiveWakesOnAFrame(t *testing.T) {
 	p := newWsPeer()
 	done := make(chan any, 1)
 	go func() {
-		_, v := p.next(false, 0)
+		_, v := p.awaitFrame(false, 0)
 		done <- v
 	}()
 	time.Sleep(20 * time.Millisecond)
@@ -58,14 +58,14 @@ func TestWsPeer_WaitingReceiveWakesOnAFrame(t *testing.T) {
 
 func TestWsPeer_ReceiveWithinTimesOutWithoutConsuming(t *testing.T) {
 	p := newWsPeer()
-	if out, _ := p.next(true, 30*time.Millisecond); out != wsTaskTimeout {
+	if out, _ := p.awaitFrame(true, 30*time.Millisecond); out != wsTaskTimeout {
 		t.Fatalf("empty queue: %v, want Timeout", out)
 	}
-	if out, _ := p.next(true, 0); out != wsTaskTimeout {
+	if out, _ := p.awaitFrame(true, 0); out != wsTaskTimeout {
 		t.Fatalf("poll on empty queue: %v, want Timeout", out)
 	}
 	p.push(textEv("x"), nil)
-	if out, _ := p.next(true, 0); out != wsTaskFrame {
+	if out, _ := p.awaitFrame(true, 0); out != wsTaskFrame {
 		t.Fatalf("poll with a queued frame: %v, want the frame", out)
 	}
 }
@@ -74,7 +74,7 @@ func TestWsPeer_LostConnectionIsAnError(t *testing.T) {
 	p := newWsPeer()
 	p.push(wsEvent{kind: wsErrorEv, err: ErrNetwork("lost")}, nil)
 	p.finish()
-	if out, _ := p.next(false, 0); out != wsTaskFailed {
+	if out, _ := p.awaitFrame(false, 0); out != wsTaskFailed {
 		t.Fatalf("got %v, want Failed", out)
 	}
 }

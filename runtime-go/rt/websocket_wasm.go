@@ -280,7 +280,7 @@ func wsJsReceive(id int64, hasLimit bool, limit time.Duration, op string) any {
 	if !s.peer.claim(wsOwnerTask) {
 		return Err[any, any](ErrInvalidInput(op + wsSubOwnedMsg))
 	}
-	switch out, v := s.peer.next(hasLimit, limit); out {
+	switch out, v := s.peer.awaitFrame(hasLimit, limit); out {
 	case wsTaskFrame:
 		return Ok[any, any](Just[any](v))
 	case wsTaskFailed:
@@ -327,7 +327,7 @@ func WebSocket_forEachMessage(sidArg any, body any) any {
 			}
 		}()
 		for {
-			out, v := s.peer.next(false, 0)
+			out, v := s.peer.awaitFrame(false, 0)
 			switch out {
 			case wsTaskFrame:
 				res := anyTaskInvoke(SkyCall(body, v))
