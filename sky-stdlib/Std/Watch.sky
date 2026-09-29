@@ -20,6 +20,14 @@
 -- is `Modified`; moved within the watched tree is `Renamed old new`. A tree
 -- that never goes quiet still gets a batch every ten windows.
 --
+-- Replacement. A file saved by rename (an editor writes a temporary file
+-- and renames it over the original) is reported `Modified`, and the new file
+-- is the one watched from then on; so is a file deleted and created again. A
+-- watched directory (or the directory of a watched file) that is renamed
+-- away, replaced or deleted is watched again at its path: when a new one is
+-- there, its entries are reported (`Modified` or `Created`); when the path is
+-- gone, its entries are `Removed`, and the watch resumes when it exists again.
+--
 -- Overflow. When the operating system's event queue overflowed, or batches
 -- piled up because nobody read them, some changes were lost. The next batch
 -- is then exactly `[ Overflow ]`: rescan what you watch.

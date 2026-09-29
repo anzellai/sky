@@ -350,3 +350,234 @@ func TestPendingSetMergeRules(t *testing.T) {
 		t.Fatalf("merge = %v, want %v", got, want)
 	}
 }
+
+// ── Replacement by rename and re-creation (editor saves) ────────────────
+//
+// An editor saves by writing a temporary file and renaming it over the
+// original. The watch must keep reporting the NEW file afterwards: on
+// macOS the kqueue backend holds a descriptor per file, and a descriptor
+// follows the old inode, so every replacement has to re-arm the watch.
+
+// watchFeed reads a watcher with ONE goroutine, so a read that times out
+// in the test never leaves a second Watch.next behind to take a batch.
+type watchFeed struct {
+	ch chan []string
+}
+
+func newWatchFeed(t *testing.T, id int) *watchFeed {
+	t.Helper()
+	f := &watchFeed{ch: make(chan []string, 256)}
+	go func() {
+		defer close(f.ch)
+		for {
+			res := Watch_next(id).(func() any)().(SkyResult[any, any])
+			if res.Tag != 0 {
+				return
+			}
+			l := res.OkValue.([]any)
+			if len(l) == 0 {
+				return // closed
+			}
+			f.ch <- batchStrings(l)
+		}
+	}()
+	return f
+}
+
+// drain reads batches until the watcher has been quiet for quiet.
+func (f *watchFeed) drain(quiet time.Duration) []string {
+	var got []string
+	for {
+		select {
+		case b, ok := <-f.ch:
+			if !ok {
+				return got
+			}
+			got = append(got, b...)
+		case <-time.After(quiet):
+			return got
+		}
+	}
+}
+
+// expect reads until one of want was reported; the whole read is returned.
+func (f *watchFeed) expect(t *testing.T, want ...string) []string {
+	t.Helper()
+	var got []string
+	deadline := time.After(5 * time.Second)
+	for {
+		for _, g := range got {
+			for _, w := range want {
+				if g == w {
+					return got
+				}
+			}
+		}
+		select {
+		case b, ok := <-f.ch:
+			if !ok {
+				t.Fatalf("want one of %v, got %v (watcher closed)", want, got)
+			}
+			got = append(got, b...)
+		case <-deadline:
+			t.Fatalf("want one of %v, got %v (timed out)", want, got)
+		}
+	}
+}
+
+func appendText(t *testing.T, p, s string) {
+	t.Helper()
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// saveByRename replaces p the way an editor saves it.
+func saveByRename(t *testing.T, p, s string) {
+	t.Helper()
+	tmp := filepath.Join(filepath.Dir(p), "."+filepath.Base(p)+".tmp")
+	writeFile(t, tmp, s)
+	if err := os.Rename(tmp, p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const watchQuiet = 150 * time.Millisecond
+
+func TestWatchFileReplacedByRenameStaysWatched(t *testing.T) {
+	for _, mode := range []string{"dir", "file"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := watchDir(t)
+			a := filepath.Join(dir, "a.txt")
+			writeFile(t, a, "one\n")
+			root := dir
+			if mode == "file" {
+				root = a
+			}
+			f := newWatchFeed(t, startWatchT(t, []string{root}, watchOpts(false, 20)))
+			appendText(t, a, "two\n")
+			f.expect(t, "Modified a.txt")
+			f.drain(watchQuiet)
+			// Twelve saves in a row: every one of them, and every append
+			// after one, must be reported.
+			for i := 0; i < 12; i++ {
+				saveByRename(t, a, fmt.Sprintf("saved %d\n", i))
+				f.expect(t, "Modified a.txt")
+				f.drain(watchQuiet)
+				appendText(t, a, "more\n")
+				f.expect(t, "Modified a.txt")
+				f.drain(watchQuiet)
+			}
+		})
+	}
+}
+
+func TestWatchFileDeletedAndRecreatedStaysWatched(t *testing.T) {
+	dir := watchDir(t)
+	a := filepath.Join(dir, "a.txt")
+	writeFile(t, a, "one\n")
+	f := newWatchFeed(t, startWatchT(t, []string{dir}, watchOpts(false, 20)))
+	for i := 0; i < 5; i++ {
+		if err := os.Remove(a); err != nil {
+			t.Fatal(err)
+		}
+		f.expect(t, "Removed a.txt")
+		f.drain(watchQuiet)
+		writeFile(t, a, "back\n")
+		f.expect(t, "Created a.txt")
+		f.drain(watchQuiet)
+		appendText(t, a, "more\n")
+		f.expect(t, "Modified a.txt")
+		f.drain(watchQuiet)
+	}
+}
+
+// A subdirectory of a recursive watch is replaced whole: a new directory is
+// filled and renamed into place, the old one moved away and removed.
+func TestWatchSubdirectoryReplacedByRenameStaysWatched(t *testing.T) {
+	dir := watchDir(t)
+	sub := filepath.Join(dir, "sub")
+	os.Mkdir(sub, 0o755)
+	writeFile(t, filepath.Join(sub, "f.txt"), "one\n")
+	f := newWatchFeed(t, startWatchT(t, []string{dir}, watchOpts(true, 20)))
+	for i := 0; i < 5; i++ {
+		fresh := filepath.Join(dir, "sub.new")
+		os.Mkdir(fresh, 0o755)
+		writeFile(t, filepath.Join(fresh, "f.txt"), fmt.Sprintf("gen %d\n", i))
+		old := filepath.Join(dir, "sub.old")
+		if err := os.Rename(sub, old); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(fresh, sub); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(old); err != nil {
+			t.Fatal(err)
+		}
+		f.expect(t, "Created f.txt", "Modified f.txt", "Created sub", "Modified sub")
+		f.drain(watchQuiet)
+		appendText(t, filepath.Join(sub, "f.txt"), "more\n")
+		f.expect(t, "Modified f.txt")
+		f.drain(watchQuiet)
+	}
+}
+
+// The watched directory ITSELF is replaced: by a rename (move the old one
+// away, rename a new one into place), and by removal and re-creation.
+func TestWatchRootDirectoryReplacedStaysWatched(t *testing.T) {
+	base := watchDir(t)
+	root := filepath.Join(base, "root")
+	os.Mkdir(root, 0o755)
+	a := filepath.Join(root, "a.txt")
+	writeFile(t, a, "one\n")
+	f := newWatchFeed(t, startWatchT(t, []string{root}, watchOpts(false, 20)))
+	appendText(t, a, "two\n")
+	f.expect(t, "Modified a.txt")
+	f.drain(watchQuiet)
+	for i := 0; i < 5; i++ {
+		fresh := filepath.Join(base, "root.new")
+		os.Mkdir(fresh, 0o755)
+		writeFile(t, filepath.Join(fresh, "a.txt"), fmt.Sprintf("gen %d\n", i))
+		old := filepath.Join(base, "root.old")
+		if err := os.Rename(root, old); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(fresh, root); err != nil {
+			t.Fatal(err)
+		}
+		f.expect(t, "Created a.txt", "Modified a.txt")
+		f.drain(watchQuiet)
+		// The old directory is no longer the watched one.
+		appendText(t, filepath.Join(old, "a.txt"), "stale\n")
+		if err := os.RemoveAll(old); err != nil {
+			t.Fatal(err)
+		}
+		appendText(t, a, "more\n")
+		got := f.expect(t, "Modified a.txt")
+		got = append(got, f.drain(watchQuiet)...)
+		for _, g := range got {
+			if g != "Modified a.txt" {
+				t.Fatalf("after the replacement only the new a.txt may be reported, got %v", got)
+			}
+		}
+	}
+	// Removed, then created again (a gap in between).
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	f.expect(t, "Removed a.txt")
+	f.drain(watchQuiet)
+	os.Mkdir(root, 0o755)
+	writeFile(t, filepath.Join(root, "b.txt"), "b\n")
+	f.expect(t, "Created b.txt")
+	f.drain(watchQuiet)
+	appendText(t, filepath.Join(root, "b.txt"), "more\n")
+	f.expect(t, "Modified b.txt")
+}
