@@ -81,8 +81,22 @@ func TestTerminalRace_ScreenMadeDuringAResizeTakesTheResize(t *testing.T) {
 
 // Concurrent resizes end with the screen, the recorded size and the PTY at
 // the same size, whatever order they ran in.
+//
+// The shell runs without line editing. GNU readline (bash's `-i` default)
+// reads the window size and writes it back each time it prepares a prompt
+// (set_winsize in rltty.c): a resize between that read and that write is
+// undone BY THE CHILD, and the kernel keeps the older size. That failed this
+// test in about 1 run in 15 on macOS (bash 3.2), with `h.resize` returning
+// no error. It is the program's own ioctl, not the runtime's: the same test
+// with `--noediting`, with zsh, or with a child that never touches the
+// terminal did not fail in 60–100 runs.
 func TestTerminalRace_ConcurrentResizesAgree(t *testing.T) {
+	// bash without readline where bash exists; otherwise /bin/sh (dash, for
+	// one, has no readline and rejects --noediting).
 	c := procCmd{program: "/bin/sh", env: [][2]string{{"PS1", "$ "}}, pty: true, cols: 80, rows: 24}
+	if _, err := os.Stat("/bin/bash"); err == nil {
+		c.program, c.args = "/bin/bash", []string{"--noediting", "-i"}
+	}
 	id := spawnT(t, c)
 	h := handleOf(t, id)
 	readScreen(t, id, "t", 1, true, 1000)
