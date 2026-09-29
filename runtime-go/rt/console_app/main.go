@@ -61,16 +61,22 @@ func init() {
 	})
 }
 
-type Sky_Config_LogFormat = int
+type Sky_Config_LogFormat int
 
 const (
 	Sky_Config_LogFormat_Json Sky_Config_LogFormat = iota
 	Sky_Config_LogFormat_Text
 )
 
-func init() { rt.RegisterEnum("Sky_Config_LogFormat", []string{"Json", "Text"}) }
+func init() {
+	rt.RegisterEnum("Sky_Config_LogFormat", []string{"Json", "Text"})
+	rt.GobRegister(Sky_Config_LogFormat(0))
+}
+func (v Sky_Config_LogFormat) SkyEnumName() string {
+	return rt.EnumName("Sky_Config_LogFormat", int(v))
+}
 
-type Sky_Config_LogLevel = int
+type Sky_Config_LogLevel int
 
 const (
 	Sky_Config_LogLevel_Debug Sky_Config_LogLevel = iota
@@ -79,7 +85,11 @@ const (
 	Sky_Config_LogLevel_Error
 )
 
-func init() { rt.RegisterEnum("Sky_Config_LogLevel", []string{"Debug", "Info", "Warn", "Error"}) }
+func init() {
+	rt.RegisterEnum("Sky_Config_LogLevel", []string{"Debug", "Info", "Warn", "Error"})
+	rt.GobRegister(Sky_Config_LogLevel(0))
+}
+func (v Sky_Config_LogLevel) SkyEnumName() string { return rt.EnumName("Sky_Config_LogLevel", int(v)) }
 
 type Sky_Config_Telemetry interface {
 	SkyVariantTag() int
@@ -164,7 +174,7 @@ func Sky_Core_Error_ErrorInfo(p0 string, p1 rt.SkyMaybe[Sky_Core_Error_ErrorDeta
 	return Sky_Core_Error_ErrorInfo_R{Message: p0, Details: p1}
 }
 
-type Sky_Core_Error_ErrorKind = int
+type Sky_Core_Error_ErrorKind int
 
 const (
 	Sky_Core_Error_ErrorKind_Io Sky_Core_Error_ErrorKind = iota
@@ -182,6 +192,10 @@ const (
 
 func init() {
 	rt.RegisterEnum("Sky_Core_Error_ErrorKind", []string{"Io", "Network", "Ffi", "Decode", "Timeout", "NotFound", "PermissionDenied", "InvalidInput", "Conflict", "Unavailable", "Unexpected"})
+	rt.GobRegister(Sky_Core_Error_ErrorKind(0))
+}
+func (v Sky_Core_Error_ErrorKind) SkyEnumName() string {
+	return rt.EnumName("Sky_Core_Error_ErrorKind", int(v))
 }
 
 type Sky_Core_Error_PanicInfo_R struct {
@@ -556,7 +570,7 @@ func State_Overview(p0 string, p1 string, p2 string, p3 int, p4 int, p5 float64,
 	return State_Overview_R{SkyVersion: p0, Commit: p1, BuiltAt: p2, UptimeSeconds: p3, RequestsTotal: p4, ErrorRate5xx: p5, BufferLogUsed: p6, BufferTraceUsed: p7, ProductionMode: p8}
 }
 
-type State_Range = int
+type State_Range int
 
 const (
 	State_Range_Last15m State_Range = iota
@@ -568,7 +582,9 @@ const (
 
 func init() {
 	rt.RegisterEnum("State_Range", []string{"Last15m", "Last1h", "Last24h", "Last7d", "RangeAll"})
+	rt.GobRegister(State_Range(0))
 }
+func (v State_Range) SkyEnumName() string { return rt.EnumName("State_Range", int(v)) }
 
 type State_ServiceStat_R struct {
 	Name       string    `sky:"name,string"`
@@ -607,7 +623,7 @@ func State_Store(p0 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overvi
 	return State_Store_R{ReadOverview: p0, ReadLogs: p1, ReadMetrics: p2, ReadTraces: p3, ReadErrors: p4, ListServices: p5, ReadServiceStats: p6, ReadFilteredLogs: p7, ReadFilteredMetrics: p8, ReadFilteredTraces: p9, ReadFilteredErrors: p10, ReadAnalytics: p11}
 }
 
-type State_Tab = int
+type State_Tab int
 
 const (
 	State_Tab_OverviewTab State_Tab = iota
@@ -620,7 +636,9 @@ const (
 
 func init() {
 	rt.RegisterEnum("State_Tab", []string{"OverviewTab", "MetricsTab", "LogsTab", "TracesTab", "ErrorsTab", "AnalyticsTab"})
+	rt.GobRegister(State_Tab(0))
 }
+func (v State_Tab) SkyEnumName() string { return rt.EnumName("State_Tab", int(v)) }
 
 type State_TraceRow_R struct {
 	TraceId    string  `sky:"traceId,string"`
@@ -779,14 +797,20 @@ func init() {
 	rt.RegisterMsgVariant("Std_App_Route", "RouteApi", 2, 2)
 }
 
-type Std_App_SessionTransport = int
+type Std_App_SessionTransport int
 
 const (
 	Std_App_SessionTransport_CookieSession Std_App_SessionTransport = iota
 	Std_App_SessionTransport_HeaderToken
 )
 
-func init() { rt.RegisterEnum("Std_App_SessionTransport", []string{"CookieSession", "HeaderToken"}) }
+func init() {
+	rt.RegisterEnum("Std_App_SessionTransport", []string{"CookieSession", "HeaderToken"})
+	rt.GobRegister(Std_App_SessionTransport(0))
+}
+func (v Std_App_SessionTransport) SkyEnumName() string {
+	return rt.EnumName("Std_App_SessionTransport", int(v))
+}
 
 type Std_App_TerminalOpts_R struct {
 	CanvasWidth  int `sky:"canvasWidth,int"`
@@ -1324,7 +1348,7 @@ func init() {
 	rt.RegisterMsgVariant("Std_Ui_Element", "Raw", 4, 1)
 }
 
-type Std_Ui_HAlign = int
+type Std_Ui_HAlign int
 
 const (
 	Std_Ui_HAlign_AlignLeft Std_Ui_HAlign = iota
@@ -1332,9 +1356,13 @@ const (
 	Std_Ui_HAlign_AlignRight
 )
 
-func init() { rt.RegisterEnum("Std_Ui_HAlign", []string{"AlignLeft", "CenterX", "AlignRight"}) }
+func init() {
+	rt.RegisterEnum("Std_Ui_HAlign", []string{"AlignLeft", "CenterX", "AlignRight"})
+	rt.GobRegister(Std_Ui_HAlign(0))
+}
+func (v Std_Ui_HAlign) SkyEnumName() string { return rt.EnumName("Std_Ui_HAlign", int(v)) }
 
-type Std_Ui_LayoutContext = int
+type Std_Ui_LayoutContext int
 
 const (
 	Std_Ui_LayoutContext_AsRow Std_Ui_LayoutContext = iota
@@ -1346,6 +1374,10 @@ const (
 
 func init() {
 	rt.RegisterEnum("Std_Ui_LayoutContext", []string{"AsRow", "AsColumn", "AsEl", "AsParagraph", "AsTextColumn"})
+	rt.GobRegister(Std_Ui_LayoutContext(0))
+}
+func (v Std_Ui_LayoutContext) SkyEnumName() string {
+	return rt.EnumName("Std_Ui_LayoutContext", int(v))
 }
 
 type Std_Ui_Length = rt.SkyADT
@@ -1395,7 +1427,7 @@ func init() {
 	rt.RegisterMsgVariant("Std_Ui_Length", "Vw", 6, 1)
 }
 
-type Std_Ui_Location = int
+type Std_Ui_Location int
 
 const (
 	Std_Ui_Location_Above Std_Ui_Location = iota
@@ -1408,7 +1440,9 @@ const (
 
 func init() {
 	rt.RegisterEnum("Std_Ui_Location", []string{"Above", "Below", "OnRight", "OnLeft", "InFront", "Behind"})
+	rt.GobRegister(Std_Ui_Location(0))
 }
+func (v Std_Ui_Location) SkyEnumName() string { return rt.EnumName("Std_Ui_Location", int(v)) }
 
 type Std_Ui_MarkerFlags_R struct {
 	Row        bool `sky:"row,bool"`
@@ -1439,7 +1473,7 @@ func Std_Ui_Nesting(p0 bool, p1 bool, p2 bool, p3 bool, p4 bool) Std_Ui_Nesting_
 	return Std_Ui_Nesting_R{Phrasing: p0, InLink: p1, InButton: p2, InForm: p3, InHeading: p4}
 }
 
-type Std_Ui_PseudoClass = int
+type Std_Ui_PseudoClass int
 
 const (
 	Std_Ui_PseudoClass_Hover Std_Ui_PseudoClass = iota
@@ -1451,9 +1485,11 @@ const (
 
 func init() {
 	rt.RegisterEnum("Std_Ui_PseudoClass", []string{"Hover", "Focus", "FocusVisible", "Active", "Disabled"})
+	rt.GobRegister(Std_Ui_PseudoClass(0))
 }
+func (v Std_Ui_PseudoClass) SkyEnumName() string { return rt.EnumName("Std_Ui_PseudoClass", int(v)) }
 
-type Std_Ui_VAlign = int
+type Std_Ui_VAlign int
 
 const (
 	Std_Ui_VAlign_AlignTop Std_Ui_VAlign = iota
@@ -1461,7 +1497,11 @@ const (
 	Std_Ui_VAlign_AlignBottom
 )
 
-func init() { rt.RegisterEnum("Std_Ui_VAlign", []string{"AlignTop", "CenterY", "AlignBottom"}) }
+func init() {
+	rt.RegisterEnum("Std_Ui_VAlign", []string{"AlignTop", "CenterY", "AlignBottom"})
+	rt.GobRegister(Std_Ui_VAlign(0))
+}
+func (v Std_Ui_VAlign) SkyEnumName() string { return rt.EnumName("Std_Ui_VAlign", int(v)) }
 
 // SKY-ORIGIN: entry
 
@@ -1470,7 +1510,7 @@ var Main_appDef__caf rt.LazyCaf[Std_App_App]
 func Main_appDef() Std_App_App {
 	return Main_appDef__caf.Get(func() Std_App_App {
 		return Std_App_withConfig(Std_App_Config_WebConfig(func() Std_App_WebOpts_R { _u := Std_App_webDefaults(); _u.Port = 8025; return _u }()), Std_App_withNotFound(struct{}{}, Std_App_withRoutes([]Std_App_Route{Std_App_route("/", struct{}{})}, Std_App_web( /* primitive join */ func(_s any) struct {
-			Init          func(any) rt.T2[any, any]
+			Init          func(struct{}) rt.T2[any, any]
 			Subscriptions func(any) any
 			Update        func(any, any) rt.T2[any, any]
 			View          func(any) Std_Html_Html
@@ -1482,19 +1522,19 @@ func Main_appDef() Std_App_App {
 				View          any
 			}); _ok {
 				return struct {
-					Init          func(any) rt.T2[any, any]
+					Init          func(struct{}) rt.T2[any, any]
 					Subscriptions func(any) any
 					Update        func(any, any) rt.T2[any, any]
 					View          func(any) Std_Html_Html
-				}{Init: func() func(any) rt.T2[any, any] {
+				}{Init: func() func(struct{}) rt.T2[any, any] {
 					_s := any(_m.Init)
-					if _f, _ok := _s.(func(any) rt.T2[any, any]); _ok {
+					if _f, _ok := _s.(func(struct{}) rt.T2[any, any]); _ok {
 						return _f
 					}
 					if _g, _ok := _s.(func(any) any); _ok {
-						return func(_a0 any) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
+						return func(_a0 struct{}) rt.T2[any, any] { return rt.Coerce[rt.T2[any, any]](_g(any(_a0))) }
 					}
-					return rt.CoerceFuncSlot[func(any) rt.T2[any, any]](_s)
+					return rt.CoerceFuncSlot[func(struct{}) rt.T2[any, any]](_s)
 				}(), Subscriptions: func() func(any) any {
 					_s := any(_m.Subscriptions)
 					if _f, _ok := _s.(func(any) any); _ok {
@@ -1527,7 +1567,7 @@ func Main_appDef() Std_App_App {
 				}()}
 			}
 			return rt.Coerce[struct {
-				Init          func(any) rt.T2[any, any]
+				Init          func(struct{}) rt.T2[any, any]
 				Subscriptions func(any) any
 				Update        func(any, any) rt.T2[any, any]
 				View          func(any) Std_Html_Html
@@ -7824,7 +7864,7 @@ func HubStore_hubStore(v_0 string) State_Store_R {
 }
 
 func Std_App_web(v_0 struct {
-	Init          func(any) rt.T2[any, any]
+	Init          func(struct{}) rt.T2[any, any]
 	Subscriptions func(any) any
 	Update        func(any, any) rt.T2[any, any]
 	View          func(any) Std_Html_Html
@@ -8154,7 +8194,7 @@ var Std_App_webDefaults__caf rt.LazyCaf[Std_App_WebOpts_R]
 
 func Std_App_webDefaults() Std_App_WebOpts_R {
 	return Std_App_webDefaults__caf.Get(func() Std_App_WebOpts_R {
-		return Std_App_WebOpts_R{Port: 8080, Store: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Static: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), StaticUrl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Ttl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), IdleEvict: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), MaxBodyBytes: /* primitive join */ rt.MaybeCoerce[int](rt.Nothing[any]()), InputMode: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Analytics: /* primitive join */ rt.MaybeCoerce[struct{ PageViews bool }](rt.Nothing[any]()), Csrf: true, Embedded: false, SessionTransport: Std_App_SessionTransport_CookieSession}
+		return Std_App_WebOpts_R{Port: (0 - 1), Store: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Static: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), StaticUrl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Ttl: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), IdleEvict: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), MaxBodyBytes: /* primitive join */ rt.MaybeCoerce[int](rt.Nothing[any]()), InputMode: /* primitive join */ rt.MaybeCoerce[string](rt.Nothing[any]()), Analytics: /* primitive join */ rt.MaybeCoerce[struct{ PageViews bool }](rt.Nothing[any]()), Csrf: true, Embedded: false, SessionTransport: Std_App_SessionTransport_CookieSession}
 	})
 }
 
@@ -8399,7 +8439,7 @@ func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 			ViewImpl      Std_App_ViewImpl
 		}](_s)
 	}(_t0.Fields[0])
-	return Std_App_applyBase_(v_0.Base, Std_App_guardTerminalView_(v_0.ViewImpl, Std_App_runLiveBoot_(Std_App_App_App(v_0))))
+	return Std_App_applyWebBase_(Std_App_findWeb(v_0.Configs), v_0.Base, Std_App_guardTerminalView_(v_0.ViewImpl, Std_App_runLiveBoot_(Std_App_App_App(v_0))))
 }
 
 func Std_App_runLiveBoot_(v_0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
@@ -8720,7 +8760,13 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 					panic(rt.Unreachable("case"))
 				}()
 				_ = withInputMode__10
-				withPort__11 := rt.Live_withPort(any(w_2.Port), withInputMode__10)
+				withPort__11 := func() any {
+					if w_2.Port >= 0 {
+						return rt.Live_withPort(any(w_2.Port), withInputMode__10)
+					} else {
+						return withInputMode__10
+					}
+				}()
 				_ = withPort__11
 				withAnalytics__12 := func() any {
 					_subj := w_2.Analytics
@@ -9167,12 +9213,20 @@ func Std_App_guardTerminalView_(v_0 Std_App_ViewImpl, v_1 rt.SkyTask[Sky_Core_Er
 	}
 }
 
-func Std_App_applyBase_(v_0 Std_App_BaseConfig_R, v_1 rt.SkyTask[Sky_Core_Error_Error, struct{}]) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
+func Std_App_applyWebBase_(v_0 Std_App_WebOpts_R, v_1 Std_App_BaseConfig_R, v_2 rt.SkyTask[Sky_Core_Error_Error, struct{}]) rt.SkyTask[Sky_Core_Error_Error, struct{}] {
 	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}]( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, any](rt.AnyTaskAndThen(any(func(_w0 any) any {
 		return any(func(_ struct{}) rt.SkyTask[Sky_Core_Error_Error, any] {
-			return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, any](v_1)
+			return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, any](v_2)
 		}( /* FFI return */ rt.Coerce[struct{}](_w0)))
-	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.Config_apply(Std_App_baseToConfig_(v_0)))))))
+	}), any( /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, struct{}](rt.Config_apply(Std_App_webBaseToConfig_(v_0, v_1)))))))
+}
+
+func Std_App_webBaseToConfig_(v_0 Std_App_WebOpts_R, v_1 Std_App_BaseConfig_R) any {
+	if v_0.Csrf {
+		return Std_App_baseToConfig_(v_1)
+	} else {
+		return Sky_Config_withCsrf(false, Std_App_baseToConfig_(v_1))
+	}
 }
 
 func Std_App_baseToConfig_(v_0 Std_App_BaseConfig_R) any {
@@ -9292,6 +9346,18 @@ func Sky_Config_logFormatName(v_0 Sky_Config_LogFormat) string {
 			return "text"
 		}
 		panic(rt.Unreachable("case"))
+	}
+}
+
+func Sky_Config_withCsrf(v_0 bool, v_1 any) any {
+	return rt.Config_withCsrf(any(Sky_Config_csrfValue(v_0)), v_1)
+}
+
+func Sky_Config_csrfValue(v_0 bool) string {
+	if v_0 {
+		return "on"
+	} else {
+		return "off"
 	}
 }
 
