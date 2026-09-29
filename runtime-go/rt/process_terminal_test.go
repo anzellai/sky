@@ -54,10 +54,15 @@ func follow(t *testing.T, id int, view string, gen int, cl *termClient, ok func(
 	}
 }
 
+// hasLine waits for a row holding a command's output. The row may start with
+// the shell's `$ ` prompt: the PTY echoes the typed line at once, and on some
+// systems the shell prints its prompt before the command's output arrives, so
+// the output lands on the prompt row ("$ x"). CI on Linux does this.
 func hasLine(want string) func([]string) bool {
 	return func(text []string) bool {
 		for _, l := range text {
-			if strings.TrimRight(l, " ") == want {
+			row := strings.TrimRight(l, " ")
+			if row == want || row == "$ "+want {
 				return true
 			}
 		}
