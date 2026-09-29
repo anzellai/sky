@@ -5093,6 +5093,30 @@ impl<'a> Ctx<'a> {
         } else {
             c
         };
+        // A non-`Def` callee (a parameter, a let-bound or lambda-bound function,
+        // a record field) applied EXACTLY returns its own Go func type's result
+        // — not the use-site's inferred type. The two differ when inference
+        // instantiated the result differently from the value's Go type: a
+        // `f : Int -> Task Error ()` parameter called inside a `Task.andThen`
+        // chain whose later links leave the result var free gives the call
+        // `rt.SkyTask[E, any]` by inference while `f` returns
+        // `rt.SkyTask[E, struct{}]`; a polymorphic let-bound function
+        // (`twice x = ( x, x )`, lowered once at `func(any) rt.T2[any, any]`)
+        // is used at `(String, String)`. Labelling the call with the inferred
+        // type made `coerce_if_needed` elide the conversion the slot needs, and
+        // `go build` rejected the return. Report the real type so the caller's
+        // coerce bridges it (doc 14 §1: both shapes are known here; R1).
+        let ret_goty = match (&c.ty, go_arity) {
+            (GoTy::Func(ps, cret), None)
+                if ps.len() == largs.len()
+                    && **cret != GoTy::Any
+                    && ret_goty != GoTy::Any
+                    && **cret != ret_goty =>
+            {
+                (**cret).clone()
+            }
+            _ => ret_goty,
+        };
         // Partial application: a def of arity N called with M < N args must
         // yield a closure over the remaining params (Sky curries; Go does not).
         // `Result.andThen (validateTime now)` → `func(_p0 any) R { return
@@ -7996,18 +8020,44 @@ impl<'a> Ctx<'a> {
                 )),
                 vec![],
             ),
-            Pattern::Ctor { ctor, name, args } => self.ctor_pattern(
-                subj,
-                subj_ty,
-                ctor.as_ref().map(|c| c.type_),
-                name.as_str(),
-                args,
-            ),
+            Pattern::Ctor { ctor, name, args } => {
+                let (ctor_ty, name, args) =
+                    (ctor.as_ref().map(|c| c.type_), name.clone(), args.clone());
+                // An ERASED subject (`any`: an ADT bag payload, an `any` list
+                // element, an alias-wrapped payload) cannot have `.Tag` /
+                // `.OkValue` / `.Fields[i]` read off it, nor stand as a Go
+                // `bool`. Narrow it once to the ctor's own nominal first — the
+                // same narrowing `ctor_pattern` / `bind_field_pat` /
+                // `adt_variant_binds` apply to the payloads they extract (doc 14
+                // R6), done HERE so every route into a ctor pattern gets it.
+                let (subj, subj_ty) = self.narrow_ctor_subject(subj, subj_ty, p);
+                self.ctor_pattern(&subj, &subj_ty, ctor_ty, name.as_str(), &args)
+            }
             Pattern::Alias(inner, id) => {
-                let inner = *inner;
-                let name = self.fresh_local_named(*id, None);
-                let (c, mut binds) = self.pattern_test(subj, subj_ty, inner);
-                binds.insert(0, GoStmt::Short(name, subj.clone()));
+                let (inner, id) = (*inner, *id);
+                let name = self.fresh_local_named(id, None);
+                // An `as` binding over an erased subject: narrow the subject to
+                // the inner pattern's nominal (`(Ok req) as whole` →
+                // `rt.SkyResult[any, any]`) so the inner test reads a typed
+                // value, and bind the alias to that SAME narrowed value with its
+                // real Go type registered — the `Pattern::Var` discipline. The
+                // alias previously bound the raw `any` with no registered type,
+                // and the inner ctor test read `.Tag` off `any` (`go build`
+                // failed: `_subj.Fields[0].Tag undefined`).
+                let (subj, subj_ty) = if *subj_ty == GoTy::Any {
+                    match self.pattern_nominal_ty(&self.body.pats[inner]) {
+                        Some(to) if to != GoTy::Any => {
+                            let e = narrow_erased(subj.clone(), &to);
+                            (e, to)
+                        }
+                        _ => (subj.clone(), subj_ty.clone()),
+                    }
+                } else {
+                    (subj.clone(), subj_ty.clone())
+                };
+                let (c, mut binds) = self.pattern_test(&subj, &subj_ty, inner);
+                self.local_tys.insert(id, subj.ty.clone());
+                binds.insert(0, GoStmt::Short(name, subj));
                 (c, binds)
             }
             Pattern::Cons(h, t) => {
@@ -8318,9 +8368,14 @@ impl<'a> Ctx<'a> {
                         // needs its payload field coerced from `any` to the
                         // sub-pattern's own ADT type, else the recursive
                         // `_subj.Fields[i].Tag` reads `.Tag` off `any` (27/28).
-                        p @ (Pattern::Ctor { .. } | Pattern::Tuple(_) | Pattern::Record(_)) => {
-                            self.pattern_nominal_ty(p).unwrap_or(GoTy::Any)
-                        }
+                        // An `as` binding over one (`Wrap ((Ok req) as whole)`,
+                        // the form the Sky.Spa split writes for a server arm)
+                        // narrows the same way — `pattern_nominal_ty` sees
+                        // through the alias.
+                        p @ (Pattern::Ctor { .. }
+                        | Pattern::Tuple(_)
+                        | Pattern::Record(_)
+                        | Pattern::Alias(..)) => self.pattern_nominal_ty(p).unwrap_or(GoTy::Any),
                         _ => GoTy::Any,
                     };
                     let field = GoExpr::new(
@@ -8438,11 +8493,45 @@ impl<'a> Ctx<'a> {
         (cond, binds)
     }
 
+    /// Narrow an ERASED (`any`) subject of ctor pattern `p` to the ctor's own
+    /// nominal when the ctor test reads structure off it: `.Tag` / `.OkValue` /
+    /// `.JustValue` / `.ErrValue` (Result, Maybe), `.Tag` / `.Fields[i]` (a
+    /// non-sealed ADT bag) or the Go `bool` itself (`True` / `False`). A sealed
+    /// ADT (`rt.EnumTagIs` + a type assertion) and an iota enum (`==` against a
+    /// constant) already work on `any`, so they keep the subject as it is. A
+    /// typed subject is returned unchanged. Doc 14 §1: the ctor head names the
+    /// nominal at emit time, so this is the closeable R6 narrowing, stamped
+    /// `GenericErase` like the payload narrowings in `ctor_pattern`.
+    fn narrow_ctor_subject(&self, subj: &GoExpr, subj_ty: &GoTy, p: PatId) -> (GoExpr, GoTy) {
+        if *subj_ty != GoTy::Any {
+            return (subj.clone(), subj_ty.clone());
+        }
+        let Pattern::Ctor { ctor, name, .. } = &self.body.pats[p] else {
+            return (subj.clone(), subj_ty.clone());
+        };
+        let needs = match name.as_str() {
+            "Ok" | "Err" | "Just" | "Nothing" | "True" | "False" => true,
+            other => matches!(
+                self.ctor_union_owner(ctor.as_ref().map(|c| c.type_), other, &GoTy::Any),
+                Some((go, NominalKind::Adt)) if !self.sealed_unions.contains(&go)
+            ),
+        };
+        if !needs {
+            return (subj.clone(), subj_ty.clone());
+        }
+        match self.pattern_nominal_ty(&self.body.pats[p]) {
+            Some(to) if to != GoTy::Any => (narrow_erased(subj.clone(), &to), to),
+            _ => (subj.clone(), subj_ty.clone()),
+        }
+    }
+
     /// The nominal Go type a (sub-)pattern matches against, derived structurally
     /// from its ctor head — so a payload extracted as `any` can be narrowed
     /// before the recursive `pattern_test` reads `.Tag` / `.V{i}` off it.
     fn pattern_nominal_ty(&self, p: &Pattern) -> Option<GoTy> {
         match p {
+            // `(Ok req) as whole` matches what its inner pattern matches.
+            Pattern::Alias(inner, _) => self.pattern_nominal_ty(&self.body.pats[*inner]),
             Pattern::Ctor { ctor, name, .. } => match name.as_str() {
                 "Ok" | "Err" => Some(GoTy::Named(
                     "rt.SkyResult".into(),
@@ -8774,6 +8863,21 @@ fn and_opt(a: Option<GoExpr>, b: Option<GoExpr>) -> Option<GoExpr> {
 /// sealed-ADT variant dispatch.
 fn is_builtin_ctor(cname: &str) -> bool {
     matches!(cname, "Ok" | "Err" | "Just" | "Nothing" | "True" | "False")
+}
+
+/// Narrow an erased (`any`) pattern subject to the nominal `to` its pattern
+/// matches — the `GenericErase` narrowing of doc 14 R6 (an erased payload
+/// un-erased at the pattern that names its shape).
+fn narrow_erased(x: GoExpr, to: &GoTy) -> GoExpr {
+    GoExpr::new(
+        GoExprKind::Coerce {
+            inner: Box::new(x),
+            from: GoTy::Any,
+            to: to.clone(),
+            reason: CoerceReason::GenericErase,
+        },
+        to.clone(),
+    )
 }
 
 fn tag_eq(subj: &GoExpr, tag: usize) -> GoExpr {

@@ -84,7 +84,7 @@ impl Mismatch {
 }
 
 /// The union-find store. Local to ONE inference run; never global (L1).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct UnionFind {
     slots: Vec<Slot>,
 }
@@ -580,7 +580,7 @@ impl UnionFind {
     }
 }
 
-fn flat_children(ft: &FlatTy) -> Vec<TyVarId> {
+pub(crate) fn flat_children(ft: &FlatTy) -> Vec<TyVarId> {
     match ft {
         FlatTy::App(_, args) => args.clone(),
         FlatTy::Fun(a, b) => vec![*a, *b],

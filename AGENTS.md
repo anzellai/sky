@@ -77,6 +77,10 @@ Core syntax you must get right:
 - **Pipelines**: `x |> f |> g` (left-to-right), `f <| x` (right-to-left).
 - **Lambdas**: `\x -> x + 1`. **Cons**: `head :: tail`. **Lists**: `[ 1, 2, 3 ]`.
 - **`let … in`** for locals; **`case … of`** for pattern matching (must be exhaustive).
+  A let-bound function is polymorphic, like a top-level one (let-generalisation
+  under the value restriction, `docs/language/types.md`).
+- **Field access**: `model.user.name`; `Shape.origin.x` is field `x` of the
+  qualified value `Shape.origin`.
 - **Record update**: `{ user | age = 41 }` (keeps every other field).
 - **Import aliasing**: `import Std.Db as Db exposing (Store)`.
 - **Multiline strings**: triple-quoted with `{{expr}}` interpolation; `\{{` escapes.

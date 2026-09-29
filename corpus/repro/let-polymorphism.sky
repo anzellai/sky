@@ -1,0 +1,43 @@
+-- PINNED REPRO — v0.27.0 downstream round 3 (a downstream project's reduction)
+--
+-- A let-bound function used at two types: a closure over an outer value
+-- (`field name decoder`, used with `Decode.int` and `Decode.string`) and a
+-- closed function (`twice`). Let bindings were monomorphic, so the second use
+-- was `[E2001] type mismatch: Int vs String`, although docs/language/types.md
+-- promised "full HM, including generalisation". Sky, unlike Elm, does not
+-- auto-import `Tuple`; the import below is part of a well-formed program.
+--
+-- coordinate: let_binding=closure let_uses=two_types let_site=in_def
+-- expect: accept, stdout "one 1 a2"
+--
+-- CHECKED IN, hand-written. Not generator output.
+module Main exposing (main)
+
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Tuple as Tuple
+import Std.Log as Log
+
+
+describe : String -> String
+describe raw =
+    let
+        field name decoder =
+            Decode.decodeString (Decode.field name decoder) raw
+    in
+        case ( field "n" Decode.int, field "s" Decode.string ) of
+
+            ( Ok n, Ok s ) ->
+                s ++ " " ++ String.fromInt n
+
+            _ ->
+                "bad"
+
+
+main =
+    let
+        twice x = ( x, x )
+    in
+        Log.println
+            (describe "{\"n\":1,\"s\":\"one\"}" ++ " " ++ Tuple.first (twice "a")
+                ++ String.fromInt (Tuple.first (twice 2)))

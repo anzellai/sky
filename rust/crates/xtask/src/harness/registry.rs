@@ -427,9 +427,12 @@ pub static GATES: &[Gate] = &[
                 // and the v0.27.0 crypto/QR surfaces sign, kx, kdf, noise,
                 // cpace and qr (+18 cases, 487 → 505), and the v0.27.0
                 // process and watch surfaces (+5 cases, 505 → 510), and the
-                // v0.27.0 canvas and terminal surfaces (+9 cases, 510 → 519).
-                from: "n_min = 519",
-                to: "n_min = 520",
+                // v0.27.0 canvas and terminal surfaces (+9 cases, 510 → 519),
+                // and the v0.27.0 round-3 language strata as_pattern_nesting,
+                // task_slot, let_polymorphism and qualified_field (+95 cases,
+                // 519 → 614).
+                from: "n_min = 614",
+                to: "n_min = 615",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -554,8 +557,11 @@ pub static GATES: &[Gate] = &[
         tier: Tier::T2,
         platforms: UNIX,
         // 1800 s held 341 cases; v0.27.0 took the corpus to 373, and a CI
-        // runner reached 325 at 30 min. 3000 s keeps headroom for growth.
-        budget_s: 3000,
+        // runner reached 325 at 30 min. 3000 s kept headroom for that. The
+        // v0.27.0 round-3 language strata took it to 468 (+95, all built and
+        // run); at the same CI rate that is about 2,600 s, so 4000 s restores
+        // the headroom.
+        budget_s: 4000,
         expected: bodies::CORPUS_BEHAVIOURAL_EXPECTED,
         expect: Expect::Falsifiable,
         summary: "every generated case built + run; values compared against the generator's own",

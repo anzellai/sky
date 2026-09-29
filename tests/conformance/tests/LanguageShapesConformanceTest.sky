@@ -1,0 +1,245 @@
+module LanguageShapesConformanceTest exposing (main, tests)
+
+{-| Behavioural conformance for four language shapes a downstream project
+found broken on the v0.27.0 release branch. Each type-checked (or should
+have), and each failed before its fix: `go build` rejected the emitted Go, or
+the checker or the resolver rejected a well-formed program.
+
+  - An `as` binding around a nested constructor pattern over an erased payload
+    (`Wrap ((Ok req) as whole)`), which the Sky.Spa split writes for a server
+    arm that matches inside its argument.
+  - A Task-returning function (a parameter, a record field) called where
+    inference leaves the Task's result free: a middle `Task.andThen` link, a
+    `Task.sequence` list, an `if` branch.
+  - Let-polymorphism: a let-bound function, lambda, closure or syntactic value
+    used at two types.
+  - `Module.value.field` on a qualified value.
+
+Every case asserts the VALUE through the compiled binary. -}
+
+import Sky.Core.Error as Error
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.List as List
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Test as Test exposing (Test)
+import Std.App as App
+import Std.Crypto.Kx as Kx
+
+-- `as` over a nested constructor pattern. `Keyed` names `Kx.SecretKey`, a type
+-- two stdlib modules define, which keeps `Msg` on the `rt.SkyADT` bag with
+-- `any` payload fields — the representation the defect needed.
+type Probe
+    = Hit Int
+    | Miss
+
+type Msg
+    = Start
+    | WrapResult (Result Error Int)
+    | WrapMaybe (Maybe Int)
+    | WrapProbe Probe
+    | WrapPair ( Int, String )
+    | Keyed (Result Error Kx.SecretKey)
+
+
+probeValue : Probe -> Int
+probeValue p =
+    case p of
+
+        Hit n ->
+            n
+
+        Miss ->
+            0
+
+
+describe : Msg -> String
+describe msg =
+    case msg of
+
+        WrapResult ((Ok n) as whole) ->
+            String.fromInt (n + Result.withDefault 0 whole)
+
+        WrapResult (Err _) ->
+            "err"
+
+        WrapMaybe ((Just n) as whole) ->
+            String.fromInt (n + Maybe.withDefault 0 whole)
+
+        WrapMaybe Nothing ->
+            "nothing"
+
+        WrapProbe ((Hit n) as whole) ->
+            String.fromInt (n + probeValue whole)
+
+        WrapProbe Miss ->
+            "miss"
+
+        WrapPair (( n, s ) as whole) ->
+            String.fromInt (n + fst whole) ++ s ++ snd whole
+
+        Start ->
+            "start"
+
+        Keyed _ ->
+            "key"
+
+
+outer : Msg -> String
+outer msg =
+    case msg of
+
+        (WrapResult (Ok n)) as whole ->
+            String.fromInt n ++ describe whole
+
+        _ ->
+            "other"
+
+-- A Task-returning function where the slot's Task result is left free.
+type alias Hooks =
+    { step : Int -> Task Error () }
+
+
+viaParam : (Int -> Task Error ()) -> Task Error Int
+viaParam f =
+    Task.succeed 20
+        |> Task.andThen
+               (\c ->
+                   Task.succeed c |> Task.andThen (\_ -> f c)
+                       |> Task.andThen (\_ -> Task.succeed (c + 22)))
+
+
+viaField : Hooks -> Task Error Int
+viaField h =
+    Task.succeed 20
+        |> Task.andThen
+               (\c ->
+                   Task.succeed c |> Task.andThen (\_ -> h.step c)
+                       |> Task.andThen (\_ -> Task.succeed (c + 22)))
+
+
+viaSequence : (Int -> Task Error Int) -> Task Error Int
+viaSequence f =
+    Task.sequence [ f 1, f 2 ] |> Task.andThen (\_ -> Task.succeed 42)
+
+
+viaBranch : (Int -> Task Error ()) -> Task Error Int
+viaBranch f =
+    Task.succeed 20
+        |> Task.andThen
+               (\c ->
+                   (if c > 0 then
+                       f c
+
+                   else
+                       Task.succeed ())
+                       |> Task.andThen (\_ -> Task.succeed (c + 22)))
+
+
+-- Let-polymorphism.
+decodeBoth : String -> String
+decodeBoth raw =
+    let
+        field name decoder =
+            Decode.decodeString (Decode.field name decoder) raw
+    in
+        case ( field "n" Decode.int, field "s" Decode.string ) of
+
+            ( Ok n, Ok s ) ->
+                s ++ String.fromInt n
+
+            _ ->
+                "bad"
+
+
+letShapes : String
+letShapes =
+    let
+        base = 22
+        twice x = ( x, x )
+        wrap = \x -> [ x ]
+        tag x = ( x, base )
+        none = []
+        size xs =
+            case xs of
+
+                [] ->
+                    0
+
+                _ :: rest ->
+                    1 + size rest
+    in
+        String.join
+            ","
+            [ fst (twice "a") ++ String.fromInt (fst (twice 1))
+            , String.fromInt (List.length (wrap 1) + List.length (wrap "b"))
+            , String.fromInt (snd (tag 0) + snd (tag "s"))
+            , String.fromInt
+                  (List.length (1 :: none) + List.length ("c" :: none))
+            , String.fromInt (size [ 1, 2 ] + size [ "d" ])
+            ]
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "as inside a nested Result pattern binds the narrowed payload"
+          (\_ -> Test.equal "42" (describe (WrapResult (Ok 21))))
+    , Test.test
+          "as inside a nested Maybe pattern"
+          (\_ -> Test.equal "42" (describe (WrapMaybe (Just 21))))
+    , Test.test
+          "as inside a nested user-ADT pattern"
+          (\_ -> Test.equal "42" (describe (WrapProbe (Hit 21))))
+    , Test.test
+          "as inside a nested tuple pattern"
+          (\_ -> Test.equal "42xx" (describe (WrapPair ( 21, "x" ))))
+    , Test.test
+          "as around the whole constructor pattern"
+          (\_ -> Test.equal "2142" (outer (WrapResult (Ok 21))))
+    , Test.test
+          "the other arms of the bag union still match"
+          (\_ ->
+              Test.equal
+                  "err|nothing|miss"
+                  (String.join
+                      "|"
+                      [ describe (WrapResult (Err (Error.invalidInput "x")))
+                      , describe (WrapMaybe Nothing)
+                      , describe (WrapProbe Miss)
+                      ]))
+    , Test.test
+          "a Task parameter in a middle andThen link"
+          (\_ -> Test.equal (Ok 42) (Task.run (viaParam (\_ -> Task.succeed ()))))
+    , Test.test
+          "a Task record field in a middle andThen link"
+          (\_ ->
+              Test.equal
+                  (Ok 42)
+                  (Task.run (viaField { step = \_ -> Task.succeed () })))
+    , Test.test
+          "Task parameters in a Task.sequence list"
+          (\_ ->
+              Test.equal (Ok 42) (Task.run (viaSequence (\n -> Task.succeed n))))
+    , Test.test
+          "a Task parameter in an if branch"
+          (\_ ->
+              Test.equal (Ok 42) (Task.run (viaBranch (\_ -> Task.succeed ()))))
+    , Test.test
+          "a let closure used with two decoders"
+          (\_ -> Test.equal "one1" (decodeBoth "{\"n\":1,\"s\":\"one\"}"))
+    , Test.test
+          "let function, lambda, closure, value and recursive function at two types"
+          (\_ -> Test.equal "a1,2,44,2,3" letShapes)
+    , Test.test
+          "Module.value.field reads the field of a qualified value"
+          (\_ -> Test.equal 42 (App.webDefaults.port + 43))
+    , Test.test
+          "Module.value.field on a Bool field"
+          (\_ -> Test.equal True App.webDefaults.csrf)
+    ]
+
+
+main : Task Error ()
+main =
+    Test.runMain tests

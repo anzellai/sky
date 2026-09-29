@@ -152,7 +152,7 @@ grep -rn 'CoerceReason::' rust/crates/lower/src/lower.rs
 | **R3** | `lower.rs:4352-4364` | narrowing an argument into a typed Go FFI parameter slot (`rt.FfiT_*`) | `FfiReturn` | **floor** — the Go signature is the authority |
 | **R4** | `lower.rs:4386-4396` | **genuine Go FFI return**, `any → actual` | `FfiReturn` | **floor** (§4.1) |
 | **R5** | `lower.rs:4429-4439` | **runtime kernel** call return, `any → actual` | `FfiReturn` ← **mislabelled** | **closeable** (§4.4) |
-| **R6** | `lower.rs:6506-6519` | ADT payload: `SkyADT.Fields[i]` is `any`, narrowed to the sub-pattern's type | `GenericErase` | **closeable for app ADTs (already), blocked for stdlib ADTs** (§4.5) |
+| **R6** | `lower.rs:6506-6519`; since v0.27.0 also `narrow_erased` via `narrow_ctor_subject` / the `Pattern::Alias` arm of `pattern_test` | ADT payload: `SkyADT.Fields[i]` is `any`, narrowed to the sub-pattern's type — including a sub-pattern under an `as` binding, and any ctor pattern whose subject reaches it erased | `GenericErase` | **closeable for app ADTs (already), blocked for stdlib ADTs** (§4.5) |
 | **R7** | `lower.rs:6591-6600` | tuple pattern: `rt.T2.V{i}` erased field | `GenericErase` | **closeable** — `GoTy::Tuple` already renders `rt.T2[A,B]` when both are known |
 | **R8** | `lower.rs:6674-6683` | record / `Maybe` field pattern on an erased named field | `GenericErase` | **closeable** where the nominal is known |
 | **R9** | `lower.rs:6966-6980` (`coerce_to_str`) | operand of a Go string `+` that is not statically `string` | `FfiReturn` ← **mislabelled** | **closeable** — it is downstream of whatever produced the `any` |

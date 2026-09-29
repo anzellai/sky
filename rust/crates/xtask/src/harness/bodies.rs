@@ -84,7 +84,7 @@ pub const REJECT_EXPECTED: u64 = ty::reject_corpus::EXPECTED_CORPUS_FILES as u64
 /// broken version compiled, type-checked and ran. Seven pin the fix (tag +
 /// display, both halves), five pin what must NOT change outside a paragraph,
 /// since keying on parent context risks flattening every layout in every app.
-pub const CONFORMANCE_EXPECTED: u64 = 1408; // +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
+pub const CONFORMANCE_EXPECTED: u64 = 1422; // +14 LanguageShapes (`as` over a nested ctor pattern on the ADT bag, a Task-returning parameter / record field in a free Task slot, let-polymorphism, Module.value.field) — v0.27.0 downstream round 3; +6 CoreHelpers (Result.fromMaybe / Maybe.toResult, kernel path) +4 Json (the same, imported Sky.Core.Result / Sky.Core.Maybe) — v0.27.0 downstream request; +3 Native (Native.scanCode off-client is Unavailable, every CodeFormat, the message) — v0.27.0 native scanner; +9 Json (Decode.decodeValue, the documented Decode.value key order, one document per decodeString) +37 Encoding (RFC 4648 section 10 base32 / base32hex vectors, unpadded form, strict-decode negatives) +5 Noise (the BLAKE2s suite, suite mismatch, protocolName) — v0.27.0 downstream requests; +5 CryptoPrimitives (explicit-nonce ChaCha20-Poly1305 RFC 8439 2.8.2 and XChaCha20-Poly1305 draft A.3.1 vectors, determinism, negatives) — v0.27.0 judge fix; +3 TaskLoop (andThen / onError recursion at two million steps, a 100,000-task sequence) — v0.27.0 phase 7 Task trampoline; +12 UiTextWrap +19 UiCanvas (Std.Ui.text span wrap, Std.Ui.Canvas SVG, Std.Ui.Terminal payloads) — v0.27.0 phase 6C; +10 Native (secure store, biometrics, Std.Bundle builders off-client) — v0.27.0 phase 6B; +24 ProcessWatch — v0.27.0 phase 5B streaming processes and Std.Watch; +25 CryptoPrimitives +11 Noise +10 Cpace +12 Qr — v0.27.0 phase 5A crypto/QR modules; +15 Auth +16 Db +11 Db.Store lifecycle — B1 authdb coverage; +19 Codec.error/Codec.result wire round-trips — v0.24.0 Sky.Spa error/result codecs; +7 TaskLoop (Task.loop/forever) +12 CoreHelpers (Result.toMaybe, Sky.Core.Tuple) +10 Json (Decode.value, Encode.raw, imported Result.toMaybe) — v0.27.0
 /// `verify-cli.sh` entries that actually assert something. The 14th entry
 /// (`11-fyne-stopwatch`) is a declared skip and is deliberately NOT counted:
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
@@ -740,12 +740,20 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// nominal, empty, boundary, unicode — and `terminal` 5 edge classes). The new
 /// `Std.Ui.Canvas` and `Std.Ui.Terminal` land covered, so the dark-module
 /// count stays at its ceiling.
-pub const CORPUS_EXPECTED: u64 = 519;
+///
+/// **614 since the v0.27.0 round-3 language strata** (+95, Family L:
+/// `as_pattern_nesting` 24, `task_slot` 32, `let_polymorphism` 24,
+/// `qualified_field` 15). Each pins a downstream reproduction as its
+/// coordinate; see `corpus/lang_shapes.rs`.
+pub const CORPUS_EXPECTED: u64 = 614;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
+///
+/// **468 since the v0.27.0 round-3 language strata** (+95, every one built
+/// and run; the same +95 as `CORPUS_EXPECTED`).
 ///
 /// **373 since the v0.27.0 canvas and terminal Family-S surfaces** (+9, every
 /// one built and run; the same +9 as `CORPUS_EXPECTED`).
@@ -767,7 +775,7 @@ pub const CORPUS_EXPECTED: u64 = 519;
 /// T1 tier — so a behavioural-case addition that forgets this const surfaces a
 /// tier late. Both `CORPUS_EXPECTED` (all cases) and this (the built-and-run
 /// subset) move by the same +2 when a behavioural case lands.
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 373;
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 468;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -808,7 +816,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 147; // +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 148; // +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator

@@ -1,0 +1,10 @@
+module Shape exposing (origin)
+
+import Sky.Core.Prelude exposing (..)
+
+
+origin : { x : Int
+, y : Int
+}
+origin =
+    { x = 3, y = 4 }

@@ -273,6 +273,74 @@ pub const SHADOW: Axis = Axis::new(
 );
 
 // ---------------------------------------------------------------------------
+// v0.27.0 downstream round-3 axes: four "type-checks, then `go build` or the
+// checker fails" defects a downstream project found. Each axis is the
+// dimension its defect moved along.
+// ---------------------------------------------------------------------------
+
+/// **Where an `as` binding sits around a nested constructor pattern.** The
+/// Sky.Spa split writes a server arm as `DoOpen ((Ok req) as spaArg0_)`: the
+/// plain form built, the `as` form read `.Tag` off the erased payload (`go
+/// build`: `_subj.Fields[0].Tag undefined (type any …)`).
+pub const AS_BINDER: Axis = Axis::new("as_binder", &["plain", "as_inner", "as_outer"]);
+
+/// **What the nested pattern matches** inside the union's payload.
+pub const NESTED_PAYLOAD: Axis = Axis::new("nested_payload", &["result", "maybe", "adt", "tuple"]);
+
+/// **How the union is represented.** `bag` adds a constructor whose field type
+/// names a type two stdlib modules both define (`Kx.SecretKey` /
+/// `Sign.SecretKey`), which keeps the union on the `rt.SkyADT` bag with `any`
+/// payload fields; `sealed` has only unambiguous field types. The defect needed
+/// the bag.
+pub const UNION_REP: Axis = Axis::new("union_rep", &["bag", "sealed"]);
+
+/// **How a Task-returning function reaches a `Task.andThen` chain.** A
+/// parameter `f : Int -> Task Error ()` called in a middle link whose result
+/// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
+/// while `f` returns `SkyTask[E, struct{}]`: `go build` rejected the return.
+pub const TASK_CALLEE: Axis = Axis::new(
+    "task_callee",
+    &["param", "record_field", "let_fn", "lambda_arg"],
+);
+
+/// **Which slot the call lands in.** Each is a place a typed Task meets an
+/// `any`-instantiated slot: a lambda's return, a list literal, an `onError`
+/// receiver, an `if` branch.
+pub const TASK_LINK: Axis = Axis::new(
+    "task_link",
+    &["middle", "in_sequence", "on_error", "in_branch"],
+);
+
+/// **The callee's Task result type.**
+pub const TASK_RESULT: Axis = Axis::new("task_result", &["unit", "int"]);
+
+/// **The shape of a let binding that is used polymorphically.** A function,
+/// a lambda right-hand side, a closure over an outer value (the downstream
+/// `field name decoder` helper) and a syntactic value (`[]`) are the four
+/// forms let-generalisation covers.
+pub const LET_BINDING: Axis = Axis::new("let_binding", &["function", "lambda", "closure", "value"]);
+
+/// **How many types the binding is used at.** `one_type` is the form that
+/// always type-checked (and must keep its typed emission); `two_types` was
+/// rejected `[E2001]` before let-generalisation.
+pub const LET_USES: Axis = Axis::new("let_uses", &["one_type", "two_types"]);
+
+/// **Where the `let` sits.**
+pub const LET_SITE: Axis = Axis::new("let_site", &["in_def", "in_case_branch", "in_lambda"]);
+
+/// **How the module of a qualified value is named.** `Shape.origin.x` was
+/// read as the undefined name `Shape.origin.x`. `last_segment` is the
+/// auto-qualifier a non-aliased `import Std.App` binds (doc 05 §6: the last
+/// path segment, never the full path).
+pub const QUAL_PATH: Axis = Axis::new("qual_path", &["alias", "last_segment", "short_alias"]);
+
+/// **Where the `Module.value.field` access is used.**
+pub const QUAL_USE: Axis = Axis::new(
+    "qual_use",
+    &["arg", "operand", "pipeline", "in_lambda", "bool_field"],
+);
+
+// ---------------------------------------------------------------------------
 // Assignments
 // ---------------------------------------------------------------------------
 
@@ -441,6 +509,31 @@ pub const STRATA: &[Stratum] = &[
         // neighbour, so batching is safe and the `N_iso` ceiling is untouched.
         isolated: false,
     },
+    // ---- v0.27.0 downstream round 3 --------------------------------------
+    Stratum {
+        name: "as_pattern_nesting",
+        axes: &[AS_BINDER, NESTED_PAYLOAD, UNION_REP],
+        coordinate: Some("v0.27.0 downstream: `as` over a nested ctor pattern"),
+        isolated: false,
+    },
+    Stratum {
+        name: "task_slot",
+        axes: &[TASK_CALLEE, TASK_LINK, TASK_RESULT],
+        coordinate: Some("v0.27.0 downstream: Task-returning param in an andThen chain"),
+        isolated: false,
+    },
+    Stratum {
+        name: "let_polymorphism",
+        axes: &[LET_BINDING, LET_USES, LET_SITE],
+        coordinate: Some("v0.27.0 downstream: let-bound function used at two types"),
+        isolated: false,
+    },
+    Stratum {
+        name: "qualified_field",
+        axes: &[QUAL_PATH, QUAL_USE],
+        coordinate: Some("v0.27.0 downstream: `Module.value.field`"),
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -545,6 +638,30 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
             Assignment::new()
                 .with(DICT_KEY, "int")
                 .with(DICT_ACCESS, "direct"),
+        ),
+        // v0.27.0 round 3: the downstream reproductions' own coordinates.
+        "as_pattern_nesting" => Some(
+            Assignment::new()
+                .with(AS_BINDER, "as_inner")
+                .with(NESTED_PAYLOAD, "result")
+                .with(UNION_REP, "bag"),
+        ),
+        "task_slot" => Some(
+            Assignment::new()
+                .with(TASK_CALLEE, "param")
+                .with(TASK_LINK, "middle")
+                .with(TASK_RESULT, "unit"),
+        ),
+        "let_polymorphism" => Some(
+            Assignment::new()
+                .with(LET_BINDING, "closure")
+                .with(LET_USES, "two_types")
+                .with(LET_SITE, "in_def"),
+        ),
+        "qualified_field" => Some(
+            Assignment::new()
+                .with(QUAL_PATH, "alias")
+                .with(QUAL_USE, "arg"),
         ),
         _ => None,
     }

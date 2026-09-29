@@ -74,6 +74,10 @@ area radius =
         pi * square radius
 ```
 
+A let-bound function is polymorphic, like a top-level one: `square` above
+could be used at `Int` and at `Float` in the same body. See
+[types.md](types.md) ("Type annotations") for the value restriction.
+
 ## Case / of
 
 ```elm
@@ -104,6 +108,13 @@ result =
 ```
 
 `|>` is left-to-right function application. `<|` is the reverse.
+
+## Field access
+
+`record.field` reads a field, and chains: `model.user.name`. On a value from
+another module, `Module.value.field` reads the field of the qualified value:
+`Shape.origin.x` is the field `x` of `Shape.origin`. A qualified path ends at
+its first lower-case segment; the rest is field access.
 
 ## Record update
 
