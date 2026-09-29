@@ -8097,3 +8097,46 @@ fn a_server_arm_navigation_the_split_cannot_isolate_is_refused() {
     );
     let _ = std::fs::remove_dir_all(&proj);
 }
+
+/// The split's analysis loads a path dependency as the build does: as app
+/// code, type-checked and reported under its own path. A type error in the
+/// package stops `sky spa-split` there, never in the synthesised client or at
+/// run time.
+#[test]
+fn a_type_error_in_a_path_dependency_stops_the_split_at_its_own_file() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let root = scratch();
+    let _ = std::fs::remove_dir_all(&root);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-path-dep-record"),
+        &root,
+    );
+    let lib = root.join("lib/src/Geo/Shape.sky");
+    let src = std::fs::read_to_string(&lib).unwrap();
+    assert_eq!(src.matches("{ p | x = p.x + d }").count(), 1);
+    std::fs::write(
+        &lib,
+        src.replace("{ p | x = p.x + d }", "{ p | x = p.x ++ \"x\" }"),
+    )
+    .unwrap();
+    let out = Command::new(SKY)
+        .args(["spa-split", "src/Main.sky", "--out"])
+        .arg(root.join("split"))
+        .current_dir(root.join("app"))
+        .output()
+        .expect("run sky spa-split");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "a broken path package must stop the split:\n{log}"
+    );
+    assert!(
+        log.contains("../lib/src/Geo/Shape.sky:17:") && log.contains("[E2001]"),
+        "the error is reported in the package's own file:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

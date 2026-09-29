@@ -537,11 +537,11 @@ impl SkyDatabase {
         }
     }
 
-    /// Mint a [`SourceFile`] input for a module's text. `file_id` is the module's
-    /// eventual `ModuleId` index (the driver assigns them in load order); the
-    /// `parse` + `module_exports` queries key off the returned handle. Creation is
-    /// `&self` (salsa input), so this composes before the `&mut self`
-    /// [`add_module`] registration.
+    /// Mint a [`SourceFile`] input for a module's text. `file_id` is a
+    /// provisional id (the driver passes the load-order ordinal); the `parse` +
+    /// `module_exports` queries key off the returned handle. Creation is `&self`
+    /// (salsa input), so this composes before the `&mut self` [`add_module`]
+    /// registration, which sets `file_id` to the module's real `ModuleId`.
     pub fn new_source(&self, file_id: u32, text: String) -> SourceFile {
         SourceFile::new(self, file_id, text)
     }
@@ -549,17 +549,35 @@ impl SkyDatabase {
     /// Register a parsed module under its dotted name. A later add with the same
     /// name overrides (local modules shadow stdlib) — identical to
     /// `hir::SourceDb::add_module`.
+    ///
+    /// The file's `file_id` is set to the returned `ModuleId`'s index. Every
+    /// other span (hir's resolver, the type checker) names a file by its
+    /// `ModuleId`, and the CLI keys its path and source maps the same way, so a
+    /// parse diagnostic must too. The load-order ordinal a file was minted with
+    /// differs from its `ModuleId` whenever a loaded file is not registered (a
+    /// path dependency's `Main`, a module outside `sky test`'s import closure)
+    /// or a name is registered twice; before this, such a parse error was
+    /// reported at the right offset in ANOTHER module's file.
     pub fn add_module(&mut self, name: &str, file: SourceFile) -> ModuleId {
-        if let Some(&id) = self.by_name.get(name) {
-            self.modules[id.index() as usize].file = file;
-            return id;
+        use salsa::Setter;
+        let id = match self.by_name.get(name) {
+            Some(&id) => {
+                self.modules[id.index() as usize].file = file;
+                id
+            }
+            None => {
+                let id = ModuleId(self.modules.len() as u32);
+                self.modules.push(ModuleReg {
+                    name: name.to_string(),
+                    file,
+                });
+                self.by_name.insert(name.to_string(), id);
+                id
+            }
+        };
+        if file.file_id(self) != id.index() {
+            file.set_file_id(self).to(id.index());
         }
-        let id = ModuleId(self.modules.len() as u32);
-        self.modules.push(ModuleReg {
-            name: name.to_string(),
-            file,
-        });
-        self.by_name.insert(name.to_string(), id);
         id
     }
 
@@ -726,6 +744,36 @@ mod tests {
         let direct = syntax::parse(src, base::FileId(3));
         assert_eq!(via_salsa.reprint(), direct.reprint());
         assert_eq!(via_salsa.error_node_count(), direct.error_node_count());
+    }
+
+    /// A parse diagnostic names the file by the module's `ModuleId`, whatever
+    /// ordinal the file was minted with: `B` is loaded but never registered (as
+    /// `sky test` drops a module outside the suite's import closure), so `C`'s
+    /// ordinal is 2 while its `ModuleId` is 1.
+    #[test]
+    fn registration_sets_file_id_to_module_id() {
+        let mut db = SkyDatabase::default();
+        let a = db.new_source(0, "module A exposing (..)\n\na = 1\n".to_string());
+        let _b = db.new_source(1, "module B exposing (..)\n\nb = 1\n".to_string());
+        let c = db.new_source(
+            2,
+            "module C exposing (..)\n\nc =\n    (1 * 2))\n".to_string(),
+        );
+        let ida = db.add_module("A", a);
+        let idc = db.add_module("C", c);
+        assert_eq!((ida.index(), idc.index()), (0, 1));
+        assert_eq!(c.file_id(&db), idc.index());
+        let errs = parse(&db, c).errors().to_vec();
+        assert!(!errs.is_empty(), "C has a parse error");
+        for d in &errs {
+            for l in &d.labels {
+                assert_eq!(l.span.file, base::FileId(idc.index()), "{d:?}");
+            }
+        }
+        // A re-registration under the same name takes that module's id.
+        let c2 = db.new_source(7, "module C exposing (..)\n\nc = )\n".to_string());
+        assert_eq!(db.add_module("C", c2), idc);
+        assert_eq!(c2.file_id(&db), idc.index());
     }
 
     #[test]

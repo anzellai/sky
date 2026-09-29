@@ -1,0 +1,15 @@
+Showing nodes accounting for 10.23kB, 23.51% of 43.53kB total
+Dropped 6 nodes (cum <= 0.22kB)
+Showing top 12 nodes out of 97
+      flat  flat%   sum%        cum   cum%
+   13.59kB 31.23% 31.23%    13.59kB 31.23%  runtime.mallocgc
+    4.88kB 11.20% 42.43%     5.08kB 11.67%  fmt.Sprintf
+   -4.88kB 11.20% 31.23%    -4.88kB 11.20%  sky-app/rt.skyEnvName
+   -4.09kB  9.40% 21.82%    -4.09kB  9.40%  bufio.NewReaderSize
+   -4.06kB  9.33% 12.49%    -4.06kB  9.33%  bufio.NewWriterSize
+    3.06kB  7.04% 19.53%     3.06kB  7.04%  sync.runtime_notifyListWait
+    2.50kB  5.74% 25.27%     2.50kB  5.74%  fmt.(*buffer).write
+   -0.75kB  1.72% 23.55%    -0.75kB  1.72%  fmt.(*buffer).writeByte
+    0.52kB  1.18% 24.73%     0.52kB  1.18%  sync.(*poolChain).pushHead
+   -0.25kB  0.57% 24.16%    -0.25kB  0.57%  fmt.(*buffer).writeString
+   -0.19kB  0.43% 23.73%    -0.19kB  0.43%  internal/bytealg.MakeNoZero

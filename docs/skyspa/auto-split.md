@@ -1257,7 +1257,11 @@ and the fuzz harnesses read) loaded the fetched registry packages under
 from a path package then named a missing module in the synthesised client
 entry, and the split failed with `[update] type mismatch: Point vs record` on a
 program `sky check` accepted. Both loaders now share
-`build::load_dependency_modules`.
+`build::load_registry_dependencies` (registry packages, trusted) and
+`build::load_path_dependency_sources` (path packages, loaded as app modules:
+type-checked, and reported under their own path). The analysis db registers
+path modules as dependencies, not project modules, so the split treats them as
+the dependencies the generated projects declare.
 
 **Every type is resolved by its module, never its bare name.** The codec
 resolver keyed the project's records and unions by bare name, and read a

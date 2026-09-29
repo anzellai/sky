@@ -1160,7 +1160,10 @@ debounce window and delivers one batch in which each path appears once (a file
 created then written is `Created`; created then deleted is not reported;
 deleted then re-created is `Modified`; a move inside the tree is `Renamed`).
 When the OS queue overflowed, or batches piled up unread, the next batch is
-exactly `[ Overflow ]`: rescan. One consumer mode per watcher, as for
+exactly `[ Overflow ]`: rescan. A file saved by rename (write a temporary
+file, rename it over the original) is `Modified`, and later changes to the new
+file are reported; a watched directory that is renamed away, replaced or
+deleted is watched again at its path, now or when it exists again. One consumer mode per watcher, as for
 `Process`. Linux uses inotify and macOS kqueue, both from the Go standard
 library; other systems return `Err Unavailable`.
 

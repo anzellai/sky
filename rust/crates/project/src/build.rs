@@ -295,11 +295,20 @@ fn assemble_and_emit_with(
     for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
-    // Every Sky dependency module (fetched packages + local path packages),
-    // loaded by the ONE routine every loader shares.
-    for note in load_dependency_modules(&mut db, &mut next_id, example_dir, repo_root)? {
+    // The Sky dependencies, loaded by the routines every loader shares
+    // (`load_source_db` too, so the Sky.Spa split analyses the program the
+    // build compiles). Registry packages are trusted and registered here.
+    for note in load_registry_dependencies(&mut db, &mut next_id, example_dir, repo_root)? {
         eprintln!("  {note}");
     }
+    //
+    // A path dependency is local source the user edits, not a fetched, pinned
+    // package: its modules are APP modules — parse-gated, type-checked, and
+    // reported under their own path — registered before the project's own so
+    // a same-named local module still shadows them. Trusting them like
+    // `.skydeps` let a parse or type error in one pass `sky check` and panic
+    // at run time. They never provide the entry.
+    let (mut dep_locals, dep_files) = load_path_dependency_sources(&db, &mut next_id, example_dir);
 
     let source_root = configured_source_root(&example_dir);
     let mut locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
@@ -309,6 +318,8 @@ fn assemble_and_emit_with(
     if locals.is_empty() {
         return Err(format!("no .sky under {source_root}/").into());
     }
+    dep_locals.extend(locals);
+    let mut locals = dep_locals;
     if let (AppScope::EntryClosure, Some(want)) = (scope, entry_module) {
         locals = entry_import_closure(&db, locals, want);
     }
@@ -316,8 +327,9 @@ fn assemble_and_emit_with(
     // so each diagnostic header carries `src/Main.sky:line:col` (matching the
     // oracle) instead of a bare `line:col`. MUST be keyed by the module's
     // `ModuleId` — the id `db.add_module` returns and the id a diagnostic span's
-    // `file` carries — NOT by the `SourceFile`'s `file_id` (a load-order ordinal
-    // minted by `next_id`). The two coincide for a project with no Sky
+    // `file` carries (`add_module` now also stamps it on the `SourceFile`, so a
+    // parse error's span carries it too) — NOT by the load-order ordinal a file
+    // was minted with by `next_id`. The two coincide for a project with no Sky
     // dependencies, but a `.skydeps` module that shares a name with a local one
     // (`add_module` returns the EXISTING id on re-add) — or kernel pre-population
     // — shifts them apart, and a span then resolves to the WRONG file's path
@@ -342,8 +354,21 @@ fn assemble_and_emit_with(
     // stdlib + `.skydeps` parse clean (the `roundtrip` gate asserts 0 ERROR nodes
     // across the whole corpus) and are trusted, exactly like the type/name/
     // exhaustive gates scope to `check_ids`.
-    let mut parse_diags: Vec<diagnostics::Diagnostic> = Vec::new();
+    //
+    // Keyed by `ModuleId`: a module reached twice (two source roots, or a
+    // name declared twice) is checked once, against the file the db holds —
+    // the LAST one registered — so its parse errors, its display path and its
+    // source text (`src_map`, read from the db) all name that one file.
+    let mut parse_diags: std::collections::BTreeMap<u32, Vec<diagnostics::Diagnostic>> =
+        std::collections::BTreeMap::new();
     for (n, file, p) in locals {
+        // Registered FIRST: `add_module` sets the file's `file_id` to its
+        // `ModuleId`, so the parse below puts that id on every span — the id
+        // `path_map` / `src_map` are keyed by. Parsed before registration, a
+        // span carried the file's load-order ordinal, and when that differed
+        // (a module outside `sky test`'s import closure sorted before this
+        // one) the error was reported at the right offset in ANOTHER file.
+        let id = db.add_module(&n, file);
         // A parser that RECOVERS from a syntax error (e.g. a bare operator
         // section `(+)`, which Sky has no grammar for) emits an `Expr::Error`
         // node that lowers to Go `nil` and panics at runtime — while `sky check`
@@ -354,11 +379,12 @@ fn assemble_and_emit_with(
         // "if it compiles it works".
         {
             let parse = skydb::parse(&db, file);
+            let mut here = Vec::new();
             if !parse.errors().is_empty() || parse.error_node_count() > 0 {
                 if parse.errors().is_empty() {
                     // Recovery produced a structural ERROR node without an attached
                     // diagnostic (defensive — the recovery paths always pair the two).
-                    parse_diags.push(diagnostics::Diagnostic::error(
+                    here.push(diagnostics::Diagnostic::error(
                         "E0001",
                         format!(
                             "PARSE ERROR in module {n}: unstructured input (recovered ERROR node)"
@@ -367,13 +393,19 @@ fn assemble_and_emit_with(
                 } else {
                     for d in parse.errors() {
                         if d.severity == diagnostics::Severity::Error {
-                            parse_diags.push(d.clone());
+                            here.push(d.clone());
                         }
                     }
                 }
             }
+            parse_diags.insert(id.index(), here);
         }
-        let id = db.add_module(&n, file);
+        // Key the display-path map by the REAL `ModuleId` (`id.index()`) — the
+        // same id `src_map` and diagnostic spans use — so a Sky-frontend error
+        // always names the file the span actually points at (see the note where
+        // `path_map` is declared). Overwritten on a second registration, like
+        // the db's file.
+        path_map.insert(base::FileId(id.index()), display_path(example_dir, &p));
         // Every app-code module (the project's own `src/` + any `extra_dirs`
         // like `tests/`) is type-checked. Stdlib + `.skydeps` are trusted
         // signatures, never re-checked — mirrors the `xtask infer` gate, whose
@@ -384,24 +416,16 @@ fn assemble_and_emit_with(
             continue;
         }
         check_ids.push(id);
-        // Key the display-path map by the REAL `ModuleId` (`id.index()`) — the
-        // same id `src_map` and diagnostic spans use — so a Sky-frontend error
-        // always names the file the span actually points at (see the note where
-        // `path_map` is declared).
-        let disp = p
-            .strip_prefix(example_dir)
-            .unwrap_or(&p)
-            .to_string_lossy()
-            .replace('\\', "/");
-        path_map.insert(base::FileId(id.index()), disp);
-        let is_entry = match entry_module {
-            Some(want) => n == want,
-            None => n == "Main" || n.ends_with(".Main") || n == "main",
-        };
+        let is_entry = !dep_files.contains(&p)
+            && match entry_module {
+                Some(want) => n == want,
+                None => n == "Main" || n.ends_with(".Main") || n == "main",
+            };
         if is_entry {
             entry = Some(id);
         }
     }
+    let parse_diags: Vec<diagnostics::Diagnostic> = parse_diags.into_values().flatten().collect();
     // `FileId → source text` for every checked app module — feeds the Elm-style
     // renderer (`Diagnostic::render_cli`) so each Sky-frontend diagnostic shows
     // its offending source line + caret instead of a flat `[code] message`. A
@@ -2684,8 +2708,18 @@ pub(crate) fn load_source_db(
     for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
-    for note in load_dependency_modules(&mut db, &mut next_id, example_dir, repo_root)? {
+    for note in load_registry_dependencies(&mut db, &mut next_id, example_dir, repo_root)? {
         eprintln!("  {note}");
+    }
+    // The path dependencies, as the build loads them: registered before the
+    // project's own modules (which shadow a same-named one) and type-checked
+    // below. They are not in `check_ids`: an analysis over this db (the
+    // Sky.Spa split) treats them as the dependencies the generated projects
+    // declare, never as project modules to copy.
+    let (path_locals, _) = load_path_dependency_sources(&db, &mut next_id, example_dir);
+    let mut path_mods: Vec<(base::ModuleId, PathBuf)> = Vec::new();
+    for (n, file, p) in path_locals {
+        path_mods.push((db.add_module(&n, file), p));
     }
     let source_root = configured_source_root(example_dir);
     let locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
@@ -2715,31 +2749,66 @@ pub(crate) fn load_source_db(
     let mut surface = ffi_type_surface(&load_ffi_surface(example_dir));
     surface.set_trust(ffi_trust(&db, repo_root, example_dir, &check_ids));
     db.set_ffi_surface(std::sync::Arc::new(surface));
+    // A path dependency is app code: check it, as the build does, and report
+    // an error under the module's own path. A module the project shadows (it
+    // declares the same name) is the project's and is checked by the caller.
+    path_mods.retain(|(m, _)| !check_ids.contains(m));
+    if !path_mods.is_empty() {
+        let ids: Vec<base::ModuleId> = path_mods.iter().map(|(m, _)| *m).collect();
+        let checked = ty::check_modules(&db, &ids);
+        let errors: Vec<diagnostics::Diagnostic> = checked
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error
+                    && (d.code.0.starts_with("E1")
+                        || d.code.0.starts_with("E2")
+                        || d.code.0 == "E3001")
+            })
+            .cloned()
+            .collect();
+        if !errors.is_empty() {
+            let text: std::collections::HashMap<base::FileId, String> = path_mods
+                .iter()
+                .map(|(m, _)| {
+                    (
+                        base::FileId(m.index()),
+                        db.source_file(*m).text(&db).to_string(),
+                    )
+                })
+                .collect();
+            let paths: std::collections::HashMap<base::FileId, String> = path_mods
+                .iter()
+                .map(|(m, p)| (base::FileId(m.index()), display_path(example_dir, p)))
+                .collect();
+            let sources = CliSources {
+                text: &text,
+                paths: &paths,
+            };
+            return Err(render_diags(&errors, &sources).render());
+        }
+    }
     Ok((db, entry, check_ids))
 }
 
-/// Load every Sky DEPENDENCY module of the project at `example_dir` into `db`:
-/// the fetched registry packages under `.skydeps/<pkg>/src/` and the local path
-/// packages (`sky add ./dir`, `crate::path_deps`), from each package's source
-/// root. Returns the notes of any local Go path dependency whose stale FFI
-/// surface was refreshed, for the caller to print.
+/// Load the project's fetched REGISTRY Sky packages (`.skydeps/<pkg>/src/`)
+/// into `db` as trusted dependency modules, and check the local path
+/// dependencies are present. Returns the notes of any local Go path
+/// dependency whose stale FFI surface was refreshed, for the caller to print.
 ///
-/// The ONE dependency loader: the build ([`assemble_and_emit_with`]) and every
-/// analysis db ([`load_source_db`] — the Sky.Spa split, `sky spa-partition`,
-/// the fuzz harnesses) call it, so an analysis sees exactly the modules the
-/// build compiles. v0.27.0: `load_source_db` loaded `.skydeps/` but not the
-/// path packages, so the split type-checked `import Geo.Shape exposing
-/// (Point)` against a missing module and failed with `Point vs record` on a
-/// program `sky check` accepted.
+/// One of the two dependency loaders every db shares (the build,
+/// [`assemble_and_emit_with`], and every analysis db, [`load_source_db`]:
+/// the Sky.Spa split, `sky spa-partition`, the diagrams, the fuzz harnesses),
+/// so an analysis sees exactly the modules the build compiles. The other is
+/// [`load_path_dependency_sources`].
 ///
-/// Registry packages load first, then path packages, both BEFORE the
-/// project's own `src/` so a dependency's demo `Main` is dropped and never
-/// shadows the project's real `Main`. `sky build` never network-clones: a
-/// declared `[dependencies]` package whose `.skydeps/<slug>/` tree is absent
-/// is an actionable error naming `sky install`, and a declared path directory
-/// that is gone stops the load the same way. (An empty or absent
-/// `[dependencies]` section is a no-op.)
-pub(crate) fn load_dependency_modules(
+/// Registry packages load BEFORE the project's own `src/` so a package's demo
+/// `Main` is dropped and never shadows the project's real `Main`. `sky build`
+/// never network-clones: a declared `[dependencies]` package whose
+/// `.skydeps/<slug>/` tree is absent is an actionable error naming `sky
+/// install`, and a declared path directory that is gone stops the load the
+/// same way. (An empty or absent `[dependencies]` section is a no-op.)
+pub(crate) fn load_registry_dependencies(
     db: &mut skydb::SkyDatabase,
     next_id: &mut u32,
     example_dir: &Path,
@@ -2763,16 +2832,40 @@ pub(crate) fn load_dependency_modules(
     // was generated is re-inspected now, before the surface is loaded: the
     // bindings would otherwise call a function that no longer exists (or miss
     // a new one). Registry dependencies keep their pinned surface.
-    let notes = crate::ffi_ops::refresh_stale_path_surfaces(example_dir, repo_root)?;
+    crate::ffi_ops::refresh_stale_path_surfaces(example_dir, repo_root)
+}
+
+/// The modules of the project's local Sky PATH dependencies (`sky add ./dir`,
+/// from each package's source root), parsed but NOT registered, with the set
+/// of their files. The caller registers them as APP modules — parse-gated,
+/// type-checked, reported under their own path — before the project's own
+/// modules, so a same-named local module shadows them; a path module never
+/// provides the entry (a package's demo `Main` is dropped here).
+///
+/// The build and [`load_source_db`] both call it. v0.27.0: `load_source_db`
+/// loaded no path package, so the Sky.Spa split type-checked `import Geo.Shape
+/// exposing (Point)` against a missing module and failed with `Point vs
+/// record` on a program `sky check` accepted.
+pub(crate) fn load_path_dependency_sources(
+    db: &skydb::SkyDatabase,
+    next_id: &mut u32,
+    example_dir: &Path,
+) -> (
+    Vec<(String, skydb::SourceFile, PathBuf)>,
+    std::collections::HashSet<PathBuf>,
+) {
+    let mut out = Vec::new();
+    let mut files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for dir in crate::path_deps::sky_source_dirs(example_dir) {
-        for (n, file, _p) in load_dir(db, next_id, &dir) {
+        for (n, file, p) in load_dir(db, next_id, &dir) {
             if n == "Main" || n == "main" {
                 continue;
             }
-            db.add_module(&n, file);
+            files.insert(p.clone());
+            out.push((n, file, p));
         }
     }
-    Ok(notes)
+    (out, files)
 }
 
 pub(crate) fn load_skydeps(
@@ -2838,6 +2931,33 @@ pub fn enumerate_skydep_files(skydeps: &Path) -> Vec<PathBuf> {
 /// handle — the whole module set now lives in the salsa db (the resolve-stage
 /// port), so `resolve`/`module_exports` key off these handles rather than cloned
 /// `Parse`s. No `FileId`/span reaches emitted Go, so build + repro are unchanged.
+/// How a diagnostic names a source file: relative to the project root, with
+/// `/` separators — `src/Main.sky`, `tests/FooTest.sky`, or, for a path
+/// dependency outside the project, `../widgets/src/Widget.sky`. Falls back to
+/// the path as loaded when no relative form exists (another drive).
+fn display_path(project_dir: &Path, p: &Path) -> String {
+    let slash = |x: &Path| x.to_string_lossy().replace('\\', "/");
+    if let Ok(rel) = p.strip_prefix(project_dir) {
+        return slash(rel);
+    }
+    let canon = |x: &Path| x.canonicalize().unwrap_or_else(|_| x.to_path_buf());
+    let (base, target) = (canon(project_dir), canon(p));
+    let b: Vec<_> = base.components().collect();
+    let t: Vec<_> = target.components().collect();
+    let common = b.iter().zip(&t).take_while(|(x, y)| x == y).count();
+    if common == 0 {
+        return slash(p);
+    }
+    let mut rel = PathBuf::new();
+    for _ in common..b.len() {
+        rel.push("..");
+    }
+    for c in &t[common..] {
+        rel.push(c.as_os_str());
+    }
+    slash(&rel)
+}
+
 /// A CLI source provider: the `FileId → text` map for the caret excerpt PLUS a
 /// `FileId → display path` map so the header shows `src/Main.sky:line:col`
 /// (matching the oracle) rather than a bare `line:col`.

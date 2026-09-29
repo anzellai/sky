@@ -503,3 +503,142 @@ fn a_failing_equal_prints_sky_values() {
     assert!(!out.contains("<nil>"), "{out}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A module with a helper that sorts BEFORE the broken one (`Aaa`, `Aab`), so
+/// the broken module's load-order ordinal differs from its module id once
+/// `sky test` drops what the suite does not import.
+fn module_src(name: &str, value: &str) -> String {
+    format!(
+        "module {name} exposing (v)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\n\n\
+         v : Int\n\
+         v =\n    {value}\n"
+    )
+}
+
+fn suite_src(name: &str, import: &str) -> String {
+    format!(
+        "module {name} exposing (tests)\n\n\
+         import {import}\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Test as Test exposing (Test)\n\n\n\
+         tests : List Test\n\
+         tests =\n    \
+         [ Test.test \"v\" (\\_ -> Test.equal 2 {import}.v) ]\n"
+    )
+}
+
+/// `sky test` reported an imported module's parse error at the right offset in
+/// ANOTHER file: `tests/LibTest.sky:5:31` with that suite's line under the
+/// caret, for an extra `)` on line 8 of `src/Lib.sky`. A parse diagnostic's
+/// span carried the file's load-order ordinal while the CLI keyed paths and
+/// source text by module id; `sky test` drops the modules its suite does not
+/// import, which is when the two differ. Every module kind is covered: `src/`,
+/// a helper under `tests/`, the suite itself, and a Sky path dependency (whose
+/// modules were not parse-gated or type-checked at all).
+#[test]
+fn a_parse_error_is_reported_in_its_own_file_for_every_module_kind() {
+    let root = scratch("parsefile");
+    let dir = root.join("app");
+    let dep = root.join("dep");
+    for d in [dir.join("src"), dir.join("tests"), dep.join("src")] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"parsefile\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+         [source]\nroot = \"src\"\n\n\
+         [dependencies]\n\"widgets\" = { path = \"../dep\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dep.join("sky.toml"),
+        "name = \"widgets\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\
+         main =\n    println \"hi\"\n",
+    )
+    .unwrap();
+    let w = |p: PathBuf, s: String| std::fs::write(p, s).unwrap();
+    w(dir.join("src/Aaa.sky"), module_src("Aaa", "1"));
+    w(dir.join("src/Lib.sky"), module_src("Lib", "(1 * 2))"));
+    w(dir.join("tests/Aab.sky"), module_src("Aab", "1"));
+    w(dir.join("tests/Helper.sky"), module_src("Helper", "[ 2 ]]"));
+    w(dep.join("src/Aac.sky"), module_src("Aac", "1"));
+    w(dep.join("src/Widget.sky"), module_src("Widget", "(1 + 1))"));
+    w(dir.join("tests/LibTest.sky"), suite_src("LibTest", "Lib"));
+    w(
+        dir.join("tests/HelperTest.sky"),
+        suite_src("HelperTest", "Helper"),
+    );
+    w(
+        dir.join("tests/WidgetTest.sky"),
+        suite_src("WidgetTest", "Widget"),
+    );
+    w(
+        dir.join("tests/SelfTest.sky"),
+        suite_src("SelfTest", "Aaa").replace("Aaa.v) ]", "Aaa.v) ]]"),
+    );
+
+    // (suite, the file:line:col the error must name, that line's text)
+    let cases = [
+        ("tests/LibTest.sky", "src/Lib.sky:8:12", "8 |     (1 * 2))"),
+        (
+            "tests/HelperTest.sky",
+            "tests/Helper.sky:8:10",
+            "8 |     [ 2 ]]",
+        ),
+        (
+            "tests/WidgetTest.sky",
+            "../dep/src/Widget.sky:8:12",
+            "8 |     (1 + 1))",
+        ),
+        (
+            "tests/SelfTest.sky",
+            "tests/SelfTest.sky:10:49",
+            "10 |     [ Test.test \"v\" (\\_ -> Test.equal 2 Aaa.v) ]]",
+        ),
+    ];
+    for (suite, at, line) in cases {
+        let (code, out, _) = run_test(&dir, Path::new(suite));
+        assert_eq!(
+            code, 2,
+            "{suite}: a parse error must stop the build:\n{out}"
+        );
+        assert!(
+            out.contains(&format!("{at} [E0001]")),
+            "{suite}: the parse error must be reported at {at}:\n{out}"
+        );
+        assert!(
+            out.contains(line),
+            "{suite}: the excerpt must be the broken file's line `{line}`:\n{out}"
+        );
+        assert_eq!(out.matches("[E0001]").count(), 1, "{suite}: once:\n{out}");
+    }
+
+    // A type error in the path dependency is checked and named there too
+    // (it used to pass `sky check` and panic at run time).
+    w(
+        dep.join("src/Widget.sky"),
+        "module Widget exposing (v)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\n\n\
+         v : Int\n\
+         v =\n    1 ++ \"x\"\n"
+            .to_string(),
+    );
+    let (code, out, _) = run_test(&dir, Path::new("tests/WidgetTest.sky"));
+    assert_eq!(
+        code, 2,
+        "a type error in a path dependency must stop the build:\n{out}"
+    );
+    assert!(
+        out.contains("../dep/src/Widget.sky:8:5 [E2001]"),
+        "the path dependency's type error must name its file:\n{out}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -1,0 +1,11 @@
+Showing nodes accounting for 3074.56kB, 100% of 3074.56kB total
+Showing top 8 nodes out of 33
+      flat  flat%   sum%        cum   cum%
+ 1536.42kB 49.97% 49.97%  2561.56kB 83.31%  sky-app/rt.serverListenerHandler.ObservabilityMiddleware.func3
+     513kB 16.69% 66.66%      513kB 16.69%  bufio.NewWriterSize
+     513kB 16.69% 83.34%      513kB 16.69%  bytes.growSlice
+  512.14kB 16.66%   100%   512.14kB 16.66%  sky-app/rt.emitAccessLog
+         0     0%   100%      513kB 16.69%  bytes.(*Buffer).Grow (inline)
+         0     0%   100%      513kB 16.69%  bytes.(*Buffer).grow
+         0     0%   100%      513kB 16.69%  encoding/json.(*encodeState).marshal
+         0     0%   100%      513kB 16.69%  encoding/json.(*encodeState).reflectValue

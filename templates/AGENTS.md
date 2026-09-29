@@ -551,7 +551,7 @@ sky doc <Module> | --list    # API docs (the source of truth for signatures)
 sky doc --diagram <kind>     # architecture diagram from the typed IR: components (C4) | wire (DFD) | journey | telemetry; --format puml|md|svg
 sky watch src/Main.sky       # rebuild + restart on save
 sky add <go/pkg> | remove | install | update   # Go FFI deps
-sky add ./local/dir          # a local Go module (go.mod) or Sky package, by path
+sky add ./local/dir          # a local Go module (go.mod) or Sky package (type-checked with your code), by path
 sky package --release --target mobile:ios   # signed store artefact → sky-out/release/ (also mobile:android, desktop:mac)
 ```
 

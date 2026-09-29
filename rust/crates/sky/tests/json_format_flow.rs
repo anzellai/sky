@@ -736,3 +736,118 @@ fn spa_split_refusal_is_its_own_diagnostic() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `sky test --format json` and `sky check --format json` name the file a
+/// parse or type error is in, for a module under `src/`, a helper under
+/// `tests/`, and a Sky path dependency — with a module that sorts before the
+/// broken one, the case in which `sky test` used to name ANOTHER file.
+#[test]
+fn diagnostics_name_their_own_file_for_every_module_kind() {
+    let root = scratch("ownfile");
+    let dir = root.join("app");
+    let dep = root.join("dep");
+    for d in [dir.join("src"), dir.join("tests"), dep.join("src")] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"ownfile\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+         [source]\nroot = \"src\"\n\n\
+         [dependencies]\n\"widgets\" = { path = \"../dep\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dep.join("sky.toml"),
+        "name = \"widgets\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    let module = |name: &str, value: &str| {
+        format!(
+            "module {name} exposing (v)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\n\n\
+             v : Int\n\
+             v =\n    {value}\n"
+        )
+    };
+    let suite = |name: &str, import: &str| {
+        format!(
+            "module {name} exposing (tests)\n\n\
+             import {import}\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Test as Test exposing (Test)\n\n\n\
+             tests : List Test\n\
+             tests =\n    \
+             [ Test.test \"v\" (\\_ -> Test.equal 2 {import}.v) ]\n"
+        )
+    };
+    let w = |p: PathBuf, s: String| std::fs::write(p, s).unwrap();
+    w(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Lib\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         import Widget\n\n\
+         main =\n    println (String.fromInt (Lib.v + Widget.v))\n"
+            .to_string(),
+    );
+    w(dir.join("src/Aaa.sky"), module("Aaa", "1"));
+    w(dir.join("src/Lib.sky"), module("Lib", "(1 * 2))"));
+    w(dir.join("tests/Aab.sky"), module("Aab", "1"));
+    w(dir.join("tests/Helper.sky"), module("Helper", "[ 2 ]]"));
+    w(dep.join("src/Aac.sky"), module("Aac", "1"));
+    w(dep.join("src/Widget.sky"), module("Widget", "1 ++ \"x\""));
+    w(dir.join("tests/LibTest.sky"), suite("LibTest", "Lib"));
+    w(
+        dir.join("tests/HelperTest.sky"),
+        suite("HelperTest", "Helper"),
+    );
+    w(
+        dir.join("tests/WidgetTest.sky"),
+        suite("WidgetTest", "Widget"),
+    );
+
+    let files = |o: &Out| -> Vec<(String, String, u64)> {
+        diags(o)
+            .iter()
+            .filter(|d| d["severity"] == "error")
+            .map(|d| {
+                (
+                    d["file"].as_str().unwrap_or("").to_string(),
+                    d["code"].as_str().unwrap_or("").to_string(),
+                    d["range"]["start"]["line"].as_u64().unwrap_or(0),
+                )
+            })
+            .collect()
+    };
+    for (s, want) in [
+        ("tests/LibTest.sky", ("src/Lib.sky", "E0001")),
+        ("tests/HelperTest.sky", ("tests/Helper.sky", "E0001")),
+        ("tests/WidgetTest.sky", ("../dep/src/Widget.sky", "E2001")),
+    ] {
+        let o = sky(&dir, &["test", s, "--format", "json"]);
+        check_stream(&o);
+        assert_eq!(o.code, 2, "{s}: {:?}\n{}", o.lines, o.stderr);
+        assert_eq!(
+            files(&o),
+            vec![(want.0.to_string(), want.1.to_string(), 7)],
+            "{s}: the error names its own file (0-based line 7)"
+        );
+    }
+    // `sky check` stops at the parse error in src/ (the gate runs before the
+    // type check); fixed, it reaches the path dependency's type error.
+    let o = sky(&dir, &["check", "src/Main.sky", "--format", "json"]);
+    check_stream(&o);
+    assert_eq!(
+        files(&o),
+        vec![("src/Lib.sky".to_string(), "E0001".to_string(), 7)]
+    );
+    w(dir.join("src/Lib.sky"), module("Lib", "2"));
+    let o = sky(&dir, &["check", "src/Main.sky", "--format", "json"]);
+    check_stream(&o);
+    assert_eq!(
+        files(&o),
+        vec![("../dep/src/Widget.sky".to_string(), "E2001".to_string(), 7)]
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

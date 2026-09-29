@@ -1177,6 +1177,34 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`Std.Watch` on macOS stopped reporting a file after an editor saved it.**
+  A save by rename (write a temporary file, rename it over the original) was
+  reported, and then no later change to that file was. The kqueue backend
+  watches a file through a descriptor, and the kernel reuses a closed
+  descriptor's number at once: the directory rescan closed the old file's
+  descriptor and opened the new file under the same number, and the old
+  file's delete event, still in the same batch of events, then matched the new
+  descriptor and dropped the new watch. Descriptors are now closed after the
+  batch, a file's delete or rename drops only that file's watch and rescans
+  its directory, and a rescan watches any wanted file that has no watch. A
+  watched directory (or a file root's directory) that is renamed away,
+  replaced or deleted is re-armed at its path on macOS and Linux; before, on
+  Linux the watch followed the moved directory under the old name, or ended.
+  On Linux a save by rename is now `Modified`, as on macOS (it was `Created`).
+- **`sky test` reported an imported module's parse error in another file.**
+  With a module that sorts before the broken one and that the suite does not
+  import, `sky test tests/LibTest.sky` printed `tests/LibTest.sky:5:31` and
+  that file's line for an extra `)` at `src/Lib.sky:8:12` (text and
+  `--format json`). A parse diagnostic named its file by the load order, and
+  every other diagnostic by module id; `sky test` builds only the suite's
+  imports, which is when the two differ. Registering a module now sets its
+  file id to the module id, so every diagnostic names its own file.
+- **A Sky path dependency was not checked.** A parse or type error in a
+  module of a local `[dependencies] "x" = { path = "…" }` package passed
+  `sky check` and `sky test` and failed at run time (`n ++ "x"` with
+  `n : Int` panicked `TypeMismatch`). Its modules are now parse-checked and
+  type-checked as the project's own, and their diagnostics name the
+  dependency's file (`../widgets/src/Widget.sky:8:5`).
 - **`sky build` kept a local Go path dependency's old FFI surface after its
   API changed.** A downstream project removed a function from its own Go
   package, and the build failed in generated code
@@ -1922,10 +1950,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   packages but not the path packages, so `import Geo.Shape exposing (Point)`
   named a missing module and the build failed with `[update] type mismatch:
   Point vs record` on a program `sky check` and the Sky.Live build accepted.
-  The analysis now uses the build's dependency loader, and a dependency's
-  record type crosses the wire: `Shared` imports its module under a
-  generated alias and derives its codec. (`rust/crates/project/src/build.rs`
-  `load_dependency_modules`, `spa_split.rs`; test
+  The analysis now uses the build's dependency loaders (registry packages
+  trusted, path packages type-checked as app code and reported under their
+  own path), and a dependency's record type crosses the wire: `Shared`
+  imports its module under a generated alias and derives its codec.
+  (`rust/crates/project/src/build.rs` `load_registry_dependencies` /
+  `load_path_dependency_sources`, `spa_split.rs`; test
   `a_record_alias_from_a_path_dependency_crosses_the_split`, which runs the
   RPC against the Sky.Live build.)
 - **An error in code the split derived said only "the failure above is in the
