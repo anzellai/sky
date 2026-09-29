@@ -1,0 +1,69 @@
+# TEMPORARY (fix/v027-rel-android-ci): runs release.yml's gate-native-android
+# job alone, with host and device sampling, to prove the Android emulator gate
+# on CI. Removed before the branch is merged.
+name: tmp-android-gate
+
+on:
+  push:
+    branches: [fix/v027-rel-android-ci]
+
+jobs:
+  gate-native-android:
+    runs-on: ubuntu-latest
+    # A cold `cargo test -p sky` build (~15 min), the emulator boot (~3 min,
+    # up to the 15 min boot timeout below) and the four emulator tests
+    # (220-250 s measured locally after a cold boot, plus up to 85 s for the
+    # system-dialog test). About 1.5x.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: runtime-go/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build the test binary before the emulator starts
+        working-directory: rust
+        run: cargo test -p sky --locked --test native_shell_flow --no-run
+      - name: Android emulator gate (Keystore, scanner, biometrics; phone + tablet)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SKY_LIVE_TESTS: require
+          # A failed emulator step saves its evidence here (logcat, focus,
+          # screenshot, UI tree, backend log); the next step uploads it.
+          SKYTEST_EVIDENCE_DIR: ${{ github.workspace }}/native-evidence
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          # The scanner needs a back camera; the emulated one opens.
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated
+          disable-animations: true
+          emulator-boot-timeout: 900
+          # Each line runs on its own. Close a system dialog a cold boot left
+          # (an ANR over SystemUI) and wake the screen before the tests.
+          script: |
+            mkdir -p "$SKYTEST_EVIDENCE_DIR"
+            sh -c 'while true; do date -u +%T; adb devices | tail -n +2; uptime; free -m | sed -n 2p; sleep 3; done' > "$SKYTEST_EVIDENCE_DIR/devices.log" 2>&1 &
+            sh -c 'while true; do adb logcat -v threadtime; sleep 1; done' > "$SKYTEST_EVIDENCE_DIR/logcat-all.txt" 2>&1 &
+            adb wait-for-device
+            adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+            adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS
+            adb shell input keyevent KEYCODE_WAKEUP
+            cd rust && cargo test -p sky --locked --test native_shell_flow android_emulator -- --ignored --test-threads=1
+      - name: Upload the emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-emulator-evidence
+          path: native-evidence
+          if-no-files-found: ignore
