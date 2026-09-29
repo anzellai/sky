@@ -1945,6 +1945,24 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Fixed
 
+- **A Go FFI type named like one of the app's types checked clean and then
+  panicked.** Under `import Net.Http as GoHttp`, an annotation
+  `GoHttp.Client` fell back to its bare name, so an app that also declared
+  `type alias Client = { … }` got its own record there: `useIt { name = "x" }`
+  type-checked where a Go `*http.Client` belongs, and passing the real Go
+  value built and panicked (`CoerceFailure: expected main.Main_Client_R, got
+  *http.Client`). A type named through a Go FFI package now has its own
+  identity in the checker (`go@Net.Http.Client`, printed `Client`; it is never
+  the app's type), and the lowering gives it the Go-opaque shape (`any`), the
+  same wildcard a pinned FFI signature gives a Go-opaque type. The record is
+  rejected with `[E2001]`; the Go value flows between FFI calls and an
+  annotated helper and runs. The coerce-floor census is unchanged on every
+  row (75 of 75, narrow 12171, adapter 0). This touches the Go FFI boundary,
+  the doc 14 §4.1 floor: the change was authorised by the user on 2026-09-29
+  for this fix only. (`rust/crates/ty/src/sig.rs` `rewrite_alias_refs`,
+  `ty/src/nominal.rs` `go_type`, `lower/src/goty.rs` `app_to_go`; tests
+  `ffi_go_type_identity_flow.rs`, `ffi_result_check.rs`, reject corpus
+  `ffi_go_type_is_not_an_app_type.sky`.)
 - **A record alias from a `[dependencies]` path package was not a record in
   the `web:app` split.** The split's analysis loaded the fetched registry
   packages but not the path packages, so `import Geo.Shape exposing (Point)`

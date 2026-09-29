@@ -1831,7 +1831,13 @@ struct TypeKeys<'a> {
 fn resolve_type_names(db: &dyn SkyDb, m: ModuleId, t: &ast::Type, keys: TypeKeys<'_>) -> Ty {
     let resolved = db.resolve(m);
     let qualified = ast_type_to_ty_qualified(t);
-    rewrite_alias_refs(db, &resolved.type_refs, keys, &qualified)
+    rewrite_alias_refs(
+        db,
+        &resolved.type_refs,
+        &resolved.qualifiers,
+        keys,
+        &qualified,
+    )
 }
 
 /// Walk a `Ty` (whose `App` names may be qualified — `"Q.Name"`) and rewrite any
@@ -1841,6 +1847,7 @@ fn resolve_type_names(db: &dyn SkyDb, m: ModuleId, t: &ast::Type, keys: TypeKeys
 fn rewrite_alias_refs(
     db: &dyn SkyDb,
     type_refs: &HashMap<String, TypeRes>,
+    qualifiers: &HashMap<String, hir::ImportSource>,
     keys: TypeKeys<'_>,
     ty: &Ty,
 ) -> Ty {
@@ -1848,12 +1855,24 @@ fn rewrite_alias_refs(
         Ty::App(name, args) => {
             let args: Vec<Ty> = args
                 .iter()
-                .map(|a| rewrite_alias_refs(db, type_refs, keys, a))
+                .map(|a| rewrite_alias_refs(db, type_refs, qualifiers, keys, a))
                 .collect();
             let full = name.as_str();
             // The bare final segment: what `ast_type_to_ty` produces, and the
             // `<name>` half of any alias / union key.
             let base = crate::nominal::base(full);
+            // A type named through a Go FFI package (`GoHttp.Client` under
+            // `import Net.Http as GoHttp`) is a Go type: it gets its own
+            // identity, and never falls back to the bare base below, where a
+            // same-named type of the app (`type alias Client = { … }`) would
+            // capture it. v0.27.0: it did, so a record passed where a Go
+            // `*http.Client` was expected checked clean, and the Go value
+            // then panicked at the app type's narrowing (`CoerceFailure`).
+            if let Some((q, _)) = full.rsplit_once('.') {
+                if let Some(hir::ImportSource::Foreign(package)) = qualifiers.get(q) {
+                    return Ty::App(Name::new(&crate::nominal::go_type(package, base)), args);
+                }
+            }
             // Resolve through HIR: prefer the exact (possibly qualified) name,
             // then fall back to the bare base (an `exposing`-imported name is
             // registered bare). A hit that lands on a DECLARED alias or union is
@@ -1894,17 +1913,22 @@ fn rewrite_alias_refs(
             Ty::App(Name::new(base), args)
         }
         Ty::Fun(a, b) => Ty::Fun(
-            Box::new(rewrite_alias_refs(db, type_refs, keys, a)),
-            Box::new(rewrite_alias_refs(db, type_refs, keys, b)),
+            Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, a)),
+            Box::new(rewrite_alias_refs(db, type_refs, qualifiers, keys, b)),
         ),
         Ty::Tuple(xs) => Ty::Tuple(
             xs.iter()
-                .map(|x| rewrite_alias_refs(db, type_refs, keys, x))
+                .map(|x| rewrite_alias_refs(db, type_refs, qualifiers, keys, x))
                 .collect(),
         ),
         Ty::Record(fs, ext) => Ty::Record(
             fs.iter()
-                .map(|(n, ft)| (n.clone(), rewrite_alias_refs(db, type_refs, keys, ft)))
+                .map(|(n, ft)| {
+                    (
+                        n.clone(),
+                        rewrite_alias_refs(db, type_refs, qualifiers, keys, ft),
+                    )
+                })
                 .collect(),
             ext.clone(),
         ),

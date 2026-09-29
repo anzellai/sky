@@ -81,7 +81,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1790701428
+      "proven_at_unix": 1790702451
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",
@@ -209,10 +209,15 @@
       "proven_at_unix": 1790272664
     },
     "reject": {
+      "inputs_files": 4,
+      "inputs_hash": "346cfbc1f6a2777342e24c9cefad4bdf6f5ff369",
       "mutation": "reject.neutralise-axis",
+      "mutations": [
+        "reject.neutralise-axis"
+      ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790272664
+      "proven_at_unix": 1790702451
     },
     "roundtrip": {
       "mutation": "roundtrip.error-node",

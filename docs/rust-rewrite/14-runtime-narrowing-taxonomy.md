@@ -768,6 +768,30 @@ there the value's shape is `any` and the narrowing is genuine.
 
 ---
 
+### 9.6 A Go FFI type captured by a same-named app type (closed, v0.27.0)
+
+An annotation that names a Go type through an FFI package (`GoHttp.Client`)
+fell back to its bare name in `ty/src/sig.rs` `rewrite_alias_refs`, and
+`lower/src/goty.rs` `app_to_go` preferred the current module's same-named
+nominal. With an app `type alias Client`, the R4 FFI return reached a slot
+typed as the app's record: `rt.Coerce[Main_Client_R]` on a `*http.Client`,
+a `CoerceFailure` at run time on a program `sky check` accepted.
+
+- **Origin:** R4 (the Go FFI return, §4.1), reaching a user-annotated slot.
+- **Floor check (§1):** the value's Go shape is a Go-opaque handle, known only
+  at run time; the slot's shape must therefore be the Go-opaque `any`, never a
+  Sky nominal. The floor itself is unchanged: it is still one narrowing at the
+  FFI boundary, now to the right shape.
+- **Change:** the checker keys the type `go@<package>.<Name>`
+  (`ty::nominal::go_type`), which is never `same` as a Sky type, and the
+  lowering maps it to `any`. Authorised by the user on 2026-09-29 for this fix
+  only.
+- **Measured:** `xtask coerce-floor` unchanged on all 75 rows (narrow 12171,
+  adapter 0).
+- **Verification:** `rust/crates/sky/tests/ffi_go_type_identity_flow.rs` (runs
+  the Go value through an annotated helper; rejects the record), the reject
+  corpus `ffi_go_type_is_not_an_app_type.sky`, `ty/tests/ffi_result_check.rs`.
+
 ## 10. How to cite this document
 
 A claim that a tactic closes a runtime-narrowing goal must name:
