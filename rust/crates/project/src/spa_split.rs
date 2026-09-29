@@ -8059,6 +8059,26 @@ fn union_variant_arg_types(d: &syntax::ast::Decl, name: &str) -> Option<Vec<ty::
 /// declares the `Msg` union. A pair whose type cannot be recovered is DROPPED
 /// (fail closed): the root then stays a plain wire branch everywhere, because
 /// every split-side consumer reads THIS map.
+/// The partition of a project as the split builds it: [`spa_partition::analyze`]
+/// plus the rule of [`analyze_for_split`] for continuations whose argument has
+/// no wire codec. `sky spa-partition` and the `sky doc --diagram` slices report
+/// this one, so they describe the split that `sky build --target <client>`
+/// generates.
+pub fn analyze_project(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+) -> Result<SpaPartitionReport, String> {
+    let (db, entry, check_ids) =
+        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let project = project_dir
+        .strip_prefix(repo_root)
+        .unwrap_or(project_dir)
+        .to_string_lossy()
+        .to_string();
+    analyze_for_split(&db, entry, &check_ids, project).map(|(report, _)| report)
+}
+
 /// The partition the split generates from. A continuation whose arm is client
 /// runs in the client when its task's result arrives, so its argument crosses
 /// the wire. One whose argument has no wire codec settles on the server instead

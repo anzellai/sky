@@ -434,7 +434,7 @@ pub fn analyze_components(
     // For a Spa app: count effectful (server, → /_rpc) vs pure (client) actions,
     // reusing the auto-split partition. Best-effort; `None` if it cannot run.
     let (rpc_effectful, rpc_pure) = if shape == AppShape::Spa {
-        match crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
+        match crate::spa_split::analyze_project(repo_root, project_dir, entry_module) {
             Ok(rep) => {
                 let eff = rep.branches.iter().filter(|b| b.server).count();
                 let pure = rep.branches.iter().filter(|b| !b.server).count();
@@ -1160,7 +1160,7 @@ fn render_components_svg(g: &ComponentGraph) -> String {
 // Model fields the branch reads + the Msg args) and its RESPONSE (the Model
 // fields it writes), so a wrong request/response shape is visible at a glance.
 //
-// It re-uses [`crate::spa_partition::analyze`] verbatim — the SAME per-branch
+// It re-uses [`crate::spa_split::analyze_project`] verbatim — the SAME per-branch
 // read-set / write-set the auto-split derives, so the diagram cannot drift from
 // what actually ships. It never re-derives, type-checks beyond the shared load,
 // lowers, emits, or writes.
@@ -1408,7 +1408,7 @@ pub fn analyze_wire(
         });
     }
 
-    let report = crate::spa_partition::analyze(repo_root, project_dir, entry_module)?;
+    let report = crate::spa_split::analyze_project(repo_root, project_dir, entry_module)?;
 
     // One `/_rpc/<Msg>` endpoint per constructor with a SERVER arm: the route
     // the split generates (the union of the constructor's server arms, whose
@@ -3387,7 +3387,7 @@ pub fn analyze_journey(
     // `action.server` (the `/_rpc` round-trip flag) is set only when `is_spa`.
     let shape = app_shape(app_target, has_app_ui, has_http_routes);
     let mut classified = false;
-    if let Ok(report) = crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
+    if let Ok(report) = crate::spa_split::analyze_project(repo_root, project_dir, entry_module) {
         let mut server_by_msg: HashMap<String, bool> = HashMap::new();
         let mut fams_by_msg: HashMap<String, Vec<String>> = HashMap::new();
         for b in &report.branches {
@@ -5010,7 +5010,7 @@ pub fn analyze_flow(
                 .push("Auth session / token".to_string());
         }
     }
-    if let Ok(rep) = crate::spa_partition::analyze(repo_root, project_dir, entry_module) {
+    if let Ok(rep) = crate::spa_split::analyze_project(repo_root, project_dir, entry_module) {
         // Sensitive Model fields: Secret-typed or PII-named.
         let mut sensitive_field: HashMap<String, String> = HashMap::new();
         for f in &rep.model_fields {

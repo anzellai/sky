@@ -317,3 +317,36 @@ fn frontend_has_no_wire_leak_for_the_server_internal_msg() {
     );
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// A client continuation whose argument has no wire codec (`Got (Result Error
+/// Http.HttpResponse)` in `tests/fixtures/spa-client-crypto-ssr`) cannot run in
+/// the client, so the split keeps it in a server chain (a hold RPC) instead of
+/// failing the build. `sky spa-partition` and the diagrams report the split as
+/// it is built (`spa_split::analyze_project`), not the classification before
+/// that rule.
+#[test]
+fn a_continuation_whose_argument_cannot_cross_stays_in_a_server_chain() {
+    let fixture = repo_root().join("rust/crates/sky/tests/fixtures/spa-client-crypto-ssr");
+    let plain = spa_partition::analyze(&repo_root(), &fixture, None)
+        .unwrap_or_else(|e| panic!("analyze failed: {e}"));
+    assert!(
+        plain
+            .client_result
+            .iter()
+            .any(|(root, m)| root == "Fetch" && m == "Got"),
+        "before the wire rule, `Got` is a client-result continuation; got {:?}",
+        plain.client_result
+    );
+    let built = spa_split::analyze_project(&repo_root(), &fixture, None)
+        .unwrap_or_else(|e| panic!("analyze_project failed: {e}"));
+    assert!(
+        built.chaining_branches.contains(&"Fetch".to_string())
+            && built.server_internal.contains(&"Got".to_string())
+            && built.client_result.is_empty(),
+        "`Got (Result Error HttpResponse)` has no wire codec: it must settle in `Fetch`'s \
+         server chain; got chaining={:?} internal={:?} client_result={:?}",
+        built.chaining_branches,
+        built.server_internal,
+        built.client_result
+    );
+}

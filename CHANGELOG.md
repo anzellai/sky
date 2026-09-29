@@ -152,7 +152,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   now answers with the task's result and the client runs `ResultMsg` when it
   arrives, on the model it holds then. `ResultMsg`'s argument now crosses the
   wire; when it has no wire codec, the continuation still settles on the server
-  and the build says so in a note.
+  and the build says so in a note. `sky spa-partition` and `sky doc --diagram`
+  report the split as it is built, with that rule applied.
 
 - **`Std.Bundle.Permission` has six new constructors** (`LocationAlways`,
   `PhotoLibrary`, `Contacts`, `FaceId`, `LocalNetwork`, `Bluetooth`). A

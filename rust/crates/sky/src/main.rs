@@ -1077,7 +1077,7 @@ fn cmd_spa_partition(args: &[String]) -> ExitCode {
     let Some((repo_root, project_dir)) = resolve(file) else {
         return ExitCode::FAILURE;
     };
-    match project::spa_partition::analyze(
+    match project::spa_split::analyze_project(
         &repo_root,
         &project_dir,
         entry_module_name(file).as_deref(),
