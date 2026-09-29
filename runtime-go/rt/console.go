@@ -181,9 +181,9 @@ func consoleInvariantError() error {
 		return nil
 	}
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("SKY_CONSOLE_AUTH")))
-	return fmt.Errorf("SKY_CONSOLE_AUTH=%s is set but neither inline nor legacy console mounted /_sky/console. "+
-		"Either link the console_app blank import (the compiler emits this for every Sky.Live + Sky.Http.Server "+
-		"app — a hand-edited main.go may have dropped it) OR set SKY_CONSOLE_AUTH=off to declare the surface "+
+	return fmt.Errorf("SKY_CONSOLE_AUTH=%s is set but this binary has no Sky Console to mount at /_sky/console. "+
+		"Rebuild it with `sky build` (the build links the console into every Sky.Live and Sky.Http.Server app; "+
+		"an edited sky-out/main.go can drop it), or set SKY_CONSOLE_AUTH=off to declare the console "+
 		"intentionally absent", mode)
 }
 

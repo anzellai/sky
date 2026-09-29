@@ -302,7 +302,7 @@ func mountLiveSubAppInProcessWithGate(
 	}
 	prefix = normaliseBasePath(prefix)
 	if prefix == "" {
-		panic("rt.MountLiveSubAppInProcess: prefix must be non-empty (use Live_app for root-mounted host apps)")
+		panic("rt.MountLiveSubAppInProcess: prefix must be non-empty (an app served at the root is a Live.app, not a sub-app)")
 	}
 
 	// The sanitised identifier drives THREE namespaces that must stay

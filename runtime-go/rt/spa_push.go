@@ -157,7 +157,7 @@ func Spa_streamTopic(brokerArg, topicArg any) any {
 		return func() any {
 			broker, ok := brokerArg.(Broker)
 			if !ok {
-				return Err[any, any](ErrUnavailable("Spa_streamTopic: no broker wired for the SSE endpoint"))
+				return Err[any, any](ErrUnavailable("Sky.Spa topic stream: no pub/sub broker is configured for the SSE endpoint"))
 			}
 			topic := AsString(topicArg)
 			sh := lookupServerStream(spaStreamWriterID(writerArg))

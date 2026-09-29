@@ -108,6 +108,26 @@ fn doc_module_prints_signatures() {
         stdout.contains("type alias Chunk = { data : String , from : Int , next : Int"),
         "record alias fields missing:\n{stdout}"
     );
+
+    // An opaque type (`exposing (Msg)`, no `(..)`) is listed without the
+    // constructors an importer cannot use (a downstream project matched on
+    // `Terminal.Ready` because `sky doc` listed it).
+    let out = Command::new(SKY)
+        .args(["doc", "Std.Ui.Terminal"])
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doc");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(
+        stdout.lines().any(|l| l.trim() == "type Msg"),
+        "opaque Msg:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Ready |"),
+        "hidden constructors:\n{stdout}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

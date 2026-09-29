@@ -150,6 +150,11 @@ const EFFECT_KERNELS: &[&str] = &[
     // browser cannot perform at all.
     "Subprocess",
     "Watch",
+    // v0.27.0 Std.Sync (Ref / Mutex / Queue): process-local shared state for
+    // Task programs and servers. Fail-closed to the server: a cell a client
+    // Task touched would otherwise live in one browser tab, not beside the
+    // server state it coordinates.
+    "Sync",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -6316,8 +6321,9 @@ mod tests {
         }
     }
 
-    /// Child processes and file watching run on the SERVER: a browser can
-    /// neither spawn a process nor watch a file system. Both families are
+    /// Child processes, file watching, file metadata and Std.Sync run on the
+    /// SERVER: a browser can neither spawn a process nor watch or stat a file
+    /// system, and Sync state belongs beside the server state. The families are
     /// reached through `Ffi.kernel "<Family>_<fn>"` symbols, so the symbol
     /// path must agree with the kernel classification.
     #[test]
@@ -6336,6 +6342,17 @@ mod tests {
             ("Watch", "changes"),
             ("Watch", "close"),
             ("Process", "run"),
+            ("File", "stat"),
+            ("File", "lstat"),
+            ("File", "realPath"),
+            ("File", "readLink"),
+            ("File", "chmod"),
+            ("File", "resolveWithin"),
+            ("Sync", "newRef"),
+            ("Sync", "update"),
+            ("Sync", "withLock"),
+            ("Sync", "push"),
+            ("Sync", "popWithin"),
         ] {
             assert_eq!(
                 classify_kernel(m, f),
@@ -6346,7 +6363,9 @@ mod tests {
         let mut acc = Refs::default();
         record_ffi_symbol("Subprocess_spawn", &mut acc, false);
         record_ffi_symbol("Watch_changes", &mut acc, false);
-        assert_eq!(acc.server_kernels.len(), 2, "{:?}", acc.server_kernels);
+        record_ffi_symbol("File_resolveWithin", &mut acc, false);
+        record_ffi_symbol("Sync_compareAndSwap", &mut acc, false);
+        assert_eq!(acc.server_kernels.len(), 4, "{:?}", acc.server_kernels);
     }
 
     /// The device secure store and biometric prompt run in the wasm client,

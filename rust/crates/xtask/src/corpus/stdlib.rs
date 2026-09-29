@@ -358,6 +358,11 @@ pub const SURFACES: &[Surface] = &[
         "Std.Watch",
         &["Sky.Core.Task as Task", "Sky.Core.File as File"],
     ),
+    // v0.27.0 Std.Sync: Ref / Mutex / Queue, bridged with `Task.run`. The
+    // expected values are the documented semantics (an atomic update loses
+    // no write, FIFO order, Nothing once closed and empty, Err on a push to a
+    // closed queue), not observations of this runtime.
+    sf2("sync", "Std.Sync", &["Sky.Core.Task as Task"]),
     // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
     // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
     // every web backend draws; the terminal as the island element it renders
@@ -684,6 +689,8 @@ pub const ASSERTED_MODULES: &[&str] = &[
     // v0.27.0: the streaming process surface and Std.Watch land covered.
     "Sky.Core.Process",
     "Std.Watch",
+    // v0.27.0: Std.Sync lands covered (`sync` surface).
+    "Std.Sync",
     // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
     // payloads) land covered, not dark.
     "Std.Ui.Canvas",
@@ -1272,6 +1279,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "qr" => qr_battery(edge),
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
+        "sync" => sync_battery(edge),
         "canvas" => canvas_battery(edge),
         "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
@@ -3657,6 +3665,49 @@ fn watch_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Sync --------------------------------------------------------------
+//
+// Shared state for concurrent Tasks. Each helper runs its Tasks with
+// `Task.run` and renders the outcome as a String, `E` for any Err.
+fn sync_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Sync.newRef", "Sync.update", "Sync.get"],
+                "syncCounter",
+                "100",
+            ),
+            s(
+                &["Sync.compareAndSwap", "Sync.newRef"],
+                "syncCas",
+                "F:1,T:9",
+            ),
+            s(
+                &["Sync.newMutex", "Sync.withLock", "Sync.set"],
+                "syncLocked",
+                "50",
+            ),
+            s(
+                &[
+                    "Sync.newQueue",
+                    "Sync.push",
+                    "Sync.pop",
+                    "Sync.close",
+                    "Sync.size",
+                ],
+                "syncFifo",
+                "3;1,2,3,-",
+            ),
+        ],
+        "failure" => vec![
+            s(&["Sync.popWithin"], "syncTimeout", "E"),
+            s(&["Sync.push", "Sync.close"], "syncPushClosed", "E"),
+            s(&["Sync.newQueue"], "syncZeroCapacity", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -5257,6 +5308,145 @@ procReadAfterClose =
         |> Task.run
         |> Result.map (\c -> c.data)
         |> orE"#
+        }
+        "sync" => {
+            r#"orE : Result Error String -> String
+orE r =
+    case r of
+        Ok v ->
+            v
+
+        Err _ ->
+            "E"
+
+
+syncCounter : String
+syncCounter =
+    Sync.newRef 0
+        |> Task.andThen
+            (\ref ->
+                List.range 1 100
+                    |> List.map (\_ -> Sync.update (\n -> n + 1) ref)
+                    |> Task.parallel
+                    |> Task.andThen (\_ -> Sync.get ref)
+            )
+        |> Task.run
+        |> Result.map String.fromInt
+        |> orE
+
+
+casStep : Int -> Sync.Ref Int -> Task Error String
+casStep expected ref =
+    Sync.compareAndSwap expected 9 ref
+        |> Task.andThen
+            (\swapped ->
+                Sync.get ref
+                    |> Task.map
+                        (\v ->
+                            (if swapped then
+                                "T:"
+
+                             else
+                                "F:"
+                            )
+                                ++ String.fromInt v
+                        )
+            )
+
+
+syncCas : String
+syncCas =
+    Sync.newRef 1
+        |> Task.andThen
+            (\ref ->
+                casStep 5 ref
+                    |> Task.andThen (\a -> casStep 1 ref |> Task.map (\b -> a ++ "," ++ b))
+            )
+        |> Task.run
+        |> orE
+
+
+syncLocked : String
+syncLocked =
+    Sync.newMutex ()
+        |> Task.andThen
+            (\lock ->
+                Sync.newRef 0
+                    |> Task.andThen
+                        (\ref ->
+                            List.range 1 50
+                                |> List.map
+                                    (\_ ->
+                                        Sync.withLock lock
+                                            (Sync.get ref |> Task.andThen (\v -> Sync.set (v + 1) ref))
+                                    )
+                                |> Task.parallel
+                                |> Task.andThen (\_ -> Sync.get ref)
+                        )
+            )
+        |> Task.run
+        |> Result.map String.fromInt
+        |> orE
+
+
+popAll : Sync.Queue Int -> List String -> Task Error (List String)
+popAll q acc =
+    Sync.pop q
+        |> Task.andThen
+            (\m ->
+                case m of
+                    Just n ->
+                        popAll q (acc ++ [ String.fromInt n ])
+
+                    Nothing ->
+                        Task.succeed (acc ++ [ "-" ])
+            )
+
+
+syncFifo : String
+syncFifo =
+    Sync.newQueue 3
+        |> Task.andThen
+            (\q ->
+                Task.sequence [ Sync.push 1 q, Sync.push 2 q, Sync.push 3 q ]
+                    |> Task.andThen (\_ -> Sync.size q)
+                    |> Task.andThen
+                        (\n ->
+                            Sync.close q
+                                |> Task.andThen (\_ -> popAll q [])
+                                |> Task.map (\xs -> String.fromInt n ++ ";" ++ String.join "," xs)
+                        )
+            )
+        |> Task.run
+        |> orE
+
+
+syncTimeout : String
+syncTimeout =
+    Sync.newQueue 1
+        |> Task.andThen (\q -> Sync.popWithin 10 q)
+        |> Task.run
+        |> Result.map (\m -> Maybe.withDefault "none" (Maybe.map String.fromInt m))
+        |> orE
+
+
+syncPushClosed : String
+syncPushClosed =
+    Sync.newQueue 1
+        |> Task.andThen (\q -> Sync.close q |> Task.andThen (\_ -> Sync.push 1 q))
+        |> Task.run
+        |> Result.map (\_ -> "pushed")
+        |> orE
+
+
+syncZeroCapacity : String
+syncZeroCapacity =
+    Sync.newQueue 0
+        |> Task.andThen (\q -> Sync.size q)
+        |> Task.run
+        |> Result.map String.fromInt
+        |> orE
+"#
         }
         "watch" => {
             r#"baseName : String -> String

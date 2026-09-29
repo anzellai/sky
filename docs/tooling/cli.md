@@ -311,6 +311,18 @@ sky verify           # gate the current project
 sky verify path/to/app
 ```
 
+A **library package** has no entry to build: its `sky.toml` names no `entry`,
+and it declares a `[lib]` table or has no `Main` module. For one, the check
+step type-checks and `go build`s every module under the source root (through
+a generated entry that imports each of them, built in a scratch directory),
+the tests run as usual, and only the entry binary is skipped:
+
+```
+  ✓ fmt      (2 file(s) clean)
+  ✓ check    (library: 1 module(s) type-check and build; no entry binary)
+  ✓ tests    (1 suite(s) passed)
+```
+
 In the **compiler repo** (a dir with `examples/`), `sky verify` instead builds
 AND runs every example — the runtime smoke sweep. `sky verify --help` documents
 both modes.
@@ -1178,9 +1190,15 @@ sky add ./libs/widgets  # has sky.toml or .sky sources → [dependencies] "widge
   given.
 - **Edits are picked up.** A changed function body is compiled by the next
   build, and `sky watch` rebuilds when a path dependency's `.sky`, `.go` or
-  `go.mod` files change. A new or changed exported Go function is not callable until
-  `sky install` re-inspects the module; until then the build warns that the
-  module's exported API changed.
+  `go.mod` files change. When a Go path dependency's exported API changes (a
+  function added, removed or given a new signature), the next `sky build` /
+  `sky check` / `sky test` re-inspects the module and rewrites its `sky-ffi/`
+  surface before it compiles, and says so
+  (`… changed its exported API → sky-ffi/<name>.* refreshed`): a path
+  dependency is your own code, so no `sky install` is needed. The build
+  compares a fingerprint of the exported declarations (`sky-ffi/<name>.pathsig`),
+  so a body edit does not re-inspect. A registry dependency keeps its pinned
+  surface.
 - **Drift is reported.** A declared directory that no longer exists stops the
   build with an error naming the dependency. A Go module whose `go.mod` now
   declares a different module path is a build warning. `sky doctor` warns about

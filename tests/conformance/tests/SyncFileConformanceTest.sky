@@ -1,0 +1,260 @@
+module SyncFileConformanceTest exposing (main, tests)
+
+-- Behavioural conformance for the v0.27.0 Sky.Core.File metadata and
+-- confinement surface (stat / lstat / realPath / readLink / chmod /
+-- permissions / resolveWithin), for Std.Sync (Ref, Mutex, Queue), and for
+-- the Sky-syntax printer behind `toString` and `sky test`. The Go runtime
+-- tests (runtime-go/rt file_info_test.go, sync_kernel_test.go,
+-- sky_show_test.go) cover the cases a Sky test cannot stage: symlink cycles,
+-- Windows, and the -race runs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error
+import Sky.Core.File as File exposing (FileKind(..))
+import Sky.Core.List as List
+import Sky.Core.Process as Process
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Tuple as Tuple
+import Std.Sync as Sync
+import Sky.Test as Test exposing (Test)
+
+
+-- ─── File helpers ──────────────────────────────────────────────────
+-- A fresh directory (its real path: macOS puts temp dirs behind a symlink)
+-- holding `root/sub/f.txt` ("hello"), `outside/secret`, and the links
+-- `root/link -> sub/f.txt` and `root/escape -> ../outside`.
+fixture : (String -> Task Error a) -> Result Error a
+fixture body =
+    Task.run
+        (File.tempDir "sky-conf-file-"
+            |> Task.andThen File.realPath
+            |> Task.andThen
+                   (\dir ->
+                       Task.sequence
+                           [ File.mkdirAll (dir ++ "/root/sub")
+                           , File.mkdirAll (dir ++ "/outside")
+                           , File.writeFile (dir ++ "/root/sub/f.txt") "hello"
+                           , File.writeFile (dir ++ "/outside/secret") "s"
+                           , Process.run "ln" [ "-s", "sub/f.txt", dir ++ "/root/link" ]
+                               |> Task.map (\_ -> ())
+                           , Process.run "ln" [ "-s", "../outside", dir ++ "/root/escape" ]
+                               |> Task.map (\_ -> ())
+                           ]
+                           |> Task.andThen (\_ -> body dir)))
+
+
+kindOf : String -> (String -> Task Error File.FileInfo) -> Result Error FileKind
+kindOf rel read =
+    fixture (\dir -> read (dir ++ rel) |> Task.map .kind)
+
+
+within : String -> Result Error String
+within rel =
+    fixture (\dir -> File.resolveWithin (dir ++ "/root") rel)
+
+
+-- The resolved path, relative to the fixture directory.
+withinRel : String -> Result Error String
+withinRel rel =
+    fixture
+        (\dir ->
+            File.resolveWithin (dir ++ "/root") rel
+                |> Task.map (String.dropLeft (String.length dir)))
+
+
+-- ─── Sync helpers ──────────────────────────────────────────────────
+counterAfterParallelUpdates : Result Error Int
+counterAfterParallelUpdates =
+    Task.run
+        (Sync.newRef 0
+            |> Task.andThen
+                   (\ref ->
+                       List.range 1 100
+                           |> List.map (\_ -> Sync.update (\n -> n + 1) ref)
+                           |> Task.parallel
+                           |> Task.andThen (\_ -> Sync.get ref)))
+
+
+casResult : Int -> Result Error ( Bool, Int )
+casResult expected =
+    Task.run
+        (Sync.newRef 1
+            |> Task.andThen
+                   (\ref ->
+                       Sync.compareAndSwap expected 9 ref
+                           |> Task.andThen
+                                  (\swapped ->
+                                      Sync.get ref |> Task.map (\v -> ( swapped, v )))))
+
+
+lockedTotal : Result Error Int
+lockedTotal =
+    Task.run
+        (Task.map2 Tuple.pair (Sync.newMutex ()) (Sync.newRef 0)
+            |> Task.andThen
+                   (\( lock, ref ) ->
+                       List.range 1 50
+                           |> List.map
+                                  (\_ ->
+                                      Sync.withLock lock
+                                          (Sync.get ref
+                                              |> Task.andThen (\v -> Sync.set (v + 1) ref)))
+                           |> Task.parallel
+                           |> Task.andThen (\_ -> Sync.get ref)))
+
+
+lockedFailure : Result Error Int
+lockedFailure =
+    Task.run
+        (Sync.newMutex ()
+            |> Task.andThen
+                   (\lock ->
+                       Sync.withLock lock (Task.fail (Error.invalidInput "inside"))
+                           |> Task.onError (\_ -> Sync.withLock lock (Task.succeed 7))))
+
+
+drain : Sync.Queue Int -> List (Maybe Int) -> Task Error (List (Maybe Int))
+drain q acc =
+    Sync.pop q
+        |> Task.andThen
+               (\m ->
+                   case m of
+                       Just _ ->
+                           drain q (acc ++ [ m ])
+
+                       Nothing ->
+                           Task.succeed (acc ++ [ m ]))
+
+
+queueFifo : Result Error (List (Maybe Int))
+queueFifo =
+    Task.run
+        (Sync.newQueue 3
+            |> Task.andThen
+                   (\q ->
+                       Task.sequence [ Sync.push 1 q, Sync.push 2 q, Sync.push 3 q, Sync.close q ]
+                           |> Task.andThen (\_ -> drain q [])))
+
+
+pushAfterClose : Result Error ()
+pushAfterClose =
+    Task.run
+        (Sync.newQueue 1
+            |> Task.andThen (\q -> Sync.close q |> Task.andThen (\_ -> Sync.push 1 q)))
+
+
+popWithinEmpty : Result Error (Maybe Int)
+popWithinEmpty =
+    Task.run (Sync.newQueue 1 |> Task.andThen (Sync.popWithin 20))
+
+
+producerConsumer : Result Error Int
+producerConsumer =
+    Task.run
+        (Sync.newQueue 2
+            |> Task.andThen
+                   (\q ->
+                       let
+                           producer =
+                               List.range 1 20
+                                   |> List.map (\n -> Sync.push n q)
+                                   |> Task.sequence
+                                   |> Task.andThen (\_ -> Sync.close q)
+                                   |> Task.map (\_ -> 0)
+
+                           consumer =
+                               drain q []
+                                   |> Task.map (List.filterMap identity >> List.foldl (\a b -> a + b) 0)
+                       in
+                       Task.parallel [ producer, consumer ] |> Task.map (List.foldl (\a b -> a + b) 0)))
+
+
+type Shape
+    = Circle Float
+    | Label String
+
+
+tests : List Test
+tests =
+    [ -- ─── Sky.Core.File ───────────────────────────────────────────
+      Test.test "stat: a regular file is File, with its size"
+        (\_ ->
+            Test.equal (Ok ( File, 5 ))
+                (fixture (\dir -> File.stat (dir ++ "/root/sub/f.txt") |> Task.map (\i -> ( i.kind, i.size )))))
+    , Test.test "stat: a directory is Directory"
+        (\_ -> Test.equal (Ok Directory) (kindOf "/root/sub" File.stat))
+    , Test.test "stat follows a symlink to its target"
+        (\_ -> Test.equal (Ok File) (kindOf "/root/link" File.stat))
+    , Test.test "lstat describes the symlink itself"
+        (\_ -> Test.equal (Ok Symlink) (kindOf "/root/link" File.lstat))
+    , Test.test "readLink returns the stored target"
+        (\_ -> Test.equal (Ok "sub/f.txt") (fixture (\dir -> File.readLink (dir ++ "/root/link"))))
+    , Test.test "realPath resolves the link"
+        (\_ ->
+            Test.equal (Ok True)
+                (fixture
+                    (\dir ->
+                        File.realPath (dir ++ "/root/./sub/../link")
+                            |> Task.map (\p -> p == dir ++ "/root/sub/f.txt"))))
+    , Test.test "chmod sets the permission bits stat reports"
+        (\_ ->
+            Test.equal (Ok 384)
+                (fixture
+                    (\dir ->
+                        File.chmod (File.permissions 6 0 0) (dir ++ "/root/sub/f.txt")
+                            |> Task.andThen (\_ -> File.stat (dir ++ "/root/sub/f.txt"))
+                            |> Task.map .mode)))
+    , Test.test "permissions 6 4 4 is octal 644"
+        (\_ -> Test.equal 420 (File.permissions 6 4 4))
+    , Test.test "stat of a missing path is NotFound"
+        (\_ -> Test.expectErrorKind Error.NotFound (kindOf "/nope" File.stat))
+    , Test.test "resolveWithin: a path inside the root"
+        (\_ -> Test.equal (Ok "/root/sub/f.txt") (withinRel "sub/f.txt"))
+    , Test.test "resolveWithin: a link inside the root is followed"
+        (\_ -> Test.equal (Ok "/root/sub/f.txt") (withinRel "link"))
+    , Test.test "resolveWithin: a path that does not exist yet"
+        (\_ -> Test.equal (Ok "/root/sub/new/file.txt") (withinRel "sub/new/file.txt"))
+    , Test.test "resolveWithin: .. out of the root is PermissionDenied"
+        (\_ -> Test.expectErrorKind Error.PermissionDenied (within "../outside/secret"))
+    , Test.test "resolveWithin: a symlink out of the root is PermissionDenied"
+        (\_ -> Test.expectErrorKind Error.PermissionDenied (within "escape/secret"))
+    , Test.test "resolveWithin: an absolute path outside is PermissionDenied"
+        (\_ -> Test.expectErrorKind Error.PermissionDenied (within "/"))
+
+    -- ─── Std.Sync ─────────────────────────────────────────────────
+    , Test.test "Ref: 100 parallel updates all land"
+        (\_ -> Test.equal (Ok 100) counterAfterParallelUpdates)
+    , Test.test "Ref: compareAndSwap with the wrong value does nothing"
+        (\_ -> Test.equal (Ok ( False, 1 )) (casResult 5))
+    , Test.test "Ref: compareAndSwap with the current value swaps"
+        (\_ -> Test.equal (Ok ( True, 9 )) (casResult 1))
+    , Test.test "Mutex: withLock serialises a get-then-set"
+        (\_ -> Test.equal (Ok 50) lockedTotal)
+    , Test.test "Mutex: a failing task releases the lock"
+        (\_ -> Test.equal (Ok 7) lockedFailure)
+    , Test.test "Queue: first in, first out, Nothing once closed and empty"
+        (\_ -> Test.equal (Ok [ Just 1, Just 2, Just 3, Nothing ]) queueFifo)
+    , Test.test "Queue: push after close is Unavailable"
+        (\_ -> Test.expectErrorKind Error.Unavailable pushAfterClose)
+    , Test.test "Queue: popWithin on an empty queue is Timeout"
+        (\_ -> Test.expectErrorKind Error.Timeout popWithinEmpty)
+    , Test.test "Queue: a capacity below 1 is InvalidInput"
+        (\_ -> Test.expectErrorKind Error.InvalidInput (Task.run (Sync.newQueue 0 |> Task.map (\_ -> ()))))
+    , Test.test "Queue: a producer and a consumer through a queue of 2"
+        (\_ -> Test.equal (Ok 210) producerConsumer)
+
+    -- ─── The Sky-syntax printer ─────────────────────────────────────
+    , Test.test "toString: Result and Maybe"
+        (\_ -> Test.equal "Ok (Just \"a\")" (toString (Ok (Just "a"))))
+    , Test.test "toString: a record, fields in name order"
+        (\_ -> Test.equal "{ age = 40, name = \"Ada\" }" (toString { name = "Ada", age = 40 }))
+    , Test.test "toString: constructors with arguments, nested"
+        (\_ -> Test.equal "[Circle 1.5, Label \"x\"]" (toString [ Circle 1.5, Label "x" ]))
+    , Test.test "toString: a top-level String is its text"
+        (\_ -> Test.equal "plain" (toString "plain"))
+    ]
+
+
+main =
+    Test.runMain tests

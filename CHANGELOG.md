@@ -127,6 +127,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### ⚠ Breaking changes
 
+- **`toString` prints Sky syntax.** `toString` / `Debug.toString` and
+  multiline-string interpolation rendered a non-String value with Go's `%v`:
+  `true`, `{Ada 40 [a b]}`, `map[1:a]`, and `toString (Just 5)` was `5`. They
+  now print `True`, `{ age = 40, name = "Ada", tags = ["a", "b"] }`,
+  `Dict.fromList [(1, "a")]` and `Just 5`. A String is still its text and an
+  Error still `<Kind>: <message>`. Int and Float print as before. Code that
+  parsed the old text must read the Sky form (see Fixed).
 - **Sky.Spa: a server RPC no longer replays the Msgs that arrived during it.**
   The client ran one RPC at a time, applied every Msg that arrived meanwhile,
   and on the answer re-ran those Msgs on top of it, without their Cmds. Now
@@ -455,6 +462,41 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `scripts/ui-canvas-terminal-e2e.sh`.)
 
 ### Added
+
+- **`Std.Sync`: a `Ref`, a `Mutex` and a bounded `Queue` for Task
+  programs.** Several Tasks that run at once (`Task.parallel`, `Task.spawn`,
+  concurrent handlers) had no lock, queue or compare-and-swap to share a
+  counter, a cache or a work queue. `Ref a` has `get` / `set` / atomic
+  `update` / `compareAndSwap`; `withLock : Mutex -> Task e a -> Task e a`
+  releases the mutex however the task ends; `Queue a` has `push` (waits
+  while full), `pop` (waits; `Nothing` once closed and empty), `popWithin ms`
+  (`Err Timeout`), `close` and `size`. Every operation is a Task. Pure code
+  needs none of it. The values are process-local (not in a Sky.Live model, not
+  across replicas) and run on the server in a Sky.Spa app
+  (`runtime-go/rt/sync_kernel.go`, `sky-stdlib/Std/Sync.sky`,
+  `docs/stdlib.md` "Std.Sync"; `go test -race` in `sync_kernel_test.go`,
+  conformance `SyncFileConformanceTest.sky`).
+- **`Sky.Core.File`: metadata, links and a confinement check.**
+  `stat` / `lstat : String -> Task Error FileInfo` (`kind` = `File` /
+  `Directory` / `Symlink` / `Other`, `size`, `modified` in Unix milliseconds,
+  `mode`), `realPath`, `readLink`, `chmod : Int -> String -> Task Error ()`,
+  `permissions 6 4 4` (Sky has no octal literal), and
+  `resolveWithin root path`, which follows every symlink and `..` and returns
+  the path only when it stays inside `root` (`Err PermissionDenied`
+  otherwise, and the last components may not exist yet). A downstream project
+  kept a Go package only because a Sky port could let a symlink lead a client
+  out of its workspace roots. Missing paths are `NotFound`, refused ones
+  `PermissionDenied` (`runtime-go/rt/file_info.go`, `file_info_test.go`).
+- **Decided, not built: a WebCrypto secure store in a plain browser.**
+  `Native.secureSet` / `secureGet` keep returning `Err Unavailable` on
+  `web:app` without a native shell. A non-extractable AES-GCM key in
+  IndexedDB would not protect the values: script in the page (an XSS, a
+  dependency, an extension) can still call the API and read every value, and
+  the browser stores the key on disk beside the ciphertext, not in an
+  operating-system key store. A store under the same name would promise the
+  Keychain / Keystore guarantee without giving it. The threat analysis and
+  what a web app does instead (the secret on the server behind the `HttpOnly`
+  session cookie) are in `docs/skyspa/client-crypto.md`.
 
 - **Let-polymorphism.** A let-bound function, lambda or syntactic value is
   now generalised, so one local helper can be used at two types:
@@ -1072,6 +1114,60 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`sky build` kept a local Go path dependency's old FFI surface after its
+  API changed.** A downstream project removed a function from its own Go
+  package, and the build failed in generated code
+  (`skyffi/hello_bindings.go:28:27: undefined: pkg.Wave`) until a manual
+  `sky install`; deleting `sky-out` did not help. The build (and `sky check`,
+  `sky test`) now re-inspects a Go path dependency whose exported-API
+  fingerprint (`sky-ffi/<name>.pathsig`) changed, or whose surface is absent
+  or unfingerprinted, before it loads the surface, and prints
+  `… changed its exported API → sky-ffi/<name>.* refreshed`. A path
+  dependency is the user's own code. A registry dependency keeps its pinned
+  surface (`ffi_ops::refresh_stale_path_surfaces`,
+  `path_deps::stale_go_surfaces`; `path_deps_flow.rs`).
+- **`sky verify` refused a library package.** A package with no `entry`
+  and no `Main` failed with `✗ check no entry module named Main` and skipped
+  its tests. A library (no `entry`, and a `[lib]` table or no `Main` module)
+  now has every module under its source root type-checked and `go build`t
+  through a generated entry, in a scratch directory, its tests run, and only
+  the entry binary is skipped (`test_verb_flow.rs`).
+- **`sky test` and `toString` printed Go structs.** A failing `Test.equal`
+  read `expected {0 a <nil>} but got {0 b <nil>}`. Values now print in Sky
+  syntax: `expected Ok "a" but got Ok "b"`, `Err (Io "x")`,
+  `{ age = 40, name = "Ada" }`, `[Circle 1.5, Empty]`, `Just (1, 'c')`,
+  `Dict.fromList [(1, "a")]`. `toString` (and `Debug.toString`, and string
+  interpolation) uses the same printer (`rt.SkyShow`, `sky_show.go`). A
+  top-level String stays its text and a top-level Error stays
+  `<Kind>: <message>`. Before, `toString (Just 5)` printed `5` and a `Bool`
+  printed `true`. A union whose constructors all take no arguments is an
+  `Int` at run time, so it prints by name only inside a record field.
+- **`sky doc` listed an opaque type's constructors, and matching one was a
+  naming error with no location.** `Std.Ui.Terminal` exports `Msg` without
+  `(..)`, yet `sky doc` showed `type Msg = Ready | …`, and
+  `case msg of Terminal.Ready ->` failed with a bare
+  `Undefined name: Terminal.Ready`. `sky doc` (text, HTML, `--export`) now
+  prints `type Msg` for a type exported by name alone, and the error points
+  at the pattern (`src/Main.sky:11:9`) and says the type is exported without
+  its constructors (`resolve.rs` `resolve_qual_ctor`, `hidden_ctor_type`).
+  LSP completion already listed only exported constructors.
+- **The CSRF 403 named a Go function.** Its hint said "exempt the route with
+  `WithoutCsrf(path)`", which no Sky program can call. It now names
+  `Server.api "POST /path" handler`, `Live.api` / `App.api`, the
+  `Authorization` header and `SKY_CSRF=off`, and the body is built with a
+  JSON encoder. An audit of the runtime's user-facing strings fixed the rest:
+  `Ffi.callPure` on a non-pure binding returned a bare String error naming
+  `rt.RegisterPure` (now an `InvalidInput` Error naming `Ffi.callTask`), and
+  the console, sub-app and embedded-PostgreSQL errors named `Live_app`, a
+  `console_app` blank import and `rt.EmbeddedPostgresBundleName` (now the Sky
+  verb that fixes them). `user_hint_names_test.go` scans every string literal
+  in the runtime for those names.
+- **`File.copy`, `File.rename`, `File.tempFile` and `File.tempDir` acted when
+  evaluated, not when their Task ran.** They returned a Result directly, so
+  `let t = File.copy a b` copied although `t` never ran, and the SSR write
+  guard was consulted at the wrong moment. They are thunks now, like every
+  other `File` function, and their errors carry `NotFound` /
+  `PermissionDenied` instead of `Io` (`file_info_test.go`).
 - **An `as` binding around a nested constructor pattern failed `go build`.**
   `Wrap ((Ok req) as whole) ->` type-checked, and the Go read `.Tag` off an
   `any` payload (`_subj.Fields[0].Tag undefined`) when the union was on the

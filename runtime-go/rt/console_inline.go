@@ -28,7 +28,7 @@ import (
 // ErrInlineConsoleUnavailable is returned by MountInlineConsole when
 // the host binary did not link console_app. Kept as a public sentinel
 // for callers that switch on it.
-var ErrInlineConsoleUnavailable = errors.New("sky-app/rt: inline console mount hook is no longer the canonical path; rt.MountEmbeddedConsole now uses MountLiveSubAppInProcess directly")
+var ErrInlineConsoleUnavailable = errors.New("sky: the inline Sky Console mount is not available in this binary; rebuild the app with `sky build`")
 
 // inlineConsoleHook is set at init() time by console_app via
 // RegisterInlineConsoleHook. Post-PR10-G no rt code consults it,

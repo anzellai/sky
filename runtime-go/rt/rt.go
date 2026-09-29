@@ -1185,16 +1185,29 @@ func ComposeR[A any, B any, C any](g func(B) C, f func(A) B) func(A) C {
 // multiline-string interpolation desugarer at canonicalise time.
 // Debug_toString backs `Debug.toString`, `Basics.toString` and multiline-string
 // interpolation (kernel.rs:118 / :422) — the compiler's one stringifier of a
-// whole Sky value, and therefore the one place a Dict is rendered for a human.
-// `toStringForDisplay` is `%v` plus the Dict-key decode: the runtime map key of
-// a `Dict Int v` carries a kind tag (see `encodeDictKey`) and the user must see
-// `map[10:j 9:i]`, not the encoded form.
+// whole Sky value. It renders Sky syntax (`SkyShow`, sky_show.go): `Ok "a"`,
+// `{ age = 40, name = "Ada" }`, `Dict.fromList [(1, "a")]`, not Go's `%v`
+// (`{0 a <nil>}`). Two top-level values keep their human form: a String is
+// returned as it is, unquoted, so interpolating a string splices its text,
+// and an Error reads `<Kind>: <message>` as `Error.toString` renders it (log
+// lines are built as `"failed: " ++ toString err`). Nested inside another
+// value both print in Sky syntax (`Err (Io "x")`).
 func Debug_toString(v any) any {
-	v = derefPointer(unwrapAny(v))
+	v = derefPointer(v)
 	if s, ok := v.(string); ok {
 		return s
 	}
-	return toStringForDisplay(v)
+	if s, ok := renderSkyError(v); ok {
+		return s
+	}
+	return SkyShow(v)
+}
+
+// Debug_show renders any Sky value in Sky syntax, a top-level String quoted.
+// `Sky.Test` prints an assertion's values with it (`expected Ok "a" but got
+// Ok "b"`).
+func Debug_show(v any) any {
+	return SkyShow(v)
 }
 
 // Log_println / Log_printlnT match the Task-everywhere kernel sig
@@ -1715,10 +1728,7 @@ func Basics_not(b any) any {
 }
 
 func Basics_toString(v any) string {
-	if s, ok := renderSkyError(v); ok {
-		return s
-	}
-	return toStringForDisplay(derefPointer(unwrapAny(v)))
+	return Debug_toString(v).(string)
 }
 
 // errorKindLabels mirrors Sky.Core.Error.kindLabel, indexed by the
@@ -4202,12 +4212,13 @@ func invokeFfi(name string, args []any, pureOnly bool) any {
 	if fn, ok := ffiRegistry[name]; ok {
 		ffiRegistryMu.RUnlock()
 		if pureOnly {
-			return Err[any, any](
+			// A Sky Error (never a bare String on a `Result Error a`
+			// surface), naming what the Sky caller can do.
+			return Err[any, any](ErrInvalidInput(
 				"Ffi.callPure: " + name +
-					" is registered as effect-unknown — use Ffi.callTask. " +
-					"Auto-generated FFI bindings default to effect-unknown. " +
-					"Use rt.RegisterPure from a hand-written ffi/*.go file " +
-					"only if you have audited the underlying Go function.")
+					" is not marked pure: call it with Ffi.callTask. " +
+					"Generated Go bindings are effect-unknown; only the standard library's " +
+					"own kernels are marked pure."))
 		}
 		return runWithRecover(name, args, fn)
 	}
@@ -7809,55 +7820,68 @@ func File_isDir(path any) any {
 	}
 }
 
+// File_tempFile, File_tempDir, File_copy and File_rename are Tasks: each
+// returns a thunk, so the effect runs when the Task is run, not when the
+// expression is evaluated (they used to act at evaluation, so
+// `let t = File.copy a b` copied even when `t` was never run, and the SSR
+// write guard was consulted at the wrong moment).
 func File_tempFile(prefix any) any {
-	f, err := os.CreateTemp("", AsString(prefix))
-	if err != nil {
-		return Err[any, any](ErrIo(err.Error()))
+	return func() any {
+		f, err := os.CreateTemp("", AsString(prefix))
+		if err != nil {
+			return Err[any, any](fileError("File.tempFile", err))
+		}
+		name := f.Name()
+		f.Close()
+		return Ok[any, any](name)
 	}
-	name := f.Name()
-	f.Close()
-	return Ok[any, any](name)
 }
 
 func File_tempDir(prefix any) any {
-	dir, err := os.MkdirTemp("", AsString(prefix))
-	if err != nil {
-		return Err[any, any](ErrIo(err.Error()))
+	return func() any {
+		dir, err := os.MkdirTemp("", AsString(prefix))
+		if err != nil {
+			return Err[any, any](fileError("File.tempDir", err))
+		}
+		return Ok[any, any](dir)
 	}
-	return Ok[any, any](dir)
 }
 
 func File_copy(src any, dst any) any {
-	if r := ssrSuppressedWrite("file.copy"); r != nil {
-		return r
+	return func() any {
+		if r := ssrSuppressedWrite("file.copy"); r != nil {
+			return r
+		}
+		srcPath := AsString(src)
+		dstPath := AsString(dst)
+		in, err := os.Open(srcPath)
+		if err != nil {
+			return Err[any, any](fileError("File.copy", err))
+		}
+		defer in.Close()
+		out, err := os.Create(dstPath)
+		if err != nil {
+			return Err[any, any](fileError("File.copy", err))
+		}
+		defer out.Close()
+		if _, err := io.Copy(out, in); err != nil {
+			return Err[any, any](fileError("File.copy", err))
+		}
+		return Ok[any, any](struct{}{})
 	}
-	srcPath := AsString(src)
-	dstPath := AsString(dst)
-	in, err := os.Open(srcPath)
-	if err != nil {
-		return Err[any, any](ErrIo(err.Error()))
-	}
-	defer in.Close()
-	out, err := os.Create(dstPath)
-	if err != nil {
-		return Err[any, any](ErrIo(err.Error()))
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, in); err != nil {
-		return Err[any, any](ErrIo(err.Error()))
-	}
-	return Ok[any, any](struct{}{})
 }
 
 func File_rename(src any, dst any) any {
-	if r := ssrSuppressedWrite("file.rename"); r != nil {
-		return r
+	return func() any {
+		if r := ssrSuppressedWrite("file.rename"); r != nil {
+			return r
+		}
+		err := os.Rename(AsString(src), AsString(dst))
+		if err != nil {
+			return Err[any, any](fileError("File.rename", err))
+		}
+		return Ok[any, any](struct{}{})
 	}
-	err := os.Rename(AsString(src), AsString(dst))
-	if err != nil {
-		return Err[any, any](ErrIo(err.Error()))
-	}
-	return Ok[any, any](struct{}{})
 }
 
 // ═══════════════════════════════════════════════════════════

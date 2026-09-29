@@ -132,21 +132,13 @@ fn go_module_path_dependency_add_build_edit_install_remove() {
         "the edited dependency is built: {out}"
     );
 
-    // A NEW exported function: the build warns until `sky install` refreshes
-    // the surface, after which the function is callable.
+    // A NEW exported function: a path dependency is the user's own code, so
+    // the next `sky build` re-inspects it and the function is callable with
+    // no manual `sky install`.
     write(
         &greet.join("extra.go"),
-        "package greet\n\n// Shout shouts.\nfunc Shout(s string) string { return s + \"!\" }\n",
+        "package greet\n\n// Shout shouts.\nfunc Shout(s string) string { return s + \"!\" }\n\n// Wave waves.\nfunc Wave(s string) string { return \"wave \" + s }\n",
     );
-    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
-    assert!(ok, "{log}");
-    assert!(
-        log.contains("changed its exported Go API") && log.contains("sky install"),
-        "API drift is reported:\n{log}"
-    );
-    let (ok, log) = run(&app, SKY, &["install"]);
-    assert!(ok, "sky install:\n{log}");
-    assert!(log.contains("local Go module"), "{log}");
     write(
         &app.join("src/Main.sky"),
         &MAIN_HELLO.replace(
@@ -155,10 +147,36 @@ fn go_module_path_dependency_add_build_edit_install_remove() {
         ),
     );
     let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
-    assert!(ok, "{log}");
+    assert!(ok, "a new function is picked up by the build:\n{log}");
+    assert!(log.contains("sky-ffi/greet.* refreshed"), "{log}");
     assert!(!log.contains("changed its exported Go API"), "{log}");
     let (_, out) = run(&app, bin.to_str().unwrap(), &[]);
     assert!(out.contains("hey!"), "{out}");
+
+    // A REMOVED function the app never calls (the downstream report): the
+    // old surface would bind `greet.Wave` and fail in `go build`. The build
+    // refreshes the surface, also after `sky-out` is deleted.
+    write(
+        &greet.join("extra.go"),
+        "package greet\n\n// Shout shouts.\nfunc Shout(s string) string { return s + \"!\" }\n",
+    );
+    let _ = std::fs::remove_dir_all(app.join("sky-out"));
+    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
+    assert!(ok, "a removed function is dropped from the surface:\n{log}");
+    assert!(!log.contains("undefined: pkg.Wave"), "{log}");
+    let bindings = std::fs::read_to_string(app.join("sky-ffi/go/greet_bindings.go")).unwrap();
+    assert!(!bindings.contains("Wave"), "{bindings}");
+    // An unchanged API is not re-inspected.
+    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
+    assert!(ok, "{log}");
+    assert!(!log.contains("refreshed"), "{log}");
+    let (_, out) = run(&app, bin.to_str().unwrap(), &[]);
+    assert!(out.contains("hey!"), "{out}");
+
+    // `sky install` still refreshes explicitly.
+    let (ok, log) = run(&app, SKY, &["install"]);
+    assert!(ok, "sky install:\n{log}");
+    assert!(log.contains("local Go module"), "{log}");
 
     // `sky update` leaves a path dependency alone, and says so.
     let (_, log) = run(&app, SKY, &["update"]);

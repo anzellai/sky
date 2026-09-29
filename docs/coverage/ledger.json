@@ -265,7 +265,7 @@
       "tier": "T1"
     },
     "conformance": {
-      "expected_assertions": 1422,
+      "expected_assertions": 1451,
       "falsifier_mutation": "conformance.break-expectation",
       "falsifier_proven": true,
       "summary": "stdlib behavioural conformance suites (Sky source, real runtime)",
@@ -288,7 +288,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 468,
+      "expected_assertions": 470,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -348,7 +348,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 614,
+      "expected_assertions": 616,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -686,6 +686,12 @@
           "apps:cli-verbs"
         ]
       },
+      "Std.Sync": {
+        "path": "tests/conformance",
+        "units": [
+          "tests/conformance"
+        ]
+      },
       "Std.Trace": {
         "path": "apps/relay",
         "units": [
@@ -702,13 +708,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2184,
-    "stdlib_modules": 111,
-    "surfaces_covered": 166,
-    "surfaces_covered_pct": 93.3,
-    "surfaces_equal": 17,
-    "surfaces_stronger": 161,
-    "surfaces_total": 178,
+    "stdlib_entries": 2209,
+    "stdlib_modules": 112,
+    "surfaces_covered": 168,
+    "surfaces_covered_pct": 93.9,
+    "surfaces_equal": 16,
+    "surfaces_stronger": 163,
+    "surfaces_total": 179,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -1348,9 +1354,15 @@
     {
       "category": "cli",
       "cover_new": {
-        "class": "None",
-        "evidence": [],
-        "strength": 0
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "gate `cli-verbs` (rust/crates/sky/tests/*_flow.rs)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -1359,7 +1371,7 @@
       },
       "description": "`sky verify`",
       "id": "cli.verify",
-      "verdict": "equal"
+      "verdict": "stronger"
     },
     {
       "category": "cli",
@@ -11261,6 +11273,34 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "tests/conformance (gate `conformance`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Sync public API",
+      "id": "stdlib.Std.Sync",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
@@ -12986,7 +13026,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 8.1
+      "pct_of_denominator": 8.0
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -12996,14 +13036,13 @@
       ]
     },
     "surfaces_with_zero_new_cover": {
-      "count": 11,
+      "count": 10,
       "surfaces": [
         "cli.console",
         "cli.console-serve",
         "cli.lsp",
         "cli.spa-partition",
         "cli.upgrade-claude",
-        "cli.verify",
         "stdlib.Sky.Core.Io",
         "stdlib.Std.Cli",
         "stdlib.Std.Db.Table",
@@ -13140,11 +13179,10 @@
           ]
         },
         "Sky.Core.Process": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "Screen",
             "pid",
-            "run",
             "screen"
           ]
         },
@@ -13850,6 +13888,14 @@
             "withRoutes"
           ]
         },
+        "Std.Sync": {
+          "count": 3,
+          "symbols": [
+            "Mutex",
+            "Ref",
+            "size"
+          ]
+        },
         "Std.Tui": {
           "count": 10,
           "symbols": [
@@ -14085,8 +14131,8 @@
           ]
         }
       },
-      "count": 661,
-      "pct_of_denominator": 30.3
+      "count": 663,
+      "pct_of_denominator": 30.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14152,8 +14198,9 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 6,
+          "count": 7,
           "symbols": [
+            "FileKind",
             "copy",
             "exists",
             "isDir",
@@ -14228,7 +14275,7 @@
           ]
         },
         "Sky.Core.Process": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "Event",
             "ExitStatus",
@@ -14236,7 +14283,6 @@
             "Signal",
             "Stream",
             "pid",
-            "run",
             "screen"
           ]
         },
@@ -15022,6 +15068,14 @@
             "withRoutes"
           ]
         },
+        "Std.Sync": {
+          "count": 3,
+          "symbols": [
+            "Mutex",
+            "Ref",
+            "size"
+          ]
+        },
         "Std.Tui": {
           "count": 10,
           "symbols": [
@@ -15271,8 +15325,8 @@
           ]
         }
       },
-      "count": 750,
-      "pct_of_denominator": 34.3
+      "count": 753,
+      "pct_of_denominator": 34.1
     }
   },
   "units": [
@@ -16450,12 +16504,12 @@
       "db_drivers": [],
       "gate": "conformance",
       "id": "tests/conformance",
-      "modules_imported": 54,
+      "modules_imported": 55,
       "path": "tests/conformance",
-      "refs_generous": 713,
-      "refs_qualified": 697,
+      "refs_generous": 737,
+      "refs_qualified": 720,
       "role": "Conformance",
-      "sky_files": 42,
+      "sky_files": 43,
       "sky_toml_sections": []
     }
   ]

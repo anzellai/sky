@@ -308,6 +308,9 @@ func TestCompositeKeyStillPanicsWithTheDocumentedMessage(t *testing.T) {
 }
 
 // ── Display: the tag is internal and must never reach a human ──────
+//
+// `Debug.toString` renders a Dict in Sky syntax (sky_show.go), its keys
+// decoded and in `Dict.toList` order.
 
 func TestToStringRendersDictKeysInTheirLogicalForm(t *testing.T) {
 	cases := []struct {
@@ -315,11 +318,11 @@ func TestToStringRendersDictKeysInTheirLogicalForm(t *testing.T) {
 		dict any
 		want string
 	}{
-		{"Int", Dict_fromList([]any{SkyTuple2{V0: 10, V1: "j"}}), "map[10:j]"},
-		{"Char", Dict_fromList([]any{SkyTuple2{V0: 'a', V1: 1}}), "map[97:1]"},
-		{"Float", Dict_fromList([]any{SkyTuple2{V0: 1.5, V1: "a"}}), "map[1.5:a]"},
-		{"Bool", Dict_fromList([]any{SkyTuple2{V0: true, V1: "t"}}), "map[true:t]"},
-		{"String", Dict_fromList([]any{SkyTuple2{V0: "a", V1: 1}}), "map[a:1]"},
+		{"Int", Dict_fromList([]any{SkyTuple2{V0: 10, V1: "j"}}), `Dict.fromList [(10, "j")]`},
+		{"Char", Dict_fromList([]any{SkyTuple2{V0: 'a', V1: 1}}), `Dict.fromList [('a', 1)]`},
+		{"Float", Dict_fromList([]any{SkyTuple2{V0: 1.5, V1: "a"}}), `Dict.fromList [(1.5, "a")]`},
+		{"Bool", Dict_fromList([]any{SkyTuple2{V0: true, V1: "t"}}), `Dict.fromList [(True, "t")]`},
+		{"String", Dict_fromList([]any{SkyTuple2{V0: "a", V1: 1}}), `Dict.fromList [("a", 1)]`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -333,17 +336,16 @@ func TestToStringRendersDictKeysInTheirLogicalForm(t *testing.T) {
 	}
 }
 
-// Ordering of the rendered map is fmt's (lexical over the displayed key), and
-// that is what it was before the encoding existed.
-func TestToStringOrdersRenderedKeysLikeItAlwaysDid(t *testing.T) {
+// The rendered Dict is in key order, as `Dict.toList` returns it: 1, 2, 9,
+// 10, not the lexical order of the encoded keys.
+func TestToStringOrdersDictKeysLikeToList(t *testing.T) {
 	got := Debug_toString(intDict())
-	if want := "map[1:a 10:j 2:b 9:i]"; got != any(want) {
+	if want := `Dict.fromList [(1, "a"), (2, "b"), (9, "i"), (10, "j")]`; got != any(want) {
 		t.Errorf("Debug_toString(intDict) = %#v, want %#v", got, want)
 	}
 }
 
-// A Dict nested inside a record / list / another Dict is detagged in place —
-// the walk rebuilds same-typed values, so the rest of the render is untouched.
+// A Dict nested inside a record / list / another Dict is decoded in place.
 func TestToStringDetagsNestedDicts(t *testing.T) {
 	type holder struct {
 		Name string
@@ -354,7 +356,7 @@ func TestToStringDetagsNestedDicts(t *testing.T) {
 	if strings.ContainsRune(got, dictKeyTagByte) {
 		t.Fatalf("a nested Dict leaked the tag: %q", got)
 	}
-	if want := "{x map[7:s]}"; got != want {
+	if want := `{ byID = Dict.fromList [(7, "s")], name = "x" }`; got != want {
 		t.Errorf("Basics_toString(record) = %q, want %q", got, want)
 	}
 
@@ -366,18 +368,8 @@ func TestToStringDetagsNestedDicts(t *testing.T) {
 	outer := Dict_fromList([]any{
 		SkyTuple2{V0: 1, V1: Dict_fromList([]any{SkyTuple2{V0: 2, V1: "z"}})},
 	})
-	if got := Basics_toString(outer); got != "map[1:map[2:z]]" {
-		t.Errorf("Basics_toString(Dict of Dict) = %q, want %q", got, "map[1:map[2:z]]")
-	}
-}
-
-// A value with no Dict in it renders byte-identically to plain `%v` — the
-// display path must not become a second, divergent renderer.
-func TestToStringLeavesNonDictValuesAlone(t *testing.T) {
-	for _, v := range []any{42, "hello", []any{1, 2}, map[string]any{"a": 1}, SkyTuple2{V0: 1, V1: "x"}} {
-		if got, want := Basics_toString(v), fmt.Sprintf("%v", v); got != want {
-			t.Errorf("Basics_toString(%#v) = %q, want %q", v, got, want)
-		}
+	if got, want := Basics_toString(outer), `Dict.fromList [(1, Dict.fromList [(2, "z")])]`; got != want {
+		t.Errorf("Basics_toString(Dict of Dict) = %q, want %q", got, want)
 	}
 }
 

@@ -1,7 +1,16 @@
 -- | Sky.Core.File — filesystem I/O (Layer 3 Sky source).
 --
 -- Every function is effectful (touches the disk) so the return is
--- always `Task Error _`.
+-- always `Task Error _`. A missing path fails with `NotFound`, a refused
+-- one with `PermissionDenied`, anything else with `Io`.
+--
+-- Symlinks. `stat` follows a symlink and describes its target; `lstat`
+-- describes the link itself (kind `Symlink`). `readLink` returns a link's
+-- target as stored; `realPath` resolves every link and `..`. To keep a
+-- path a client sent inside a directory, use `resolveWithin`, which
+-- follows links the same way. On Windows, links and junctions are reported
+-- as the operating system reports them (a junction is not a `Symlink`), and
+-- `mode` keeps only what Windows stores (a read-only file has no write bits).
 module Sky.Core.File exposing
     ( readFile
     , readFileLimit
@@ -17,10 +26,20 @@ module Sky.Core.File exposing
     , tempDir
     , copy
     , rename
+    , FileKind(..)
+    , FileInfo
+    , stat
+    , lstat
+    , realPath
+    , readLink
+    , chmod
+    , permissions
+    , resolveWithin
     )
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
 
 
 -- ─── Read ──────────────────────────────────────────────────────────
@@ -110,3 +129,142 @@ copy =
 rename : String -> String -> Task Error ()
 rename =
     Ffi.kernel "File_rename"
+
+-- ─── Metadata ──────────────────────────────────────────────────────
+-- | What a path is: a regular `File`, a `Directory`, a `Symlink` (only
+-- `lstat` reports one), or `Other` (a device, a socket, a named pipe).
+type FileKind
+    = File
+    | Directory
+    | Symlink
+    | Other
+
+-- | A path's metadata. `size` is in bytes; `modified` is the last
+-- modification time in Unix milliseconds (the same unit as `Time.now`);
+-- `mode` is the permission bits as an Int: `permissions 6 4 4` (420, the
+-- octal 644), with setuid, setgid and sticky in their Unix positions (2048,
+-- 1024, 512).
+type alias FileInfo =
+    { kind : FileKind
+    , size : Int
+    , modified : Int
+    , mode : Int
+    }
+
+type alias RawInfo =
+    { kind : Int
+    , size : Int
+    , modified : Int
+    , mode : Int
+    }
+
+
+fromRaw : RawInfo -> FileInfo
+fromRaw raw =
+    { kind = kindFromInt raw.kind
+    , size = raw.size
+    , modified = raw.modified
+    , mode = raw.mode
+    }
+
+
+kindFromInt : Int -> FileKind
+kindFromInt n =
+    case n of
+
+        0 ->
+            File
+
+        1 ->
+            Directory
+
+        2 ->
+            Symlink
+
+        _ ->
+            Other
+
+
+statRaw : String -> Task Error RawInfo
+statRaw =
+    Ffi.kernel "File_stat"
+
+
+lstatRaw : String -> Task Error RawInfo
+lstatRaw =
+    Ffi.kernel "File_lstat"
+
+
+-- | `stat path` — the metadata of `path`, following a symlink to its
+-- target. `Err NotFound` when the path (or a link's target) is missing.
+stat : String -> Task Error FileInfo
+stat path =
+    Task.map fromRaw (statRaw path)
+
+
+-- | `lstat path` — like `stat`, but a symlink is described itself (kind
+-- `Symlink`, its own size and times), not followed.
+lstat : String -> Task Error FileInfo
+lstat path =
+    Task.map fromRaw (lstatRaw path)
+
+
+-- ─── Links + paths ─────────────────────────────────────────────────
+-- | `realPath path` — the absolute path with every symlink, `.` and `..`
+-- resolved. The path must exist (`Err NotFound` otherwise).
+realPath : String -> Task Error String
+realPath =
+    Ffi.kernel "File_realPath"
+
+
+-- | `readLink path` — the target a symlink stores, exactly as written
+-- (possibly relative to the link's directory). An error for a path that
+-- is not a symlink.
+readLink : String -> Task Error String
+readLink =
+    Ffi.kernel "File_readLink"
+
+
+-- | `chmod mode path` — set the permission bits:
+-- `chmod (permissions 6 0 0) path` (owner read + write, nothing else).
+-- `Err InvalidInput` for a mode outside `0 .. 4095` (octal 7777).
+chmod : Int -> String -> Task Error ()
+chmod =
+    Ffi.kernel "File_chmod"
+
+
+-- | `permissions owner group other` — a mode from its three octal digits
+-- (each 0 to 7: 4 read, 2 write, 1 execute): `permissions 6 4 4` is 420,
+-- the octal 644. A digit outside 0 to 7 is clamped into it.
+permissions : Int -> Int -> Int -> Int
+permissions owner group other =
+    permDigit owner * 64 + permDigit group * 8 + permDigit other
+
+
+permDigit : Int -> Int
+permDigit d =
+    if d < 0 then
+        0
+
+    else if d > 7 then
+        7
+
+    else
+        d
+
+
+-- | `resolveWithin root path` — resolve `path` (a relative path is taken
+-- relative to `root`), following every symlink and `..`, and return the
+-- resolved absolute path only when it is `root` or inside it. A path that
+-- leads out of `root` — through `..`, an absolute path, or a symlink that
+-- points outside — is `Err PermissionDenied`. The last components may not
+-- exist yet (a file about to be written); `root` itself must exist.
+--
+--     File.resolveWithin workspace requestedPath
+--         |> Task.andThen File.readFile
+--
+-- The check holds at the moment of the call: do not let untrusted code
+-- create links inside `root`, and use the returned path, not the input.
+resolveWithin : String -> String -> Task Error String
+resolveWithin =
+    Ffi.kernel "File_resolveWithin"

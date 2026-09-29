@@ -1,0 +1,151 @@
+-- | Std.Sync — shared mutable state for Task programs: a `Ref`, a `Mutex`,
+-- and a bounded `Queue`.
+--
+-- Pure code needs none of this. A Sky value never changes, so two
+-- computations cannot race on it. `Std.Sync` is for Task programs and
+-- servers where several Tasks run at the same time (`Task.parallel`,
+-- `Task.spawn`, concurrent HTTP handlers) and must share a counter, a cache,
+-- or a work queue.
+--
+--     counter : Ref Int -> Task Error Int
+--     counter hits =
+--         Sync.update (\n -> n + 1) hits
+--
+--     worker : Queue Job -> Task Error ()
+--     worker jobs =
+--         Task.loop (\_ -> Sync.pop jobs |> Task.andThen step) ()
+--
+-- Every operation is a Task: nothing happens until the Task runs. A `Ref`,
+-- `Mutex` or `Queue` lives in this process only: it does not survive a
+-- restart, it is not shared between replicas, and it cannot be stored in a
+-- Sky.Live model (the session store cannot save it). Two values are equal
+-- only when they are the same `Ref` / `Mutex` / `Queue`.
+module Std.Sync exposing
+    ( Ref
+    , newRef
+    , get
+    , set
+    , update
+    , compareAndSwap
+    , Mutex
+    , newMutex
+    , withLock
+    , Queue
+    , newQueue
+    , push
+    , pop
+    , popWithin
+    , close
+    , size
+    )
+
+import Sky.Ffi as Ffi
+import Sky.Core.Error exposing (Error)
+
+-- | A mutable cell holding an `a`. Opaque.
+type Ref a
+    = Ref__Internal Int
+
+-- | A lock. Opaque.
+type Mutex
+    = Mutex__Internal Int
+
+-- | A first-in, first-out queue of `a` with a fixed capacity. Opaque.
+type Queue a
+    = Queue__Internal Int
+
+
+-- ─── Ref ───────────────────────────────────────────────────────────
+-- | `newRef initial` — a new cell holding `initial`.
+newRef : a -> Task Error (Ref a)
+newRef =
+    Ffi.kernel "Sync_newRef"
+
+
+-- | The value the cell holds now.
+get : Ref a -> Task Error a
+get =
+    Ffi.kernel "Sync_get"
+
+
+-- | `set value ref` — replace the value.
+set : a -> Ref a -> Task Error ()
+set =
+    Ffi.kernel "Sync_set"
+
+
+-- | `update f ref` — replace the value with `f` applied to it, atomically:
+-- no other operation on the cell sees a state between the read and the
+-- write. Returns the new value. Use it (not `get` then `set`) for a
+-- read-modify-write such as a counter.
+update : (a -> a) -> Ref a -> Task Error a
+update =
+    Ffi.kernel "Sync_update"
+
+
+-- | `compareAndSwap expected new ref` — store `new` only when the value
+-- equals `expected` (`==`), and say whether it did. The building block for
+-- an optimistic update that must also run an effect.
+compareAndSwap : a -> a -> Ref a -> Task Error Bool
+compareAndSwap =
+    Ffi.kernel "Sync_compareAndSwap"
+
+
+-- ─── Mutex ─────────────────────────────────────────────────────────
+-- | A new, unlocked mutex. Create one at the top level to share it:
+-- `lock = Task.run (Sync.newMutex ())` runs once (a top-level binding is
+-- evaluated once).
+newMutex : () -> Task Error Mutex
+newMutex =
+    Ffi.kernel "Sync_newMutex"
+
+
+-- | `withLock mutex task` — run `task` while holding `mutex`, so no other
+-- `withLock` on the same mutex runs at the same time. The mutex is released
+-- however the task ends. Not re-entrant: a `withLock m` inside a
+-- `withLock m` waits for itself.
+withLock : Mutex -> Task e a -> Task e a
+withLock =
+    Ffi.kernel "Sync_withLock"
+
+
+-- ─── Queue ─────────────────────────────────────────────────────────
+-- | `newQueue capacity` — an empty queue that holds at most `capacity`
+-- items (`Err InvalidInput` below 1).
+newQueue : Int -> Task Error (Queue a)
+newQueue =
+    Ffi.kernel "Sync_newQueue"
+
+
+-- | `push item queue` — add `item` at the back, waiting while the queue is
+-- full. `Err Unavailable` when the queue is closed.
+push : a -> Queue a -> Task Error ()
+push =
+    Ffi.kernel "Sync_push"
+
+
+-- | Take the item at the front, waiting until there is one: `Just item`, or
+-- `Nothing` once the queue is closed and empty.
+pop : Queue a -> Task Error (Maybe a)
+pop =
+    Ffi.kernel "Sync_pop"
+
+
+-- | `popWithin ms queue` — `pop`, waiting at most `ms` milliseconds:
+-- `Err Timeout` when nothing arrived in time.
+popWithin : Int -> Queue a -> Task Error (Maybe a)
+popWithin =
+    Ffi.kernel "Sync_popWithin"
+
+
+-- | Close the queue: later pushes fail, waiting pushes fail, and pops
+-- return the items still queued, then `Nothing`. Closing twice is a no-op.
+close : Queue a -> Task Error ()
+close =
+    Ffi.kernel "Sync_close"
+
+
+-- | How many items are waiting now.
+size : Queue a -> Task Error Int
+size =
+    Ffi.kernel "Sync_size"

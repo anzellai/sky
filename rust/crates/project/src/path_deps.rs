@@ -392,8 +392,8 @@ pub fn drift_warnings(project_dir: &Path) -> Vec<String> {
                 if recorded.is_some_and(|r| r != signature_fingerprint(&dir)) {
                     out.push(format!(
                         "path dependency \"{}\" ({}) changed its exported Go API since its \
-                         FFI surface was generated. The new or changed functions are not \
-                         callable until you run `sky install`",
+                         FFI surface was generated, and the surface could not be refreshed. \
+                         Run `sky install` to re-inspect it",
                         d.key, d.path
                     ));
                 }
@@ -401,6 +401,31 @@ pub fn drift_warnings(project_dir: &Path) -> Vec<String> {
         }
     }
     out
+}
+
+/// The declared Go path dependencies whose generated FFI surface no longer
+/// matches the directory: the surface is absent, it was generated before the
+/// fingerprint was recorded (no `.pathsig`), or the exported API changed since
+/// ([`signature_fingerprint`]). A path dependency is the user's own code, so
+/// the build regenerates these (`ffi_ops::refresh_stale_path_surfaces`)
+/// instead of compiling bindings against functions that no longer exist.
+/// A directory that is gone, or whose `go.mod` declares another module, is not
+/// listed: those are reported by [`missing_error`] / [`drift_warnings`], and
+/// re-inspecting cannot fix them.
+pub fn stale_go_surfaces(project_dir: &Path) -> Vec<PathDep> {
+    read_path_dependencies_of(&project_dir.join("sky.toml"), PathDepKind::Go)
+        .into_iter()
+        .filter(|d| {
+            let dir = d.resolve(project_dir);
+            if !dir.is_dir() || go_module_path(&dir).as_deref() != Some(d.key.as_str()) {
+                return false;
+            }
+            match recorded_signature(project_dir, &d.key) {
+                Some(r) => r != signature_fingerprint(&dir),
+                None => true,
+            }
+        })
+        .collect()
 }
 
 /// A fingerprint of a Go package's EXPORTED API as its source spells it: every

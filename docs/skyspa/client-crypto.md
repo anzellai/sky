@@ -130,11 +130,50 @@ them.
   `mobile:ios`, `mobile:android` and `desktop:<os>`, keep a long-term key with
   `Native.secureSet` / `Native.secureGet` (Keychain, Android Keystore), and put
   it in the model only while it is in use. In a plain browser those calls return
-  `Err Unavailable`; there is no fallback to `localStorage`.
+  `Err Unavailable`; there is no fallback to `localStorage` (see "Why a plain
+  browser has no secure store" below).
 - **What the build cannot see.** A key you turn into a `String` yourself
   (`Kx.secretKeyToBytes` then `Secret.reveal`, or a base64 export) is a
   `String`, and the build cannot tell it from any other text. Do not send such a
   value.
+
+## Why a plain browser has no secure store
+
+`Native.secureSet` / `secureGet` return `Err Unavailable` in a plain browser
+(`web:app` without a native shell), and that is a decision, not a gap. The
+candidate design was a WebCrypto store: a non-extractable AES-GCM key created
+with `crypto.subtle.generateKey`, kept in IndexedDB, wrapping each value. It
+was not built (v0.27.0), for these reasons.
+
+- **Script in the page reads the values anyway.** An XSS, a compromised
+  dependency or an extension runs as the page, so it can call `secureGet` (or
+  `crypto.subtle.decrypt` with the stored key handle) and read every value
+  while it runs. A non-extractable key stops it copying the KEY, but the
+  values are what it wants, and it gets them in plaintext. Against this
+  attacker the store is no better than `localStorage`.
+- **The key sits on disk beside the ciphertext.** A browser persists a
+  `CryptoKey` in IndexedDB by structured clone, in the same profile directory
+  as the ciphertext, and the browsers do not seal IndexedDB with an operating
+  system key store. An attacker who can read the profile (malware, a stolen
+  unencrypted disk, a backup) reads the key material and decrypts. "Encrypted
+  at rest" would be true in name only.
+- **The name would promise what the native shells deliver.** On iOS, Android
+  and macOS the same call uses the Keychain or the Android Keystore: the key
+  lives outside the process, is bound to the device and to its unlock state,
+  and is not in the app's files. A web store under the same API would read as
+  that guarantee and not give it.
+
+What a web app does instead:
+
+- Keep a long-lived secret (a refresh token, an API key) on the **server**,
+  and let the browser hold a session cookie. The Sky.Live and Sky.Spa session
+  cookies are `HttpOnly`, so script in the page cannot read them at all: the
+  one browser primitive that does resist an XSS.
+- Keep a device key the client must hold (see "What changes" above) in the
+  model for the session, and re-establish it (pairing, or `Cpace` from a
+  password) when the page loads.
+- Ship the app with a native shell (`mobile:*`, `desktop:mac`) when the
+  device must keep a key across restarts.
 
 ## Tests
 

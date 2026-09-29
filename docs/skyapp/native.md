@@ -281,7 +281,10 @@ must not sit in `localStorage`:
 | a browser, a server, a CLI, Windows / Linux desktop | none: `Err Unavailable` |
 
 There is no fallback. A value the app asked to keep secret is never written to
-`localStorage` instead. The value is a `Sky.Core.Secret.Secret`, so it redacts
+`localStorage` instead. A WebCrypto store in IndexedDB was considered for the
+plain browser and not built: script in the page could still read every value,
+and the key sits on disk beside the ciphertext (the threat analysis is in
+`docs/skyspa/client-crypto.md`, "Why a plain browser has no secure store"). The value is a `Sky.Core.Secret.Secret`, so it redacts
 itself in every log and print path; wrap a string with `Secret.fromString` and
 unwrap it with `Secret.reveal` where it is used. A key is 1 to 256 bytes with no
 control characters (`Err InvalidInput` otherwise). On Android, an entry whose

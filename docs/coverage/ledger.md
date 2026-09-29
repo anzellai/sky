@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 178 |
-| covered by the new corpus (>= Asserted) | 166 |
-| verdict `stronger` | 161 |
-| verdict `equal` | 17 |
+| surfaces | 179 |
+| covered by the new corpus (>= Asserted) | 168 |
+| verdict `stronger` | 163 |
+| verdict `equal` | 16 |
 | verdict `weaker` | 0 |
 | corpus units | 83 |
-| stdlib modules (denominator) | 111 |
-| stdlib entries (denominator) | 2184 |
+| stdlib modules (denominator) | 112 |
+| stdlib entries (denominator) | 2209 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 8.1% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 750 | 34.3% |
-| symbols unreferenced under the generous rule | 661 | 30.3% |
+| stdlib modules imported by nothing | 9 | 8.0% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 753 | 34.1% |
+| symbols unreferenced under the generous rule | 663 | 30.0% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -45,7 +45,6 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 - `cli.lsp`
 - `cli.spa-partition`
 - `cli.upgrade-claude`
-- `cli.verify`
 - `stdlib.Sky.Core.Io`
 - `stdlib.Std.Cli`
 - `stdlib.Std.Db.Table`
@@ -59,7 +58,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 24 |
-| stdlib modules owned by exactly one unit of any role | 19 |
+| stdlib modules owned by exactly one unit of any role | 20 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -108,7 +107,7 @@ None.
 | `cli.update` | cli | None | Falsified | stronger |
 | `cli.upgrade` | cli | None | Falsified | stronger |
 | `cli.upgrade-claude` | cli | None | None | equal |
-| `cli.verify` | cli | None | None | equal |
+| `cli.verify` | cli | None | Falsified | stronger |
 | `cli.watch` | cli | None | Falsified | stronger |
 | `compiler.codegen-determinism` | compiler | Asserted | Falsified | stronger |
 | `compiler.coerce-floor` | compiler | Asserted | Asserted | equal |
@@ -235,6 +234,7 @@ None.
 | `stdlib.Std.Qr` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Sub` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Sync` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Time` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Trace` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Tui` | stdlib | None | None | equal |
