@@ -54,6 +54,10 @@ const KERNEL_SURFACE: &[(&str, &[&str])] = &[
         &["app", "program", "config", "withOnKey"],
     ),
     (
+        "sky-stdlib/Std/Nav.sky",
+        &["pushUrl", "replaceUrl", "clearFragment"],
+    ),
+    (
         "sky-stdlib/Std/Cli.sky",
         &["program", "config", "withOnLine"],
     ),

@@ -381,7 +381,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 183,
+      "expected_assertions": 184,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -452,7 +452,7 @@
       "tier": "T1"
     },
     "reject": {
-      "expected_assertions": 82,
+      "expected_assertions": 83,
       "falsifier_mutation": "reject.neutralise-axis",
       "falsifier_proven": true,
       "summary": "every file in the reject corpus is rejected by the type checker",
@@ -632,12 +632,6 @@
           "apps:relay"
         ]
       },
-      "Std.Crypto.Cpace": {
-        "path": "tests/conformance",
-        "units": [
-          "tests/conformance"
-        ]
-      },
       "Std.Crypto.Sign": {
         "path": "tests/conformance",
         "units": [
@@ -660,6 +654,12 @@
         "path": "apps/dispatch",
         "units": [
           "apps:dispatch"
+        ]
+      },
+      "Std.Nav": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
         ]
       },
       "Std.Qr": {
@@ -696,13 +696,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2210,
-    "stdlib_modules": 112,
-    "surfaces_covered": 168,
+    "stdlib_entries": 2213,
+    "stdlib_modules": 113,
+    "surfaces_covered": 169,
     "surfaces_covered_pct": 93.9,
     "surfaces_equal": 16,
-    "surfaces_stronger": 163,
-    "surfaces_total": 179,
+    "surfaces_stronger": 164,
+    "surfaces_total": 180,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -8558,6 +8558,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -10847,6 +10852,28 @@
       },
       "description": "the Std.Native public API",
       "id": "stdlib.Std.Native",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Nav public API",
+      "id": "stdlib.Std.Nav",
       "verdict": "stronger"
     },
     {
@@ -13457,12 +13484,6 @@
             "var3"
           ]
         },
-        "Std.Crypto.Cpace": {
-          "count": 1,
-          "symbols": [
-            "Pending"
-          ]
-        },
         "Std.Crypto.Kdf": {
           "count": 1,
           "symbols": [
@@ -14134,8 +14155,8 @@
           ]
         }
       },
-      "count": 663,
-      "pct_of_denominator": 30.0
+      "count": 662,
+      "pct_of_denominator": 29.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -14574,12 +14595,6 @@
             "maybe",
             "shape",
             "var3"
-          ]
-        },
-        "Std.Crypto.Cpace": {
-          "count": 1,
-          "symbols": [
-            "Pending"
           ]
         },
         "Std.Crypto.Kdf": {
@@ -15328,8 +15343,8 @@
           ]
         }
       },
-      "count": 753,
-      "pct_of_denominator": 34.1
+      "count": 752,
+      "pct_of_denominator": 34.0
     }
   },
   "units": [
@@ -15349,12 +15364,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 59,
+      "modules_imported": 61,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 388,
-      "refs_qualified": 364,
+      "refs_generous": 393,
+      "refs_qualified": 369,
       "role": "Layer2",
-      "sky_files": 182,
+      "sky_files": 186,
       "sky_toml_sections": []
     },
     {

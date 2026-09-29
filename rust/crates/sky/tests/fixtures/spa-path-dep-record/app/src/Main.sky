@@ -1,0 +1,89 @@
+module Main exposing (main)
+
+-- A record alias from a `[dependencies]` path package (`../lib`, module
+-- `Geo.Shape`) in the model, in a client Msg payload (`Place`), in the
+-- result of a server arm (`Jump` -> `Landed`) and in the view. The
+-- `--target web:app` split type-checks it as `sky check` does and carries
+-- `Point` over the wire by its module (`Geo.Shape.Point`).
+
+import Geo.Shape as Shape exposing (Point)
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Ui as Ui
+
+type alias Model =
+    { at : Point
+    , log : String
+    }
+
+type Msg
+    = Move
+    | Place Point
+    | Jump
+    | Landed (Result Error Point)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { at = Shape.origin, log = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Move ->
+            ( { model | at = { x = model.at.x + 1, y = model.at.y } }
+            , Cmd.none
+            )
+
+        Place p ->
+            ( { model | at = p, log = model.log ++ "P" }, Cmd.none )
+
+        Jump ->
+            ( { model | log = model.log ++ "J" }
+            , Cmd.perform
+                  (Time.sleep 1 |> Task.map (\_ -> Shape.shift 10 model.at))
+                  Landed
+            )
+
+        Landed (Ok p) ->
+            ( { model | at = p, log = model.log ++ "L" }, Cmd.none )
+
+        Landed (Err _) ->
+            ( { model | log = model.log ++ "E" }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.el
+                              [ Ui.htmlAttribute "id" "pos" ]
+                              (Ui.text
+                                  ("AT=" ++ String.fromInt m.at.x ++ ","
+                                      ++ String.fromInt m.at.y
+                                      ++ " LOG="
+                                      ++ m.log))
+                        , Ui.button
+                              [ Ui.htmlAttribute "id" "move" ]
+                              { onPress = Just Move, label = Ui.text "move" }
+                        , Ui.button
+                              [ Ui.htmlAttribute "id" "place" ]
+                              { onPress = Just (Place { x = 7, y = 8 })
+                              , label = Ui.text "place"
+                              }
+                        , Ui.button
+                              [ Ui.htmlAttribute "id" "jump" ]
+                              { onPress = Just Jump, label = Ui.text "jump" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

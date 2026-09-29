@@ -1,0 +1,7 @@
+name = "nav-cmds"
+version = "0.1.0"
+entry = "src/Main.sky"
+bin = "app"
+
+[source]
+root = "src"

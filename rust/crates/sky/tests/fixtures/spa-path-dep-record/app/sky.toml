@@ -1,0 +1,10 @@
+name = "pathdeprec"
+version = "0.1.0"
+entry = "src/Main.sky"
+bin = "app"
+
+[source]
+root = "src"
+
+[dependencies]
+"geo" = { path = "../lib" }

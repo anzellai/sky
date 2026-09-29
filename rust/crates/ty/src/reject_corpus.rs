@@ -128,7 +128,9 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// **82 since v0.27.0 round 3**: `let_application_not_generalised.sky` pins the
 /// value restriction that let-generalisation keeps (an application stays
 /// monomorphic).
-pub const EXPECTED_CORPUS_FILES: usize = 82;
+/// **83 since v0.27.0 round 5**: `ffi_go_type_is_not_an_app_type.sky` pins a Go
+/// FFI type's own identity (an app record of the same bare name is rejected).
+pub const EXPECTED_CORPUS_FILES: usize = 83;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -149,7 +151,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// [`EXPECTED_FILES_WITHOUT_DECLARED_CODE`] and updates BOTH constants in the
 /// same commit.
 /// **36 since v0.27.0 round 3** (`let_application_not_generalised.sky`).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 36;
+/// **37 since v0.27.0 round 5** (`ffi_go_type_is_not_an_app_type.sky`).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 37;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

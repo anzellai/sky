@@ -679,6 +679,42 @@ update msg model =
 | `Sub.onFragment` | `(String -> msg) -> Sub msg` | Receive the URL fragment (after `#`) at load and on every change, on Sky.Live, Sky.Spa and the `Std.App` web targets |
 | `Sub.batch` | `List (Sub msg) -> Sub msg` | Combine timer + topic + others |
 
+#### `Std.Nav` — move the address bar from `update` (v0.27.0)
+
+```elm
+import Std.Nav as Nav
+
+update msg model =
+    case msg of
+        Saved (Ok order) ->
+            ( model, Nav.pushUrl ("/orders/" ++ String.fromInt order.id) )
+
+        GotKey key ->
+            ( { model | key = Just key }, Nav.clearFragment )
+```
+
+| Function | Type | Notes |
+|---|---|---|
+| `Nav.pushUrl` | `String -> Cmd msg` | Go to a URL on this site and add a history entry, with no page reload |
+| `Nav.replaceUrl` | `String -> Cmd msg` | The same, replacing the current history entry |
+| `Nav.clearFragment` | `Cmd msg` | Remove the `#…` fragment from the address bar (`replaceUrl "#"`) |
+
+A path or query change routes like an in-app link: the routes pick the page
+and `withOnNavigate` runs, once. A fragment-only change moves no page, and
+`Sub.onFragment` receives the new fragment. Only a reference on the app's own
+site is followed: a path (`/orders/7`), a query (`?page=2`) or a fragment
+(`#top`). Any other value (an absolute URL, `//host`, a backslash) is refused
+with the classified error `NavRejectedUrl` in the log, and the address bar does
+not change.
+
+Sky.Live moves the tab whose action caused the update (for work no tab started,
+such as a timer, one tab of the session; a tab that has not connected yet gets
+it when it connects). Sky.Spa applies it in the wasm client; in a server
+branch the client runs the navigation when it sends the request, and the split
+refuses a server branch whose navigation it cannot isolate (put the
+`Nav.pushUrl …` directly in the branch's command). A terminal target has no
+address bar and ignores it.
+
 ### `Time` — clock + duration
 
 ```elm

@@ -517,7 +517,10 @@ These are real, current scope boundaries — not roadmap optimism:
   `Time.now` / `Random` inline; async `Http` via `fetch`), `Sub.every` timers,
   `Sub.subscribeTopic` (an `EventSource` on the backend's push endpoint),
   `Sub.onFragment` (the client reads `location.hash` at load and on every
-  `hashchange`) and `Sky.Core.WebSocket` (the browser WebSocket API, above).
+  `hashchange`), `Std.Nav` (`pushUrl` / `replaceUrl` / `clearFragment`: the
+  History API, then the route like a link click; a server branch's navigation
+  runs in the client when it sends the request) and `Sky.Core.WebSocket` (the
+  browser WebSocket API, above).
   `Cmd.publish` is a documented client no-op (no peer/session bus in a single
   tab); `Http.Stream` subscriptions are not wired on the client.
 

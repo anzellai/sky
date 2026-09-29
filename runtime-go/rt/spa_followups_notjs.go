@@ -46,6 +46,12 @@ func Spa_collectFollowUps(cmd any) any {
 				return // a Std.Native client effect: the client runs it
 			}
 			out = append(out, sky_call(ct.toMsg, res))
+		case "nav":
+			// Std.Nav moves the browser's address bar. The split runs a
+			// server branch's navigation in the client when it sends the RPC
+			// (the `Spa.rpcWith`-style residual), and refuses a branch whose
+			// navigation it cannot isolate, so the backend's copy of the leaf
+			// is already applied: nothing to run here.
 		case "island":
 			// Cmd.toIsland reaches a widget in the browser; a server branch
 			// runs on the backend, which has none. Say so rather than drop it

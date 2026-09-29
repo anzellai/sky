@@ -55,16 +55,46 @@ impl TypeResolver for NoTypeResolver {
 }
 
 /// A resolver backed by a precomputed nominal-name → [`TypeDef`] map, built from
-/// the project's own type declarations (unions + record aliases) via the `ty`
-/// crate's CST helpers (`variant_arg_types` / `record_alias_fields`). This is the
-/// resolver the real `sky spa-diff-fuzz` uses — it lets `genModel` / `genMsg`
-/// build values of the app's nominal record/union types (the DS `Page` route
-/// union, `BasketLine`, …). Keyed by bare declaration name; a tail lookup matches
-/// because `spa_diff_gen` resolves against the type's tail segment.
-pub struct MapTypeResolver(pub std::collections::HashMap<String, crate::spa_diff_gen::TypeDef>);
+/// the project's own type declarations (unions + record aliases) with every
+/// type resolved in its declaring module. This is the resolver the real `sky
+/// spa-diff-fuzz` uses — it lets `genModel` / `genMsg` build values of the
+/// app's nominal record/union types (the DS `Page` route union, `BasketLine`,
+/// …). Keyed by module-qualified name (`Main.Page`): a qualified name resolves
+/// only to exactly that declaration, so a stdlib type (`Std.Crypto.Cpace.Pending`)
+/// never resolves to an app type of the same bare name. A bare name (the
+/// annotation's `Msg`, a type whose declaring module is unknown) resolves to
+/// the one declaration of that name, preferring the entry module's (`home`).
+pub struct MapTypeResolver {
+    map: std::collections::HashMap<String, crate::spa_diff_gen::TypeDef>,
+    home: String,
+}
+impl MapTypeResolver {
+    pub fn new(
+        map: std::collections::HashMap<String, crate::spa_diff_gen::TypeDef>,
+        home: String,
+    ) -> Self {
+        MapTypeResolver { map, home }
+    }
+}
 impl TypeResolver for MapTypeResolver {
     fn resolve(&self, name: &str) -> Option<crate::spa_diff_gen::TypeDef> {
-        self.0.get(name).cloned()
+        if let Some(d) = self.map.get(name) {
+            return Some(d.clone());
+        }
+        if name.contains('.') {
+            return None;
+        }
+        if let Some(d) = self.map.get(&format!("{}.{name}", self.home)) {
+            return Some(d.clone());
+        }
+        let mut hits = self
+            .map
+            .iter()
+            .filter(|(k, _)| k.rsplit('.').next() == Some(name));
+        match (hits.next(), hits.next()) {
+            (Some((_, d)), None) => Some(d.clone()),
+            _ => None,
+        }
     }
 }
 

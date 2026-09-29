@@ -763,6 +763,16 @@ fn app_to_go(
     if matches!(ty::nominal::base(name), "Decoder" | "Value" | "Cmd" | "Sub") {
         return GoTy::Any;
     }
+    // A Go FFI type (`GoHttp.Client`, keyed `go@Net.Http.Client` by the
+    // checker) is Go-opaque: the FFI boundary hands it over as `any`, the same
+    // wildcard the checker gives a Go-opaque type in a pinned signature
+    // (`ty::ffi_sig`). It never resolves to a Sky nominal: the bare-name path
+    // below preferred the CURRENT module's same-named type, so an app's own
+    // `Client` record became the Go slot's type and the Go value panicked at
+    // `rt.Coerce` (v0.27.0).
+    if ty::nominal::is_go_type(name) {
+        return GoTy::Any;
+    }
     // A qualified reference (`Counter.Msg`) carries its declaring module in the
     // name — resolve it to THAT module's nominal directly, bypassing the
     // `cur_mod` disambiguation (which would wrongly pick a same-module `Msg`).

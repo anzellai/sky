@@ -2135,6 +2135,51 @@ window.addEventListener("popstate", function() {
     })
     .catch(function() { /* Back/Forward fetch failed; leave URL alone. */ });
 });
+// Std.Nav.pushUrl / replaceUrl (nav.go, live_nav_delivery.go): the server
+// names a URL on this site for this tab. A path or query change routes like a
+// sky-nav link (pushUrl) or like Back/Forward (replaceUrl): the page is
+// fetched, so the server applies the route and onNavigate, and the URL moves
+// before the patch (the same order as the sky-nav click, so the data-sky-path
+// sync adds no second entry). A fragment-only change moves no page; it is
+// reported to Sub.onFragment as a hashchange would be (the History API fires
+// none). "#" alone clears the fragment. A URL off this site is refused.
+function __skyNavApply(url, replace) {
+  var u = null;
+  try { u = new URL(String(url), window.location.href); } catch (e) { u = null; }
+  if (!u || u.origin !== window.location.origin) {
+    if (window.console && console.error) console.error("[sky.live] Std.Nav refused a URL off this site: " + url + " (NavRejectedUrl)");
+    return;
+  }
+  var target = u.pathname + u.search + (u.hash.length > 1 ? u.hash : "");
+  var oldHash = String(window.location.hash || "");
+  var move = function() {
+    if (replace) window.history.replaceState(window.history.state, "", target);
+    else window.history.pushState({}, "", target);
+  };
+  if (u.pathname === window.location.pathname && u.search === window.location.search) {
+    move();
+    if (String(window.location.hash || "") !== oldHash) __skySendFragment();
+    return;
+  }
+  var reload = function() {
+    if (replace) window.location.replace(target); else window.location.assign(target);
+  };
+  return fetch(target, { headers: __skyWithSession({ "X-Sky-Nav": "1", "X-Sky-Tab": __skyTabId }), credentials: "same-origin" })
+    .then(function(r) {
+      __skyAdoptToken(r);
+      var navSid = r.headers.get("X-Sky-Sid");
+      if (navSid) __skySid = navSid;
+      if (!r.ok) { reload(); return; }
+      return r.text().then(function(t) {
+        move();
+        __skyPatch(t);
+        var nv = r.headers.get("X-Sky-View");
+        if (nv) __skyView = nv;
+        if (String(window.location.hash || "") !== oldHash) __skySendFragment();
+      });
+    })
+    .catch(reload);
+}
 // Sub.onFragment: a browser never sends the URL fragment in a request, so the
 // client reports it — once at load when the page has one, and on every
 // hashchange. The server delivers it only to the app's Sub.onFragment leaf.
@@ -2593,6 +2638,17 @@ function __skyOpenSSE() {
     if (d && typeof d.id === "string" && window.Sky && window.Sky.__islandCommand) {
       window.Sky.__islandCommand(d.id, d.name, d.payload === undefined ? null : d.payload, d.seq);
     }
+  });
+  // Std.Nav (live_nav_delivery.go): move this tab's address bar. It runs
+  // after every event this tab already sent (their replies apply first, in
+  // order), and a later event waits for the new page.
+  __skySSE.addEventListener("nav", function(e) {
+    __skyLastSseAt = Date.now();
+    var d = null;
+    try { d = JSON.parse(e.data); } catch (_) {}
+    if (!d || typeof d.url !== "string") return;
+    var run = function() { return __skyNavApply(d.url, d.replace === true); };
+    __skyPostChain = __skyPostChain.then(run, run);
   });
   // The widget-command sync map (live_island_delivery.go): an island whose
   // commands were lost on the way is resynced (island_client.go).

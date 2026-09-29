@@ -42,6 +42,9 @@ const HEADER: &str = "\
 -- ffi: Pkg lookupLegacy : String -> Result Error (String, Bool)
 -- ffi: Pkg noType/2 :
 -- ffi: Github.Com.Google.Uuid newString : () -> Result Error String
+-- ffi: Pkg defaultClient : () -> Result Error Client@net/http
+-- ffi: Pkg setTimeoutMs : Int -> Client@net/http -> Result Error Client@net/http
+-- ffi: Pkg describe : Client@net/http -> Result Error String
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
@@ -313,5 +316,35 @@ fn the_type_error_carries_the_ffi_result_hint() {
         hint.contains("Result Error a") && hint.contains("Result.withDefault"),
         "hint: {hint:?}; message: {}",
         d.message
+    );
+}
+
+// ---- a Go FFI type has its own identity (v0.27.0) ------------------------------
+//
+// A type named through an FFI package (`Pkg.Client`) used to fall back to its
+// bare name, where the app's own `type alias Client` captured it: an app record
+// passed where the Go value belongs type-checked, and the Go value then
+// panicked at the record's narrowing.
+
+const OWN_CLIENT: &str = "type alias Client =\n    { name : String }\n\n\n";
+
+#[test]
+fn an_app_record_is_not_a_go_type_of_the_same_name() {
+    assert_rejects(
+        "useIt { name = \"x\" } where Pkg.Client is expected",
+        &format!(
+            "{OWN_CLIENT}useIt : Pkg.Client -> String\nuseIt _ =\n    \"ok\"\n\n\nmain =\n    println (useIt {{ name = \"x\" }})\n"
+        ),
+        "E2001",
+    );
+}
+
+#[test]
+fn a_go_value_flows_between_ffi_calls_and_an_annotated_helper() {
+    assert_accepts(
+        "the Go client passed from one FFI call to another",
+        &format!(
+            "{OWN_CLIENT}useIt : Pkg.Client -> Result Error String\nuseIt c =\n    Pkg.setTimeoutMs 50 c |> Result.andThen Pkg.describe\n\n\nmine : Client\nmine =\n    {{ name = \"x\" }}\n\n\nmain =\n    case Pkg.defaultClient () |> Result.andThen useIt of\n        Ok s ->\n            println (s ++ mine.name)\n\n        Err _ ->\n            println \"err\"\n"
+        ),
     );
 }

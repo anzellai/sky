@@ -295,41 +295,10 @@ fn assemble_and_emit_with(
     for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
-    // Sky-package dependencies (`[dependencies]` in sky.toml, e.g.
-    // `github.com/anzellai/sky-tailwind`) are fetched as Sky *source* under
-    // `.skydeps/<pkg>/src/`. Load those modules into the db so imports like
-    // `import Tailwind exposing (..)` resolve to the real bindings rather than
-    // falling through to a `Basics` kernel guess. Loaded BEFORE the example's
-    // own src so a dep module named `Main` (packages ship their own demo entry)
-    // is overwritten by — and never shadows — the example's real `Main`.
-    // Read-only guard: `sky build` never network-clones. A declared
-    // `[dependencies]` whose `.skydeps/<slug>/` tree is absent means the Sky
-    // package was never fetched — surface an actionable error pointing at `sky
-    // install` rather than silently mis-resolving `import <Pkg>` to a kernel
-    // guess. An empty/absent `[dependencies]` section is a no-op (the ~48
-    // no-Sky-dep examples must not regress).
-    for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
-        let slug = path.replace('/', "_");
-        if !example_dir.join(".skydeps").join(&slug).is_dir() {
-            return Err(format!("Sky dependency {path} not fetched — run 'sky install'").into());
-        }
-    }
-    for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
-        db.add_module(&n, file);
-    }
-    // Local path dependencies (`sky add ./dir`, `crate::path_deps`). A declared
-    // directory that is gone stops the build here, like an unfetched package.
-    // A Sky package's modules load straight from its source root, beside
-    // `.skydeps/` and before the project's own `src/` (same shadowing rule:
-    // a dependency's demo `Main` is dropped).
-    if let Some(e) = crate::path_deps::missing_error(example_dir) {
-        return Err(e.into());
-    }
-    // A local Go path dependency whose exported API changed since its surface
-    // was generated is re-inspected now, before the surface is loaded: the
-    // bindings would otherwise call a function that no longer exists (or miss
-    // a new one). Registry dependencies keep their pinned surface.
-    for note in crate::ffi_ops::refresh_stale_path_surfaces(example_dir, repo_root)? {
+    // The Sky dependencies, loaded by the routines every loader shares
+    // (`load_source_db` too, so the Sky.Spa split analyses the program the
+    // build compiles). Registry packages are trusted and registered here.
+    for note in load_registry_dependencies(&mut db, &mut next_id, example_dir, repo_root)? {
         eprintln!("  {note}");
     }
     //
@@ -339,17 +308,7 @@ fn assemble_and_emit_with(
     // a same-named local module still shadows them. Trusting them like
     // `.skydeps` let a parse or type error in one pass `sky check` and panic
     // at run time. They never provide the entry.
-    let mut dep_locals = Vec::new();
-    let mut dep_files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    for dir in crate::path_deps::sky_source_dirs(example_dir) {
-        for (n, file, p) in load_dir(&db, &mut next_id, &dir) {
-            if n == "Main" || n == "main" {
-                continue;
-            }
-            dep_files.insert(p.clone());
-            dep_locals.push((n, file, p));
-        }
-    }
+    let (mut dep_locals, dep_files) = load_path_dependency_sources(&db, &mut next_id, example_dir);
 
     let source_root = configured_source_root(&example_dir);
     let mut locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
@@ -586,6 +545,46 @@ fn assemble_and_emit_with(
             .cloned()
             .collect();
         return Err(render_diags(&ds, &sources));
+    }
+    // An unresolved TYPE reference (`[E1001]` in an annotation) is a CAUSE too.
+    // The checker still needs a type at that site, and a name the resolver
+    // could not bind falls back to a bare nominal, which the type world may
+    // expand to an unrelated alias of the same name. Measured: `p0 :
+    // Geo.Shape.Point` under a plain `import Geo.Shape` (the qualifier is
+    // `Shape`) reported `[E2001] type mismatch: Int vs Float`, the stdlib
+    // `Std.Ui.Canvas.Point`, and never the undefined name. Report the
+    // unresolved type names ahead of the type gate.
+    let unresolved_types: Vec<String> = check_ids
+        .iter()
+        .flat_map(|m| {
+            hir::SkyDb::resolve(&db, *m)
+                .class_a
+                .iter()
+                .filter(|c| c.kind == hir::RefKind::Type)
+                .map(|c| match &c.qualifier {
+                    Some(q) => format!("{q}.{}", c.name),
+                    None => c.name.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if !unresolved_types.is_empty() {
+        let ds: Vec<diagnostics::Diagnostic> = checked
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error
+                    && d.code.0 == "E1001"
+                    && unresolved_types.iter().any(|n| {
+                        let m = format!("Undefined name: {n}");
+                        d.message == m || d.message.starts_with(&format!("{m}. "))
+                    })
+            })
+            .cloned()
+            .collect();
+        if !ds.is_empty() {
+            return Err(render_diags(&ds, &sources));
+        }
     }
     if checked.type_errors > 0 {
         // Select by the type-error BAND (`E2…`), not by an enumerated allowlist.
@@ -2709,16 +2708,18 @@ pub(crate) fn load_source_db(
     for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
-    for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
-        let slug = path.replace('/', "_");
-        if !example_dir.join(".skydeps").join(&slug).is_dir() {
-            return Err(format!(
-                "Sky dependency {path} not fetched — run 'sky install'"
-            ));
-        }
+    for note in load_registry_dependencies(&mut db, &mut next_id, example_dir, repo_root)? {
+        eprintln!("  {note}");
     }
-    for (n, file) in load_skydeps(&db, &mut next_id, &example_dir.join(".skydeps")) {
-        db.add_module(&n, file);
+    // The path dependencies, as the build loads them: registered before the
+    // project's own modules (which shadow a same-named one) and type-checked
+    // below. They are not in `check_ids`: an analysis over this db (the
+    // Sky.Spa split) treats them as the dependencies the generated projects
+    // declare, never as project modules to copy.
+    let (path_locals, _) = load_path_dependency_sources(&db, &mut next_id, example_dir);
+    let mut path_mods: Vec<(base::ModuleId, PathBuf)> = Vec::new();
+    for (n, file, p) in path_locals {
+        path_mods.push((db.add_module(&n, file), p));
     }
     let source_root = configured_source_root(example_dir);
     let locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
@@ -2748,7 +2749,123 @@ pub(crate) fn load_source_db(
     let mut surface = ffi_type_surface(&load_ffi_surface(example_dir));
     surface.set_trust(ffi_trust(&db, repo_root, example_dir, &check_ids));
     db.set_ffi_surface(std::sync::Arc::new(surface));
+    // A path dependency is app code: check it, as the build does, and report
+    // an error under the module's own path. A module the project shadows (it
+    // declares the same name) is the project's and is checked by the caller.
+    path_mods.retain(|(m, _)| !check_ids.contains(m));
+    if !path_mods.is_empty() {
+        let ids: Vec<base::ModuleId> = path_mods.iter().map(|(m, _)| *m).collect();
+        let checked = ty::check_modules(&db, &ids);
+        let errors: Vec<diagnostics::Diagnostic> = checked
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.severity == diagnostics::Severity::Error
+                    && (d.code.0.starts_with("E1")
+                        || d.code.0.starts_with("E2")
+                        || d.code.0 == "E3001")
+            })
+            .cloned()
+            .collect();
+        if !errors.is_empty() {
+            let text: std::collections::HashMap<base::FileId, String> = path_mods
+                .iter()
+                .map(|(m, _)| {
+                    (
+                        base::FileId(m.index()),
+                        db.source_file(*m).text(&db).to_string(),
+                    )
+                })
+                .collect();
+            let paths: std::collections::HashMap<base::FileId, String> = path_mods
+                .iter()
+                .map(|(m, p)| (base::FileId(m.index()), display_path(example_dir, p)))
+                .collect();
+            let sources = CliSources {
+                text: &text,
+                paths: &paths,
+            };
+            return Err(render_diags(&errors, &sources).render());
+        }
+    }
     Ok((db, entry, check_ids))
+}
+
+/// Load the project's fetched REGISTRY Sky packages (`.skydeps/<pkg>/src/`)
+/// into `db` as trusted dependency modules, and check the local path
+/// dependencies are present. Returns the notes of any local Go path
+/// dependency whose stale FFI surface was refreshed, for the caller to print.
+///
+/// One of the two dependency loaders every db shares (the build,
+/// [`assemble_and_emit_with`], and every analysis db, [`load_source_db`]:
+/// the Sky.Spa split, `sky spa-partition`, the diagrams, the fuzz harnesses),
+/// so an analysis sees exactly the modules the build compiles. The other is
+/// [`load_path_dependency_sources`].
+///
+/// Registry packages load BEFORE the project's own `src/` so a package's demo
+/// `Main` is dropped and never shadows the project's real `Main`. `sky build`
+/// never network-clones: a declared `[dependencies]` package whose
+/// `.skydeps/<slug>/` tree is absent is an actionable error naming `sky
+/// install`, and a declared path directory that is gone stops the load the
+/// same way. (An empty or absent `[dependencies]` section is a no-op.)
+pub(crate) fn load_registry_dependencies(
+    db: &mut skydb::SkyDatabase,
+    next_id: &mut u32,
+    example_dir: &Path,
+    repo_root: &Path,
+) -> Result<Vec<String>, String> {
+    for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
+        let slug = path.replace('/', "_");
+        if !example_dir.join(".skydeps").join(&slug).is_dir() {
+            return Err(format!(
+                "Sky dependency {path} not fetched — run 'sky install'"
+            ));
+        }
+    }
+    for (n, file) in load_skydeps(db, next_id, &example_dir.join(".skydeps")) {
+        db.add_module(&n, file);
+    }
+    if let Some(e) = crate::path_deps::missing_error(example_dir) {
+        return Err(e);
+    }
+    // A local Go path dependency whose exported API changed since its surface
+    // was generated is re-inspected now, before the surface is loaded: the
+    // bindings would otherwise call a function that no longer exists (or miss
+    // a new one). Registry dependencies keep their pinned surface.
+    crate::ffi_ops::refresh_stale_path_surfaces(example_dir, repo_root)
+}
+
+/// The modules of the project's local Sky PATH dependencies (`sky add ./dir`,
+/// from each package's source root), parsed but NOT registered, with the set
+/// of their files. The caller registers them as APP modules — parse-gated,
+/// type-checked, reported under their own path — before the project's own
+/// modules, so a same-named local module shadows them; a path module never
+/// provides the entry (a package's demo `Main` is dropped here).
+///
+/// The build and [`load_source_db`] both call it. v0.27.0: `load_source_db`
+/// loaded no path package, so the Sky.Spa split type-checked `import Geo.Shape
+/// exposing (Point)` against a missing module and failed with `Point vs
+/// record` on a program `sky check` accepted.
+pub(crate) fn load_path_dependency_sources(
+    db: &skydb::SkyDatabase,
+    next_id: &mut u32,
+    example_dir: &Path,
+) -> (
+    Vec<(String, skydb::SourceFile, PathBuf)>,
+    std::collections::HashSet<PathBuf>,
+) {
+    let mut out = Vec::new();
+    let mut files: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for dir in crate::path_deps::sky_source_dirs(example_dir) {
+        for (n, file, p) in load_dir(db, next_id, &dir) {
+            if n == "Main" || n == "main" {
+                continue;
+            }
+            files.insert(p.clone());
+            out.push((n, file, p));
+        }
+    }
+    (out, files)
 }
 
 pub(crate) fn load_skydeps(

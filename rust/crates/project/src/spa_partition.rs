@@ -545,7 +545,13 @@ fn classify_kernel_in(client_crypto: bool, module: &str, func: &str) -> KernelCl
 /// any peer) is not a chain of short RPCs. The native client (websocket.go)
 /// stays for Live, Task programs and the backend itself. Its Subs
 /// (`Sub_subscribeWebSocket`) are `Sub` plumbing, already neutral.
-const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket"];
+///
+/// `Nav` (`Std.Nav`, kernel prefix `Nav_`) is here since v0.27.0: a
+/// navigation moves the browser's address bar, so it runs in the wasm client.
+/// An arm that reaches one is never settled on the server; a server arm's
+/// navigation leaf is run by the client when it sends the RPC
+/// (`spa_split::nav_residual`).
+const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket", "Nav"];
 
 /// Classify a kernel pseudo-module + function. `module` is the pseudo name
 /// (`Db`, `Http`, `System`, …) as produced by the resolver's `Res::Kernel`, or
@@ -2354,7 +2360,7 @@ fn tail_continuations(db: &dyn SkyDb, body: &Body, e: ExprId) -> Option<Vec<Stri
                 out.insert(m);
             }
             CmdLeaf::Perform { to_msg: None, .. } | CmdLeaf::Unresolvable => return None,
-            CmdLeaf::NoneCmd | CmdLeaf::Publish => {}
+            CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav => {}
         }
     }
     Some(out.into_iter().collect())
@@ -3511,6 +3517,11 @@ enum CmdLeaf {
     /// `Cmd.publish` / `Cmd.publishNoEcho` — a server→client push leaf (not a
     /// server-runnable read; a chain containing one is not chained).
     Publish,
+    /// A `Std.Nav` navigation (`pushUrl` / `replaceUrl` / `clearFragment`): it
+    /// moves the browser, produces no Msg, and runs in the client (a chain
+    /// containing one is not chained; a server arm's leaf is the client's
+    /// residual).
+    Nav,
     /// A shape the static resolver could not read (an opaque let-bound Cmd, a
     /// helper returning a Cmd, a non-list batch). Forces fail-closed.
     Unresolvable,
@@ -3522,6 +3533,7 @@ enum CmdDefKind {
     Batch,
     NoneCmd,
     Publish,
+    Nav,
     Other,
 }
 
@@ -3553,6 +3565,13 @@ fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
         CmdDefKind::NoneCmd
     } else if def_is_kernel_alias_to(db, d, &["Cmd_publish", "Cmd_publishNoEcho"]) {
         CmdDefKind::Publish
+    } else if db
+        .def_loc(d)
+        .is_some_and(|loc| db.module_name(loc.module) == "Std.Nav")
+    {
+        // Every `Std.Nav` command (`clearFragment` is `replaceUrl "#"`, not a
+        // kernel alias).
+        CmdDefKind::Nav
     } else {
         CmdDefKind::Other
     }
@@ -3690,6 +3709,7 @@ fn resolve_cmd_leaves_rec(
                     }
                     CmdDefKind::NoneCmd => out.push(CmdLeaf::NoneCmd),
                     CmdDefKind::Publish => out.push(CmdLeaf::Publish),
+                    CmdDefKind::Nav => out.push(CmdLeaf::Nav),
                     // A HELPER returning a `Cmd` (e.g. `shippedCmd o = Cmd.perform
                     // (Mailer.sendShipped o) EmailSent`) — resolve INTO its body so
                     // the perform edge is seen, not treated as opaque.
@@ -3712,6 +3732,7 @@ fn resolve_cmd_leaves_rec(
         // A bare reference: `Cmd.none`, or a nullary `Cmd`-returning helper.
         Expr::Var(Res::Def(d)) => match cmd_def_kind(db, *d) {
             CmdDefKind::NoneCmd => out.push(CmdLeaf::NoneCmd),
+            CmdDefKind::Nav => out.push(CmdLeaf::Nav),
             CmdDefKind::Other => resolve_helper_cmd(db, *d, out, depth + 1, visited),
             _ => out.push(CmdLeaf::Unresolvable),
         },
@@ -4362,6 +4383,7 @@ fn compute_server_chaining(
                             // an unknown number of times: not a chain step, exactly
                             // as the opaque batch it was read as before.
                             CmdLeaf::Publish
+                            | CmdLeaf::Nav
                             | CmdLeaf::Unresolvable
                             | CmdLeaf::Perform { repeated: true, .. } => {
                                 dirty = true;
@@ -4729,7 +4751,7 @@ fn compute_server_chaining(
                         None => clean = false,
                     }
                 }
-                CmdLeaf::Publish | CmdLeaf::Unresolvable => clean = false,
+                CmdLeaf::Publish | CmdLeaf::Nav | CmdLeaf::Unresolvable => clean = false,
             }
         }
         if !clean || perform_count != 1 {
@@ -4831,7 +4853,7 @@ fn compute_server_chaining(
                         has_perform = true;
                         ctors = None;
                     }
-                    CmdLeaf::NoneCmd | CmdLeaf::Publish => {}
+                    CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav => {}
                 }
             }
         }

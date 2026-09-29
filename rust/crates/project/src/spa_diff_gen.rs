@@ -230,7 +230,7 @@ impl<'a> GenModule<'a> {
                         let e_ok = self.finite_rec(&args[0], visiting);
                         a_ok || e_ok
                     }
-                    (_, 0) => self.finite_nominal(tl, visiting),
+                    (_, 0) => self.finite_nominal(name.as_str(), visiting),
                     // A generic user type applied to args (e.g. `Store Todo`) is
                     // out of scope for the value generator.
                     _ => false,
@@ -342,7 +342,7 @@ impl<'a> GenModule<'a> {
                     ("Result", 2) => self.result_body(&args[0], &args[1]),
                     (_, 0) => {
                         // A nominal user record / union.
-                        match self.resolver.resolve(tl) {
+                        match self.resolver.resolve(name.as_str()) {
                             Some(TypeDef::Record(fs)) => self.record_body(&fs),
                             Some(TypeDef::Union(ctors)) => self.union_body(&ctors),
                             None => Err(format!("nominal type `{tl}` did not resolve")),

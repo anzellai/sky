@@ -93,6 +93,24 @@ pub fn is_qualified(name: &str) -> bool {
     name.contains('.')
 }
 
+/// The qualifier prefix of a Go FFI type (a type named through a `sky add`
+/// package: `GoHttp.Client` under `import Net.Http as GoHttp`). `@` cannot
+/// appear in a Sky module name, so a Go type's key never equals, and is never
+/// [`same`] as, a type a Sky module declares.
+pub const GO_TYPE_PREFIX: &str = "go@";
+
+/// The key of the Go type `name` of FFI package `package` (the Sky module path
+/// the import names, `Net.Http`): `go@Net.Http.Client`. The printer shows it
+/// as `Client` ([`strip`]); the lowering maps it to the Go-opaque shape.
+pub fn go_type(package: &str, name: &str) -> String {
+    format!("{GO_TYPE_PREFIX}{package}.{name}")
+}
+
+/// Is this the key of a Go FFI type ([`go_type`])?
+pub fn is_go_type(name: &str) -> bool {
+    name.starts_with(GO_TYPE_PREFIX)
+}
+
 /// Build the canonical qualified key for a type declared in `module`.
 ///
 /// The ONE place this shape is formed for unions, and byte-identical to the

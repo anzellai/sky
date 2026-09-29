@@ -1,0 +1,28 @@
+-- gate: reject
+-- defect: an app record passed where a Go FFI type is expected, while the app declares a type of the same bare name
+-- rust: reject [E2001] `Pkg.Client` is the Go type `go@Pkg.Client`, never the app's `Client` record
+-- ffi: Pkg defaultClient : () -> Result Error Client@net/http
+--
+-- Before v0.27.0 a type named through a Go FFI package fell back to its bare
+-- name, where the app's own `type alias Client` captured it: this program
+-- type-checked, and a real Go `*http.Client` passed to `useIt` then panicked
+-- at the app record's narrowing (`CoerceFailure: expected main.Main_Client_R,
+-- got *http.Client`). A Go FFI type now has its own identity.
+module Main exposing (main)
+
+import Pkg
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+type alias Client =
+    { name : String }
+
+
+useIt : Pkg.Client -> String
+useIt _ =
+    "ok"
+
+
+main =
+    println (useIt { name = "x" })
