@@ -53,7 +53,7 @@ jobs:
           # (an ANR over SystemUI) and wake the screen before the tests.
           script: |
             mkdir -p "$SKYTEST_EVIDENCE_DIR"
-            sh -c 'while true; do date -u +%T; adb devices | tail -n +2; uptime; free -m | sed -n 2p; sleep 3; done' > "$SKYTEST_EVIDENCE_DIR/devices.log" 2>&1 &
+            sh -c 'while true; do date -u +%T; adb devices | tail -n +2; uptime; free -m | sed -n 2p; echo "guest $(timeout 5 adb shell cat /proc/uptime) system_server $(timeout 5 adb shell pidof system_server)"; sleep 3; done' > "$SKYTEST_EVIDENCE_DIR/devices.log" 2>&1 &
             sh -c 'while true; do adb logcat -v threadtime; sleep 1; done' > "$SKYTEST_EVIDENCE_DIR/logcat-all.txt" 2>&1 &
             adb wait-for-device
             adb shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
