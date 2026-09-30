@@ -2,6 +2,7 @@ package rt
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"reflect"
@@ -204,9 +205,18 @@ func assertNoHeapGrowth(t *testing.T, what string, samples []uint64, iterations 
 		return float64(c[m])
 	}
 	first, second := median(s[:half]), median(s[half:])
-	const slack = 4 << 20
-	t.Logf("%s: %d iterations, %d samples, heap first-half %.0f B, second-half %.0f B, min %d, max %d",
-		what, iterations, len(samples), first, second, minU(s), maxU(s))
+	// The slack scales with the live heap. HeapAlloc is the whole process,
+	// and the package's other tests run beside this one: on a macOS runner the
+	// heap sat near 80 MB and the half medians differed by 5-7 MB from one
+	// sample to the next, with no trend (min and max in both halves), which a
+	// fixed 4 MB slack read as growth. A leak is far larger than this slack:
+	// retaining even 8 bytes per iteration adds iterations*4 bytes between the
+	// half medians, over 100 MB at the tens of millions of iterations these
+	// loops run.
+	slack := math.Max(4<<20, first/5)
+	leakSignal := float64(iterations) * 4
+	t.Logf("%s: %d iterations, %d samples, heap first-half %.0f B, second-half %.0f B, min %d, max %d, slack %.0f B, 8-byte-leak signal %.0f B",
+		what, iterations, len(samples), first, second, minU(s), maxU(s), slack, leakSignal)
 	if second > first+slack {
 		t.Fatalf("%s: live heap grew from %.0f to %.0f bytes over %d iterations; samples %v",
 			what, first, second, iterations, samples)
