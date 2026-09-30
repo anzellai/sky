@@ -1949,6 +1949,11 @@ func resolveBindHost() (string, bindSource) {
 	if h := strings.TrimSpace(skyGetenv("HOST")); h != "" {
 		return h, bindFromSkyHost
 	}
+	// A desktop window's server is for its own window only: loopback in
+	// every mode (std_app_desktop.go).
+	if desktopWindowActive() {
+		return "127.0.0.1", bindDevDefault
+	}
 	if productionFromEnv() {
 		return "", bindProductionDefault
 	}

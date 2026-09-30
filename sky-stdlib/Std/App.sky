@@ -1810,12 +1810,26 @@ runLiveWindow (App a) =
         -- window then waited out its probe and failed with no cause. The
         -- server task reports its own failure and ends the process instead.
     in
-        Task.andThen
-            (\_ ->
-                openLiveWindow_
-                    (livePort_ w.port)
-                    { title = d.title, size = ( d.width, d.height ) })
-            (Task.spawn (runLive (App a) |> Task.onError liveWindowServerFailed_))
+        desktopWindowMode_ ()
+            |> Task.andThen
+                   (\_ ->
+                       Task.spawn
+                           (runLive (App a)
+                               |> Task.onError liveWindowServerFailed_))
+            |> Task.andThen
+                   (\_ ->
+                       openLiveWindow_
+                           (livePort_ w.port)
+                           { title = d.title, size = ( d.width, d.height ) })
+
+
+-- | Mark the process as a desktop window BEFORE its Live server starts: the
+-- server then binds loopback in every mode, keeps the Host guard in
+-- production, and does not mount the open dev console (a packaged desktop app
+-- runs with no ENV, and any local process could read that console).
+desktopWindowMode_ : () -> Task Error ()
+desktopWindowMode_ =
+    Ffi.kernel "Std_App_desktopWindowMode"
 
 
 -- | The Live server of a desktop window failed to start: say why, then end

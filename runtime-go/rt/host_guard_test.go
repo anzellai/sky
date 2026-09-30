@@ -191,3 +191,161 @@ func TestBothListenersApplyTheHostGuard(t *testing.T) {
 		}
 	}
 }
+
+// setDesktopWindowMode turns desktop window mode on for one test.
+func setDesktopWindowMode(t *testing.T) {
+	t.Helper()
+	was := desktopWindowMode.Load()
+	desktopWindowMode.Store(true)
+	ResetConsoleAuthStateForTesting()
+	t.Cleanup(func() {
+		desktopWindowMode.Store(was)
+		ResetConsoleAuthStateForTesting()
+	})
+}
+
+// setEnvForTest sets one variable for one test and restores it afterwards.
+func setEnvForTest(t *testing.T, k, v string) {
+	t.Helper()
+	if old, ok := os.LookupEnv(k); ok {
+		t.Cleanup(func() { os.Setenv(k, old) })
+	} else {
+		t.Cleanup(func() { os.Unsetenv(k) })
+	}
+	os.Setenv(k, v)
+}
+
+// TestHostGuardIsOffInProductionOnALoopbackBind is E-1: the documented
+// production layout "process on loopback behind a local proxy"
+// (ENV=production SKY_HOST=127.0.0.1) got a 403 for every proxied request,
+// because the proxy forwards the public Host. The guard exists for the open
+// dev console; in production the console is authenticated, so the guard is
+// off there.
+func TestHostGuardIsOffInProductionOnALoopbackBind(t *testing.T) {
+	clearHostGuardEnv(t)
+	clearProductionMode()
+	t.Cleanup(clearProductionMode)
+	setEnvForTest(t, "ENV", "production")
+	setEnvForTest(t, "SKY_HOST", "127.0.0.1")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	for name, h := range map[string]http.Handler{
+		"Sky.Live":        liveListenerHandler(mux, "127.0.0.1"),
+		"Sky.Http.Server": serverListenerHandler(mux, nil, "127.0.0.1"),
+	} {
+		for _, path := range []string{"/", "/_sky/healthz"} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Host = "shop.example.com"
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s %s: production loopback bind answered %d to the proxied public Host, want 200 (%q)",
+					name, path, rec.Code, rec.Body.String())
+			}
+		}
+	}
+	if hostGuardApplies("127.0.0.1") {
+		t.Fatal("hostGuardApplies is true in production; the WebSocket upgrade path would still refuse the public Host")
+	}
+}
+
+// TestHostGuardAdmitsThePublicURLHosts — outside production a dev proxy or a
+// staging name listed in <PREFIX>_PUBLIC_URL (comma list, the same variable
+// the /_rpc origin guard reads) is admitted without listing it twice.
+func TestHostGuardAdmitsThePublicURLHosts(t *testing.T) {
+	clearHostGuardEnv(t)
+	setEnvForTest(t, "SKY_PUBLIC_URL", "https://app.example.test/, http://second.example.test:8443")
+	h := hostGuardMiddleware("127.0.0.1", okHandler())
+	for _, host := range []string{"app.example.test", "app.example.test:443", "second.example.test:8443"} {
+		if code, body := guardStatus(t, h, host); code != http.StatusOK {
+			t.Fatalf("SKY_PUBLIC_URL host %q rejected: %d %q", host, code, body)
+		}
+	}
+	if code, _ := guardStatus(t, h, "evil.example"); code != http.StatusForbidden {
+		t.Fatalf("SKY_PUBLIC_URL opened the guard to every host: %d", code)
+	}
+}
+
+// TestHostGuard403NamesEveryWayIn — the 403 must not call a production-like
+// server a "dev server", and must name both variables that admit a name.
+func TestHostGuard403NamesEveryWayIn(t *testing.T) {
+	clearHostGuardEnv(t)
+	h := hostGuardMiddleware("127.0.0.1", okHandler())
+	_, body := guardStatus(t, h, "evil.example")
+	if strings.Contains(body, "dev server") {
+		t.Fatalf("403 body still says \"dev server\": %q", body)
+	}
+	for _, want := range []string{"SKY_ALLOWED_HOSTS", "SKY_PUBLIC_URL", "evil.example"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("403 body does not name %s: %q", want, body)
+		}
+	}
+}
+
+// TestLoopbackOnlyGuardIgnoresProduction — the Sky.Webview loopback server
+// serves the user's rendered data to a browser engine on this machine. It is
+// never behind a proxy, so its guard stays on in production.
+func TestLoopbackOnlyGuardIgnoresProduction(t *testing.T) {
+	clearHostGuardEnv(t)
+	clearProductionMode()
+	t.Cleanup(clearProductionMode)
+	setEnvForTest(t, "ENV", "production")
+	h := webviewLoopbackGuard(okHandler())
+	if code, _ := guardStatus(t, h, "evil.example:8000"); code != http.StatusForbidden {
+		t.Fatalf("webview loopback server in production: foreign Host got %d, want 403", code)
+	}
+	if code, _ := guardStatus(t, h, "127.0.0.1:8000"); code != http.StatusOK {
+		t.Fatalf("webview loopback server refused its own window: %d", code)
+	}
+}
+
+// TestDesktopWindowModeKeepsTheGuardAndLoopback is DESK: a Sky.Live app in a
+// desktop window keeps the Host guard and the loopback bind even when an
+// operator layer sets ENV=production.
+func TestDesktopWindowModeKeepsTheGuardAndLoopback(t *testing.T) {
+	clearHostGuardEnv(t)
+	clearProductionMode()
+	t.Cleanup(clearProductionMode)
+	setEnvForTest(t, "ENV", "production")
+	setDesktopWindowMode(t)
+	if got, _ := resolveBindHost(); got != "127.0.0.1" {
+		t.Fatalf("desktop window with ENV=production binds %q, want 127.0.0.1", got)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := liveListenerHandler(mux, "127.0.0.1")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "evil.example:8000"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("desktop window in production: foreign Host got %d, want 403", rec.Code)
+	}
+	// An explicit SKY_HOST still wins.
+	setEnvForTest(t, "SKY_HOST", "0.0.0.0")
+	if got, _ := resolveBindHost(); got != "0.0.0.0" {
+		t.Fatalf("desktop window ignored SKY_HOST: %q", got)
+	}
+}
+
+// TestDesktopWindowModeClosesTheDevConsole is DESK: a packaged desktop app
+// runs with no ENV, so it used to mount the console dev-open (no login) on
+// its loopback port, readable by any local process. In desktop window mode
+// the console is off unless SKY_CONSOLE_AUTH names a mode.
+func TestDesktopWindowModeClosesTheDevConsole(t *testing.T) {
+	clearHostGuardEnv(t)
+	setEnvForTest(t, "SKY_CONSOLE_AUTH", "")
+	os.Unsetenv("SKY_CONSOLE_AUTH")
+	ResetConsoleAuthStateForTesting()
+	if m := resolveConsoleAuthMode(); m != consoleAuthModeDevOpen {
+		t.Fatalf("precondition: a dev process resolves %s, want dev-open", describeConsoleAuthMode(m))
+	}
+	setDesktopWindowMode(t)
+	if m := resolveConsoleAuthMode(); m != consoleAuthModeOff {
+		t.Fatalf("desktop window resolves console mode %s, want off", describeConsoleAuthMode(m))
+	}
+	os.Setenv("SKY_CONSOLE_AUTH", "token")
+	if m := resolveConsoleAuthMode(); m != consoleAuthModeToken {
+		t.Fatalf("desktop window ignored an explicit SKY_CONSOLE_AUTH=token: %s", describeConsoleAuthMode(m))
+	}
+}
