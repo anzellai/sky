@@ -1212,6 +1212,30 @@ fn with_declared_field_types(
     out
 }
 
+/// The model JSON writer for a model that holds a device key
+/// (`withClientCrypto`). `Codec.auto`'s `Encodable` bound refuses a key
+/// ANYWHERE in the type, and the model type still names `Maybe
+/// Noise.Handshake`; the generated code writes each such field `Nothing`
+/// before it calls this, so no key is encoded. Every other field is checked
+/// with the same `Encodable` rule by the split itself (a build error in this
+/// mode, see `generate`). Same bytes as `Codec.toJson (Codec.auto m) m`
+/// (`rt.Spa_modelToJson`); `Spa_*` is the kernel prefix a generated project
+/// may bind.
+const DEVICE_MODEL_TO_JSON: &str =
+    "-- The model as JSON with its device-held keys already written `Nothing`.\n\
+     spaModelToJson_ : m -> String\n\
+     spaModelToJson_ =\n    \
+     Ffi.kernel \"Spa_modelToJson\"\n\n\n";
+
+/// The decoder twin of [`DEVICE_MODEL_TO_JSON`]: `Codec.fromJson (Codec.auto
+/// blank) s` (`rt.Spa_modelFromJson`). The caller clears the device-only
+/// fields of the result, so no key can be planted from the page or storage.
+const DEVICE_MODEL_FROM_JSON: &str =
+    "-- The model from JSON; the caller clears its device-held keys.\n\
+     spaModelFromJson_ : m -> String -> Result Error m\n\
+     spaModelFromJson_ =\n    \
+     Ffi.kernel \"Spa_modelFromJson\"\n\n\n";
+
 /// `{ <base> | f1 = Nothing, f2 = Nothing }` — the model with its device-only
 /// fields cleared, or `base` unchanged when there are none.
 fn clear_device_only(base: &str, device_only: &[String]) -> String {
@@ -3063,6 +3087,24 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     } else {
         Vec::new()
     };
+    // With device-only fields the model JSON is written by
+    // `spaModelToJson_` (see [`DEVICE_MODEL_TO_JSON`]), not `Codec.auto`, so
+    // the checker's `Encodable` bound no longer sees the model type. Apply the
+    // same rule to every other field here, as a build error.
+    if !device_only.is_empty() {
+        for f in &report.model_fields {
+            if device_only.contains(&f.name) {
+                continue;
+            }
+            if let Some((ty_label, why)) = codec_auto_unencodable(f, Some(&db)) {
+                return Err(format!(
+                    "sky.spa: model field `{}` has type `{}`, which the first-paint and saved \
+                     model cannot carry. {}",
+                    f.name, ty_label, why
+                ));
+            }
+        }
+    }
     let mut wires: Vec<Wire> = Vec::new();
     for (name, io) in &server {
         let args = server_args.get(name).cloned().unwrap_or_default();
@@ -7854,29 +7896,29 @@ fn gen_backend(
         match model_anno {
             Some(anno) => {
                 let cleared = clear_device_only("m_", device_only);
+                let body = if device_only.is_empty() {
+                    format!("Codec.toJson (Codec.auto m_) {cleared}")
+                } else {
+                    handlers.push_str(DEVICE_MODEL_TO_JSON);
+                    format!("spaModelToJson_ ({cleared})")
+                };
                 handlers.push_str(&format!(
                     "-- The first-paint model as JSON (device-held keys written `Nothing`).\n\
                      spaSsrModelJson_ : {anno} -> String\n\
                      spaSsrModelJson_ m_ =\n    \
-                     Codec.toJson (Codec.auto m_) {}\n\n\n",
-                    if device_only.is_empty() {
-                        cleared
-                    } else {
-                        format!("({cleared})")
-                    }
+                     {body}\n\n\n"
                 ));
                 lets.push_str("        modelJson =\n            spaSsrModelJson_ resolved\n");
             }
             None => {
                 let embedded = clear_device_only("resolved", device_only);
-                lets.push_str(&format!(
-                    "        modelJson =\n            Codec.toJson (Codec.auto resolved) {}\n",
-                    if device_only.is_empty() {
-                        embedded
-                    } else {
-                        format!("({embedded})")
-                    }
-                ));
+                let body = if device_only.is_empty() {
+                    format!("Codec.toJson (Codec.auto resolved) {embedded}")
+                } else {
+                    handlers.push_str(DEVICE_MODEL_TO_JSON);
+                    format!("spaModelToJson_ ({embedded})")
+                };
+                lets.push_str(&format!("        modelJson =\n            {body}\n"));
             }
         }
         // A-2b/E-3: with a session projection the page answer passes through
@@ -8214,6 +8256,17 @@ fn gen_frontend(
     if (decoder_blank.is_some() || follow_here) && !has_module(imports, "Std.Codec") {
         import_lines.push("import Std.Codec as Codec".to_string());
     }
+    // A device-key model is read and written by the `Spa_model*Json` kernels
+    // (see [`DEVICE_MODEL_TO_JSON`]).
+    if decoder_blank.is_some()
+        && !device_only.is_empty()
+        && !has_module(imports, "Sky.Ffi")
+        && !import_lines
+            .iter()
+            .any(|l| l.starts_with("import Sky.Ffi "))
+    {
+        import_lines.push("import Sky.Ffi as Ffi".to_string());
+    }
     if follow_here {
         if let Some(f) = &follow {
             if !f.q.is_empty() {
@@ -8342,12 +8395,20 @@ fn gen_frontend(
     if let Some(model) = &decoder_blank {
         // `withClientCrypto`: a device-only key field is `Nothing` whatever the
         // page or localStorage holds, so no key can be planted from outside.
-        let decoded = if device_only.is_empty() {
-            String::new()
+        let (decode, decoded) = if device_only.is_empty() {
+            (
+                "Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_",
+                String::new(),
+            )
         } else {
-            format!(
-                "\n        |> Result.map (\\m_ -> {})",
-                clear_device_only("m_", device_only)
+            body.push_str(DEVICE_MODEL_TO_JSON);
+            body.push_str(DEVICE_MODEL_FROM_JSON);
+            (
+                "spaModelFromJson_ spaModelBlank_ jsonStr_",
+                format!(
+                    "\n        |> Result.map (\\m_ -> {})",
+                    clear_device_only("m_", device_only)
+                ),
             )
         };
         body.push_str(&format!(
@@ -8356,7 +8417,7 @@ fn gen_frontend(
              {model}\n\n\n\
              spaModelDecoder_ : String -> Result Error {model_ty}\n\
              spaModelDecoder_ jsonStr_ =\n    \
-             Codec.fromJson (Codec.auto spaModelBlank_) jsonStr_{decoded}\n\n\n"
+             {decode}{decoded}\n\n\n"
         ));
         // P2: the SYMMETRIC encoder — byte-compatible with the decoder (the SAME
         // `Codec.auto spaModelBlank_`). The wasm client applies it to the WHOLE
@@ -8365,15 +8426,15 @@ fn gen_frontend(
         // is (SSR-hydration path), so persistence rides the same GET-safe seed.
         // `withClientCrypto`: the device-only key fields are saved as `Nothing`.
         let saved = clear_device_only("m_", device_only);
-        let saved = if device_only.is_empty() {
-            saved
+        let encode = if device_only.is_empty() {
+            format!("Codec.toJson (Codec.auto spaModelBlank_) {saved}")
         } else {
-            format!("({saved})")
+            format!("spaModelToJson_ ({saved})")
         };
         body.push_str(&format!(
             "spaModelEncoder_ : {model_ty} -> String\n\
              spaModelEncoder_ m_ =\n    \
-             Codec.toJson (Codec.auto spaModelBlank_) {saved}\n\n\n"
+             {encode}\n\n\n"
         ));
     }
 

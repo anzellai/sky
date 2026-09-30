@@ -351,3 +351,24 @@ func asSpaRoutes(v any) []spaRoute {
 	}
 	return out
 }
+
+// Spa_modelToJson : model -> String. The first-paint and saved model of a
+// `withClientCrypto` app, written by the split's generated code only (an
+// `Ffi.kernel` a generated project may bind; `Spa_*` prefix). The bytes are
+// exactly `Codec.toJson (Codec.auto m) m`.
+//
+// Why not `Codec.auto`: the model type holds a device key (`Maybe
+// Noise.Handshake`), which the `Encodable` bound refuses anywhere in the type.
+// The split writes those fields as `Nothing` before it calls this, and after
+// the decode below, so no key is ever encoded or planted; every other field is
+// checked with the same `Encodable` rule by the split at build time
+// (project/src/spa_split.rs, `codec_auto_unencodable`).
+func Spa_modelToJson(model any) any {
+	return JsonEnc_encode(0, Codec_autoEnc(true, model))
+}
+
+// Spa_modelFromJson : model -> String -> Result Error model. The decoder
+// twin of Spa_modelToJson: `Codec.fromJson (Codec.auto blank) s`.
+func Spa_modelFromJson(blank, s any) any {
+	return JsonDec_decodeString(Codec_autoDecoder(true, blank), s)
+}

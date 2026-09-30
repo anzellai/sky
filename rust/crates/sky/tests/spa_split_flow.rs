@@ -522,8 +522,10 @@ fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
         "the backend must have no RPC for a key operation:\n{back}"
     );
     assert!(
-        back.contains("Codec.toJson (Codec.auto m_) ({ m_ | handshake = Nothing })"),
-        "the SSR first paint must write the device handshake as Nothing:\n{back}"
+        back.contains("spaModelToJson_ ({ m_ | handshake = Nothing })")
+            && back.contains("Ffi.kernel \"Spa_modelToJson\""),
+        "the SSR first paint must write the device handshake as Nothing (through \
+         `Spa_modelToJson`: `Codec.auto`'s Encodable bound refuses a key type):\n{back}"
     );
     assert!(
         front.contains("({ m_ | handshake = Nothing })"),
@@ -569,12 +571,13 @@ fn a_device_key_field_with_a_server_branch_builds_and_paints_nothing() {
     let front = std::fs::read_to_string(split.join("frontend/src/Main.sky")).unwrap_or_default();
     assert!(
         back.contains("spaSsrModelJson_ : Model -> String")
-            && back.contains("Codec.toJson (Codec.auto m_) ({ m_ | hs = Nothing })"),
+            && back.contains("spaModelToJson_ ({ m_ | hs = Nothing })"),
         "the first-paint encoder is pinned to Model and clears the key:\n{back}\n{log}"
     );
     assert!(
-        front.contains("|> Result.map (\\m_ -> { m_ | hs = Nothing })")
-            && front.contains("({ m_ | hs = Nothing })"),
+        front.contains("spaModelFromJson_ spaModelBlank_ jsonStr_")
+            && front.contains("|> Result.map (\\m_ -> { m_ | hs = Nothing })")
+            && front.contains("spaModelToJson_ ({ m_ | hs = Nothing })"),
         "the client clears the key after a decode and in the saved model:\n{front}"
     );
     if !required(Need::Go, have_go()) {
