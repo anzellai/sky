@@ -4,7 +4,8 @@
 //! R1: a server branch whose command is a LET-BOUND
 //! `Cmd.batch (List.map (\x -> Cmd.perform … Sent) xs)` read as opaque, so the
 //! split treated every Msg as a possible follow-up and failed the build on an
-//! unrelated constructor with no wire codec (`GotConfig`, a `Dict` argument).
+//! unrelated constructor with no wire codec (`GotConfig`; the fixture now uses a
+//! `Set` argument, because a `Dict` crosses the wire since `Codec.dict`).
 //! The command is now read exactly; a command that still cannot be read warns
 //! about such a constructor instead of failing the build.
 //!

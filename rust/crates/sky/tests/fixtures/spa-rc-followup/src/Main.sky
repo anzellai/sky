@@ -6,7 +6,8 @@ module Main exposing (main)
 -- R1: `SendAll` delegates to a helper whose command is a LET-BOUND
 -- `Cmd.batch (List.map (\x -> Cmd.perform … Sent) xs)`. The split could not
 -- read it, treated EVERY Msg as a possible follow-up, and failed the build on
--- `GotConfig`, whose `Dict` argument has no wire codec. `Blast` returns a
+-- `GotConfig`, whose `Set` argument has no wire codec (a `Dict` has one
+-- since v0.27.0, `Codec.dict`). `Blast` returns a
 -- command the split can still not read (`List.filterMap`): the build must
 -- warn about `GotConfig` and not fail.
 --
@@ -17,7 +18,7 @@ module Main exposing (main)
 -- Tests: project/tests/spa_rc_followup.rs.
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Set as Set exposing (Set)
 import Sky.Core.File as File
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -51,15 +52,15 @@ type Msg
     = SendAll
     | Blast
     | Sent (Result Error ())
-    | GotConfig (Result Error (List (Dict String String)))
+    | GotConfig (Result Error (List (Set String)))
     | SignIn String
     | Reset
 
 
-loadConfig : Task Error (List (Dict String String))
+loadConfig : Task Error (List (Set String))
 loadConfig =
     File.readFile "config.txt"
-        |> Task.map (\s -> [ Dict.fromList [ ( "k", s ) ] ])
+        |> Task.map (\s -> [ Set.fromList [ s ] ])
 
 
 init : a -> ( Model, Cmd Msg )
