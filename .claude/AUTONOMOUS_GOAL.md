@@ -54,3 +54,22 @@ of 22 Sky gaps, six design studies and three adversarial reviews. Go FFI stays
   with the safest reasonable default and recorded in the CHANGELOG.
 - "Done" is declared only by a fresh-context Judge agent against this verbatim
   goal (CLAUDE.md §0).
+
+## Amendment (user, 2026-09-30, verbatim)
+
+> can we work a bit more smarter so than we sweep + audit everything first,
+> before we call it ready for merge test etc.?
+> it seems we've been running for long time, and each iteration we found new
+> bugs etc.
+>
+> the release will affect live production apps, so i want this release to be
+> properly audited + tested in real practical terms, plus audited so there are
+> no known holes/gaps/security concerns
+>
+> please again in 100^ fully unattended + autonomous + PIV
+
+How it runs: one full audit of the whole v0.27.0 change first (security,
+crypto, compiler soundness, runtime robustness, upgrade impact on live apps,
+tooling, test and doc integrity, practical real-app tests including an
+in-place upgrade from v0.26.1). All findings are fixed in one batch, verified
+once, then the release workflow, the Judge and the tag follow.
