@@ -75,6 +75,9 @@ func dispatchSkyHandler(w http.ResponseWriter, req *http.Request, handler any, p
 		w.WriteHeader(500)
 		fmt.Fprint(w, "Internal Server Error")
 	}()
+	// Std.Analytics state is per visitor for every Sky handler (a Sky.Spa
+	// /_rpc call included), not one process-wide state (analytics_kernel.go).
+	defer analyticsEnterRequest(req)()
 	// Bound body read to prevent memory exhaustion.
 	req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)
 
