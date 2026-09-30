@@ -222,6 +222,14 @@ impl<'a> Infer<'a> {
         let root = body.root?;
         let v = self.infer_expr(body, root);
         self.collapse_let_poly();
+        // C-2: the relaxed value restriction for an UNANNOTATED top-level CAF.
+        // The type is read back from this run, so its variable names match the
+        // sub-expression types the restriction inspects. Pass 5 re-infers such
+        // CAFs until stable, so the scheme callers see has the same shape.
+        if self.errors.is_empty() && body.params.is_empty() && self.self_def.is_some() {
+            let exported = self.read_back_scheme(v, true);
+            self.check_value_restriction(body, &exported, false);
+        }
         Some(self.read_back(v))
     }
 
@@ -518,8 +526,28 @@ impl<'a> Infer<'a> {
         if self.errors.len() == errs_before {
             let prev = self.cur_span;
             self.cur_span = body.expr_span(root);
+            let before = self.errors.len();
             self.unify(v, expected_result);
+            if self.errors.len() > before {
+                let note = self.any_fill_note(body, root);
+                self.append_note(before, note);
+            }
             self.cur_span = prev;
+        }
+        // C-2: the relaxed value restriction for a top-level CAF, checked
+        // against the type callers see (the annotation, its `any` holes filled
+        // by pass 6).
+        if self.errors.len() == errs_before {
+            let annotated_any = ty_contains_any(&scheme.ty);
+            // With `any` holes, read the type back from this run: the holes are
+            // filled exactly as pass 6 fills them, and the names match the
+            // sub-expression types the restriction inspects.
+            let exported = if annotated_any {
+                self.read_back_scheme(v, true)
+            } else {
+                scheme.ty.clone()
+            };
+            self.check_value_restriction(body, &exported, annotated_any);
         }
     }
 
@@ -551,54 +579,374 @@ impl<'a> Infer<'a> {
         Some(Scheme::generalize(ty))
     }
 
-    /// D1 (wildcard-`any` result pin): for an ANNOTATED def whose declared result
-    /// contains `any` (`f : Int -> any`), infer what the BODY actually returns and
-    /// build a check-only sig `<annotation params> -> <body result>`. Params are
-    /// SEEDED from the annotation (so the body result resolves concretely — a bare
-    /// `f x = x` with `x : Int` returns `Int`, not a fresh var). The annotation's
-    /// `any` result is deliberately NOT unified with the body — that lenient valve
-    /// is exactly what lets a caller absorb the result at any type. Returns the
-    /// pinned scheme ONLY if it is fully MONOMORPHIC: a polymorphic body (e.g.
-    /// `kernelAttr k v = Attr.href v : Attribute msg`) is left unpinned, matching
-    /// the oracle, which also does not pin a wildcard result whose body is
-    /// polymorphic. Populated into `World::any_result_check_sigs` (check-only).
-    pub fn infer_any_result_pin(
-        &mut self,
-        body: &Body,
-        anno: &Ty,
-        concretize: bool,
-    ) -> Option<Scheme> {
+    /// D-ANY (v0.27.0): `any` in a USER annotation is a partial-signature hole.
+    ///
+    /// Before v0.27.0 every `any` in a signature was a fresh variable at every
+    /// use, so `coerce : a -> any; coerce x = x` was an unchecked cast (a caller
+    /// could read the result at any type), and `List any` at a CAF escaped the
+    /// value restriction. Now each `any` occurrence is filled by inference from
+    /// the body, and the def's exported (check-only) scheme carries the filled
+    /// type: `coerce` exports `a -> a`, `routes : List any` exports
+    /// `List (Route Page)`. A hole the body leaves open stays a quantified
+    /// variable, subject to the value restriction (C-2) at a CAF.
+    ///
+    /// How: the annotation is instantiated with every named variable FLEXIBLE
+    /// and every `any` occurrence (and every record whose row is `any`) recorded
+    /// as a hole, the body is inferred against it, and each hole is read back.
+    /// A named variable the body left unbound reads back under its own name, so
+    /// `a -> any` with `x = x` fills to `a -> a`, not `a -> t17`. Everything
+    /// outside the holes is the annotation, byte for byte.
+    ///
+    /// Returns `None` when the body does not check against the annotation (the
+    /// annotation gate then reports the error). Check-only: the result goes to
+    /// `World::any_result_check_sigs`, which the lowerer never reads, so Go
+    /// emission is unchanged. Stdlib and kernel signatures keep per-occurrence
+    /// `any` (the caller skips them; the CAST gate audits them).
+    pub fn infer_any_fill(&mut self, body: &Body, anno: &Scheme) -> Option<Scheme> {
         let root = body.root?;
         let param_vars: Vec<TyVarId> = body
             .params
             .iter()
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
-        // Seed each param from the annotation's arrow spine (closed, via ty_to_var).
+        let mut named: Vec<(String, TyVarId)> = Vec::new();
         let mut sub: HashMap<String, TyVarId> = HashMap::new();
-        let mut cur = anno.clone();
+        for name in &anno.vars {
+            if name.as_str() != "any" {
+                let v = self.uf.fresh_flex();
+                sub.insert(name.as_str().to_string(), v);
+                named.push((name.as_str().to_string(), v));
+            }
+        }
+        let mut holes: Vec<TyVarId> = Vec::new();
+        let full = self.ty_to_var_holes(&anno.ty, &mut sub, &mut holes);
+        let mut cur = full;
         for &pv in &param_vars {
-            match cur {
-                Ty::Fun(a, b) => {
-                    let av = self.ty_to_var(&a, &mut sub);
-                    self.unify(pv, av);
-                    cur = *b;
+            let r = self.uf.find(cur);
+            match self.uf.content(r) {
+                Content::Structure(FlatTy::Fun(a, b)) => {
+                    self.unify(pv, a);
+                    cur = b;
                 }
                 _ => break,
             }
         }
+        let errs_before = self.errors.len();
         let rv = self.infer_expr(body, root);
         self.collapse_let_poly();
-        let full = param_vars
-            .into_iter()
-            .rev()
-            .fold(rv, |acc, pv| self.fun(pv, acc));
-        let ty = self.read_back_scheme(full, concretize);
-        let scheme = Scheme::generalize(ty);
-        if scheme.vars.is_empty() {
-            Some(scheme)
+        if self.errors.len() != errs_before {
+            return None;
+        }
+        self.unify(rv, cur);
+        if self.errors.len() != errs_before {
+            return None;
+        }
+        // A named variable still unbound reads back as `t<root>` / `r<root>`;
+        // map it to the name the user wrote (first name, alphabetically, when
+        // the body unified two named variables).
+        named.sort();
+        let mut names: HashMap<Name, Name> = HashMap::new();
+        for (n, v) in &named {
+            let r = self.uf.find(*v);
+            if matches!(self.uf.content(r), Content::Flex | Content::FlexSuper(_)) {
+                names
+                    .entry(Name::new(&format!("t{}", r.0)))
+                    .or_insert_with(|| Name::new(n));
+                names
+                    .entry(Name::new(&format!("r{}", r.0)))
+                    .or_insert_with(|| Name::new(n));
+            }
+        }
+        let mut it = holes.into_iter();
+        let filled = self.fill_holes(&anno.ty, &mut it, &names);
+        Some(Scheme::generalize(filled))
+    }
+
+    /// [`Infer::ty_to_var`] that also records, in pre-order, the variable made
+    /// for every `any` occurrence and for every record whose row is `any`.
+    /// [`Infer::fill_holes`] walks the same order.
+    fn ty_to_var_holes(
+        &mut self,
+        ty: &Ty,
+        sub: &mut HashMap<String, TyVarId>,
+        holes: &mut Vec<TyVarId>,
+    ) -> TyVarId {
+        match ty {
+            Ty::Var(n) if n.as_str() == "any" => {
+                let v = self.uf.fresh_flex();
+                holes.push(v);
+                v
+            }
+            Ty::Fun(a, b) => {
+                let va = self.ty_to_var_holes(a, sub, holes);
+                let vb = self.ty_to_var_holes(b, sub, holes);
+                self.fun(va, vb)
+            }
+            Ty::App(name, args) => {
+                let vs: Vec<TyVarId> = args
+                    .iter()
+                    .map(|a| self.ty_to_var_holes(a, sub, holes))
+                    .collect();
+                self.uf
+                    .fresh(Content::Structure(FlatTy::App(name.clone(), vs)))
+            }
+            Ty::Tuple(xs) => {
+                let vs: Vec<TyVarId> = xs
+                    .iter()
+                    .map(|x| self.ty_to_var_holes(x, sub, holes))
+                    .collect();
+                self.uf.fresh(Content::Structure(FlatTy::Tuple(vs)))
+            }
+            Ty::Record(fields, ext) => {
+                let mut map = std::collections::BTreeMap::new();
+                for (n, t) in fields {
+                    let v = self.ty_to_var_holes(t, sub, holes);
+                    map.insert(n.clone(), v);
+                }
+                let any_row = ext.as_ref().is_some_and(|e| e.as_str() == "any");
+                let ext_var = ext.as_ref().map(|e| {
+                    if e.as_str() == "any" {
+                        self.uf.fresh_flex()
+                    } else if let Some(&v) = sub.get(e.as_str()) {
+                        v
+                    } else {
+                        let v = self.uf.fresh_flex();
+                        sub.insert(e.as_str().to_string(), v);
+                        v
+                    }
+                });
+                let rv = self
+                    .uf
+                    .fresh(Content::Structure(FlatTy::Record(map, ext_var)));
+                if any_row {
+                    holes.push(rv);
+                }
+                rv
+            }
+            other => self.ty_to_var(other, sub),
+        }
+    }
+
+    /// Every variable name reachable from `v`, spelt as read-back spells it:
+    /// a rigid variable by its name, an unbound flex root as `t<id>` (and
+    /// `r<id>`, its spelling as a record row). See [`Infer::read_back_scheme`].
+    fn collect_var_names(
+        &mut self,
+        v: TyVarId,
+        out: &mut std::collections::HashSet<String>,
+        seen: &mut std::collections::HashSet<TyVarId>,
+    ) {
+        let r = self.uf.find(v);
+        if !seen.insert(r) {
+            return;
+        }
+        match self.uf.content(r) {
+            Content::Flex | Content::FlexSuper(_) => {
+                out.insert(format!("t{}", r.0));
+                out.insert(format!("r{}", r.0));
+            }
+            Content::Rigid(n) => {
+                out.insert(n.as_str().to_string());
+            }
+            Content::Structure(ft) => {
+                for k in crate::unify::flat_children(&ft) {
+                    self.collect_var_names(k, out, seen);
+                }
+            }
+            Content::Error => {}
+        }
+    }
+
+    /// Rebuild `ty` with every hole (see [`Infer::ty_to_var_holes`]) replaced by
+    /// the read-back of its solved variable, renamed through `names`.
+    fn fill_holes(
+        &mut self,
+        ty: &Ty,
+        holes: &mut std::vec::IntoIter<TyVarId>,
+        names: &HashMap<Name, Name>,
+    ) -> Ty {
+        match ty {
+            Ty::Var(n) if n.as_str() == "any" => match holes.next() {
+                Some(v) => {
+                    let t = self.read_back_scheme(v, true);
+                    crate::variance::rename_vars(&t, names)
+                }
+                None => ty.clone(),
+            },
+            Ty::Fun(a, b) => Ty::Fun(
+                Box::new(self.fill_holes(a, holes, names)),
+                Box::new(self.fill_holes(b, holes, names)),
+            ),
+            Ty::App(n, args) => Ty::App(
+                n.clone(),
+                args.iter()
+                    .map(|a| self.fill_holes(a, holes, names))
+                    .collect(),
+            ),
+            Ty::Tuple(xs) => Ty::Tuple(
+                xs.iter()
+                    .map(|x| self.fill_holes(x, holes, names))
+                    .collect(),
+            ),
+            Ty::Record(fields, ext) => {
+                let filled: Vec<(Name, Ty)> = fields
+                    .iter()
+                    .map(|(n, t)| (n.clone(), self.fill_holes(t, holes, names)))
+                    .collect();
+                if ext.as_ref().is_some_and(|e| e.as_str() == "any") {
+                    match holes.next() {
+                        Some(v) => {
+                            let t = self.read_back_scheme(v, true);
+                            crate::variance::rename_vars(&t, names)
+                        }
+                        None => Ty::Record(filled, ext.clone()),
+                    }
+                } else {
+                    Ty::Record(filled, ext.clone())
+                }
+            }
+            other => other.clone(),
+        }
+    }
+
+    /// C-2 (v0.27.0): the relaxed value restriction for a top-level CAF.
+    ///
+    /// A top-level def with no parameters is evaluated once and shared by every
+    /// use. When its body is EXPANSIVE (not a syntactic value, see
+    /// [`is_syntactic_value`]) the one value may hold mutable state, so the
+    /// def may be generalised only over type variables that occur in covariant
+    /// positions (`crate::variance`). `ty` is the def's exported type: the
+    /// annotation (with `any` holes filled), or the inferred scheme of an
+    /// unannotated def. Let groups keep the strict restriction
+    /// ([`Infer::generalise_let_group`]); only top-level CAFs are relaxed.
+    ///
+    /// A second, independent relaxation: a variable that occurs in the type of
+    /// no EXPANSIVE sub-expression is generalisable at any variance. The body
+    /// is a value built (by records, tuples, lists, constructors and lambdas)
+    /// around its maximal expansive sub-expressions; only those run, so only
+    /// their types can carry state. `noDurableWiring = { setup = Task.succeed
+    /// (), persist = \_ _ -> … }` is expansive only through `Task.succeed ()`,
+    /// whose type mentions no `model`, so `DurableWiring model` stays
+    /// polymorphic. The sub-expression types come from this run's recorded
+    /// per-expression table (the check path records it); without it every
+    /// variable counts as reached, which is the plain rule.
+    fn check_value_restriction(&mut self, body: &Body, ty: &Ty, annotated_any: bool) {
+        let Some(root) = body.root else { return };
+        let Some(def) = self.self_def else { return };
+        if !body.params.is_empty() || is_syntactic_value(body, root) {
+            return;
+        }
+        let dangerous: Option<std::collections::HashSet<String>> = if self.record_exprs {
+            let mut exp = Vec::new();
+            collect_expansive(body, root, &mut exp);
+            let ids: std::collections::HashSet<ExprId> = exp.into_iter().collect();
+            let vars: Vec<TyVarId> = self
+                .expr_vars
+                .iter()
+                .filter(|(e, _)| ids.contains(e))
+                .map(|(_, v)| *v)
+                .collect();
+            let mut names = std::collections::HashSet::new();
+            let mut seen = std::collections::HashSet::new();
+            for v in vars {
+                self.collect_var_names(v, &mut names, &mut seen);
+            }
+            Some(names)
         } else {
             None
+        };
+        let (shown, viols) =
+            crate::variance::violations(self.world, self.db, ty, dangerous.as_ref());
+        if viols.is_empty() {
+            return;
+        }
+        let name = self
+            .db
+            .def_loc(def)
+            .map(|l| l.name.as_str().to_string())
+            .unwrap_or_else(|| "this definition".to_string());
+        let shown_ty = shown.render();
+        let vars: Vec<String> = viols
+            .iter()
+            .map(|v| format!("`{}` ({})", v.var, v.reason))
+            .collect();
+        let bad: Vec<String> = viols.iter().map(|v| v.var.clone()).collect();
+        let concrete = crate::variance::concretise(&shown, &bad, &Ty::app("Int", vec![])).render();
+        let from_any = annotated_any && viols.iter().any(|v| v.from_inference);
+        let (why_any, anchor) = if from_any {
+            (
+                " In v0.27.0 an `any` in a signature is filled from the body, and this \
+                 body leaves it open, so write the type instead of `any`.",
+                "any-in-annotations",
+            )
+        } else {
+            ("", "value-restriction")
+        };
+        let other = if matches!(ty, Ty::Fun(..)) {
+            format!(
+                " Or give `{name}` its parameter, so the body is a function and not a \
+                 value computed once: `{name} x = … x`."
+            )
+        } else {
+            " Or, if every use really needs its own value, make it a function of `()`; \
+             each call then builds a new value."
+                .to_string()
+        };
+        self.errors.push(TypeError {
+            message: format!(
+                "`{name}` has no parameters, so its body runs once and every use shares \
+                 that one value. Since v0.27.0 such a value may be polymorphic only in \
+                 covariant positions (the value restriction: `List a`, `Cmd msg` and \
+                 `Html msg` are fine), and its type `{shown_ty}` leaves {} open, so two \
+                 uses could store and read that one value at two different types.{why_any} \
+                 Fix: give it a concrete type, for example `{name} : {concrete}`.{other} \
+                 See docs/migration/v0.27.md#{anchor}",
+                vars.join(", ")
+            ),
+            span: body.expr_span(root),
+            code: "E2012",
+        });
+    }
+
+    /// D-ANY migration note. When `e` (or the callee `e` applies) is a def
+    /// whose signature had `any` filled from its body (pass 6, check path),
+    /// the sentence to append to a clash there: before v0.27.0 that `any` was
+    /// a cast to whatever type the caller wanted, so code that compiled on
+    /// v0.26 can fail here.
+    fn any_fill_note(&self, body: &Body, e: ExprId) -> Option<String> {
+        if self.use_inferred {
+            return None;
+        }
+        let head = match &body.exprs[e] {
+            Expr::Call(f, _) => *f,
+            _ => e,
+        };
+        let Expr::Var(Res::Def(d)) = &body.exprs[head] else {
+            return None;
+        };
+        if self.self_def == Some(*d) {
+            return None;
+        }
+        let filled = self.world.any_result_check_sigs.get(d)?;
+        let name = self.db.def_loc(*d)?.name.as_str().to_string();
+        Some(format!(
+            ". `{name}`'s signature uses `any`. Since v0.27.0 each `any` in a signature \
+             is filled from the body, so `{name} : {}`; `any` is no longer a cast to \
+             whatever type a caller wants. Fix: write that type in the signature of \
+             `{name}` instead of `any`, and convert the value explicitly where another \
+             type is needed. See docs/migration/v0.27.md#any-in-annotations",
+            filled.ty.render_pretty()
+        ))
+    }
+
+    /// Append `note` to every error recorded since `from` that does not carry
+    /// it yet.
+    fn append_note(&mut self, from: usize, note: Option<String>) {
+        let Some(note) = note else { return };
+        for err in &mut self.errors[from..] {
+            if !err.message.contains("#any-in-annotations") {
+                err.message.push_str(&note);
+            }
         }
     }
 
@@ -848,6 +1196,14 @@ impl<'a> Infer<'a> {
                         self.fun(ta, res)
                     };
                     self.unify(tf, want);
+                    // D-ANY migration note: a clash against a signature whose
+                    // `any` was filled from its body (v0.27.0) says so.
+                    if self.errors.len() > before {
+                        let note = self
+                            .any_fill_note(body, *callee)
+                            .or_else(|| self.any_fill_note(body, arg));
+                        self.append_note(before, note);
+                    }
                     tf = res;
                 }
                 tf
@@ -1912,7 +2268,7 @@ fn collect_expr_binders(body: &Body, e: ExprId, out: &mut std::collections::Hash
 
 /// ML's syntactic-value test (the value restriction): an expression whose
 /// evaluation cannot run a computation. Only such a let binding generalises.
-fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
+pub(crate) fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
     match &body.exprs[e] {
         Expr::Lambda { .. }
         | Expr::Int(_)
@@ -1927,11 +2283,48 @@ fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
         Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(|&x| is_syntactic_value(body, x)),
         Expr::Record(fs) => fs.iter().all(|(_, x)| is_syntactic_value(body, *x)),
         // A constructor applied to values builds data; it runs nothing.
-        Expr::Call(f, args) => {
-            matches!(body.exprs[*f], Expr::Var(Res::Ctor(_)))
-                && args.iter().all(|&a| is_syntactic_value(body, a))
-        }
+        // `Ffi.kernel "Name"` names a runtime function: it is a reference, and
+        // evaluating it runs nothing either (FINAL-PLAN §1, "varied").
+        Expr::Call(f, args) => match &body.exprs[*f] {
+            Expr::Var(Res::Ctor(_)) => args.iter().all(|&a| is_syntactic_value(body, a)),
+            Expr::Var(Res::Kernel { module, func }) => {
+                module.as_str() == "Ffi"
+                    && func.as_str() == "kernel"
+                    && matches!(args.as_slice(), [a] if matches!(body.exprs[*a], Expr::Str(_)))
+            }
+            _ => false,
+        },
         _ => false,
+    }
+}
+
+/// The MAXIMAL expansive sub-expressions of `e`: walk through the value
+/// formers [`is_syntactic_value`] accepts (lists, tuples, records, a
+/// constructor applied to arguments, negation) and collect every node that is
+/// not itself a syntactic value. Lambdas are values and their bodies are not
+/// walked (they run only when called). Empty iff `e` is a syntactic value.
+fn collect_expansive(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
+    if is_syntactic_value(body, e) {
+        return;
+    }
+    match &body.exprs[e] {
+        Expr::Negate(x) => collect_expansive(body, *x, out),
+        Expr::List(xs) | Expr::Tuple(xs) => {
+            for &x in xs {
+                collect_expansive(body, x, out);
+            }
+        }
+        Expr::Record(fs) => {
+            for (_, x) in fs {
+                collect_expansive(body, *x, out);
+            }
+        }
+        Expr::Call(f, args) if matches!(body.exprs[*f], Expr::Var(Res::Ctor(_))) => {
+            for &a in args {
+                collect_expansive(body, a, out);
+            }
+        }
+        _ => out.push(e),
     }
 }
 
@@ -2143,5 +2536,19 @@ mod tests {
             assert_eq!(sub_e, want_e);
             assert_eq!(sub_l, want_l);
         }
+    }
+}
+
+/// Does `t` contain the wildcard `any` anywhere (a type or a record row)?
+pub(crate) fn ty_contains_any(t: &Ty) -> bool {
+    match t {
+        Ty::Var(n) => n.as_str() == "any",
+        Ty::Fun(a, b) => ty_contains_any(a) || ty_contains_any(b),
+        Ty::App(_, xs) | Ty::Tuple(xs) => xs.iter().any(ty_contains_any),
+        Ty::Record(fs, ext) => {
+            ext.as_ref().is_some_and(|e| e.as_str() == "any")
+                || fs.iter().any(|(_, t)| ty_contains_any(t))
+        }
+        Ty::Unit | Ty::Error => false,
     }
 }

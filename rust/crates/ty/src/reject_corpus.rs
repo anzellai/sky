@@ -133,7 +133,10 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// **84 since v0.27.0 judge round 2**: `ffi_kernel_through_another_qualifier.sky`
 /// pins `Webview.kernel` as `[E1011]` (`Sky.Ffi` plumbing under another
 /// qualifier bypassed the scan).
-pub const EXPECTED_CORPUS_FILES: usize = 84;
+/// **86 since v0.27.0 final batch (S3a)**: `value_restriction_polymorphic_ref_caf.sky`
+/// (the top-level CAF value restriction, `[E2012]`) and
+/// `value_restriction_any_is_not_a_cast.sky` (`any` filled from the body).
+pub const EXPECTED_CORPUS_FILES: usize = 86;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -156,7 +159,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **36 since v0.27.0 round 3** (`let_application_not_generalised.sky`).
 /// **37 since v0.27.0 round 5** (`ffi_go_type_is_not_an_app_type.sky`).
 /// **38 since v0.27.0 judge round 2** (`ffi_kernel_through_another_qualifier.sky`).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 38;
+/// **40 since v0.27.0 final batch (S3a)** (the two `value_restriction_*.sky` files).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 40;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

@@ -28,6 +28,7 @@ pub mod shared;
 mod sig;
 pub mod tytable;
 mod unify;
+pub mod variance;
 
 pub use check::{
     check_modules, check_modules_with_world, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
