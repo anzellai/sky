@@ -248,7 +248,9 @@ fn backend_reload_handler_binds_and_settles_the_chain() {
         "the Reload handler must run the read and return its result (no chain):\n{reload_block}"
     );
     // SPA-3: the un-chained SyncCopy handler RUNS its command's server leaves
-    // and returns the follow-up Msgs (no discard floor).
+    // and returns the follow-up Msgs (no discard floor). E-4: only a legacy
+    // page (no `X-Sky-Wire`) has the chain settled on the server, through
+    // `spaLegacySettle_`; a current client gets the follow-ups.
     let sync_block = back
         .split("syncCopyHandler req =")
         .nth(1)
@@ -258,7 +260,8 @@ fn backend_reload_handler_binds_and_settles_the_chain() {
         .unwrap_or("");
     assert!(
         sync_block.contains("( m2, cmd ) =")
-            && sync_block.contains("spaEncodeFollows_ (spaFollowUps_ cmd)")
+            && sync_block.contains("spaLegacySettle_ req m2 cmd")
+            && sync_block.contains("spaEncodeFollows_ (spaFollowUps_ cmd3_)")
             && !sync_block.contains("spaChainSettle_"),
         "the SyncCopy handler must run its command and return the follow-ups (no chain):\n{sync_block}"
     );
