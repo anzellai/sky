@@ -302,6 +302,7 @@ fn code_title(code: &str) -> &'static str {
         "E2010" => "FORM SUBMIT HANDLER",
         "E2011" => "PUB/SUB PAYLOAD MISMATCH",
         "E2012" => "VALUE RESTRICTION",
+        "E2013" => "GO INTERFACE ARGUMENT",
         "E3001" => "MISSING PATTERNS",
         "E4005" => "CODEGEN ERROR",
         _ => "ERROR",
@@ -654,5 +655,49 @@ mod tests {
         assert!(rendered.contains("Try: rename `b`"));
         assert!(rendered.contains("1 | a = 1"));
         assert!(rendered.contains("2 | b = 2"));
+    }
+
+    /// Every error code a compiler crate emits has its own header title. A
+    /// code without a row renders under the generic `-- ERROR --` rule, which
+    /// is how `[E2013]` (a Sky value for a Go interface) shipped untitled.
+    #[test]
+    fn every_emitted_code_has_a_title() {
+        fn scan(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    scan(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let src = std::fs::read_to_string(&p).unwrap_or_default();
+                    let b = src.as_bytes();
+                    for i in 0..b.len().saturating_sub(6) {
+                        if b[i] == b'"'
+                            && b[i + 1] == b'E'
+                            && b[i + 2..i + 6].iter().all(u8::is_ascii_digit)
+                            && b[i + 6] == b'"'
+                        {
+                            out.insert(src[i + 1..i + 6].to_string());
+                        }
+                    }
+                }
+            }
+        }
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut codes = std::collections::BTreeSet::new();
+        for krate in ["syntax", "hir", "ty", "lower", "codegen", "project", "sky"] {
+            scan(&crates.join(krate).join("src"), &mut codes);
+        }
+        assert!(
+            codes.contains("E2001"),
+            "the scan found no codes: {codes:?}"
+        );
+        let untitled: Vec<_> = codes.iter().filter(|c| code_title(c) == "ERROR").collect();
+        assert!(
+            untitled.is_empty(),
+            "codes with no header title: {untitled:?}"
+        );
     }
 }
