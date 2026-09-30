@@ -64,6 +64,13 @@ func fetchBlocking(method, url, body string) SkyResult[any, any] {
 		opts.Set("body", body)
 		hdr := global.Get("Object").New()
 		hdr.Set("Content-Type", "application/json")
+		// E-4: every auto-split RPC names the wire schema the page was built
+		// for (spa_wire.go).
+		if strings.HasPrefix(url, "/_rpc/") {
+			if h := spaPageWireHash(); h != "" {
+				hdr.Set(spaWireHeader, h)
+			}
+		}
 		opts.Set("headers", hdr)
 	}
 
@@ -103,6 +110,12 @@ func fetchBlocking(method, url, body string) SkyResult[any, any] {
 		}
 		if s := resp.Get("status"); s.Type() == js.TypeNumber {
 			status = s.Int()
+		}
+		// E-4: the backend runs another wire schema: reload (guarded).
+		if status == 409 && strings.HasPrefix(url, "/_rpc/") {
+			if st := resp.Get("headers").Call("get", "X-Sky-Status"); st.Type() == js.TypeString && st.String() == "reload" {
+				spaWireReload()
+			}
 		}
 		// Response.text() is itself a Promise; chain it.
 		resp.Call("text").Call("then", onText).Call("catch", onTextErr)
