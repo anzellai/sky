@@ -20,12 +20,10 @@ import Sky.Core.Math as Math
 import Sky.Core.String as String
 import Sky.Test as Test exposing (Test)
 
-
 type Color
     = Red
     | Green Int
     | Blue String
-
 
 type Tree
     = Leaf
@@ -51,37 +49,104 @@ floats xs =
 
 tests : List Test
 tests =
-    [ Test.test "a custom type sorts by constructor declaration order, then payload"
-        (\_ ->
-            Test.equal [ Red, Green 1, Green 3, Blue "a", Blue "b" ]
-                (List.sort [ Green 3, Red, Blue "b", Green 1, Blue "a" ])
-        )
-    , Test.test "compare on a custom type"
-        (\_ -> Test.equal [ -1, 0, 1, -1 ] [ compare Red (Green 1), compare (Green 2) (Green 2), compare (Blue "a") (Green 9), compare (Green 1) (Green 2) ])
-    , Test.test "< and > on a custom type agree with compare"
-        (\_ -> Test.equal [ False, True, True ] [ Green 2 < Red, Red < Green 0, Blue "b" > Blue "a" ])
-    , Test.test "max / min on a custom type"
-        (\_ -> Test.equal ( Green 9, Red ) ( max Red (Green 9), Math.min Red (Green 9) ))
-    , Test.test "sortBy a custom-type key"
-        (\_ -> Test.equal [ 2, 1, 3 ] (List.sortBy colorOf [ 3, 1, 2 ]))
-    , Test.test "a recursive custom type orders structurally"
-        (\_ -> Test.equal [ Leaf, Node Leaf 1 Leaf, Node Leaf 2 Leaf, Node (Node Leaf 0 Leaf) 0 Leaf ] (List.sort [ Node Leaf 2 Leaf, Node (Node Leaf 0 Leaf) 0 Leaf, Leaf, Node Leaf 1 Leaf ]))
-    , Test.test "records compare field by field, by field NAME"
-        (\_ -> Test.equal [ 1, -1, 0 ] [ compare { a = 1, b = "z" } { a = 1, b = "y" }, compare { b = 9, a = 2 } { b = 0, a = 3 }, compare { a = 1 } { a = 1 } ])
-    , Test.test "Bool: False < True"
-        (\_ -> Test.equal [ False, True ] (List.sort [ True, False ]))
-    , Test.test "Maybe: Just x < Nothing, then by payload"
-        (\_ -> Test.equal [ Just 1, Just 2, Nothing ] (List.sort [ Nothing, Just 2, Just 1 ]))
-    , Test.test "a Set lists its elements in ascending derived order"
-        (\_ -> Test.equal [ Red, Green 2, Blue "x" ] (Set.toList (Set.fromList [ Blue "x", Red, Green 2, Red ])))
-    , Test.test "a Set of tuples lists ascending"
-        (\_ -> Test.equal [ ( 1, "a" ), ( 1, "b" ), ( 2, "a" ) ] (Set.toList (Set.fromList [ ( 2, "a" ), ( 1, "b" ), ( 1, "a" ) ])))
-    , Test.test "NaN sorts after +Inf; compare is total"
-        (\_ -> Test.equal (floats [ 0.0 - Math.inf, 1.0, Math.inf, Math.nan ]) (floats (List.sort [ Math.nan, Math.inf, 1.0, 0.0 - Math.inf ])))
-    , Test.test "compare nan nan == 0, but nan == nan is False"
-        (\_ -> Test.equal ( 0, False ) ( compare Math.nan Math.nan, Math.nan == Math.nan ))
-    , Test.test "compare nan x is GT for every other float"
-        (\_ -> Test.equal [ 1, 1, -1 ] [ compare Math.nan Math.inf, compare Math.nan (0.0 - Math.inf), compare 5.0 Math.nan ])
+    [ Test.test
+          "a custom type sorts by constructor declaration order, then payload"
+          (\_ ->
+              Test.equal
+                  [ Red, Green 1, Green 3, Blue "a", Blue "b" ]
+                  (List.sort [ Green 3, Red, Blue "b", Green 1, Blue "a" ]))
+    , Test.test
+          "compare on a custom type"
+          (\_ ->
+              Test.equal
+                  [ -1, 0, 1, -1 ]
+                  [ compare Red (Green 1)
+                  , compare (Green 2) (Green 2)
+                  , compare (Blue "a") (Green 9)
+                  , compare (Green 1) (Green 2)
+                  ])
+    , Test.test
+          "< and > on a custom type agree with compare"
+          (\_ ->
+              Test.equal
+                  [ False, True, True ]
+                  [ Green 2 < Red, Red < Green 0, Blue "b" > Blue "a" ])
+    , Test.test
+          "max / min on a custom type"
+          (\_ ->
+              Test.equal
+                  ( Green 9, Red )
+                  ( max Red (Green 9), Math.min Red (Green 9) ))
+    , Test.test
+          "sortBy a custom-type key"
+          (\_ -> Test.equal [ 2, 1, 3 ] (List.sortBy colorOf [ 3, 1, 2 ]))
+    , Test.test
+          "a recursive custom type orders structurally"
+          (\_ ->
+              Test.equal
+                  [ Leaf
+                  , Node Leaf 1 Leaf
+                  , Node Leaf 2 Leaf
+                  , Node (Node Leaf 0 Leaf) 0 Leaf
+                  ]
+                  (List.sort
+                      [ Node Leaf 2 Leaf
+                      , Node (Node Leaf 0 Leaf) 0 Leaf
+                      , Leaf
+                      , Node Leaf 1 Leaf
+                      ]))
+    , Test.test
+          "records compare field by field, by field NAME"
+          (\_ ->
+              Test.equal
+                  [ 1, -1, 0 ]
+                  [ compare { a = 1, b = "z" } { a = 1, b = "y" }
+                  , compare { b = 9, a = 2 } { b = 0, a = 3 }
+                  , compare { a = 1 } { a = 1 }
+                  ])
+    , Test.test
+          "Bool: False < True"
+          (\_ -> Test.equal [ False, True ] (List.sort [ True, False ]))
+    , Test.test
+          "Maybe: Just x < Nothing, then by payload"
+          (\_ ->
+              Test.equal
+                  [ Just 1, Just 2, Nothing ]
+                  (List.sort [ Nothing, Just 2, Just 1 ]))
+    , Test.test
+          "a Set lists its elements in ascending derived order"
+          (\_ ->
+              Test.equal
+                  [ Red, Green 2, Blue "x" ]
+                  (Set.toList (Set.fromList [ Blue "x", Red, Green 2, Red ])))
+    , Test.test
+          "a Set of tuples lists ascending"
+          (\_ ->
+              Test.equal
+                  [ ( 1, "a" ), ( 1, "b" ), ( 2, "a" ) ]
+                  (Set.toList
+                      (Set.fromList [ ( 2, "a" ), ( 1, "b" ), ( 1, "a" ) ])))
+    , Test.test
+          "NaN sorts after +Inf; compare is total"
+          (\_ ->
+              Test.equal
+                  (floats [ 0.0 - Math.inf, 1.0, Math.inf, Math.nan ])
+                  (floats (List.sort [ Math.nan, Math.inf, 1.0, 0.0 - Math.inf ])))
+    , Test.test
+          "compare nan nan == 0, but nan == nan is False"
+          (\_ ->
+              Test.equal
+                  ( 0, False )
+                  ( compare Math.nan Math.nan, Math.nan == Math.nan ))
+    , Test.test
+          "compare nan x is GT for every other float"
+          (\_ ->
+              Test.equal
+                  [ 1, 1, -1 ]
+                  [ compare Math.nan Math.inf
+                  , compare Math.nan (0.0 - Math.inf)
+                  , compare 5.0 Math.nan
+                  ])
     ]
 
 
