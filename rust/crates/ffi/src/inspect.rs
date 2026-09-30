@@ -47,6 +47,11 @@ pub struct Param {
         skip_serializing_if = "String::is_empty"
     )]
     pub sky_type_qualified: String,
+    /// Surface format 3: the Sky type of this slot as the inspector computed
+    /// it from the Go type structure (`tools/sky-ffi-inspect/sky3.go`).
+    /// Empty in a report from an older inspector.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sky3: String,
 }
 
 /// One exported Go function / method / synthetic accessor.

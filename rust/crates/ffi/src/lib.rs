@@ -53,6 +53,8 @@ struct KernelJson {
     #[serde(rename = "kernelName")]
     kernel_name: String,
     package: String,
+    #[serde(rename = "surfaceFormat", default)]
+    surface_format: Option<u32>,
     functions: Vec<KernelJsonFn>,
 }
 
@@ -61,6 +63,9 @@ struct KernelJson {
 pub struct FfiFnInfo {
     pub arity: usize,
     pub sky_type: String,
+    /// The binding comes from a surface older than format 3 and its old
+    /// wrapper cannot be called soundly ([`surface::needs_format3`]).
+    pub needs_format3: bool,
 }
 
 /// One Go package's pinned FFI surface, parsed from `<slug>.kernel.json` and its
@@ -92,6 +97,8 @@ pub struct FfiPackage {
     /// symbol (`Go_Stripe_…SetUnitAmountT`). Non-primitive params still route
     /// through their `FfiT_…_P<i>` slot; this pins the primitives.
     pub wrapper_params: BTreeMap<String, Vec<String>>,
+    /// The surface format the kernel.json is stamped with (1 when unstamped).
+    pub format: u32,
 }
 
 /// The loaded FFI surface, keyed by Sky module path. Every collection is a
@@ -146,13 +153,41 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
         } else {
             (BTreeSet::new(), BTreeSet::new(), BTreeMap::new(), None)
         };
+        let format = kj.surface_format.unwrap_or(1);
+        let results = binding_file
+            .as_deref()
+            .map(scan_wrapper_results)
+            .unwrap_or_default();
+        let mut go_symbols = go_symbols;
+        let mut ffi_slots = ffi_slots;
         let mut functions = BTreeMap::new();
         for f in kj.functions {
+            let stale = surface::binding_needs_format3(
+                format,
+                &kj.kernel_name,
+                &f.name,
+                &go_symbols,
+                &wrapper_params,
+                &results,
+            );
+            if stale {
+                // The old wrapper narrows or converts this binding's values
+                // unsoundly (a `*string` typed `String`, a truncated `uint8`,
+                // an opaque value narrowed outside any recover). It is not
+                // callable until `sky install` regenerates the surface: its
+                // Go symbols are withdrawn, and the lowering names the cause
+                // (`surface::stale_marker`).
+                let base = format!("{}_{}", kj.kernel_name, f.name);
+                go_symbols.remove(&format!("{base}T"));
+                go_symbols.remove(&base);
+                ffi_slots.insert(surface::stale_marker(&kj.module_name, &f.name));
+            }
             functions.insert(
                 f.name,
                 FfiFnInfo {
                     arity: f.arity,
                     sky_type: f.sky_type,
+                    needs_format3: stale,
                 },
             );
         }
@@ -167,10 +202,107 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
                 ffi_slots,
                 wrapper_params,
                 binding_file,
+                format,
             },
         );
     }
     reg
+}
+
+/// Scan a Go wrapper file for each typed wrapper's ok type:
+/// `func Go_…T(…) (out SkyResult[any, T])` → `Go_…T → T`.
+fn scan_wrapper_results(path: &Path) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return out;
+    };
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("func ") else {
+            continue;
+        };
+        let sym: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !sym.starts_with("Go_") {
+            continue;
+        }
+        let Some(i) = rest.find("SkyResult[any, ") else {
+            continue;
+        };
+        let tail = &rest[i + "SkyResult[any, ".len()..];
+        let mut depth = 0i32;
+        let mut end = tail.len();
+        for (j, c) in tail.char_indices() {
+            match c {
+                '[' => depth += 1,
+                ']' if depth == 0 => {
+                    end = j;
+                    break;
+                }
+                ']' => depth -= 1,
+                _ => {}
+            }
+        }
+        out.insert(sym, tail[..end].trim().to_string());
+    }
+    out
+}
+
+/// The format-3 surface rules the build driver and the lowering share.
+pub mod surface {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// A Go type whose value is its Sky value, so an old (format < 3) wrapper
+    /// passes it soundly.
+    fn native(t: &str) -> bool {
+        matches!(t, "string" | "int" | "float64" | "bool" | "struct{}")
+    }
+
+    /// Does a binding of a surface stamped `format` need a regenerated
+    /// (format 3) surface before it can be called?
+    ///
+    /// Never for format 3. For an older surface: yes unless its typed wrapper
+    /// (`<kernel>_<fn>T`) exists and takes and returns only native Go types
+    /// (`string`, `int`, `float64`, `bool`, `struct{}`). Every other old
+    /// wrapper is unsound for some value: it types a `*string` as `String`
+    /// (C-4), a `map[int]V` as `Dict String V` (C-5), truncates a `uint8` or
+    /// wraps a `uint64` (C-7), or narrows an opaque value outside its recover
+    /// (C-6).
+    pub fn binding_needs_format3(
+        format: u32,
+        kernel_name: &str,
+        fn_name: &str,
+        go_symbols: &BTreeSet<String>,
+        wrapper_params: &BTreeMap<String, Vec<String>>,
+        results: &BTreeMap<String, String>,
+    ) -> bool {
+        if format >= crate::gen::SURFACE_FORMAT {
+            return false;
+        }
+        let typed = format!("{kernel_name}_{fn_name}T");
+        if !go_symbols.contains(&typed) {
+            return true;
+        }
+        let params_ok = wrapper_params
+            .get(&typed)
+            .is_some_and(|ps| ps.iter().all(|p| native(p)));
+        let result_ok = results.get(&typed).is_some_and(|r| native(r));
+        !(params_ok && result_ok)
+    }
+
+    /// Does this loaded binding need a regenerated surface? The build driver
+    /// reports these; the lowering refuses a call to one.
+    pub fn needs_format3(pkg: &crate::FfiPackage, fn_name: &str) -> bool {
+        pkg.functions.get(fn_name).is_some_and(|f| f.needs_format3)
+    }
+
+    /// The marker the loader records (in `FfiPackage::ffi_slots`, which the
+    /// lowering already receives) for a binding withdrawn by
+    /// [`needs_format3`]. `module` is the Sky module path of the import.
+    pub fn stale_marker(module: &str, fn_name: &str) -> String {
+        format!("SkyStaleFfiSurface:{module}.{fn_name}")
+    }
 }
 
 /// The surface format a `kernel.json` was generated at ([`gen::SURFACE_FORMAT`]).

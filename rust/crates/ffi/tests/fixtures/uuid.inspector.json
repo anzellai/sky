@@ -7,7 +7,8 @@
       "params": [],
       "results": [
         {
-          "type": "int"
+          "type": "int",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -28,12 +29,14 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.Domain",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -55,18 +58,21 @@
       "params": [
         {
           "name": "b",
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "results": [
         {
           "name": "uuid",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
           "name": "err",
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -78,13 +84,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Variant",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -98,13 +106,16 @@
       "results": [
         {
           "type": "github.com/google/uuid.Time",
-          "skyType": "int64"
+          "skyType": "int64",
+          "sky3": "Int"
         },
         {
-          "type": "uint16"
+          "type": "uint16",
+          "sky3": "Int"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -116,13 +127,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Domain",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -135,13 +148,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Variant",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -154,12 +169,14 @@
       "params": [
         {
           "name": "err",
-          "type": "error"
+          "type": "error",
+          "sky3": "iface:@error"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -171,13 +188,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -186,37 +205,19 @@
       "isPkgVar": true
     },
     {
-      "name": "SetMax",
-      "params": [
-        {
-          "name": "value",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "struct{}"
-        }
-      ],
-      "variadic": false,
-      "effect": "effectful",
-      "exported": true,
-      "methodName": "Max",
-      "isPkgVar": true
-    },
-    {
       "name": "Microsoft",
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Variant",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -230,17 +231,20 @@
         {
           "name": "uuid",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
           "name": "err",
-          "type": "error"
+          "type": "error",
+          "sky3": "iface:@error"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -252,13 +256,15 @@
       "params": [
         {
           "name": "s",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -270,38 +276,20 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
       "effect": "pure",
       "exported": true,
-      "isPkgVar": true
-    },
-    {
-      "name": "SetNameSpaceDNS",
-      "params": [
-        {
-          "name": "value",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "struct{}"
-        }
-      ],
-      "variadic": false,
-      "effect": "effectful",
-      "exported": true,
-      "methodName": "NameSpaceDNS",
       "isPkgVar": true
     },
     {
@@ -309,38 +297,20 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
       "effect": "pure",
       "exported": true,
-      "isPkgVar": true
-    },
-    {
-      "name": "SetNameSpaceOID",
-      "params": [
-        {
-          "name": "value",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "struct{}"
-        }
-      ],
-      "variadic": false,
-      "effect": "effectful",
-      "exported": true,
-      "methodName": "NameSpaceOID",
       "isPkgVar": true
     },
     {
@@ -348,38 +318,20 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
       "effect": "pure",
       "exported": true,
-      "isPkgVar": true
-    },
-    {
-      "name": "SetNameSpaceURL",
-      "params": [
-        {
-          "name": "value",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "struct{}"
-        }
-      ],
-      "variadic": false,
-      "effect": "effectful",
-      "exported": true,
-      "methodName": "NameSpaceURL",
       "isPkgVar": true
     },
     {
@@ -387,38 +339,20 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
       "effect": "pure",
       "exported": true,
-      "isPkgVar": true
-    },
-    {
-      "name": "SetNameSpaceX500",
-      "params": [
-        {
-          "name": "value",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "struct{}"
-        }
-      ],
-      "variadic": false,
-      "effect": "effectful",
-      "exported": true,
-      "methodName": "NameSpaceX500",
       "isPkgVar": true
     },
     {
@@ -427,7 +361,8 @@
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -440,10 +375,12 @@
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -456,10 +393,12 @@
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -472,20 +411,24 @@
         {
           "name": "domain",
           "type": "github.com/google/uuid.Domain",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         },
         {
           "name": "id",
-          "type": "uint32"
+          "type": "uint32",
+          "sky3": "Int"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -498,26 +441,31 @@
         {
           "name": "h",
           "type": "hash.Hash",
-          "skyTypeQualified": "Hash@hash"
+          "skyTypeQualified": "Hash@hash",
+          "sky3": "iface:Hash@hash"
         },
         {
           "name": "space",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
           "name": "data",
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         },
         {
           "name": "version",
-          "type": "int"
+          "type": "int",
+          "sky3": "Int"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -530,17 +478,20 @@
         {
           "name": "space",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
           "name": "data",
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -548,15 +499,39 @@
       "exported": true
     },
     {
+      "name": "NewNullUUID",
+      "params": [
+        {
+          "name": "_",
+          "type": "struct{}",
+          "sky3": "()"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "isPkgVar": true
+    },
+    {
       "name": "NewRandom",
       "params": [],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -569,16 +544,19 @@
         {
           "name": "r",
           "type": "io.Reader",
-          "skyTypeQualified": "Reader@io"
+          "skyTypeQualified": "Reader@io",
+          "sky3": "iface:Reader@io"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -591,17 +569,20 @@
         {
           "name": "space",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
           "name": "data",
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -613,7 +594,8 @@
       "params": [],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -626,10 +608,12 @@
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -642,10 +626,12 @@
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -658,10 +644,12 @@
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -674,16 +662,19 @@
         {
           "name": "r",
           "type": "io.Reader",
-          "skyTypeQualified": "Reader@io"
+          "skyTypeQualified": "Reader@io",
+          "sky3": "iface:Reader@io"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -695,13 +686,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "variadic": false,
@@ -710,31 +703,12 @@
       "isPkgVar": true
     },
     {
-      "name": "SetNil",
-      "params": [
-        {
-          "name": "value",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "struct{}"
-        }
-      ],
-      "variadic": false,
-      "effect": "effectful",
-      "exported": true,
-      "methodName": "Nil",
-      "isPkgVar": true
-    },
-    {
       "name": "NodeID",
       "params": [],
       "results": [
         {
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "variadic": false,
@@ -746,7 +720,8 @@
       "params": [],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -754,68 +729,23 @@
       "exported": true
     },
     {
-      "name": "NullUUIDScan",
-      "params": [
-        {
-          "name": "recv",
-          "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
-        },
-        {
-          "name": "value",
-          "type": "interface{}"
-        }
-      ],
-      "results": [
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "NullUUID",
-      "methodName": "Scan"
-    },
-    {
-      "name": "NullUUIDValue",
-      "params": [
-        {
-          "name": "recv",
-          "type": "github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "NullUUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "database/sql/driver.Value",
-          "skyTypeQualified": "Value@database/sql/driver"
-        },
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "NullUUID",
-      "methodName": "Value"
-    },
-    {
       "name": "NullUUIDMarshalBinary",
       "params": [
         {
           "name": "recv",
           "type": "github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "NullUUID@github.com/google/uuid"
+          "skyTypeQualified": "NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -825,91 +755,23 @@
       "methodName": "MarshalBinary"
     },
     {
-      "name": "NullUUIDUnmarshalBinary",
-      "params": [
-        {
-          "name": "recv",
-          "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
-        },
-        {
-          "name": "data",
-          "type": "[]byte"
-        }
-      ],
-      "results": [
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "NullUUID",
-      "methodName": "UnmarshalBinary"
-    },
-    {
-      "name": "NullUUIDMarshalText",
-      "params": [
-        {
-          "name": "recv",
-          "type": "github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "NullUUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "[]byte"
-        },
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "NullUUID",
-      "methodName": "MarshalText"
-    },
-    {
-      "name": "NullUUIDUnmarshalText",
-      "params": [
-        {
-          "name": "recv",
-          "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
-        },
-        {
-          "name": "data",
-          "type": "[]byte"
-        }
-      ],
-      "results": [
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "NullUUID",
-      "methodName": "UnmarshalText"
-    },
-    {
       "name": "NullUUIDMarshalJSON",
       "params": [
         {
           "name": "recv",
           "type": "github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "NullUUID@github.com/google/uuid"
+          "skyTypeQualified": "NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -919,21 +781,187 @@
       "methodName": "MarshalJSON"
     },
     {
+      "name": "NullUUIDMarshalText",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "[]byte",
+          "sky3": "Bytes"
+        },
+        {
+          "type": "error",
+          "sky3": "@error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "MarshalText"
+    },
+    {
+      "name": "NullUUIDScan",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        },
+        {
+          "name": "value",
+          "type": "interface{}",
+          "sky3": "any"
+        }
+      ],
+      "results": [
+        {
+          "type": "error",
+          "sky3": "@error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "Scan"
+    },
+    {
+      "name": "NullUUIDSetUUID",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UUID",
+      "isFieldSet": true
+    },
+    {
+      "name": "NullUUIDSetValid",
+      "params": [
+        {
+          "name": "value",
+          "type": "bool",
+          "sky3": "Bool"
+        },
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "Valid",
+      "isFieldSet": true
+    },
+    {
+      "name": "NullUUIDUUID",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UUID",
+      "isField": true
+    },
+    {
+      "name": "NullUUIDUnmarshalBinary",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte",
+          "sky3": "Bytes"
+        }
+      ],
+      "results": [
+        {
+          "type": "error",
+          "sky3": "@error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "NullUUID",
+      "methodName": "UnmarshalBinary"
+    },
+    {
       "name": "NullUUIDUnmarshalJSON",
       "params": [
         {
           "name": "recv",
           "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
         },
         {
           "name": "data",
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -943,53 +971,31 @@
       "methodName": "UnmarshalJSON"
     },
     {
-      "name": "NullUUIDUUID",
+      "name": "NullUUIDUnmarshalText",
       "params": [
         {
           "name": "recv",
           "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "variadic": false,
-      "effect": "pure",
-      "exported": true,
-      "recvType": "NullUUID",
-      "methodName": "UUID",
-      "isField": true
-    },
-    {
-      "name": "NullUUIDSetUUID",
-      "params": [
-        {
-          "name": "value",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
         },
         {
-          "name": "recv",
-          "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+          "name": "data",
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "results": [
         {
-          "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
-      "effect": "pure",
+      "effect": "fallible",
       "exported": true,
       "recvType": "NullUUID",
-      "methodName": "UUID",
-      "isFieldSet": true
+      "methodName": "UnmarshalText"
     },
     {
       "name": "NullUUIDValid",
@@ -997,12 +1003,14 @@
         {
           "name": "recv",
           "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+          "skyTypeQualified": "*NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -1013,62 +1021,46 @@
       "isField": true
     },
     {
-      "name": "NullUUIDSetValid",
+      "name": "NullUUIDValue",
       "params": [
-        {
-          "name": "value",
-          "type": "bool"
-        },
         {
           "name": "recv",
-          "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+          "type": "github.com/google/uuid.NullUUID",
+          "skyTypeQualified": "NullUUID@github.com/google/uuid",
+          "sky3": "NullUUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "*github.com/google/uuid.NullUUID",
-          "skyTypeQualified": "*NullUUID@github.com/google/uuid"
+          "type": "database/sql/driver.Value",
+          "skyTypeQualified": "Value@database/sql/driver",
+          "sky3": "Value@database/sql/driver"
+        },
+        {
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
-      "effect": "pure",
+      "effect": "fallible",
       "exported": true,
       "recvType": "NullUUID",
-      "methodName": "Valid",
-      "isFieldSet": true
-    },
-    {
-      "name": "NewNullUUID",
-      "params": [
-        {
-          "name": "_",
-          "type": "struct{}"
-        }
-      ],
-      "results": [
-        {
-          "type": "*github.com/google/uuid.NullUUID"
-        }
-      ],
-      "variadic": false,
-      "effect": "pure",
-      "exported": true,
-      "recvType": "NullUUID",
-      "isPkgVar": true
+      "methodName": "Value"
     },
     {
       "name": "Org",
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Domain",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1081,16 +1073,19 @@
       "params": [
         {
           "name": "s",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -1102,16 +1097,19 @@
       "params": [
         {
           "name": "b",
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -1123,13 +1121,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Domain",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1142,13 +1142,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Variant",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1161,13 +1163,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Variant",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1180,7 +1184,8 @@
       "params": [
         {
           "name": "seq",
-          "type": "int"
+          "type": "int",
+          "sky3": "Int"
         }
       ],
       "results": [],
@@ -1189,16 +1194,150 @@
       "exported": true
     },
     {
-      "name": "SetNodeID",
+      "name": "SetMax",
       "params": [
         {
-          "name": "id",
-          "type": "[]byte"
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "struct{}",
+          "sky3": "()"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "Max",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceDNS",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}",
+          "sky3": "()"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceDNS",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceOID",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}",
+          "sky3": "()"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceOID",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceURL",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}",
+          "sky3": "()"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceURL",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNameSpaceX500",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}",
+          "sky3": "()"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "NameSpaceX500",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNil",
+      "params": [
+        {
+          "name": "value",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "struct{}",
+          "sky3": "()"
+        }
+      ],
+      "variadic": false,
+      "effect": "effectful",
+      "exported": true,
+      "methodName": "Nil",
+      "isPkgVar": true
+    },
+    {
+      "name": "SetNodeID",
+      "params": [
+        {
+          "name": "id",
+          "type": "[]byte",
+          "sky3": "Bytes"
+        }
+      ],
+      "results": [
+        {
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -1210,12 +1349,14 @@
       "params": [
         {
           "name": "name",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -1228,7 +1369,8 @@
         {
           "name": "r",
           "type": "io.Reader",
-          "skyTypeQualified": "Reader@io"
+          "skyTypeQualified": "Reader@io",
+          "sky3": "iface:Reader@io"
         }
       ],
       "results": [],
@@ -1242,17 +1384,20 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.Time",
-          "skyType": "int64"
+          "skyType": "int64",
+          "sky3": "Int"
         }
       ],
       "results": [
         {
           "name": "sec",
-          "type": "int64"
+          "type": "int64",
+          "sky3": "Int"
         },
         {
           "name": "nsec",
-          "type": "int64"
+          "type": "int64",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1262,18 +1407,42 @@
       "methodName": "UnixTime"
     },
     {
+      "name": "UUIDClockSequence",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "int",
+          "sky3": "Int"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "ClockSequence"
+    },
+    {
       "name": "UUIDDomain",
       "params": [
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Domain",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1288,12 +1457,14 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "uint32"
+          "type": "uint32",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1303,67 +1474,23 @@
       "methodName": "ID"
     },
     {
-      "name": "UUIDMarshalText",
-      "params": [
-        {
-          "name": "recv",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "[]byte"
-        },
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "UUID",
-      "methodName": "MarshalText"
-    },
-    {
-      "name": "UUIDUnmarshalText",
-      "params": [
-        {
-          "name": "recv",
-          "type": "*github.com/google/uuid.UUID",
-          "skyTypeQualified": "*UUID@github.com/google/uuid"
-        },
-        {
-          "name": "data",
-          "type": "[]byte"
-        }
-      ],
-      "results": [
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "UUID",
-      "methodName": "UnmarshalText"
-    },
-    {
       "name": "UUIDMarshalBinary",
       "params": [
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -1373,28 +1500,30 @@
       "methodName": "MarshalBinary"
     },
     {
-      "name": "UUIDUnmarshalBinary",
+      "name": "UUIDMarshalText",
       "params": [
         {
           "name": "recv",
-          "type": "*github.com/google/uuid.UUID",
-          "skyTypeQualified": "*UUID@github.com/google/uuid"
-        },
-        {
-          "name": "data",
-          "type": "[]byte"
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "[]byte",
+          "sky3": "Bytes"
+        },
+        {
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
       "effect": "fallible",
       "exported": true,
       "recvType": "UUID",
-      "methodName": "UnmarshalBinary"
+      "methodName": "MarshalText"
     },
     {
       "name": "UUIDNodeID",
@@ -1402,12 +1531,14 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "[]byte"
+          "type": "[]byte",
+          "sky3": "Bytes"
         }
       ],
       "variadic": false,
@@ -1422,16 +1553,19 @@
         {
           "name": "recv",
           "type": "*github.com/google/uuid.UUID",
-          "skyTypeQualified": "*UUID@github.com/google/uuid"
+          "skyTypeQualified": "*UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         },
         {
           "name": "src",
-          "type": "interface{}"
+          "type": "interface{}",
+          "sky3": "any"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -1441,82 +1575,19 @@
       "methodName": "Scan"
     },
     {
-      "name": "UUIDValue",
-      "params": [
-        {
-          "name": "recv",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "database/sql/driver.Value",
-          "skyTypeQualified": "Value@database/sql/driver"
-        },
-        {
-          "type": "error"
-        }
-      ],
-      "variadic": false,
-      "effect": "fallible",
-      "exported": true,
-      "recvType": "UUID",
-      "methodName": "Value"
-    },
-    {
-      "name": "UUIDTime",
-      "params": [
-        {
-          "name": "recv",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "github.com/google/uuid.Time",
-          "skyType": "int64"
-        }
-      ],
-      "variadic": false,
-      "effect": "pure",
-      "exported": true,
-      "recvType": "UUID",
-      "methodName": "Time"
-    },
-    {
-      "name": "UUIDClockSequence",
-      "params": [
-        {
-          "name": "recv",
-          "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
-        }
-      ],
-      "results": [
-        {
-          "type": "int"
-        }
-      ],
-      "variadic": false,
-      "effect": "pure",
-      "exported": true,
-      "recvType": "UUID",
-      "methodName": "ClockSequence"
-    },
-    {
       "name": "UUIDString",
       "params": [
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -1526,17 +1597,42 @@
       "methodName": "String"
     },
     {
+      "name": "UUIDTime",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "github.com/google/uuid.Time",
+          "skyType": "int64",
+          "sky3": "Int"
+        }
+      ],
+      "variadic": false,
+      "effect": "pure",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Time"
+    },
+    {
       "name": "UUIDURN",
       "params": [
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -1546,18 +1642,101 @@
       "methodName": "URN"
     },
     {
+      "name": "UUIDUnmarshalBinary",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.UUID",
+          "skyTypeQualified": "*UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte",
+          "sky3": "Bytes"
+        }
+      ],
+      "results": [
+        {
+          "type": "error",
+          "sky3": "@error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "UnmarshalBinary"
+    },
+    {
+      "name": "UUIDUnmarshalText",
+      "params": [
+        {
+          "name": "recv",
+          "type": "*github.com/google/uuid.UUID",
+          "skyTypeQualified": "*UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        },
+        {
+          "name": "data",
+          "type": "[]byte",
+          "sky3": "Bytes"
+        }
+      ],
+      "results": [
+        {
+          "type": "error",
+          "sky3": "@error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "UnmarshalText"
+    },
+    {
+      "name": "UUIDValue",
+      "params": [
+        {
+          "name": "recv",
+          "type": "github.com/google/uuid.UUID",
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
+        }
+      ],
+      "results": [
+        {
+          "type": "database/sql/driver.Value",
+          "skyTypeQualified": "Value@database/sql/driver",
+          "sky3": "Value@database/sql/driver"
+        },
+        {
+          "type": "error",
+          "sky3": "@error"
+        }
+      ],
+      "variadic": false,
+      "effect": "fallible",
+      "exported": true,
+      "recvType": "UUID",
+      "methodName": "Value"
+    },
+    {
       "name": "UUIDVariant",
       "params": [
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Variant",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1572,13 +1751,15 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUID",
-          "skyTypeQualified": "UUID@github.com/google/uuid"
+          "skyTypeQualified": "UUID@github.com/google/uuid",
+          "sky3": "UUID@github.com/google/uuid"
         }
       ],
       "results": [
         {
           "type": "github.com/google/uuid.Version",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "variadic": false,
@@ -1593,12 +1774,14 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.UUIDs",
-          "skyTypeQualified": "UUIDs@github.com/google/uuid"
+          "skyTypeQualified": "UUIDs@github.com/google/uuid",
+          "sky3": "UUIDs@github.com/google/uuid"
         }
       ],
       "results": [
         {
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "variadic": false,
@@ -1612,12 +1795,14 @@
       "params": [
         {
           "name": "s",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -1630,12 +1815,14 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.Variant",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -1650,12 +1837,14 @@
         {
           "name": "recv",
           "type": "github.com/google/uuid.Version",
-          "skyType": "byte"
+          "skyType": "byte",
+          "sky3": "Int"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -1667,73 +1856,73 @@
   ],
   "implements": {
     "Domain@github.com/google/uuid": [
-      "Token@encoding/json",
-      "Ordered@cmp",
       "DecrypterOpts@crypto",
+      "Ordered@cmp",
       "PrivateKey@crypto",
       "PublicKey@crypto",
-      "Value@database/sql/driver",
-      "Stringer@fmt"
+      "Stringer@fmt",
+      "Token@encoding/json",
+      "Value@database/sql/driver"
     ],
     "NullUUID@github.com/google/uuid": [
-      "Marshaler@encoding/json",
-      "Token@encoding/json",
-      "Unmarshaler@encoding/json",
-      "DecrypterOpts@crypto",
-      "PrivateKey@crypto",
-      "PublicKey@crypto",
-      "Value@database/sql/driver",
-      "Valuer@database/sql/driver",
       "BinaryMarshaler@encoding",
       "BinaryUnmarshaler@encoding",
-      "TextMarshaler@encoding",
-      "TextUnmarshaler@encoding"
-    ],
-    "Time@github.com/google/uuid": [
-      "Token@encoding/json",
-      "Ordered@cmp",
       "DecrypterOpts@crypto",
+      "Marshaler@encoding/json",
       "PrivateKey@crypto",
       "PublicKey@crypto",
+      "TextMarshaler@encoding",
+      "TextUnmarshaler@encoding",
+      "Token@encoding/json",
+      "Unmarshaler@encoding/json",
+      "Value@database/sql/driver",
+      "Valuer@database/sql/driver"
+    ],
+    "Time@github.com/google/uuid": [
+      "DecrypterOpts@crypto",
+      "Ordered@cmp",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Token@encoding/json",
       "Value@database/sql/driver"
     ],
     "UUID@github.com/google/uuid": [
-      "Token@encoding/json",
-      "DecrypterOpts@crypto",
-      "PrivateKey@crypto",
-      "PublicKey@crypto",
-      "Value@database/sql/driver",
-      "Valuer@database/sql/driver",
-      "Stringer@fmt",
       "BinaryMarshaler@encoding",
       "BinaryUnmarshaler@encoding",
-      "TextMarshaler@encoding",
-      "TextUnmarshaler@encoding"
-    ],
-    "UUIDs@github.com/google/uuid": [
-      "Token@encoding/json",
       "DecrypterOpts@crypto",
       "PrivateKey@crypto",
       "PublicKey@crypto",
+      "Stringer@fmt",
+      "TextMarshaler@encoding",
+      "TextUnmarshaler@encoding",
+      "Token@encoding/json",
+      "Value@database/sql/driver",
+      "Valuer@database/sql/driver"
+    ],
+    "UUIDs@github.com/google/uuid": [
+      "DecrypterOpts@crypto",
+      "PrivateKey@crypto",
+      "PublicKey@crypto",
+      "Token@encoding/json",
       "Value@database/sql/driver"
     ],
     "Variant@github.com/google/uuid": [
-      "Token@encoding/json",
-      "Ordered@cmp",
       "DecrypterOpts@crypto",
+      "Ordered@cmp",
       "PrivateKey@crypto",
       "PublicKey@crypto",
-      "Value@database/sql/driver",
-      "Stringer@fmt"
+      "Stringer@fmt",
+      "Token@encoding/json",
+      "Value@database/sql/driver"
     ],
     "Version@github.com/google/uuid": [
-      "Token@encoding/json",
-      "Ordered@cmp",
       "DecrypterOpts@crypto",
+      "Ordered@cmp",
       "PrivateKey@crypto",
       "PublicKey@crypto",
-      "Value@database/sql/driver",
-      "Stringer@fmt"
+      "Stringer@fmt",
+      "Token@encoding/json",
+      "Value@database/sql/driver"
     ]
   },
   "pkgAlias": {
@@ -1756,5 +1945,5 @@
     "sync": "sync",
     "time": "time"
   },
-  "errors": null
+  "errors": []
 }

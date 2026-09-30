@@ -8,13 +8,15 @@
         {
           "name": "r",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "github.com/gorilla/mux.MiddlewareFunc",
-          "skyTypeQualified": "MiddlewareFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "MiddlewareFunc@github.com/gorilla/mux",
+          "sky3": "MiddlewareFunc@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -27,13 +29,15 @@
         {
           "name": "r",
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -45,12 +49,14 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -63,12 +69,14 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -82,22 +90,26 @@
         {
           "name": "recv",
           "type": "github.com/gorilla/mux.MatcherFunc",
-          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux",
+          "sky3": "(Request@net/http -> RouteMatch@github.com/gorilla/mux -> Bool)"
         },
         {
           "name": "r",
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         },
         {
           "name": "match",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -112,18 +124,21 @@
         {
           "name": "recv",
           "type": "github.com/gorilla/mux.MiddlewareFunc",
-          "skyTypeQualified": "MiddlewareFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "MiddlewareFunc@github.com/gorilla/mux",
+          "sky3": "(Handler@net/http -> iface:Handler@net/http)"
         },
         {
           "name": "handler",
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "iface:Handler@net/http"
         }
       ],
       "results": [
         {
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "Handler@net/http"
         }
       ],
       "variadic": false,
@@ -137,12 +152,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
-          "type": "*github.com/gorilla/mux.Route"
+          "type": "*github.com/gorilla/mux.Route",
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -156,12 +174,15 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
-          "type": "*github.com/gorilla/mux.RouteMatch"
+          "type": "*github.com/gorilla/mux.RouteMatch",
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -176,7 +197,8 @@
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -189,13 +211,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -210,18 +234,21 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "f",
           "type": "github.com/gorilla/mux.BuildVarsFunc",
-          "skyTypeQualified": "BuildVarsFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "BuildVarsFunc@github.com/gorilla/mux",
+          "sky3": "((Dict String String) -> Dict String String)"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -236,12 +263,14 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -256,13 +285,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "Handler@net/http"
         }
       ],
       "variadic": false,
@@ -277,15 +308,18 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -300,15 +334,18 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -323,12 +360,14 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "variadic": false,
@@ -343,15 +382,18 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -366,15 +408,18 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -389,15 +434,18 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -412,15 +460,18 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -435,15 +486,18 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -458,18 +512,21 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "handler",
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "iface:Handler@net/http"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -484,17 +541,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "f",
-          "type": "func(net/http.ResponseWriter, *net/http.Request)"
+          "type": "func(net/http.ResponseWriter, *net/http.Request)",
+          "sky3": "(ResponseWriter@net/http -> Request@net/http -> ())"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -509,17 +569,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -534,17 +597,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -559,17 +625,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "tpl",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -584,22 +653,26 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "req",
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         },
         {
           "name": "match",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -614,13 +687,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "Handler@net/http"
         }
       ],
       "variadic": false,
@@ -636,12 +711,14 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -657,13 +734,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -679,18 +758,21 @@
         {
           "name": "value",
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "iface:Handler@net/http"
         },
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -705,18 +787,21 @@
       "params": [
         {
           "name": "value",
-          "type": "error"
+          "type": "error",
+          "sky3": "iface:@error"
         },
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -732,18 +817,21 @@
         {
           "name": "value",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -758,18 +846,21 @@
       "params": [
         {
           "name": "value",
-          "type": "map[string]string"
+          "type": "map[string]string",
+          "sky3": "Dict String String"
         },
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -785,12 +876,14 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "map[string]string"
+          "type": "map[string]string",
+          "sky3": "Dict String String"
         }
       ],
       "variadic": false,
@@ -806,18 +899,21 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "f",
           "type": "github.com/gorilla/mux.MatcherFunc",
-          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux",
+          "sky3": "(Request@net/http -> RouteMatch@github.com/gorilla/mux -> Bool)"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -832,17 +928,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "methods",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -857,17 +956,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "name",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -882,17 +984,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "tpl",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -907,17 +1012,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "tpl",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -932,17 +1040,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -957,17 +1068,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "schemes",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -982,12 +1096,14 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -1002,13 +1118,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1023,20 +1141,24 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*net/url.URL",
-          "skyTypeQualified": "*URL@net/url"
+          "skyTypeQualified": "*URL@net/url",
+          "sky3": "URL@net/url"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": true,
@@ -1051,20 +1173,24 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*net/url.URL",
-          "skyTypeQualified": "*URL@net/url"
+          "skyTypeQualified": "*URL@net/url",
+          "sky3": "URL@net/url"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": true,
@@ -1079,20 +1205,24 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*net/url.URL",
-          "skyTypeQualified": "*URL@net/url"
+          "skyTypeQualified": "*URL@net/url",
+          "sky3": "URL@net/url"
         },
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": true,
@@ -1107,18 +1237,21 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "f",
           "type": "github.com/gorilla/mux.BuildVarsFunc",
-          "skyTypeQualified": "BuildVarsFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "BuildVarsFunc@github.com/gorilla/mux",
+          "sky3": "((Dict String String) -> Dict String String)"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1133,17 +1266,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "name",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1158,17 +1294,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "name",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1183,22 +1322,26 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "path",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         },
         {
           "name": "handler",
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "iface:Handler@net/http"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1213,21 +1356,25 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "path",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         },
         {
           "name": "f",
-          "type": "func(net/http.ResponseWriter, *net/http.Request)"
+          "type": "func(net/http.ResponseWriter, *net/http.Request)",
+          "sky3": "(ResponseWriter@net/http -> Request@net/http -> ())"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1242,17 +1389,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -1267,17 +1417,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "tpl",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1292,12 +1445,14 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -1313,22 +1468,26 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "req",
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         },
         {
           "name": "match",
           "type": "*github.com/gorilla/mux.RouteMatch",
-          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux"
+          "skyTypeQualified": "*RouteMatch@github.com/gorilla/mux",
+          "sky3": "RouteMatch@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "variadic": false,
@@ -1343,18 +1502,21 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "f",
           "type": "github.com/gorilla/mux.MatcherFunc",
-          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "MatcherFunc@github.com/gorilla/mux",
+          "sky3": "(Request@net/http -> RouteMatch@github.com/gorilla/mux -> Bool)"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1369,13 +1531,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "Handler@net/http"
         }
       ],
       "variadic": false,
@@ -1391,17 +1555,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "methods",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -1416,17 +1583,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "name",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1441,13 +1611,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1462,13 +1634,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "Handler@net/http"
         }
       ],
       "variadic": false,
@@ -1484,17 +1658,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "tpl",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1509,17 +1686,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "tpl",
-          "type": "string"
+          "type": "string",
+          "sky3": "String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1534,17 +1714,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "pairs",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -1559,17 +1742,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "schemes",
-          "type": "[]string"
+          "type": "[]string",
+          "sky3": "List String"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Route",
-          "skyTypeQualified": "*Route@github.com/gorilla/mux"
+          "skyTypeQualified": "*Route@github.com/gorilla/mux",
+          "sky3": "Route@github.com/gorilla/mux"
         }
       ],
       "variadic": true,
@@ -1584,17 +1770,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "w",
           "type": "net/http.ResponseWriter",
-          "skyTypeQualified": "ResponseWriter@net/http"
+          "skyTypeQualified": "ResponseWriter@net/http",
+          "sky3": "iface:ResponseWriter@net/http"
         },
         {
           "name": "req",
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         }
       ],
       "results": [],
@@ -1609,18 +1798,21 @@
       "params": [
         {
           "name": "value",
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         },
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1636,18 +1828,21 @@
         {
           "name": "value",
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "iface:Handler@net/http"
         },
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1663,18 +1858,21 @@
         {
           "name": "value",
           "type": "net/http.Handler",
-          "skyTypeQualified": "Handler@net/http"
+          "skyTypeQualified": "Handler@net/http",
+          "sky3": "iface:Handler@net/http"
         },
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1690,17 +1888,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "value",
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1715,17 +1916,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "value",
-          "type": "bool"
+          "type": "bool",
+          "sky3": "Bool"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1740,12 +1944,14 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "mwf",
           "type": "[]github.com/gorilla/mux.MiddlewareFunc",
-          "skyTypeQualified": "[]MiddlewareFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "[]MiddlewareFunc@github.com/gorilla/mux",
+          "sky3": "List MiddlewareFunc@github.com/gorilla/mux"
         }
       ],
       "results": [],
@@ -1761,13 +1967,15 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "results": [
         {
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         }
       ],
       "variadic": false,
@@ -1782,17 +1990,20 @@
         {
           "name": "recv",
           "type": "*github.com/gorilla/mux.Router",
-          "skyTypeQualified": "*Router@github.com/gorilla/mux"
+          "skyTypeQualified": "*Router@github.com/gorilla/mux",
+          "sky3": "Router@github.com/gorilla/mux"
         },
         {
           "name": "walkFn",
           "type": "github.com/gorilla/mux.WalkFunc",
-          "skyTypeQualified": "WalkFunc@github.com/gorilla/mux"
+          "skyTypeQualified": "WalkFunc@github.com/gorilla/mux",
+          "sky3": "(Route@github.com/gorilla/mux -> Router@github.com/gorilla/mux -> (List Route@github.com/gorilla/mux) -> Result Error ())"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -1806,12 +2017,14 @@
       "params": [
         {
           "name": "value",
-          "type": "error"
+          "type": "error",
+          "sky3": "iface:@error"
         }
       ],
       "results": [
         {
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "variadic": false,
@@ -1825,12 +2038,14 @@
       "params": [
         {
           "name": "value",
-          "type": "error"
+          "type": "error",
+          "sky3": "iface:@error"
         }
       ],
       "results": [
         {
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "variadic": false,
@@ -1844,12 +2059,14 @@
       "params": [
         {
           "name": "value",
-          "type": "error"
+          "type": "error",
+          "sky3": "iface:@error"
         }
       ],
       "results": [
         {
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "variadic": false,
@@ -1864,17 +2081,20 @@
         {
           "name": "r",
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         },
         {
           "name": "val",
-          "type": "map[string]string"
+          "type": "map[string]string",
+          "sky3": "Dict String String"
         }
       ],
       "results": [
         {
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         }
       ],
       "variadic": false,
@@ -1886,12 +2106,14 @@
       "params": [
         {
           "name": "_",
-          "type": "struct{}"
+          "type": "struct{}",
+          "sky3": "()"
         }
       ],
       "results": [
         {
-          "type": "error"
+          "type": "error",
+          "sky3": "@error"
         }
       ],
       "variadic": false,
@@ -1905,12 +2127,14 @@
         {
           "name": "r",
           "type": "*net/http.Request",
-          "skyTypeQualified": "*Request@net/http"
+          "skyTypeQualified": "*Request@net/http",
+          "sky3": "Request@net/http"
         }
       ],
       "results": [
         {
-          "type": "map[string]string"
+          "type": "map[string]string",
+          "sky3": "Dict String String"
         }
       ],
       "variadic": false,
@@ -1969,5 +2193,5 @@
     "strconv": "strconv",
     "strings": "strings"
   },
-  "errors": null
+  "errors": []
 }

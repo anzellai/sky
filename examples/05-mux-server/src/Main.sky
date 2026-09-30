@@ -37,7 +37,7 @@ setupRoutes router =
         router
 
 
-startServer : Value -> Result Error ()
+startServer : Mux.Router -> Result Error ()
 startServer router =
     let
         _ = println "Server starting on port 8000"

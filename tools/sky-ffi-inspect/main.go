@@ -84,6 +84,12 @@ type Param struct {
 	// additive change; C17b extends the parser to consume it.
 	// When the type isn't an opaque named struct, this is empty
 	// and consumers fall back to SkyType.
+	// Sky3 — surface format 3: the Sky type of this slot, computed from the
+	// go/types structure (sky3Of). Opaque Go types are `Name@importPath`
+	// (or `@kind` for an unnamed one), a non-empty interface a parameter
+	// receives is `iface:Name@importPath`, an empty one `any`. The Rust
+	// generator maps these to the checker's nominal keys.
+	Sky3             string     `json:"sky3,omitempty"`
 	SkyTypeQualified string     `json:"skyTypeQualified,omitempty"`
 	GoType           types.Type `json:"-"` // unexported; used for interface-implements checks
 }
@@ -488,8 +494,8 @@ func walkPackage(requestedPath string, pkg *packages.Package) PackageInfo {
 		if v, ok := obj.(*types.Var); ok && v.Exported() {
 			info.Functions = append(info.Functions, Function{
 				Name:     v.Name(),
-				Params:   []Param{{Name: "_", Type: "struct{}"}},
-				Results:  []Param{paramFor(v.Type())},
+				Params:   []Param{{Name: "_", Type: "struct{}", Sky3: "()"}},
+				Results:  []Param{resultFor(v.Type())},
 				Effect:   "pure",
 				Exported: true,
 				IsPkgVar: true,
@@ -497,7 +503,7 @@ func walkPackage(requestedPath string, pkg *packages.Package) PackageInfo {
 			info.Functions = append(info.Functions, Function{
 				Name:       "Set" + v.Name(),
 				Params:     []Param{paramForNamed("value", v.Type())},
-				Results:    []Param{{Type: "struct{}"}},
+				Results:    []Param{{Type: "struct{}", Sky3: "()"}},
 				Effect:     "effectful",
 				Exported:   true,
 				IsPkgVar:   true,
@@ -509,8 +515,8 @@ func walkPackage(requestedPath string, pkg *packages.Package) PackageInfo {
 		if c, ok := obj.(*types.Const); ok && c.Exported() {
 			info.Functions = append(info.Functions, Function{
 				Name:     c.Name(),
-				Params:   []Param{{Name: "_", Type: "struct{}"}},
-				Results:  []Param{paramFor(c.Type())},
+				Params:   []Param{{Name: "_", Type: "struct{}", Sky3: "()"}},
+				Results:  []Param{resultFor(c.Type())},
 				Effect:   "pure",
 				Exported: true,
 				IsPkgVar: true,
@@ -657,7 +663,7 @@ func resultsOf(sig *types.Signature) []Param {
 	out := make([]Param, 0, sig.Results().Len())
 	for i := 0; i < sig.Results().Len(); i++ {
 		r := sig.Results().At(i)
-		out = append(out, withGoType(paramForNamed(r.Name(), r.Type()), r.Type()))
+		out = append(out, withGoType(resultForNamed(r.Name(), r.Type()), r.Type()))
 	}
 	return out
 }
@@ -671,9 +677,9 @@ func paramFor(t types.Type) Param {
 	st := skyTypeOf(t)
 	sq := skyTypeQualifiedOf(t)
 	if st == gt {
-		return Param{Type: gt, SkyTypeQualified: sq}
+		return Param{Type: gt, SkyTypeQualified: sq, Sky3: sky3Of(t, dirIn, true)}
 	}
-	return Param{Type: gt, SkyType: st, SkyTypeQualified: sq}
+	return Param{Type: gt, SkyType: st, SkyTypeQualified: sq, Sky3: sky3Of(t, dirIn, true)}
 }
 
 // skyTypeQualifiedOf — v0.17 C17a — emits a fully-qualified opaque
@@ -855,8 +861,8 @@ func addZeroConstructor(info *PackageInfo, typeName string, named *types.Named) 
 	}
 	info.Functions = append(info.Functions, Function{
 		Name:     name,
-		Params:   []Param{{Name: "_", Type: "struct{}"}},
-		Results:  []Param{{Type: types.NewPointer(named.Obj().Type()).String()}},
+		Params:   []Param{{Name: "_", Type: "struct{}", Sky3: "()"}},
+		Results:  []Param{resultFor(types.NewPointer(named.Obj().Type()))},
 		Effect:   "pure",
 		Exported: true,
 		RecvType: typeName,
@@ -888,7 +894,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 			info.Functions = append(info.Functions, Function{
 				Name:       getterName,
 				Params:     []Param{paramForReceiver(recvTypeT)},
-				Results:    []Param{paramFor(f.Type())},
+				Results:    []Param{resultFor(f.Type())},
 				Effect:     "pure",
 				Exported:   true,
 				RecvType:   typeName,
@@ -906,7 +912,7 @@ func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named 
 					paramForNamed("value", f.Type()),
 					paramForReceiver(recvTypeT),
 				},
-				Results:    []Param{paramFor(recvTypeT)},
+				Results:    []Param{resultFor(recvTypeT)},
 				Effect:     "pure",
 				Exported:   true,
 				RecvType:   typeName,
@@ -973,7 +979,7 @@ func describe(fn *types.Func, sig *types.Signature) Function {
 	results := []Param{}
 	for i := 0; i < sig.Results().Len(); i++ {
 		r := sig.Results().At(i)
-		results = append(results, paramForNamed(r.Name(), r.Type()))
+		results = append(results, resultForNamed(r.Name(), r.Type()))
 	}
 	return Function{
 		Name:     fn.Name(),

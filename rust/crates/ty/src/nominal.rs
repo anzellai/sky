@@ -145,6 +145,12 @@ pub fn same(a: &str, b: &str) -> bool {
 /// a diagnostic reads better — and stays byte-identical to every pre-existing
 /// snapshot and oracle message — as the bare name.
 pub fn strip(name: &str) -> &str {
+    // A Go FFI type prints with its package path (`Example.Com.Gopk.Thing`,
+    // `Go.GoFunc`): its bare name alone (`Thing`) reads like a Sky type, and
+    // the v0.27.0 migration hint keys on the path to recognise it.
+    if let Some(rest) = name.strip_prefix(GO_TYPE_PREFIX) {
+        return rest;
+    }
     base(name)
 }
 

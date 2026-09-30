@@ -5,7 +5,8 @@
 //!
 //! Consumes an [`inspect::PackageInfo`] and produces the `package rt` Go source
 //! that surfaces each Go function as a typed `Go_<Kernel>_<fn>T` wrapper
-//! returning `SkyResult[any, T]` with `SkyFfiRecoverT` panic capture.
+//! returning `SkyResult[any, T]` under the `SkyFfiGuardT` recover, converting
+//! every non-native value with `FfiArg` / `FfiRet` (surface format 3).
 //!
 //! This is a faithful, byte-for-byte port: the committed golden file
 //! `tests/fixtures/uuid.expected_bindings.go` is the spec and the test at the
@@ -402,42 +403,50 @@ fn scan_path_rewrite(chars: &[char], start: usize) -> Option<(String, String, us
 // Argument coercion (FfiGen.hs:1371) — typed `arg` params.
 // ---------------------------------------------------------------------------
 
-/// `typedArgCast` (FfiGen.hs:1371).
-fn typed_arg_cast(i: usize, t: &str) -> String {
-    let p = format!("arg{i}");
-    match t {
-        "string" => format!("fmt.Sprintf(\"%v\", {p})"),
-        "int" => format!("AsInt({p})"),
-        "int8" => format!("int8(AsInt({p}))"),
-        "int16" => format!("int16(AsInt({p}))"),
-        "int32" => format!("int32(AsInt({p}))"),
-        "int64" => format!("int64(AsInt({p}))"),
-        "uint" => format!("uint(AsInt({p}))"),
-        "uint8" => format!("uint8(AsInt({p}))"),
-        "uint16" => format!("uint16(AsInt({p}))"),
-        "uint32" => format!("uint32(AsInt({p}))"),
-        "uint64" => format!("uint64(AsInt({p}))"),
-        "float64" => format!("AsFloat({p})"),
-        "float32" => format!("float32(AsFloat({p}))"),
-        "bool" => format!("AsBool({p})"),
-        "byte" => format!("byte(AsInt({p}))"),
-        "rune" => format!("rune(AsInt({p}))"),
-        "[]byte" => format!("SkyFfiArg_bytes({p})"),
-        "error" => format!("{p}.(error)"),
-        _ => format!("{p}.({t})"),
+/// A Go type whose value IS its Sky value: passed and returned raw, with no
+/// conversion. Every other type is taken as `any` and converted by
+/// `rt.FfiArg` / returned through `rt.FfiRet` (`runtime-go/rt/ffi_convert.go`),
+/// inside the wrapper's guard, so a value that cannot be converted is an
+/// `Err`, never a crash or a wrong value (surface format 3).
+fn is_native(t: &str) -> bool {
+    matches!(t, "string" | "int" | "float64" | "bool" | "struct{}")
+}
+
+/// The expression that converts wrapper argument `p` (declared `any` unless
+/// its type is native) to the Go type `t`.
+fn arg_conv(p: &str, t: &str) -> String {
+    if is_native(t) {
+        p.to_string()
+    } else {
+        format!("FfiArg[{t}]({p})")
     }
 }
 
-/// `packResults` (FfiGen.hs:1396).
-fn pack_results(vs: &[String]) -> String {
-    match vs {
-        [] => "struct{}{}".to_string(),
-        [v] => v.clone(),
-        _ => format!("[]any{{{}}}", join(", ", vs)),
+/// The Sky value of a Go result `v` of type `t`.
+fn ret_conv(v: &str, t: &str) -> String {
+    if is_native(t) {
+        v.to_string()
+    } else {
+        format!("FfiRet({v})")
+    }
+}
+
+/// `typedArgCast` (FfiGen.hs:1371): the untyped wrapper's argument
+/// conversion. Format 3: always the checked `FfiArg` (the old casts
+/// truncated integers and stringified anything with `%v`).
+fn typed_arg_cast(i: usize, t: &str) -> String {
+    let p = format!("arg{i}");
+    match t {
+        "error" => format!("{p}.(error)"),
+        _ => format!("FfiArg[{t}]({p})"),
     }
 }
 
 /// `emitTypedCall` (FfiGen.hs:1320) — body of the any/any DirectCall wrapper.
+/// Format 3: every argument goes through `FfiArg` and every result through
+/// `FfiRet`, packed in the shapes the surface renders
+/// (`gen::wrapper_sky_type`): comma-ok is a Maybe, two or three values a
+/// tuple.
 fn emit_typed_call(
     fn_: &Function,
     params: &[(String, String)],
@@ -450,7 +459,12 @@ fn emit_typed_call(
         .iter()
         .enumerate()
         .map(|(i, (_, t))| {
-            let cast = typed_arg_cast(i, t);
+            let t = if fn_.variadic && i == n_params - 1 && !t.starts_with("[]") {
+                format!("[]{t}")
+            } else {
+                t.clone()
+            };
+            let cast = typed_arg_cast(i, &t);
             if fn_.variadic && i == n_params - 1 {
                 format!("{cast}...")
             } else {
@@ -468,71 +482,43 @@ fn emit_typed_call(
         let method_args: Vec<String> = arg_exprs.iter().skip(1).cloned().collect();
         format!("{recv_cast}.{method_n}({})", join(", ", &method_args))
     };
-    match results {
-        [] => format!("\t{call}\n\tout = Ok[any, any](struct{{}}{{}})"),
-        [(_, t)] => {
-            if t == "error" {
-                unlines(&[
-                    format!("\terr := {call}"),
-                    "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }"
-                        .to_string(),
-                    "\tout = Ok[any, any](struct{}{})".to_string(),
-                ])
-            } else {
-                format!("\tout = Ok[any, any]({call})")
-            }
-        }
-        _ => {
-            let last_ty = &results[results.len() - 1].1;
-            let others = &results[..results.len() - 1];
-            let bind_vars: Vec<String> = (0..others.len()).map(|i| format!("r{i}")).collect();
-            let mut all_vars = bind_vars.clone();
-            if last_ty == "error" {
-                all_vars.push("err".to_string());
-            } else {
-                all_vars.push(format!("r{}", bind_vars.len()));
-            }
-            let assign_line = format!("\t{} := {call}", join(", ", &all_vars));
-            if last_ty == "error" {
-                unlines(&[
-                    assign_line,
-                    "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }"
-                        .to_string(),
-                    format!("\tout = Ok[any, any]({})", pack_results(&bind_vars)),
-                ])
-            } else {
-                unlines(&[
-                    assign_line,
-                    format!("\tout = Ok[any, any]([]any{{{}}})", join(", ", &all_vars)),
-                ])
-            }
-        }
+    let tys: Vec<&str> = results.iter().map(|(_, t)| t.as_str()).collect();
+    let has_err = tys.last() == Some(&"error");
+    let vals: Vec<String> = (0..tys.len() - usize::from(has_err))
+        .map(|i| format!("r{i}"))
+        .collect();
+    let mut lhs = vals.clone();
+    if has_err {
+        lhs.push("err".to_string());
     }
+    let mut lines: Vec<String> = Vec::new();
+    if lhs.is_empty() {
+        lines.push(format!("\t{call}"));
+    } else {
+        lines.push(format!("\t{} := {call}", join(", ", &lhs)));
+    }
+    if has_err {
+        lines.push(
+            "\tif err != nil { out = Err[any, any](ErrFfi(err.Error())); return }".to_string(),
+        );
+    }
+    let conv: Vec<String> = vals.iter().map(|v| format!("FfiRet({v})")).collect();
+    let value = match (vals.len(), has_err) {
+        (0, _) => "struct{}{}".to_string(),
+        (1, _) => conv[0].clone(),
+        (2, false) if tys[1] == "bool" && tys[0] != "bool" => {
+            format!("FfiCommaOk({}, r1)", conv[0])
+        }
+        (2 | 3, _) => pack_tuple(&conv),
+        _ => format!("[]any{{{}}}", join(", ", &conv)),
+    };
+    lines.push(format!("\tout = Ok[any, any]({value})"));
+    lines.join("\n")
 }
 
 // ---------------------------------------------------------------------------
 // FfiT_* aliases + type-expressibility checks (FfiGen.hs:1546-1763).
 // ---------------------------------------------------------------------------
-
-/// `emitFfiTAliases` (FfiGen.hs:1546).
-fn emit_ffi_t_aliases(any_name: &str, params: &[(String, String)], ok_type: &str) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    for (i, (_, t)) in params.iter().enumerate() {
-        if needs_alias(t) {
-            lines.push(format!("type FfiT_{any_name}_P{i} = {t}"));
-        }
-    }
-    if needs_alias(ok_type) {
-        lines.push(format!("type FfiT_{any_name}_R = {ok_type}"));
-    }
-    lines
-}
-
-/// `needsAlias` (FfiGen.hs:1564).
-fn needs_alias(t: &str) -> bool {
-    let bare = strip_leading_decor(t);
-    bare.contains('.')
-}
 
 fn strip_leading_decor(t: &str) -> &str {
     t.trim_start_matches(['*', '[', ']', ' '])
@@ -803,16 +789,13 @@ fn touches_internal(t: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 fn emit_identity_pointer_typed(wrapper_name: &str) -> String {
+    // `func Ptr[T any](v T) *T`: the surface types it `$T -> Result Error
+    // (Maybe $T)`, and a pointer to a value is `Just` the value (a Go `*T`
+    // parameter takes it back through `FfiArg`). It used to return the raw
+    // pointer, not even wrapped in a Result.
     unlines(&[
-        "// Generic identity-pointer helper via reflect.".to_string(),
-        format!("func {wrapper_name}(arg0 any) (out any) {{"),
-        "\tdefer SkyFfiRecover(&out)()".to_string(),
-        "\trv := ReflectValueOfAny(arg0)".to_string(),
-        "\tpv := ReflectNewOf(rv.Type())".to_string(),
-        "\tpv.Elem().Set(rv)".to_string(),
-        "\tout = pv.Interface()".to_string(),
-        "\treturn".to_string(),
-        "}".to_string(),
+        "// Generic identity-pointer helper: the pointer to a value is Just it.".to_string(),
+        format!("func {wrapper_name}(arg0 any) (out any) {{ return SkyFfiPtrOf(arg0) }}"),
     ])
 }
 
@@ -821,16 +804,30 @@ fn emit_identity_pointer_typed(wrapper_name: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Classify a result list for typed emission (FfiGen.hs:1613). Returns
-/// `(okGoType, isEffectful)`; the Haskell `pickExpr` is always `id`, so we drop
-/// it and use the call expression directly at the single-result site.
+/// `(okGoType, isEffectful)`. Format 3: a native result keeps its Go type; any
+/// other result is converted by `FfiRet` and the ok slot is `any` (or
+/// `SkyMaybe[any]` for comma-ok).
 fn classify_typed_result(results: &[(String, String)]) -> Option<(String, bool)> {
     let ts: Vec<&str> = results.iter().map(|(_, t)| t.as_str()).collect();
+    let one = |t: &str| {
+        if is_native(t) {
+            t.to_string()
+        } else {
+            "any".to_string()
+        }
+    };
     match ts.as_slice() {
         [] => Some(("struct{}".to_string(), false)),
         ["error"] => Some(("struct{}".to_string(), true)),
-        [t] if *t != "error" => Some((t.to_string(), false)),
-        [t, "error"] if *t != "error" => Some((t.to_string(), true)),
-        [t, "bool"] if *t != "error" && *t != "bool" => Some((format!("SkyMaybe[{t}]"), false)),
+        [t] if *t != "error" => Some((one(t), false)),
+        [t, "error"] if *t != "error" => Some((one(t), true)),
+        [t, "bool"] if *t != "error" && *t != "bool" => {
+            if is_native(t) {
+                Some((format!("SkyMaybe[{t}]"), false))
+            } else {
+                Some(("SkyMaybe[any]".to_string(), false))
+            }
+        }
         [t1, t2] if *t1 != "error" && *t2 != "error" => Some(("SkyTuple2".to_string(), false)),
         [t1, t2, "error"] if *t1 != "error" && *t2 != "error" => {
             Some(("SkyTuple2".to_string(), true))
@@ -858,6 +855,14 @@ fn pack_tuple(xs: &[String]) -> String {
 }
 
 /// `emitTypedVariant` (FfiGen.hs:1414) — the strongly-typed `...T` wrapper.
+///
+/// Format 3: a native parameter (`string`, `int`, `float64`, `bool`) keeps
+/// its Go type; every other parameter is declared `any` and converted by
+/// `FfiArg` INSIDE the wrapper's guard (`SkyFfiGuardT`). Before, the call site
+/// narrowed it to a typed slot (`rt.Coerce[FfiT_…]`) outside any recover, so a
+/// Go value of the wrong type crashed the process (C-6), and an Int for a
+/// `uint8` parameter was truncated (C-7). A non-native result goes through
+/// `FfiRet` (pointers to `Maybe`, typed map keys, range-checked integers).
 #[allow(clippy::too_many_lines)]
 fn emit_typed_variant(
     known_aliases: &BTreeSet<String>,
@@ -888,59 +893,70 @@ fn emit_typed_variant(
     let go_fn_name = &fn_.name;
     let method_n = &fn_.method_name;
 
-    // Param declarations. Variadic last param becomes `[]X` unless already `[]`.
-    let param_type_for = |t: &str, is_last: bool| -> String {
-        if fn_.variadic && is_last {
-            if t.starts_with("[]") {
-                t.to_string()
-            } else {
-                format!("[]{t}")
-            }
-        } else {
-            t.to_string()
-        }
-    };
+    // The Go type of each parameter; a variadic last one is its slice.
     let n_params = params.len();
-    let param_decls: Vec<String> = params
+    let go_ty: Vec<String> = params
         .iter()
         .enumerate()
-        .map(|(i, (_, t))| format!("arg{i} {}", param_type_for(t, i == n_params - 1)))
+        .map(|(i, (_, t))| {
+            if fn_.variadic && i == n_params - 1 && !t.starts_with("[]") {
+                format!("[]{t}")
+            } else {
+                t.clone()
+            }
+        })
+        .collect();
+    let param_decls: Vec<String> = go_ty
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            if is_native(t) {
+                format!("arg{i} {t}")
+            } else {
+                format!("arg{i} any")
+            }
+        })
         .collect();
     let param_decls = join(", ", &param_decls);
 
-    let spread_if_variadic = |i: usize| -> String {
+    let arg_expr = |i: usize| -> String {
+        let e = arg_conv(&format!("arg{i}"), &go_ty[i]);
         if fn_.variadic && i == n_params - 1 {
-            format!("arg{i}...")
+            format!("{e}...")
         } else {
-            format!("arg{i}")
+            e
         }
     };
-    let arg_refs: Vec<String> = (0..n_params).map(spread_if_variadic).collect();
-    let arg_refs = join(", ", &arg_refs);
+    let mut pre: Vec<String> = Vec::new();
     let call = if is_method {
-        let call_args: Vec<String> = (1..n_params).map(spread_if_variadic).collect();
-        format!("arg0.{method_n}({})", join(", ", &call_args))
+        pre.push(format!("\trecv := {}", arg_conv("arg0", &go_ty[0])));
+        if is_pointer_type(&go_ty[0]) {
+            pre.push(format!(
+                "\tif recv == nil {{ out = Err[any,{ok_type}](ErrFfi(\"nil receiver: {}.{method_n}\")); return }}",
+                fn_.recv_type
+            ));
+        }
+        let call_args: Vec<String> = (1..n_params).map(arg_expr).collect();
+        format!("recv.{method_n}({})", join(", ", &call_args))
     } else {
-        format!("pkg.{go_fn_name}({arg_refs})")
+        let call_args: Vec<String> = (0..n_params).map(arg_expr).collect();
+        format!("pkg.{go_fn_name}({})", join(", ", &call_args))
     };
 
-    let recover_line = "\tdefer SkyFfiRecoverT(&out)()".to_string();
-
-    let nil_recv_check = if is_method && !params.is_empty() && is_pointer_type(&params[0].1) {
-        Some(format!(
-            "\tif arg0 == nil {{ out = Err[any,{ok_type}](ErrFfi(\"nil receiver: {}.{method_n}\")); return }}",
-            fn_.recv_type
-        ))
-    } else {
-        None
-    };
-
-    let non_error_count = results.iter().filter(|(_, t)| t != "error").count();
-    let r_names: Vec<String> = (0..non_error_count).map(|i| format!("r{i}")).collect();
+    let non_error: Vec<&str> = results
+        .iter()
+        .map(|(_, t)| t.as_str())
+        .filter(|t| *t != "error")
+        .collect();
+    let r_names: Vec<String> = (0..non_error.len()).map(|i| format!("r{i}")).collect();
+    let r_conv: Vec<String> = r_names
+        .iter()
+        .zip(&non_error)
+        .map(|(r, t)| ret_conv(r, t))
+        .collect();
 
     let body_lines: Vec<String> = if is_effectful {
         if results.len() == 1 {
-            // single `error`
             vec![
                 format!("\terr := {call}"),
                 format!(
@@ -949,7 +965,6 @@ fn emit_typed_variant(
                 format!("\tout = Ok[any,{ok_type}](struct{{}}{{}})"),
             ]
         } else {
-            // (T, ..., error)
             let mut lhs_vars = r_names.clone();
             lhs_vars.push("err".to_string());
             vec![
@@ -957,34 +972,36 @@ fn emit_typed_variant(
                 format!(
                     "\tif err != nil {{ out = Err[any,{ok_type}](ErrFfi(err.Error())); return }}"
                 ),
-                format!("\tout = Ok[any,{ok_type}]({})", pack_tuple(&r_names)),
+                format!("\tout = Ok[any,{ok_type}]({})", pack_tuple(&r_conv)),
             ]
         }
     } else {
-        let result_ts: Vec<&str> = results.iter().map(|(_, t)| t.as_str()).collect();
-        match result_ts.as_slice() {
+        match non_error.as_slice() {
             [] => vec![
                 format!("\t{call}"),
                 format!("\tout = Ok[any,{ok_type}](struct{{}}{{}})"),
             ],
-            [_] => vec![format!("\tout = Ok[any,{ok_type}]({call})")],
-            // (T, bool) comma-ok → CommaOkToMaybe
-            [t, "bool"] if *t != "bool" => vec![
-                format!("\tr0, r1 := {call}"),
-                format!("\tout = Ok[any,{ok_type}](CommaOkToMaybe(r0, r1))"),
-            ],
-            // (T, ...) without error
+            [t] => vec![format!("\tout = Ok[any,{ok_type}]({})", ret_conv(&call, t))],
+            // (T, bool) comma-ok
+            [t, "bool"] if *t != "bool" => {
+                let maybe = if is_native(t) {
+                    "CommaOkToMaybe(r0, r1)".to_string()
+                } else {
+                    "FfiCommaOk(FfiRet(r0), r1)".to_string()
+                };
+                vec![
+                    format!("\tr0, r1 := {call}"),
+                    format!("\tout = Ok[any,{ok_type}]({maybe})"),
+                ]
+            }
             _ => vec![
                 format!("\t{} := {call}", join(", ", &r_names)),
-                format!("\tout = Ok[any,{ok_type}]({})", pack_tuple(&r_names)),
+                format!("\tout = Ok[any,{ok_type}]({})", pack_tuple(&r_conv)),
             ],
         }
     };
 
-    let alias_lines = emit_ffi_t_aliases(any_name, params, &ok_type);
-
     let mut lines: Vec<String> = Vec::new();
-    lines.extend(alias_lines);
     lines.push(format!(
         "// [{}] typed wrapper for {any_name} (P7 adaptor target)",
         fn_.effect
@@ -992,10 +1009,8 @@ fn emit_typed_variant(
     lines.push(format!(
         "func {typed_name}({param_decls}) (out SkyResult[any, {ok_type}]) {{"
     ));
-    lines.push(recover_line);
-    if let Some(nrc) = nil_recv_check {
-        lines.push(nrc);
-    }
+    lines.push("\tdefer SkyFfiGuardT(&out)()".to_string());
+    lines.extend(pre);
     lines.extend(body_lines);
     lines.push("\treturn".to_string());
     lines.push("}".to_string());
@@ -1044,77 +1059,69 @@ fn emit_typed_wrapper(
     }
 
     if fn_.is_field {
+        // Format 3: the field's Go value goes through `FfiRet` (a `*string`
+        // field is a Maybe, a `uint64` one is range-checked), and a nil
+        // receiver is an `Err` under the guard, never a nil dereference.
         let field_name = &fn_.method_name;
         let receiver_type = rparams.first().map(|(_, t)| t.clone()).unwrap_or_default();
-        let field_type = rresults.first().map(|(_, t)| t.clone()).unwrap_or_default();
         let receiver_ok = is_simple_typed_type(&receiver_type)
             && all_packages_known(&known_aliases, &receiver_type)
             && !receiver_type.is_empty();
-        let field_expressible = is_simple_typed_type(&field_type)
-            && all_packages_known(&known_aliases, &field_type)
-            && !field_type.is_empty();
-        let ok_type = if field_expressible {
-            field_type.clone()
+        let nil_check = if is_pointer_type(&receiver_type) {
+            format!(
+                "\tif recv == nil {{ out = Err[any, any](ErrFfi({})); return }}\n",
+                quote(&format!("{field_name}: nil receiver"))
+            )
         } else {
-            "any".to_string()
+            String::new()
         };
-        let mut typed_alias: Vec<String> = Vec::new();
-        if needs_alias(&receiver_type) {
-            typed_alias.push(format!("type FfiT_{wrapper_name}_P0 = {receiver_type}"));
-        }
-        if field_expressible && needs_alias(&field_type) {
-            typed_alias.push(format!("type FfiT_{wrapper_name}_R = {field_type}"));
-        }
         let typed_decl = format!(
-            "func {wrapper_name}T(arg0 {receiver_type}) SkyResult[any, {ok_type}] {{ return Ok[any, {ok_type}](arg0.{field_name}) }}\n"
+            "func {wrapper_name}T(arg0 any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\trecv := {}\n{nil_check}\tout = Ok[any, any](FfiRet(recv.{field_name}))\n\treturn\n}}\n",
+            arg_conv("arg0", &receiver_type)
         );
         let any_decl = format!(
-            "func {wrapper_name}(arg0 any) any {{ return SkyFfiFieldGet(arg0, {}) }}\n",
+            "func {wrapper_name}(arg0 any) any {{ return SkyFfiFieldGet3(arg0, {}) }}\n",
             quote(field_name)
         );
         return if receiver_ok {
-            format!("{}{typed_decl}{any_decl}", unlines(&typed_alias))
+            format!("{typed_decl}{any_decl}")
         } else {
             any_decl
         };
     }
 
     if fn_.is_field_set {
+        // Format 3: the Sky value is converted to the field's Go type by
+        // `FfiArg` (a `Maybe String` to a `*string` field; an Int range-checked
+        // into a `uint8` one), under the guard.
         let field_name = &fn_.method_name;
         let raw_value_type = rparams.first().map(|(_, t)| t.clone()).unwrap_or_default();
         let receiver_type = rparams.get(1).map(|(_, t)| t.clone()).unwrap_or_default();
-        let (sky_side_value, assign_expr) = match raw_value_type.strip_prefix('*') {
-            Some(inner) => (
-                inner.to_string(),
-                format!("func() *{inner} {{ v := value; return &v }}()"),
-            ),
-            None => (raw_value_type.clone(), "value".to_string()),
-        };
         let params_ok = is_simple_typed_type(&raw_value_type)
             && all_packages_known(&known_aliases, &raw_value_type)
             && is_simple_typed_type(&receiver_type)
             && all_packages_known(&known_aliases, &receiver_type)
             && !raw_value_type.is_empty()
             && !receiver_type.is_empty();
-        let mut typed_alias_set: Vec<String> = Vec::new();
-        if needs_alias(&sky_side_value) {
-            typed_alias_set.push(format!("type FfiT_{wrapper_name}_P0 = {sky_side_value}"));
-        }
-        if needs_alias(&receiver_type) {
-            typed_alias_set.push(format!("type FfiT_{wrapper_name}_P1 = {receiver_type}"));
-        }
+        let nil_check = if is_pointer_type(&receiver_type) {
+            format!(
+                "\tif r == nil {{ out = Err[any, any](ErrFfi({})); return }}\n",
+                quote(&format!("{field_name}: nil receiver"))
+            )
+        } else {
+            String::new()
+        };
         let typed_decl_set = format!(
-            "func {wrapper_name}T(value {sky_side_value}, recv {receiver_type}) SkyResult[any, {receiver_type}] {{ recv.{field_name} = {assign_expr}; return Ok[any, {receiver_type}](recv) }}\n"
+            "func {wrapper_name}T(value any, recv any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\tr := {}\n{nil_check}\tr.{field_name} = {}\n\tout = Ok[any, any](FfiRet(r))\n\treturn\n}}\n",
+            arg_conv("recv", &receiver_type),
+            arg_conv("value", &raw_value_type)
         );
         let any_decl_set = format!(
-            "func {wrapper_name}(value any, recv any) any {{ return SkyFfiFieldSet(value, recv, {}) }}\n",
+            "func {wrapper_name}(value any, recv any) any {{ return SkyFfiFieldSet3(value, recv, {}) }}\n",
             quote(field_name)
         );
         return if params_ok {
-            format!(
-                "{}{typed_decl_set}{any_decl_set}",
-                unlines(&typed_alias_set)
-            )
+            format!("{typed_decl_set}{any_decl_set}")
         } else {
             any_decl_set
         };
@@ -1125,15 +1132,20 @@ fn emit_typed_wrapper(
         let method = &fn_.method_name;
         return if !recv.is_empty() && method.is_empty() {
             // Zero-value struct constructor.
-            format!("func {wrapper_name}(_ any) any {{ return Ok[any, any](new(pkg.{recv})) }}\n")
-        } else if recv.is_empty() && !method.is_empty() {
-            // Setter for a pkg-level var.
             format!(
-                "func {wrapper_name}(value any) any {{ reflect.ValueOf(&pkg.{method}).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.{method}))); return Ok[any, any](struct{{}}{{}}) }}\n"
+                "func {wrapper_name}(_ any) any {{ return Ok[any, any](FfiRet(new(pkg.{recv}))) }}\n"
+            )
+        } else if recv.is_empty() && !method.is_empty() {
+            // Setter for a pkg-level var: the Sky value is converted to the
+            // variable's type under the guard.
+            format!(
+                "func {wrapper_name}(value any) (out any) {{\n\tdefer SkyFfiGuard(&out)()\n\tSkyFfiSetVar(&pkg.{method}, value)\n\tout = Ok[any, any](struct{{}}{{}})\n\treturn\n}}\n"
             )
         } else {
             // Plain pkg-level var/const read.
-            format!("func {wrapper_name}(_ any) any {{ return Ok[any, any](pkg.{go_fn_name}) }}\n")
+            format!(
+                "func {wrapper_name}(_ any) (out any) {{\n\tdefer SkyFfiGuard(&out)()\n\tout = Ok[any, any](FfiRet(pkg.{go_fn_name}))\n\treturn\n}}\n"
+            )
         };
     }
 
@@ -1160,7 +1172,7 @@ fn emit_typed_wrapper(
                             fn_.effect
                         ),
                         format!("func {wrapper_name}({param_list}) (out any) {{"),
-                        "\tdefer SkyFfiRecover(&out)()".to_string(),
+                        "\tdefer SkyFfiGuard(&out)()".to_string(),
                         body,
                         "\treturn".to_string(),
                         "}".to_string(),
@@ -1207,7 +1219,7 @@ fn emit_typed_wrapper(
                     fn_.effect, fn_.recv_type
                 ),
                 format!("func {wrapper_name}({reflect_param_list}) (out any) {{"),
-                "\tdefer SkyFfiRecover(&out)()".to_string(),
+                "\tdefer SkyFfiGuard(&out)()".to_string(),
                 "\trecv := reflect.ValueOf(arg0)".to_string(),
                 format!("\tm := recv.MethodByName({})", quote(&method_name)),
                 "\tif !m.IsValid() {".to_string(),
@@ -1217,7 +1229,7 @@ fn emit_typed_wrapper(
                 ),
                 "\t\treturn".to_string(),
                 "\t}".to_string(),
-                format!("\tout = SkyFfiReflectCall(m, {has_err}, {reflect_method_args_list})"),
+                format!("\tout = SkyFfiReflectCall3(m, {has_err}, {reflect_method_args_list})"),
                 "\treturn".to_string(),
                 "}".to_string(),
             ])
@@ -1242,8 +1254,8 @@ fn reflect_call(
     unlines(&[
         format!("// [{effect}] {kernel_name}.{sky_name} → {target} (via SkyFfiReflectCall)"),
         format!("func {wrapper_name}({reflect_param_list}) (out any) {{"),
-        "\tdefer SkyFfiRecover(&out)()".to_string(),
-        format!("\tout = SkyFfiReflectCall({target}, {has_err}, {reflect_args_list})"),
+        "\tdefer SkyFfiGuard(&out)()".to_string(),
+        format!("\tout = SkyFfiReflectCall3({target}, {has_err}, {reflect_args_list})"),
         "\treturn".to_string(),
         "}".to_string(),
     ])
@@ -1361,7 +1373,7 @@ pub(crate) fn emit_go_file(kernel_name: &str, info: &PackageInfo) -> String {
         "// Sky source resolves `import {module_name} as X` and calls `X.<lowerFn>` — the canonicaliser routes it via"
     ));
     lines.push("// the FFI registry to these typed Go functions. Every wrapper wraps".to_string());
-    lines.push("// panics in Err[any, any] via SkyFfiRecover.".to_string());
+    lines.push("// panics and failed conversions in an Err via SkyFfiGuard(T).".to_string());
     lines.push(String::new());
     lines.push("package skyffi".to_string());
     lines.push(String::new());

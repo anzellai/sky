@@ -419,3 +419,389 @@ fn a_registry_package_ignoring_an_ffi_result_is_rejected() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// Surface format 3 (v0.27.0): every Go value crosses the boundary typed.
+//
+// One local Go package (a path dependency, so no network) exercises each
+// class the audit found (C-4, C-5, C-6, C-7, C-12): pointers, non-string map
+// keys, unsigned and narrow integers in results, parameters and callbacks,
+// opaque Go values, empty and non-empty interfaces, zero-parameter callbacks,
+// fixed-size byte arrays, and a Go type named `T`. The doc 14 citation for
+// each change is in `docs/rust-rewrite/14-runtime-narrowing-taxonomy.md`
+// §9.7.
+// ---------------------------------------------------------------------------
+
+const GOPK_GO: &str = r#"
+package gopk
+
+import (
+	"database/sql/driver"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+)
+
+type Thing struct {
+	N    int
+	Name *string
+}
+
+type T struct{ X int }
+
+func PtrStr(ok bool) *string {
+	if ok {
+		s := "x"
+		return &s
+	}
+	return nil
+}
+func PtrLen(p *string) int {
+	if p == nil {
+		return -1
+	}
+	return len(*p)
+}
+func PtrList() []*int { one := 1; return []*int{&one, nil} }
+func WithPtrCb(f func(*string) string) string {
+	s := "y"
+	return f(&s) + "|" + f(nil)
+}
+func IntMap() map[int]string { return map[int]string{1: "a", 2: "b"} }
+func SumKeys(m map[int]string) int {
+	t := 0
+	for k := range m {
+		t += k
+	}
+	return t
+}
+func Big() uint64                         { return math.MaxUint64 }
+func Small64() uint64                     { return 7 }
+func TakeU8(x uint8) int                  { return int(x) }
+func Echo8(x int8) int8                   { return x }
+func CbBig(f func(uint64) string) string  { return f(math.MaxUint64) }
+func Apply(f func(int) string) string     { return f(3) }
+func DescribeValue(v driver.Value) string { return fmt.Sprintf("%T", v) }
+func WriteTo(w io.Writer, s string) error {
+	_, err := io.WriteString(w, s)
+	return err
+}
+func CallTwice(f func()) int {
+	f()
+	f()
+	return 2
+}
+func Hash(s string) [32]byte {
+	var h [32]byte
+	copy(h[:], s)
+	return h
+}
+func HexOf(b [4]byte) string      { return fmt.Sprintf("%x", b) }
+func MkT() T                      { return T{X: 5} }
+func ReadT(t T) int               { return t.X }
+func MkThing() *Thing             { return &Thing{N: 3} }
+func ThingN2(t *Thing) int        { return t.N * 2 }
+func Fails() (int, error)         { return 0, errors.New("boom") }
+func Lookup(k string) (int, bool) { return 1, k == "a" }
+func OnErr(f func(int) error) string {
+	if err := f(1); err != nil {
+		return "cb-err:" + err.Error()
+	}
+	return "cb-ok"
+}
+"#;
+
+/// A scratch project depending on the local Go package `example.com/gopk`.
+fn gopk_project(tag: &str, main: &str) -> PathBuf {
+    let root = scratch(tag);
+    let gopk = root.join("gopk");
+    std::fs::create_dir_all(&gopk).unwrap();
+    std::fs::write(gopk.join("go.mod"), "module example.com/gopk\n\ngo 1.22\n").unwrap();
+    std::fs::write(gopk.join("gopk.go"), GOPK_GO).unwrap();
+    let app = root.join("app");
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    std::fs::write(
+        app.join("sky.toml"),
+        "name = \"ffi-format3\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+         [\"go.dependencies\"]\n\"example.com/gopk\" = { path = \"../gopk\" }\n",
+    )
+    .unwrap();
+    std::fs::write(app.join("src/Main.sky"), main).unwrap();
+    app
+}
+
+const GOPK_HEAD: &str = "module Main exposing (main)
+
+import Example.Com.Gopk as G
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+
+show : Result Error String -> String
+show r =
+    case r of
+        Ok s ->
+            s
+
+        Err e ->
+            \"err:\" ++ errorToString e
+
+
+maybeStr : Maybe String -> String
+maybeStr m =
+    case m of
+        Just s ->
+            \"Just \" ++ s
+
+        Nothing ->
+            \"Nothing\"
+
+
+";
+
+const GOPK_RUNS: &str = "report : List String
+report =
+    [ \"ptr \" ++ show (G.ptrStr True |> Result.map maybeStr) ++ \",\" ++ show (G.ptrStr False |> Result.map maybeStr)
+    , \"ptrLen \" ++ show (G.ptrLen (Just \"abc\") |> Result.map String.fromInt) ++ \",\" ++ show (G.ptrLen Nothing |> Result.map String.fromInt)
+    , \"ptrList \" ++ show (G.ptrList () |> Result.map (\\xs -> String.join \",\" (List.map (\\m -> Maybe.withDefault \"none\" (Maybe.map String.fromInt m)) xs)))
+    , \"ptrCb \" ++ show (G.withPtrCb (\\m -> maybeStr m))
+    , \"intMap \" ++ show (G.intMap () |> Result.map (\\d -> String.join \",\" (Dict.values d) ++ \" get1=\" ++ Maybe.withDefault \"none\" (Dict.get 1 d)))
+    , \"sumKeys \" ++ show (G.sumKeys (Dict.fromList [ ( 3, \"c\" ), ( 4, \"d\" ) ]) |> Result.map String.fromInt)
+    , \"big \" ++ show (G.big () |> Result.map String.fromInt)
+    , \"small \" ++ show (G.small64 () |> Result.map String.fromInt)
+    , \"u8 \" ++ show (G.takeU8 200 |> Result.map String.fromInt) ++ \",\" ++ show (G.takeU8 300 |> Result.map String.fromInt)
+    , \"i8 \" ++ show (G.echo8 -129 |> Result.map String.fromInt)
+    , \"cbBig \" ++ show (G.cbBig (\\n -> String.fromInt n))
+    , \"apply \" ++ show (G.apply (\\n -> String.fromInt (n * 2)))
+    , \"desc \" ++ show (G.describeValue \"s\")
+    , \"writeTo \" ++ show (G.mkThing () |> Result.andThen (\\t -> G.writeTo t \"x\") |> Result.map (\\_ -> \"ok\"))
+    , \"callTwice \" ++ show (G.callTwice (\\_ -> ()) |> Result.map String.fromInt)
+    , \"hash \" ++ show (G.hash \"ab\" |> Result.map (\\b -> String.fromInt (String.length b)))
+    , \"hexOf \" ++ show (G.hexOf \"wxyz\") ++ \",\" ++ show (G.hexOf \"abc\")
+    , \"t \" ++ show (G.mkT () |> Result.andThen G.readT |> Result.map String.fromInt)
+    , \"thing \" ++ show (G.mkThing () |> Result.andThen G.thingN2 |> Result.map String.fromInt)
+    ]
+
+
+main =
+    println (String.join \"\\n\" report)
+";
+
+/// C-4, C-5, C-6, C-7, C-12 at run time: every value converts, and every
+/// value that cannot is an `Err` the program handles — no panic, no wrapped
+/// or truncated number, no empty Dict.
+#[test]
+fn format3_go_values_convert_or_are_err() {
+    if !required(Need::Go, go_on_path()) {
+        return;
+    }
+    let app = gopk_project("f3-runs", &format!("{GOPK_HEAD}{GOPK_RUNS}"));
+    let (ok, log) = run(&app, SKY, &["install"]);
+    assert!(ok, "sky install (path dep) failed:\n{log}");
+    let kj = std::fs::read_to_string(app.join("sky-ffi/gopk.kernel.json")).unwrap();
+    assert!(kj.contains("\"surfaceFormat\": 3"), "{kj}");
+    for want in [
+        "\"skyType\": \"Bool -> Result Error (Maybe String)\"",
+        "\"skyType\": \"() -> Result Error (Dict Int String)\"",
+        "\"skyType\": \"() -> Result Error go@Example.Com.Gopk.Thing\"",
+        "\"skyType\": \"(Int -> String) -> Result Error String\"",
+        "\"skyType\": \"(() -> ()) -> Result Error Int\"",
+        "\"skyType\": \"any -> Result Error String\"",
+        "\"skyType\": \"goi@Io.Writer -> String -> Result Error ()\"",
+        "\"skyType\": \"go@Example.Com.Gopk.T -> Result Error Int\"",
+    ] {
+        assert!(kj.contains(want), "missing {want} in:\n{kj}");
+    }
+    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
+    assert!(ok, "sky build failed:\n{log}");
+    let bin = app.join("sky-out").join("app");
+    let (ok, out) = run(&app, bin.to_str().unwrap(), &[]);
+    assert!(ok, "the app must run without a panic:\n{out}");
+    assert!(
+        !out.contains("panic:"),
+        "no conversion may surface as a panic:\n{out}"
+    );
+    let line = |p: &str| -> String {
+        out.lines()
+            .find(|l| l.starts_with(p))
+            .unwrap_or_else(|| panic!("no `{p}` line in:\n{out}"))
+            .to_string()
+    };
+    assert_eq!(line("ptr "), "ptr Just x,Nothing");
+    assert_eq!(line("ptrLen "), "ptrLen 3,-1");
+    assert_eq!(line("ptrList "), "ptrList 1,none");
+    assert_eq!(line("ptrCb "), "ptrCb Just y|Nothing");
+    assert_eq!(line("intMap "), "intMap a,b get1=a");
+    assert_eq!(line("sumKeys "), "sumKeys 7");
+    assert!(line("big ").contains("err:") && line("big ").contains("out of range for Int"));
+    assert_eq!(line("small "), "small 7");
+    let u8l = line("u8 ");
+    assert!(
+        u8l.starts_with("u8 200,err:") && u8l.contains("300 is out of range for uint8"),
+        "{u8l}"
+    );
+    assert!(
+        line("i8 ").contains("-129 is out of range for int8"),
+        "{}",
+        line("i8 ")
+    );
+    assert!(
+        line("cbBig ").contains("out of range for Int"),
+        "{}",
+        line("cbBig ")
+    );
+    assert_eq!(line("apply "), "apply 6");
+    assert_eq!(line("desc "), "desc string");
+    assert!(
+        line("writeTo ").contains("does not implement io.Writer"),
+        "{}",
+        line("writeTo ")
+    );
+    assert_eq!(line("callTwice "), "callTwice 2");
+    assert_eq!(line("hash "), "hash 32");
+    let hex = line("hexOf ");
+    assert!(
+        hex.starts_with("hexOf 7778797a,err:") && hex.contains("needs exactly 4 bytes"),
+        "{hex}"
+    );
+    assert_eq!(line("t "), "t 5");
+    assert_eq!(line("thing "), "thing 6");
+    let _ = std::fs::remove_dir_all(app.parent().unwrap());
+}
+
+/// Each compile-time class is a type error with its migration hint:
+/// (C-6) an opaque Go value used as an Int; (C-12) a callback returning the
+/// wrong type; (C-4) a Go pointer read as its target; ([E2012]) a Sky value
+/// passed where a Go interface is required.
+#[test]
+fn format3_misuse_is_a_type_error_with_a_migration_hint() {
+    if !required(Need::Go, go_on_path()) {
+        return;
+    }
+    let app = gopk_project(
+        "f3-reject",
+        &format!("{GOPK_HEAD}main =\n    println \"x\"\n"),
+    );
+    let (ok, log) = run(&app, SKY, &["install"]);
+    assert!(ok, "sky install (path dep) failed:\n{log}");
+    for (body, code, anchor) in [
+        (
+            "asInt : Int\nasInt =\n    case G.mkThing () of\n        Ok t ->\n            t\n\n        Err _ ->\n            0\n\n\nmain =\n    println (String.fromInt asInt)\n",
+            "[E2001]",
+            "#ffi-opaque-go-types",
+        ),
+        (
+            "main =\n    println (show (G.apply (\\n -> n * 2)))\n",
+            "[E2001]",
+            "#ffi-callback-result",
+        ),
+        (
+            "name : String\nname =\n    case G.ptrStr True of\n        Ok s ->\n            s\n\n        Err _ ->\n            \"\"\n\n\nmain =\n    println name\n",
+            "[E2001]",
+            "#ffi-pointer-is-maybe",
+        ),
+        (
+            "main =\n    println (show (G.writeTo \"not a writer\" \"x\" |> Result.map (\\_ -> \"ok\")))\n",
+            "[E2012]",
+            "#ffi-go-interface-params",
+        ),
+    ] {
+        std::fs::write(app.join("src/Main.sky"), format!("{GOPK_HEAD}{body}")).unwrap();
+        let (ok, log) = run(&app, SKY, &["check", "src/Main.sky"]);
+        assert!(!ok, "sky check must reject:\n{body}\n{log}");
+        assert!(log.contains(code), "want {code}:\n{log}");
+        assert!(
+            log.contains("v0.27.0") && log.contains(&format!("see docs/migration/v0.27.md{anchor}")),
+            "the diagnostic must name the change and link {anchor}:\n{log}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(app.parent().unwrap());
+}
+
+/// A surface generated before format 3 is refused only for a binding its old
+/// wrapper converts unsoundly, with the `sky install` fix; a binding that
+/// passes only strings, ints, floats and bools still builds, with a warning.
+#[test]
+fn an_old_surface_is_refused_only_where_a_binding_needs_format3() {
+    if !required(Need::Go, go_on_path()) {
+        return;
+    }
+    let app = gopk_project(
+        "f3-old",
+        &format!("{GOPK_HEAD}main =\n    println (show (G.apply (\\n -> String.fromInt n)))\n"),
+    );
+    // A format-2 surface, as an older sky wrote it.
+    std::fs::create_dir_all(app.join("sky-ffi/go")).unwrap();
+    std::fs::write(
+        app.join("sky-ffi/gopk.kernel.json"),
+        "{\n  \"moduleName\": \"Example.Com.Gopk\",\n  \"kernelName\": \"Go_Gopk\",\n  \
+         \"package\": \"example.com/gopk\",\n  \"surfaceFormat\": 2,\n  \"functions\": [\n    \
+         {\"name\": \"readT\", \"arity\": 1, \"skyType\": \"T@example.com/gopk -> Result Error Int\"},\n    \
+         {\"name\": \"ptrStr\", \"arity\": 1, \"skyType\": \"Bool -> Result Error String\"},\n    \
+         {\"name\": \"takeU8\", \"arity\": 1, \"skyType\": \"Int -> Result Error Int\"},\n    \
+         {\"name\": \"hexOf\", \"arity\": 1, \"skyType\": \"Bytes -> Result Error String\"},\n    \
+         {\"name\": \"apply\", \"arity\": 1, \"skyType\": \"(Int -> String) -> Result Error String\"},\n    \
+         {\"name\": \"ptrLen\", \"arity\": 1, \"skyType\": \"String -> Result Error Int\"}\n  ]\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("sky-ffi/go/gopk_bindings.go"),
+        "// Code generated by sky-ffi-inspect from example.com/gopk. DO NOT EDIT.\n\
+         // Surface format 2 (sky install regenerates a surface stamped otherwise).\n\n\
+         package skyffi\n\nimport (\n\t. \"sky-app/rt\"\n\tpkg \"example.com/gopk\"\n\t\"fmt\"\n)\n\n\
+         func Go_Gopk_applyT(arg0 func(int) string) (out SkyResult[any, string]) {\n\
+         \tdefer SkyFfiRecoverT(&out)()\n\tout = Ok[any,string](pkg.Apply(arg0))\n\treturn\n}\n\n\
+         func Go_Gopk_ptrStrT(arg0 bool) (out SkyResult[any, *string]) {\n\
+         \tdefer SkyFfiRecoverT(&out)()\n\tout = Ok[any,*string](pkg.PtrStr(arg0))\n\treturn\n}\n\n\
+         func Go_Gopk_takeU8T(arg0 uint8) (out SkyResult[any, int]) {\n\
+         \tdefer SkyFfiRecoverT(&out)()\n\tout = Ok[any,int](pkg.TakeU8(arg0))\n\treturn\n}\n\n\
+         var _ = fmt.Sprintf\n",
+    )
+    .unwrap();
+    // `apply` takes a Go func, which the old wrapper narrows outside its
+    // recover and whose result it never typed: refused, with the fix named.
+    let (ok, log) = run(&app, SKY, &["check", "src/Main.sky"]);
+    assert!(!ok, "a stale binding must be refused:\n{log}");
+    assert!(
+        log.contains("predates surface format 3")
+            && log.contains("sky install")
+            && log.contains("see docs/migration/v0.27.md#ffi-surface-format-3"),
+        "the refusal must name the fix:\n{log}"
+    );
+    assert!(
+        log.contains("surface format 2"),
+        "the outdated surface is also reported as a warning:\n{log}"
+    );
+    // An all-native binding of the same old surface still builds.
+    std::fs::write(
+        app.join("sky-ffi/go/gopk_bindings.go"),
+        "// Code generated by sky-ffi-inspect from example.com/gopk. DO NOT EDIT.\n\
+         // Surface format 2 (sky install regenerates a surface stamped otherwise).\n\n\
+         package skyffi\n\nimport (\n\t. \"sky-app/rt\"\n\tpkg \"example.com/gopk\"\n\t\"fmt\"\n)\n\n\
+         func Go_Gopk_ptrLenT(arg0 string) (out SkyResult[any, int]) {\n\
+         \tdefer SkyFfiRecoverT(&out)()\n\ts := arg0\n\tout = Ok[any,int](pkg.PtrLen(&s))\n\treturn\n}\n\n\
+         var _ = fmt.Sprintf\n",
+    )
+    .unwrap();
+    std::fs::write(
+        app.join("src/Main.sky"),
+        format!("{GOPK_HEAD}main =\n    println (show (G.ptrLen \"abcd\" |> Result.map String.fromInt))\n"),
+    )
+    .unwrap();
+    let (ok, log) = run(&app, SKY, &["build", "src/Main.sky"]);
+    assert!(
+        ok,
+        "an all-native binding of an old surface still builds:\n{log}"
+    );
+    assert!(
+        log.contains("surface format 2"),
+        "with the outdated-surface warning:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(app.parent().unwrap());
+}
