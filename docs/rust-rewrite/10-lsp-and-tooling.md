@@ -89,9 +89,9 @@ Each LSP method lowers to one (or a couple of) salsa queries. The queries are th
 | `textDocument/rename` / `prepareRename` | `references(DefId)` → one `WorkspaceEdit`; `prepareRename` validates the target is a renameable `DefId` | Reuses the references query |
 | `textDocument/semanticTokens/full` | `parse(file)` (CST) + `resolve` to classify each token | 12 token types (`Server.hs:2042–2056`), preserved verbatim |
 | `textDocument/publishDiagnostics` | `parse` + `resolve` + `infer` + `exhaustiveness` diagnostics, unioned | **Push** on input change (below); no `forkIO`, no `sky check` subprocess |
-| `textDocument/inlayHint` | `infer(def)` per-region types | **Target — not yet implemented in `crates/sky-lsp`.** |
-| `textDocument/formatting` | `fmt` crate over `parse(file)` CST | **Target — `crates/fmt` exists (CLI `sky fmt`) but is not wired to this LSP endpoint yet.** |
-| `textDocument/signatureHelp` | `resolve` at call head → `infer` signature | **Target — not yet implemented in `crates/sky-lsp`.** |
+| `textDocument/inlayHint` | `infer(def)` per-region types | Implemented (`sky-lsp` `inlay_hints`). |
+| `textDocument/formatting` | `fmt` crate over `parse(file)` CST | Implemented: the `fmt` crate `sky fmt` uses, served by the LSP endpoint. |
+| `textDocument/signatureHelp` | `resolve` at call head → `infer` signature | Implemented (`sky-lsp` `signature_help`). |
 
 ### Incremental for free — contrast the 5-round + threads
 
@@ -188,16 +188,16 @@ fn sky_capabilities() -> ServerCapabilities {
         declaration_provider: Some(true.into()),
         references_provider: Some(true.into()),
         document_symbol_provider: Some(true.into()),
-        document_formatting_provider: Some(true.into()),          // target — not yet implemented
+        document_formatting_provider: Some(true.into()),
         rename_provider: Some(RenameOptions { prepare_provider: Some(true), ..Default::default() }.into()),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into()]), ..Default::default() }),
-        signature_help_provider: Some(SignatureHelpOptions {      // target — not yet implemented
+        signature_help_provider: Some(SignatureHelpOptions {
             trigger_characters: Some(vec!["(".into(), " ".into()]),
             retrigger_characters: Some(vec![",".into()]), ..Default::default() }),
         semantic_tokens_provider: Some(sky_semantic_legend().into()), // 12 types, Server.hs:2042
         code_action_provider: Some(true.into()),
-        inlay_hint_provider: Some(OneOf::Left(true)),             // target — not yet implemented
+        inlay_hint_provider: Some(OneOf::Left(true)),
         ..Default::default()
     }
 }

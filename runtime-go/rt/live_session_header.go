@@ -404,8 +404,16 @@ func (app *liveApp) handleSSETicket(w http.ResponseWriter, r *http.Request) {
 // SKY_CSRF=off turns the check off, as it does in cookie mode.
 func headerSessionCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !csrfEnabled.Load() || isObservabilityPath(r.URL.Path) {
+		if !csrfEnabled.Load() || isBuiltinCsrfExempt(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
+			return
+		}
+		// An in-process sub-app (the inline console at /_sky/console) keeps
+		// the cookie transport whatever the host uses, so its requests take
+		// the double-submit check with the sub-app's own CSRF cookie. They
+		// used to be exempt by path in both modes.
+		if csrfCookieNameForPath(r.URL.Path) != SkyCsrfCookieName {
+			CSRFMiddleware(next).ServeHTTP(w, r)
 			return
 		}
 		mutating := r.Method == http.MethodPost || r.Method == http.MethodPut ||

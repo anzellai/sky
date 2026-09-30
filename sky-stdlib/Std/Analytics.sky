@@ -25,8 +25,8 @@
 -- JSONL file / a `Custom` userland handler for any provider), a SQLite
 -- store (reuse the console DB or a `[analytics] dbPath` override), `erase`,
 -- and the aggregate queries (`totalEvents` / `uniqueUsers` / `eventCounts`
--- / `recentEvents`). Landing later: per-sink Pii clearance, first-class
--- provider wrappers, the console dashboard tab — see
+-- / `recentEvents`), shown in the Sky Console's Analytics tab. Not yet
+-- shipped: per-sink Pii clearance and first-class provider wrappers — see
 -- docs/rfcs/std-analytics.md. PII stays redacted across every sink.
 module Std.Analytics exposing
     ( Event
@@ -91,8 +91,8 @@ type alias EventProp =
 -- identifier) may enter an event ONLY through this type, never as a
 -- bare `String` prop. That makes redaction load-bearing: a sink or
 -- context not cleared for PII strips or hashes `Pii` props by type,
--- and the reflective payload deriver (later phase) never emits a plain
--- `String` as PII by accident. In P1 all `Pii` props are redacted.
+-- and the reflective payload deriver (`trackEvent`) never treats a plain
+-- `String` as PII. Every sink receives `Pii` props redacted.
 type Pii
     = PiiEmail String
     | PiiRaw String
@@ -167,9 +167,10 @@ piiRaw v =
 
 
 -- | Emit an event built with `event` + the typed prop builders. Writes a
--- structured `[analytics]` line (the default local sink) with PII redacted;
--- later phases route it through the consent gate, context enrichment, and the
--- configured sinks.
+-- structured `[analytics]` line with PII redacted. The event passes the
+-- session's consent gate (`setConsent Denied` drops it), carries the device
+-- and IP-anonymised context, and fans out to the configured sinks
+-- (`configure`; stderr by default).
 track : Event -> Task Error ()
 track =
     Ffi.kernel "Analytics_track"

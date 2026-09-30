@@ -18,8 +18,11 @@ module Std.Bundle exposing
     )
 
 -- | `Std.Bundle` — everything a Sky app ships WITH: its cross-platform identity
--- (display name, reverse-DNS id, icon, version) and, in a later phase, the
--- static assets embedded alongside the binary.
+-- (display name, reverse-DNS id, icon, version, build number), the static
+-- assets staged with it (`withAsset`, `withAssetDir`, served under
+-- `/assets/…` and named by `assetUrl`), and the native permissions and
+-- entitlements a store build declares (`withPermission`, `withUsage`,
+-- `withEntitlement`).
 --
 -- Declared once as a top-level `bundle` binding using the `withX` builder, so
 -- `sky.toml` stays lean and packaging lives in code next to the app:

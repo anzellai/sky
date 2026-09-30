@@ -799,3 +799,72 @@ func TestSessionRotation_ConcurrentWritesNeverResurrectOldSid(t *testing.T) {
 		}
 	}
 }
+
+// /_sky/rotate is CSRF-checked through the REAL listener chain
+// (liveListenerHandlerFor → CSRFMiddleware), not only by calling handleRotate
+// directly: a cross-site POST that carries the old session cookie, the acting
+// tab and a valid ticket, but no CSRF token, must not get the new session
+// cookie. The same POST with the page's token redeems it.
+func TestSessionRotation_RotateIsCSRFCheckedThroughTheListener(t *testing.T) {
+	prev := csrfEnabled.Load()
+	csrfEnabled.Store(true)
+	defer csrfEnabled.Store(prev)
+
+	app := newRotationTestApp(t)
+	oldSid, oldCookie := mintSession(t, app, "sky_sid")
+	sess := mustGet(t, app, oldSid)
+	_, actCh, _ := sess.registerSSEConn("tab-a")
+	bindFromTab(app, sess, "user-1", "tab-a")
+	newSid := sess.currentSID()
+	var ticket string
+	select {
+	case fr := <-actCh:
+		var p struct {
+			Ticket string `json:"ticket"`
+		}
+		if err := json.Unmarshal([]byte(fr.data), &p); err != nil || p.Ticket == "" {
+			t.Fatalf("rotate frame data %q: %v", fr.data, err)
+		}
+		ticket = p.Ticket
+	case <-time.After(time.Second):
+		t.Fatal("acting tab received no rotate frame")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/_sky/rotate", app.handleRotate)
+	h := liveListenerHandlerFor(app, mux, "127.0.0.1")
+	post := func(extraCookie, csrfHeader string) *httptest.ResponseRecorder {
+		body := `{"tab":"tab-a","ticket":"` + ticket + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/_sky/rotate", strings.NewReader(body))
+		req.Host = "localhost"
+		req.Header.Set("Content-Type", "application/json")
+		cookie := oldCookie
+		if extraCookie != "" {
+			cookie += "; " + extraCookie
+		}
+		req.Header.Set("Cookie", cookie)
+		if csrfHeader != "" {
+			req.Header.Set(SkyCsrfHeaderName, csrfHeader)
+		}
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+
+	forged := post("", "")
+	if forged.Code != http.StatusForbidden {
+		t.Fatalf("a rotate POST with no CSRF token must be refused (403), got %d: %s", forged.Code, forged.Body.String())
+	}
+	if got := cookieFromResponse(forged, "sky_sid"); got == newSid {
+		t.Fatal("FIXATION: a CSRF-less rotate POST was handed the new session cookie")
+	}
+
+	tok := "0123456789abcdef0123456789abcdef"
+	ok := post(SkyCsrfCookieName+"="+tok, tok)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("a rotate POST with the CSRF token must redeem, got %d: %s", ok.Code, ok.Body.String())
+	}
+	if got := cookieFromResponse(ok, "sky_sid"); got != newSid {
+		t.Fatalf("the redeemed rotate must set the new cookie, got %q want %q", got, newSid)
+	}
+}

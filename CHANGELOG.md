@@ -95,7 +95,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   exempted `POST /report` from CSRF, including an app's own
   cookie-authenticated form post on that path. `Live.api` had the same
   flaw. Exemptions are now keyed by method and path; a spec with no method
-  still exempts every method.
+  still exempts every method. The runtime's own exemptions had the same
+  flaw and are keyed the same way: every method on `/_sky/console/*` and on
+  `/_sky/observability/ingest` skipped the check, so the Sky Console's own
+  state-changing requests (`/_sky/console/_sky/event`, `/_sky/rotate`) ran
+  with no CSRF check for a signed-in admin. Now only `GET` probes
+  (`/_sky/healthz`, `/readyz`, `/metrics`, `/buildinfo`, `/sse`, `/config`),
+  the console's `GET` JSON API, the console login `POST` and sign-out, and
+  the ingest `POST` are exempt. The console checks its own CSRF token like
+  any Sky.Live sub-app, also when the host uses header sessions.
 - **The Sky.Spa session cookie over HTTPS.** A regression test now pins
   that `sky_sid` gets `Secure` on a TLS request (or `X-Forwarded-Proto:
   https`) without `ENV` set. The emission-time check that adds it

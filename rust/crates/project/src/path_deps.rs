@@ -578,6 +578,50 @@ mod tests {
     }
 
     #[test]
+    fn drift_warnings_name_a_changed_module_path_and_a_missing_go_mod() {
+        let dir = scratch("drift");
+        let proj = dir.join("app");
+        std::fs::create_dir_all(proj.join("greet")).unwrap();
+        std::fs::create_dir_all(proj.join("nomod")).unwrap();
+        std::fs::write(
+            proj.join("sky.toml"),
+            "name = \"x\"\n\n[\"go.dependencies\"]\n\"example.com/greet\" = { path = \"./greet\" }\n\"example.com/nomod\" = { path = \"./nomod\" }\n",
+        )
+        .unwrap();
+        // The key it was added under still matches: no warning.
+        std::fs::write(
+            proj.join("greet/go.mod"),
+            "module example.com/greet\n\ngo 1.22\n",
+        )
+        .unwrap();
+        let w = drift_warnings(&proj);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("has no go.mod"), "{w:?}");
+        // The go.mod now declares another module.
+        std::fs::write(
+            proj.join("greet/go.mod"),
+            "module example.com/renamed\n\ngo 1.22\n",
+        )
+        .unwrap();
+        let w = drift_warnings(&proj);
+        assert!(
+            w.iter().any(|m| m.contains(
+                "path dependency \"example.com/greet\" (./greet): its go.mod now declares module \"example.com/renamed\""
+            ) && m.contains("sky remove example.com/greet")
+                && m.contains("sky add ./greet")),
+            "{w:?}"
+        );
+        // Re-inspecting cannot fix a renamed module, so it is not "stale".
+        assert!(
+            stale_go_surfaces(&proj)
+                .iter()
+                .all(|d| d.key != "example.com/greet"),
+            "a renamed module must not be listed for re-inspection"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn inline_path_reads_the_path_key_only() {
         assert_eq!(inline_path(r#"{ path = "../x" }"#).as_deref(), Some("../x"));
         assert_eq!(

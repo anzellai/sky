@@ -1,0 +1,72 @@
+-- gate: accept
+-- pairs: reject/corpus/ffi_result_used_as_payload.sky
+-- ffi: Pkg read : String -> Int -> Int -> Result Error (String, Int)
+-- ffi: Pkg repeat : String -> Int -> Result Error String
+-- ffi: Pkg encodedLen : Int -> Result Error Int
+-- ffi: Pkg newRouter : () -> Result Error Router@github.com/gorilla/mux
+-- ffi: Pkg describe : Router@github.com/gorilla/mux -> Result Error String
+--
+-- The accept side of the Go FFI `Result` rule: every shape an application
+-- uses to handle a binding's `Result Error a` type-checks against the pinned
+-- signatures above (the `-- ffi:` lines stand in for `sky-ffi/<pkg>.kernel.json`).
+-- `case`, `Result.withDefault`, `Result.map` / `andThen` across two calls, a
+-- partial application, a binding passed as a function value, and a Go opaque
+-- value (`Router`) that flows from one call into the next.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Pkg
+
+
+firstField : String
+firstField =
+    case Pkg.read "x" 0 1 of
+
+        Ok ( s, _ ) ->
+            s
+
+        Err _ ->
+            ""
+
+
+twice : Int -> Result Error String
+twice =
+    Pkg.repeat "ab"
+
+
+lengths : List Int
+lengths =
+    List.map (\n -> Result.withDefault 0 (Pkg.encodedLen n)) [ 1, 2, 3 ]
+
+
+chained : Result Error Int
+chained =
+    twice 2 |> Result.andThen (\s -> Pkg.encodedLen (String.length s))
+        |> Result.map (\n -> n * 10)
+
+
+applied : List (Result Error Int)
+applied =
+    List.map Pkg.encodedLen [ 4, 5 ]
+
+
+routerName : String
+routerName =
+    Pkg.newRouter () |> Result.andThen Pkg.describe |> Result.withDefault "none"
+
+
+main =
+    println
+        (String.join
+            ","
+            [ firstField
+            , Result.withDefault "" (twice 1)
+            , String.fromInt (List.foldl (\a b -> a + b) 0 lengths)
+            , String.fromInt (Result.withDefault 0 chained)
+            , String.fromInt (List.length applied)
+            , routerName
+            ])

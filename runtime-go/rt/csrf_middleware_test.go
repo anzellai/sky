@@ -172,11 +172,16 @@ func TestCSRF_HeadAndOptionsPass(t *testing.T) {
 func TestCSRF_ObservabilityEndpointsSkipped(t *testing.T) {
 	resetCsrf(t)
 	for _, path := range []string{"/_sky/healthz", "/_sky/readyz", "/_sky/metrics", "/_sky/buildinfo", "/_sky/sse", "/_sky/config"} {
-		// Even POST should pass on these — they're either GET-only
-		// or auth'd separately (metrics token, SSE session cookie).
-		resp := serveCsrf(http.MethodPost, path, nil, nil)
+		// These are read-only (GET) endpoints: GET skips the middleware.
+		resp := serveCsrf(http.MethodGet, path, nil, nil)
 		if resp.Code != 200 {
-			t.Errorf("POST %s should bypass CSRF, got %d", path, resp.Code)
+			t.Errorf("GET %s should bypass CSRF, got %d", path, resp.Code)
+		}
+		// The exemption is keyed by method (v0.27): a state-changing method
+		// on the same path takes the normal check.
+		post := serveCsrf(http.MethodPost, path, nil, nil)
+		if post.Code != http.StatusForbidden {
+			t.Errorf("POST %s must be CSRF-checked, got %d", path, post.Code)
 		}
 	}
 }

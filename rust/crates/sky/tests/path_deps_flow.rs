@@ -173,6 +173,30 @@ fn go_module_path_dependency_add_build_edit_install_remove() {
     let (_, out) = run(&app, bin.to_str().unwrap(), &[]);
     assert!(out.contains("hey!"), "{out}");
 
+    // The module path drifts: greet's go.mod now declares another module.
+    // `sky check` and `sky install` both say so and name the fix, instead of
+    // building against a module that no longer exists under its key.
+    write(
+        &greet.join("go.mod"),
+        "module example.com/renamed\n\ngo 1.22\n",
+    );
+    let (_, log) = run(&app, SKY, &["check", "src/Main.sky"]);
+    assert!(
+        log.contains("its go.mod now declares module \"example.com/renamed\"")
+            && log.contains("sky remove example.com/greet"),
+        "the module-path drift must be reported by sky check:\n{log}"
+    );
+    let (_, log) = run(&app, SKY, &["install"]);
+    assert!(
+        log.contains("warning: path dependency \"example.com/greet\"")
+            && log.contains("now declares module \"example.com/renamed\""),
+        "sky install must repeat the module-path drift:\n{log}"
+    );
+    write(
+        &greet.join("go.mod"),
+        "module example.com/greet\n\ngo 1.22\n",
+    );
+
     // `sky install` still refreshes explicitly.
     let (ok, log) = run(&app, SKY, &["install"]);
     assert!(ok, "sky install:\n{log}");

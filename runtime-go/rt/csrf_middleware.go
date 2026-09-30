@@ -219,9 +219,9 @@ func IsCsrfEnabled() bool {
 //     `Server.api` / `Live.api` / `Server.rpc` call) → pass through
 //     unchanged. `Server.rpc` routes carry their own origin guard
 //     (rpc_guard.go) in place of the double-submit token.
-//   - Observability endpoints (/_sky/healthz, /_sky/readyz,
-//     /_sky/metrics, /_sky/buildinfo, /_sky/sse) → pass through
-//     (no state mutation; SSE is GET).
+//   - The runtime's own exemptions (csrfBuiltinExemptions, keyed by
+//     method + path: GET probes, the console's GET JSON API, the console
+//     login / logout, the observability ingest POST) → pass through.
 //   - State-mutating method (POST/PUT/DELETE/PATCH) → require
 //     `X-Sky-Csrf` header matching `__sky_csrf` cookie. Both
 //     present + equal → pass. Missing or mismatch → 403.
@@ -231,8 +231,8 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Observability + SSE skip — see above.
-		if isObservabilityPath(r.URL.Path) {
+		// The runtime's own exemptions (method + path) — see above.
+		if isBuiltinCsrfExempt(r.Method, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -490,35 +490,67 @@ const csrfRejectHint = "CSRF guards cookie-session browser POSTs. API clients: s
 	"Live.api or App.api \"POST /path\" handler in a Sky.Live or Std.App app. " +
 	"SKY_CSRF=off turns the check off for the whole app."
 
-// isObservabilityPath — true for paths the CSRF middleware skips
-// because they're read-only (GET) or are the SSE connection (which
-// runs over GET and is authenticated by session cookie alone).
+// csrfBuiltinExemption is one CSRF exemption the runtime itself declares,
+// keyed by METHOD + path like a user exemption (csrfExemption). `prefix`
+// matches the path and everything under it.
+type csrfBuiltinExemption struct {
+	methods []string
+	path    string
+	prefix  bool
+}
+
+// csrfBuiltinExemptions — the runtime's own routes that skip the CSRF check.
 //
-// The /_sky/console family is included because the dashboard polls
-// its API endpoints every 1s via plain fetch (no CSRF token to
-// attach — the dashboard is a static HTML shell, not a Sky.Live
-// app). Admin-auth is the production gate for these, layered
-// inside the handlers themselves.
-func isObservabilityPath(path string) bool {
+// Before v0.27 this was a PATH-only list (`isObservabilityPath`): every method
+// on /_sky/console/* and on /_sky/observability/ingest skipped the check. The
+// inline console is a Sky.Live sub-app mounted at /_sky/console, so its
+// state-changing requests (/_sky/console/_sky/event, /_sky/console/_sky/rotate)
+// ran with no CSRF check for a signed-in admin's cookie. Each entry now names
+// the methods it covers, and everything else — the console sub-app's own
+// event and rotation POSTs included — takes the normal check with the
+// sub-app's own CSRF cookie (csrfCookieNameForPath), which its page embeds.
+var csrfBuiltinExemptions = []csrfBuiltinExemption{
+	// Read-only probes and the SSE stream: no cookie on a probe.
+	{methods: []string{http.MethodGet, http.MethodHead}, path: "/_sky/healthz"},
+	{methods: []string{http.MethodGet, http.MethodHead}, path: "/_sky/readyz"},
+	{methods: []string{http.MethodGet, http.MethodHead}, path: "/_sky/metrics"},
+	{methods: []string{http.MethodGet, http.MethodHead}, path: "/_sky/buildinfo"},
+	{methods: []string{http.MethodGet, http.MethodHead}, path: "/_sky/sse"},
+	{methods: []string{http.MethodGet, http.MethodHead}, path: "/_sky/config"},
+	// The console's JSON API, polled with plain fetch (GET). Admin auth is
+	// the gate, inside the handlers.
+	{methods: []string{http.MethodGet, http.MethodHead}, path: "/_sky/console/api/", prefix: true},
+	// The console login form is a plain HTML form served by the auth gate; it
+	// authenticates by the console token it submits. Sign-out clears a cookie
+	// and is idempotent (GET link or POST).
+	{methods: []string{http.MethodPost}, path: "/_sky/console/_login"},
+	{methods: []string{http.MethodGet, http.MethodPost}, path: "/_sky/console/_logout"},
+	// Sub-app observability ingest: POSTed by children through the push
+	// exporter, authenticated by X-Sky-Ingest-Token
+	// (HandleObservabilityIngest). No browser is involved; without this
+	// exemption every child push hits 403 and federation breaks.
+	{methods: []string{http.MethodPost}, path: "/_sky/observability/ingest"},
+}
+
+// isBuiltinCsrfExempt reports whether method + path match one of the
+// runtime's own exemptions (csrfBuiltinExemptions).
+func isBuiltinCsrfExempt(method, path string) bool {
 	if !strings.HasPrefix(path, "/_sky/") {
 		return false
 	}
-	// Console + console API subroutes — match by prefix.
-	if path == "/_sky/console" || strings.HasPrefix(path, "/_sky/console/") {
-		return true
-	}
-	// Specific endpoints that must always pass:
-	switch path {
-	case "/_sky/healthz", "/_sky/readyz", "/_sky/metrics",
-		"/_sky/buildinfo", "/_sky/sse", "/_sky/config",
-		// Sub-app observability ingest — POSTed to by children
-		// via the push exporter. Has its own auth via
-		// X-Sky-Ingest-Token (validated by HandleObservabilityIngest);
-		// CSRF cookies are irrelevant because no browser is involved.
-		// Without this exemption every child push hits 403 and
-		// federation silently breaks.
-		"/_sky/observability/ingest":
-		return true
+	for _, e := range csrfBuiltinExemptions {
+		if e.prefix {
+			if !strings.HasPrefix(path, e.path) {
+				continue
+			}
+		} else if path != e.path {
+			continue
+		}
+		for _, m := range e.methods {
+			if strings.EqualFold(m, method) {
+				return true
+			}
+		}
 	}
 	return false
 }

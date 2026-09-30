@@ -8140,3 +8140,111 @@ fn a_type_error_in_a_path_dependency_stops_the_split_at_its_own_file() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// `GET /_sky/sub` with NO `subscriptions` function the generator can find:
+/// the backend has nothing to authorise a topic against, so it refuses every
+/// topic (fail closed) and `sky spa-split` warns. The push fixture's own
+/// `subscriptions` names "count"; renamed to `subs`, the same app must answer
+/// 403 for "count" rather than stream it.
+#[test]
+fn sub_endpoint_refuses_every_topic_when_subscriptions_cannot_be_found() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    let fixture_dir = push_fixture_entry()
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    copy_tree(&fixture_dir, &proj);
+    let main_path = proj.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main_path).unwrap();
+    let renamed = src
+        .replace(
+            "subscriptions : Model -> Sub Msg\nsubscriptions _ =",
+            "subs : Model -> Sub Msg\nsubs _ =",
+        )
+        .replace(
+            "            , subscriptions = subscriptions\n",
+            "            , subscriptions = subs\n",
+        );
+    assert_ne!(src, renamed, "the fixture's subscriptions must be renamed");
+    std::fs::write(&main_path, renamed).unwrap();
+
+    let out = proj.join(".split-out");
+    let output = Command::new(SKY)
+        .args([
+            "spa-split",
+            main_path.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "sky spa-split must succeed:\n{log}"
+    );
+    assert!(
+        log.contains("refuses every topic"),
+        "sky spa-split must warn that /_sky/sub refuses every topic:\n{log}"
+    );
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        back.contains("subHandler _ =")
+            && back.contains("Server.withStatus 403")
+            && !back.contains("spaSubAllowsTopic_"),
+        "with no subscriptions the handler must refuse without consulting a Sub:\n{back}"
+    );
+    assert!(
+        back.contains("Server.api \"GET /_sky/sub\" subHandler"),
+        "the endpoint stays mounted (a client that subscribes gets a 403, not a 404):\n{back}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    let backend_dir = out.join("backend");
+    let build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&backend_dir)
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        build.status.success(),
+        "the backend must build:\n{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let child = Killed(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file)
+            .spawn()
+            .expect("spawn the backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 80),
+        "the backend never reported listening on :{port}"
+    );
+    let count = curl_req(port, "GET", "/_sky/sub?topic=count", &[], None, "2");
+    let other = curl_req(port, "GET", "/_sky/sub?topic=anything", &[], None, "2");
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    assert_eq!(
+        count.0, 403,
+        "a topic the app's (unfound) subscriptions would name is refused: {count:?}"
+    );
+    assert_eq!(other.0, 403, "every other topic is refused: {other:?}");
+}

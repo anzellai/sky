@@ -342,21 +342,27 @@ func TestConsole_DisabledViaEnv(t *testing.T) {
 	}
 }
 
-// ─── isObservabilityPath covers console ──────────────────
+// ─── the console's built-in CSRF exemptions are method-keyed ──────
 
-func TestIsObservabilityPath_CoversConsoleSubroutes(t *testing.T) {
-	for _, p := range []string{
-		"/_sky/console",
-		"/_sky/console/api/overview",
-		"/_sky/console/api/logs",
-		"/_sky/console/api/errors",
+func TestBuiltinCsrfExempt_CoversConsoleReadsAndLoginOnly(t *testing.T) {
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/_sky/console/api/overview"},
+		{"GET", "/_sky/console/api/logs"},
+		{"GET", "/_sky/console/api/errors"},
+		{"POST", "/_sky/console/_login"},
 	} {
-		if !isObservabilityPath(p) {
-			t.Errorf("%s should be classed as observability (CSRF skip)", p)
+		if !isBuiltinCsrfExempt(c.method, c.path) {
+			t.Errorf("%s %s should be a built-in CSRF exemption", c.method, c.path)
 		}
 	}
-	// Negative — unrelated path doesn't match.
-	if isObservabilityPath("/api/users") {
-		t.Errorf("/api/users must NOT be classed as observability")
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/_sky/console/api/overview"},
+		{"POST", "/_sky/console/_sky/event"},
+		{"GET", "/_sky/console"},
+		{"POST", "/api/users"},
+	} {
+		if isBuiltinCsrfExempt(c.method, c.path) {
+			t.Errorf("%s %s must NOT be a built-in CSRF exemption", c.method, c.path)
+		}
 	}
 }

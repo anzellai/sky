@@ -373,3 +373,62 @@ func TestSweepSessionless_SparesSocketWhosePingsSucceed(t *testing.T) {
 		t.Fatal("control: a silent socket with no heartbeat was not reaped")
 	}
 }
+
+// TestSweepSessionless_SparesTaskSocketWhoseReaderIsParked — a Task reads a
+// socket when it is ready, so a Task-owned socket whose peer sent more frames
+// than the queue holds parks its reader (no conn.Read, so TCP backpressure
+// slows the peer). The backlog is proof of a live peer: the reaper must not
+// close it however long the Task takes. Control: the same parked state on a
+// socket no Task owns is reaped at the idle bound.
+func TestSweepSessionless_SparesTaskSocketWhoseReaderIsParked(t *testing.T) {
+	flood := func(ctx context.Context, conn *websocket.Conn) {
+		for i := 0; i < wsReadChanCap+16; i++ {
+			if err := conn.Write(ctx, websocket.MessageText, []byte(fmt.Sprintf("%d", i))); err != nil {
+				return
+			}
+		}
+		_, _, _ = conn.Read(ctx) // stay open
+	}
+	id := wsTaskConnect(t, wsScriptServer(t, flood), 0)
+	sh := lookupWs(nil, id)
+	// One Task receive claims the socket for a Task.
+	if got := wsReceived(runWsTask(WebSocket_receive(id))); got != "Text:0" {
+		t.Fatalf("first receive = %q", got)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !sh.parked.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !sh.parked.Load() {
+		t.Fatal("the reader never parked on a full queue")
+	}
+	if sh.owner.Load() != wsOwnerTask {
+		t.Fatalf("owner = %d, want the Task owner", sh.owner.Load())
+	}
+
+	sweepSessionless(time.Now().Add(11 * time.Minute))
+
+	if sh.IsClosed() {
+		t.Fatal("the reaper closed a Task-owned socket whose reader is parked on a backlog")
+	}
+	if _, ok := sessionlessSockets.Load(sh.id); !ok {
+		t.Fatal("the reaper unmapped a Task-owned socket whose reader is parked")
+	}
+	// The backlog is still there for the Task, in order.
+	if got := wsReceived(runWsTask(WebSocket_receive(id))); got != "Text:1" {
+		t.Fatalf("receive after the sweep = %q, want the next queued frame", got)
+	}
+
+	// Control: parked with no Task owner (a Sub owner stalls out instead of
+	// parking indefinitely) is not proof of life, and idle past the bound is
+	// reaped.
+	ctx, cancel := context.WithCancel(context.Background())
+	ctl := &wsHandle{id: nextWsID(), ch: make(chan wsEvent, 1), ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	ctl.owner.Store(wsOwnerSub)
+	ctl.parked.Store(true)
+	registerWs(nil, ctl)
+	sweepSessionless(time.Now().Add(11 * time.Minute))
+	if !ctl.IsClosed() {
+		t.Fatal("control: a parked socket with no Task owner was not reaped at the idle bound")
+	}
+}

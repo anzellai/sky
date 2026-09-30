@@ -5,8 +5,9 @@ stable name, a description the model reads, and an executor `arguments -> result
 (both strings on the wire; the executor parses/serialises as it likes). The v1
 loop uses a prompt-based protocol: the model is told the tools and asked to reply
 with `{"tool":"<name>","args":"<input>"}` to call one, or `{"answer":"<final>"}`
-when done. Native OpenAI function-calling (a `tools` array + `tool_calls`) is a
-follow-up on the same `Tool` type.
+when done. Native OpenAI function-calling (a `tools` array + `tool_calls`) is
+also available: `Agent.nativeToolLoop` runs it over the same `Tool` values, and
+`Provider.chatTools` is the single call it makes.
 
     weather =
         Tool.tool "weather" "Get the weather for a city (args: the city name)"
