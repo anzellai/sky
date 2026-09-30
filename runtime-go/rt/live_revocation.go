@@ -225,7 +225,7 @@ func (app *liveApp) evictForAccess(sess *liveSession) {
 	// the gate lets through.) None of this touches the session's goroutines,
 	// so it is safe under the sess.mu the caller holds.
 	app.endSessionNow(sess)
-	go func() {
+	goSky("session eviction teardown", func() {
 		// markDone first so sess.done closes promptly even if the store no
 		// longer holds the sid; store.Delete then removes the blob (and calls
 		// markDone again — idempotent via doneOnce). The evicted flag set above
@@ -234,7 +234,7 @@ func (app *liveApp) evictForAccess(sess *liveSession) {
 		if app != nil && app.store != nil && sid != "" {
 			app.store.Delete(sid)
 		}
-	}()
+	})
 }
 
 // ─── durable binding rows (restore-time re-bind) ────────────────────

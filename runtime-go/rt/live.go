@@ -3840,7 +3840,11 @@ func (app *liveApp) runCmd(sess *liveSession, cmd any) {
 		// fans out below the perform layer and consumes no permit, so
 		// parallel-fetch is not serialised.) See runPerform for the full
 		// argument.
-		go app.runPerform(sess, c.task, c.toMsg, parentCtx)
+		// goSky: a panic net for everything outside performMsg's own
+		// recover (the permits, the stamps, the dispatch of the Msg).
+		// runPerform re-stamps the parent's trace context and the session.
+		task, toMsg := c.task, c.toMsg
+		goSky("Cmd.perform", func() { app.runPerform(sess, task, toMsg, parentCtx) })
 	case "publish":
 		// Cycle 3 P48: Std.Cmd.publish dispatch. Route every publish
 		// through app.Publish so the "one bump per publish, BEFORE
