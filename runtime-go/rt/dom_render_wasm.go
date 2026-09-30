@@ -408,7 +408,9 @@ func bindNodeEvents(n js.Value, el VNode) {
 			ek := evt
 			node := n
 			f := js.FuncOf(func(this js.Value, args []js.Value) any {
-				spaReadFileAndDispatch(node, spaNodeHandlers.lookup(idOf(this), ek, h))
+				if cur, ok := spaEventHandler(this, args, ek, idOf, h); ok {
+					spaReadFileAndDispatch(node, cur)
+				}
 				return nil
 			})
 			spaListen(n, el.SkyID, "change", f)
@@ -431,7 +433,9 @@ func bindNodeEvents(n js.Value, el VNode) {
 					}
 					ev.Call("preventDefault")
 				}
-				dispatchEvent(spaNodeHandlers.lookup(idOf(this), "enter", h), "")
+				if cur, ok := spaEventHandler(this, args, "enter", idOf, h); ok {
+					dispatchEvent(cur, "")
+				}
 				return nil
 			})
 			spaListen(n, el.SkyID, "keydown", f)
@@ -443,7 +447,16 @@ func bindNodeEvents(n js.Value, el VNode) {
 		h := handler // fallback only; the live handler is read at dispatch time
 		e := evt
 		f := js.FuncOf(func(this js.Value, args []js.Value) any {
-			cur := spaNodeHandlers.lookup(idOf(this), e, h)
+			cur, run := spaEventHandler(this, args, e, idOf, h)
+			if !run {
+				// This node had no handler for the event when it started
+				// (the listener was bound by a render during the event).
+				// A form submit is still kept from a native submit.
+				if e == "submit" && len(args) > 0 && args[0].Truthy() {
+					args[0].Call("preventDefault")
+				}
+				return nil
+			}
 			// A form submit is the one event that carries structured data (the
 			// field values), and it MUST preventDefault or the browser does a
 			// native submit — which, on a form with no method, is a GET that
@@ -506,6 +519,70 @@ func bindNodeEvents(n js.Value, el VNode) {
 	}
 }
 
+// spaEventViews holds the handler view of each DOM event in flight
+// (dom_event_view.go): a listener runs the handler its node had when the event
+// started, never one a render bound or renamed while the event was dispatching.
+var spaEventViews = newDomEventViews[js.Value](32)
+
+// spaEventViewKey is the expando on the DOM Event object that carries the
+// token of its recorded view.
+const spaEventViewKey = "__skyEventView"
+
+// spaEventHandler returns the handler `this` runs for the event in args under
+// key (the VNode event name: "click", "input", the synthetic "enter", …), and
+// false when it must run nothing. The first Sky listener an event reaches
+// records the view; every later one reads it (the H-2 fix).
+func spaEventHandler(this js.Value, args []js.Value, key string, idOf func(js.Value) string, fallback any) (any, bool) {
+	if this.Type() != js.TypeObject {
+		return fallback, true
+	}
+	// An element without a sky-id has no handler slot: its bind-time handler.
+	if s := this.Call("getAttribute", "sky-id"); s.Type() != js.TypeString || s.String() == "" {
+		return spaNodeHandlers.lookup(idOf(this), key, fallback), true
+	}
+	if len(args) == 0 || args[0].Type() != js.TypeObject {
+		return spaNodeHandlers.lookup(idOf(this), key, fallback), true
+	}
+	ev := args[0]
+	tok := ev.Get(spaEventViewKey)
+	if tok.Type() != js.TypeNumber {
+		t := spaEventViews.open(spaEventPath(ev), spaNodeSkyID, spaNodeHandlers)
+		ev.Set(spaEventViewKey, t)
+		tok = js.ValueOf(t)
+	}
+	h, ok, known := spaEventViews.lookup(tok.Int(), this, func(a, b js.Value) bool { return a.Equal(b) }, key)
+	if !known {
+		return spaNodeHandlers.lookup(idOf(this), key, fallback), true
+	}
+	return h, ok
+}
+
+// spaEventPath is the event's propagation path (target first), fixed by the
+// browser before dispatch.
+func spaEventPath(ev js.Value) []js.Value {
+	if ev.Get("composedPath").Type() != js.TypeFunction {
+		return nil
+	}
+	p := ev.Call("composedPath")
+	out := make([]js.Value, 0, p.Length())
+	for i := 0; i < p.Length(); i++ {
+		out = append(out, p.Index(i))
+	}
+	return out
+}
+
+// spaNodeSkyID reads a node's sky-id attribute.
+func spaNodeSkyID(n js.Value) (string, bool) {
+	if n.Type() != js.TypeObject || n.Get("getAttribute").Type() != js.TypeFunction {
+		return "", false
+	}
+	s := n.Call("getAttribute", "sky-id")
+	if s.Type() != js.TypeString || s.String() == "" {
+		return "", false
+	}
+	return s.String(), true
+}
+
 // spaBindComposition wires compositionstart / compositionend on a node with
 // an input handler: the start marks the node composing (so input events and
 // value patches leave it alone), the end dispatches the committed text once.
@@ -521,7 +598,9 @@ func spaBindComposition(n js.Value, id string, h any, idOf func(js.Value) string
 			val = v.String()
 		}
 		this.Set("__skyComposed", val)
-		dispatchEvent(spaNodeHandlers.lookup(idOf(this), "input", h), val)
+		if cur, ok := spaEventHandler(this, args, "input", idOf, h); ok {
+			dispatchEvent(cur, val)
+		}
 		return nil
 	})
 	spaListen(n, id, "compositionstart", start)
