@@ -28,10 +28,29 @@ package rt
 //     Watch.close) is never read by a runner that outlived it: the handle's
 //     own close wakes the pump, which then observes the closed state and
 //     returns.
+//
+// # Handover: a re-requested source waits for its stopping runner
+//
+// `cancel` does not wait: a Sky.Live update that drops its own subscription
+// runs on the runner's goroutine and cannot wait for itself, and a Live
+// dispatch holds sess.mu, which a stopping runner may need to finish its last
+// delivery. So a dropped runner releases its claim a little AFTER the
+// reconcile that dropped it returns. A model that drops a source and asks for
+// it again before that release (two quick dispatches, or a toggle) must not
+// be refused as if a second consumer held the source: the claim is still the
+// old runner's, and it is on its way out.
+//
+// sourceClaims records which runner holds each source. When the holder is
+// stopping, startSourceRunner does not claim at once: the new runner's
+// goroutine waits for the holder's `done` (its release) and claims then, so
+// the two runners never read the source at the same time and the new one
+// resumes exactly where the old one stopped. A holder that is NOT stopping is
+// a real second consumer and is refused, as before.
 
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sky-app/rt/periodic"
@@ -108,9 +127,6 @@ func (r *sourceRunner) cancelAndWait(timeout time.Duration) bool {
 // after the source is released.
 func startSourceRunner(key string, src subSource, toMsg any,
 	deliver func(msg any, stop <-chan struct{}) bool, onEnd func()) (*sourceRunner, error) {
-	if err := src.claimSub(); err != nil {
-		return nil, err
-	}
 	r := &sourceRunner{
 		key:   key,
 		src:   src,
@@ -118,19 +134,92 @@ func startSourceRunner(key string, src subSource, toMsg any,
 		stop:  make(chan struct{}),
 		done:  make(chan struct{}),
 	}
-	go r.run(deliver, onEnd)
+	sourceClaims.mu.Lock()
+	var predecessor <-chan struct{}
+	if prev := sourceClaims.holder[src]; prev != nil && prev.stopping() && !prev.ended() {
+		// The holder was dropped and is leaving: take over once it has
+		// released (see "Handover" above).
+		predecessor = prev.done
+	} else if err := src.claimSub(); err != nil {
+		sourceClaims.mu.Unlock()
+		return nil, err
+	}
+	sourceClaims.holder[src] = r
+	sourceClaims.mu.Unlock()
+	go r.run(predecessor, deliver, onEnd)
 	return r, nil
 }
 
-func (r *sourceRunner) run(deliver func(msg any, stop <-chan struct{}) bool, onEnd func()) {
+// sourceClaims maps each claimed source to the runner that holds (or, after
+// a handover, is about to hold) its claim.
+var sourceClaims = struct {
+	mu     sync.Mutex
+	holder map[subSource]*sourceRunner
+}{holder: map[subSource]*sourceRunner{}}
+
+// forgetClaim removes r as the holder of its source, unless a successor has
+// already taken the entry over.
+func (r *sourceRunner) forgetClaim() {
+	sourceClaims.mu.Lock()
+	if sourceClaims.holder[r.src] == r {
+		delete(sourceClaims.holder, r.src)
+	}
+	sourceClaims.mu.Unlock()
+}
+
+func (r *sourceRunner) stopping() bool {
+	select {
+	case <-r.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *sourceRunner) ended() bool {
+	select {
+	case <-r.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// testHookSourceBeforeRelease, when set by a test, runs on the runner
+// goroutine after the pump returned and before the claim is released. It
+// lets a test hold a dropped runner in its "stopped reading, still holding
+// the claim" window.
+var testHookSourceBeforeRelease atomic.Pointer[func(key string)]
+
+func (r *sourceRunner) run(predecessor <-chan struct{}, deliver func(msg any, stop <-chan struct{}) bool, onEnd func()) {
 	defer close(r.done)
 	defer func() {
 		if onEnd != nil {
 			onEnd()
 		}
 	}()
+	defer r.forgetClaim()
+	if predecessor != nil {
+		// Handover: the previous runner still holds the claim. It has
+		// stopped reading, so this wait is short and bounded by its exit.
+		// done closes only after this wait, so a later handover never
+		// overtakes this one.
+		<-predecessor
+		if r.stopping() {
+			return // dropped before it ever claimed: nothing to release
+		}
+		if err := r.src.claimSub(); err != nil {
+			logOnce("source-sub-handover-refused-"+r.key, func() {
+				fmt.Printf("[sky.sub] subscription %s ignored: %v\n", r.key, err)
+			})
+			return
+		}
+	}
 	// Released AFTER the pump returned: the stream leaves first.
 	defer r.src.releaseSub()
+	if hook := testHookSourceBeforeRelease.Load(); hook != nil {
+		defer (*hook)(r.key)
+	}
 	defer func() {
 		if rec := recover(); rec != nil {
 			LogRecoveredPanic("sky.sub", "subscription source "+r.key, rec)

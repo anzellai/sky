@@ -39,6 +39,10 @@ func TestSubAppDoesNotInheritHostDurableStore(t *testing.T) {
 	}
 
 	app := MountLiveSubAppInProcess(http.NewServeMux(), "/_sky/console", cfg)
+	// The mount is process-wide: release it, or the next test in this
+	// process that serves an app with the inline console finds
+	// /_sky/console already taken and panics (seen under -count=2).
+	t.Cleanup(func() { unmountInProcessSubApp("/_sky/console", app) })
 	if fataled {
 		t.Fatal("L9: sub-app inherited the host's postgres store and fail-loud fired — it must default to memory")
 	}
