@@ -13,7 +13,7 @@
 //! scaffolded files, so it has the same value on a bare CI runner as it does
 //! locally.
 //!
-//! Verbs covered here: `init`, `clean`, `watch` (argument validation), `package` (the release refusals), `config migrate`,
+//! Verbs covered here: `init`, `clean`, `watch` (argument validation), `package` (the release and TestFlight-upload refusals), `config migrate`,
 //! `install`, `update`, `upgrade`, `db` (dispatch + `init`), and unknown-verb
 //! dispatch. `doctor` is owned by `doctor_flow.rs`, `doc` by `doc_flow.rs`,
 //! `add`/`remove` by `ffi_verb_flow.rs`, `db migrate/push` by `db_flow.rs`.
@@ -448,6 +448,199 @@ fn package_refuses_a_release_it_cannot_ship() {
     assert!(
         !dir.join(".split").exists(),
         "a refused release must not start a build"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `sky package --release --upload testflight` refuses, before any build and
+/// before any `xcrun altool` call, an upload it cannot make, naming the fix:
+/// an unknown destination, a non-iOS target, `--ipa` without `--upload`, no
+/// `Bundle.withId`, no `Bundle.withBuild`, missing App Store Connect key
+/// variables, a key path that is not a `.p8`, no distribution signing (the
+/// build would be the unsigned `.ipa`), a development identity and a
+/// development profile. The upload itself, with a fake `xcrun`, is proven in
+/// `native_shell_flow.rs` (`testflight_upload_validates_then_uploads_through_altool`).
+#[test]
+fn package_upload_refuses_before_any_network_call() {
+    let dir = scratch("package-upload");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"shop\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    let main = |bundle_steps: &str| {
+        std::fs::write(
+            dir.join("src/Main.sky"),
+            format!(
+                "module Main exposing (main, bundle)\n\nimport Std.Bundle as Bundle exposing (Bundle)\nimport Std.Spa as Spa\n\nbundle : Bundle\nbundle =\n    Bundle.default\n{bundle_steps}\n\nmain =\n    0\n"
+            ),
+        )
+        .unwrap();
+    };
+    // A fake xcrun that only records: no call may reach it.
+    let log = dir.join("xcrun.log");
+    let fake = dir.join("fake-xcrun");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\necho \"$*\" >> \"$FAKE_XCRUN_LOG\"\nexit 0\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let key = dir.join("AuthKey_ABC123DEF4.p8");
+    std::fs::write(
+        &key,
+        "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n",
+    )
+    .unwrap();
+    let not_key = dir.join("notes.txt");
+    std::fs::write(&not_key, "not a key").unwrap();
+    let dev_profile = dir.join("dev.mobileprovision");
+    std::fs::write(
+        &dev_profile,
+        "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>ProvisionedDevices</key>\
+         <array><string>00008110</string></array></dict></plist>",
+    )
+    .unwrap();
+    let key_s = key.display().to_string();
+    let not_key_s = not_key.display().to_string();
+    let dev_profile_s = dev_profile.display().to_string();
+    let asc: [(&str, &str); 3] = [
+        ("SKY_ASC_KEY_ID", "ABC123DEF4"),
+        ("SKY_ASC_ISSUER_ID", "57246542-96fe-1a63-e053-0824d011072a"),
+        ("SKY_ASC_KEY_PATH", &key_s),
+    ];
+    let package = |args: &[&str], env: &[(&str, &str)]| -> (i32, String) {
+        let mut cmd = Command::new(SKY);
+        cmd.arg("package")
+            .args(args)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .env("SKY_APP_URL", "https://shop.example.test/")
+            .env("SKY_XCRUN", &fake)
+            .env("FAKE_XCRUN_LOG", &log);
+        for v in [
+            "SKY_PACKAGE_RELEASE",
+            "SKY_ASC_KEY_ID",
+            "SKY_ASC_ISSUER_ID",
+            "SKY_ASC_KEY_PATH",
+            "SKY_IOS_SIGN_IDENTITY",
+            "SKY_IOS_PROVISIONING_PROFILE",
+        ] {
+            cmd.env_remove(v);
+        }
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("spawn sky package");
+        let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+        s.push_str(&String::from_utf8_lossy(&out.stderr));
+        (out.status.code().unwrap_or(-1), s)
+    };
+    let upload = [
+        "--release",
+        "--target",
+        "mobile:ios",
+        "--upload",
+        "testflight",
+    ];
+
+    main("        |> Bundle.withId \"com.example.shop\"\n        |> Bundle.withBuild 3");
+    let (code, out) = package(
+        &["--release", "--target", "mobile:ios", "--upload", "play"],
+        &asc,
+    );
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("--upload testflight"), "{out}");
+    let (code, out) = package(
+        &[
+            "--release",
+            "--target",
+            "mobile:android",
+            "--upload",
+            "testflight",
+        ],
+        &asc,
+    );
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("mobile:ios or tablet:ipad"), "{out}");
+    let (code, out) = package(
+        &["--release", "--target", "mobile:ios", "--ipa", "App.ipa"],
+        &asc,
+    );
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("--upload"), "{out}");
+
+    main("        |> Bundle.withBuild 3");
+    let (code, out) = package(&upload, &asc);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("Bundle.withId"),
+        "no bundle id must be refused:\n{out}"
+    );
+
+    main("        |> Bundle.withId \"com.example.shop\"");
+    let (code, out) = package(&upload, &asc);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("Bundle.withBuild") && out.contains("raise it for every upload"),
+        "no build number must be refused, saying it must increase:\n{out}"
+    );
+
+    main("        |> Bundle.withId \"com.example.shop\"\n        |> Bundle.withBuild 3");
+    let (code, out) = package(&upload, &[]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("SKY_ASC_KEY_ID")
+            && out.contains("SKY_ASC_ISSUER_ID")
+            && out.contains("SKY_ASC_KEY_PATH")
+            && out.contains("App Store Connect API"),
+        "missing key variables must be named with the setup:\n{out}"
+    );
+    let (code, out) = package(&upload, &[asc[0], asc[1], ("SKY_ASC_KEY_PATH", &not_key_s)]);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("-----BEGIN PRIVATE KEY-----"), "{out}");
+    assert!(
+        !out.contains("not a key"),
+        "the key file's contents are never printed:\n{out}"
+    );
+
+    let (code, out) = package(&upload, &asc);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("SKY_IOS_SIGN_IDENTITY") && out.contains("unsigned"),
+        "an upload without distribution signing must be refused:\n{out}"
+    );
+    let mut signed = asc.to_vec();
+    signed.push(("SKY_IOS_PROVISIONING_PROFILE", &dev_profile_s));
+    signed.push((
+        "SKY_IOS_SIGN_IDENTITY",
+        "Apple Development: Ada (TEAMID1234)",
+    ));
+    let (code, out) = package(&upload, &signed);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("development identity"), "{out}");
+    signed.pop();
+    signed.push((
+        "SKY_IOS_SIGN_IDENTITY",
+        "Apple Distribution: Ada (TEAMID1234)",
+    ));
+    let (code, out) = package(&upload, &signed);
+    assert_eq!(code, 1, "{out}");
+    assert!(out.contains("lists devices"), "{out}");
+
+    assert!(
+        !log.exists(),
+        "a refused upload must not run xcrun at all:\n{}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    assert!(
+        !dir.join("sky-out").join("release").exists(),
+        "a refused upload must not start a build"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

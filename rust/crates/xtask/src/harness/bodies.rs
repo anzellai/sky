@@ -1068,7 +1068,11 @@ pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
 /// ledger used to credit `cli.migrate` (`sky config migrate`) from any quoted
 /// `"migrate"` token in a flow file (`sky db migrate` calls); it now counts
 /// only real invocations, so the verb got a real test.
-pub const CLI_VERBS_EXPECTED: u64 = 12;
+///
+/// 12 -> 13: v0.27.0 adds `sky package --upload testflight` and its refusal
+/// test (`package_upload_refuses_before_any_network_call`); the upload itself
+/// is proven with a fake `xcrun` in `native_shell_flow.rs`.
+pub const CLI_VERBS_EXPECTED: u64 = 13;
 
 pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
     let suite = ctx.repo_root.join("rust/crates/sky/tests/cli_verb_flow.rs");

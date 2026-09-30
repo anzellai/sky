@@ -51,6 +51,7 @@ mod native_pkg;
 mod plist;
 mod precompress;
 mod split_diag;
+mod store_upload;
 mod target;
 mod xmlmini;
 
@@ -187,7 +188,14 @@ Builds the store / distribution artefact for a native shell into sky-out/release
   desktop:mac     a .app and a .dmg (SKY_MACOS_SIGN_IDENTITY, else signed ad hoc)
 
 A release must load a deployed https backend (App.withAppUrl or SKY_APP_URL), and every
-declared permission must state its purpose string (Bundle.withUsage)."#;
+declared permission must state its purpose string (Bundle.withUsage).
+
+Upload to TestFlight (mobile:ios or tablet:ipad, on macOS with Xcode):
+  --upload testflight   after the signed .ipa is built, validate it and upload it to App
+                        Store Connect with `xcrun altool` (SKY_ASC_KEY_ID, SKY_ASC_ISSUER_ID,
+                        SKY_ASC_KEY_PATH = the AuthKey_<KEY_ID>.p8). Needs Bundle.withId and
+                        Bundle.withBuild (raise it for every upload), and distribution signing.
+  --ipa <file>          with --upload: upload this already packaged .ipa, without a build"#;
 
 /// `sky package --release --target <t> [entry]` — the release artefact for a
 /// native shell. It runs the ordinary `sky build --target <t>` with
@@ -266,6 +274,42 @@ fn cmd_package(args: &[String]) -> ExitCode {
         }
     };
     let canonical = tgt.canonical();
+    let flag_value = |flag: &str| -> Option<String> {
+        let eq = format!("{flag}=");
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+            .or_else(|| {
+                args.iter()
+                    .find_map(|a| a.strip_prefix(eq.as_str()).map(str::to_string))
+            })
+    };
+    let upload = match flag_value("--upload") {
+        None => None,
+        Some(d) => match store_upload::parse_destination(&d) {
+            Ok(d) => Some(d),
+            Err(e) => {
+                eprintln!("sky package: {e}");
+                return ExitCode::from(2);
+            }
+        },
+    };
+    let ipa_arg = flag_value("--ipa").map(PathBuf::from);
+    if ipa_arg.is_some() && upload.is_none() {
+        eprintln!(
+            "sky package: --ipa names an .ipa to upload, so it goes with `--upload \
+             testflight`.\n\n{PACKAGE_USAGE}"
+        );
+        return ExitCode::from(2);
+    }
+    if upload.is_some() && tgt.frontend_shell() != Some("ios") {
+        eprintln!(
+            "sky package: `--upload testflight` sends an iOS build to App Store Connect, so \
+             it goes with --target mobile:ios or tablet:ipad, not {canonical}."
+        );
+        return ExitCode::from(2);
+    }
     let (positional, _) = parse_out(args);
     let file = match resolve_entry_arg(&positional, PACKAGE_USAGE) {
         Ok(f) => f,
@@ -277,6 +321,24 @@ fn cmd_package(args: &[String]) -> ExitCode {
     if is_compiler_repo_root(&project_dir) {
         eprintln!("sky package: run it inside an app project, not the compiler repo root.");
         return ExitCode::FAILURE;
+    }
+    // The upload's preconditions, before any build and any network call.
+    let upload_plan = match upload {
+        None => None,
+        Some(store_upload::Destination::TestFlight) => {
+            match testflight_preconditions(&project_dir, ipa_arg.as_deref()) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    eprintln!("sky package --target {canonical} --upload testflight: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    };
+    // `--ipa`: upload an artefact packaged earlier; nothing is built, and the
+    // release directory (which may hold that very file) is left as it is.
+    if let (Some(plan), Some(ipa)) = (&upload_plan, &ipa_arg) {
+        return run_testflight_upload(&canonical, plan, ipa);
     }
     let release_dir = project_dir.join("sky-out").join("release");
     // Stale artefacts from an earlier package run must not be reported as
@@ -345,7 +407,144 @@ fn cmd_package(args: &[String]) -> ExitCode {
     for m in &made {
         println!("  {m}");
     }
+    if let Some(plan) = &upload_plan {
+        let Some(ipa) = made
+            .iter()
+            .find(|m| m.ends_with(".ipa") && !m.ends_with("-unsigned.ipa"))
+        else {
+            eprintln!(
+                "sky package --target {canonical} --upload testflight: the build made no \
+                 signed .ipa in {}, so nothing was uploaded.",
+                release_dir.display()
+            );
+            return ExitCode::FAILURE;
+        };
+        return run_testflight_upload(&canonical, plan, &release_dir.join(ipa));
+    }
     ExitCode::SUCCESS
+}
+
+/// What a TestFlight upload needs, checked before any build or network call.
+struct TestflightPlan {
+    key: store_upload::AscKey,
+    bundle_id: String,
+    build: u32,
+    xcrun: std::ffi::OsString,
+}
+
+/// The upload's preconditions, each refused with its fix: the app's own bundle
+/// id and a build number in the `bundle` binding, the App Store Connect API
+/// key, distribution signing (for a build) or a signed `.ipa` with an App Store
+/// profile (for `--ipa`), and `xcrun altool`.
+fn testflight_preconditions(
+    project_dir: &Path,
+    ipa: Option<&Path>,
+) -> Result<TestflightPlan, String> {
+    let entry = entry_rel_path(project_dir);
+    let src = read_entry_source(project_dir)
+        .ok_or_else(|| format!("cannot read the entry {entry} to find the `bundle` binding."))?;
+    let bundle_id = match scan_bundle_call(&src, "withId").filter(|v| !v.trim().is_empty()) {
+        None => {
+            return Err(format!(
+                "TestFlight needs the app's own bundle id. Add `|> Bundle.withId \
+                 \"com.you.app\"` to the `bundle` binding in {entry}: the reverse-DNS id \
+                 you registered for the app in App Store Connect. The default `sky.spa.…` \
+                 id is for development builds only."
+            ))
+        }
+        Some(id) if !valid_bundle_id(id.trim()) => {
+            return Err(format!(
+                "Bundle.withId \"{id}\" is not a valid reverse-DNS identifier (e.g. \
+                 \"com.example.myapp\")."
+            ))
+        }
+        Some(id) => id.trim().to_string(),
+    };
+    let build = native_pkg::scan_build_number(&src)
+        .map_err(|e| format!("Std.Bundle: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "TestFlight needs a build number. Add `|> Bundle.withBuild 1` to the \
+                 `bundle` binding in {entry}. App Store Connect refuses a build number it \
+                 already has for the version, so raise it for every upload."
+            )
+        })?;
+    let key = store_upload::asc_key()?;
+    match ipa {
+        Some(ipa) => {
+            if !ipa.is_file() {
+                return Err(format!("--ipa {}: no such file.", ipa.display()));
+            }
+            store_upload::check_signed_ipa(ipa)?;
+        }
+        None => match native_pkg::ios_signing()? {
+            None => {
+                return Err(format!(
+                    "TestFlight takes a build signed for distribution, and {} and {} are \
+                     not set, so the build would be the unsigned -unsigned.ipa. Set both: \
+                     your \"Apple Distribution: …\" identity and an App Store distribution \
+                     provisioning profile for {bundle_id}.",
+                    native_pkg::IOS_SIGN_IDENTITY,
+                    native_pkg::IOS_PROVISIONING_PROFILE
+                ))
+            }
+            Some(sign) => {
+                store_upload::check_distribution_identity(&sign.identity)?;
+                let bytes = std::fs::read(&sign.profile)
+                    .map_err(|e| format!("read {}: {e}", sign.profile.display()))?;
+                store_upload::check_app_store_profile(
+                    &bytes,
+                    &format!(
+                        "{}={}",
+                        native_pkg::IOS_PROVISIONING_PROFILE,
+                        sign.profile.display()
+                    ),
+                )?;
+            }
+        },
+    }
+    let xcrun = store_upload::xcrun();
+    store_upload::find_altool(&xcrun)?;
+    Ok(TestflightPlan {
+        key,
+        bundle_id,
+        build,
+        xcrun,
+    })
+}
+
+/// Validate and upload `ipa`, and say what happens next.
+fn run_testflight_upload(canonical: &str, plan: &TestflightPlan, ipa: &Path) -> ExitCode {
+    let build = plan.build.to_string();
+    if let Err(e) = store_upload::check_signed_ipa(ipa) {
+        eprintln!("sky package --target {canonical} --upload testflight: {e}");
+        return ExitCode::FAILURE;
+    }
+    match store_upload::upload_testflight(&plan.xcrun, ipa, &plan.key, &plan.bundle_id, &build) {
+        Ok(report) => {
+            println!(
+                "\nUploaded {} to App Store Connect (bundle id {}, build {build}).",
+                ipa.display(),
+                plan.bundle_id
+            );
+            if let Some(m) = &report.message {
+                println!("  Apple: {m}");
+            }
+            if let Some(d) = &report.delivery {
+                println!("  Delivery UUID: {d}");
+            }
+            println!(
+                "  Apple now processes the build; it appears in App Store Connect → TestFlight \
+                 when that finishes, usually within 30 minutes, and Apple emails the account \
+                 holder. The next upload needs a higher Bundle.withBuild."
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky package --target {canonical} --upload testflight: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `sky fmt`, with `--format` handled ([`with_format`]).
@@ -14027,6 +14226,11 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
             // `--broker <value>` (sky spa-split): same — consume the URL value so
             // it is not mistaken for the entry file. cmd_spa_split reads it.
             "--broker" => {
+                it.next();
+            }
+            // `--upload <destination>` / `--ipa <file>` (sky package): consume
+            // the value. cmd_package reads both from `args`.
+            "--upload" | "--ipa" => {
                 it.next();
             }
             s if s.starts_with('-') => { /* ignore unknown flags for forward-compat */ }

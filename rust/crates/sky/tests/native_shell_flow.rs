@@ -259,6 +259,356 @@ fn native_notify_without_the_notifications_permission_fails_the_android_build() 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TestFlight upload (toolchain-free: a fake `xcrun` through SKY_XCRUN)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The TestFlight upload tests use a shell-script fake, so they run on Unix.
+#[cfg(unix)]
+mod testflight {
+    use super::*;
+
+    /// A fake `xcrun` (TEST-ONLY `SKY_XCRUN`). It records every call, the
+    /// `API_PRIVATE_KEYS_DIR` altool would read the key from and the files in it,
+    /// and answers `--validate-app` / `--upload-package` with the altool JSON
+    /// named by `FAKE_VALIDATE` / `FAKE_UPLOAD`. No network, no credentials.
+    const FAKE_XCRUN: &str = r#"#!/bin/sh
+    log="$FAKE_XCRUN_LOG"
+    echo "ARGS $*" >> "$log"
+    if [ "$1" = "--find" ]; then
+      if [ "$FAKE_ALTOOL" = "missing" ]; then
+        echo 'xcrun: error: unable to find utility "altool", not a developer tool or in PATH' >&2
+        exit 72
+      fi
+      echo /Applications/Xcode.app/Contents/Developer/usr/bin/altool
+      exit 0
+    fi
+    echo "KEYDIR $API_PRIVATE_KEYS_DIR" >> "$log"
+    for f in "$API_PRIVATE_KEYS_DIR"/*; do echo "KEYFILE ${f##*/}" >> "$log"; done
+    case "$2" in
+      --validate-app) mode="$FAKE_VALIDATE" ;;
+      --upload-package) mode="$FAKE_UPLOAD" ;;
+      *) mode=unknown ;;
+    esac
+    case "$mode" in
+      ok)
+        echo '{"tool-version":"27.0.5","success-message":"No errors uploading '"'"'Vault.ipa'"'"'","details":{"delivery-uuid":"8d1c2f3a-5b6e-4c7d-9e0f-112233445566"}}'
+        exit 0 ;;
+      duplicate)
+        echo '{"tool-version":"27.0.5","product-errors":[{"code":-19232,"message":"The provided entity includes an attribute with a value that has already been used","userInfo":{"NSLocalizedFailureReason":"The bundle version must be higher than the previously uploaded version: '"'"'7'"'"'."}}]}'
+        exit 1 ;;
+      auth)
+        echo '*** Error: Unable to authenticate. (-19209)' >&2
+        exit 1 ;;
+      *)
+        echo "fake xcrun: unexpected $2" >&2
+        exit 3 ;;
+    esac
+    "#;
+
+    const ASC_KEY_ID: &str = "ABC123DEF4";
+    const ASC_ISSUER: &str = "57246542-96fe-1a63-e053-0824d011072a";
+    const FAKE_KEY_MATERIAL: &str = "FAKEKEYMATERIALnotarealkey";
+
+    /// A provisioning profile as a signed CMS envelope carries it: binary bytes
+    /// around a plain property list. `extra` adds keys (devices, get-task-allow).
+    fn fake_profile(extra: &str) -> Vec<u8> {
+        let mut b = vec![0x30, 0x82, 0x1f, 0x00, 0x06, 0x09];
+        b.extend_from_slice(
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \
+                 \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+                 <plist version=\"1.0\"><dict><key>Name</key><string>Vault App Store</string>\
+                 <key>TeamIdentifier</key><array><string>TEAMID1234</string></array>{extra}\
+                 </dict></plist>"
+            )
+            .as_bytes(),
+        );
+        b.extend_from_slice(&[0xa0, 0x82, 0x0d]);
+        b
+    }
+
+    const APP_STORE: &str = "<key>Entitlements</key><dict>\
+         <key>application-identifier</key><string>TEAMID1234.com.example.vault</string>\
+         <key>get-task-allow</key><false/></dict>";
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for &b in data {
+            crc ^= u32::from(b);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// Write a stored (uncompressed) zip: the shape of an `.ipa`.
+    fn write_zip(path: &Path, files: &[(&str, Vec<u8>)]) {
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for (name, data) in files {
+            let offset = out.len() as u32;
+            let crc = crc32(data);
+            let head = |sig: u32, out: &mut Vec<u8>, central: bool| {
+                out.extend_from_slice(&sig.to_le_bytes());
+                if central {
+                    out.extend_from_slice(&20u16.to_le_bytes()); // made by
+                }
+                out.extend_from_slice(&20u16.to_le_bytes()); // needed
+                out.extend_from_slice(&0u16.to_le_bytes()); // flags
+                out.extend_from_slice(&0u16.to_le_bytes()); // stored
+                out.extend_from_slice(&0u32.to_le_bytes()); // time + date
+                out.extend_from_slice(&crc.to_le_bytes());
+                out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+                out.extend_from_slice(&0u16.to_le_bytes()); // extra
+                if central {
+                    out.extend_from_slice(&0u16.to_le_bytes()); // comment
+                    out.extend_from_slice(&0u16.to_le_bytes()); // disk
+                    out.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+                    out.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+                    out.extend_from_slice(&offset.to_le_bytes());
+                }
+                out.extend_from_slice(name.as_bytes());
+            };
+            head(0x0403_4b50, &mut out, false);
+            out.extend_from_slice(data);
+            head(0x0201_4b50, &mut central, true);
+        }
+        let cd_offset = out.len() as u32;
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0]);
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        std::fs::write(path, out).unwrap();
+    }
+
+    /// A packaged `.ipa`: signed (a code signature and an embedded profile) or not.
+    fn fake_ipa(path: &Path, profile: Option<Vec<u8>>) {
+        let mut files = vec![
+            ("Payload/Vault.app/Info.plist", b"<plist/>".to_vec()),
+            ("Payload/Vault.app/Vault", b"\xcf\xfa\xed\xfe".to_vec()),
+        ];
+        if let Some(p) = profile {
+            files.push((
+                "Payload/Vault.app/_CodeSignature/CodeResources",
+                b"<plist/>".to_vec(),
+            ));
+            files.push(("Payload/Vault.app/embedded.mobileprovision", p));
+        }
+        write_zip(path, &files);
+    }
+
+    /// One `sky package --release --upload testflight --ipa …` run against the
+    /// fake xcrun. Returns (exit code, output, the fake's log).
+    fn upload_run(dir: &Path, ipa: &Path, env: &[(&str, &str)]) -> (i32, String, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let fake = dir.join("fake-xcrun");
+        if !fake.exists() {
+            std::fs::write(&fake, FAKE_XCRUN).unwrap();
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let log = dir.join("xcrun.log");
+        let _ = std::fs::remove_file(&log);
+        let key = dir.join("keys").join("downloaded-key.p8");
+        std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+        std::fs::write(
+            &key,
+            format!(
+                "-----BEGIN PRIVATE KEY-----\n{FAKE_KEY_MATERIAL}\n-----END PRIVATE KEY-----\n"
+            ),
+        )
+        .unwrap();
+        let mut cmd = Command::new(SKY);
+        cmd.args([
+            "package",
+            "--release",
+            "--target",
+            "mobile:ios",
+            "--upload",
+            "testflight",
+            "--ipa",
+        ])
+        .arg(ipa)
+        .arg("src/Main.sky")
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .env_remove("SKY_PACKAGE_RELEASE")
+        .env_remove("SKY_IOS_SIGN_IDENTITY")
+        .env_remove("SKY_IOS_PROVISIONING_PROFILE")
+        .env_remove("API_PRIVATE_KEYS_DIR")
+        .env("SKY_XCRUN", &fake)
+        .env("FAKE_XCRUN_LOG", &log)
+        .env("SKY_ASC_KEY_ID", ASC_KEY_ID)
+        .env("SKY_ASC_ISSUER_ID", ASC_ISSUER)
+        .env("SKY_ASC_KEY_PATH", &key);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("spawn sky package");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let log = std::fs::read_to_string(&log).unwrap_or_default();
+        (out.status.code().unwrap_or(-1), text, log)
+    }
+
+    /// `sky package --release --target mobile:ios --upload testflight` with a
+    /// fake `xcrun`: the success path validates, THEN uploads, with altool's
+    /// documented arguments; the API key reaches altool only as
+    /// `AuthKey_<KEY_ID>.p8` in `API_PRIVATE_KEYS_DIR` (never an argument, never
+    /// printed) and the temporary copy is removed afterwards; Apple's errors are
+    /// reported as written with the Sky fix, and a failed validation uploads
+    /// nothing; an unsigned or development-signed `.ipa`, and a Mac without
+    /// altool, are refused before any altool call.
+    #[test]
+    fn testflight_upload_validates_then_uploads_through_altool() {
+        let dir = scratch("testflight");
+        vault_app(
+            &dir,
+            "        |> Bundle.withUsage Bundle.FaceId \"Unlocks your vault.\"\n        |> Bundle.withBuild 7",
+        );
+        let release = dir.join("sky-out").join("release");
+        std::fs::create_dir_all(&release).unwrap();
+        let ipa = release.join("Vault.ipa");
+        fake_ipa(&ipa, Some(fake_profile(APP_STORE)));
+
+        // Success.
+        let (code, out, log) = upload_run(
+            &dir,
+            &ipa,
+            &[("FAKE_VALIDATE", "ok"), ("FAKE_UPLOAD", "ok")],
+        );
+        assert_eq!(code, 0, "the upload must succeed:\n{out}\n--- log\n{log}");
+        let calls: Vec<&str> = log.lines().filter(|l| l.starts_with("ARGS ")).collect();
+        let ipa_s = ipa.display().to_string();
+        let auth = format!("--api-key {ASC_KEY_ID} --api-issuer {ASC_ISSUER} --output-format json");
+        assert_eq!(
+            calls,
+            [
+                "ARGS --find altool".to_string(),
+                format!("ARGS altool --validate-app {ipa_s} {auth}"),
+                format!("ARGS altool --upload-package {ipa_s} {auth}"),
+            ],
+            "validate first, then upload, with altool's documented arguments:\n{log}"
+        );
+        assert!(
+            log.lines()
+                .filter(|l| l.starts_with("KEYFILE "))
+                .all(|l| l == format!("KEYFILE AuthKey_{ASC_KEY_ID}.p8")),
+            "altool finds the key as AuthKey_<KEY_ID>.p8 in API_PRIVATE_KEYS_DIR:\n{log}"
+        );
+        assert!(
+            log.contains(&format!("KEYFILE AuthKey_{ASC_KEY_ID}.p8")),
+            "{log}"
+        );
+        assert!(
+            !log.contains(".p8 ") && !calls.iter().any(|c| c.contains(".p8")),
+            "the key file is never an argument:\n{log}"
+        );
+        assert!(!out.contains(FAKE_KEY_MATERIAL) && !log.contains(FAKE_KEY_MATERIAL));
+        let key_dir = log
+            .lines()
+            .find_map(|l| l.strip_prefix("KEYDIR "))
+            .expect("the key dir is logged");
+        assert!(
+            !Path::new(key_dir).exists(),
+            "the temporary key copy must be removed after the upload: {key_dir}"
+        );
+        assert!(
+            out.contains("Uploaded")
+                && out.contains("bundle id com.example.vault, build 7")
+                && out.contains("Delivery UUID: 8d1c2f3a-5b6e-4c7d-9e0f-112233445566")
+                && out.contains("TestFlight"),
+            "{out}"
+        );
+
+        // Apple refuses the validation (a build number already used): its text is
+        // reported, the fix is Bundle.withBuild, and nothing is uploaded.
+        let (code, out, log) = upload_run(&dir, &ipa, &[("FAKE_VALIDATE", "duplicate")]);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains("Apple: The provided entity includes an attribute with a value that has already been used")
+                && out.contains("must be higher than the previously uploaded version")
+                && out.contains("raise `Bundle.withBuild`")
+                && out.contains("Nothing was uploaded"),
+            "{out}"
+        );
+        assert!(!log.contains("--upload-package"), "{log}");
+
+        // Apple refuses the upload with plain text output: reported, with the fix.
+        let (code, out, _) = upload_run(
+            &dir,
+            &ipa,
+            &[("FAKE_VALIDATE", "ok"), ("FAKE_UPLOAD", "auth")],
+        );
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains("refused the upload")
+                && out.contains("Unable to authenticate. (-19209)")
+                && out.contains("SKY_ASC_KEY_ID"),
+            "{out}"
+        );
+
+        // No altool (no Xcode): refused, naming the fix.
+        let (code, out, log) = upload_run(&dir, &ipa, &[("FAKE_ALTOOL", "missing")]);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains("Xcode") && out.contains("Transporter"),
+            "{out}"
+        );
+        assert!(!log.contains("altool --"), "{log}");
+
+        // The unsigned archive, an .ipa with no signature, a development profile
+        // and an enterprise profile: refused before any altool call.
+        let unsigned = release.join("Vault-unsigned.ipa");
+        fake_ipa(&unsigned, None);
+        let nosig = dir.join("Nosig.ipa");
+        fake_ipa(&nosig, None);
+        let dev = dir.join("Dev.ipa");
+        fake_ipa(
+            &dev,
+            Some(fake_profile(
+                "<key>ProvisionedDevices</key><array><string>00008110-001</string></array>",
+            )),
+        );
+        let ent = dir.join("Ent.ipa");
+        fake_ipa(
+            &ent,
+            Some(fake_profile("<key>ProvisionsAllDevices</key><true/>")),
+        );
+        for (file, want) in [
+            (&unsigned, "UNSIGNED"),
+            (&nosig, "is not signed"),
+            (&dev, "lists devices"),
+            (&ent, "enterprise"),
+        ] {
+            let (code, out, log) = upload_run(
+                &dir,
+                file,
+                &[("FAKE_VALIDATE", "ok"), ("FAKE_UPLOAD", "ok")],
+            );
+            assert_eq!(code, 1, "{}: {out}", file.display());
+            assert!(out.contains(want), "{}: {out}", file.display());
+            assert!(log.is_empty(), "refused before any xcrun call: {log}");
+        }
+        assert!(ipa.is_file(), "--ipa must not wipe the release directory");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Native smoke (macOS; run by the release workflow's gate-native job)
 // ─────────────────────────────────────────────────────────────────────────────
 

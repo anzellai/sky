@@ -821,6 +821,31 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
     missing Android signing, an iOS identity without a profile, and an
     entitlement the provisioning profile does not grant. Desktop packaging is
     macOS only (the desktop shell builds on macOS in this version).
+  - `sky package --release --target mobile:ios --upload testflight` (also
+    `tablet:ipad`) uploads the signed `.ipa` to App Store Connect, which makes
+    it a TestFlight build. It runs Apple's `xcrun altool`: `--validate-app`
+    first, then `--upload-package` only when validation passes. The API key
+    comes from `SKY_ASC_KEY_ID`, `SKY_ASC_ISSUER_ID` and `SKY_ASC_KEY_PATH`
+    (the `.p8`). Decision: the key file never goes on a command line; altool
+    reads `AuthKey_<KEY_ID>.p8` from `API_PRIVATE_KEYS_DIR` (a private
+    temporary copy when the file has another name, removed afterwards), and
+    Sky never prints it. `--ipa <file>` uploads an `.ipa` packaged earlier,
+    without a build. Before any build or network call it refuses, naming the
+    fix: an unknown destination or a non-iOS target, no `Bundle.withId`, no
+    `Bundle.withBuild` (and says it must rise for every upload), a missing key
+    variable or a key path that is not a `.p8`, and a build not signed for App
+    Store distribution (signing unset, so the build would be the unsigned
+    `-unsigned.ipa`; an "Apple Development" identity; a profile that lists
+    devices, is an enterprise profile or allows a debugger; with `--ipa`, an
+    archive with no code signature or embedded profile). Apple's errors are
+    printed as Apple wrote them, with the Sky fix for the common ones (build
+    number already used, no app record, key not accepted, invalid profile,
+    missing purpose string, missing icon), and the exit status is 1. The flow
+    tests prove every path with a fake `xcrun` through the test-only
+    `SKY_XCRUN`; the first real upload is the developer's, with their own key.
+    Guide: `docs/skyapp/native.md` ("Upload to TestFlight"). A Play Console
+    upload is not part of this: an Android build uploads its `.aab` in the
+    Play Console.
   - The iOS simulator build carries its entitlements the way Xcode's does: in
     the executable's `__TEXT,__entitlements` and `__TEXT,__ents_der` sections
     (`ld -sectcreate`), with the application identifier and, when the app

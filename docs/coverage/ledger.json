@@ -209,7 +209,7 @@
       "tier": "T1"
     },
     "cli-verbs": {
-      "expected_assertions": 12,
+      "expected_assertions": 13,
       "falsifier_mutation": "cli-verbs.break-an-expectation",
       "falsifier_proven": true,
       "summary": "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",

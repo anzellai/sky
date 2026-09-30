@@ -9,7 +9,8 @@ and the Android app has no form-factor split. Before v0.27.0 `tablet:ipad` and
 This page covers what a native app needs beyond the web build: the purpose
 strings the operating system shows in its permission prompts, the Apple
 entitlements, the device's secure store, the biometric prompt, and the store
-artefact that `sky package --release` makes, and the camera code scanner. The
+artefact that `sky package --release` makes (and its upload to TestFlight),
+and the camera code scanner. The
 last section is a recipe that scans and generates QR codes.
 
 Everything here is declared in code, in the optional `bundle` binding of the
@@ -443,8 +444,128 @@ debug key.
   `SKY_MACOS_PROVISIONING_PROFILE`.
 
 A notarised `.dmg` needs `xcrun notarytool submit --wait` and `xcrun stapler
-staple` after packaging, with your Apple credentials. An App Store upload of the
-`.ipa` uses Transporter or `xcrun altool`.
+staple` after packaging, with your Apple credentials. An iOS or iPadOS build
+uploads to TestFlight with `--upload testflight` (next section).
+
+## Upload to TestFlight — `sky package --upload testflight`
+
+`sky package --release --target mobile:ios --upload testflight` (or
+`--target tablet:ipad`) builds the signed `.ipa`, then sends it to App Store
+Connect with Apple's own tool, `xcrun altool`: it validates the build first and
+uploads it only when validation passes. The build then appears in TestFlight
+when Apple has processed it. The upload runs on macOS with Xcode installed (the
+Command Line Tools alone do not have `altool`).
+
+**One-time setup in App Store Connect.**
+
+1. Register the bundle id in the Apple Developer portal (Certificates,
+   Identifiers & Profiles → Identifiers → +), for example `com.acme.vault`.
+2. Create the app record in App Store Connect (Apps → + → New App) and choose
+   that bundle id.
+3. Create an "Apple Distribution" certificate and an **App Store Connect**
+   distribution provisioning profile for the bundle id (Profiles → + →
+   Distribution → App Store Connect). A development or ad hoc profile does not
+   work for TestFlight.
+4. Create an API key: Users and Access → Integrations → App Store Connect API
+   → Team Keys → +, with the **App Manager** role. Note the key id (10
+   characters) and the issuer id (a UUID at the top of the page). Download
+   `AuthKey_<KEY_ID>.p8`. Apple lets you download it once. Keep it out of the
+   repository.
+
+**The app.** The `bundle` binding sets the id and a build number:
+
+```elm
+-- doc-example: skip  (fragment — the rest of the app is elided)
+bundle : Bundle
+bundle =
+    Bundle.default
+        |> Bundle.withId "com.acme.vault"
+        |> Bundle.withVersion "1.0"
+        |> Bundle.withBuild 7
+```
+
+App Store Connect refuses a build number it already has for the version, so
+raise `Bundle.withBuild` for every upload.
+
+**The command.**
+
+```bash
+SKY_APP_URL=https://app.acme.com/ \
+SKY_IOS_SIGN_IDENTITY="Apple Distribution: Acme Ltd (TEAMID)" \
+SKY_IOS_PROVISIONING_PROFILE=~/profiles/vault_appstore.mobileprovision \
+SKY_ASC_KEY_ID=ABC123DEF4 \
+SKY_ASC_ISSUER_ID=57246542-96fe-1a63-e053-0824d011072a \
+SKY_ASC_KEY_PATH=~/keys/AuthKey_ABC123DEF4.p8 \
+  sky package --release --target mobile:ios --upload testflight src/Main.sky
+```
+
+To upload an `.ipa` packaged earlier (for example after a network failure),
+add `--ipa sky-out/release/Vault.ipa`. Sky then builds nothing and uploads that
+file. The signing variables are not needed, because the file is already signed.
+
+| Variable | Value |
+|---|---|
+| `SKY_ASC_KEY_ID` | The API key id, e.g. `ABC123DEF4`. |
+| `SKY_ASC_ISSUER_ID` | The issuer id (a UUID). |
+| `SKY_ASC_KEY_PATH` | The path to the downloaded `AuthKey_<KEY_ID>.p8`. |
+
+**How the key is passed.** The key id and the issuer id are identifiers, not
+secrets, and go to `altool` as `--api-key` and `--api-issuer`. The key file
+never appears on a command line, so `ps` does not show it: `altool` reads
+`AuthKey_<KEY_ID>.p8` from the directory in `API_PRIVATE_KEYS_DIR`, which is
+one of the places `xcrun altool --help` documents. When your file already has
+that name Sky points at its directory. Otherwise Sky copies it into a private
+temporary directory (mode 0700, the file 0600) and removes the copy when the
+upload ends. Sky never prints the key.
+
+**Refused before any build or network call**, each with the fix:
+
+- `--upload` with a destination other than `testflight`, or with a target
+  other than `mobile:ios` / `tablet:ipad`; `--ipa` without `--upload`;
+- no `Bundle.withId` (the default `sky.spa.…` id is for development builds),
+  or no `Bundle.withBuild`;
+- a missing `SKY_ASC_*` variable, or a key path that is not a `.p8` key file;
+- a build that would not be signed for distribution: the signing variables
+  unset (the build would be the unsigned `-unsigned.ipa`), an "Apple
+  Development" identity, or a profile that lists devices (development or ad
+  hoc), is an enterprise profile, or allows a debugger (`get-task-allow`);
+- with `--ipa`: an `-unsigned.ipa`, an `.ipa` with no code signature or no
+  embedded profile, or an embedded profile that is not an App Store profile;
+- no `xcrun altool` (install Xcode and run `sudo xcode-select -s
+  /Applications/Xcode.app`, or upload with Apple's Transporter app).
+
+**A successful upload prints** the file, the bundle id and the build number,
+Apple's success message and the delivery UUID:
+
+```text
+Uploaded sky-out/release/Vault.ipa to App Store Connect (bundle id com.acme.vault, build 7).
+  Apple: No errors uploading 'sky-out/release/Vault.ipa'
+  Delivery UUID: 8d1c2f3a-5b6e-4c7d-9e0f-112233445566
+```
+
+Apple then processes the build. It appears under TestFlight in App Store
+Connect when processing finishes, usually within 30 minutes, and Apple emails
+the account holder. Add testers there.
+
+**When Apple refuses.** Sky prints each Apple error as Apple wrote it
+(`Apple: …`), then the fix for the errors a Sky app can meet (`fix: …`), and
+exits 1. A failed validation uploads nothing.
+
+| Apple says | Fix |
+|---|---|
+| "The bundle version must be higher than the previously uploaded version", "Redundant Binary Upload" | Raise `Bundle.withBuild` and package again. |
+| ITMS-90062, `CFBundleShortVersionString` must be higher | The version is closed for new builds: raise `Bundle.withVersion`. |
+| "No suitable application records were found" | Create the app record for the bundle id in App Store Connect (setup step 2). |
+| "Unable to authenticate", `NOT_AUTHORIZED` | Check `SKY_ASC_KEY_ID` and `SKY_ASC_ISSUER_ID`, that the key is not revoked, and that it has the App Manager role. |
+| ITMS-90161 "Invalid Provisioning Profile" | Sign with an App Store distribution profile for this bundle id. |
+| ITMS-90683 missing purpose string | Declare the permission with `Bundle.withUsage`. |
+| ITMS-90022 / ITMS-90704 missing icon | Set `Bundle.withIcon` to a 1024×1024 PNG without transparency. |
+
+**Testing.** The flow tests prove the argument construction, every refusal, the
+success path and Apple's error reports with a fake `xcrun`, through
+`SKY_XCRUN`. That variable is **for tests only**: it names an executable run in
+place of `xcrun`. Leave it unset. No test in this repository reaches Apple: the
+first real upload is yours to run, with your own App Store Connect key.
 
 The release workflow's `gate-native` job builds a probe app for the iOS
 simulator (`mobile:ios`, and `tablet:ipad` with restricted entitlements
