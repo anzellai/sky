@@ -14,6 +14,7 @@
 package rt
 
 import (
+	"database/sql"
 	"errors"
 	"log"
 	"time"
@@ -78,22 +79,32 @@ func (s *memoryStore) rekeySession(oldSid, newSid string, sess *liveSession) {
 }
 
 func (s *memoryStore) putAlias(oldSid string, a sessionAlias) {
+	_ = s.putAliasUntil(oldSid, a, time.Now().Add(aliasTTL(s.ttl)))
+}
+
+func (s *memoryStore) putAliasUntil(oldSid string, a sessionAlias, exp time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.aliases == nil {
 		s.aliases = map[string]memAlias{}
 	}
-	s.aliases[oldSid] = memAlias{a: a, exp: time.Now().Add(aliasTTL(s.ttl))}
+	s.aliases[oldSid] = memAlias{a: a, exp: exp}
+	return nil
 }
 
 func (s *memoryStore) getAlias(oldSid string) (sessionAlias, bool) {
+	a, ok, _ := s.lookupAlias(oldSid)
+	return a, ok
+}
+
+func (s *memoryStore) lookupAlias(oldSid string) (sessionAlias, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	e, ok := s.aliases[oldSid]
 	if !ok || time.Now().After(e.exp) {
-		return sessionAlias{}, false
+		return sessionAlias{}, false, nil
 	}
-	return e.a, true
+	return e.a, true, nil
 }
 
 // reapAliases drops expired alias records. Caller holds s.mu.
@@ -135,17 +146,22 @@ func (s *sqliteStore) rekeySession(oldSid, newSid string, sess *liveSession) {
 }
 
 func (s *sqliteStore) putAlias(oldSid string, a sessionAlias) {
-	exp := time.Now().Add(aliasTTL(s.ttl)).Unix()
-	reportSessionWriteError("live.session-alias.sqlite", oldSid,
-		execIgnoringRows(s.db, qSqlitePutAlias, oldSid, encodeAlias(a), exp))
+	_ = s.putAliasUntil(oldSid, a, time.Now().Add(aliasTTL(s.ttl)))
+}
+
+func (s *sqliteStore) putAliasUntil(oldSid string, a sessionAlias, exp time.Time) error {
+	err := execIgnoringRows(s.db, qSqlitePutAlias, oldSid, encodeAlias(a), exp.Unix())
+	reportSessionWriteError("live.session-alias.sqlite", oldSid, err)
+	return err
 }
 
 func (s *sqliteStore) getAlias(oldSid string) (sessionAlias, bool) {
-	var raw string
-	if err := s.db.QueryRow(qSqliteGetAlias, oldSid, time.Now().Unix()).Scan(&raw); err != nil {
-		return sessionAlias{}, false
-	}
-	return decodeAlias(raw)
+	a, ok, _ := s.lookupAlias(oldSid)
+	return a, ok
+}
+
+func (s *sqliteStore) lookupAlias(oldSid string) (sessionAlias, bool, error) {
+	return scanAliasRow(s.db.QueryRow(qSqliteGetAlias, oldSid, time.Now().Unix()))
 }
 
 func (s *postgresStore) rekeySession(oldSid, newSid string, sess *liveSession) {
@@ -156,17 +172,41 @@ func (s *postgresStore) rekeySession(oldSid, newSid string, sess *liveSession) {
 }
 
 func (s *postgresStore) putAlias(oldSid string, a sessionAlias) {
-	exp := time.Now().Add(aliasTTL(s.ttl)).Unix()
-	reportSessionWriteError("live.session-alias.postgres", oldSid,
-		execIgnoringRows(s.db, qPostgresPutAlias, oldSid, encodeAlias(a), exp))
+	_ = s.putAliasUntil(oldSid, a, time.Now().Add(aliasTTL(s.ttl)))
+}
+
+func (s *postgresStore) putAliasUntil(oldSid string, a sessionAlias, exp time.Time) error {
+	err := execIgnoringRows(s.db, qPostgresPutAlias, oldSid, encodeAlias(a), exp.Unix())
+	reportSessionWriteError("live.session-alias.postgres", oldSid, err)
+	return err
 }
 
 func (s *postgresStore) getAlias(oldSid string) (sessionAlias, bool) {
+	a, ok, _ := s.lookupAlias(oldSid)
+	return a, ok
+}
+
+func (s *postgresStore) lookupAlias(oldSid string) (sessionAlias, bool, error) {
+	return scanAliasRow(s.db.QueryRow(qPostgresGetAlias, oldSid, time.Now().Unix()))
+}
+
+// scanAliasRow reads one alias row. No row is "not found" (nil error); any
+// other failure is returned, so a caller that must not fail open (the Sky.Spa
+// sign-out check, spa_session_revocation.go) can tell "no record" from "the
+// store could not answer".
+func scanAliasRow(row *sql.Row) (sessionAlias, bool, error) {
 	var raw string
-	if err := s.db.QueryRow(qPostgresGetAlias, oldSid, time.Now().Unix()).Scan(&raw); err != nil {
-		return sessionAlias{}, false
+	if err := row.Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sessionAlias{}, false, nil
+		}
+		return sessionAlias{}, false, err
 	}
-	return decodeAlias(raw)
+	a, ok := decodeAlias(raw)
+	if !ok {
+		return sessionAlias{}, false, errors.New("session alias: undecodable record")
+	}
+	return a, true, nil
 }
 
 // ── redis ───────────────────────────────────────────────────────────
@@ -182,18 +222,40 @@ func (s *redisStore) rekeySession(oldSid, newSid string, sess *liveSession) {
 }
 
 func (s *redisStore) putAlias(oldSid string, a sessionAlias) {
-	if err := s.client.Set(s.ctx, redisAliasKey(oldSid), encodeAlias(a), aliasTTL(s.ttl)).Err(); err != nil {
+	_ = s.putAliasUntil(oldSid, a, time.Now().Add(aliasTTL(s.ttl)))
+}
+
+func (s *redisStore) putAliasUntil(oldSid string, a sessionAlias, exp time.Time) error {
+	ttl := time.Until(exp)
+	if ttl <= 0 {
+		return nil // already expired: nothing to keep
+	}
+	err := s.client.Set(s.ctx, redisAliasKey(oldSid), encodeAlias(a), ttl).Err()
+	if err != nil {
 		reportSessionWriteError("live.session-alias.redis", oldSid, err)
 	}
+	return err
 }
 
 func (s *redisStore) getAlias(oldSid string) (sessionAlias, bool) {
+	a, ok, err := s.lookupAlias(oldSid)
+	if err != nil {
+		log.Printf("[sky.live] redis: get session alias %s: %v", oldSid, err)
+	}
+	return a, ok
+}
+
+func (s *redisStore) lookupAlias(oldSid string) (sessionAlias, bool, error) {
 	raw, err := s.client.Get(s.ctx, redisAliasKey(oldSid)).Result()
 	if err != nil {
-		if !errors.Is(err, redis.Nil) {
-			log.Printf("[sky.live] redis: get session alias %s: %v", oldSid, err)
+		if errors.Is(err, redis.Nil) {
+			return sessionAlias{}, false, nil
 		}
-		return sessionAlias{}, false
+		return sessionAlias{}, false, err
 	}
-	return decodeAlias(raw)
+	a, ok := decodeAlias(raw)
+	if !ok {
+		return sessionAlias{}, false, errors.New("session alias: undecodable record")
+	}
+	return a, true, nil
 }

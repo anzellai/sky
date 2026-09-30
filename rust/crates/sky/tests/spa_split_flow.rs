@@ -4638,10 +4638,12 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     let backend = std::fs::read_to_string(proj.join(".split/backend/src/Main.sky"))
         .expect("generated backend entry must exist");
 
-    // (a) the backend reuses Sky.Live's own Std.Auth token logic.
+    // (a) the backend signs and verifies through the Spa session kernels, which
+    // reuse Std.Auth's HS256 token logic and add the sign-out check.
     assert!(
-        backend.contains("import Std.Auth as Auth"),
-        "signed session must import Std.Auth:\n{backend}"
+        backend.contains("Ffi.kernel \"Spa_verifySession\"")
+            && backend.contains("Ffi.kernel \"Spa_signSession\""),
+        "signed session must use the Spa session kernels:\n{backend}"
     );
     // (b) the admin branch runs against the COOKIE-verified model, never the wire
     // payload. `mAuth` overrides `session` from `verifiedSession_ req base.session`
@@ -4667,7 +4669,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     );
     // (c) the login branch signs a Set-Cookie around its response.
     assert!(
-        backend.contains("signedResponse_ m2 (Server.json"),
+        backend.contains("signedResponse_ req m2 (Server.json"),
         "the establishing (login) branch must sign a Set-Cookie:\n{backend}"
     );
     assert!(
@@ -4773,6 +4775,255 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     assert_eq!(
         admin_after_ok, "legit",
         "with a valid signed cookie the admin effect MUST run — admin.txt must be \"legit\", was {admin_after_ok:?}"
+    );
+}
+
+fn session_revocation_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-session-revocation")
+}
+
+/// Spawn the compiled split backend in `backend_dir` on `port` with `envs`,
+/// logging to `<backend_dir>/<log_name>`, and wait for its listening line.
+/// Panics (after killing the child) when it never starts.
+fn spawn_spa_backend(
+    backend_dir: &std::path::Path,
+    port: u16,
+    log_name: &str,
+    envs: &[(&str, String)],
+) -> std::process::Child {
+    let log_path = backend_dir.join(log_name);
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut cmd = Command::new(backend_dir.join("sky-out/app"));
+    cmd.current_dir(backend_dir)
+        .env("PORT", port.to_string())
+        .env(
+            "SKY_SPA_SESSION_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789",
+        )
+        .env_remove("SKY_LIVE_STORE")
+        .env_remove("SKY_LIVE_STORE_PATH")
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().expect("spawn the compiled split backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        panic!("split backend never reported listening on :{port}:\n{log}");
+    }
+    child
+}
+
+/// SIGN-OUT REVOCATION (security, v0.27.0). The auto-split signs the session
+/// projection into the `sky_sid` cookie. Before v0.27.0 that token was checked
+/// only by its signature and its 30-day `exp`: sign-out cleared the cookie in
+/// the browser, but a copy of the cookie taken before sign-out still signed the
+/// user in until it expired. Sky.Live closed the same class in Phase 1A.
+///
+/// The token now carries a session id (`sid`). Sign-out records the id as ended
+/// in the configured session store (for its remaining lifetime), and every
+/// verification refuses an ended id. Proven end to end on the built backend:
+///
+///   * two replicas share one store: a sign-out on replica A refuses the old
+///     cookie on A AND on B (the record is in the store, not in a process);
+///   * both sign-out paths revoke: the framework endpoint `__spaSignOut` (the
+///     client-side sign-out) and a server branch that clears the session;
+///   * a fresh sign-in after a sign-out works;
+///   * the default store (none configured) keeps the record across a restart,
+///     and a cookie that was NOT signed out still works after the restart.
+#[test]
+fn spa_sign_out_revokes_the_signed_session_cookie() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&session_revocation_fixture_dir(), &proj);
+
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-session-revocation fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let backend = std::fs::read_to_string(proj.join(".split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+
+    // Emission: verification and signing go through the revocation-aware
+    // kernels, and the sign-out endpoint ends the session server-side.
+    assert!(
+        backend.contains("Ffi.kernel \"Spa_verifySession\"")
+            && backend.contains("case spaVerifySession_ sessionSecret_ tok of"),
+        "the verify helper must check revocation (Spa_verifySession):\n{backend}"
+    );
+    assert!(
+        !backend.contains("Auth.verifyToken sessionSecret_"),
+        "no verify path may skip the revocation check:\n{backend}"
+    );
+    assert!(
+        backend.contains("Ffi.kernel \"Spa_signSession\"")
+            && backend.contains("signedResponse_ req m2 (Server.json"),
+        "the establishing branch must sign through Spa_signSession with the request:\n{backend}"
+    );
+    assert!(
+        backend.contains("Ffi.kernel \"Spa_endSession\"")
+            && backend.contains("spaEndSession_ sessionSecret_"),
+        "the sign-out endpoint must end the session server-side:\n{backend}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "revocation fixture: --target web:app must build end-to-end:\n{log}"
+    );
+    let backend_dir = proj.join(".split/backend");
+    let admin = || std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
+    let save = |port: u16, content: &str, cookie: &str| {
+        curl_post_full(
+            port,
+            "/_rpc/SaveAdmin",
+            &format!(r#"{{"session":null,"content":"{content}","note":""}}"#),
+            Some(cookie),
+        )
+        .expect("SaveAdmin should answer")
+    };
+
+    // ── Phase 1: two replicas sharing one sqlite session store. ──
+    let shared_db = proj.join("shared-sessions.db");
+    let store_env = vec![
+        ("SKY_LIVE_STORE", "sqlite".to_string()),
+        (
+            "SKY_LIVE_STORE_PATH",
+            shared_db.to_string_lossy().to_string(),
+        ),
+    ];
+    let (pa, pb) = (8986u16, 8987u16);
+    let mut a = spawn_spa_backend(&backend_dir, pa, "replica-a.log", &store_env);
+    let mut b = spawn_spa_backend(&backend_dir, pb, "replica-b.log", &store_env);
+
+    let login = curl_post_full(pa, "/_rpc/LogIn", "{}", None).expect("LogIn answers");
+    let c1 = login.2.clone().expect("LogIn must issue a sky_sid cookie");
+    let r_one = save(pb, "one", &c1);
+    let after_one = admin();
+    let signout =
+        curl_post_full(pa, "/_rpc/__spaSignOut", "{}", Some(&c1)).expect("sign-out answers");
+    let r_two = save(pa, "two", &c1);
+    let after_two = admin();
+    let r_three = save(pb, "three", &c1);
+    let after_three = admin();
+    let login2 = curl_post_full(pb, "/_rpc/LogIn", "{}", None).expect("LogIn answers");
+    let c2 = login2
+        .2
+        .clone()
+        .expect("a second LogIn must issue a cookie");
+    let r_four = save(pa, "four", &c2);
+    let after_four = admin();
+    let logout =
+        curl_post_full(pa, "/_rpc/LogOut", r#"{"note":""}"#, Some(&c2)).expect("LogOut answers");
+    let r_five = save(pb, "five", &c2);
+    let after_five = admin();
+
+    let _ = a.kill();
+    let _ = a.wait();
+    let _ = b.kill();
+    let _ = b.wait();
+    let replica_logs = format!(
+        "{}\n{}",
+        std::fs::read_to_string(backend_dir.join("replica-a.log")).unwrap_or_default(),
+        std::fs::read_to_string(backend_dir.join("replica-b.log")).unwrap_or_default()
+    );
+
+    // ── Phase 2: the default store (none configured), across a restart. ──
+    let _ = std::fs::remove_file(backend_dir.join("admin.txt"));
+    let pc = 8988u16;
+    let mut c = spawn_spa_backend(&backend_dir, pc, "default-1.log", &[]);
+    let c4 = curl_post_full(pc, "/_rpc/LogIn", "{}", None)
+        .and_then(|r| r.2)
+        .expect("LogIn on the default store must issue a cookie");
+    let c5 = curl_post_full(pc, "/_rpc/LogIn", "{}", None)
+        .and_then(|r| r.2)
+        .expect("a second LogIn on the default store must issue a cookie");
+    let signout4 =
+        curl_post_full(pc, "/_rpc/__spaSignOut", "{}", Some(&c4)).expect("sign-out answers");
+    let _ = c.kill();
+    let _ = c.wait();
+    let mut c = spawn_spa_backend(&backend_dir, pc, "default-2.log", &[]);
+    let r_six = save(pc, "six", &c4);
+    let after_six = admin();
+    let r_seven = save(pc, "seven", &c5);
+    let after_seven = admin();
+    let _ = c.kill();
+    let _ = c.wait();
+    let default_logs = format!(
+        "{}\n{}",
+        std::fs::read_to_string(backend_dir.join("default-1.log")).unwrap_or_default(),
+        std::fs::read_to_string(backend_dir.join("default-2.log")).unwrap_or_default()
+    );
+    let data_dir_db = backend_dir.join(".skydata/spa-sessions.db");
+    let default_store_on_disk = data_dir_db.is_file();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let ctx = format!("replica logs:\n{replica_logs}\ndefault-store logs:\n{default_logs}");
+    assert_eq!(r_one.0, 200, "{ctx}");
+    assert_eq!(
+        after_one, "one",
+        "a valid cookie must act as the signed-in admin on the other replica: {ctx}"
+    );
+    assert_eq!(
+        signout.0, 200,
+        "the sign-out endpoint must answer 200: {ctx}"
+    );
+    assert!(
+        signout.2.as_deref() == Some("sky_sid="),
+        "the sign-out endpoint must clear the cookie, got {:?}: {ctx}",
+        signout.2
+    );
+    assert_eq!(r_two.0, 200, "{ctx}");
+    assert_eq!(
+        after_two, "one",
+        "SECURITY: a cookie copied before sign-out must NOT act as the user after sign-out (same replica): {ctx}"
+    );
+    assert_eq!(r_three.0, 200, "{ctx}");
+    assert_eq!(
+        after_three, "one",
+        "SECURITY: a sign-out on replica A must refuse the old cookie on replica B: {ctx}"
+    );
+    assert_eq!(r_four.0, 200, "{ctx}");
+    assert_eq!(
+        after_four, "four",
+        "a fresh sign-in after a sign-out must work: {ctx}"
+    );
+    assert_eq!(logout.0, 200, "{ctx}");
+    assert!(
+        logout.2.is_some(),
+        "the server sign-out branch re-issues the (signed-out) cookie: {ctx}"
+    );
+    assert_eq!(r_five.0, 200, "{ctx}");
+    assert_eq!(
+        after_five, "four",
+        "SECURITY: a server-branch sign-out must refuse the pre-sign-out cookie: {ctx}"
+    );
+    assert_eq!(signout4.0, 200, "{ctx}");
+    assert!(
+        default_store_on_disk,
+        "with no store configured the record must live in the data dir: {ctx}"
+    );
+    assert_eq!(r_six.0, 200, "{ctx}");
+    assert_eq!(
+        after_six, "",
+        "SECURITY: a signed-out cookie must stay refused after a restart (default store): {ctx}"
+    );
+    assert_eq!(r_seven.0, 200, "{ctx}");
+    assert_eq!(
+        after_seven, "seven",
+        "a cookie that was NOT signed out must still work after a restart: {ctx}"
     );
 }
 

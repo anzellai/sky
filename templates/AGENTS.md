@@ -588,6 +588,11 @@ Each `/_rpc/<Msg>` is a `Server.rpc` route: it takes only same-origin
 set `SKY_PUBLIC_URL`), and `GET /_sky/sub` streams a topic only when the app's
 own `subscriptions`, run on the verified session model, names it. A topic keyed
 on a non-session model field is refused: key per-user topics on the session.
+The split's `sky_sid` is a signed token with a session id: sign-out (the client
+clearing its `Session` field, or a server branch that changes it) ends that id
+in the session store, so a copy of the cookie from before sign-out is refused.
+Several replicas need a shared store (`[live] store` / `SKY_LIVE_STORE` =
+`postgres` or `redis`) as well as a shared `SKY_SPA_SESSION_SECRET`.
 
 **Serving a Sky.Spa build — precompress the wasm.** A Go→wasm client is multi-MB
 raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on

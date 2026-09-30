@@ -254,6 +254,13 @@ snapshot starts a new session with a new key.
 With several replicas, the record of a retired id lives in the shared session
 store (sqlite / postgres / redis), so every replica refuses the old id.
 
+The same app built for `--target web:app` (the Sky.Spa auto-split) has no
+server-side session; its `sky_sid` is a signed token. It gets the same guarantee
+from the same store: the token carries a session id, a change of signed identity
+mints a new id and ends the old one, and sign-out ends the current one, so a copy
+of the cookie from before sign-out is refused. See
+[Sign-out ends the signed session](../skyspa/auto-split.md#25-sign-out-ends-the-signed-session-v0270).
+
 ### Why Sky.Live keeps Model across reload
 
 Server-driven UIs hold real state — open sockets, accumulators, decoded

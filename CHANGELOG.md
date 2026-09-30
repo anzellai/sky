@@ -15,6 +15,36 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### ⚠ Security
 
+- **Sky.Spa sign-out did not end the session on the server.** The auto-split
+  signs the session projection into the `sky_sid` cookie, and the backend
+  checked only the token's signature and its 30-day `exp`. Sign-out removed
+  the cookie in the browser, but a copy of the cookie taken before sign-out
+  still signed the user in until it expired (seen behind a proxy on two
+  split apps). The token now carries a session id (`sid`). Sign-out
+  (`POST /_rpc/__spaSignOut`, which the client calls when its `Session`
+  field goes to `Nothing`) records the id as ended for the rest of the
+  token's lifetime, and every verification (RPC, SSR, console check,
+  `/_sky/sub`) refuses an ended id. A change of the signed identity (sign-in,
+  a switch of account, a server branch that clears the session) mints a new
+  id and ends the old one, the same rule Sky.Live applies at sign-in. The
+  record is an alias in the session store Sky.Live uses for a retired id
+  (`sky_session_aliases` on sqlite / postgres, a `sky:alias:` key on redis),
+  so with a shared `[live] store` / `SKY_LIVE_STORE` every replica refuses
+  the old cookie. The split now copies `[live] store` / `storePath` into the
+  backend manifest. With no store configured the record goes to
+  `spa-sessions.db` in the data dir, so a single node keeps its sign-outs
+  across a restart. The check fails closed: a store that cannot answer
+  refuses the cookie, and a sign-out the store cannot record answers 503.
+  A token signed before v0.27.0 has no `sid` and is refused, so each visitor
+  signs in once more after the upgrade. When `SKY_SPA_SESSION_SECRET` is set
+  and no shared store is configured, the backend warns that a sign-out holds
+  only on the replica that served it.
+  (`runtime-go/rt/spa_session_revocation.go`, `live_store_rotation.go`,
+  `rust/crates/project/src/spa_split.rs`; tests
+  `spa_session_revocation_test.go`,
+  `spa_sign_out_revokes_the_signed_session_cookie`,
+  `spa_split::live_store_section_tests`; docs
+  `docs/skyspa/auto-split.md` §25, `docs/skyauth/overview.md`.)
 - **The Sky.Spa split decided "a key never crosses a wire" on a type's bare
   name.** It read a `Msg` payload's types from the syntax, which drops the
   module, and looked each one up in the project's types by its last name. A

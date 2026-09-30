@@ -389,6 +389,12 @@ on the user's machine → **untrusted**. Therefore, unavoidably:
   `application/json` POST before the handler runs (403). The auto-split
   registers every `/_rpc/<Msg>` and `/_rpc/__spaSignOut` this way. See
   [the auto-split security notes](auto-split.md#21-rpc-and-push-security).
+- Sign-out ends the signed session on the server, not only in the browser.
+  The `sky_sid` token carries a session id; sign-out (and any change of the
+  signed identity) records that id as ended in the session store, so a copy of
+  the cookie taken before sign-out is refused afterwards. Give the replicas a
+  shared store (`[live] store` / `SKY_LIVE_STORE` = `postgres` or `redis`). See
+  [Sign-out ends the signed session](auto-split.md#25-sign-out-ends-the-signed-session-v0270).
 - `GET /_sky/sub?topic=…` streams a topic only when the app's own
   `subscriptions`, run on the visitor's verified session model, names it.
   Every other topic gets 403.

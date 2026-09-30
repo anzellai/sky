@@ -36,6 +36,11 @@ const spaSessionSecretMinBytes = 32
 var (
 	spaSessionSecretOnce sync.Once
 	spaSessionSecretVal  string
+	// spaSessionSecretShared is true when the secret came from
+	// SKY_SPA_SESSION_SECRET: the operator's signal of a multi-replica deploy.
+	// The sign-out record store reads it (spa_session_revocation.go) to warn
+	// when those replicas would not share their sign-out records.
+	spaSessionSecretShared bool
 )
 
 // Spa_sessionSecret is the internal kernel the auto-split's generated backend
@@ -67,6 +72,7 @@ func resolveSpaSessionSecret() string {
 			// the top-level recover) rather than sign with a weak key.
 			panic(spaSessionSecretEnv + " is set but shorter than 32 bytes; supply a key of at least 32 bytes")
 		}
+		spaSessionSecretShared = true
 		return v
 	}
 	// No operator secret: mint + persist under the data dir for a single node.

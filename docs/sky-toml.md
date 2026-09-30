@@ -644,9 +644,12 @@ What's NOT affected:
   `SKY_SPA_SESSION_SECRET` (the shared secret that signs the Sky.Spa
   session cookie under `--target web:app`; set one, ≥ 32 bytes, on
   every replica of a multi-replica deployment, or a lone node
-  auto-generates and persists one under `SKY_DATA_DIR`),
+  auto-generates and persists one under `SKY_DATA_DIR`; such a
+  deployment also needs a shared `[live] store`, where the backend
+  records sign-outs — docs/skyspa/auto-split.md §25),
   `SKY_DATA_DIR` (the durable data directory — the embedded-Postgres
-  cluster and the Sky.Spa session-secret file), and the developer
+  cluster, the Sky.Spa session-secret file and, with no store
+  configured, the Sky.Spa sign-out records `spa-sessions.db`), and the developer
   trace switches (`SKY_STREAM_DEBUG`, `SKY_TUI_*`, `SKY_WEBVIEW_DEBUG`,
   `SKY_DEV_BANNER`, `SKY_CSRF`, `SKY_EMAIL_DRY_RUN`). Each is listed
   with its reason in the gate's `FIXED_NAME_READS` table.

@@ -3884,10 +3884,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // external Sky library analyses fine but the generated frontend/backend can't
     // resolve the import.
     let dep_sections = emit_dep_sections(project_dir);
+    // The backend records sign-outs in the app's session store
+    // (runtime-go/rt/spa_session_revocation.go), so it carries the project's
+    // `[live] store` / `storePath` (the frontend has no server state).
+    let live_store = emit_live_store_section(project_dir);
     write(
         "backend/sky.toml",
         &format!(
-            "{}{dep_sections}",
+            "{}{dep_sections}{live_store}",
             sky_toml(&format!("{proj_name}-backend"), "backend")
         ),
         &mut files,
@@ -4855,6 +4859,41 @@ fn emit_dep_sections(project_dir: &Path) -> String {
         }
     }
     out
+}
+
+/// The project's `sky.toml` `[live] store` / `storePath` lines, re-emitted as a
+/// `[live]` section for the generated BACKEND manifest (empty when neither is
+/// set). The split backend is a `Sky.Http.Server` app, not a Sky.Live one, but
+/// it keeps its sign-out records in the same session store a Sky.Live build of
+/// the app would use, so a store shared by the replicas refuses a signed-out
+/// cookie on every replica. The lines are copied verbatim (a trailing `#`
+/// comment included): `build.rs` parses them exactly as it parses the
+/// project's own manifest. The operator's `SKY_LIVE_STORE` /
+/// `SKY_LIVE_STORE_PATH` still win at run time.
+fn emit_live_store_section(project_dir: &Path) -> String {
+    let Ok(toml) = std::fs::read_to_string(project_dir.join("sky.toml")) else {
+        return String::new();
+    };
+    let mut in_live = false;
+    let mut lines: Vec<String> = Vec::new();
+    for line in toml.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            in_live = l == "[live]";
+            continue;
+        }
+        if !in_live {
+            continue;
+        }
+        let key = l.split('=').next().unwrap_or("").trim();
+        if (key == "store" || key == "storePath") && l.contains('=') {
+            lines.push(l.to_string());
+        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("\n[live]\n{}\n", lines.join("\n"))
 }
 
 /// Copy the project's fetched external-dependency trees (`.skydeps/` Sky sources,
@@ -6872,16 +6911,15 @@ fn gen_backend(
             "import Sky.Http.Server.Stream as Stream exposing (StreamWriter)",
         );
     }
-    // STATELESS SIGNED SESSION: the sign / verify path needs Std.Auth (the token
-    // logic Sky.Live reuses), the `Secret` type, `Sky.Ffi` (the secret-kernel
-    // façade), and `Sky.Core.Task` (the sign-out handler answers a Task). Both
-    // Auth and Secret are `Ffi.kernel` façades — they pull no Live runtime into
-    // the backend. The `add` helper only checks the ORIGINAL app imports, so a
+    // STATELESS SIGNED SESSION: the sign / verify / sign-out path needs the
+    // `Secret` type, `Sky.Ffi` (the `Spa_*Session` kernel façades, which reuse
+    // Std.Auth's HS256 token logic in Go — runtime-go/rt/spa_session_revocation.go),
+    // and `Sky.Core.Task` (the sign-out handler answers a Task). None of them
+    // pulls the Live runtime into the backend. The `add` helper only checks the ORIGINAL app imports, so a
     // module another block already pushed (Ffi / Task under SSR or push) is
     // filtered against `import_lines` here to avoid a duplicate import line.
     if !session_proj.is_empty() {
         for (path, text) in [
-            ("Std.Auth", "import Std.Auth as Auth"),
             (
                 "Sky.Core.Secret",
                 "import Sky.Core.Secret exposing (Secret)",
@@ -7083,13 +7121,35 @@ fn gen_backend(
              -- projection into an httpOnly `sky_sid` cookie on the establishing branch\n\
              -- and VERIFIES it on every RPC + SSR, taking the session from the cookie —\n\
              -- never from the forgeable wire model. No server session store, so the\n\
-             -- backend stays stateless; it reuses Sky.Live's own Std.Auth token logic.\n\
+             -- backend stays stateless; it reuses Std.Auth's own token logic.\n\
+             --\n\
+             -- SIGN-OUT (v0.27.0). Each token carries a session id. Sign-out, and any\n\
+             -- change of the signed identity, records the old id as ended in the\n\
+             -- configured session store, and verification refuses an ended id, so a\n\
+             -- copy of the cookie taken before sign-out stops working at once\n\
+             -- (runtime-go/rt/spa_session_revocation.go).\n\
              spaSessionSecret_ : () -> Secret\n\
              spaSessionSecret_ =\n\
              \x20   Ffi.kernel \"Spa_sessionSecret\"\n\n\n\
              sessionSecret_ : Secret\n\
              sessionSecret_ =\n\
-             \x20   spaSessionSecret_ ()\n\n\n",
+             \x20   spaSessionSecret_ ()\n\n\n\
+             spaVerifySession_ : Secret -> String -> Result Error a\n\
+             spaVerifySession_ =\n\
+             \x20   Ffi.kernel \"Spa_verifySession\"\n\n\n\
+             spaSignSession_ : Secret -> String -> a -> Result Error String\n\
+             spaSignSession_ =\n\
+             \x20   Ffi.kernel \"Spa_signSession\"\n\n\n\
+             spaEndSession_ : Secret -> String -> Task Error ()\n\
+             spaEndSession_ =\n\
+             \x20   Ffi.kernel \"Spa_endSession\"\n\n\n\
+             spaSessionCookie_ : Request -> String\n\
+             spaSessionCookie_ req =\n\
+             \x20   case Server.getCookie \"sky_sid\" req of\n\
+             \x20       Just tok ->\n\
+             \x20           tok\n\n\
+             \x20       Nothing ->\n\
+             \x20           \"\"\n\n\n",
         );
         // One verify helper per identity field: return the TRUSTED value from the
         // signed cookie, or the init value when there is no valid cookie — NEVER
@@ -7107,7 +7167,7 @@ fn gen_backend(
                 "{vname} req initVal =\n\
                  \x20   case Server.getCookie \"sky_sid\" req of\n\
                  \x20       Just tok ->\n\
-                 \x20           case Auth.verifyToken sessionSecret_ tok of\n\
+                 \x20           case spaVerifySession_ sessionSecret_ tok of\n\
                  \x20               Ok claims ->\n\
                  \x20                   case Codec.fromJson {cname} claims.p{idx} of\n\
                  \x20                       Ok v ->\n\
@@ -7120,9 +7180,13 @@ fn gen_backend(
                  \x20           initVal\n\n\n",
             ));
         }
-        // signedResponse_ m resp: re-issue the `sky_sid` cookie from the model the
-        // establishing branch produced, signing every identity field through its
-        // codec (fixed 30-day expiry; the token `exp` bounds replay). A sign
+        // signedResponse_ req m resp: re-issue the `sky_sid` cookie from the model
+        // the establishing branch produced, signing every identity field through
+        // its codec (30-day expiry, set by the kernel). The request's current
+        // cookie goes in too: the kernel keeps its session id when the identity
+        // is unchanged, and otherwise mints a new id and ENDS the old one, so a
+        // copy of the pre-change cookie stops working at once
+        // (Spa_signSession, runtime-go/rt/spa_session_revocation.go). A sign
         // failure (server misconfig) leaves the response cookie-less rather than
         // failing the request.
         let claims = session_proj
@@ -7138,21 +7202,29 @@ fn gen_backend(
             })
             .collect::<String>();
         handlers.push_str(&format!(
-            "signedResponse_ m resp =\n\
-             \x20   case Auth.signToken sessionSecret_ {{ {claims} }} 2592000 of\n\
+            "signedResponse_ req m resp =\n\
+             \x20   case spaSignSession_ sessionSecret_ (spaSessionCookie_ req) {{ {claims} }} of\n\
              \x20       Ok tok ->\n\
              \x20           Server.withCookie \"sky_sid\" tok \"Path=/; HttpOnly; SameSite=Lax\" resp\n\n\
              \x20       Err _ ->\n\
              \x20           resp\n\n\n"
         ));
-        // The framework sign-out endpoint: clear `sky_sid` (Max-Age=0). The wasm
-        // client calls it when the session field transitions Just -> Nothing
-        // (wired in a separate task); emitted only when the projection is present.
+        // The framework sign-out endpoint. The wasm client calls it when the
+        // session field transitions Just -> Nothing. It ENDS the cookie's session
+        // id in the session store (so a copy of the cookie is refused from now
+        // on, on every replica that shares the store) and clears `sky_sid`
+        // (Max-Age=0). When the store cannot record the sign-out it still clears
+        // the cookie but answers 503, so the failure is not silent.
         handlers.push_str(
             "spaSignOutHandler : Handler\n\
-             spaSignOutHandler _ =\n\
-             \x20   Task.succeed\n\
-             \x20       (Server.withCookie \"sky_sid\" \"\" \"Path=/; HttpOnly; SameSite=Lax; Max-Age=0\" (Server.json \"{}\"))\n\n\n",
+             spaSignOutHandler req =\n\
+             \x20   let\n\
+             \x20       cleared_ =\n\
+             \x20           Server.withCookie \"sky_sid\" \"\" \"Path=/; HttpOnly; SameSite=Lax; Max-Age=0\" (Server.json \"{}\")\n\
+             \x20   in\n\
+             \x20   spaEndSession_ sessionSecret_ (spaSessionCookie_ req)\n\
+             \x20       |> Task.map (\\_ -> cleared_)\n\
+             \x20       |> Task.onError (\\_ -> Task.succeed (Server.withStatus 503 cleared_))\n\n\n",
         );
     }
     for (name, io) in server {
@@ -7261,7 +7333,7 @@ fn gen_backend(
         };
         // STATELESS SIGNED SESSION write path: when this branch ESTABLISHES an
         // identity field (its write-set intersects the projection), wrap the JSON
-        // response in `signedResponse_ <model>`, which re-issues the signed
+        // response in `signedResponse_ req <model>`, which re-issues the signed
         // `sky_sid` cookie from the model the branch produced. Only such a branch
         // emits a Set-Cookie; a branch that touches no identity field answers
         // plain. The wrap is applied at the single `Server.json` site so every
@@ -7274,7 +7346,7 @@ fn gen_backend(
                     .any(|f| session_proj.iter().any(|p| &p.name == f)));
         let json_resp = if establishes_session {
             format!(
-                "signedResponse_ {result_model} (Server.json (Codec.toJson {resp_codec} {resp_val}))"
+                "signedResponse_ req {result_model} (Server.json (Codec.toJson {resp_codec} {resp_val}))"
             )
         } else {
             format!("Server.json (Codec.toJson {resp_codec} {resp_val})")
@@ -9894,5 +9966,45 @@ mod type_identity_tests {
         let mut only_key = BTreeSet::new();
         collect_ty_names(&app("Std.Crypto.Cpace.Pending"), &s, &mut only_key);
         assert!(only_key.is_empty(), "{only_key:?}");
+    }
+}
+
+#[cfg(test)]
+mod live_store_section_tests {
+    use super::emit_live_store_section;
+
+    fn project(toml: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-spa-live-store-{}-{}",
+            std::process::id(),
+            toml.len()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("sky.toml"), toml).unwrap();
+        dir
+    }
+
+    /// The split backend records sign-outs in the app's session store, so it
+    /// must carry `[live] store` / `storePath` (and nothing else from `[live]`).
+    #[test]
+    fn backend_manifest_carries_only_the_live_store_keys() {
+        let dir = project(
+            "name = \"x\"\n\n[live]\nport = 8000\nstore = \"postgres\"   # shared\nstorePath = \"postgres://db/app\"\nstatic = \"public\"\n\n[source]\nroot = \"src\"\nstore = \"not-live\"\n",
+        );
+        let got = emit_live_store_section(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            got,
+            "\n[live]\nstore = \"postgres\"   # shared\nstorePath = \"postgres://db/app\"\n"
+        );
+    }
+
+    #[test]
+    fn no_live_store_emits_nothing() {
+        let dir = project("name = \"y\"\n\n[live]\nport = 8000\n");
+        let got = emit_live_store_section(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got, "");
     }
 }

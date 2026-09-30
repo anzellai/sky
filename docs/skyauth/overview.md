@@ -466,6 +466,19 @@ There are **two independent states**, and the distinction matters:
 
 Read the combined verdict with `Auth.userAccessState db userId issuedAt : Task Error AccessState` (`Active` / `Revoked` / `Disabled`, with `Disabled` taking precedence), or the booleans `Auth.isRevoked` / `Auth.isDisabled`.
 
+### Signing out one session is not revoking the user
+
+`Auth.revokeUser` ends **every** session and token of a user issued before now:
+the user is signed out on every device. A normal sign-out ends **one** session,
+and it must end it on the server, not only in the browser. Clearing a cookie
+does not stop a copy of that cookie that someone took earlier.
+
+| Where the session lives | Sign-out that ends it on the server |
+|---|---|
+| Sky.Live (`sky_sid` is a random id for a server-side session) | `Live.endSession ()`. The id is dead in the shared store; a copy of the cookie gets a fresh, signed-out session. |
+| Sky.Spa auto-split (`sky_sid` is a signed token the split backend mints) | Automatic. Clearing the `Session` field in the client (or a server branch that changes it) ends the token's session id in the session store, so a copy of the cookie is refused. Use a shared store with several replicas. See [Sign-out ends the signed session](../skyspa/auto-split.md#25-sign-out-ends-the-signed-session-v0270). |
+| A token the app mints itself (`Auth.signToken` / `signSlidingToken` in its own cookie) | The token is stateless: it is valid until its `exp`, whoever holds it. Keep its lifetime short (a sliding token with a small `windowSeconds`), and on a sign-out that must end every copy, call `Auth.revokeUser` and check `Auth.isRevoked db sub iat` (or the sliding `revokedCheck`) on each request. |
+
 ### Wiring it into a Sky.Live app
 
 Three steps:

@@ -540,6 +540,15 @@ type SessionStore interface {
 	putAlias(oldSid string, a sessionAlias)
 	// getAlias reads a retired id's record.
 	getAlias(oldSid string) (sessionAlias, bool)
+	// putAliasUntil is putAlias with an explicit expiry, and it returns the
+	// write error. The Sky.Spa sign-out record (spa_session_revocation.go)
+	// must outlive the store TTL: it lives as long as the signed token it
+	// ends, and the caller must know when the record was not written.
+	putAliasUntil(oldSid string, a sessionAlias, exp time.Time) error
+	// lookupAlias is getAlias that tells "no record" (false, nil) apart from
+	// "the store could not answer" (an error), so a check that must fail
+	// closed can do so.
+	lookupAlias(oldSid string) (sessionAlias, bool, error)
 }
 
 // ═════════════════════════════════════════════════════════════════════

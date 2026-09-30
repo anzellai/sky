@@ -1333,3 +1333,74 @@ Tests: the fixtures `spa-path-dep-record` (with its `lib/` package),
 `a_server_arm_navigation_the_split_cannot_isolate_is_refused`; the unit tests
 `spa_split::type_identity_tests` and `split_diag::tests`; the browser e2e
 `scripts/nav-e2e.sh` (Sky.Live and web:app, Chrome and WebKit, strict CSP).
+
+## 25. Sign-out ends the signed session (v0.27.0)
+
+The split backend keeps no session object. It signs the session projection
+(the model fields of type `Session` / `Maybe Session` that a server branch
+writes) into the httpOnly `sky_sid` cookie, and verifies that cookie on every
+RPC, SSR render, console check and `/_sky/sub` request (§21). Before v0.27.0
+the check was the signature and the 30-day `exp` only. A sign-out removed the
+cookie from the browser, but a copy of the cookie taken before sign-out (a
+stolen cookie, a second browser profile, a proxy log) still signed the user in
+until it expired. Sky.Live closed the same class in v0.27.0 by rotating the
+session id at sign-in and ending a revoked id in the shared store; the split
+backend now does the same with its signed token.
+
+**Each token carries a session id.** `Spa_signSession`
+(`runtime-go/rt/spa_session_revocation.go`) stamps a random `sid` claim next
+to the projection claims. It keeps the id while a branch re-issues the same
+identity. When the identity changes (sign-in, a switch of account, a server
+branch that clears the session), it mints a new id and ends the old one, so the
+cookie from before the change stops working at once.
+
+**Sign-out ends the id.** The wasm client calls `POST /_rpc/__spaSignOut`
+when the session field goes from `Just` to `Nothing`. The endpoint verifies the
+cookie, records its `sid` as ended for the rest of the token's lifetime, and
+clears the cookie. When the store cannot record the sign-out, the endpoint
+still clears the cookie but answers 503, so the failure is visible.
+
+**Verification refuses an ended id.** `Spa_verifySession` is
+`Auth.verifyToken` plus two checks: the token has a `sid`, and the `sid` has
+not ended. A token without a `sid` (one signed before v0.27.0) cannot be
+signed out, so it is refused: each visitor signs in once more after the
+upgrade. When the store cannot answer, the cookie is refused and the failure
+is logged (`spa.session-check.failed`). The check never fails open.
+
+**Where the record lives.** The record is an alias in the session store that
+Sky.Live uses for a retired session id (the `sky_session_aliases` table on
+sqlite and postgres, a `sky:alias:` key on redis), under the key prefix
+`spa-sid:`. It expires with the token it ends, and the store's own alias sweep
+removes it. The store is resolved as for Sky.Live: `SKY_LIVE_STORE` /
+`SKY_LIVE_STORE_PATH`, else the project's `sky.toml` `[live] store` /
+`storePath` (the split copies these two lines into the backend manifest).
+`App.withConfig { store = … }` in the source is not read by the split backend:
+set the store in `sky.toml` or in the environment.
+
+| Store | Sign-out is refused on |
+|---|---|
+| none configured | this host, across restarts (a sqlite file `spa-sessions.db` in the data dir, `SKY_DATA_DIR` else `.skydata`, beside the auto-minted signing secret) |
+| `memory` | this process, until it restarts |
+| `sqlite` at a shared path | every process that opens the same file |
+| `postgres` / `redis` | every replica |
+
+A deployment with several replicas already sets `SKY_SPA_SESSION_SECRET` (every
+replica must verify with the same key). When that variable is set and no shared
+store is configured, the backend logs a warning when it first opens the store:
+a sign-out would then be refused only on the replica that served it. A store the
+operator configured that cannot be opened in production refuses every signed
+session (and logs why), rather than fall back to a per-process memory store.
+
+**Cost.** One store read per verified request (a primary-key lookup on sqlite
+or postgres, a `GET` on redis). A request with no `sky_sid` cookie reads
+nothing.
+
+Tests: the Go unit tests in `runtime-go/rt/spa_session_revocation_test.go`
+(sign-out refuses the copied cookie, the id is kept for the same projection and
+rotated on a change, a token without a `sid` is refused, reserved claims, a
+forged cookie writes no record, fail closed when the store is down, the record
+outlives the store TTL and a reopen, expiry); the `spa_split_flow.rs` test
+`spa_sign_out_revokes_the_signed_session_cookie` on the fixture
+`spa-session-revocation` (two replicas sharing one sqlite store, both sign-out
+paths, a fresh sign-in, the default store across a restart); and the unit
+tests `spa_split::live_store_section_tests`.
