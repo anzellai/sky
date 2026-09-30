@@ -499,8 +499,7 @@ jobs:
         run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t3
       # The heavy real-DB e2e leg carried by `#[ignore]` in the `sky` crate's
       # flow tests (`db_run_cluster_flow`, `cross_replica_session_flow`,
-      # `auth_db_lifecycle_flow`, and the pre-existing `std_app_flow` erasure
-      # renders). These are OFF the per-commit `test-sky` T1 critical path (T1
+      # `auth_db_lifecycle_flow`). These are OFF the per-commit `test-sky` T1 critical path (T1
       # tier-budget, docs/ci-test-architecture-v2.md §8.2) and run here, nightly,
       # where the 90-min T3 ceiling has room. Each keeps its per-commit kernel
       # leg (named in the `#[ignore]` reason), so this is the confirmation leg,
