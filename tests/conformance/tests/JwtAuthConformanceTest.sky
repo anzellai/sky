@@ -20,6 +20,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Jwt as Jwt
 import Sky.Core.Json.Decode as JsonDec
+import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Secret as Secret exposing (Secret)
 import Std.Auth as Auth
 import Sky.Test as Test exposing (Test)
@@ -106,9 +107,9 @@ authClaims =
     Dict.fromList [ ( "sub", "u1" ), ( "role", "admin" ) ]
 
 
--- Verify with an explicit claims-type annotation so HM has a concrete
--- `a` to solve; only the Ok/Err constructor is inspected downstream.
-verifyAuth : Secret -> String -> Result Error (Dict.Dict String String)
+-- The claims come back as a JSON Value (v0.27.0); only the Ok/Err
+-- constructor is inspected by the BYPASS tests below.
+verifyAuth : Secret -> String -> Result Error JsonEnc.Value
 verifyAuth secret tok =
     Auth.verifyToken secret tok
 
@@ -268,6 +269,28 @@ tests =
                 tok = Result.withDefault "SIGN_FAILED" signed
             in
                 Test.ok (verifyAuth authSecret tok))
+
+      -- The claims are read with a decoder, not cast (CAST, v0.27.0): the
+      -- signed `role` claim round-trips as a String.
+    , Test.test "Auth: verifyToken claims decode with Json.Decode"
+        (\_ ->
+            let
+                tok = Result.withDefault "SIGN_FAILED" (Auth.signToken authSecret authClaims 3600)
+            in
+                Test.equal
+                    (Ok "admin")
+                    (verifyAuth authSecret tok
+                        |> Result.andThen (JsonDec.decodeValue (JsonDec.field "role" JsonDec.string))))
+
+      -- A claim read at the wrong type is an Err, never a crash.
+    , Test.test "Auth: verifyToken claim decoded at the wrong type -> Err"
+        (\_ ->
+            let
+                tok = Result.withDefault "SIGN_FAILED" (Auth.signToken authSecret authClaims 3600)
+            in
+                Test.err
+                    (verifyAuth authSecret tok
+                        |> Result.andThen (JsonDec.decodeValue (JsonDec.field "role" JsonDec.int))))
 
       -- BYPASS CLASS: verify with the WRONG secret -> Err.
     , Test.test "Auth: verifyToken with wrong secret -> Err [BYPASS]"

@@ -40,6 +40,7 @@ module Sky.Http.Server exposing
     , withHeader
     , cookie
     , withCookie
+    , addCookie
     , static
     , staticNotFound
     )
@@ -100,7 +101,7 @@ type Server
     = Server_OPAQUE
 
 -- | An opaque HTTP cookie carrying safe defaults (HttpOnly + Path=/ +
--- SameSite=Lax).  Build with `cookie`, attach with `withCookie`.
+-- SameSite=Lax).  Build with `cookie`, attach with `addCookie`.
 type Cookie
     = Cookie_OPAQUE
 
@@ -282,34 +283,37 @@ formValue =
 
 -- ─── Cookies ───────────────────────────────────────────────────────
 -- | `cookie name value` — build a default cookie (Path=/, HttpOnly,
--- SameSite=Lax).  Pair with `withCookie` to add it to a response.
+-- SameSite=Lax).  Pair with `addCookie` to add it to a response.
 cookie : String -> String -> Cookie
 cookie =
     Ffi.kernel "Server_cookie"
 
 
--- | `withCookie` — attach a cookie to a response.  Three call
--- shapes are supported (variadic on the runtime side):
+-- | `withCookie name value attrs resp` — attach a cookie with an explicit
+-- attribute string (e.g. `"Path=/; HttpOnly; Max-Age=0"` to clear it).
 --
---   * `withCookie cookieValue resp` — using a pre-built `Cookie`.
---   * `withCookie name value resp` — quick form with safe defaults.
---   * `withCookie name value attrs resp` — full control over
---     attribute string (e.g. `"Path=/; HttpOnly; Max-Age=0"`).
---
--- Every shape defaults to `Path=/; HttpOnly; SameSite=Lax`, and the
--- runtime adds `Secure` when the response goes back over HTTPS or the
+-- The runtime adds `Secure` when the response goes back over HTTPS or the
 -- production gate is on (`ENV` set to any non-dev value) — the same
 -- rule it applies to its own session and CSRF cookies.  It is NOT
 -- added on a plain-HTTP dev session, where the browser would refuse
--- to send the cookie back.  Write `Secure` into the 4-arg attribute
--- string to force it.
+-- to send the cookie back.  Write `Secure` into the attribute string to
+-- force it.
 --
--- The Sky signature is left untyped (`any -> any`) to admit all
--- three shapes; consider migrating to the `cookie` + 2-arg form for
--- typed call sites in new code.
-withCookie : any
+-- Before v0.27.0 `withCookie` was typed `any` and took three shapes. It was
+-- an unchecked cast: any arguments type-checked, and a result used at any
+-- type failed at run time. The pre-built `Cookie` form is now `addCookie`;
+-- the 3-argument form is `addCookie (cookie name value)`.
+withCookie : String -> String -> String -> Response -> Response
 withCookie =
     Ffi.kernel "Server_withCookie"
+
+
+-- | `addCookie c resp` — attach a cookie built with `cookie` (defaults
+-- `Path=/; HttpOnly; SameSite=Lax`, plus `Secure` under the same rule as
+-- `withCookie`).
+addCookie : Cookie -> Response -> Response
+addCookie =
+    Ffi.kernel "Server_addCookie"
 
 
 -- ─── Static-file serving ───────────────────────────────────────────

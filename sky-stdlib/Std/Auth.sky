@@ -34,6 +34,7 @@ module Std.Auth exposing
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
+import Sky.Core.Json.Encode exposing (Value)
 import Sky.Core.Jwt as Jwt
 import Sky.Core.Secret exposing (Secret)
 import Sky.Core.Task as Task
@@ -94,10 +95,17 @@ signToken =
     Ffi.kernel "Auth_signToken"
 
 
--- | `verifyToken secret token` — verify + decode a JWT.
-verifyToken : Secret -> String -> Result Error a
+-- | `verifyToken secret token` — verify a JWT and return its claims as a
+-- JSON `Value`. Read a claim with a `Json.Decode` decoder; a claim of the wrong
+-- shape is an `Err`, never a crash:
+--
+--     Auth.verifyToken secret token
+--         |> Result.andThen (Decode.decodeValue (Decode.field "sub" Decode.string))
+--
+-- Numeric claims (`exp`, `iat`) decode with `Decode.int`.
+verifyToken : Secret -> String -> Result Error Value
 verifyToken =
-    Ffi.kernel "Auth_verifyToken"
+    Ffi.kernel "Auth_verifyTokenT"
 
 
 -- | `signSlidingToken secret claims { windowSeconds, maxLifetimeSeconds }` —

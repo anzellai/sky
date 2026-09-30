@@ -29,6 +29,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Json.Decode as Decode
 import Sky.Core.Json.Encode as JsonEnc
 import Sky.Core.Jwt as Jwt
 import Sky.Core.Secret exposing (Secret)
@@ -69,20 +70,21 @@ adminClaims user =
 
 
 -- | `adminRole secret token` — verify with `Std.Auth.verifyToken` and
--- report whether the `role` claim survived the round trip.  Claim
--- VALUES stay untouched inside the `Dict String any` the kernel hands
--- back (JWT numeric claims are float-shaped there), so nothing is
--- coerced out of `any`.
+-- report whether the `role` claim survived the round trip. The claims
+-- are a JSON `Value`; the `role` claim is read with a decoder, so a
+-- token without it is "unknown", never a crash.
 adminRole : Secret -> String -> Result Error String
 adminRole secret token =
     case Auth.verifyToken secret token of
 
-        Ok claimBag ->
-            if Dict.member "role" claimBag then
-                Ok "admin"
+        Ok claims ->
+            case Decode.decodeValue (Decode.field "role" Decode.string) claims of
 
-            else
-                Ok "unknown"
+                Ok _ ->
+                    Ok "admin"
+
+                Err _ ->
+                    Ok "unknown"
 
         Err e ->
             Err e
