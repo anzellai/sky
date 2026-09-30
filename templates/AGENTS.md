@@ -336,8 +336,10 @@ off `update` (for example with `Cmd.perform`), wrap it yourself:
 `Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`.
 The checker enforces the `Result` (since v0.27.0): code that uses a call's
 result as the bare value is an `[E2001]` type error. `Sky.Ffi` (`kernel` /
-`call` / `callPure` / `callTask`) is stdlib-only (`[E1011]`): call the typed
-stdlib function or a `sky add` binding.
+`call` / `callPure` / `callTask`) is stdlib-only (`[E1011]`, under any
+qualifier: `Webview.kernel` is refused too): call the typed stdlib function or
+a `sky add` binding. A fetched `.skydeps` package is type-checked like your own
+code on every build and gets no `Sky.Ffi`.
 
 **Top-level bindings are memoised — evaluated once, then cached.** A
 zero-parameter top-level binding is a single VALUE: `apiKey` reads the env

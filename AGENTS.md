@@ -109,8 +109,10 @@ To run a call later, off `update`, wrap it yourself:
 `Task.lazy (\_ -> Pkg.call args) |> Task.andThen Task.fromResult`. The checker
 enforces the `Result` from the binding's pinned signature (v0.27.0): using a
 call's result as the bare value is an `[E2001]` type error, and `Sky.Ffi`
-(`kernel` / `call` / `callPure` / `callTask`) is stdlib-only (`[E1011]`): call
-the typed stdlib function or a `sky add` binding. See
+(`kernel` / `call` / `callPure` / `callTask`) is stdlib-only (`[E1011]`, under
+any qualifier: `Webview.kernel` is refused too): call the typed stdlib function
+or a `sky add` binding. A fetched `.skydeps` package is type-checked like your
+own code on every build and gets no `Sky.Ffi`. See
 `docs/ffi/boundary-philosophy.md`.
 
 `let _ = someTask` auto-forces the task (fires the effect). A top-level
