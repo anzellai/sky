@@ -270,6 +270,37 @@ sessionKey =
         |> Result.andThen (Kdf.derive salt "my-app v1 session" 32)
 ```
 
+A whole program that signs a message and checks the signature:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Crypto.Sign as Sign
+import Std.Log as Log
+
+
+main : Task Error ()
+main =
+    Sign.generate
+        |> Task.andThen
+            (\key ->
+                let
+                    signature =
+                        Sign.sign key "invoice #42"
+
+                    valid =
+                        Sign.verify (Sign.publicKey key) "invoice #42" signature
+                in
+                if valid then
+                    Log.println "the signature verifies"
+
+                else
+                    Log.println "the signature does not verify"
+            )
+```
+
 | Function | Type | Notes |
 |---|---|---|
 | `Sign.generate` | `Task Error Sign.SecretKey` | Fresh Ed25519 key |
@@ -339,6 +370,28 @@ at `Low`, 1273 at `High`), `Qr.size`, `Qr.isDark column row`, `Qr.rows`, and
 the renderers `Qr.view` (`Std.Ui` element), `Qr.toSvg` (SVG document string)
 and `Qr.toTerminal` (half-block characters in explicit black on white). Pure,
 no cgo; it also runs in the Sky.Spa wasm client.
+
+A whole program that prints a pairing code to the terminal:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Std.Log as Log
+import Std.Qr as Qr exposing (ErrorCorrection(..))
+
+
+main : Task Error ()
+main =
+    case Qr.encode Medium "https://example.test/pair?code=482916" of
+        Ok code ->
+            Log.println (Qr.toTerminal code)
+
+        Err e ->
+            Log.println ("no QR code: " ++ Error.toString e)
+```
 
 ### `Bytes` — byte-buffer helpers (Sky.Core.Bytes)
 
@@ -1064,6 +1117,23 @@ result =
 
 `Process.run` runs a program to completion and returns its stdout. (`exit`,
 `getEnv`, `getCwd`, `loadEnv` moved to `System` in v0.10.0.)
+
+As a whole program:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Process as Process
+import Sky.Core.Task as Task
+import Std.Log as Log
+
+
+main : Task Error ()
+main =
+    Process.run "echo" [ "hello from a child process" ]
+        |> Task.andThen Log.println
+```
 
 #### Streaming child processes (`Process.spawn`, v0.27.0)
 

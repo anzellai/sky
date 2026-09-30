@@ -42,7 +42,7 @@ trap 'rm -rf "$BLOCKS" "$PROJ"' EXIT
 # string. conformance.sh already guards this way (`ran -eq 0` -> exit 2);
 # doc-examples did not. Raise the floor when docs gain examples; never lower it
 # to make a red run green.
-DOC_EXAMPLES_FLOOR="${DOC_EXAMPLES_FLOOR:-12}"
+DOC_EXAMPLES_FLOOR="${DOC_EXAMPLES_FLOOR:-21}"
 
 pass=0; fail=0; total=0
 declare -a failures
