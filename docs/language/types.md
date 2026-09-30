@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
+> [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
 
 Sky's type system is Hindley-Milner with algebraic data types, records, and concrete Go interop types. There are no type classes, no higher-kinded types, no row polymorphism.

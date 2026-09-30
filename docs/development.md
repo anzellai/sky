@@ -6,7 +6,7 @@
 > historical reference. Type-directed lowering, Go generics on
 > parametric record aliases, Layer-3 stdlib, and whole-program DCE all
 > carry over; runtime verification runs across ~50 examples. See
-> [`compiler/versions.md`](compiler/versions.md) for the changelog.
+> [`history/compiler/versions.md`](history/compiler/versions.md) for the changelog.
 
 
 Building Sky from source — for contributors, language-tooling work,

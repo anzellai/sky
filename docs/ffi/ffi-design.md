@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
+> [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
 
 Technical reference for how the FFI generator classifies and emits wrappers. For user-facing usage see [go-interop.md](go-interop.md).

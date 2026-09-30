@@ -60,7 +60,7 @@ loop to the client, which changes the trade:
 
 | | Sky.Live | Sky.Spa |
 |---|---|---|
-| Where `update` runs | server (trusted) | client (**untrusted** — see [Security](#security)) |
+| Where `update` runs | server (trusted) | client (**untrusted** — see [Security](#security--the-untrusted-client-is-a-first-class-rule)) |
 | Pure UI transition | round-trips to the server | **client-local, zero round-trip** |
 | Backend | stateful (session + SSE per user) | **stateless** — auth + effects + durable data only |
 | Scaling axis | sticky sessions / SSE fan-out | horizontal stateless API; DB is the only shared axis |
@@ -522,15 +522,14 @@ These are real, current scope boundaries — not roadmap optimism:
   cannot compile `reflect.MakeFunc`, so production web needs *either* a
   reflection-free core rewrite *or* a Sky→JS backend. Both are **v2 bets**, not
   done. See [design.md §0/§9](design.md).
-- **Browser pixel-check pending.** The TEA loop, the client renderer, and the
-  full round-trip are proven **headlessly** (Node + a DOM shim; `examples/60`'s
-  `run_roundtrip.sh` asserts persistence, the zero-round-trip property, routing,
-  and reload rehydration). The in-browser *visual* confirmation awaits a
-  connected browser extension — confirmation, not a new risk.
-- **Auto-split = v2.** v1's boundary is explicit (author-declared server calls).
-  The compiler-derived client/server partition ("no hand-written API routes") is
-  the v2 target, specified in [auto-split.md](auto-split.md); v1-dialect apps are
-  forward-compatible with it.
+- **Browser coverage.** The TEA loop, the client renderer and the round trip
+  run headlessly (Node and a DOM shim, `examples/60`'s `run_roundtrip.sh`) and
+  in Chromium and WebKit in the release gate's browser e2e scripts
+  (`scripts/spa-*-e2e.sh`). Other browsers are not tested.
+- **The auto-split is built.** `sky build` on a `Spa.app` entry or a `web:app`
+  target derives the client/server partition ([auto-split.md](auto-split.md)).
+  What it cannot carry is a build error, and `sky check` reports the same
+  error.
 - **Client effect surface is bounded.** Client effects run through a
   single-threaded wasm interpreter: `Cmd.perform` (sync kernels like
   `Time.now` / `Random` inline; async `Http` via `fetch`), `Sub.every` timers,

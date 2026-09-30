@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
 Technical reference for how Sky.Live dispatches events, renders, and diffs. For user-facing usage see [overview.md](overview.md).
@@ -570,7 +570,7 @@ Commands (`Cmd.perform`) run their `Task` outside the session lock, then re-acqu
   `Path=/; Secure; SameSite=Lax` unconditionally — the `__Host-` prefix
   mandates `Secure` — and is deliberately **not** `HttpOnly`.
 - **Cookies your own code sets get the same treatment.**
-  `Server.withCookie name value resp` emits `Path=/; HttpOnly; SameSite=Lax`
+  `Server.addCookie (Server.cookie name value) resp` emits `Path=/; HttpOnly; SameSite=Lax`
   and picks up `Secure` from the rule above, including the HTTPS signal —
   the decision runs where the response is written, so the request is in
   hand. It used to run only at mint time, where it was not, and the `ENV`

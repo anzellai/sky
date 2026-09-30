@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
 **Terminal-rendering TEA backend.** Sky.Tui runs an `init` / `update`
@@ -243,7 +243,7 @@ appDef =
 target = "terminal:cli"
 ```
 
-`Cli.readPassword : () -> Task Error String` (a helper of the
+`Cli.readPassword : () -> Task Error Secret` (a helper of the
 line-oriented runtime) reads a line from stdin with terminal echo
 disabled — wraps `golang.org/x/term`'s ReadPassword. Falls back
 gracefully on non-TTY stdin.

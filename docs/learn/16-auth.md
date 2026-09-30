@@ -46,18 +46,24 @@ checkLogin password storedHash =
 
 `signToken` and `verifyToken` are an HMAC-SHA256 JWT pair. `signToken` takes the
 secret, your claims (a record or dict), and an expiry in seconds; `verifyToken`
-decodes back into whatever type the call site annotates:
+returns the verified claims as a `Json.Value`, which you decode with
+`Json.Decode`:
 
 ```elm
--- Auth.signToken   : String -> a -> Int -> Result Error String
--- Auth.verifyToken : String -> String -> Result Error a
+-- Auth.signToken   : Secret -> a -> Int -> Result Error String
+-- Auth.verifyToken : Secret -> String -> Result Error Value
+--
+-- userId =
+--     Auth.verifyToken secret token
+--         |> Result.andThen (Decode.decodeValue (Decode.field "sub" Decode.int))
 ```
 
 ## Two rules
 
-- **Secrets are typed `String`, and never interpolated.** The signing key comes
-  from an environment variable (`SKY_AUTH_TOKEN_SECRET`), never a literal in
-  source, and never `fmt.Sprintf`-style stringified.
+- **Secrets are typed `Secret`, and never interpolated.** The signing key comes
+  from an environment variable (`Secret.fromEnv "SKY_AUTH_TOKEN_SECRET"`), never
+  a literal in source, and a `Secret` redacts itself in every log and JSON
+  path. Unwrap it only with `Secret.reveal`.
 - **Gate at the view, not per route.** Let routing pick the page as usual, then in
   your view outer-`case` on `model.session`: signed-out always renders the sign-in
   surface, whatever page was requested. One `currentPath` function keeps the URL

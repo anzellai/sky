@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
 **One database API, two backends.** `Std.Db` works identically against SQLite and PostgreSQL — pick the driver in `sky.toml`, never touch it again in your code. For record-shaped tables the **recommended default is `Std.Db.Store` + `Std.Codec`**: write one codec per type and let the Store drive the schema, the reads, and the writes — no hand-written SQL, no row mappers. Drop down to raw `Db.exec` / `Db.query` only for JOINs, aggregates, or SQL the Store can't express (the [escape hatch](#dropping-to-raw-sql) shown later).
@@ -307,7 +307,7 @@ performance-critical hot paths). `Table` is the default for single-table CRUD.
 
 ## What's in the surface
 
-Every operation that touches the disk returns `Task Error a` (per the [Task-everywhere doctrine](../../CLAUDE.md#effect-boundary-task-everywhere-v0100)). Parameter-supplied helpers (`Db.getString`, `Db.getInt`) return bare values because the default plugs the failure case at the call site.
+Every operation that touches the disk returns `Task Error a` (per the [Task-everywhere doctrine](../../AGENTS.md#language-essentials)). Parameter-supplied helpers (`Db.getString`, `Db.getInt`) return bare values because the default plugs the failure case at the call site.
 
 ### Connect / open / close
 
@@ -438,7 +438,7 @@ For any table with an `id` column, these save you from hand-writing SELECT/UPDAT
 | `Db.getInt` | `String -> row -> Int` | Parses to Int; 0 when missing or unparseable |
 | `Db.getBool` | `String -> row -> Bool` | Parses to Bool; False when missing |
 
-These return bare values — see [default-supplied helpers stay bare](../../CLAUDE.md#effect-boundary-task-everywhere-v0100). Reach for a typed decoder via `Db.queryDecode` when "missing" needs to fail loud.
+These return bare values — see [default-supplied helpers stay bare](../../AGENTS.md#language-essentials). Reach for a typed decoder via `Db.queryDecode` when "missing" needs to fail loud.
 
 ## Walkthrough — CRUD with transactions
 
@@ -582,7 +582,7 @@ the runtime read.)
 DATABASE_URL=postgres://user:pass@localhost:5432/myapp
 ```
 
-Three-layer precedence (highest wins): process env → `.env` file → `sky.toml`. See [environment-variable precedence](../../CLAUDE.md#environment-variable-precedence).
+Three-layer precedence (highest wins): process env → `.env` file → `sky.toml`. See [environment-variable precedence](../sky-toml.md#precedence).
 
 ## Patterns
 
@@ -635,7 +635,7 @@ Decoders are `Result`-shaped, but DB calls are `Task`. Three helpers compose the
 | `Task.andThenResult` | `(a -> Result e b) -> Task e a -> Task e b` | Chain a Result step after a Task |
 | `Result.andThenTask` | `(a -> Task e b) -> Result e a -> Task e b` | Chain a Task step after a Result |
 
-See [Result/Task bridges](../../CLAUDE.md#resulttask-bridges) for the full cheatsheet.
+See [the effect boundary](../../AGENTS.md#language-essentials) for the full cheatsheet.
 
 ## Production checklist
 

@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
 **Server-driven UI with the TEA architecture** (`init` / `update` / `view` / `subscriptions`). You write the app once with **`Std.App`** and build it for the `web` target (the default) — **Sky.Live is the runtime that target delivers**: all state, logic, and rendering live on the server, and the browser runs no client-side framework, just minimal JavaScript for DOM patching and SSE reconnection. You never import `Std.Live` yourself; `Std.App` composes it.

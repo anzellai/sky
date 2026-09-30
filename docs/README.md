@@ -63,9 +63,9 @@ reference**:
   data flow (legacy Haskell).
 * [`compiler/runtime-verification.md`](compiler/runtime-verification.md)
   — example sweep + Playwright drive (legacy Haskell).
-* [`compiler/journey.md`](compiler/journey.md) — historical narrative
+* [`history/compiler/journey.md`](history/compiler/journey.md) — historical narrative
   of how Sky got here.  Kept for contributors.
-* [`compiler/versions.md`](compiler/versions.md) — per-version
+* [`history/compiler/versions.md`](history/compiler/versions.md) — per-version
   feature ledger.
 
 Language + interop references (backend-neutral):

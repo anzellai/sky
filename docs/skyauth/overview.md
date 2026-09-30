@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/journey.md`](../compiler/journey.md) for the changelog.
+> [`../history/compiler/journey.md`](../history/compiler/journey.md) for the changelog.
 
 
 **Authentication, in the box.** Sky ships with bcrypt password hashing, JWT signing/verification, and database-backed user registration / login as kernel modules. No `passport`, no `bcrypt-cost-finder`, no separate auth service — `import Std.Auth as Auth` and you have the surface every web app needs.
@@ -58,7 +58,7 @@ If you already have a users table and just want to hash passwords + issue JWTs:
 | `Auth.verifyPassword` | `String -> String -> Result Error Bool` | constant-time compare |
 | `Auth.passwordStrength` | `String -> Result Error String` | `"weak" / "fair" / "strong"` category label |
 | `Auth.signToken` | `Secret -> a -> Int -> Result Error String` | HMAC-SHA256 JWT, expirySeconds from now; `a` is your claims record / dict. The signing key is an opaque `Sky.Core.Secret` — wrap at the boundary (`Secret.fromEnv "VAR"` / `Secret.fromString runtimeStr`). |
-| `Auth.verifyToken` | `String -> String -> Result Error a` | parametric — decode into the claims record / dict the call site annotates |
+| `Auth.verifyToken` | `Secret -> String -> Result Error Value` | the verified claims as a `Json.Value`; decode them with `Json.Decode` (`Decode.decodeValue (Decode.field "sub" Decode.string)`) |
 
 These return `Result` (synchronous CPU work), so they compose naturally inside any handler:
 
@@ -78,7 +78,7 @@ issueToken user =
         86400  -- 24h
 ```
 
-`signToken`'s claims arg is parametric (`a`) — pass any record, dict, or primitive. `verifyToken` round-trips into the type the call site annotates.
+`signToken`'s claims arg is parametric (`a`): pass any record, dict or primitive that has a JSON form (a function, `Secret`, key or handle is refused at compile time). `verifyToken` returns the verified claims as a `Json.Value`; decode the fields you need with `Json.Decode` (since v0.27.0: it used to return any type the call site annotated, an unchecked cast).
 
 ### Layer 2 — built-in user table (zero schema work)
 
@@ -109,6 +109,8 @@ import Std.Db as Db
 import System
 import Sky.Core.Secret as Secret
 import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Result as Result
+import Sky.Core.Json.Decode as Decode
 
 
 secret =
@@ -147,9 +149,10 @@ handleRegister db req =
 
 
 -- POST /login — verifies, signs a token, sets it as an HttpOnly cookie.
--- The attrs are spelled out: the two-and-three-argument forms of
--- `withCookie` emit `Path=/; HttpOnly; SameSite=Lax` and add `Secure`
--- only when the process is in production (see "Production checklist").
+-- The attrs are spelled out with `withCookie name value attrs resp`. A
+-- cookie built with `Server.cookie name value` and added with
+-- `Server.addCookie` gets `Path=/; HttpOnly; SameSite=Lax`, and the runtime
+-- adds `Secure` on its own signals (see "Production checklist").
 handleLogin : Db -> Request -> Task Error Response
 handleLogin db req =
     case ( Server.formValue "email" req, Server.formValue "password" req ) of
@@ -173,16 +176,15 @@ handleLogin db req =
 
 
 -- GET /me — reads the cookie, verifies, returns the claims
-type alias Claims = { sub : Int }
 
 
 handleMe : Db -> Request -> Task Error Response
 handleMe db req =
     case Server.getCookie "sky_auth" req of
         Just token ->
-            case Auth.verifyToken secret token of
-                Ok claims ->
-                    Task.succeed (Server.json ("{\"sub\":" ++ String.fromInt claims.sub ++ "}"))
+            case Auth.verifyToken secret token |> Result.andThen (Decode.decodeValue (Decode.field "sub" Decode.int)) of
+                Ok sub ->
+                    Task.succeed (Server.json ("{\"sub\":" ++ String.fromInt sub ++ "}"))
 
                 Err _ ->
                     Task.succeed (Server.withStatus 401 (Server.text "invalid token"))
@@ -191,7 +193,7 @@ handleMe db req =
             Task.succeed (Server.withStatus 401 (Server.text "not signed in"))
 ```
 
-`Task.andThenResult` is the bridge that chains `Auth.signToken` (Result) after `Auth.login` (Task) without nested case-matching. See [Effect Boundary](../../CLAUDE.md#effect-boundary-task-everywhere-v0100) for the bridge cheatsheet.
+`Task.andThenResult` is the bridge that chains `Auth.signToken` (Result) after `Auth.login` (Task) without nested case-matching. See [Effect Boundary](../../AGENTS.md#language-essentials) for the bridge cheatsheet.
 
 > The `Server.withCookie "sky_auth" token "…"` above sets a **fixed-expiry**
 > cookie, which is the right shape for this Sky.Http.Server flow. For a
@@ -241,9 +243,11 @@ manager).
 - **Rotate `SKY_AUTH_TOKEN_SECRET` periodically.** All outstanding tokens become invalid on rotation. Plan a deploy window.
 - **Minimum 32 bytes** for the secret. `Auth.signToken` rejects shorter values with an error rather than producing weak HMACs; the runtime also refuses to start with a short `SKY_AUTH_TOKEN_SECRET`.
 - **`Secure` is not in the attribute default — the runtime adds it, on two
-  signals.** `Server.withCookie`'s two- and three-argument forms emit
-  `Path=/; HttpOnly; SameSite=Lax` (`Server_withCookie` in
-  `runtime-go/rt/rt.go`), with no `Secure` in the string. The runtime then
+  signals.** A cookie built with `Server.cookie name value` and added with
+  `Server.addCookie` gets `Path=/; HttpOnly; SameSite=Lax`
+  (`Server_withCookie` in `runtime-go/rt/rt.go`), with no `Secure` in the
+  string. (Before v0.27.0 `withCookie` was typed `any` and took this shape as
+  its two- and three-argument forms; it is now the four-argument form only.) The runtime then
   adds `; Secure` when either signal is true (`cookieSecureFor` in
   `runtime-go/rt/cookie_secure.go`):
 
@@ -266,8 +270,8 @@ manager).
   cookie sent `SameSite=None`, are `Secure` unconditionally — the spec
   requires it.
 
-  To pin the attributes yourself, use the **four-argument form**,
-  `Server.withCookie name value attrs resp`, which passes your string
+  To pin the attributes yourself, use `Server.withCookie name value attrs
+  resp` (`String -> String -> String -> Response -> Response`), which passes your string
   through (the runtime may still append `; Secure`, never a second copy) —
   that is what the login handler above uses:
 
@@ -276,8 +280,8 @@ manager).
   ```
 
   `Server.cookie` is **not** an override: it takes only a name and a value
-  (`Server_cookie` in `rt.go`, `Sky/Http/Server.sky:254`) and carries no
-  attribute control at all.
+  (`Server_cookie` in `rt.go`) and carries no attribute control at all; add
+  it to a response with `Server.addCookie : Cookie -> Response -> Response`.
 
   > This bullet used to read "`Server.withCookie` defaults to
   > `HttpOnly; Secure; SameSite=Lax`. Use `Server.cookie` to override" —
@@ -291,7 +295,7 @@ manager).
   > the HTTPS signal applies as well. Line-number citations were dropped
   > in the same pass — they were stale within a day.
 - **Bcrypt cost**. Default is 12, which is ~250ms on a 2024 laptop. Raise to 13–14 in production if you can spare the latency budget; lower to 10 only for CI/test fixtures.
-- **Rate-limit `/login` and `/register`.** Use [`Sky.Http.Middleware.withRateLimit`](../../CLAUDE.md#standard-library) on those routes — credential stuffing is the #1 attack on any auth endpoint.
+- **Rate-limit `/login` and `/register`.** Use [`Sky.Http.Middleware.withRateLimit`](../stdlib.md) on those routes — credential stuffing is the #1 attack on any auth endpoint.
 - **Validate password strength at registration**. `Auth.passwordStrength password` returns `Result Error String` where the body is `"weak" / "fair" / "strong"`; reject `"weak"` at registration as a baseline.
 
 ## Security-critical kernels require typed arguments
@@ -343,7 +347,7 @@ update msg model =
             ( { model | error = Just "invalid credentials", loading = False }, Cmd.none )
 ```
 
-For password fields specifically, see [the form-with-passwords pattern](../../CLAUDE.md#forms-with-passwords-and-other-sensitive-inputs) — submit on form submit, never round-trip the secret through Model.
+For password fields specifically, see [the form-with-passwords pattern](../../AGENTS.md#pinned-defaults--the-preferred-way-to-write-sky) — submit on form submit, never round-trip the secret through Model.
 
 ## Sliding (rolling) session tokens
 

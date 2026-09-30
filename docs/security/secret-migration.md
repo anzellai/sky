@@ -22,7 +22,7 @@ on a call to `Auth.signToken`, `Auth.verifyToken`, `Auth.signSlidingToken`, or
 | Function | Before | After |
 |---|---|---|
 | `Std.Auth.signToken` | `String -> a -> Int -> Result Error String` | `Secret -> a -> Int -> Result Error String` |
-| `Std.Auth.verifyToken` | `String -> String -> Result Error a` | `Secret -> String -> Result Error a` |
+| `Std.Auth.verifyToken` | `String -> String -> Result Error a` | `Secret -> String -> Result Error Value` (v0.27.0: the claims as a `Json.Value`) |
 | `Std.Auth.signSlidingToken` | `String -> a -> {…} -> …` | `Secret -> a -> {…} -> …` |
 | `Sky.Core.Jwt.hs256` | `String -> Algorithm` | `Secret -> Algorithm` |
 | `Sky.Core.Jwt.rs256` (RSA sign) | `String -> Algorithm` | `Secret -> Algorithm` |

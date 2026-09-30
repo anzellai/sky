@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
+> [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
 
 Sky's surface syntax is Elm-compatible: most expressions that parse in Elm also parse in Sky. (See [NOTICE.md](../../NOTICE.md) for prior-art attribution; programming-language syntax is not itself copyrightable.)
