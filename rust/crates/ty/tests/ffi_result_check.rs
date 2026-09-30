@@ -33,18 +33,25 @@ const HEADER: &str = "\
 -- ffi: Pkg read : String -> Int -> Int -> Result Error (String, Int)
 -- ffi: Pkg repeat : String -> Int -> Result Error String
 -- ffi: Pkg encodedLen : Int -> Result Error Int
--- ffi: Pkg newRouter : () -> Result Error Router@github.com/gorilla/mux
--- ffi: Pkg handleFunc : Router@github.com/gorilla/mux -> String -> (ResponseWriter@net/http -> Request@net/http -> ()) -> Result Error Route@github.com/gorilla/mux
--- ffi: Pkg onTick : Router@github.com/gorilla/mux -> (Int -> Int) -> Result Error ()
--- ffi: Pkg onDone : Router@github.com/gorilla/mux -> ( -> ()) -> Result Error ()
+-- ffi: Pkg newRouter : () -> Result Error go@Pkg.Router
+-- ffi: Pkg handleFunc : go@Pkg.Router -> String -> (go@Pkg.ResponseWriter -> go@Pkg.Request -> ()) -> Result Error go@Pkg.Route
+-- ffi: Pkg onTick : go@Pkg.Router -> (Int -> Int) -> Result Error ()
+-- ffi: Pkg onDone : go@Pkg.Router -> ( -> ()) -> Result Error ()
 -- ffi: Pkg join : List String -> String -> Result Error String
 -- ffi: Pkg lookupEnv : String -> Result Error (Maybe String)
--- ffi: Pkg lookupLegacy : String -> Result Error (String, Bool)
+-- ffi: Pkg ptrStr : Bool -> Result Error (Maybe String)
+-- ffi: Pkg intMap : () -> Result Error (Dict Int String)
+-- ffi: Pkg apply : (Int -> String) -> Result Error String
+-- ffi: Pkg writeTo : goi@Io.Writer -> String -> Result Error ()
+-- ffi: Pkg describeValue : any -> Result Error String
+-- ffi: Pkg driverValue : () -> Result Error go@Pkg.Value
+-- ffi: Pkg writeAll : List goi@Io.Writer -> Result Error ()
+-- ffi: Pkg middleware : (go@Pkg.Handler -> goi@Pkg.Handler) -> Result Error ()
 -- ffi: Pkg noType/2 :
 -- ffi: Github.Com.Google.Uuid newString : () -> Result Error String
--- ffi: Pkg defaultClient : () -> Result Error Client@net/http
--- ffi: Pkg setTimeoutMs : Int -> Client@net/http -> Result Error Client@net/http
--- ffi: Pkg describe : Client@net/http -> Result Error String
+-- ffi: Pkg defaultClient : () -> Result Error go@Pkg.Client
+-- ffi: Pkg setTimeoutMs : Int -> go@Pkg.Client -> Result Error go@Pkg.Client
+-- ffi: Pkg describe : go@Pkg.Client -> Result Error String
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
@@ -175,15 +182,15 @@ fn partial_application_and_ffi_values_are_accepted() {
 fn callbacks_and_opaque_values_are_accepted() {
     assert_accepts(
         "callbacks returning values, opaque in a Value slot",
-        "handler w r =\n    ()\n\n\nkeep : Value -> Value\nkeep v =\n    v\n\n\nmain =\n    case Pkg.newRouter () of\n        Ok router ->\n            let\n                _ =\n                    Pkg.handleFunc (keep router) \"/\" handler\n\n                _ =\n                    Pkg.onTick router (\\n -> n + 1)\n\n                _ =\n                    Pkg.onDone router (\\_ -> ())\n            in\n            println \"ok\"\n\n        Err _ ->\n            println \"err\"\n",
+        "handler w r =\n    ()\n\n\nkeep : Pkg.Router -> Pkg.Router\nkeep v =\n    v\n\n\nmain =\n    case Pkg.newRouter () of\n        Ok router ->\n            let\n                _ =\n                    Pkg.handleFunc (keep router) \"/\" handler\n\n                _ =\n                    Pkg.onTick router (\\n -> n + 1)\n\n                _ =\n                    Pkg.onDone router (\\_ -> ())\n            in\n            println \"ok\"\n\n        Err _ ->\n            println \"err\"\n",
     );
 }
 
 #[test]
 fn variadic_list_and_comma_ok_are_accepted() {
     assert_accepts(
-        "List arg, Maybe payload, legacy (T, Bool) payload",
-        "main =\n    let\n        j =\n            Pkg.join [ \"a\", \"b\" ] \",\" |> Result.withDefault \"\"\n\n        m =\n            case Pkg.lookupEnv \"HOME\" of\n                Ok (Just v) ->\n                    v\n\n                Ok Nothing ->\n                    \"\"\n\n                Err _ ->\n                    \"\"\n\n        l =\n            case Pkg.lookupLegacy \"HOME\" of\n                Ok (Just v) ->\n                    v\n\n                _ ->\n                    \"\"\n    in\n    println (j ++ m ++ l)\n",
+        "List arg, Maybe payload",
+        "main =\n    let\n        j =\n            Pkg.join [ \"a\", \"b\" ] \",\" |> Result.withDefault \"\"\n\n        m =\n            case Pkg.lookupEnv \"HOME\" of\n                Ok (Just v) ->\n                    v\n\n                Ok Nothing ->\n                    \"\"\n\n                Err _ ->\n                    \"\"\n    in\n    println (j ++ m)\n",
     );
 }
 
@@ -346,5 +353,174 @@ fn a_go_value_flows_between_ffi_calls_and_an_annotated_helper() {
         &format!(
             "{OWN_CLIENT}useIt : Pkg.Client -> Result Error String\nuseIt c =\n    Pkg.setTimeoutMs 50 c |> Result.andThen Pkg.describe\n\n\nmine : Client\nmine =\n    {{ name = \"x\" }}\n\n\nmain =\n    case Pkg.defaultClient () |> Result.andThen useIt of\n        Ok s ->\n            println (s ++ mine.name)\n\n        Err _ ->\n            println \"err\"\n"
         ),
+    );
+}
+
+// ---- surface format 3 (v0.27.0) ------------------------------------------------
+
+/// C-6: an opaque Go value is its own type, never an Int.
+#[test]
+fn an_opaque_go_value_is_not_an_int() {
+    assert_rejects(
+        "opaque used as Int",
+        "asInt : Int\nasInt =\n    case Pkg.newRouter () of\n        Ok r ->\n            r\n\n        Err _ ->\n            0\n\n\nmain =\n    println (String.fromInt asInt)\n",
+        "E2001",
+    );
+    assert_rejects(
+        "a Go `Value` where the kernel-implicit `Value` is annotated",
+        "keep : Value -> String\nkeep _ =\n    \"k\"\n\n\nmain =\n    case Pkg.driverValue () of\n        Ok v ->\n            println (keep v)\n\n        Err _ ->\n            println \"err\"\n",
+        "E2001",
+    );
+    assert_rejects(
+        "opaque in a same-named app type",
+        "type alias Router =\n    { n : Int }\n\n\nkeep : Router -> Int\nkeep r =\n    r.n\n\n\nmain =\n    case Pkg.newRouter () of\n        Ok r ->\n            println (String.fromInt (keep r))\n\n        Err _ ->\n            println \"err\"\n",
+        "E2001",
+    );
+}
+
+/// C-12: the callback's result is typed from the pin.
+#[test]
+fn a_callback_of_the_wrong_result_type_is_rejected() {
+    assert_rejects(
+        "apply (\\n -> n * 2) where func(int) string is wanted",
+        "main =\n    println (Result.withDefault \"\" (Pkg.apply (\\n -> n * 2)))\n",
+        "E2001",
+    );
+    assert_accepts(
+        "apply (\\n -> String.fromInt n)",
+        "main =\n    println (Result.withDefault \"\" (Pkg.apply (\\n -> String.fromInt n)))\n",
+    );
+}
+
+/// C-4 / C-5: a pointer is a Maybe; a map keeps its key type.
+#[test]
+fn pointers_and_map_keys_are_typed() {
+    assert_rejects(
+        "a *string read as String",
+        "s : String\ns =\n    case Pkg.ptrStr True of\n        Ok v ->\n            v\n\n        Err _ ->\n            \"\"\n\n\nmain =\n    println s\n",
+        "E2001",
+    );
+    assert_accepts(
+        "Maybe String and Dict Int",
+        "main =\n    let\n        a =\n            case Pkg.ptrStr True of\n                Ok (Just v) ->\n                    v\n\n                _ ->\n                    \"\"\n\n        n =\n            Pkg.intMap () |> Result.map (\\d -> List.length [ d ]) |> Result.withDefault 0\n    in\n    println (a ++ String.fromInt n)\n",
+    );
+}
+
+/// [E2013]: a Sky value is never a Go interface; an empty interface accepts
+/// anything.
+#[test]
+fn a_sky_value_for_a_go_interface_is_rejected() {
+    let v = check("main =\n    println (Result.withDefault \"\" (Pkg.writeTo \"x\" \"y\" |> Result.map (\\_ -> \"ok\")))\n");
+    assert!(v.rejected(), "a String is not an io.Writer");
+    assert!(
+        v.observed_codes.iter().any(|c| c == "E2013"),
+        "{:?} {}",
+        v.observed_codes,
+        v.first_msg
+    );
+    let src = format!(
+        "{HEADER}\nmain =\n    println (Result.withDefault \"\" (Pkg.writeTo \"x\" \"y\" |> Result.map (\\_ -> \"ok\")))\n"
+    );
+    let mut db = hir::SourceDb::new();
+    for (n, p) in stdlib() {
+        db.add_module(n, p.clone());
+    }
+    db.set_ffi_surface(std::sync::Arc::new(ty::ffi_sig::surface_from_directives(
+        &src,
+    )));
+    let m = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+    let out = ty::check_modules(&db, &[m]);
+    let d = out
+        .diagnostics
+        .iter()
+        .find(|d| d.code.0 == "E2013")
+        .expect("an E2013");
+    assert!(
+        d.message.contains("v0.27.0")
+            && d.message.contains("Fix:")
+            && d.message
+                .ends_with("see docs/migration/v0.27.md#ffi-go-interface-params"),
+        "{}",
+        d.message
+    );
+    assert_accepts(
+        "a Go value for a Go interface, a String for an empty one",
+        "main =\n    let\n        a =\n            Pkg.newRouter () |> Result.andThen (\\r -> Pkg.writeTo r \"x\") |> Result.map (\\_ -> \"\") |> Result.withDefault \"\"\n\n        b =\n            Pkg.describeValue \"s\" |> Result.withDefault \"\"\n    in\n    println (a ++ b)\n",
+    );
+}
+
+/// Every format-3 type error names the v0.27.0 change, the fix, and its
+/// migration anchor.
+#[test]
+fn format3_type_errors_carry_the_migration_hint() {
+    let hint_of = |body: &str| -> String {
+        let src = format!("{HEADER}\n{body}");
+        let mut db = hir::SourceDb::new();
+        for (n, p) in stdlib() {
+            db.add_module(n, p.clone());
+        }
+        db.set_ffi_surface(std::sync::Arc::new(ty::ffi_sig::surface_from_directives(
+            &src,
+        )));
+        let m = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+        let out = ty::check_modules(&db, &[m]);
+        let d = out
+            .diagnostics
+            .iter()
+            .find(|d| d.code.0 == "E2001")
+            .unwrap_or_else(|| panic!("an E2001 for:\n{body}"));
+        d.suggestion.clone().unwrap_or_default()
+    };
+    for (body, anchor) in [
+        (
+            "asInt : Int\nasInt =\n    case Pkg.newRouter () of\n        Ok r ->\n            r\n\n        Err _ ->\n            0\n\n\nmain =\n    println (String.fromInt asInt)\n",
+            "ffi-opaque-go-types",
+        ),
+        (
+            "main =\n    println (Result.withDefault \"\" (Pkg.apply (\\n -> n * 2)))\n",
+            "ffi-callback-result",
+        ),
+        (
+            "s : String\ns =\n    case Pkg.ptrStr True of\n        Ok v ->\n            v\n\n        Err _ ->\n            \"\"\n\n\nmain =\n    println s\n",
+            "ffi-pointer-is-maybe",
+        ),
+        (
+            "d : Result Error (Dict String String)\nd =\n    Pkg.intMap ()\n\n\nmain =\n    println \"x\"\n",
+            "ffi-map-keys",
+        ),
+    ] {
+        let hint = hint_of(body);
+        assert!(
+            hint.contains("since v0.27.0")
+                && hint.contains("Fix:")
+                && hint.ends_with(&format!("see docs/migration/v0.27.md#{anchor}")),
+            "{anchor}: {hint:?}"
+        );
+    }
+}
+
+/// [E2013] also checks an interface nested in a parameter (a variadic list of
+/// interfaces, a callback's result) and the pipe form of a call.
+#[test]
+fn a_sky_value_in_a_nested_or_piped_interface_position_is_rejected() {
+    for (label, body) in [
+        (
+            "List of io.Writer given Strings",
+            "main =\n    println (Result.withDefault \"\" (Pkg.writeAll [ \"a\" ] |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+        (
+            "callback returning a String for an http.Handler",
+            "main =\n    println (Result.withDefault \"\" (Pkg.middleware (\\next -> \"x\") |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+        (
+            "piped String for an io.Writer",
+            "main =\n    println (Result.withDefault \"\" ((\"w\" |> Pkg.writeTo \"x\") |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+    ] {
+        assert_rejects(label, body, "E2013");
+    }
+    assert_accepts(
+        "callback returning its Go handler",
+        "main =\n    println (Result.withDefault \"\" (Pkg.middleware (\\next -> next) |> Result.map (\\_ -> \"ok\")))\n",
     );
 }

@@ -3622,6 +3622,21 @@ impl<'a> Ctx<'a> {
                  `Std.*` and `Sky.Core.*` / `Sky.Http.*` (e.g. `Sky.Core.List`, \
                  `Std.Db`). This is not a Go-FFI package; `sky install` won't fetch it."
             )
+        } else if self
+            .ffi
+            .has_ffi_slot(&format!("SkyStaleFfiSurface:{pkg}.{fun}"))
+        {
+            // Marker recorded by `ffi::load_surface` (`ffi::surface::stale_marker`)
+            // for a binding of a pre-format-3 surface whose old wrapper cannot
+            // be called soundly.
+            format!(
+                "the Go-FFI surface for `{pkg}` predates surface format 3: since \
+                 v0.27.0 every Go value crosses the FFI boundary typed and checked, \
+                 and `{pkg}.{fun}` passes a value its old wrapper converts unsoundly \
+                 (a Go pointer, an unsigned or narrow integer, a map key, an opaque \
+                 Go value or a callback). Fix: run `sky install` to regenerate the \
+                 surface. see docs/migration/v0.27.md#ffi-surface-format-3"
+            )
         } else if self.ffi.has_package(pkg) {
             format!(
                 "no such Go-FFI function `{pkg}.{fun}` — the FFI surface for `{pkg}` \

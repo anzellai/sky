@@ -137,6 +137,9 @@ func classifyPanic(msg string) (kind, hint string) {
 	case strings.Contains(msg, "Codec.auto: cannot encode"):
 		return "JsonEncodeFailure",
 			"Codec.auto was given a value with no JSON form: a function, a Secret, a key, a crypto state or a runtime handle (Process, WebSocket, Cache, ...). Keep it out of records you save or send, or write the field's codec by hand."
+	case strings.Contains(msg, "Go FFI: "):
+		return "FfiConversion",
+			"A Go FFI value could not be converted to the shape the other side needs (an integer out of range, a Go value of another type, a byte array of the wrong length), in a callback Go ran outside the binding call. Give the callback an `error` result in Go, or check the value before it crosses. See docs/migration/v0.27.md#ffi-integer-range."
 	case strings.Contains(msg, "rt.JsonEnc_encode: cannot encode"):
 		return "JsonEncodeFailure",
 			"Json.Encode.encode was given a value JSON cannot represent: a NaN or infinite Float (`Math.nan`, `Math.inf`, `Math.sqrt` of a negative number, a Float overflow). JSON has no such number. Check the Float (`Math.isNaN`) before you encode it."

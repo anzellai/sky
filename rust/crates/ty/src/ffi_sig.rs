@@ -2,49 +2,45 @@
 //! (`sky-ffi/<pkg>.kernel.json`) → the type [`Scheme`] inference instantiates at
 //! a `Res::Foreign` reference.
 //!
-//! # What is enforced, and what is not
+//! # What is enforced (surface format 3)
 //!
-//! Every Go-FFI call returns `Result Error a` (docs/ffi/boundary-philosophy.md).
-//! This module makes the checker hold a program to that:
+//! Every Go-FFI call returns `Result Error a` (docs/ffi/boundary-philosophy.md),
+//! and every position of the signature is typed. There is no unchecked
+//! wildcard:
 //!
-//! * **Strict:** the `Result Error` wrapper, the arity (the top-level arrow
-//!   count must equal the inspector's recorded `arity`), the primitives
-//!   (`String`, `Int`, `Float`, `Bool`, `()`), `List`, `Maybe`, tuples, and the
-//!   arrow structure of a callback parameter.
-//! * **Wildcard `any`** (the checker's per-occurrence wildcard) wherever the
-//!   pinned string does not describe the runtime value truthfully:
-//!   - Go-opaque types — `Name@pkg`, a bare unknown name, a lower-case
-//!     (unexported or named-parameter) name. Payload soundness for these needs
-//!     nominal opaque types plus an implements axiom; that is a later tier.
-//!   - a callback's RESULT position — the `reflect.MakeFunc` adapter accepts a
-//!     Sky closure whatever it returns (`lower.rs`, `ffi_call`);
-//!   - a zero-parameter callback `( -> R)` — Sky has no spelling for it;
-//!   - a function-typed value anywhere else (a payload, a list element): the
-//!     runtime hands back a raw Go func;
-//!   - `Bytes` — the typed wrapper returns a raw `[]byte` (`gen_bindings.rs`);
-//!   - `Dict` — the generator renders EVERY Go map as `Dict String V`, whatever
-//!     its key type (`ffi::gen::go_type_to_sky`), so the key is not trustworthy;
-//!   - `error` — the generator maps it to `String`, which the runtime value is
-//!     not;
-//!   - a 2-tuple payload ending in `Bool` — older surfaces render the comma-ok
-//!     result `(T, bool)` as `(T, Bool)` while the typed wrapper returns
-//!     `Maybe T`, and `(T, bool, error)` renders the same way;
-//!   - Go array residue (`[32]byte`, `[]string`) and `complex*`.
-//! * **Go residue normalised:** `int*` / `uint*` / `byte` / `rune` / `uintptr` /
-//!   `untyped int` → `Int`, `float*` → `Float`, `string` → `String`, `bool` →
-//!   `Bool`.
-//! * A single capital letter is a type variable (`ptr : T -> Result Error T`).
-//! * The error type is emitted QUALIFIED (`Sky.Core.Error.Error`), so a user's
-//!   own `type Error` never unifies with it (`nominal::same`).
+//! * the `Result Error` wrapper, the arity (the top-level arrow count must
+//!   equal the inspector's recorded `arity`), the primitives, `List`, `Maybe`,
+//!   `Dict` with its real key type (a Go `map[int]V` is `Dict Int V`, C-5),
+//!   tuples, and `Bytes` (a Sky String);
+//! * a Go pointer to a non-opaque type is `Maybe` (C-4);
+//! * an opaque Go type is the NOMINAL `go@<Sky module>.<Name>`
+//!   ([`crate::nominal::go_type`], the key a `Pkg.Name` annotation gets), so an
+//!   opaque value is never usable as an `Int` or as another Go type (C-6);
+//!   unnamed opaque shapes are `go@Go.GoFunc`, `go@Go.GoAny`, `go@Go.GoMap`, …;
+//! * a callback's parameters AND result are typed from the pin, so a closure
+//!   returning the wrong type is a type error, not a `go build` failure
+//!   (C-12); a zero-parameter Go callback is `() -> r`;
+//! * a type variable exists only where the surface spells one (`$T`, a
+//!   format-3 generic); a bare capital letter is never one.
+//!
+//! Two parameter positions accept any Sky value, both CHECKED:
+//!
+//! * an empty Go interface (`any`, `driver.Value`): Go itself accepts every
+//!   value there;
+//! * a non-empty Go interface (`goi@…`, `io.Writer`): [`crate::ffi_iface`]
+//!   rejects a Sky-native argument after solving, and the wrapper asserts the
+//!   Go value inside its guard, so a value that does not implement the
+//!   interface is an `Err`, never a crash.
+//!
+//! Integer widths and signedness are checked by the wrapper
+//! (`runtime-go/rt/ffi_convert.go`): an out-of-range value is an `Err` (C-7).
 //!
 //! A string that cannot be parsed — or whose arrow count disagrees with the
 //! recorded arity, or which lacks the `Result Error` wrapper — gets the
-//! arity-only scheme `any -> … -> Result Error any`: the wrapper stays enforced
-//! even when nothing else can be read. A parameter or payload that fails to
-//! parse on its own (the inspector emits a few unbalanced strings such as
-//! `( -> ReadCloser, error))`) becomes `any` while the rest of the signature
-//! stays typed. None of this is a user warning: a user cannot fix inspector
-//! output. [`census`] counts the fallbacks for `-v` / docs.
+//! arity-only scheme `any -> … -> Result Error go@Go.GoUnknown`: the result is
+//! opaque, and the wrapper (reflective, `SkyFfiReflectCall3`) converts every
+//! argument inside its guard. [`census`] counts the fallbacks; [`wildcard_census`]
+//! counts the unchecked positions.
 //!
 //! Parsing is LAZY: inference parses one string when a `Res::Foreign` reference
 //! to it is first instantiated (`Infer`'s per-run memo), never the whole
@@ -98,7 +94,7 @@ pub fn scheme_for(sky_type: &str, arity: usize) -> FfiScheme {
 /// The arity-only scheme: `any -> … -> Result Error any` with `arity`
 /// parameters. The `Result` wrapper is still enforced.
 pub fn fallback(arity: usize) -> Scheme {
-    let mut ty = result_of(wild());
+    let mut ty = result_of(opaque("Unknown"));
     for _ in 0..arity {
         ty = Ty::Fun(Box::new(wild()), Box::new(ty));
     }
@@ -212,11 +208,11 @@ pub fn parse(sky_type: &str, arity: usize) -> Option<Scheme> {
     let mut tv = TyVars::default();
     let payload_toks = &last.toks[2..];
     let payload = if last.garbled || payload_toks.is_empty() {
-        wild()
+        opaque("Unknown")
     } else {
         match parse_full(payload_toks) {
-            Some(raw) => conv(&raw, Ctx::Payload, &mut tv),
-            None => wild(),
+            Some(raw) => conv(&raw, Dir::Out, false, &mut tv),
+            None => opaque("Unknown"),
         }
     };
     let mut ty = result_of(payload);
@@ -225,7 +221,7 @@ pub fn parse(sky_type: &str, arity: usize) -> Option<Scheme> {
             wild()
         } else {
             match parse_full(&seg.toks) {
-                Some(raw) => conv(&raw, Ctx::Param, &mut tv),
+                Some(raw) => conv(&raw, Dir::In, true, &mut tv),
                 None => wild(),
             }
         };
@@ -316,7 +312,7 @@ fn tokenise(s: &str) -> Option<Vec<Tok>> {
 }
 
 fn is_ident_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '@' | '*')
+    c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '@' | '*' | '$')
 }
 
 /// One top-level (depth-0) arrow segment. `garbled` marks a stray closing
@@ -374,8 +370,8 @@ enum Raw {
     /// `Head arg…` (a bare name has no args).
     Name(String, Vec<Raw>),
     Fun(Box<Raw>, Box<Raw>),
-    /// `( -> R)` — a zero-parameter Go func.
-    ZeroFun,
+    /// `( -> R)` — a zero-parameter Go func (a format-2 spelling).
+    ZeroFun(Box<Raw>),
     Tuple(Vec<Raw>),
     Unit,
     /// `[N]T` / `[]T` Go residue.
@@ -440,8 +436,8 @@ impl P<'_> {
                     return Some(Raw::Unit);
                 }
                 if self.eat(&Tok::Arrow) {
-                    let _r = self.ty()?;
-                    return self.eat(&Tok::RParen).then_some(Raw::ZeroFun);
+                    let r = self.ty()?;
+                    return self.eat(&Tok::RParen).then_some(Raw::ZeroFun(Box::new(r)));
                 }
                 let first = self.ty()?;
                 if self.eat(&Tok::RParen) {
@@ -471,16 +467,14 @@ impl P<'_> {
 
 // ---- raw → Ty -------------------------------------------------------------------
 
-/// Where a type sits in the signature — decides which positions are
-/// wildcards.
+/// Which way a value crosses the boundary. `In`: Sky hands it to Go (a
+/// parameter, a callback's result). `Out`: Go hands it to Sky (the payload, a
+/// callback's argument). Only an `In` interface is checked at the call
+/// (a wildcard here, see [`iface_params`]); an `Out` one is an opaque nominal.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Ctx {
-    /// A top-level parameter: a function here is a CALLBACK.
-    Param,
-    /// The `Result Error` payload itself.
-    Payload,
-    /// Inside a callback's parameter list, or inside a container.
-    Inner,
+enum Dir {
+    In,
+    Out,
 }
 
 #[derive(Default)]
@@ -499,23 +493,40 @@ impl TyVars {
     }
 }
 
-fn conv(raw: &Raw, ctx: Ctx, tv: &mut TyVars) -> Ty {
+/// An opaque Go type the surface names by kind (`go@Go.GoFunc`, …).
+fn opaque(kind: &str) -> Ty {
+    Ty::app(
+        &format!("{}Go.Go{kind}", crate::nominal::GO_TYPE_PREFIX),
+        vec![],
+    )
+}
+
+/// `top`: a top-level parameter, the only position a func is a callback.
+fn conv(raw: &Raw, dir: Dir, top: bool, tv: &mut TyVars) -> Ty {
     match raw {
         Raw::Unit => Ty::Unit,
-        Raw::GoArray | Raw::ZeroFun => wild(),
-        Raw::Fun(..) => {
-            if ctx != Ctx::Param {
-                return wild();
+        Raw::GoArray => opaque("Unknown"),
+        Raw::ZeroFun(r) => {
+            if dir == Dir::In && top {
+                Ty::Fun(Box::new(Ty::Unit), Box::new(conv(r, Dir::In, false, tv)))
+            } else {
+                opaque("Func")
             }
-            // A callback: its parameters are typed, its RESULT is a wildcard
-            // (the MakeFunc adapter accepts a closure returning anything).
+        }
+        Raw::Fun(..) => {
+            if !(dir == Dir::In && top) {
+                return opaque("Func");
+            }
+            // A callback: Go hands its arguments to Sky (`Out`), and Sky
+            // hands its result back to Go (`In`) — typed from the pin, so a
+            // closure returning the wrong type is a type error (C-12).
             let mut params = Vec::new();
             let mut cur = raw;
             while let Raw::Fun(a, b) = cur {
-                params.push(conv(a, Ctx::Inner, tv));
+                params.push(conv(a, Dir::Out, false, tv));
                 cur = b;
             }
-            let mut ty = wild();
+            let mut ty = conv(cur, Dir::In, false, tv);
             for p in params.into_iter().rev() {
                 ty = Ty::Fun(Box::new(p), Box::new(ty));
             }
@@ -523,50 +534,121 @@ fn conv(raw: &Raw, ctx: Ctx, tv: &mut TyVars) -> Ty {
         }
         Raw::Tuple(items) => {
             if !(2..=3).contains(&items.len()) {
-                return wild();
+                return opaque("Tuple");
             }
-            if ctx == Ctx::Payload && items.len() == 2 && is_bool(&items[1]) && !is_bool(&items[0])
-            {
-                // Legacy comma-ok rendering: `(T, Bool)` may be a `Maybe T`.
-                return wild();
-            }
-            Ty::Tuple(items.iter().map(|x| conv(x, Ctx::Inner, tv)).collect())
+            Ty::Tuple(items.iter().map(|x| conv(x, dir, false, tv)).collect())
         }
-        Raw::Name(head, args) => conv_name(head, args, tv),
+        Raw::Name(head, args) => conv_name(head, args, dir, tv),
     }
 }
 
-fn is_bool(r: &Raw) -> bool {
-    matches!(r, Raw::Name(h, a) if a.is_empty() && (h == "Bool" || h == "bool"))
-}
-
-fn conv_name(head: &str, args: &[Raw], tv: &mut TyVars) -> Ty {
+fn conv_name(head: &str, args: &[Raw], dir: Dir, tv: &mut TyVars) -> Ty {
     match (head, args) {
-        ("List", [x]) => Ty::app("List", vec![conv(x, Ctx::Inner, tv)]),
-        ("Maybe", [x]) => Ty::app("Maybe", vec![conv(x, Ctx::Inner, tv)]),
+        ("List", [x]) => Ty::app("List", vec![conv(x, dir, false, tv)]),
+        ("Maybe", [x]) => Ty::app("Maybe", vec![conv(x, dir, false, tv)]),
+        ("Dict", [k, v]) => Ty::app(
+            "Dict",
+            vec![conv(k, dir, false, tv), conv(v, dir, false, tv)],
+        ),
+        // A callback's `Result Error a` result (`func(…) error`).
+        ("Result", [Raw::Name(e, ea), x]) if e == "Error" && ea.is_empty() => {
+            result_of(conv(x, dir, false, tv))
+        }
         ("untyped", [Raw::Name(k, a)]) if a.is_empty() => match k.as_str() {
             "int" | "rune" => Ty::app("Int", vec![]),
             "float" => Ty::app("Float", vec![]),
             "string" => Ty::app("String", vec![]),
             "bool" => Ty::app("Bool", vec![]),
-            _ => wild(),
+            _ => opaque("Unknown"),
         },
-        (h, []) => match primitive(h) {
-            Some(p) => Ty::app(p, vec![]),
-            None if is_type_var(h) => tv.var(h),
-            None => wild(),
-        },
-        // Any other application — `Dict …`, `Result …` nested, an opaque
-        // generic, a named callback parameter (`network string`) — is a
-        // wildcard.
-        _ => wild(),
+        (h, []) => conv_atom(h, dir, tv),
+        _ => opaque("Unknown"),
     }
+}
+
+fn conv_atom(h: &str, dir: Dir, tv: &mut TyVars) -> Ty {
+    if let Some(p) = primitive(h) {
+        return Ty::app(p, vec![]);
+    }
+    let go = crate::nominal::GO_TYPE_PREFIX;
+    // A non-empty interface: a parameter accepts any Go value here, and the
+    // call is checked after solving (`crate::ffi_iface`) and again at run
+    // time inside the wrapper's guard. A value Go returns is its nominal.
+    if let Some(key) = h.strip_prefix("goi@") {
+        return match dir {
+            Dir::In => wild(),
+            Dir::Out => Ty::app(&format!("{go}{key}"), vec![]),
+        };
+    }
+    if h.starts_with(go) {
+        return Ty::app(h, vec![]);
+    }
+    if let Some(v) = h.strip_prefix('$') {
+        return tv.var(v);
+    }
+    match h {
+        // An empty interface: a parameter accepts anything (Go does); a value
+        // Go returns is an opaque Go value.
+        "any" => match dir {
+            Dir::In => wild(),
+            Dir::Out => opaque("Any"),
+        },
+        "error" => opaque("Error"),
+        _ => {
+            // A format-2 opaque marker `Name@importPath`: its nominal key.
+            if let Some((name, path)) = h.split_once('@') {
+                if !name.is_empty() {
+                    return Ty::app(
+                        &format!("{go}{}.{name}", module_of_import_path(path)),
+                        vec![],
+                    );
+                }
+            }
+            // A bare name the surface did not qualify (a format-2 string):
+            // opaque, never a wildcard and never a type variable.
+            opaque("Unknown")
+        }
+    }
+}
+
+/// The Sky module path `sky add` binds a Go import path to
+/// (`github.com/stripe/stripe-go/v84` → `Github.Com.Stripe.StripeGo.V84`).
+/// The same transform as `ffi::gen::pkg_to_module_name`, which a format-3
+/// surface has already applied; only a format-2 marker needs it here.
+fn module_of_import_path(path: &str) -> String {
+    let mut segs = Vec::new();
+    for slash in path.split('/') {
+        for dot in slash.split('.') {
+            let mut s = String::new();
+            let mut up = false;
+            for c in dot.chars() {
+                if c == '-' {
+                    up = true;
+                } else if up {
+                    s.extend(c.to_uppercase());
+                    up = false;
+                } else if c.is_alphanumeric() {
+                    s.push(c);
+                } else {
+                    s.push('_');
+                }
+            }
+            if !s.is_empty() {
+                let mut cs = s.chars();
+                let first = cs.next().unwrap();
+                segs.push(first.to_uppercase().chain(cs).collect::<String>());
+            }
+        }
+    }
+    segs.join(".")
 }
 
 /// The Sky primitive a pinned name denotes, normalising Go residue.
 fn primitive(h: &str) -> Option<&'static str> {
     Some(match h {
-        "String" | "string" => "String",
+        // `Bytes` is a Sky String whose bytes need not be UTF-8
+        // (`Sky.Core.Bytes`); the wrapper converts `[]byte` / `[N]byte`.
+        "String" | "string" | "Bytes" => "String",
         "Int" | "int" | "int8" | "int16" | "int32" | "int64" | "uint" | "uint8" | "uint16"
         | "uint32" | "uint64" | "uintptr" | "byte" | "rune" => "Int",
         "Float" | "float32" | "float64" => "Float",
@@ -575,11 +657,122 @@ fn primitive(h: &str) -> Option<&'static str> {
     })
 }
 
-fn is_type_var(h: &str) -> bool {
-    let mut cs = h.chars();
-    matches!((cs.next(), cs.next()), (Some(c), None) if c.is_ascii_uppercase())
+/// Does a pinned signature take a callback (a parenthesised function
+/// parameter)?
+pub fn has_callback_param(sky_type: &str, arity: usize) -> bool {
+    let Some(toks) = tokenise(sky_type) else {
+        return false;
+    };
+    let segs = split_top(&toks);
+    let Some((_, params)) = segs.split_last() else {
+        return false;
+    };
+    params.len() == arity
+        && params
+            .iter()
+            .any(|s| !s.garbled && s.toks.contains(&Tok::Arrow))
 }
 
+/// Where, inside one parameter, a pinned signature puts a non-empty Go
+/// interface (`goi@…`): the positions [`crate::ffi_iface`] checks after
+/// solving.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IfaceSlot {
+    /// No interface anywhere in this position.
+    None,
+    /// This position is the interface (its key, `Io.Writer`).
+    Iface(String),
+    /// A `List` / `Maybe` element, or a `Dict` value.
+    Elem(Box<IfaceSlot>),
+    /// Tuple components.
+    Tuple(Vec<IfaceSlot>),
+    /// A callback of `n` parameters whose RESULT holds an interface (Sky hands
+    /// the result to Go).
+    CallbackResult(usize, Box<IfaceSlot>),
+}
+
+impl IfaceSlot {
+    fn is_none(&self) -> bool {
+        matches!(self, IfaceSlot::None)
+    }
+}
+
+fn iface_slot(raw: &Raw, top: bool) -> IfaceSlot {
+    let wrap_elem = |s: IfaceSlot| {
+        if s.is_none() {
+            IfaceSlot::None
+        } else {
+            IfaceSlot::Elem(Box::new(s))
+        }
+    };
+    match raw {
+        Raw::Name(h, args) if args.is_empty() => match h.strip_prefix("goi@") {
+            Some(k) => IfaceSlot::Iface(k.to_string()),
+            None => IfaceSlot::None,
+        },
+        Raw::Name(h, args) if (h == "List" || h == "Maybe") && args.len() == 1 => {
+            wrap_elem(iface_slot(&args[0], false))
+        }
+        Raw::Name(h, args) if h == "Dict" && args.len() == 2 => {
+            wrap_elem(iface_slot(&args[1], false))
+        }
+        Raw::Tuple(items) => {
+            let parts: Vec<IfaceSlot> = items.iter().map(|x| iface_slot(x, false)).collect();
+            if parts.iter().all(IfaceSlot::is_none) {
+                IfaceSlot::None
+            } else {
+                IfaceSlot::Tuple(parts)
+            }
+        }
+        Raw::Fun(..) if top => {
+            let mut n = 0;
+            let mut cur = raw;
+            while let Raw::Fun(_, b) = cur {
+                n += 1;
+                cur = b;
+            }
+            let r = iface_slot(cur, false);
+            if r.is_none() {
+                IfaceSlot::None
+            } else {
+                IfaceSlot::CallbackResult(n, Box::new(r))
+            }
+        }
+        Raw::ZeroFun(r) if top => {
+            let r = iface_slot(r, false);
+            if r.is_none() {
+                IfaceSlot::None
+            } else {
+                IfaceSlot::CallbackResult(1, Box::new(r))
+            }
+        }
+        _ => IfaceSlot::None,
+    }
+}
+
+/// The interface positions of each top-level parameter of a pinned
+/// signature. `None` when the string does not parse.
+pub fn iface_params(sky_type: &str, arity: usize) -> Option<Vec<IfaceSlot>> {
+    let toks = tokenise(sky_type)?;
+    let segs = split_top(&toks);
+    let (_, params) = segs.split_last()?;
+    if params.len() != arity {
+        return None;
+    }
+    Some(
+        params
+            .iter()
+            .map(|seg| {
+                if seg.garbled {
+                    return IfaceSlot::None;
+                }
+                parse_full(&seg.toks)
+                    .map(|raw| iface_slot(&raw, true))
+                    .unwrap_or(IfaceSlot::None)
+            })
+            .collect(),
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,45 +840,123 @@ mod tests {
         }
     }
 
-    #[test]
-    fn wildcards() {
-        for (src, arity) in [
-            ("UUID@github.com/google/uuid -> Result Error ()", 1),
-            ("Request -> Result Error ()", 1),
-            ("network -> Result Error ()", 1),
-            ("Bytes -> Result Error ()", 1),
-            ("any -> Result Error ()", 1),
-            ("error -> Result Error ()", 1),
-            ("Dict String String -> Result Error ()", 1),
-            ("complex128 -> Result Error ()", 1),
-            ("( -> ()) -> Result Error ()", 1),
-        ] {
-            let s = scheme_for(src, arity);
-            assert_eq!(s.kind, FfiSchemeKind::Parsed, "{src}");
-            let Ty::Fun(p, _) = &s.scheme.ty else {
-                panic!("{src}")
-            };
-            assert_eq!(**p, wild(), "{src}: param must be the wildcard");
-        }
-        // payload wildcards
-        for src in [
-            "() -> Result Error Bytes",
-            "() -> Result Error (Dict String String)",
-            "() -> Result Error (Request -> Request -> String)",
-            "() -> Result Error [32]byte",
-            "() -> Result Error (String, Bool)",
-            "() -> Result Error Route@github.com/gorilla/mux",
-        ] {
-            let s = scheme_for(src, 1).scheme;
-            let Ty::Fun(_, r) = &s.ty else { panic!() };
-            assert_eq!(**r, result_of(wild()), "{src}");
-        }
+    fn p1(src: &str) -> Ty {
+        let s = scheme_for(src, 1);
+        assert_eq!(s.kind, FfiSchemeKind::Parsed, "{src}");
+        let Ty::Fun(p, _) = &s.scheme.ty else {
+            panic!("{src}")
+        };
+        (**p).clone()
     }
 
+    fn r0(src: &str) -> Ty {
+        let s = scheme_for(src, 1);
+        let Ty::Fun(_, r) = &s.scheme.ty else {
+            panic!("{src}")
+        };
+        let Ty::App(_, args) = r.as_ref() else {
+            panic!("{src}")
+        };
+        args[1].clone()
+    }
+
+    fn go(key: &str) -> Ty {
+        Ty::app(&format!("go@{key}"), vec![])
+    }
+
+    /// C-6: an opaque Go type is a nominal, never a wildcard: the parameter
+    /// and the result carry the same key a `Pkg.Name` annotation gets.
     #[test]
-    fn callback_params_typed_result_wild() {
+    fn opaque_go_types_are_nominal() {
+        let key = "Github.Com.Google.Uuid.UUID";
+        assert_eq!(p1(&format!("go@{key} -> Result Error ()")), go(key));
+        assert_eq!(r0(&format!("() -> Result Error go@{key}")), go(key));
+        assert_eq!(
+            r0("() -> Result Error (List go@Net.Http.Cookie)"),
+            Ty::app("List", vec![go("Net.Http.Cookie")])
+        );
+        assert_eq!(r0("() -> Result Error go@Go.GoFunc"), go("Go.GoFunc"));
+        // A format-2 marker maps to the same key.
+        assert_eq!(
+            p1("UUID@github.com/google/uuid -> Result Error ()"),
+            go(key)
+        );
+        // A bare name, a lower-case name, `error`, a Go array, `complex128`:
+        // opaque, never a wildcard.
+        for src in [
+            "Request -> Result Error ()",
+            "network -> Result Error ()",
+            "complex128 -> Result Error ()",
+            "[32]byte -> Result Error ()",
+        ] {
+            assert_eq!(p1(src), go("Go.GoUnknown"), "{src}");
+        }
+        assert_eq!(p1("error -> Result Error ()"), go("Go.GoError"));
+        // A single capital letter is NOT a type variable; `$T` is.
+        assert_eq!(p1("T -> Result Error ()"), go("Go.GoUnknown"));
+        let s = scheme_for("$T -> Result Error (Maybe $T)", 1).scheme;
+        assert_eq!(s.vars.len(), 1);
+    }
+
+    /// C-4 / C-5: pointers are Maybe, map keys keep their type.
+    #[test]
+    fn pointers_and_map_keys() {
+        assert_eq!(
+            r0("() -> Result Error (Maybe String)"),
+            Ty::app("Maybe", vec![Ty::app("String", vec![])])
+        );
+        assert_eq!(
+            p1("Dict Int String -> Result Error ()"),
+            Ty::app(
+                "Dict",
+                vec![Ty::app("Int", vec![]), Ty::app("String", vec![])]
+            )
+        );
+        assert_eq!(p1("Bytes -> Result Error ()"), Ty::app("String", vec![]));
+        // A tuple ending in Bool is a tuple (comma-ok renders as Maybe).
+        assert_eq!(
+            r0("() -> Result Error (String, Bool)"),
+            Ty::Tuple(vec![Ty::app("String", vec![]), Ty::app("Bool", vec![])])
+        );
+    }
+
+    /// The two checked parameter positions: an empty interface accepts any
+    /// value (Go does); a non-empty one is checked after solving. As a
+    /// RESULT both are opaque.
+    #[test]
+    fn interfaces() {
+        assert_eq!(p1("any -> Result Error ()"), wild());
+        assert_eq!(p1("goi@Io.Writer -> Result Error ()"), wild());
+        assert_eq!(r0("() -> Result Error go@Io.Writer"), go("Io.Writer"));
+        assert_eq!(
+            iface_params("goi@Io.Writer -> String -> Result Error ()", 2),
+            Some(vec![
+                IfaceSlot::Iface("Io.Writer".to_string()),
+                IfaceSlot::None
+            ])
+        );
+        // Nested: a variadic list of interfaces, a callback returning one.
+        assert_eq!(
+            iface_params("List goi@Io.Writer -> Result Error ()", 1),
+            Some(vec![IfaceSlot::Elem(Box::new(IfaceSlot::Iface(
+                "Io.Writer".to_string()
+            )))])
+        );
+        assert_eq!(
+            iface_params("(go@H.Handler -> goi@H.Handler) -> Result Error ()", 1),
+            Some(vec![IfaceSlot::CallbackResult(
+                1,
+                Box::new(IfaceSlot::Iface("H.Handler".to_string()))
+            )])
+        );
+    }
+
+    /// C-12: a callback's parameters and RESULT are typed from the pin; a
+    /// zero-parameter callback is `() -> r`; a func anywhere else is opaque.
+    #[test]
+    fn callbacks_are_typed() {
         let s = scheme_for(
-            "Router@github.com/gorilla/mux -> String -> (ResponseWriter -> String -> ()) -> Result Error ()",
+            "go@Github.Com.Gorilla.Mux.Router -> String -> (go@Net.Http.ResponseWriter -> go@Net.Http.Request -> ()) -> Result Error ()",
             3,
         )
         .scheme;
@@ -695,17 +966,44 @@ mod tests {
         assert_eq!(
             **cb,
             Ty::Fun(
-                Box::new(wild()),
+                Box::new(go("Net.Http.ResponseWriter")),
                 Box::new(Ty::Fun(
-                    Box::new(Ty::app("String", vec![])),
-                    Box::new(wild())
+                    Box::new(go("Net.Http.Request")),
+                    Box::new(Ty::Unit)
                 ))
             )
+        );
+        assert_eq!(
+            p1("(Int -> String) -> Result Error String"),
+            Ty::Fun(
+                Box::new(Ty::app("Int", vec![])),
+                Box::new(Ty::app("String", vec![]))
+            )
+        );
+        assert_eq!(
+            p1("(() -> ()) -> Result Error Int"),
+            Ty::Fun(Box::new(Ty::Unit), Box::new(Ty::Unit))
+        );
+        assert_eq!(
+            p1("( -> ()) -> Result Error Int"),
+            Ty::Fun(Box::new(Ty::Unit), Box::new(Ty::Unit))
+        );
+        assert_eq!(
+            p1("(Int -> Result Error ()) -> Result Error String"),
+            Ty::Fun(
+                Box::new(Ty::app("Int", vec![])),
+                Box::new(result_of(Ty::Unit))
+            )
+        );
+        assert_eq!(
+            r0("() -> Result Error (Int -> Int)"),
+            go("Go.GoFunc"),
+            "a returned func is opaque"
         );
     }
 
     #[test]
-    fn list_maybe_and_type_vars() {
+    fn list_maybe() {
         let s = scheme_for("List String -> Result Error (Maybe Int)", 1).scheme;
         assert_eq!(
             s.ty,
@@ -714,27 +1012,22 @@ mod tests {
                 Box::new(result_of(Ty::app("Maybe", vec![Ty::app("Int", vec![])])))
             )
         );
-        let s = scheme_for("T -> Result Error T", 1).scheme;
-        assert_eq!(s.vars.len(), 1);
-        assert_eq!(
-            s.ty,
-            Ty::Fun(
-                Box::new(Ty::Var(s.vars[0].clone())),
-                Box::new(result_of(Ty::Var(s.vars[0].clone())))
-            )
-        );
     }
 
     #[test]
     fn unbalanced_segments_degrade_locally() {
-        // A stray `)` in the payload keeps the params typed.
+        // A stray `)` in the payload: the result is opaque, the params typed.
         let s = scheme_for("URL@net/url -> Result Error (Request -> URL, error))", 1);
         assert_eq!(s.kind, FfiSchemeKind::Parsed);
         assert_eq!(
             s.scheme.ty,
-            Ty::Fun(Box::new(wild()), Box::new(result_of(wild())))
+            Ty::Fun(
+                Box::new(go("Net.Url.URL")),
+                Box::new(result_of(go("Go.GoUnknown")))
+            )
         );
-        // A garbled PARAMETER becomes any; the others stay typed.
+        // A garbled PARAMETER is checked by the reflective wrapper; the others
+        // stay typed.
         let s = scheme_for("( -> ReadCloser, error)) -> String -> Result Error Int", 2);
         assert_eq!(s.kind, FfiSchemeKind::Parsed);
         assert_eq!(
@@ -750,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_keeps_the_result() {
+    fn fallback_keeps_the_result_opaque() {
         for (src, arity, kind) in [
             ("", 2, FfiSchemeKind::FallbackMissing),
             (
@@ -767,12 +1060,23 @@ mod tests {
         ] {
             let s = scheme_for(src, arity);
             assert_eq!(s.kind, kind, "{src:?}");
-            let mut want = result_of(wild());
+            let mut want = result_of(go("Go.GoUnknown"));
             for _ in 0..arity {
                 want = Ty::Fun(Box::new(wild()), Box::new(want));
             }
             assert_eq!(s.scheme.ty, want, "{src:?}");
         }
+    }
+
+    /// No format-3 signature leaves an unchecked result position.
+    #[test]
+    fn census_counts_only_parameter_wildcards() {
+        let sigs = [
+            ("go@Io.Reader -> Result Error (Maybe String)", 1),
+            ("goi@Io.Writer -> Bytes -> Result Error ()", 2),
+            ("any -> Result Error go@Go.GoAny", 1),
+        ];
+        assert_eq!(wildcard_census(sigs.into_iter()), (3, 2, 2));
     }
 
     #[test]
@@ -781,5 +1085,70 @@ mod tests {
         assert_eq!(spelled_arity("(A -> B) -> Result Error ()"), Some(1));
         assert_eq!(spelled_arity("() -> Result Error ()"), Some(1));
         assert_eq!(spelled_arity("( -> X, error)) -> Result Error ()"), None);
+    }
+}
+
+/// The `ffi_sig` wildcard census of a surface: `(bindings, bindings with at
+/// least one wildcard, wildcard occurrences)`. A wildcard is the checker's
+/// per-occurrence `any`: a position the pinned signature leaves unchecked.
+pub fn wildcard_census<'a>(sigs: impl Iterator<Item = (&'a str, usize)>) -> (usize, usize, usize) {
+    fn count(t: &Ty) -> usize {
+        match t {
+            Ty::Var(n) if n.as_str() == "any" => 1,
+            Ty::Var(_) | Ty::Unit | Ty::Error => 0,
+            Ty::App(_, args) | Ty::Tuple(args) => args.iter().map(count).sum(),
+            Ty::Fun(a, b) => count(a) + count(b),
+            Ty::Record(fields, _) => fields.iter().map(|(_, t)| count(t)).sum(),
+        }
+    }
+    let (mut n, mut with, mut occ) = (0, 0, 0);
+    for (s, arity) in sigs {
+        n += 1;
+        let c = count(&scheme_for(s, arity).scheme.ty);
+        if c > 0 {
+            with += 1;
+        }
+        occ += c;
+    }
+    (n, with, occ)
+}
+
+#[cfg(test)]
+mod census_tests {
+    /// Prints the wildcard census of every `*.kernel.json` under the
+    /// directories in `SKY_FFI_CENSUS_DIRS` (colon-separated). A measurement,
+    /// not a gate: `cargo test -p ty ffi_wildcard_census -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn ffi_wildcard_census() {
+        let dirs = std::env::var("SKY_FFI_CENSUS_DIRS").unwrap_or_default();
+        for dir in dirs.split(':').filter(|d| !d.is_empty()) {
+            let mut files: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.to_string_lossy().ends_with("kernel.json"))
+                .collect();
+            files.sort();
+            for f in files {
+                let v: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+                let fns = v["functions"].as_array().cloned().unwrap_or_default();
+                let sigs: Vec<(String, usize)> = fns
+                    .iter()
+                    .map(|f| {
+                        (
+                            f["skyType"].as_str().unwrap_or("").to_string(),
+                            f["arity"].as_u64().unwrap_or(0) as usize,
+                        )
+                    })
+                    .collect();
+                let (n, with, occ) =
+                    super::wildcard_census(sigs.iter().map(|(s, a)| (s.as_str(), *a)));
+                println!(
+                    "CENSUS {} bindings={n} with_wildcard={with} wildcards={occ}",
+                    f.display()
+                );
+            }
+        }
     }
 }

@@ -19,8 +19,11 @@ use crate::inspect::{Function, PackageInfo, Param};
 /// build, which never runs the inspector, see an outdated surface.
 ///
 /// Format history: 1 = unstamped (Task-era `.skyi` header); 2 = stamped,
-/// `Result Error a` header.
-pub const SURFACE_FORMAT: u32 = 2;
+/// `Result Error a` header; 3 = every slot typed from the inspector's
+/// go/types rendering (`sky3`): nominal opaque Go types, pointers as `Maybe`,
+/// typed map keys, typed callback results, and wrappers that convert and
+/// range-check every value inside their recover (`rt/ffi_convert.go`).
+pub const SURFACE_FORMAT: u32 = 3;
 
 /// The stamp line in the `.skyi` and `_bindings.go` headers (after the
 /// comment marker).
@@ -208,11 +211,32 @@ fn is_error_type(t: &str) -> bool {
     t == "error"
 }
 
-fn touches_internal(t: &str) -> bool {
+/// A Go type string that names a type another package cannot spell: one in an
+/// `internal/` or `vendor/` tree, or an unexported one
+/// (`github.com/redis/go-redis/v9.commandInfoResolver`). The generator used to
+/// write the latter verbatim as a Go type (`arg1.(*github.com/…/v9.cmdable)`),
+/// which is not Go syntax, so no program importing the package could build
+/// (M-3). A binding whose signature needs one is skipped from the surface; its
+/// wrapper, if emitted, goes through reflection.
+pub(crate) fn touches_internal(t: &str) -> bool {
     t.contains("/internal.")
         || t.contains("/internal/")
         || t.contains("/vendor.")
         || t.contains("/vendor/")
+        || names_unexported_type(t)
+}
+
+/// Does `t` name an unexported type of some package (`path.lowerName`)?
+pub(crate) fn names_unexported_type(t: &str) -> bool {
+    t.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '-')))
+        .map(|tok| tok.trim_start_matches('.'))
+        .filter(|tok| tok.contains('.'))
+        .any(|tok| {
+            let last = tok.rsplit('.').next().unwrap_or("");
+            last.chars()
+                .next()
+                .is_some_and(|c| c.is_lowercase() || c == '_')
+        })
 }
 
 fn generic_hint(t: &str) -> bool {
@@ -284,16 +308,12 @@ fn emit_kernel_json(module_name: &str, kernel_name: &str, info: &PackageInfo) ->
         .iter()
         .map(|fn_| {
             let st = wrapper_sky_type(fn_);
-            let base = format!(
-                "    {{\"name\": {}, \"arity\": {}",
+            format!(
+                "    {{\"name\": {}, \"arity\": {}, \"skyType\": {}}}",
                 quote(&lower_first(&fn_.name)),
-                fn_.params.len().max(1)
-            );
-            if is_sky_parseable(&st) {
-                format!("{base}, \"skyType\": {}}}", quote(&st))
-            } else {
-                format!("{base}}}")
-            }
+                fn_.params.len().max(1),
+                quote(&st)
+            )
         })
         .collect();
 
@@ -343,71 +363,76 @@ fn emit_kernel_json(module_name: &str, kernel_name: &str, info: &PackageInfo) ->
 }
 
 // ---------------------------------------------------------------------------
-// wrapperSkyType (FfiGen.hs:464-526) + isSkyParseable (536-545).
+// The Sky type of a binding (surface format 3).
 // ---------------------------------------------------------------------------
 
-/// The full HM signature for a wrapper, including the `Result Error` wrap.
-/// Mirrors `wrapperSkyType`.
+/// The full Sky signature of a binding, including the `Result Error` wrap:
+/// the `skyType` kernel.json records and the checker types every call by
+/// (`ty::ffi_sig`).
+///
+/// Every slot's type comes from the inspector's `sky3` rendering (computed
+/// from the go/types structure, `tools/sky-ffi-inspect/sky3.go`); this
+/// function only maps its opaque markers to the checker's nominal keys
+/// ([`sky3_to_surface`]) and composes the result:
+///
+/// * a trailing `error` is peeled into the `Result Error` wrap;
+/// * `(T, bool)` is `Maybe T` (the wrapper returns a Maybe);
+/// * one other result is itself, two or three are a tuple, more are the
+///   opaque `go@Go.GoTuple`.
+///
+/// A slot the inspector did not render (a report from an older inspector)
+/// is the opaque `go@Go.GoUnknown`: never a wildcard.
 pub fn wrapper_sky_type(fn_: &Function) -> String {
-    let resolve = |p: &Param| -> String {
-        if !p.sky_type_qualified.is_empty() {
-            go_type_to_sky(&p.sky_type_qualified)
-        } else if !p.sky_type.is_empty() {
-            go_type_to_sky(&p.sky_type)
-        } else {
-            go_type_to_sky(&p.ty)
-        }
-    };
-
     let param_sig = if fn_.params.is_empty() {
         "()".to_string()
     } else {
         fn_.params
             .iter()
-            .map(&resolve)
+            .map(slot_sky)
             .collect::<Vec<_>>()
             .join(" -> ")
     };
 
     let non_err: Vec<&Param> = fn_.results.iter().filter(|p| p.ty != "error").collect();
-    // `()` when: no results, a lone `error` result, or no non-error results.
-    let is_unit = fn_.results.is_empty()
-        || (fn_.results.len() == 1 && fn_.results[0].ty == "error")
-        || non_err.is_empty();
-    // comma-ok: exactly `(T, bool)` with T neither `bool` nor `error` → `Maybe T`,
-    // matching what the typed wrapper returns (`SkyMaybe[T]`,
-    // `gen_bindings::classify_typed_result`). This test used to sit inside the
-    // `non_err.len() == 1` branch, where it could never fire (a `(T, bool)` pair
-    // has TWO non-error results), so the surface said `(T, Bool)` while the
-    // runtime value was a Maybe — and a checker that types FFI calls from the
-    // surface would have held programs to the wrong shape.
     let is_comma_ok = fn_.results.len() == 2
         && fn_.results[1].ty == "bool"
         && fn_.results[0].ty != "bool"
         && fn_.results[0].ty != "error";
-    let inner_ok = if is_unit {
+    let inner_ok = if non_err.is_empty() {
         "()".to_string()
     } else if is_comma_ok {
-        format!("Maybe {}", wrap_if_multi(&resolve(&fn_.results[0])))
+        format!("Maybe {}", wrap_if_multi(&slot_sky(&fn_.results[0])))
     } else if non_err.len() == 1 {
-        resolve(non_err[0])
-    } else {
+        slot_sky(non_err[0])
+    } else if non_err.len() <= 3 {
         format!(
             "({})",
             non_err
                 .iter()
-                .map(|p| resolve(p))
+                .map(|p| slot_sky(p))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
+    } else {
+        OPAQUE_TUPLE.to_string()
     };
-
     let ok_type = if inner_ok.starts_with('(') {
         format!("Result Error {inner_ok}")
     } else {
         format!("Result Error {}", wrap_if_multi(&inner_ok))
     };
     format!("{param_sig} -> {ok_type}")
+}
+
+/// The opaque type of a Go result list with more than three values.
+pub const OPAQUE_TUPLE: &str = "go@Go.GoTuple";
+
+/// The Sky type of one slot.
+fn slot_sky(p: &Param) -> String {
+    if p.sky3.is_empty() {
+        return "go@Go.GoUnknown".to_string();
+    }
+    sky3_to_surface(&p.sky3)
 }
 
 fn wrap_if_multi(s: &str) -> String {
@@ -418,139 +443,58 @@ fn wrap_if_multi(s: &str) -> String {
     }
 }
 
-/// Reject Sky-type strings that still carry Go residue (channels, inline
-/// struct/interface, un-stripped `func(`). Mirrors `isSkyParseable`.
-pub fn is_sky_parseable(s: &str) -> bool {
-    const BAD: [&str; 7] = [
-        "<-",
-        " chan ",
-        "chan ",
-        "interface{",
-        "struct{",
-        "func(",
-        "{}",
-    ];
-    !BAD.iter().any(|b| s.contains(b))
-}
-
-// ---------------------------------------------------------------------------
-// goTypeToSky (FfiGen.hs:1836-1917).
-// ---------------------------------------------------------------------------
-
-/// Map a Go type expression to its Sky surface name. `[]*pkg.X` → `List X`,
-/// `map[string]V` → `Dict String V`, pointers transparent, `[]byte` → `Bytes`.
-pub fn go_type_to_sky(t: &str) -> String {
-    if let Some(body) = t.strip_prefix("func(") {
-        return format_func_type(body);
-    }
-    if t == "[]byte" {
-        return "Bytes".to_string();
-    }
-    if let Some(inner) = t.strip_prefix("[]") {
-        return format!("List {}", wrap_if_composite(&go_type_to_sky(inner)));
-    }
-    if let Some(inner) = t.strip_prefix('*') {
-        return go_type_to_sky(inner);
-    }
-    if let Some(inner) = t.strip_prefix("map[string]") {
-        return format!("Dict String {}", wrap_if_composite(&go_type_to_sky(inner)));
-    }
-    if let Some(rest) = t.strip_prefix("map[") {
-        // map[K]V, K != string — surface as Dict String V.
-        let (_k, v) = split_map_bracket(rest);
-        return format!(
-            "Dict String {}",
-            wrap_if_composite(&go_type_to_sky(v.trim()))
-        );
-    }
-    match t {
-        "string" => "String".to_string(),
-        "int" | "int64" | "int32" => "Int".to_string(),
-        "float64" | "float32" => "Float".to_string(),
-        "bool" => "Bool".to_string(),
-        "error" => "String".to_string(),
-        "interface{}" => "any".to_string(),
-        "struct{}" => "()".to_string(),
-        _ => strip_pkg(t),
-    }
-}
-
-/// Qualified opaque markers (`Name@pkg`) keep their `@pkg` suffix intact; bare
-/// dotted names drop the package prefix.
-fn strip_pkg(s: &str) -> String {
-    if s.contains('@') {
-        s.to_string()
-    } else {
-        match s.rfind('.') {
-            Some(i) => s[i + 1..].to_string(),
-            None => s.to_string(),
-        }
-    }
-}
-
-fn wrap_if_composite(s: &str) -> String {
-    if s.contains(' ') {
-        format!("({s})")
-    } else {
-        s.to_string()
-    }
-}
-
-/// For `map[K]V` (already past `map[`): return `(K, V)` splitting on the `]`
-/// that matches the opening `[` (depth-aware for nested `[`).
-fn split_map_bracket(s: &str) -> (&str, &str) {
-    let mut depth = 1i32;
-    for (i, c) in s.char_indices() {
-        match c {
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    return (&s[..i], &s[i + 1..]);
-                }
+/// Map the inspector's `sky3` markers to the checker's type keys:
+///
+/// * `Name@importPath` → `go@<Sky module of importPath>.Name`, the same key a
+///   user annotation `Pkg.Name` gets (`ty::nominal::go_type`);
+/// * `@kind` (an unnamed opaque Go type: `@func`, `@map`, `@any`, …) →
+///   `go@Go.Go<Kind>`;
+/// * `iface:X` (a non-empty interface a parameter receives) → `goi@<key of X>`.
+pub fn sky3_to_surface(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if is_atom_char(c) && !(c == '-' && chars.get(i + 1) == Some(&'>')) {
+            let start = i;
+            while i < chars.len()
+                && is_atom_char(chars[i])
+                && !(chars[i] == '-' && chars.get(i + 1) == Some(&'>'))
+            {
+                i += 1;
             }
-            _ => {}
+            let atom: String = chars[start..i].iter().collect();
+            out.push_str(&map_atom(&atom));
+        } else {
+            out.push(c);
+            i += 1;
         }
     }
-    (s, "")
+    out
 }
 
-fn format_func_type(body: &str) -> String {
-    let (arg_part, ret_part) = split_at_close_paren(body);
-    let sky_args: Vec<String> = split_commas(arg_part)
-        .into_iter()
-        .map(|a| go_type_to_sky(a.trim()))
-        .collect();
-    let sky_ret = if ret_part.trim().is_empty() {
-        "()".to_string()
-    } else {
-        go_type_to_sky(ret_part.trim())
-    };
-    let mut parts = sky_args;
-    parts.push(sky_ret);
-    format!("({})", parts.join(" -> "))
+fn is_atom_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '-' | '@' | ':' | '$' | '~' | '+')
 }
 
-/// Split `body` (interior of a `func(...)`, opening `(` already consumed) at the
-/// matching close paren, returning `(args, rest-after-close)`.
-fn split_at_close_paren(s: &str) -> (&str, &str) {
-    let mut depth = 0i32;
-    for (i, c) in s.char_indices() {
-        match c {
-            ')' if depth == 0 => return (&s[..i], &s[i + 1..]),
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            _ => {}
-        }
+fn map_atom(atom: &str) -> String {
+    if let Some(rest) = atom.strip_prefix("iface:") {
+        return format!("goi@{}", opaque_key(rest));
     }
-    (s, "")
+    if atom.contains('@') {
+        return format!("go@{}", opaque_key(atom));
+    }
+    atom.to_string()
 }
 
-fn split_commas(s: &str) -> Vec<&str> {
-    if s.is_empty() {
-        return vec![""];
+/// `Name@importPath` → `Module.Name`; `@kind` → `Go.GoKind`.
+fn opaque_key(marker: &str) -> String {
+    match marker.split_once('@') {
+        Some(("", kind)) => format!("Go.Go{}", cap_first(kind)),
+        Some((name, path)) => format!("{}.{name}", pkg_to_module_name(path)),
+        None => format!("Go.Go{}", cap_first(marker)),
     }
-    s.split(',').collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -575,8 +519,9 @@ fn emit_skyi(info: &PackageInfo) -> String {
         "--     Task.lazy (\\_ -> call args) |> Task.andThen Task.fromResult".to_string(),
         "-- See docs/ffi/boundary-philosophy.md.".to_string(),
         "--".to_string(),
-        "-- Opaque Go struct values flow through Sky as Any; use the bindings".to_string(),
-        "-- to construct, read and update them.".to_string(),
+        "-- An opaque Go value (a struct, an interface, a func) has its own Sky".to_string(),
+        "-- type, named through this module (`Pkg.Client`); use the bindings to".to_string(),
+        "-- construct, read and update it.".to_string(),
         "--".to_string(),
         "-- Imports used in this package's wrapper:".to_string(),
     ];
@@ -599,6 +544,14 @@ fn emit_skyi(info: &PackageInfo) -> String {
 // used to print the raw Go results followed by "runtime wrap: Task Error",
 // which described neither the type nor the runtime behaviour.
 fn emit_skyi_fn(fn_: &Function) -> String {
+    if should_skip_fn(fn_) {
+        // Not in kernel.json, so not callable: say so, and why.
+        return format!(
+            "-- [skipped] {}: its Go signature uses a generic, internal, unexported \
+             or `error`-parameter type that Sky cannot pass",
+            fn_.name
+        );
+    }
     format!(
         "-- [{}] {} : {}",
         fn_.effect,
@@ -666,6 +619,13 @@ mod tests {
     fn comma_ok_result_renders_as_maybe() {
         let p = |ty: &str| Param {
             ty: ty.to_string(),
+            sky3: match ty {
+                "string" => "String",
+                "bool" => "Bool",
+                "error" => "@error",
+                _ => "",
+            }
+            .to_string(),
             ..Default::default()
         };
         let f = |params: Vec<Param>, results: Vec<Param>| Function {
@@ -693,17 +653,63 @@ mod tests {
         );
     }
 
+    /// M-3: an unexported Go type is never written as a Go type; a binding
+    /// that needs one is skipped.
     #[test]
-    fn go_type_mapping() {
-        assert_eq!(go_type_to_sky("string"), "String");
-        assert_eq!(go_type_to_sky("*github.com/google/uuid.UUID"), "UUID");
-        assert_eq!(go_type_to_sky("[]byte"), "Bytes");
-        assert_eq!(go_type_to_sky("[]string"), "List String");
-        assert_eq!(go_type_to_sky("map[string]int"), "Dict String Int");
+    fn unexported_types_are_detected() {
+        for t in [
+            "*github.com/redis/go-redis/v9.commandInfoResolver",
+            "github.com/redis/go-redis/v9.cmdable",
+            "[]example.com/p.inner",
+            "func(example.com/p.hook) error",
+        ] {
+            assert!(names_unexported_type(t), "{t}");
+            assert!(touches_internal(t), "{t}");
+        }
+        for t in [
+            "*github.com/redis/go-redis/v9.Client",
+            "gopkg.in/yaml.v3.Node",
+            "context.Context",
+            "func(xs ...int) string",
+            "map[string]interface{}",
+            "[]byte",
+        ] {
+            assert!(!names_unexported_type(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn sky3_markers_map_to_the_checker_keys() {
+        assert_eq!(sky3_to_surface("String"), "String");
         assert_eq!(
-            go_type_to_sky("UUID@github.com/google/uuid"),
-            "UUID@github.com/google/uuid"
+            sky3_to_surface("UUID@github.com/google/uuid"),
+            "go@Github.Com.Google.Uuid.UUID"
         );
+        assert_eq!(
+            sky3_to_surface("iface:Writer@io"),
+            "goi@Io.Writer",
+            "an interface a parameter receives"
+        );
+        assert_eq!(sky3_to_surface("@func"), "go@Go.GoFunc");
+        assert_eq!(sky3_to_surface("iface:@any"), "goi@Go.GoAny");
+        assert_eq!(
+            sky3_to_surface("(Maybe String -> Result Error ()) -> List (Client@net/http)"),
+            "(Maybe String -> Result Error ()) -> List (go@Net.Http.Client)"
+        );
+        assert_eq!(
+            sky3_to_surface("Dict Int (Thing@example.com/go-kit/v2)"),
+            "Dict Int (go@Example.Com.GoKit.V2.Thing)"
+        );
+        // An unrendered slot is opaque, never a wildcard.
+        let f = Function {
+            name: "F".into(),
+            params: vec![Param {
+                ty: "x".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(wrapper_sky_type(&f), "go@Go.GoUnknown -> Result Error ()");
     }
 
     #[test]
@@ -837,6 +843,37 @@ mod tests {
         }
     }
 
+    /// Regenerates the committed fixtures from fresh inspector reports (the
+    /// `<name>.raw.json` files in `SKY_FFI_REGEN_DIR`, produced by
+    /// `tools/sky-ffi-inspect` under the pinned linux/amd64 target). A tool,
+    /// not a gate: `cargo test -p ffi regenerate_fixtures -- --ignored`.
+    #[test]
+    #[ignore]
+    fn regenerate_fixtures() {
+        let src = std::env::var("SKY_FFI_REGEN_DIR").expect("SKY_FFI_REGEN_DIR");
+        let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for name in ["uuid", "mux", "net_http"] {
+            let raw =
+                std::fs::read_to_string(Path::new(&src).join(format!("{name}.raw.json"))).unwrap();
+            let mut info = crate::inspect::parse_one(&raw).unwrap();
+            crate::inspect::normalize(&mut info);
+            let mut json = serde_json::to_string_pretty(&info).unwrap();
+            json.push('\n');
+            std::fs::write(out.join(format!("{name}.inspector.json")), json).unwrap();
+            let s = generate(&info);
+            std::fs::write(
+                out.join(format!("{name}.expected.kernel.json")),
+                s.kernel_json,
+            )
+            .unwrap();
+            std::fs::write(
+                out.join(format!("{name}.expected_bindings.go")),
+                s.bindings_go,
+            )
+            .unwrap();
+        }
+    }
+
     // The .skyi catalogue is the first thing a user reads about a Go package.
     // It used to say every call "returns Task Error a" and is callable via
     // `Sky.Ffi.callTask` (the dynamic escape hatch, not how generated bindings
@@ -867,7 +904,10 @@ mod tests {
             skyi.contains("Task.lazy"),
             "the header must show how to defer a call:\n{skyi}"
         );
-        let fn_lines: Vec<&str> = skyi.lines().filter(|l| l.starts_with("-- [")).collect();
+        let fn_lines: Vec<&str> = skyi
+            .lines()
+            .filter(|l| l.starts_with("-- [") && !l.starts_with("-- [skipped]"))
+            .collect();
         assert!(
             !fn_lines.is_empty(),
             "the uuid fixture has bindings:\n{skyi}"

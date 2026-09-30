@@ -81,7 +81,7 @@ getOrCreateCustomer userId userName userEmail =
         listParamsR =
             Stripe.newCustomerListParams ()
                 |> Result.andThen
-                       (\p -> Stripe.customerListParamsSetEmail userEmail p)
+                       (\p -> Stripe.customerListParamsSetEmail (Just userEmail) p)
     in
         case listParamsR of
 
@@ -146,9 +146,9 @@ createCustomer userId userName userEmail =
         paramsR =
             Stripe.newCustomerParams ()
                 |> Result.andThen
-                       (\p -> Stripe.customerParamsSetEmail userEmail p)
+                       (\p -> Stripe.customerParamsSetEmail (Just userEmail) p)
                 |> Result.andThen
-                       (\p -> Stripe.customerParamsSetName userName p)
+                       (\p -> Stripe.customerParamsSetName (Just userName) p)
     in
         case paramsR of
 
@@ -184,7 +184,7 @@ createCustomer userId userName userEmail =
                             ++ errorToString e))
 
 
-buildLineItem : Dict String String -> Result Error Value
+buildLineItem : Dict String String -> Result Error Stripe.CheckoutSessionLineItemParams
 buildLineItem item =
     let
         title = Db.getField "title" item
@@ -203,7 +203,7 @@ buildLineItem item =
                 |> Result.andThen
                        (\p ->
                            Stripe.checkoutSessionLineItemPriceDataProductDataParamsSetName
-                               title
+                               (Just title)
                                p)
         priceDataR =
             productDataR
@@ -218,12 +218,12 @@ buildLineItem item =
                                |> Result.andThen
                                       (\p ->
                                           Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount
-                                              effectivePrice
+                                              (Just effectivePrice)
                                               p)
                                |> Result.andThen
                                       (\p ->
                                           Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency
-                                              currency
+                                              (Just currency)
                                               p))
     in
         priceDataR
@@ -238,7 +238,7 @@ buildLineItem item =
                            |> Result.andThen
                                   (\p ->
                                       Stripe.checkoutSessionLineItemParamsSetQuantity
-                                          qty
+                                          (Just qty)
                                           p))
 
 
@@ -260,7 +260,7 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                     successUrl =
                         domainUrl () ++ "/order/" ++ cartId ++ "/success"
                     cancelUrl = domainUrl () ++ "/cart"
-                    -- buildLineItem returns Result Error Value; collect the
+                    -- buildLineItem returns a Result of Stripe line-item params; collect the
                     -- Oks so the SetLineItems setter sees an unwrapped list.
                     lineItems =
                         List.foldr
@@ -282,7 +282,7 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                             |> Result.andThen
                                    (\p ->
                                        Stripe.checkoutSessionPhoneNumberCollectionParamsSetEnabled
-                                           True
+                                           (Just True)
                                            p)
                     paramsR =
                         case shippingCollectionR of
@@ -301,22 +301,22 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                                             |> Result.andThen
                                                    (\p ->
                                                        Stripe.checkoutSessionParamsSetMode
-                                                           "payment"
+                                                           (Just "payment")
                                                            p)
                                             |> Result.andThen
                                                    (\p ->
                                                        Stripe.checkoutSessionParamsSetSuccessURL
-                                                           successUrl
+                                                           (Just successUrl)
                                                            p)
                                             |> Result.andThen
                                                    (\p ->
                                                        Stripe.checkoutSessionParamsSetCancelURL
-                                                           cancelUrl
+                                                           (Just cancelUrl)
                                                            p)
                                             |> Result.andThen
                                                    (\p ->
                                                        Stripe.checkoutSessionParamsSetCustomer
-                                                           customerId
+                                                           (Just customerId)
                                                            p)
                                             |> Result.andThen
                                                    (\p ->

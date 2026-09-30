@@ -356,6 +356,76 @@ fn ffi_result_hint(message: &str, body: &Body) -> Option<String> {
     })
 }
 
+/// The v0.27.0 migration hint for a type error in a def that calls Go FFI
+/// (surface format 3). A Go FFI type prints with its package path
+/// (`nominal::strip`), which is how an opaque Go value is recognised here.
+fn ffi_format3_hint(message: &str, body: &Body, sky: &dyn hir::SkyDb) -> Option<String> {
+    let foreign: Vec<(String, String)> = body
+        .exprs
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Expr::Var(Res::Foreign { package, name }) => {
+                Some((package.as_str().to_string(), name.as_str().to_string()))
+            }
+            _ => None,
+        })
+        .collect();
+    if foreign.is_empty() {
+        return None;
+    }
+    let link = |anchor: &str| format!(" see docs/migration/v0.27.md#{anchor}");
+    if message.contains("Go.Go")
+        || foreign
+            .iter()
+            .any(|(p, _)| message.contains(&format!("{p}.")))
+    {
+        return Some(format!(
+            "since v0.27.0 an opaque Go value has its own type, named through its \
+             package (`Pkg.Thing`): it is never an Int, a String or another Go type. \
+             Fix: annotate it with its Go type (`thing : Pkg.Thing`) and pass it to the \
+             bindings that take it.{}",
+            link("ffi-opaque-go-types")
+        ));
+    }
+    if message.contains("Result") {
+        return None;
+    }
+    if message.contains("Maybe") {
+        return Some(format!(
+            "since v0.27.0 a Go pointer (`*string`) is a `Maybe`, and a nil pointer is \
+             `Nothing`. Fix: `Maybe.withDefault \"\" value`, or a `case` on `Just` / \
+             `Nothing`.{}",
+            link("ffi-pointer-is-maybe")
+        ));
+    }
+    let typed_key = foreign.iter().any(|(p, n)| {
+        sky.ffi_fn(p, n).is_some_and(|s| {
+            ["Dict Int", "Dict Float", "Dict Bool"]
+                .iter()
+                .any(|k| s.sky_type.contains(k))
+        })
+    });
+    if message.contains("Dict") || typed_key {
+        return Some(format!(
+            "since v0.27.0 a Go map keeps its key type: `map[int]V` is `Dict Int V`, not \
+             `Dict String V`. Fix: use the real key type (`Dict Int String`).{}",
+            link("ffi-map-keys")
+        ));
+    }
+    let has_callback = foreign.iter().any(|(p, n)| {
+        sky.ffi_fn(p, n)
+            .is_some_and(|s| crate::ffi_sig::has_callback_param(&s.sky_type, s.arity))
+    });
+    has_callback.then(|| {
+        format!(
+            "since v0.27.0 a function passed to Go is typed from the Go signature, its \
+             result included. Fix: return the type the Go function expects (for a Go \
+             `func(int) string`, `\\n -> String.fromInt n`).{}",
+            link("ffi-callback-result")
+        )
+    })
+}
+
 fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
     let start = span.range.0 as usize;
     let end = (span.range.1 as usize).min(src.len());
@@ -605,6 +675,8 @@ pub fn check_modules_with_world(
         let mut codec_elems = codec_elem::CodecElemScan::default();
         // `[E2010]` state (per module, one diagnostic per offending call).
         let mut form_submits = crate::form_submit::FormSubmitScan::default();
+        // `[E2013]` state (per module, one diagnostic per offending argument).
+        let mut ffi_ifaces = crate::ffi_iface::IfaceScan::default();
 
         // `[E1011]` — `Sky.Ffi` is stdlib-only. `Ffi.call` / `Ffi.callPure` /
         // `Ffi.callTask` reach a registered Go binding by NAME and infer to a
@@ -767,6 +839,7 @@ pub fn check_modules_with_world(
                         .unwrap_or_default(),
                     suggestion: builder_cfg_migration_hint(&err.message)
                         .or_else(|| secret_migration_hint(&err.message))
+                        .or_else(|| ffi_format3_hint(&err.message, body, sky))
                         .or_else(|| ffi_result_hint(&err.message, body)),
                 });
             }
@@ -815,6 +888,9 @@ pub fn check_modules_with_world(
 
             // ---- [E2010] form-submit handler ---------------------------
             crate::form_submit::scan_body(body, &expr_ty, sky, &dname, &mut form_submits);
+
+            // ---- [E2013] a Sky value where a Go interface is required ---
+            crate::ffi_iface::scan_body(body, &expr_ty, sky, &dname, &mut ffi_ifaces);
 
             // ---- [E2011] literal pub/sub topic (collected; compared below,
             // across every module under check) --------------------------
@@ -867,6 +943,26 @@ pub fn check_modules_with_world(
                     })
                     .unwrap_or_default(),
                 suggestion: Some(dictkey::suggestion()),
+            });
+        }
+
+        // One `[E2013]` per Sky value passed for a Go interface parameter.
+        for f in &ffi_ifaces.found {
+            out.type_errors += 1;
+            out.diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: Code("E2013".to_string()),
+                message: format!("[{}] {}", f.def_name, crate::ffi_iface::message(f)),
+                labels: f
+                    .span
+                    .map(|s| {
+                        vec![diagnostics::Label {
+                            span: trim_leading_ws(&module_src, s),
+                            message: "this argument".into(),
+                        }]
+                    })
+                    .unwrap_or_default(),
+                suggestion: Some(crate::ffi_iface::suggestion()),
             });
         }
 

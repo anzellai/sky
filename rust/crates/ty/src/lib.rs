@@ -19,6 +19,7 @@ mod db;
 pub mod dictkey;
 pub mod encodable;
 mod exhaustive;
+pub mod ffi_iface;
 pub mod ffi_sig;
 pub mod form_submit;
 mod infer;
