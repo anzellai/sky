@@ -1,0 +1,82 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+
+type alias Model =
+    { count : Int
+    , note : String
+    }
+
+type Msg
+    = Bump
+    | Save
+    | Saved (Result Error String)
+    | Tracked (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0, note = "" }, Cmd.none )
+
+
+-- A server-only read: makes `Bump` a server branch (an RPC).
+serverNote : () -> String
+serverNote _ =
+    Result.withDefault "?" (Task.run (File.readFile "sky.toml"))
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Bump ->
+            ( { model | count = model.count + 1
+              , note = String.left 4 (serverNote ())
+              }
+            , Cmd.perform (File.readFile "sky.toml") Tracked
+            )
+
+        Save ->
+            ( { model | note = serverNote () }
+            , Cmd.perform (File.readFile "sky.toml") Saved
+            )
+
+        -- Its arm reads server data again, so the Save chain settles on the server
+        -- and `Tracked` (reached from it) becomes server-internal.
+        Saved _ ->
+            ( { model | note = serverNote () }
+            , Cmd.perform (File.readFile "sky.toml") Tracked
+            )
+
+        Tracked _ ->
+            ( model, Cmd.none )
+
+
+view : Model -> Ui.Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.el [ Ui.onClick Bump ] (Ui.text "bump")
+        , Ui.el [ Ui.onClick Save ] (Ui.text "save")
+        , Ui.text ("count=" ++ String.fromInt model.count)
+        ]
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

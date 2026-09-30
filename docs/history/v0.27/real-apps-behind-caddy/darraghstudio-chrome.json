@@ -1,0 +1,469 @@
+{
+  "app": "darraghstudio",
+  "browser": "chrome",
+  "browserVersion": "154.0.8037.58",
+  "base": "https://darraghstudio.localhost:9443",
+  "startedAt": "2026-09-30T07:20:29.115Z",
+  "pages": [
+    {
+      "path": "/",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/about",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/about",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/products",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/products",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/products/big-red-bus-sticker-pack",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/products/big-red-bus-sticker-pack",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/basket",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/basket",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/signin",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/signin",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/signup",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/signup",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/suggest",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/suggest",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/terms",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/terms",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/privacy",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/privacy",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    }
+  ],
+  "checks": {
+    "anonCookies": [
+      {
+        "name": "__sky_csrf",
+        "secure": true,
+        "httpOnly": true,
+        "sameSite": "Strict",
+        "path": "/",
+        "domain": "darraghstudio.localhost",
+        "session": false
+      }
+    ],
+    "rpcGuard": {
+      "crossOriginJson": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_origin\",\"reason\":\"Origin https://evil.example is not this app's origin\",\"hint\":\"Sky.Spa RPCs accept same-"
+      },
+      "sameSiteOtherOriginJson": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_origin\",\"reason\":\"Origin https://other.localhost:9443 is not this app's origin\",\"hint\":\"Sky.Spa RPCs acce"
+      },
+      "originNullJson": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_origin\",\"reason\":\"Origin: null is refused\",\"hint\":\"Sky.Spa RPCs accept same-origin JSON requests only. Be"
+      },
+      "sameOriginTextPlain": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_content_type\",\"reason\":\"an RPC request body must be Content-Type: application/json\",\"hint\":\"Sky.Spa RPCs "
+      },
+      "sameOriginForm": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_content_type\",\"reason\":\"an RPC request body must be Content-Type: application/json\",\"hint\":\"Sky.Spa RPCs "
+      },
+      "get": {
+        "status": 405,
+        "body": "{\"status\":\"rpc_method\",\"reason\":\"this RPC endpoint accepts POST only\",\"hint\":\"Sky.Spa RPCs accept same-origin JSON reque"
+      },
+      "sameOriginJsonControl": {
+        "status": 400,
+        "body": "Decode: missing field: .accountLoaded"
+      },
+      "browserSameOriginFetch": {
+        "status": 400
+      },
+      "evilOrigin": "https://evil.localhost:9443",
+      "browserCrossOriginNoCors": [
+        {
+          "status": 403
+        }
+      ]
+    },
+    "precompressed": {
+      "browserWasm": [
+        {
+          "path": "/main.d53d2684bdeb.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "br": {
+        "status": 200,
+        "contentEncoding": "br",
+        "contentLength": "2201651",
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "gzip": {
+        "status": 200,
+        "contentEncoding": "gzip",
+        "contentLength": "3552256",
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "identity": {
+        "status": 200,
+        "contentEncoding": null,
+        "contentLength": "15226369",
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "wasmExecBr": {
+        "status": 200,
+        "contentEncoding": "br"
+      }
+    },
+    "console": {
+      "anonymousStatus": 403,
+      "anonymousApi": 403,
+      "mode": "app",
+      "adminSignUp": {
+        "signUpRpc": 200,
+        "verifyRpc": {
+          "path": "/_rpc/RunVerify",
+          "status": 200
+        }
+      },
+      "consoleStatusAfterAdminSignIn": 200,
+      "consoleTitle": "",
+      "cookies": [
+        {
+          "name": "__sky_csrf_sky_console",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "darraghstudio.localhost",
+          "session": false
+        },
+        {
+          "name": "__sky_csrf",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "darraghstudio.localhost",
+          "session": false
+        },
+        {
+          "name": "sky_sid",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax",
+          "path": "/",
+          "domain": "darraghstudio.localhost",
+          "session": true
+        },
+        {
+          "name": "__Host-sky_console",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "darraghstudio.localhost",
+          "session": false
+        },
+        {
+          "name": "__Host-sky_sky_console_sid",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax",
+          "path": "/",
+          "domain": "darraghstudio.localhost",
+          "session": false
+        }
+      ]
+    },
+    "basketRpc": {
+      "booted": true,
+      "addToBasketRpc": 200,
+      "basketShowsItem": false,
+      "consoleErrors": [
+        "[sky.spa] a server branch's follow-up could not be applied: Unexpected: sky.spa: unknown follow-up Msg "
+      ],
+      "pageErrors": [],
+      "rpcSeen": [
+        {
+          "method": "POST",
+          "path": "/_rpc/AddToBasket",
+          "status": 200
+        }
+      ],
+      "subSeen": [],
+      "cspViolations": 0
+    },
+    "signInRotation": {
+      "signUp": {
+        "signUpRpc": 200,
+        "verifyRpc": {
+          "path": "/_rpc/RunVerify",
+          "status": 200
+        }
+      },
+      "cookieBeforeSignIn": null,
+      "cookieAfterVerify": {
+        "name": "sky_sid",
+        "secure": true,
+        "httpOnly": true,
+        "sameSite": "Lax",
+        "valuePrefix": "eyJhbGciOiJI"
+      },
+      "signOutRpc": 200,
+      "cookieAfterSignOut": null,
+      "signInRpc": 200,
+      "cookieAfterPasswordSignIn": {
+        "name": "sky_sid",
+        "secure": true,
+        "httpOnly": true,
+        "sameSite": "Lax",
+        "valuePrefix": "eyJhbGciOiJI"
+      },
+      "valueChangedAtSignIn": true,
+      "valueChangedAnonToSignedIn": true,
+      "replay_preSignInValue": "no anonymous sky_sid was issued",
+      "replay_currentValue": {
+        "status": 200,
+        "seedCarriesEmail": true
+      },
+      "replay_valueFromBeforeSignOut": {
+        "status": 200,
+        "seedCarriesEmail": true
+      },
+      "control_noCookie": {
+        "status": 200,
+        "seedCarriesEmail": false
+      },
+      "consoleErrors": [
+        "[sky.spa] a server branch's follow-up could not be applied: Unexpected: sky.spa: unknown follow-up Msg ",
+        "[sky.spa] a server branch's follow-up could not be applied: Unexpected: sky.spa: unknown follow-up Msg "
+      ],
+      "pageErrors": [],
+      "rpcSeen": [
+        {
+          "method": "POST",
+          "path": "/_rpc/DoSignUp",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/_rpc/RunVerify",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/_rpc/RunLoadAccount",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/_rpc/__spaSignOut",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/_rpc/DoSignIn",
+          "status": 200
+        }
+      ],
+      "subSeen": [],
+      "cspViolations": 0
+    }
+  },
+  "finishedAt": "2026-09-30T07:21:12.061Z"
+}
