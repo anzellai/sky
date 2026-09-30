@@ -79,6 +79,21 @@ pub struct World {
     /// Weak variables (C-2, pass 6b), keyed by their opaque type name
     /// (`variance::WEAK_PREFIX`): what the `[E2012]` message at a use names.
     pub weak_vars: HashMap<String, crate::variance::WeakVar>,
+    /// CHECK-ONLY schemes that carry a BOUND the def's own signature does not
+    /// spell (v0.27.0 qualified bounds, `crate::obligations`). Two writers:
+    /// * pass 4: the stdlib APIs that encode a free type by reflection
+    ///   (`Codec.auto : encodable -> Codec encodable`, `App.withDurable`,
+    ///   `Table.table`/`insert`, `Jobs.define`/`enqueue`, `Auth.signToken`),
+    ///   whose `.sky` signatures stay as they are;
+    /// * pass 6c: an annotated def whose body forces `Encodable` on one of its
+    ///   plain variables (`persist : a -> Codec a; persist b = Codec.auto b`).
+    ///
+    /// Consulted FIRST at a `Res::Def` on the check path; never by the
+    /// lowerer, so Go emission is unchanged.
+    pub bound_check_sigs: HashMap<DefId, Scheme>,
+    /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
+    /// `(pseudo-module, func)`.
+    pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// LOWERING-PATH ONLY: full closed-record result types for zero-param,
     /// unannotated top-level defs (D2). Consulted ONLY in the `Expr::Update` arm
     /// on the `use_inferred` (codegen region-type) path, to close the row var when
@@ -271,6 +286,10 @@ impl World {
 
         // ---- pass 6b: the value restriction for app CAFs (C-2, check-only) ----
         self.apply_value_restriction(db);
+
+        // ---- pass 6c: qualified bounds carried through helpers (C-11/B-1,
+        // check-only) — see `crate::obligations`. ----
+        self.infer_bounds_fixpoint(db);
 
         // ---- pass 7: full record result types (D2, lowering-path only) ----
         self.infer_record_result_sigs(db);
@@ -540,6 +559,8 @@ impl World {
             app_check_sigs: HashMap::new(),
             any_result_check_sigs: HashMap::new(),
             weak_vars: HashMap::new(),
+            bound_check_sigs: HashMap::new(),
+            bound_kernel_sigs: HashMap::new(),
             record_result_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
@@ -1157,11 +1178,20 @@ impl World {
         // oracle is genuinely LENIENT on those (`abs "x"` / `min "a" 2` accept), so
         // pinning them would make Rust stricter than the oracle — a divergence, not
         // a fix. Verified against the absolute-path differential, 2026-07-20.
+        // v0.27.0 (C-11): the ordering kernels need a comparable type. They
+        // have no `.sky` definition (`compare` dispatches by reflection), so
+        // the bound lives here, in the check-only channel: the lowerer's view
+        // of them is unchanged. The oracle's leniency on `min "a" 2` is
+        // superseded by the qualified-bounds decision (FINAL-PLAN §3).
+        let cmp = || Ty::var("comparable");
         let basics_specs: Vec<(&str, Ty)> = vec![
             ("fst", fun(tup2(a(), b()), a())),
             ("snd", fun(tup2(a(), b()), b())),
             ("modBy", fun(int_(), fun(int_(), int_()))),
             ("clamp", fun(int_(), fun(int_(), fun(int_(), int_())))),
+            ("compare", fun(cmp(), fun(cmp(), int_()))),
+            ("min", fun(cmp(), fun(cmp(), cmp()))),
+            ("max", fun(cmp(), fun(cmp(), cmp()))),
         ];
 
         // F8 — Maybe core combinators (`withDefault : a -> Maybe a -> a`, etc.).
@@ -1296,6 +1326,7 @@ impl World {
             ),
         ];
 
+        crate::obligations::seed_bound_overrides(self, db);
         for (pseudo, path, specs) in [
             ("List", "Sky.Core.List", list_specs),
             ("Basics", "Sky.Core.Basics", basics_specs),

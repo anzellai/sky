@@ -53,15 +53,14 @@ abs =
     Ffi.kernel "Math_abs"
 
 
--- min / max are polymorphic — work on any comparable type at the
--- runtime level.  The kernel-registry sig is `forall a. a -> a -> a`;
--- Sky-source annotation mirrors that.
-min : a -> a -> a
+-- min / max work on any comparable type (see `List.sort`): the smaller /
+-- larger of two values.
+min : comparable -> comparable -> comparable
 min =
     Ffi.kernel "Math_min"
 
 
-max : a -> a -> a
+max : comparable -> comparable -> comparable
 max =
     Ffi.kernel "Math_max"
 

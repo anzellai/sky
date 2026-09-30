@@ -82,8 +82,8 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
 }
 
 pub struct Infer<'a> {
-    world: &'a World,
-    db: &'a dyn SkyDb,
+    pub(crate) world: &'a World,
+    pub(crate) db: &'a dyn SkyDb,
     pub uf: UnionFind,
     locals: HashMap<LocalId, TyVarId>,
     pub errors: Vec<TypeError>,
@@ -116,7 +116,7 @@ pub struct Infer<'a> {
     /// discipline by the `infer_expr` wrapper (save on entry, restore on exit).
     /// A unify clash reads this to anchor its `TypeError` at the offending
     /// sub-expression. Read-only bookkeeping; never affects unification.
-    cur_span: Option<Span>,
+    pub(crate) cur_span: Option<Span>,
     /// Go-FFI schemes parsed so far in THIS run, keyed by `(package, name)`.
     /// A skyType is parsed only when a reference to it is first instantiated,
     /// and at most once per run — never the whole surface.
@@ -134,6 +134,18 @@ pub struct Infer<'a> {
     /// checked type, the variables it may not generalise, and the fix text.
     /// Read by pass 6b (`World::apply_value_restriction`).
     pub last_vr: Option<(Ty, Vec<crate::variance::Violation>, crate::variance::VrInfo)>,
+    /// Bound obligations the unifier deferred (a bounded variable met a
+    /// custom type or a record), with the span where they arose. Decided by
+    /// [`Infer::discharge_bounds`] (`crate::obligations`, v0.27.0).
+    pub(crate) obligations: Vec<crate::obligations::Obligation>,
+    /// Nominal bound checks already made in this run, keyed by the bound, the
+    /// type name and its argument roots: stops a recursive type from looping.
+    pub(crate) bound_seen: std::collections::HashSet<(SuperType, String, Vec<TyVarId>)>,
+    /// Bounds the annotation gate INFERRED for the def's own type variables
+    /// (`Encodable` only, B-1): `persist : a -> Codec a` whose body calls
+    /// `Codec.auto`. Read by `World::infer_annotated_bounds`, which adds them
+    /// to the scheme callers see.
+    pub inferred_bounds: Vec<(Name, SuperType)>,
 }
 
 impl<'a> Infer<'a> {
@@ -155,6 +167,9 @@ impl<'a> Infer<'a> {
             poly_locals: HashMap::new(),
             poly_insts: Vec::new(),
             last_vr: None,
+            obligations: Vec::new(),
+            bound_seen: std::collections::HashSet::new(),
+            inferred_bounds: Vec::new(),
         }
     }
 
@@ -170,6 +185,11 @@ impl<'a> Infer<'a> {
     pub fn with_self_def(mut self, def: Option<DefId>) -> Self {
         self.self_def = def;
         self
+    }
+
+    /// Is this the lowering path (`use_inferred`)? Bounds are check-only.
+    pub(crate) fn use_inferred_path(&self) -> bool {
+        self.use_inferred
     }
 
     /// Consult pass-3 inferred schemes at call sites (lowerer only — see
@@ -226,6 +246,7 @@ impl<'a> Infer<'a> {
     pub fn infer_def(&mut self, body: &Body) -> Option<Ty> {
         let root = body.root?;
         let v = self.infer_expr(body, root);
+        self.discharge_bounds(true);
         self.collapse_let_poly();
         // C-2: the relaxed value restriction for an UNANNOTATED top-level CAF.
         // The type is read back from this run, so its variable names match the
@@ -352,7 +373,7 @@ impl<'a> Infer<'a> {
             let mut sub: HashMap<String, TyVarId> = HashMap::new();
             for name in &scheme.vars {
                 if name.as_str() != "any" {
-                    let fresh = self.uf.fresh_flex();
+                    let fresh = self.fresh_for_name(name.as_str());
                     sub.insert(name.as_str().to_string(), fresh);
                 }
             }
@@ -373,6 +394,7 @@ impl<'a> Infer<'a> {
         if let Some(ev) = expected_result {
             self.unify(v, ev);
         }
+        self.discharge_bounds(true);
         self.collapse_let_poly();
         Some((v, param_vars))
     }
@@ -443,11 +465,19 @@ impl<'a> Infer<'a> {
                 let fresh = if result_vars.contains(name.as_str()) {
                     self.uf.fresh(Content::Rigid(Name::new(name.as_str())))
                 } else {
-                    self.uf.fresh_flex()
+                    // An argument-only quantifier stays flexible, carrying the
+                    // bound its name spells (`comparable`), if any.
+                    self.fresh_for_name(name.as_str())
                 };
                 sub.insert(name.as_str().to_string(), fresh);
             }
         }
+        let arg_only: Vec<(String, TyVarId)> = scheme
+            .vars
+            .iter()
+            .filter(|n| n.as_str() != "any" && !result_vars.contains(n.as_str()))
+            .filter_map(|n| sub.get(n.as_str()).map(|v| (n.as_str().to_string(), *v)))
+            .collect();
         // Peel one arrow per top-level param, seeding EVERY param's declared type
         // (including record-typed params) CLOSED via `ty_to_var` — a param `model
         // : Model` is exactly the closed record the user wrote. Real TEA record
@@ -539,6 +569,12 @@ impl<'a> Infer<'a> {
             }
             self.cur_span = prev;
         }
+        // v0.27.0 qualified bounds: decide the deferred obligations, then
+        // check that every annotation variable the body bounded says so.
+        self.discharge_bounds(true);
+        if self.errors.len() == errs_before {
+            self.check_annotation_bounds(body, root, &arg_only);
+        }
         // C-2: the relaxed value restriction for a top-level CAF, checked
         // against the type callers see (the annotation, its `any` holes filled
         // by pass 6).
@@ -575,6 +611,7 @@ impl<'a> Infer<'a> {
             .map(|&p| self.infer_pat_fresh(body, p))
             .collect();
         let rv = self.infer_expr(body, root);
+        self.discharge_bounds(true);
         self.collapse_let_poly();
         let full = param_vars
             .into_iter()
@@ -618,7 +655,7 @@ impl<'a> Infer<'a> {
         let mut sub: HashMap<String, TyVarId> = HashMap::new();
         for name in &anno.vars {
             if name.as_str() != "any" {
-                let v = self.uf.fresh_flex();
+                let v = self.fresh_for_name(name.as_str());
                 sub.insert(name.as_str().to_string(), v);
                 named.push((name.as_str().to_string(), v));
             }
@@ -643,6 +680,7 @@ impl<'a> Infer<'a> {
             return None;
         }
         self.unify(rv, cur);
+        self.discharge_bounds(true);
         if self.errors.len() != errs_before {
             return None;
         }
@@ -653,13 +691,23 @@ impl<'a> Infer<'a> {
         let mut names: HashMap<Name, Name> = HashMap::new();
         for (n, v) in &named {
             let r = self.uf.find(*v);
-            if matches!(self.uf.content(r), Content::Flex | Content::FlexSuper(_)) {
+            let c = self.uf.content(r);
+            if matches!(c, Content::Flex | Content::FlexSuper(_)) {
                 names
                     .entry(Name::new(&format!("t{}", r.0)))
                     .or_insert_with(|| Name::new(n));
                 names
                     .entry(Name::new(&format!("r{}", r.0)))
                     .or_insert_with(|| Name::new(n));
+                if let Content::FlexSuper(b) = c {
+                    // A bounded root reads back as `<label><id>`; the user's
+                    // name keeps the bound only when it spells it, which the
+                    // annotation gate enforces (or, for `Encodable`, pass 6c
+                    // adds).
+                    names
+                        .entry(Name::new(&format!("{}{}", b.label(), r.0)))
+                        .or_insert_with(|| Name::new(n));
+                }
             }
         }
         let mut it = holes.into_iter();
@@ -715,7 +763,7 @@ impl<'a> Infer<'a> {
                     } else if let Some(&v) = sub.get(e.as_str()) {
                         v
                     } else {
-                        let v = self.uf.fresh_flex();
+                        let v = self.fresh_for_name(e.as_str());
                         sub.insert(e.as_str().to_string(), v);
                         v
                     }
@@ -746,9 +794,13 @@ impl<'a> Infer<'a> {
             return;
         }
         match self.uf.content(r) {
-            Content::Flex | Content::FlexSuper(_) => {
+            Content::Flex => {
                 out.insert(format!("t{}", r.0));
                 out.insert(format!("r{}", r.0));
+            }
+            // Spelt as `read_back_scheme` spells a bounded root.
+            Content::FlexSuper(b) => {
+                out.insert(format!("{}{}", b.label(), r.0));
             }
             Content::Rigid(n) => {
                 out.insert(n.as_str().to_string());
@@ -977,7 +1029,10 @@ impl<'a> Infer<'a> {
     }
 
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
-        if let Err(m) = self.uf.unify(a, b) {
+        let res = self.uf.unify(a, b);
+        // Obligations the unifier deferred are anchored where they arose.
+        self.drain_pending();
+        if let Err(m) = res {
             // A clash on a weak variable (C-2) is the value restriction at a
             // use: say so, with the migration fix.
             if let Some(message) = self.weak_use_message(&m.message) {
@@ -1365,6 +1420,10 @@ impl<'a> Infer<'a> {
     /// are NOT reachable from the enclosing scope or from the let's other
     /// binders — HM's `ftv(τ) \ ftv(Γ)`.
     fn generalise_let_group(&mut self, body: &Body, defs: &[hir::LocalDef], group: &[usize]) {
+        // Decide the deferred bound obligations first, so a bound on a custom
+        // type's argument reaches the variable before it is quantified (an
+        // instance copies a bounded variable, not a pending obligation).
+        self.discharge_bounds(false);
         let generalisable = |d: &hir::LocalDef| {
             d.pat.is_none()
                 && d.binders.len() == 1
@@ -1650,6 +1709,18 @@ impl<'a> Infer<'a> {
                     .or_insert_with(|| self.uf.fresh_flex())
             }
             Res::Def(def) => {
+                // v0.27.0 qualified bounds — CHECK-ONLY. A def whose scheme
+                // gained a bound it does not spell (a stdlib API that encodes
+                // by reflection, `Codec.auto : encodable -> Codec encodable`;
+                // an annotated helper whose body forces `Encodable`) is seen by
+                // its callers with the bound. Never on the lowering path, never
+                // for the def's own body.
+                if !self.use_inferred && self.self_def != Some(def) {
+                    if let Some(s) = self.world.bound_check_sigs.get(&def) {
+                        let s = s.clone();
+                        return self.instantiate(&s);
+                    }
+                }
                 // D1 (wildcard-`any` result pin) — CHECK-ONLY. When a def's
                 // declared result contains `any` and its body returns a concrete
                 // monomorphic type, use that pinned type at call sites so misuse
@@ -1711,6 +1782,13 @@ impl<'a> Infer<'a> {
             }
             Res::Kernel { module, func } => {
                 let key = (module.as_str().to_string(), func.as_str().to_string());
+                // v0.27.0 qualified bounds, the kernel face (see `Res::Def`).
+                if !self.use_inferred {
+                    if let Some(s) = self.world.bound_kernel_sigs.get(&key) {
+                        let s = relax_unit_arg_spine(s);
+                        return self.instantiate(&s);
+                    }
+                }
                 if let Some(s) = self.world.kernel_sigs.get(&key) {
                     // Zero-arg kernel-shim class (Limitation #7 family:
                     // `loadEnv`/`uuidV4`/`timeNow`/`Pure.*`): a kernel
@@ -1820,9 +1898,24 @@ impl<'a> Infer<'a> {
                 self.unify(tr, list);
                 tr
             }
-            // equality / comparison: a -> a -> Bool (lenient — no super-gate)
-            "==" | "/=" | "<" | ">" | "<=" | ">=" => {
+            // equality: a -> a -> Bool (lenient — no super-gate)
+            "==" | "/=" => {
                 self.unify(tl, tr);
+                self.con("Bool", vec![])
+            }
+            // ordering: comparable -> comparable -> Bool (v0.27.0, C-11). The
+            // operands must be comparable: `Green 2 < Red` orders by the
+            // derived constructor order, a function has no order.
+            "<" | ">" | "<=" | ">=" => {
+                if self.use_inferred {
+                    // Lowering path: bounds are check-only (see
+                    // `Infer::fresh_for_name`).
+                    self.unify(tl, tr);
+                } else {
+                    let c = self.uf.fresh(Content::FlexSuper(SuperType::Comparable));
+                    self.unify(tl, c);
+                    self.unify(tr, c);
+                }
                 self.con("Bool", vec![])
             }
             "&&" | "||" => {
@@ -2017,16 +2110,34 @@ impl<'a> Infer<'a> {
 
     // ---- instantiation (doc 06 §"Generalisation & instantiation") -------
 
-    fn instantiate(&mut self, s: &Scheme) -> TyVarId {
+    pub(crate) fn instantiate(&mut self, s: &Scheme) -> TyVarId {
         let mut sub: HashMap<String, TyVarId> = HashMap::new();
         for v in &s.vars {
             if v.as_str() == "any" {
                 continue; // per-occurrence: never shared (Instantiate.hs:43)
             }
-            let fresh = self.uf.fresh_flex();
+            let fresh = self.fresh_for_name(v.as_str());
             sub.insert(v.as_str().to_string(), fresh);
         }
         self.ty_to_var(&s.ty, &mut sub)
+    }
+
+    /// A fresh variable for a quantifier named `name`: bounded when the name
+    /// spells a bound (`comparable`, `number`, `appendable`, `compappend`,
+    /// `encodable`, and the unifier's own `comparable12`), else plain. This is
+    /// how a bound survives a scheme (v0.27.0 qualified bounds).
+    ///
+    /// Bounds are a CHECK-only concept: the lowering path (`use_inferred`)
+    /// never mints one, so its per-expression types, and hence Go emission,
+    /// are exactly what they were before bounds were qualified.
+    pub(crate) fn fresh_for_name(&mut self, name: &str) -> TyVarId {
+        if self.use_inferred {
+            return self.uf.fresh_flex();
+        }
+        match SuperType::from_var_name(name) {
+            Some(b) => self.uf.fresh(Content::FlexSuper(b)),
+            None => self.uf.fresh_flex(),
+        }
     }
 
     fn ty_to_var(&mut self, ty: &Ty, sub: &mut HashMap<String, TyVarId>) -> TyVarId {
@@ -2039,7 +2150,7 @@ impl<'a> Infer<'a> {
                 if let Some(&v) = sub.get(n.as_str()) {
                     v
                 } else {
-                    let v = self.uf.fresh_flex();
+                    let v = self.fresh_for_name(n.as_str());
                     sub.insert(n.as_str().to_string(), v);
                     v
                 }
@@ -2070,7 +2181,7 @@ impl<'a> Infer<'a> {
                     } else if let Some(&v) = sub.get(e.as_str()) {
                         v
                     } else {
-                        let v = self.uf.fresh_flex();
+                        let v = self.fresh_for_name(e.as_str());
                         sub.insert(e.as_str().to_string(), v);
                         v
                     }
@@ -2123,22 +2234,27 @@ impl<'a> Infer<'a> {
         if !seen.insert(r) {
             return Ty::Error; // cycle guard (anyEquivSeen, Solve.hs:1449)
         }
-        let super_var = |r: TyVarId| Ty::Var(Name::new(&format!("t{}", r.0)));
         let out = match self.uf.content(r) {
             Content::Flex => Ty::Var(Name::new(&format!("t{}", r.0))),
             Content::Rigid(n) => Ty::Var(n),
             // Oracle-faithful concrete default: unresolved `Number` super reads
             // back as concrete `Int` (Solve.hs:1457) on the concretize channel.
-            // `Int` (not `App("number")`) so `super_matches(Number, Int)` still
-            // admits valid `Int` uses at call sites.
-            Content::FlexSuper(SuperType::Number) if scheme && concretize_super => {
+            // `Int` (not `App("number")`) so a `Number` bound still admits valid
+            // `Int` uses at call sites.
+            Content::FlexSuper(b) if scheme && concretize_super && b.has(SuperType::Number) => {
                 Ty::app("Int", vec![])
             }
-            Content::FlexSuper(_) if scheme => super_var(r),
-            Content::FlexSuper(SuperType::Number) => Ty::app("number", vec![]),
-            Content::FlexSuper(SuperType::Comparable) => Ty::var("comparable"),
-            Content::FlexSuper(SuperType::Appendable) => Ty::var("appendable"),
-            Content::FlexSuper(SuperType::CompAppend) => Ty::var("compappend"),
+            // v0.27.0 qualified bounds: a bounded quantifier is spelt with its
+            // bound (`comparable12`), so instantiating the scheme restores it
+            // (`Infer::fresh_for_name`). Distinct roots stay distinct names.
+            Content::FlexSuper(b) if scheme => Ty::Var(Name::new(&format!("{}{}", b.label(), r.0))),
+            // Expression-level read-back (the lowerer's table): unchanged from
+            // before bounds were qualified, so Go emission is byte-identical.
+            // `Comparable`/`Encodable` alone read back as the plain variable
+            // they were before `<` and `Codec.auto` carried a bound.
+            Content::FlexSuper(b) if b.has(SuperType::Number) => Ty::app("number", vec![]),
+            Content::FlexSuper(b) if b.has(SuperType::Appendable) => Ty::var("appendable"),
+            Content::FlexSuper(_) => Ty::Var(Name::new(&format!("t{}", r.0))),
             Content::Error => Ty::Error,
             Content::Structure(ft) => match ft {
                 FlatTy::App(name, args) => Ty::App(
@@ -2173,6 +2289,14 @@ impl<'a> Infer<'a> {
                     fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
                     let ext_name = ext.and_then(|e| match self.uf.content(e) {
                         Content::Flex => Some(Name::new(&format!("r{}", self.uf.find(e).0))),
+                        // A bounded row (an open record passed to `Codec.auto`)
+                        // keeps its bound in a scheme.
+                        Content::FlexSuper(b) if scheme => {
+                            Some(Name::new(&format!("{}{}", b.label(), self.uf.find(e).0)))
+                        }
+                        Content::FlexSuper(_) => {
+                            Some(Name::new(&format!("r{}", self.uf.find(e).0)))
+                        }
                         _ => None,
                     });
                     Ty::Record(fields, ext_name)

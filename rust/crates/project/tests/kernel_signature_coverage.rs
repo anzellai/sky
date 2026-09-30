@@ -97,9 +97,15 @@ fn repo_root() -> PathBuf {
 ///     the exact channel whose concrete pinning regressed the stdlib smoke test
 ///     with a runtime `CoerceFailure` (see `infer_unannotated_kernel`'s
 ///     `pseudo != "Result"` guard). High blast radius, no diagnostic gain.
-///     `Basics.abs`/`min`/`max`/`negate`/`sqrt`/`compare` additionally MUST NOT
-///     be pinned: the oracle accepts `abs "x"` / `min "a" 2`, so a signature
-///     would make Rust stricter than the oracle — a divergence, not a fix
+///     `Basics.compare`/`min`/`max` are typed since v0.27.0 (C-11) in that
+///     same check-only channel, `comparable -> comparable -> …` (qualified
+///     bounds, `ty::obligations`): the oracle's leniency on `min "a" 2` was
+///     given up on purpose, because an unconstrained ordering accepted
+///     `compare` on two functions. They stay on this list because they still
+///     have no `.sky` declaration (`compare` dispatches by reflection), and a
+///     declaration would move them into the lowerer's `kernel_sigs`.
+///     `Basics.abs`/`negate`/`sqrt` stay unpinned: the oracle accepts
+///     `abs "x"`, and a signature would make Rust stricter than the oracle
 ///     (verified against the absolute-path differential, 2026-07-20).
 ///   * **`Fmt.sprint`/`sprintf`/`sprintln`/`errorf` (4)** — Go-VARIADIC
 ///     (`args ...any`). HM has no variadic arrow, so no signature is both

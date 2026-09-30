@@ -19,13 +19,125 @@ use crate::TyVarId;
 use base::Name;
 use std::collections::BTreeMap;
 
-/// The four built-in super-vars (`Type.hs:62`). NOT typeclasses (doc 03 §5).
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum SuperType {
-    Number,
-    Comparable,
-    Appendable,
-    CompAppend,
+/// The bounds a type variable can carry: Elm's four built-in super-vars
+/// (`Type.hs:62`) plus `Encodable` (v0.27.0, B-1). NOT typeclasses (doc 03
+/// §5): a fixed set, decided structurally.
+///
+/// A set of flags, closed upwards by [`SuperType::closure`]: a number is
+/// comparable, and a comparable is encodable (every comparable shape is data
+/// `Codec.auto` round-trips). `Number` and `Appendable` together are
+/// unsatisfiable (no type is both).
+///
+/// **Qualified bounds (v0.27.0, C-11).** A bound survives generalisation by
+/// its NAME: a scheme variable read back from a bounded variable is spelt
+/// `<label><id>` (`comparable12`), and instantiation maps any variable whose
+/// name starts with a label back to a bounded variable
+/// ([`SuperType::from_var_name`]). So does a variable the user writes:
+/// `largest : List comparable -> Maybe comparable`, as in Elm.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Default)]
+pub struct SuperType(u8);
+
+#[allow(non_upper_case_globals)]
+impl SuperType {
+    /// `Int` or `Float`.
+    pub const Number: SuperType = SuperType(1);
+    /// Can be ordered (`<`, `compare`, `List.sort`, `Set`, …).
+    pub const Comparable: SuperType = SuperType(2);
+    /// `String` or `List a` (`++`).
+    pub const Appendable: SuperType = SuperType(4);
+    /// Comparable and appendable: `String` or `List comparable`.
+    pub const CompAppend: SuperType = SuperType(2 | 4);
+    /// Round-trips through `Codec.auto` (B-1): no function, `Secret`, key,
+    /// crypto state or runtime handle anywhere inside.
+    pub const Encodable: SuperType = SuperType(8);
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+    pub fn has(self, o: SuperType) -> bool {
+        self.0 & o.0 == o.0 && !o.is_empty()
+    }
+    pub fn union(self, o: SuperType) -> SuperType {
+        SuperType(self.0 | o.0)
+    }
+    pub fn intersect(self, o: SuperType) -> SuperType {
+        SuperType(self.0 & o.0)
+    }
+    pub fn minus(self, o: SuperType) -> SuperType {
+        SuperType(self.0 & !o.0)
+    }
+    /// Close the set upwards: `Number ⇒ Comparable ⇒ Encodable`.
+    pub fn closure(self) -> SuperType {
+        let mut b = self.0;
+        if b & 1 != 0 {
+            b |= 2;
+        }
+        if b & 2 != 0 {
+            b |= 8;
+        }
+        SuperType(b)
+    }
+    /// Some type satisfies every bound in the set.
+    pub fn is_satisfiable(self) -> bool {
+        !(self.has(SuperType::Number) && self.has(SuperType::Appendable))
+    }
+    /// What the ELEMENTS of a container must satisfy for the container to
+    /// satisfy `self` (a list is comparable when its elements are).
+    pub fn for_elements(self) -> SuperType {
+        self.closure()
+            .intersect(SuperType::Comparable.union(SuperType::Encodable))
+    }
+    /// The variable-name prefix that spells this (closed) set.
+    pub fn label(self) -> &'static str {
+        let b = self.closure();
+        if b.has(SuperType::Number) {
+            "number"
+        } else if b.has(SuperType::CompAppend) {
+            "compappend"
+        } else if b.has(SuperType::Comparable) {
+            "comparable"
+        } else if b.has(SuperType::Appendable) && b.has(SuperType::Encodable) {
+            "encappend"
+        } else if b.has(SuperType::Appendable) {
+            "appendable"
+        } else {
+            "encodable"
+        }
+    }
+    /// The bound a variable NAME carries (Elm's rule: a prefix). `None` for
+    /// an ordinary variable.
+    pub fn from_var_name(name: &str) -> Option<SuperType> {
+        const PREFIXES: [(&str, SuperType); 6] = [
+            ("compappend", SuperType::CompAppend),
+            ("comparable", SuperType::Comparable),
+            ("appendable", SuperType::Appendable),
+            ("encappend", SuperType(4 | 8)),
+            ("encodable", SuperType::Encodable),
+            ("number", SuperType::Number),
+        ];
+        PREFIXES
+            .iter()
+            .find(|(p, _)| name.starts_with(p))
+            .map(|(_, b)| b.closure())
+    }
+    /// Is `name` a variable the unifier minted for a bounded variable
+    /// (`comparable12`: a label followed by digits only)? Such a name is an
+    /// inference artefact, like `t12`, and is shown as plain `comparable`.
+    pub fn minted_label(name: &str) -> Option<&'static str> {
+        [
+            "compappend",
+            "comparable",
+            "appendable",
+            "encappend",
+            "encodable",
+            "number",
+        ]
+        .into_iter()
+        .find(|p| {
+            name.strip_prefix(p)
+                .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+        })
+    }
 }
 
 /// The descriptor a union-find root carries.
@@ -87,11 +199,25 @@ impl Mismatch {
 #[derive(Default, Clone)]
 pub struct UnionFind {
     slots: Vec<Slot>,
+    /// Bound obligations the unifier cannot decide on its own (v0.27.0,
+    /// C-11/B-1): a bounded variable met a nominal type (a custom type, an
+    /// opaque stdlib type) or a record. Whether a custom type is comparable
+    /// depends on its constructors, which only the nominal environment knows,
+    /// and whether a record's row is closed is known only after solving. The
+    /// checker drains these and decides them (`crate::obligations`).
+    pub(crate) pending: Vec<(SuperType, TyVarId)>,
+    /// Bounds a RIGID (annotation) variable was asked for that its name does
+    /// not carry but that the checker infers instead of refusing: only
+    /// `Encodable` (B-1). `persist : a -> Codec a; persist b = Codec.auto b`
+    /// exports `encodable -> Codec encodable`, so the bound is carried to its
+    /// callers. A missing `Comparable`/`Number`/`Appendable` is refused
+    /// (Elm's rule).
+    pub(crate) rigid_needs: Vec<(Name, SuperType)>,
 }
 
 impl UnionFind {
     pub fn new() -> Self {
-        UnionFind { slots: Vec::new() }
+        UnionFind::default()
     }
 
     /// Allocate a fresh variable with the given content. Deterministic (L4):
@@ -254,6 +380,27 @@ impl UnionFind {
                     )))
                 }
             }
+            // A skolem vs a BOUNDED flex (v0.27.0 qualified bounds): legal when
+            // the skolem's own name carries the bound (`comparable` against
+            // `<`), or when the only missing bound is `Encodable`, which the
+            // checker infers and adds to the exported scheme. A missing
+            // `Comparable`/`Number`/`Appendable` is Elm's "the annotation is
+            // too general" error, worded with the fix.
+            (Content::Rigid(n), Content::FlexSuper(s))
+            | (Content::FlexSuper(s), Content::Rigid(n)) => {
+                let have = SuperType::from_var_name(n.as_str()).unwrap_or_default();
+                let missing = s.closure().minus(have.closure());
+                if missing.is_empty() {
+                    self.union(ra, rb, Content::Rigid(n));
+                    Ok(())
+                } else if missing == SuperType::Encodable {
+                    self.rigid_needs.push((n.clone(), missing));
+                    self.union(ra, rb, Content::Rigid(n));
+                    Ok(())
+                } else {
+                    Err(Mismatch::new(rigid_bound_message(n.as_str(), missing)))
+                }
+            }
             // A skolem vs ANYTHING concrete (Structure / FlexSuper) is a clash:
             // the body forced the declared quantifier to a specific type, so the
             // annotation is strictly more general than the body (audit #5/#6).
@@ -263,24 +410,133 @@ impl UnionFind {
                 "rigid type variable `{}` cannot be unified with a concrete type",
                 n.as_str()
             ))),
-            (Content::FlexSuper(s1), Content::FlexSuper(s2)) => match combine_super(s1, s2) {
-                Some(s) => {
+            (Content::FlexSuper(s1), Content::FlexSuper(s2)) => {
+                let s = s1.union(s2).closure();
+                if s.is_satisfiable() {
                     self.union(ra, rb, Content::FlexSuper(s));
                     Ok(())
-                }
-                None => Err(Mismatch::new(format!("cannot unify {s1:?} with {s2:?}"))),
-            },
-            (Content::FlexSuper(s), Content::Structure(ft))
-            | (Content::Structure(ft), Content::FlexSuper(s)) => {
-                if super_matches(s, &ft) {
-                    self.union(ra, rb, Content::Structure(ft));
-                    Ok(())
                 } else {
-                    Err(Mismatch::new(format!("{} is not a {s:?}", flat_label(&ft))))
+                    Err(Mismatch::new(
+                        "no type is both a number and appendable (`++` needs a `String` or a `List`, \
+                         arithmetic needs an `Int` or a `Float`)",
+                    ))
                 }
             }
+            (Content::FlexSuper(s), Content::Structure(ft))
+            | (Content::Structure(ft), Content::FlexSuper(s)) => self.satisfy(ra, rb, s, ft),
             (Content::Structure(f1), Content::Structure(f2)) => self.unify_flat(ra, rb, f1, f2),
         }
+    }
+
+    /// A bounded variable meets a concrete shape (`superMatches`, `Unify.hs:529`,
+    /// made structural in v0.27.0). Containers pass the bound to their
+    /// elements (a list is comparable when its elements are), so the check is
+    /// complete for every shape the unifier can see. A nominal type other than
+    /// the builtins, and a record (whose row is known closed only after
+    /// solving), are recorded in [`UnionFind::pending`] for the checker.
+    fn satisfy(
+        &mut self,
+        ra: TyVarId,
+        rb: TyVarId,
+        s: SuperType,
+        ft: FlatTy,
+    ) -> Result<(), Mismatch> {
+        let s = s.closure();
+        let elems = s.for_elements();
+        let num = s.has(SuperType::Number);
+        let app = s.has(SuperType::Appendable);
+        let fail = |this: &mut Self, ft: &FlatTy| -> Result<(), Mismatch> {
+            let what = this.describe_flat(ft, 0);
+            Err(Mismatch::new(bound_failure(s, &what, ft)))
+        };
+        // Which children must carry `elems`, and whether the node itself is a
+        // pending (nominal / record) obligation.
+        let (children, pend): (Vec<TyVarId>, bool) = match &ft {
+            FlatTy::Fun(..) => return fail(self, &ft),
+            FlatTy::Unit => {
+                if num || app {
+                    return fail(self, &ft);
+                }
+                (Vec::new(), false)
+            }
+            FlatTy::Tuple(xs) => {
+                if num || app {
+                    return fail(self, &ft);
+                }
+                (xs.clone(), false)
+            }
+            FlatTy::Record(fs, _) => {
+                if num || app {
+                    return fail(self, &ft);
+                }
+                (fs.values().copied().collect(), true)
+            }
+            FlatTy::App(n, args) => match (n.as_str(), args.len()) {
+                ("Int" | "Float", 0) => {
+                    if app {
+                        return fail(self, &ft);
+                    }
+                    (Vec::new(), false)
+                }
+                ("String", 0) => {
+                    if num {
+                        return fail(self, &ft);
+                    }
+                    (Vec::new(), false)
+                }
+                ("Char" | "Bool", 0) => {
+                    if num || app {
+                        return fail(self, &ft);
+                    }
+                    (Vec::new(), false)
+                }
+                ("List", 1) => {
+                    if num {
+                        return fail(self, &ft);
+                    }
+                    (args.clone(), false)
+                }
+                ("Maybe", 1) | ("Result", 2) => {
+                    if num || app {
+                        return fail(self, &ft);
+                    }
+                    (args.clone(), false)
+                }
+                // A `Dict` or a `Set` has no order (Elm's rule); both encode.
+                ("Dict", 2) | ("Set", 1) => {
+                    if num || app || s.has(SuperType::Comparable) {
+                        return fail(self, &ft);
+                    }
+                    (args.clone(), false)
+                }
+                // A weak variable (C-2) is one fixed type chosen elsewhere.
+                (w, _) if w.starts_with(crate::variance::WEAK_PREFIX) => (Vec::new(), false),
+                _ => {
+                    if num || app {
+                        return fail(self, &ft);
+                    }
+                    (Vec::new(), true)
+                }
+            },
+        };
+        self.union(ra, rb, Content::Structure(ft));
+        let root = self.find(ra);
+        if pend && !elems.is_empty() {
+            self.pending.push((elems, root));
+        }
+        if !elems.is_empty() {
+            for c in children {
+                let b = self.fresh(Content::FlexSuper(elems));
+                self.unify(c, b)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Describe a variable for a bound diagnostic (`describe_var`, public to
+    /// the checker's obligation pass).
+    pub(crate) fn describe(&mut self, v: TyVarId) -> String {
+        self.describe_var(v, 0)
     }
 
     fn infinite(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
@@ -590,16 +846,6 @@ pub(crate) fn flat_children(ft: &FlatTy) -> Vec<TyVarId> {
     }
 }
 
-fn flat_label(ft: &FlatTy) -> String {
-    match ft {
-        FlatTy::App(n, _) => n.as_str().to_string(),
-        FlatTy::Fun(_, _) => "function".to_string(),
-        FlatTy::Record(_, _) => "record".to_string(),
-        FlatTy::Tuple(_) => "tuple".to_string(),
-        FlatTy::Unit => "()".to_string(),
-    }
-}
-
 fn record_missing_msg(missing: &BTreeMap<Name, TyVarId>) -> String {
     let names: Vec<&str> = missing.keys().map(Name::as_str).collect();
     format!("record is missing field(s): {}", names.join(", "))
@@ -613,46 +859,83 @@ fn record_unknown_msg(unknown: &BTreeMap<Name, TyVarId>) -> String {
     )
 }
 
-/// `combineSuper` (`Unify.hs:546`). CompAppend is the meet of Comparable and
-/// Appendable; Number meets only itself/Comparable-ish per Sky's tables.
-fn combine_super(a: SuperType, b: SuperType) -> Option<SuperType> {
-    use SuperType::*;
-    if a == b {
-        return Some(a);
-    }
-    match (a, b) {
-        (Number, Comparable) | (Comparable, Number) => Some(Number),
-        (Comparable, Appendable) | (Appendable, Comparable) => Some(CompAppend),
-        (CompAppend, Comparable) | (Comparable, CompAppend) => Some(CompAppend),
-        (CompAppend, Appendable) | (Appendable, CompAppend) => Some(CompAppend),
-        _ => None,
+/// The migration link for an ordering refused since v0.27.0.
+pub(crate) const COMPARABLE_ANCHOR: &str = "docs/migration/v0.27.md#comparable-bound";
+/// The migration link for a persisted value refused since v0.27.0.
+pub(crate) const ENCODABLE_ANCHOR: &str = "docs/migration/v0.27.md#encodable-bound";
+
+/// Why a shape fails a bound, worded for the user. `what` renders the shape.
+pub(crate) fn bound_failure(s: SuperType, what: &str, ft: &FlatTy) -> String {
+    let s = s.closure();
+    let shown = match ft {
+        FlatTy::Fun(..) => format!("a function (`{what}`)"),
+        FlatTy::Record(..) => "a record".to_string(),
+        _ => format!("`{what}`"),
+    };
+    if s.has(SuperType::Number) {
+        format!("{shown} is not a number: this needs an `Int` or a `Float`")
+    } else if s.has(SuperType::Appendable) {
+        format!("{shown} cannot be appended with `++`: only a `String` or a `List` can")
+    } else if s.has(SuperType::Comparable) {
+        comparable_failure(&shown)
+    } else {
+        encodable_failure(&shown)
     }
 }
 
-/// `superMatches` (`Unify.hs:529`): does a concrete shape satisfy a super-var?
-fn super_matches(s: SuperType, ft: &FlatTy) -> bool {
-    let name = match ft {
-        FlatTy::App(n, args) if args.is_empty() => Some(n.as_str()),
-        FlatTy::App(n, _) => Some(n.as_str()),
-        _ => None,
-    };
-    match s {
-        SuperType::Number => matches!(name, Some("Int") | Some("Float")),
-        SuperType::Comparable => {
-            matches!(
-                name,
-                Some("Int") | Some("Float") | Some("String") | Some("Char")
-            ) || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
-                || matches!(ft, FlatTy::Tuple(_))
-        }
-        SuperType::Appendable => {
-            matches!(name, Some("String"))
-                || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
-        }
-        SuperType::CompAppend => {
-            matches!(name, Some("String"))
-                || matches!(ft, FlatTy::App(n, _) if n.as_str() == "List")
-        }
+/// The `Comparable` refusal, ending with the migration link.
+pub(crate) fn comparable_failure(shown: &str) -> String {
+    format!(
+        "{shown} cannot be ordered, so it cannot be used with `<`, `>`, `<=`, `>=`, \
+         `compare`, `min`, `max`, `List.sort`, `List.sortBy` or a `Set`. Since v0.27.0 an \
+         ordering needs a comparable type: `Int`, `Float`, `String`, `Char`, `Bool`, a `List`, \
+         `Maybe`, `Result` or tuple of comparables, a record whose fields are comparable, or a \
+         custom type whose constructors hold only comparable values. A function, a `Dict`, a \
+         `Set`, a `Secret`, a key, a runtime handle and an opaque stdlib type have no order. \
+         Fix: order by a comparable key instead, for example `List.sortBy .name items`. \
+         See {COMPARABLE_ANCHOR}"
+    )
+}
+
+/// The `Encodable` refusal, ending with the migration link.
+pub(crate) fn encodable_failure(shown: &str) -> String {
+    format!(
+        "{shown} cannot be encoded, so it cannot be stored by `Codec.auto`, \
+         `App.withDurable`, a `Std.Db.Table`, `Jobs.define`/`enqueue` or `Auth.signToken`. \
+         Since v0.27.0 these need a type that round-trips as data: no function, `Secret`, \
+         crypto key or state, or runtime handle (`Process`, `Watcher`, `Sync.Ref`, `Mutex`, \
+         `Queue`, `WebSocket`, `WebSocketServer`, `StreamId`, `StreamWriter`, `Cache`) anywhere \
+         inside, in either direction (a handle decoded from JSON would be forged). Fix: keep \
+         that value out of the stored type, for example in a separate field of the model that \
+         is not persisted, or store the data it is made from. See {ENCODABLE_ANCHOR}"
+    )
+}
+
+/// Elm's "the annotation is too general" error for a rigid variable that the
+/// body needs to be bounded (`largest : List a -> Maybe a` using `List.sort`).
+pub(crate) fn rigid_bound_message(var: &str, missing: SuperType) -> String {
+    let missing = missing.closure();
+    if missing.has(SuperType::Comparable) && !missing.has(SuperType::Number) {
+        format!(
+            "the type annotation says `{var}` can be any type, but this code orders it \
+             (`<`, `compare`, `min`, `max`, `List.sort`, `List.sortBy` or a `Set`), so it must \
+             be a comparable type. Since v0.27.0 an ordering needs a comparable type, and a \
+             type variable that is ordered must say so. Fix: write `comparable` instead of \
+             `{var}` in the type annotation, for example \
+             `largest : List comparable -> Maybe comparable`. See {COMPARABLE_ANCHOR}"
+        )
+    } else if missing.has(SuperType::Number) {
+        format!(
+            "the type annotation says `{var}` can be any type, but this code uses it as a \
+             number. Fix: write `number` instead of `{var}` in the type annotation, or a \
+             concrete `Int` or `Float`"
+        )
+    } else {
+        format!(
+            "the type annotation says `{var}` can be any type, but this code appends it with \
+             `++`. Fix: write `appendable` instead of `{var}` in the type annotation, or a \
+             concrete `String` or `List`"
+        )
     }
 }
 

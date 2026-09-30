@@ -467,9 +467,10 @@ pub fn concretise(t: &Ty, vars: &[String], with: &Ty) -> Ty {
 /// user wrote? Mirrors `Ty::render_pretty`.
 fn is_internal_var(n: &str) -> bool {
     let mut chars = n.chars();
-    matches!(chars.next(), Some('t') | Some('r'))
+    (matches!(chars.next(), Some('t') | Some('r'))
         && !n[1..].is_empty()
-        && n[1..].chars().all(|c| c.is_ascii_digit())
+        && n[1..].chars().all(|c| c.is_ascii_digit()))
+        || crate::unify::SuperType::minted_label(n).is_some()
 }
 
 /// Rename the unifier's variables to `a`, `b`, … (skipping names the user

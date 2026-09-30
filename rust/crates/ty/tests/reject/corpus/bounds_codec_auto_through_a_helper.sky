@@ -1,0 +1,26 @@
+-- defect: `Codec.auto` encodes by reflection, and accepted any witness. Over a
+-- record with a function field it type-checked and panicked at run time
+-- (`Codec.auto: cannot encode kind func`, the v0.27.0 audit repro C/cd-3);
+-- over a `Secret` or a crypto key it encoded `{}` and the decode then failed,
+-- so a durable model silently stopped being restored (B-1). Since v0.27.0
+-- `Codec.auto` needs an Encodable type, and the bound is carried through a
+-- generic helper: `persist` is annotated `a -> Codec a`, and the checker
+-- infers that its `a` must be encodable. The accepted twin (a record of data)
+-- is in ty/tests/qualified_bounds.rs.
+--
+-- rust: reject [E2001] — `Codec.auto` needs an Encodable type (B-1).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+import Std.Log exposing (println)
+
+
+persist : a -> Codec a
+persist blank =
+    Codec.auto blank
+
+
+main : Task Error ()
+main =
+    println (Codec.toJson (persist { f = \x -> x + 1 }) { f = \x -> x * 2 })
