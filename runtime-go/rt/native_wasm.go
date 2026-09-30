@@ -349,8 +349,46 @@ func Native_notify(title any, body any) any {
 	t := fmt.Sprintf("%v", title)
 	b := fmt.Sprintf("%v", body)
 	return func() any {
-		return nativeNotifyVia(nativeShellJS, func() SkyResult[any, any] { return webNotify(t, b) }, t, b)
+		return nativeNotifyWith(nativeShellJS, legacyShellNotify, func() SkyResult[any, any] { return webNotify(t, b) }, t, b)
 	}
+}
+
+// legacyShellNotify posts through the notify entry point of a native shell
+// built before v0.27.0 (E-16): iOS — `skyNative.postMessage({type:"notify",
+// title, body})`, whose reply Promise settles Ok or rejects; Android —
+// `SkyNative.notify(title, body)`, a synchronous bool.
+func legacyShellNotify(t, b string) (res SkyResult[any, any], ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			res, ok = SkyResult[any, any]{}, false
+		}
+	}()
+	win := js.Global()
+	if webkit := win.Get("webkit"); webkit.Truthy() {
+		if mh := webkit.Get("messageHandlers"); mh.Truthy() {
+			if sky := mh.Get("skyNative"); sky.Truthy() && sky.Get("postMessage").Type() == js.TypeFunction {
+				msg := win.Get("Object").New()
+				msg.Set("type", "notify")
+				msg.Set("title", t)
+				msg.Set("body", b)
+				reply := sky.Call("postMessage", msg)
+				if reply.Truthy() && reply.Type() == js.TypeObject {
+					return blockOnJsPromise(reply, func(a []js.Value) SkyResult[any, any] {
+						return Ok[any, any](struct{}{})
+					}), true
+				}
+				return SkyResult[any, any]{}, false
+			}
+		}
+	}
+	if sn := win.Get("SkyNative"); sn.Truthy() {
+		r := sn.Call("notify", t, b)
+		if r.Type() == js.TypeBoolean && !r.Bool() {
+			return Err[any, any](ErrPermissionDenied("notify: the device denied notifications")), true
+		}
+		return Ok[any, any](struct{}{}), true
+	}
+	return SkyResult[any, any]{}, false
 }
 
 // webNotify shows a notification with the Web Notification API
