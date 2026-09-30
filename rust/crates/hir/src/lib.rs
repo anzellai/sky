@@ -17,6 +17,7 @@ mod hir;
 mod ids;
 mod kernel;
 mod resolve;
+pub mod stdlib_history;
 
 pub use db::{ImportSource, SkyDb, SourceDb};
 pub use exports::{compute_exports, ExportedAlias, ExportedCtor, ExportedUnion, ModuleExports};
@@ -26,8 +27,8 @@ pub use ffi::{
 pub use hir::{Body, CaseBranch, Expr, ExprId, LocalDef, PatId, Pattern, TopDef, Type, TypeId};
 pub use ids::{CtorRef, DefKind, DefLoc, DefTable, LocalId, Res, TypeRes};
 pub use kernel::{
-    is_reserved_sky_namespace, kernel_functions, KERNEL_FUNCTIONS, KERNEL_IMPLICIT_TYPES,
-    KERNEL_MODULES, PRELUDE_PROTECTED, PRELUDE_QUALIFIERS,
+    is_reserved_sky_namespace, kernel_functions, BUILTIN_CTORS, BUILTIN_TYPES, BUILTIN_VARS,
+    KERNEL_FUNCTIONS, KERNEL_IMPLICIT_TYPES, KERNEL_MODULES, PRELUDE_PROTECTED, PRELUDE_QUALIFIERS,
 };
 pub use resolve::{
     resolve, BinderDef, ClassA, ClassB, FieldDecl, FieldOcc, FieldRecv, RefKind, RefOcc,

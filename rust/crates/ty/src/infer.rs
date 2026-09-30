@@ -891,9 +891,27 @@ impl<'a> Infer<'a> {
             }
             Expr::Case { subject, branches } => {
                 let ts = self.infer_expr(body, *subject);
+                // E-18 / M-2: type the arms' patterns together first, then meet
+                // the scrutinee ONCE. Unifying each arm's pattern with the
+                // scrutinee separately reported one wrong scrutinee type once
+                // per arm (`case Crypto.aesGcmEncrypt k p of Ok … ; Err …` on
+                // the Task it now returns printed the same `[E2001]` twice).
+                // Patterns that disagree with each other are still an error,
+                // reported between the arms. Every pattern is typed before any
+                // arm body, so each body sees its locals already tied to the
+                // scrutinee, as before.
+                let pats: Vec<TyVarId> = branches
+                    .iter()
+                    .map(|br| self.infer_pat_fresh(body, br.pat))
+                    .collect();
+                if let Some((&first, rest)) = pats.split_first() {
+                    for &p in rest {
+                        self.unify(p, first);
+                    }
+                    self.unify(first, ts);
+                }
                 let result = self.uf.fresh_flex();
                 for br in branches {
-                    self.infer_pat_against(body, br.pat, ts);
                     let tb = self.infer_expr(body, br.body);
                     self.unify(tb, result);
                 }
@@ -1586,6 +1604,45 @@ impl<'a> Infer<'a> {
                     .as_ref()
                     .and_then(|cr| self.world.ctors_by_def.get(&cr.def).cloned());
                 // instantiate the ctor scheme: peel args, unify result w/ expected.
+                // A pattern that gives a constructor the wrong number of
+                // sub-patterns is an arity error AT THE PATTERN, naming the
+                // constructor and both counts. Peeling the extra arguments off
+                // the constructor's type instead reported a type mismatch at the
+                // `case` head (`Result _ _` vs `a -> b`) that did not say which
+                // pattern was wrong or why.
+                let declared = ctor.as_ref().map(|cr| cr.arity as usize);
+                if let (Some(n), Some(scheme)) = (
+                    declared.filter(|&n| n != args.len()),
+                    by_def
+                        .clone()
+                        .or_else(|| self.world.ctors.get(&cname).cloned()),
+                ) {
+                    let given = args.len();
+                    let plural = |k: usize| if k == 1 { "argument" } else { "arguments" };
+                    self.errors.push(TypeError {
+                        message: format!(
+                            "The constructor `{cname}` takes {n} {}, but this pattern gives it \
+                             {given}. Write one sub-pattern per argument (use `_` for one you \
+                             do not need).",
+                            plural(n)
+                        ),
+                        span: body.pat_span(p).or(self.cur_span),
+                        code: "E2007",
+                    });
+                    let mut cur = self.instantiate(&scheme);
+                    for _ in 0..n {
+                        let a = self.uf.fresh_flex();
+                        let r = self.uf.fresh_flex();
+                        let want = self.fun(a, r);
+                        self.unify(cur, want);
+                        cur = r;
+                    }
+                    self.unify(cur, expected);
+                    for pat in &args {
+                        let _ = self.infer_pat_fresh(body, *pat);
+                    }
+                    return;
+                }
                 if let Some(scheme) = by_def.or_else(|| self.world.ctors.get(&cname).cloned()) {
                     let mut cur = self.instantiate(&scheme);
                     let mut arg_vars = Vec::new();

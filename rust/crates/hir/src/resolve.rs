@@ -331,6 +331,41 @@ enum TypeKey {
     Opaque,
 }
 
+/// Depth-first search over alias-to-alias edges: true when `target` is
+/// reachable again from `at`. On success `path` holds the chain from `target`
+/// back to `target` (`Node -> Node`, `A -> B -> A`), for the `[E1016]` message.
+fn alias_cycle(
+    target: &str,
+    at: &str,
+    edges: &HashMap<&str, Vec<&str>>,
+    seen: &mut HashSet<String>,
+    path: &mut Vec<String>,
+) -> bool {
+    for next in edges.get(at).map(Vec::as_slice).unwrap_or(&[]) {
+        if *next == target {
+            path.push(target.to_string());
+            return true;
+        }
+        if seen.insert((*next).to_string()) {
+            path.push((*next).to_string());
+            if alias_cycle(target, next, edges, seen, path) {
+                return true;
+            }
+            path.pop();
+        }
+    }
+    false
+}
+
+/// The ambiguity key of a kernel-implicit type binding. It is the interned
+/// `BUILTIN_MOD` `DefId` itself, written exactly as a builtin type's key, so a
+/// kernel pseudo-module that re-exposes a builtin (`import Sky.Core.Prelude
+/// exposing (String, Int)`) is the SAME binding as the ambient builtin, not a
+/// second one (C-14: that import used to be `[E1012] Ambiguous type String`).
+fn kernel_implicit_key(con: DefId) -> TypeKey {
+    TypeKey::Id(format!("def:{}", con.0))
+}
+
 /// Identity of a resolution, for the "same definition reached twice" test.
 fn res_key(r: &Res) -> String {
     match r {
@@ -956,13 +991,58 @@ impl<'a> Resolver<'a> {
                  them binds `{name}`."
             )
         };
+        // E-5: when a candidate is a name its stdlib module did not export in the
+        // previous release, say so. The user's program did not change; a new
+        // stdlib export made the reference ambiguous, and the message must not
+        // leave them looking for their own mistake.
+        let (new_cands, old_cands): (Vec<_>, Vec<_>) = cands
+            .iter()
+            .partition(|(m, _)| crate::stdlib_history::is_new_import_member(m, name));
+        let why_new = if new_cands.is_empty() {
+            String::new()
+        } else {
+            let prev = crate::stdlib_history::PREVIOUS_RELEASE;
+            let new_in: Vec<String> = new_cands
+                .iter()
+                .map(|(m, _)| format!("`{m}.{name}`"))
+                .collect();
+            // The one-line fixes that keep the meaning the name had before the
+            // upgrade: qualify it, or import it by name from the module that
+            // already exported it (an `exposing (name)` import outranks an
+            // `exposing (..)` one, so the new export stops competing).
+            let keep = match old_cands.as_slice() {
+                [(m, q)] => {
+                    let qualified = match q {
+                        Some(q) => format!("write `{q}.{name}`"),
+                        None => format!("write `import {m} as X` and `X.{name}`"),
+                    };
+                    format!(
+                        " To keep the meaning it had before, {qualified}, or import it by name: \
+                         `import {m} exposing ({name})`."
+                    )
+                }
+                _ => String::new(),
+            };
+            format!(
+                " {} {} new since Sky {prev}, so a program that compiled with {prev} can meet \
+                 this error with no change of its own.{keep}",
+                join_and(&new_in),
+                if new_in.len() == 1 { "is" } else { "are" },
+            )
+        };
+        let see = if new_cands.is_empty() {
+            String::new()
+        } else {
+            " See docs/migration/v0.27.md#new-stdlib-names".to_string()
+        };
         let mut diag = Diagnostic::error(
             "E1012",
             format!(
                 "Ambiguous {what} `{name}` — it is brought into scope by {}, and this reference \
                  does not say which one it means. Sky rejects this instead of picking one, \
                  because the winner would otherwise depend on the ORDER of your import lines: \
-                 swapping two imports would silently change what this program computes. {fix}",
+                 swapping two imports would silently change what this program computes.{why_new} \
+                 {fix}{see}",
                 join_and(&mods)
             ),
         );
@@ -1322,6 +1402,21 @@ impl<'a> Resolver<'a> {
                 ImportSource::Kernel(_) | ImportSource::Foreign(_) => {}
             }
         }
+        // C-15: the FULL module path is a qualifier too, as in Elm: after
+        // `import Page.B`, `Page.B.Model` and `Page.B.label` name the same things
+        // as the auto-qualifier's `B.Model` / `B.label`. Only without an explicit
+        // `as` alias (Elm: an alias replaces the path), and only for a parsed Sky
+        // module, whose exports are the whole meaning of the qualifier. A path
+        // already bound as a qualifier is left alone.
+        if alias.is_none() && path.contains('.') && qual.as_deref() != Some(path.as_str()) {
+            if let ImportSource::Dep(dep) = &source {
+                if !self.import_aliases.contains_key(&path) {
+                    self.import_aliases.insert(path.clone(), source.clone());
+                    let exports = self.db.module_exports(*dep);
+                    self.bind_qual_from_exports(&path, &exports);
+                }
+            }
+        }
 
         // ---- exposing binding (still happens even if the qualifier was
         // suppressed by explicit-alias-wins — C1) ----
@@ -1526,10 +1621,7 @@ impl<'a> Resolver<'a> {
                         )
                     } else if KERNEL_IMPLICIT_TYPES.contains(&name.as_str()) {
                         let con = self.kernel_implicit_type_def(name);
-                        (
-                            TypeRes { con, arity: 0 },
-                            TypeKey::Id(format!("kernel-implicit:{name}")),
-                        )
+                        (TypeRes { con, arity: 0 }, kernel_implicit_key(con))
                     } else {
                         // Nothing authoritative. A type the source module does
                         // not even LIST is a missing export, the type analogue of
@@ -1659,7 +1751,7 @@ impl<'a> Resolver<'a> {
                     self.bind_type_imported(
                         name.clone(),
                         TypeRes { con, arity: 0 },
-                        TypeKey::Id(format!("kernel-implicit:{name}")),
+                        kernel_implicit_key(con),
                     );
                 }
                 cst::ExposedItem::Operator => {}
@@ -1746,12 +1838,7 @@ impl<'a> Resolver<'a> {
                         continue;
                     };
                     if PRELUDE_RESERVED.contains(&tn.as_str()) {
-                        self.result.diagnostics.push(Diagnostic::error(
-                            "E1004",
-                            format!(
-                                "Type `{tn}` shadows a Prelude-exposed name — pick a different name"
-                            ),
-                        ));
+                        self.report_prelude_shadow("Type", &tn, u.name().map(|t| t.text_range()));
                     }
                     let arity = cst::decl_type_vars(u.syntax()).len() as u16;
                     let type_ = self.def(self.module, &tn, DefKind::TypeCon);
@@ -1771,12 +1858,11 @@ impl<'a> Resolver<'a> {
                             continue;
                         };
                         if PRELUDE_RESERVED.contains(&cn.as_str()) {
-                            self.result.diagnostics.push(Diagnostic::error(
-                                "E1004",
-                                format!(
-                                    "Constructor `{cn}` shadows a Prelude-exposed name — pick a different name"
-                                ),
-                            ));
+                            self.report_prelude_shadow(
+                                "Constructor",
+                                &cn,
+                                var.name().map(|t| t.text_range()),
+                            );
                         }
                         let cargs = cst::child_types(var.syntax()).len() as u16;
                         let d = self.def(self.module, &cn, DefKind::Ctor);
@@ -1802,12 +1888,7 @@ impl<'a> Resolver<'a> {
                         continue;
                     };
                     if PRELUDE_RESERVED.contains(&an.as_str()) {
-                        self.result.diagnostics.push(Diagnostic::error(
-                            "E1004",
-                            format!(
-                                "Type `{an}` shadows a Prelude-exposed name — pick a different name"
-                            ),
-                        ));
+                        self.report_prelude_shadow("Type", &an, a.name().map(|t| t.text_range()));
                     }
                     let arity = cst::decl_type_vars(a.syntax()).len() as u16;
                     let is_record = a
@@ -1868,7 +1949,97 @@ impl<'a> Resolver<'a> {
 
     // ---- walking (doc 05 §4) --------------------------------------------
 
+    /// `[E1016]`: a `type alias` that refers to itself, directly or through
+    /// other aliases of this module (C-13). An alias is expanded, never named,
+    /// so a recursive one has no finite expansion: the checker reports a
+    /// confusing `record vs Node` mismatch or accepts it, and the Go it emits
+    /// is an `invalid recursive type` that `go build` rejects. Elm refuses the
+    /// same declaration and points at a `type` wrapper, which gives the
+    /// recursion a name to stop at. A cycle cannot cross modules: that would
+    /// need an import cycle, which `[E1010]` already refuses, so one module's
+    /// aliases suffice.
+    /// `[E1004]`: a declared type or constructor reuses a Prelude-exposed name.
+    /// The diagnostic carries the declaration's span (C-16: it used to have
+    /// none, so the CLI printed a location-less block and the user had to find
+    /// the `type Error` among every module by hand).
+    fn report_prelude_shadow(&mut self, what: &str, name: &str, at: Option<syntax::TextRange>) {
+        let mut diag = Diagnostic::error(
+            "E1004",
+            format!("{what} `{name}` shadows a Prelude-exposed name — pick a different name"),
+        );
+        if let Some(r) = at {
+            diag = diag.with_label(self.span_of(r), "shadows a Prelude name");
+        }
+        self.result.diagnostics.push(diag);
+    }
+
+    fn check_recursive_aliases(&mut self) {
+        let tree = self.db.module_parse(self.module).tree();
+        // (alias name, name span, unqualified type names its body mentions)
+        let mut aliases: Vec<(String, Span, Vec<String>)> = Vec::new();
+        for decl in tree.decls() {
+            let ast::Decl::Alias(a) = decl else { continue };
+            let (Some(name_tok), Some(body)) = (a.name(), a.ty()) else {
+                continue;
+            };
+            let refs: Vec<String> = body
+                .syntax()
+                .descendants()
+                .filter(|n| n.kind() == SyntaxKind::TypeCon)
+                .filter_map(|n| {
+                    let (qual, last) = cst::dotted_parts(&n);
+                    qual.is_empty().then_some(last)
+                })
+                .collect();
+            aliases.push((
+                name_tok.text().to_string(),
+                self.span_of(name_tok.text_range()),
+                refs,
+            ));
+        }
+        let edges: HashMap<&str, Vec<&str>> = aliases
+            .iter()
+            .map(|(n, _, refs)| {
+                let local: Vec<&str> = refs
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|r| aliases.iter().any(|(m, _, _)| m == r))
+                    .collect();
+                (n.as_str(), local)
+            })
+            .collect();
+        let mut found: Vec<(String, Span, Vec<String>)> = Vec::new();
+        for (name, span, _) in &aliases {
+            let mut path: Vec<String> = vec![name.clone()];
+            let mut seen: HashSet<String> = HashSet::new();
+            if alias_cycle(name, name, &edges, &mut seen, &mut path) {
+                found.push((name.clone(), *span, path));
+            }
+        }
+        for (name, span, path) in found {
+            let via = if path.len() > 2 {
+                format!(" through {}", path.join(" -> "))
+            } else {
+                String::new()
+            };
+            self.result.diagnostics.push(
+                Diagnostic::error(
+                    "E1016",
+                    format!(
+                        "The type alias `{name}` refers to itself{via}. A type alias is only \
+                         another name for its body, so a recursive one never ends. Make it a \
+                         custom type instead, which gives the recursion a name to stop at: \
+                         `type {name} = {name} {{ … }}`, and wrap and unwrap the record with \
+                         the `{name}` constructor. See docs/migration/v0.27.md#recursive-type-alias"
+                    ),
+                )
+                .with_label(span, "this type alias refers to itself"),
+            );
+        }
+    }
+
     fn walk_module(&mut self) {
+        self.check_recursive_aliases();
         let tree = self.db.module_parse(self.module).tree();
         for decl in tree.decls() {
             match decl {

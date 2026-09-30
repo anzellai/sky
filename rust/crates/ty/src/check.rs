@@ -356,6 +356,59 @@ fn ffi_result_hint(message: &str, body: &Body) -> Option<String> {
     })
 }
 
+/// True when `body` references the stdlib function `module.name`, through the
+/// `.sky` module (`Std.Auth`) or a bare kernel pseudo-module (`import Auth`).
+fn body_calls(body: &Body, sky: &dyn hir::SkyDb, module: &str, pseudo: &str, name: &str) -> bool {
+    body.exprs.iter().any(|(_, e)| match e {
+        Expr::Var(Res::Kernel { module: m, func }) => m.as_str() == pseudo && func.as_str() == name,
+        Expr::Var(Res::Def(d)) => sky
+            .def_loc(*d)
+            .is_some_and(|l| l.name.as_str() == name && sky.module_name(l.module) == module),
+        _ => false,
+    })
+}
+
+/// Migration hints for v0.27.0 stdlib signature changes (the CAST finding and
+/// the AEAD encrypts that became Tasks): old call sites now fail with a plain
+/// mismatch. Say what changed, show the one-line fix and the migration anchor.
+fn cast_migration_hint(message: &str, body: &Body, sky: &dyn hir::SkyDb) -> Option<String> {
+    // M-2: the random-nonce AEAD encrypts became Tasks in v0.27.0 (drawing a
+    // nonce is an effect). Old code used the result as a `Result` or a value.
+    for f in ["aesGcmEncrypt", "chacha20Encrypt"] {
+        if message.contains("Task") && body_calls(body, sky, "Sky.Core.Crypto", "Crypto", f) {
+            return Some(format!(
+                "`Crypto.{f}` returns a `Task Error String` since v0.27.0: it draws a random \
+                 nonce, which is an effect. Wrap it: `Task.run (Crypto.{f} key plain)` gives \
+                 the `Result`, or chain it with `Task.andThen`. \
+                 See docs/migration/v0.27.md#aead-encrypt-is-a-task"
+            ));
+        }
+    }
+    if message.contains("Value") && body_calls(body, sky, "Std.Auth", "Auth", "verifyToken") {
+        return Some(
+            "`Auth.verifyToken` returns the claims as a JSON `Value` since v0.27.0 (it \
+             was `Result Error a`, which let each caller pick any claims type unchecked). \
+             Read a claim with a decoder: `Auth.verifyToken secret token |> Result.andThen \
+             (Decode.decodeValue (Decode.field \"sub\" Decode.string))`. \
+             See docs/migration/v0.27.md#auth-verifytoken-json"
+                .to_string(),
+        );
+    }
+    if (message.contains("Cookie") || message.contains("Response"))
+        && body_calls(body, sky, "Sky.Http.Server", "Server", "withCookie")
+    {
+        return Some(
+            "`Server.withCookie` takes `name value attrs response` since v0.27.0 (it was \
+             typed `any`, an unchecked cast). Attach a built `Cookie` with \
+             `Server.addCookie someCookie resp`, and write the 3-argument form as \
+             `Server.addCookie (Server.cookie name value) resp`. \
+             See docs/migration/v0.27.md#server-withcookie-typed"
+                .to_string(),
+        );
+    }
+    None
+}
+
 fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
     let start = span.range.0 as usize;
     let end = (span.range.1 as usize).min(src.len());
@@ -567,6 +620,12 @@ pub fn check_modules_with_world(
     // their module (for the label span trim).
     let mut topic_sites: Vec<crate::pubsub_topic::TopicSite> = Vec::new();
     let mut topic_src: HashMap<String, String> = HashMap::new();
+    let recursive_alias_declared = to_check.iter().any(|m| {
+        sky.resolve(*m)
+            .diagnostics
+            .iter()
+            .any(|d| d.code.0 == "E1016")
+    });
     for &mid in to_check {
         let mname = sky.module_name(mid).to_string();
         // Module source text — used to tighten an E2001 label span to the first
@@ -584,6 +643,14 @@ pub fn check_modules_with_world(
                 out.name_errors += 1;
                 out.diagnostics.push(d.clone());
             }
+        }
+        // C-13: a recursive type alias (`[E1016]`) has no finite expansion, so
+        // every type that mentions it is meaningless to infer against. Checking
+        // on only buried the real cause under a `record vs Node` mismatch, and
+        // the build driver reports type errors before name errors, so the user
+        // never saw `[E1016]`. Stop at the declaration error instead.
+        if recursive_alias_declared {
+            continue;
         }
         let names: HashMap<base::DefId, String> = resolved
             .top_defs
@@ -767,7 +834,8 @@ pub fn check_modules_with_world(
                         .unwrap_or_default(),
                     suggestion: builder_cfg_migration_hint(&err.message)
                         .or_else(|| secret_migration_hint(&err.message))
-                        .or_else(|| ffi_result_hint(&err.message, body)),
+                        .or_else(|| ffi_result_hint(&err.message, body))
+                        .or_else(|| cast_migration_hint(&err.message, body, sky)),
                 });
             }
 

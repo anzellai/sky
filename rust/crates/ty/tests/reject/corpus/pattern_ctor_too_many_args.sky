@@ -1,0 +1,26 @@
+-- gate: reject
+-- defect: a constructor pattern with more sub-patterns than the constructor has arguments
+-- rust: reject [E2007] the pattern names the constructor and both counts
+--
+-- `Just a b` gives `Just` two sub-patterns; `Just` takes one. The checker
+-- peeled the extra sub-pattern off the constructor's type and reported a type
+-- mismatch at the `case` head (`Maybe _` vs a function type) that named neither
+-- the pattern nor the counts. It is now an arity error at the pattern.
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+describe : Maybe Int -> String
+describe m =
+    case m of
+        Just a b ->
+            "two"
+
+        Nothing ->
+            "none"
+
+
+main =
+    println (describe (Just 1))
