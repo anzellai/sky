@@ -1,0 +1,102 @@
+module Main exposing (main)
+
+-- Sky.Spa error-report fixture (scripts/spa-rpc-order-e2e.sh, second stage:
+-- scripts/spa-handled-err-verify.mjs). Two client-local performs fail and the
+-- app handles both Errs in its own Msg arms:
+--
+--   init   `Native.secureGet` in a browser: no native shell, `Err Unavailable`,
+--          handled by `Loaded (Err _)`.
+--   local  `Task.fail`: `Err InvalidInput`, handled by `Failed (Err _)`.
+--
+-- Neither is an RPC, so the client must write NO console error for them. (The
+-- v0.27.0 release head wrote "[sky.spa] RPC failed; kept last good model (no
+-- app-level handler …)" for each.)
+--
+--   price  `Price` is a server branch (it reads a server value). The check
+--          makes its RPC answer 500. The app declares no `App.withRpcError`,
+--          so the client keeps the model and writes the loud "RPC failed"
+--          line exactly once.
+
+import Sky.Core.Error as Error
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Time as Time
+import Std.App as App
+import Std.Native as Native
+import Std.Ui as Ui
+
+type alias Model =
+    { out : String
+    , price : String
+    }
+
+type Msg
+    = Loaded (Result Error (Maybe Secret))
+    | Local
+    | Failed (Result Error ())
+    | Price
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { out = "", price = "-" }, Cmd.perform (Native.secureGet "k") Loaded )
+
+
+-- A server-only value, read inline: the `Price` arm needs the server.
+serverPrice : String -> String
+serverPrice item =
+    item ++ "@"
+        ++ Result.withDefault
+               "?"
+               (Task.run (Time.sleep 10 |> Task.map (\_ -> "9.99")))
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Loaded (Ok _) ->
+            ( { model | out = "loaded" }, Cmd.none )
+
+        Loaded (Err _) ->
+            ( { model | out = "handled secureGet Err" }, Cmd.none )
+
+        Local ->
+            ( model
+            , Cmd.perform (Task.fail (Error.invalidInput "local")) Failed
+            )
+
+        Failed (Ok _) ->
+            ( model, Cmd.none )
+
+        Failed (Err _) ->
+            ( { model | out = model.out ++ "; handled local Err" }, Cmd.none )
+
+        Price ->
+            ( { model | price = serverPrice "tea" }, Cmd.none )
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.el
+                              [ Ui.htmlAttribute "id" "out" ]
+                              (Ui.text ("OUT=" ++ m.out))
+                        , Ui.el
+                              [ Ui.htmlAttribute "id" "price" ]
+                              (Ui.text ("PRICE=" ++ m.price))
+                        , Ui.button
+                              [ Ui.htmlAttribute "id" "local" ]
+                              { onPress = Just Local, label = Ui.text "local" }
+                        , Ui.button
+                              [ Ui.htmlAttribute "id" "pricebtn" ]
+                              { onPress = Just Price, label = Ui.text "price" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

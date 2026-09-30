@@ -676,66 +676,26 @@ func spaAsList(v any) []any {
 	return AsList(v)
 }
 
-// spaRpcSend runs one RPC (on its own goroutine: the fetch blocks it, not the
-// browser event loop) and delivers its result Msg to the scheduler. A network
-// failure keeps the RPC in flight and arms the Retry overlay to re-send the
-// SAME request (same request id, so the backend's dedupe cache answers a
-// request it already ran); the failure is reported to the app at once.
-func spaRpcSend(j *spaRpcJob) {
-	result := spaRunRpcTask(j)
-	if spaIsNetworkErr(result) {
-		spaShowRetryOverlay(func() { spaRpcSend(j) })
-		// Report the failure to the app (Applied<Msg> (Err _) keeps the model,
-		// or App.withRpcError routes it); the RPC stays in flight and settles
-		// on retry.
-		spaSch.report(j, spaApplyToMsg(j.toMsg, result), step)
-		return
-	}
-	if result.Tag == 0 {
-		spaHideRetryOverlayIfIdle()
-	} else if spaReportableTransportErr(result) {
+// The browser side of the portable perform / RPC delivery (spa_perform.go):
+// the console sink and the connection overlay.
+func init() {
+	spaConsoleError = func(args ...any) {
 		if c := js.Global().Get("console"); c.Truthy() {
-			c.Call("error",
-				"[sky.spa] RPC failed; kept last good model (no app-level handler for this transport error):",
-				spaTransportErrText(result))
+			c.Call("error", args...)
 		}
 	}
-	spaSch.settle(j, spaApplyToMsg(j.toMsg, result), step)
+	spaRetryHook = spaShowRetryOverlay
+	spaOkHook = spaHideRetryOverlayIfIdle
 }
 
-// spaRunRpcTask builds the request task from the request id and runs it to a
-// Result. A panic while building or running is a classified Err, never a dead
-// client.
-func spaRunRpcTask(j *spaRpcJob) (result SkyResult[SkyADT, any]) {
-	defer func() {
-		if r := recover(); r != nil {
-			ev, _ := ErrUnexpected(fmt.Sprintf("Sky.Spa RPC panicked: %v", r)).(SkyADT)
-			result = SkyResult[SkyADT, any]{Tag: 1, ErrValue: ev}
-		}
-	}()
-	return spaRunTask(sky_call(j.mk, j.rid))
-}
-
-// spaApplyToMsg maps a perform/RPC Result to its Msg (typed assertion first,
-// reflect fallback for a non-standard shape).
-func spaApplyToMsg(toMsg any, result SkyResult[SkyADT, any]) any {
-	if tm, ok := toMsg.(func(SkyResult[SkyADT, any]) any); ok {
-		return tm(result)
-	}
-	return sky_call(toMsg, result)
-}
-
-// spaRunTask runs a Cmd.perform / RPC task to its Result, reflection-free for
-// the standard shapes (see performTask).
-func spaRunTask(task any) SkyResult[SkyADT, any] {
-	switch t := task.(type) {
-	case func() SkyResult[SkyADT, any]:
-		return t()
-	default:
-		r := anyTaskInvoke(task) // reflection-free for SkyTask nodes; erases E to any
-		ev, _ := r.ErrValue.(SkyADT)
-		return SkyResult[SkyADT, any]{Tag: r.Tag, OkValue: r.OkValue, ErrValue: ev}
-	}
+// spaRpcSend runs one RPC (on its own goroutine: the fetch blocks it, not the
+// browser event loop) and delivers its result Msg to the scheduler
+// (spaRpcDeliver, spa_perform.go). A network failure keeps the RPC in flight
+// and arms the Retry overlay to re-send the SAME request (same request id, so
+// the backend's dedupe cache answers a request it already ran); the failure is
+// reported to the app at once.
+func spaRpcSend(j *spaRpcJob) {
+	spaRpcDeliver(spaSch, j, spaRunRpcTask(j), step, func() { spaRpcSend(j) })
 }
 
 // spaReportPanic is the js sink spaTransition (and dispatchEvent) report a
@@ -1010,6 +970,10 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		if nc, ok := navCmdOf(cmd); ok {
 			go spaNavApply(nc)
 		}
+	case "spaRpcFailed":
+		// Spa.reportRpcFailure: the generated no-handler Applied<Msg> (Err e)
+		// arm's loud report (spa_perform.go).
+		spaReportRpcFailure(cmd.payload)
 	case "spaError":
 		if c := js.Global().Get("console"); c.Truthy() {
 			c.Call("error", "[sky.spa] a server branch's follow-up could not be applied:",
@@ -1047,60 +1011,7 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 // than killing the goroutine silently (mirrors the server's per-perform
 // recover); it cannot be re-dispatched as a typed Msg, so it is reported.
 func performTask(task, toMsg any, dispatch func(any)) {
-	defer func() {
-		if r := recover(); r != nil {
-			logEmit(logLevelError, "error",
-				"Sky.Spa Cmd.perform: task panicked; effect dropped", map[string]any{
-					"panic": fmt.Sprintf("%v", r),
-				})
-		}
-	}()
-
-	// Reflection-free perform (Sky.Spa client). `Sky.Core.Error` aliases to
-	// rt.SkyADT (codegen: `type Sky_Core_Error_Error = rt.SkyADT`) and the
-	// Cmd.perform boundary is uniformly `SkyTask[SkyADT, any]` with
-	// `toMsg : func(SkyResult[SkyADT, any]) any`, so both are invoked by TYPED
-	// ASSERTION — no `reflect.Value.Call`, which TinyGo cannot compile. The
-	// reflect `sky_call` fallbacks below are unreached for a real Spa client and
-	// exist only for a non-standard task/toMsg shape (and are DCE-stripped once
-	// no client path references reflect).
-	result := spaRunTask(task)
-	// Built-in connection resilience: if the perform failed because the server
-	// was unreachable (a fetch rejection → Err(ErrNetwork)), show the retry
-	// overlay armed to re-run THIS exact perform, instead of leaving the client
-	// stranded when the generated `Applied<Msg> (Err _)` arm folds nothing back.
-	// Any successful perform clears the overlay (connectivity is back). The
-	// result is still dispatched below, so app-level handling is unaffected.
-	if spaIsNetworkErr(result) {
-		t, tm := task, toMsg
-		spaShowRetryOverlay(func() { performTask(t, tm, dispatch) })
-	} else if result.Tag == 0 {
-		spaHideRetryOverlayIfIdle()
-	} else if spaReportableTransportErr(result) {
-		// A completed round-trip that FAILED with a non-network error (a 5xx the
-		// backend answered, a response the shared codec could not decode). The
-		// generated `Applied<Msg> (Err _)` arm keeps the model — correct, since
-		// the write-set never applied — but the failure was otherwise INVISIBLE:
-		// the auto-split client has no app-level result Msg to route the Err to
-		// (effects are synchronous inline Task.run in the source). Surface it
-		// loudly here, at the single perform choke point, so no transport error
-		// is ever silent (covers the synthesised RPC arms AND hand-written
-		// Spa.getJson / Spa.postJson callers). Mirrors the [sky.spa]-prefixed
-		// reporting the perform / timer / topic recovers already emit. The result
-		// is still dispatched below, so the app's own handling (if any) is
-		// unaffected; the model is kept.
-		if c := js.Global().Get("console"); c.Truthy() {
-			c.Call("error",
-				"[sky.spa] RPC failed; kept last good model (no app-level handler for this transport error):",
-				spaTransportErrText(result))
-		}
-	}
-
-	if tm, ok := toMsg.(func(SkyResult[SkyADT, any]) any); ok {
-		dispatch(tm(result))
-		return
-	}
-	dispatch(sky_call(toMsg, result))
+	spaPerform(task, toMsg, dispatch) // spa_perform.go: delivery + panic recovery
 }
 
 // reconcileSubs evaluates subscriptions(model) and reconciles the active

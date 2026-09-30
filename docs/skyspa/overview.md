@@ -257,6 +257,16 @@ client then keeps running while it waits, and other server calls go out beside
 it. An arm that writes a server value into the model holds the client for its
 whole round trip.
 
+**A failed task is a result, not a console error.** A client-local
+`Cmd.perform` whose task fails (`Task.fail`, a `Std.Native` call in a browser
+with no native shell, a client `Http` call) delivers its `Err` to the Msg you
+gave it, like an `Ok`; the client logs nothing. A server call that fails (a
+5xx, a response the codec cannot decode) goes to `App.withRpcError` when the
+app declares it. Without that handler the client keeps the model and writes
+`[sky.spa] RPC failed; kept last good model (no app-level handler …)` once (the
+generated `Applied<Msg> (Err e)` arm returns `Spa.reportRpcFailure e`). A
+network error arms the Retry overlay instead.
+
 ## WebSocket from the client
 
 A Sky.Spa client can hold its own WebSocket: `Sky.Core.WebSocket` (`connect`,

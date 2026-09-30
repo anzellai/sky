@@ -232,6 +232,13 @@ func Spa_followUps(msgs any) SkyCmd { return cmdT{kind: "followUps", payload: ms
 // `App.withRpcError` handler. Never a silent drop.
 func Spa_reportError(err any) SkyCmd { return cmdT{kind: "spaError", payload: err} }
 
+// Spa_reportRpcFailure reports a failed server-branch RPC loudly on the client
+// console (spaReportRpcFailure) without dispatching anything. The auto-split
+// returns it from the generated `Applied<Msg> (Err e)` arm only when the app
+// declared no `App.withRpcError`, so a failure nothing handles is never silent,
+// and a failure the app handles is never reported as unhandled.
+func Spa_reportRpcFailure(err any) SkyCmd { return cmdT{kind: "spaRpcFailed", payload: err} }
+
 // ── Route matching (portable pure helpers) ──────────────────────────
 //
 // Reimplements Sky.Live's matchRoute / splitPath algorithm (live.go:1600-1624)

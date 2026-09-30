@@ -16,6 +16,13 @@
 #          stalled with busy = True)
 #   pair   two server Msgs are in flight together (one delay, not two)
 #
+# A second stage builds rust/crates/sky/tests/fixtures/spa-handled-err
+# (--target web:app) and checks the client's error reports
+# (scripts/spa-handled-err-verify.mjs): a client-local perform's Err the app
+# handles reaches its Msg with no RPC and NO console error; a server RPC that
+# fails with no App.withRpcError keeps the model and logs the loud
+# "RPC failed" line exactly once.
+#
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
 # uses Google Chrome; SKY_E2E_HEADED=1 runs them headed.
 #
@@ -56,5 +63,17 @@ echo "==> driving both targets in a browser"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 600 node "$ROOT/scripts/spa-rpc-order-verify.mjs" "$SPA" "$LIVE" --port "${RPC_ORDER_PORT:-9361}"
 
-echo "spa-rpc-order-e2e: PASS — web:app runs each Msg once, in order, with its Cmds, as Sky.Live does."
+mkdir -p "$TMP/err"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-handled-err/." "$TMP/err/"
+echo "==> building fixture spa-handled-err (--target web:app)"
+(cd "$TMP/err" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky) >"$TMP/build-err.log" 2>&1 \
+  || { cat "$TMP/build-err.log" >&2; echo "spa-rpc-order-e2e: spa-handled-err build failed" >&2; exit 1; }
+ERR="$TMP/err/.skyapp/web-app/.split/backend/sky-out/app"
+[ -x "$ERR" ] || { echo "spa-rpc-order-e2e: backend not built at $ERR" >&2; exit 1; }
+echo "==> driving the error reports in a browser"
+SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
+  with_timeout 300 node "$ROOT/scripts/spa-handled-err-verify.mjs" "$ERR" --port "${HANDLED_ERR_PORT:-9363}"
+
+echo "spa-rpc-order-e2e: PASS — web:app runs each Msg once, in order, with its Cmds, as Sky.Live does;"
+echo "  a handled client Err logs nothing, an unhandled RPC failure logs once."
 rm -rf "$TMP"
