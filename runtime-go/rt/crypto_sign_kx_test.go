@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -447,5 +448,56 @@ func TestExplicitNonceAeadNegative(t *testing.T) {
 		if pt := cryOk(t, c.open(key, nonce, "", empty)).(string); pt != "" {
 			t.Fatalf("%s: empty round trip gave %q", c.name, pt)
 		}
+	}
+}
+
+// B-3: the eight small-order Ed25519 points (and non-canonical spellings of
+// them) are refused at import. The identity key accepted one fixed
+// signature (R = identity, S = 0) for EVERY message, so its holder could
+// later claim to have signed anything.
+func TestSignRejectsSmallOrderPublicKeys(t *testing.T) {
+	for _, h := range []string{
+		"0100000000000000000000000000000000000000000000000000000000000000", // identity
+		"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // order 2
+		"0000000000000000000000000000000000000000000000000000000000000000", // order 4
+		"0000000000000000000000000000000000000000000000000000000000000080", // order 4
+		"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05", // order 8
+		"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85", // order 8
+		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a", // order 8
+		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa", // order 8
+		"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // y = p + 1: identity, non-canonical
+		"0100000000000000000000000000000000000000000000000000000000000080", // identity with the sign bit set
+	} {
+		r, ok := Sign_publicKeyFromBytes(unhex(t, h)).(SkyResult[any, any])
+		if !ok || r.Tag == 0 {
+			t.Fatalf("small-order or non-canonical key %s was accepted", h)
+		}
+		if msg := errorMessage(r.ErrValue); strings.Contains(msg, "small-order") &&
+			!strings.Contains(msg, "see docs/migration/v0.27.md#ed25519-small-order-keys") {
+			t.Fatalf("small-order refusal has no migration link: %s", msg)
+		}
+	}
+	// Ordinary keys still import (RFC 8032 test 1 and a generated key).
+	cryOk(t, Sign_publicKeyFromBytes(unhex(t, "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")))
+	sk := cryOk(t, runCryptoTaskAny(t, Sign_generate(struct{}{})))
+	cryOk(t, Sign_publicKeyFromBytes(Sign_publicKeyToBytes(Sign_publicKey(sk))))
+}
+
+// B-6: the point check decodes the point itself; it no longer depends on the
+// text of an error inside the Go standard library (Go before 1.24 said
+// "invalid signature" there, and every 32-byte string then counted as a point).
+func TestSignPointCheckDoesNotReadGoErrorText(t *testing.T) {
+	src, err := os.ReadFile("crypto_sign_kx.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), `"bad public key"`) {
+		t.Fatal("crypto_sign_kx.go still matches a Go error string to decide point validity")
+	}
+	if !ed25519PointValid([]byte(unhex(t, "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"))) {
+		t.Fatal("an RFC 8032 public key is not a valid point")
+	}
+	if ed25519PointValid([]byte(unhex(t, "0200000000000000000000000000000000000000000000000000000000000000"))) {
+		t.Fatal("y = 2 has no x on the curve, yet it was accepted")
 	}
 }
