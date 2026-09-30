@@ -160,10 +160,6 @@ usage: xtask harness [options]
                                  window. Every other gate is CARRIED and reported so.
   --all                          with --verify-falsifiers: re-prove every selected gate,
                                  carrying nothing (nightly and release use this)
-  --mutations <id[,id...]>       with --verify-falsifiers and --only: prove only these
-                                 declared mutations of the gates that declare them (the
-                                 baseline still runs). Lets one slow gate's mutations run
-                                 in parallel jobs; each id must belong to an --only gate
   --explain-inputs <gate>        print the files and digest a gate's proof depends on
   --list                         print the registry and exit
   -h, --help
@@ -179,7 +175,6 @@ struct Opts {
     fail_fast: bool,
     verify_falsifiers: bool,
     all: bool,
-    mutations: Vec<String>,
     explain_inputs: Option<String>,
     list: bool,
     help: bool,
@@ -223,12 +218,6 @@ impl Opts {
                 "--fail-fast" => o.fail_fast = true,
                 "--verify-falsifiers" => o.verify_falsifiers = true,
                 "--all" => o.all = true,
-                "--mutations" => o.mutations.extend(
-                    value(args, &mut i, "--mutations")?
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty()),
-                ),
                 "--explain-inputs" => {
                     o.explain_inputs = Some(value(args, &mut i, "--explain-inputs")?)
                 }
@@ -243,27 +232,6 @@ impl Opts {
         // exiting 0 on an unknown subcommand.
         if o.all && !o.verify_falsifiers {
             return Err("--all only applies to --verify-falsifiers".into());
-        }
-        // A mutation filter narrows a proof, so it must never be able to name
-        // nothing: every id is a mutation declared by a gate the run selects.
-        // An unknown or mistyped id is an ERROR, not an empty set that
-        // trivially passes.
-        if !o.mutations.is_empty() {
-            if !o.verify_falsifiers || o.only.is_empty() {
-                return Err("--mutations needs --verify-falsifiers and --only".into());
-            }
-            for id in &o.mutations {
-                let declared_by_selected = o.only.iter().any(|n| {
-                    registry::find(n)
-                        .is_some_and(|g| g.mutations.as_slice().iter().any(|m| m.id == id))
-                });
-                if !declared_by_selected {
-                    return Err(format!(
-                        "--mutations: `{id}` is not a mutation of any --only gate \
-                         (see `xtask harness --list`)"
-                    ));
-                }
-            }
         }
         for name in o.only.iter().chain(o.explain_inputs.iter()) {
             if registry::find(name).is_none() {
@@ -739,7 +707,6 @@ fn run_falsifiers(o: &Opts, root: &Path) -> i32 {
         // trace of which gate was slow.
         eprintln!("harness: proving {} …", g.name);
         let started = std::time::Instant::now();
-        let g = restrict_mutations(g, &o.mutations);
         let reports = falsify::verify_gate(g, &fopts, &mut generation);
         for r in &reports {
             eprintln!(
@@ -929,30 +896,6 @@ fn recorded_mutations_declared(e: &serde_json::Value, g: &Gate) -> bool {
         .unwrap_or_default();
     // A legacy single-mutation record only vouches for a single-mutation gate.
     declared.len() == 1 && declared[0] == one
-}
-
-/// `g` with only the mutations `--mutations` names, when it names any of
-/// `g`'s; otherwise `g` unchanged. The baseline is unaffected. The narrowed
-/// gate is leaked: a falsifier run proves a handful of gates once and exits.
-/// A partial proof recorded to the ledger lists fewer mutations than the gate
-/// declares, so an incremental run re-proves it rather than carrying it
-/// (`recorded_mutations_declared`).
-fn restrict_mutations(g: &'static Gate, ids: &[String]) -> &'static Gate {
-    let keep: Vec<registry::Mutation> = g
-        .mutations
-        .as_slice()
-        .iter()
-        .filter(|m| ids.iter().any(|id| id == m.id))
-        .copied()
-        .collect();
-    if keep.is_empty() {
-        return g;
-    }
-    let keep: &'static [registry::Mutation] = Box::leak(keep.into_boxed_slice());
-    Box::leak(Box::new(Gate {
-        mutations: registry::Mutations::new(keep),
-        ..*g
-    }))
 }
 
 /// The gates a falsifier run considers, in registry order.
@@ -1542,72 +1485,5 @@ mod proof_ledger_location_tests {
         );
 
         std::env::remove_var(PROOF_LEDGER_ENV);
-    }
-}
-
-#[cfg(test)]
-mod mutation_filter_tests {
-    use super::*;
-
-    fn args(a: &[&str]) -> Vec<String> {
-        a.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn a_mutation_filter_must_name_a_declared_mutation_of_a_selected_gate() {
-        // Needs both --verify-falsifiers and --only.
-        assert!(Opts::parse(&args(&["--mutations", "corpus.wrong-expected-value"])).is_err());
-        assert!(Opts::parse(&args(&[
-            "--verify-falsifiers",
-            "--mutations",
-            "corpus.wrong-expected-value"
-        ]))
-        .is_err());
-        // An id no selected gate declares is an error, not an empty proof.
-        assert!(Opts::parse(&args(&[
-            "--verify-falsifiers",
-            "--only",
-            "corpus",
-            "--mutations",
-            "corpus.no-such-mutation"
-        ]))
-        .is_err());
-        assert!(Opts::parse(&args(&[
-            "--verify-falsifiers",
-            "--only",
-            "roundtrip",
-            "--mutations",
-            "corpus.wrong-expected-value"
-        ]))
-        .is_err());
-        let o = Opts::parse(&args(&[
-            "--verify-falsifiers",
-            "--all",
-            "--only",
-            "corpus",
-            "--mutations",
-            "corpus.wrong-stdlib-digest",
-        ]))
-        .expect("a declared mutation of a selected gate parses");
-        assert_eq!(o.mutations, vec!["corpus.wrong-stdlib-digest".to_string()]);
-    }
-
-    #[test]
-    fn restricting_keeps_only_the_named_mutations_and_leaves_other_gates_whole() {
-        let corpus = registry::find("corpus").expect("registered");
-        assert!(corpus.mutations.as_slice().len() >= 2);
-        let ids = vec!["corpus.wrong-stdlib-digest".to_string()];
-        let narrowed = restrict_mutations(corpus, &ids);
-        let kept: Vec<&str> = narrowed.mutations.as_slice().iter().map(|m| m.id).collect();
-        assert_eq!(kept, vec!["corpus.wrong-stdlib-digest"]);
-        assert_eq!(narrowed.name, corpus.name);
-        assert_eq!(narrowed.budget_s, corpus.budget_s);
-        // A gate the filter does not name keeps every mutation.
-        let canary = registry::find("canary").expect("registered");
-        let same = restrict_mutations(canary, &ids);
-        assert_eq!(
-            same.mutations.as_slice().len(),
-            canary.mutations.as_slice().len()
-        );
     }
 }

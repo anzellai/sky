@@ -1215,20 +1215,7 @@ fn the_release_workflow_is_the_full_suite() {
         registered.len()
     );
 
-    // Every declared mutation id, `gate.what` — the registry names each
-    // mutation with its gate's name as the prefix.
-    let mutation_ids: Vec<String> = registry
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("id: \""))
-        .filter_map(|rest| rest.split('"').next().map(str::to_string))
-        .collect();
-
-    // A gate is covered by a line that proves ALL its mutations (no
-    // `--mutations`), or by several `--mutations` lines whose ids together
-    // name every mutation it declares. The second form lets a slow gate's
-    // mutations run in parallel jobs; it must not let one of them drop out.
     let mut covered: Vec<String> = Vec::new();
-    let mut partial: Vec<(String, String)> = Vec::new(); // (gate, mutation id)
     for r in &runs {
         for line in r.lines().filter(|l| l.contains("--verify-falsifiers")) {
             assert!(
@@ -1237,51 +1224,9 @@ fn the_release_workflow_is_the_full_suite() {
                  from the checked-in ledger: {line}"
             );
             let toks: Vec<&str> = line.split_whitespace().collect();
-            let Some(i) = toks.iter().position(|t| *t == "--only") else {
-                continue;
-            };
-            let gates: Vec<String> = toks[i + 1].split(',').map(str::to_string).collect();
-            let muts: Vec<String> = toks
-                .iter()
-                .position(|t| *t == "--mutations")
-                .map(|j| toks[j + 1].split(',').map(str::to_string).collect())
-                .unwrap_or_default();
-            for g in gates {
-                let prefix = format!("{g}.");
-                let named: Vec<&String> = muts.iter().filter(|m| m.starts_with(&prefix)).collect();
-                if named.is_empty() {
-                    covered.push(g);
-                } else {
-                    partial.extend(named.into_iter().map(|m| (g.clone(), m.clone())));
-                }
+            if let Some(i) = toks.iter().position(|t| *t == "--only") {
+                covered.extend(toks[i + 1].split(',').map(str::to_string));
             }
-        }
-    }
-    let mut partial_gates: Vec<&String> = partial.iter().map(|(g, _)| g).collect();
-    partial_gates.sort();
-    partial_gates.dedup();
-    for g in partial_gates {
-        let prefix = format!("{g}.");
-        let declared: Vec<&String> = mutation_ids
-            .iter()
-            .filter(|m| m.starts_with(&prefix))
-            .collect();
-        assert!(
-            !declared.is_empty(),
-            "no declared mutations parsed for gate `{g}`"
-        );
-        let missing: Vec<&&String> = declared
-            .iter()
-            .filter(|d| !partial.iter().any(|(pg, pm)| pg == g && pm == **d))
-            .collect();
-        if missing.is_empty() {
-            covered.push(g.clone());
-        } else {
-            panic!(
-                "gate `{g}` is proven with `--mutations` in release.yml, but no job \
-                 proves its mutation(s) {missing:?} — list each in some job's \
-                 `--mutations`, or drop `--mutations` from one job"
-            );
         }
     }
     let uncovered: Vec<&str> = registered

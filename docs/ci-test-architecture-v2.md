@@ -963,16 +963,16 @@ passes a "9-minute tier".
 elapsed comes within ~20 % of its `timeout-minutes` is split, not given a
 larger timeout, wherever the work divides: the `sky` crate's tests by test
 (`nextest --partition slice:k/N`, rust-ci `test-sky*`, release
-`gate-core-sky-*`), a falsifier group by gate, one slow gate's mutations by
-`--mutations`, a macOS job by step (`macos-conformance` left
-`macos-behaviour`). Where the work does not divide (one Go package under
-`-race` in `integration-postgres`), the timeout is re-derived as 1.5× the new
-measured estimate, with the measurement in the job's comment. A macOS job's
-timeout stays under the macOS tier ceiling (1800 s + 20 %), so a slow macOS
-runner shows up in the budget report, not only as a cancelled job.
-`tests/workflows_parse.rs` checks that every `slice:k/N` split runs all N
-slices in gating jobs, and that `--mutations` lists leave no mutation
-unproven.
+`gate-core-sky-*`), a falsifier group by gate, a macOS job by step
+(`macos-conformance` left `macos-behaviour`). Where the work does not divide,
+the timeout is re-derived as 1.5× the new measured estimate, with the
+measurement in the job's comment: one Go package under `-race`
+(`integration-postgres`), and the `corpus` falsifier (`gate-falsifiers-4`),
+whose ~37 min baseline is the unit and whose mutated runs are ~7 min each, so a
+split by mutation repeats the baseline. A macOS job's timeout stays under the
+macOS tier ceiling (1800 s + 20 %), so a slow macOS runner shows up in the
+budget report, not only as a cancelled job. `tests/workflows_parse.rs` checks
+that every `slice:k/N` split runs all N slices in gating jobs.
 
 ### 8.3 A TZ matrix — a UTC-only runner is blind to a shipped bug class
 

@@ -201,16 +201,6 @@ digest does not model is still re-proven before a tag.
 `--explain-inputs <gate>` prints a gate's input paths, its body closure and its
 digest — use it to see why a gate re-proved, or to check a new gate's inputs.
 
-`--mutations <id[,id...]>` (with `--verify-falsifiers` and `--only`) proves only
-the named mutations of the gates that declare them; the baseline still runs.
-It exists so one slow gate's mutations can be proven in parallel jobs: the
-release proves the `corpus` gate's two mutations in `gate-falsifiers-4` and
-`gate-falsifiers-10`, each a full corpus build-and-run. An id that no `--only`
-gate declares is a usage error. A proof recorded this way lists fewer
-mutations than the gate declares, so an incremental run re-proves it instead
-of carrying it. `tests/workflows_parse.rs` fails if the release's
-`--mutations` lists together leave one of a gate's mutations unproven.
-
 Because `--require-proofs` (the release tier lines) rejects a proof whose digest
 no longer matches the tree, a change to a gate's inputs must land with the
 re-proved ledger: run the incremental `--verify-falsifiers` (it is the last

@@ -915,17 +915,18 @@ jobs:
   # Group 4 is the behavioural corpus alone: its baseline and its mutated run
   # each `go build` and run every fixture (~10 min apiece).
   #
-  # The corpus gate declares two mutations, and each proof is a full corpus
-  # build-and-run (~17 min at 468 cases). Baseline + both mutations in one job
-  # took 3,127 s of step time and 57 min of job time against its 60 min limit
-  # (release run 36643630048). So the two mutations are proven in two jobs,
-  # this one and gate-falsifiers-10, each running the baseline plus one
-  # mutation (`--mutations`); tests/workflows_parse.rs checks the two
-  # `--mutations` lists together cover every mutation the gate declares.
-  # Estimate ~40 min with setup; timeout 60 (1.5x ≈ 60).
+  # v0.27.0 (468 cases): 57 min of job time against the old 60 min limit
+  # (release run 36643630048). The time is the BASELINE run, which builds every
+  # case from a cold per-case state: ~37 min, against ~7 min for each mutated
+  # run that follows it on a warm cache (measured per mutation in run
+  # 36651737329, where the two mutations ran in separate jobs: 2,686 s and
+  # 2,671 s each, baseline included). Splitting by mutation therefore repeats
+  # the baseline and saves ~7 min, so the work does not divide at the job level,
+  # and the timeout follows docs/ci-test-architecture-v2.md §8.2 instead: 1.5x
+  # the ~57 min measured ≈ 86, rounded to 90.
   gate-falsifiers-4:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
@@ -933,9 +934,9 @@ jobs:
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: t2
-      - name: Falsifier verification (group 4 — the T2 behavioural corpus, mutation 1 of 2)
+      - name: Falsifier verification (group 4 — the T2 behavioural corpus)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutations corpus.wrong-expected-value
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1052,26 +1053,6 @@ jobs:
       - name: Falsifier verification (group 9 — conformance / config-matrix)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only conformance,config-matrix
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
-
-  # gate-falsifiers-10 — the corpus gate's second mutation (see
-  # gate-falsifiers-4). Same setup and Go cache family as group 4.
-  gate-falsifiers-10:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      GO_CACHE_BUDGET_MB: '4096'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: t2
-      - name: Falsifier verification (group 10 — the T2 behavioural corpus, mutation 2 of 2)
-        working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutations corpus.wrong-stdlib-digest
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1423,7 +1404,6 @@ jobs:
       - gate-falsifiers-7
       - gate-falsifiers-8
       - gate-falsifiers-9
-      - gate-falsifiers-10
       - gate-race
       - gate-web
       - gate-sweep
