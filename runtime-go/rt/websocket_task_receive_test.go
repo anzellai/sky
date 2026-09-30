@@ -163,7 +163,10 @@ func TestWsReceiveWithin_TimeoutKeepsFrameAndSocket(t *testing.T) {
 // backpressure slows the peer) instead of closing, and the heartbeat treats
 // the parked reader as alive. Every frame arrives, in order.
 func TestWsReceive_SlowTaskConsumerDropsNothing(t *testing.T) {
-	withWsTestKnobs(t, 4, 30*time.Millisecond, 60*time.Millisecond)
+	// G-3: a 60 ms pong deadline under -race on a loaded runner closed the
+	// socket for a slow pong and failed as "frame lost". The pong deadline
+	// is 500 ms; the consumer still stops reading for longer than it.
+	withWsTestKnobs(t, 4, 30*time.Millisecond, 500*time.Millisecond)
 	const n = 200
 	url := wsScriptServer(t, func(ctx context.Context, conn *websocket.Conn) {
 		for i := 0; i < n; i++ {
@@ -177,8 +180,9 @@ func TestWsReceive_SlowTaskConsumerDropsNothing(t *testing.T) {
 	if got := wsReceived(runWsTask(WebSocket_receive(id))); got != "Text:m000" {
 		t.Fatalf("first frame = %q", got)
 	}
-	// Stop reading: the queue fills, the reader parks, pings come due.
-	time.Sleep(400 * time.Millisecond)
+	// Stop reading: the queue fills, the reader parks, pings come due. The
+	// pause is longer than the stall timeout and the pong deadline.
+	time.Sleep(1200 * time.Millisecond)
 	for i := 1; i < n; i++ {
 		want := fmt.Sprintf("Text:m%03d", i)
 		if got := wsReceived(runWsTask(WebSocket_receiveWithin(5000, id))); got != want {
