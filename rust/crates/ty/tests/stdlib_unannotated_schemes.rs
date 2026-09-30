@@ -158,3 +158,30 @@ fn every_exported_stdlib_value_has_a_checked_scheme() {
          source, or seed a check-only scheme in `World::seed_check_sigs`): {out:?}"
     );
 }
+
+/// The new refusal names the v0.27.0 change and its migration anchor.
+#[test]
+fn a_newly_checked_combinator_error_carries_the_migration_hint() {
+    let src = "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\n\
+               import Sky.Core.Result as Result\n\n\
+               k : Int -> Int\nk n =\n    n + 1\n\n\
+               main =\n    Ok \"s\" |> Result.map k\n";
+    let mut db = hir::SourceDb::new();
+    for (n, p) in stdlib() {
+        db.add_module(n, p.clone());
+    }
+    let m = db.add_module("Main", syntax::parse(src, base::FileId(0)));
+    let out = ty::check_modules(&db, &[m]);
+    let d = out
+        .diagnostics
+        .iter()
+        .find(|d| d.code.0 == "E2001")
+        .expect("an E2001");
+    let hint = d.suggestion.clone().unwrap_or_default();
+    assert!(
+        hint.contains("since v0.27.0")
+            && hint.contains("Fix:")
+            && hint.ends_with("docs/migration/v0.27.md#stdlib-combinators-are-checked"),
+        "{hint:?}"
+    );
+}

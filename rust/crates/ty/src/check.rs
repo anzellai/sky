@@ -479,6 +479,61 @@ fn cast_migration_hint(message: &str, body: &Body, sky: &dyn hir::SkyDb) -> Opti
     None
 }
 
+/// The stdlib combinators that were unchecked before v0.27.0 (no annotation
+/// and no check-only scheme, so every call site was a wildcard): a type error
+/// in a def that calls one names the change and its migration anchor.
+fn checked_combinator_hint(
+    body: &Body,
+    sky: &dyn hir::SkyDb,
+    at: Option<base::Span>,
+) -> Option<String> {
+    const NEWLY_CHECKED: [(&str, &str, &str); 9] = [
+        ("Sky.Core.Result", "Result", "map"),
+        ("Sky.Core.Result", "Result", "withDefault"),
+        ("Sky.Core.Result", "Result", "andThen"),
+        ("Sky.Core.Result", "Result", "mapError"),
+        ("Sky.Core.Maybe", "Maybe", "isJust"),
+        ("Sky.Core.Maybe", "Maybe", "isNothing"),
+        ("Sky.Core.Basics", "Basics", "identity"),
+        ("Sky.Core.Basics", "Basics", "always"),
+        ("Sky.Core.Basics", "Basics", "not"),
+    ];
+    let at = at?;
+    // The head of an application or a pipe (`f a b`, `x |> f a`).
+    let head = |mut e: hir::ExprId| loop {
+        match &body.exprs[e] {
+            Expr::Call(callee, _) => e = *callee,
+            Expr::Binop { op, rhs, .. } if op.as_str() == "|>" => e = *rhs,
+            Expr::Binop { op, lhs, .. } if op.as_str() == "<|" => e = *lhs,
+            _ => return e,
+        }
+    };
+    let is = |e: hir::ExprId, module: &str, pseudo: &str, name: &str| match &body.exprs[e] {
+        Expr::Var(Res::Kernel { module: m, func }) => m.as_str() == pseudo && func.as_str() == name,
+        Expr::Var(Res::Def(d)) => sky
+            .def_loc(*d)
+            .is_some_and(|l| l.name.as_str() == name && sky.module_name(l.module) == module),
+        _ => false,
+    };
+    // Only an error inside a call of one of them: another mistake in the same
+    // def keeps its own message.
+    let (module, _, name) = NEWLY_CHECKED.iter().find(|(m, p, n)| {
+        body.exprs.iter().any(|(e, _)| {
+            is(head(e), m, p, n)
+                && body.expr_span(e).is_some_and(|sp| {
+                    sp.file == at.file && sp.range.0 <= at.range.0 && at.range.1 <= sp.range.1
+                })
+        })
+    })?;
+    let short = module.rsplit('.').next().unwrap_or(module);
+    Some(format!(
+        "since v0.27.0 `{short}.{name}` is type-checked (it had no signature, so any \
+         argument passed). Fix: give it the type it takes, for example a function from \
+         the `Ok` value's type for `Result.map`. \
+         See docs/migration/v0.27.md#stdlib-combinators-are-checked"
+    ))
+}
+
 fn trim_leading_ws(src: &str, span: base::Span) -> base::Span {
     let start = span.range.0 as usize;
     let end = (span.range.1 as usize).min(src.len());
@@ -909,7 +964,8 @@ pub fn check_modules_with_world(
                         .or_else(|| secret_migration_hint(&err.message))
                         .or_else(|| ffi_format3_hint(&err.message, body, sky))
                         .or_else(|| ffi_result_hint(&err.message, body))
-                        .or_else(|| cast_migration_hint(&err.message, body, sky)),
+                        .or_else(|| cast_migration_hint(&err.message, body, sky))
+                        .or_else(|| checked_combinator_hint(body, sky, err.span)),
                 });
             }
 

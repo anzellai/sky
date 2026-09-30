@@ -36,6 +36,7 @@ Changes that stop the build (the error shows the fix):
 - The constructors of `WebSocket`, `WebSocketServer`, `StreamId`, `StreamWriter` and `Cache` are hidden. [#opaque-handle-constructors](docs/migration/v0.27.md#opaque-handle-constructors)
 - New stdlib names make a bare name that two `exposing (..)` imports both export ambiguous (`[E1012]`): `Done`, `Event`, `Running`, `Step`, `address`, `close`, `island`, `onIslandEvent`, `raw`, `rpc`, `serve`, `spawn`, `stop`, `toMaybe`, `value`, `withClientCrypto`, `withEmbedded`, `withName`, `withSessionTransport`. The error names the new export and both fixes. [#new-stdlib-names](docs/migration/v0.27.md#new-stdlib-names)
 - A recursive `type alias` is `[E1016]`. [#recursive-type-alias](docs/migration/v0.27.md#recursive-type-alias)
+- `Result.map` / `withDefault` / `andThen` / `mapError`, `Maybe.isJust` / `isNothing`, `identity`, `always` and `not` are type-checked (they had no signature, so any argument passed). [#stdlib-combinators-are-checked](docs/migration/v0.27.md#stdlib-combinators-are-checked)
 - `init : () -> …` in `App.app` / `web` / `cli` / `tui`; new fields in `WebOpts` (`embedded`, `sessionTransport`), `WebSocketServerCfg` and `App.DurableWiring`; six new `Bundle.Permission` constructors; mobile builds need the permission for each native capability; `Spa.rpc` takes the body as a value. [#init-takes-unit](docs/migration/v0.27.md#init-takes-unit), [#webopts-record-literals](docs/migration/v0.27.md#webopts-record-literals), [#native-permissions](docs/migration/v0.27.md#native-permissions), [#spa-rpc-body-value](docs/migration/v0.27.md#spa-rpc-body-value)
 - The Sky.Spa split refuses two wire records with one name, one module under several aliases, and a server arm it cannot read; `sky check` now refuses what the split refuses. [#spa-split-refusals](docs/migration/v0.27.md#spa-split-refusals), [#sky-check-runs-the-spa-split](docs/migration/v0.27.md#sky-check-runs-the-spa-split)
 - Tooling: stdlib module names are reserved, `sky fmt` refuses a file that does not parse, `sky add` acts on the project root and refuses odd names, a store release refuses a local backend address, a dependency's native code is limited, `withClientCrypto` refuses a key inside a union, a TestFlight `--ipa` must match the project, and every download is checked against `checksums.txt`. [#stdlib-module-names-are-reserved](docs/migration/v0.27.md#stdlib-module-names-are-reserved), [#fmt-refuses-a-file-that-does-not-parse](docs/migration/v0.27.md#fmt-refuses-a-file-that-does-not-parse), [#sky-add-finds-the-project-root](docs/migration/v0.27.md#sky-add-finds-the-project-root), [#dependency-names-and-paths](docs/migration/v0.27.md#dependency-names-and-paths), [#release-refuses-local-addresses](docs/migration/v0.27.md#release-refuses-local-addresses), [#dependency-native-code](docs/migration/v0.27.md#dependency-native-code), [#client-crypto-keys-inside-unions](docs/migration/v0.27.md#client-crypto-keys-inside-unions), [#testflight-ipa-must-match-the-project](docs/migration/v0.27.md#testflight-ipa-must-match-the-project), [#upgrades-and-installs-verify-checksums](docs/migration/v0.27.md#upgrades-and-installs-verify-checksums)
@@ -1626,6 +1627,23 @@ entries.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`Ok "s" |> Result.map k` passed `sky check` with `k : Int -> Int`.**
+  Nine stdlib functions with no signature were checked as wildcards. Each
+  now has its type, and a test fails on any exported stdlib value without
+  one.
+- **A Sky value reached a Go interface parameter through a named or passed
+  binding.** `w = Pkg.writeTo` then `w "x" s`, or `apply Pkg.writeTo "x" s`,
+  passed `sky check`. It is `[E2013]` now, as a direct call already was.
+- **`Server.use` had no signature**, so `sky doc` left it out and a call was
+  not checked. It is `(Handler -> Handler) -> List Route -> List Route`.
+- **With the header session transport, WebKit could show the page after
+  sign-in only with the next server frame.** The stream now opens through a
+  ticket and a native `EventSource` in every browser.
+- **A Sky.Spa backend's memory grew with its RPC dedupe cache.** Expired
+  entries are released, and the cache has a byte limit.
+- **A link to an `App.api` path that a client page route also matched
+  rendered the client page** in a Sky.Spa client. The client now knows every
+  `App.api` path as a server route.
 - **A panic in a `Task.parallel` or `Task.parallelN` branch ended the
   process.** It is raised again on the task that waits for the branches, so
   a server answers 500 for that request and keeps running. A branch that
