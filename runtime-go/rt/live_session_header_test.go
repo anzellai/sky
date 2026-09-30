@@ -200,9 +200,11 @@ func readSSEUntil(t *testing.T, body string, event string) bool {
 }
 
 // sseOnce runs handleSSE until its first frames are written, then ends the
-// request.
+// request. G-3: the bound was 300 ms, which a loaded -race runner can exceed
+// before the hello is written; a refused stream returns at once, so the
+// longer bound costs only the accepted cases.
 func sseOnce(app *liveApp, req *http.Request) *httptest.ResponseRecorder {
-	ctx, cancel := context.WithTimeout(req.Context(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
 	defer cancel()
 	rr := httptest.NewRecorder()
 	app.handleSSE(rr, req.WithContext(ctx))
@@ -222,8 +224,11 @@ func TestHeaderSession_SSEByHeaderAndByOneTimeTicket(t *testing.T) {
 	// A cookie alone opens nothing.
 	req = httptest.NewRequest(http.MethodGet, "/_sky/sse?tab=t1&sl=1", nil)
 	req.Header.Set("Cookie", "sky_sid="+sid)
-	if rr := sseOnce(app, req); readSSEUntil(t, rr.Body.String(), "hello") {
-		t.Fatal("SSE opened with a session cookie in header mode")
+	// G-3: assert the refusal itself, not only that no hello arrived (a slow
+	// handler also sends no hello).
+	if rr := sseOnce(app, req); readSSEUntil(t, rr.Body.String(), "hello") ||
+		!readSSEUntil(t, rr.Body.String(), "session-lost") {
+		t.Fatalf("SSE with a session cookie in header mode was not refused:\n%s", rr.Body.String())
 	}
 
 	issue := func(tab string) string {
@@ -246,7 +251,15 @@ func TestHeaderSession_SSEByHeaderAndByOneTimeTicket(t *testing.T) {
 	}
 	open := func(ticket, tab string) bool {
 		req := httptest.NewRequest(http.MethodGet, "/_sky/sse?sl=1&tab="+tab+"&tk="+ticket, nil)
-		return readSSEUntil(t, sseOnce(app, req).Body.String(), "hello")
+		body := sseOnce(app, req).Body.String()
+		if readSSEUntil(t, body, "hello") {
+			return true
+		}
+		// A refused ticket is answered, not left hanging (G-3).
+		if !readSSEUntil(t, body, "session-lost") {
+			t.Fatalf("an SSE request with ticket %q was neither opened nor refused:\n%s", ticket, body)
+		}
+		return false
 	}
 
 	tk := issue("t1")
@@ -428,7 +441,8 @@ func TestHeaderSession_ServedAppEndToEnd(t *testing.T) {
 	if !validSessionID(token) {
 		t.Fatalf("served page GET handed no token: %q", token)
 	}
-	sid := sessionTokenSID(token)
+	// A served app's ids carry its namespace (live_namespace.go).
+	sid := ls.app.tokenSID(token)
 	hid := clickHandlerID(t, ls.app, sid)
 	req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/_sky/event", strings.NewReader(eventBody(sid, hid)))
 	req.Header.Set("Content-Type", "application/json")

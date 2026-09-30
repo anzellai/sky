@@ -76,6 +76,7 @@ module Std.App exposing
     , withDurableId
     , withEmbedded
     , withSessionTransport
+    , withName
     , DurableWiring
     , baseDefaults
     , webDefaults
@@ -207,6 +208,7 @@ type alias WebOpts =
     , csrf : Bool
     , embedded : Bool
     , sessionTransport : SessionTransport
+    , name : Maybe String
     }
 
 -- | How a Sky.Live session id travels between the browser and the server.
@@ -236,6 +238,7 @@ webDefaults =
     , csrf = True
     , embedded = False
     , sessionTransport = CookieSession
+    , name = Nothing
     }
 
 -- | Tablet-target config — same Live-backed shape as [`WebOpts`].
@@ -1013,6 +1016,59 @@ headerSessionIn_ configs =
             headerSessionIn_ rest
 
 
+-- | Name the session namespace of an app started with [`serve`]. Two apps
+-- served in one process must not share sessions, so every served app is
+-- namespaced: its cookie is `sky_sid_<name>` and its session ids carry the
+-- name. Without a name a served app is namespaced by its port
+-- (`port-<N>`); a served app on port 0 with a durable session store needs a
+-- name, because the port (and with it every stored session) changes at each
+-- boot. The app started with [`run`] is never namespaced: its cookie stays
+-- `sky_sid`, so existing sessions keep working.
+--
+--     admin =
+--         adminApp |> App.withName "admin"
+withName : String -> App fallback seed page model msg key -> App fallback seed page model msg key
+withName n (App a) =
+    App
+        { a | configs = a.configs ++ [ WebConfig { webDefaults | name = Just n } ]
+        }
+
+
+-- | The first name set by [`withName`] in the config list.
+nameIn_ : List Config -> Maybe String
+nameIn_ configs =
+    case configs of
+
+        [] ->
+            Nothing
+
+        (WebConfig o) :: rest ->
+            case o.name of
+
+                Just n ->
+                    Just n
+
+                Nothing ->
+                    nameIn_ rest
+
+        (TabletConfig o) :: rest ->
+            case o.name of
+
+                Just n ->
+                    Just n
+
+                Nothing ->
+                    nameIn_ rest
+
+        _ :: rest ->
+            nameIn_ rest
+
+
+liveWithName_ : String -> Live.AppConfig model msg -> Live.AppConfig model msg
+liveWithName_ =
+    Ffi.kernel "Live_withName"
+
+
 -- | True when any web / tablet config in the list asks for embedded mode.
 embeddedIn_ : List Config -> Bool
 embeddedIn_ configs =
@@ -1435,8 +1491,16 @@ liveConfig_ (App a) =
 
                     else
                         withEmbedded_
+                withName_ =
+                    case nameIn_ a.configs of
+
+                        Just n ->
+                            liveWithName_ n withTransport_
+
+                        Nothing ->
+                            withTransport_
             in
-                Just withTransport_
+                Just withName_
 
         Nothing ->
             Nothing

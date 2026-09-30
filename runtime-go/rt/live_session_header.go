@@ -134,7 +134,7 @@ func deriveRotatedToken(token, salt string) string {
 // derives the next token, which must hash to that hop's new id. ok is false
 // when a hop has no salt (a cookie-mode or tokenless rotation) or the chain
 // does not verify.
-func tokenThroughHops(token string, hops []sessionAlias) (string, bool) {
+func (app *liveApp) tokenThroughHops(token string, hops []sessionAlias) (string, bool) {
 	if token == "" || len(hops) == 0 {
 		return "", false
 	}
@@ -144,7 +144,7 @@ func tokenThroughHops(token string, hops []sessionAlias) (string, bool) {
 			return "", false
 		}
 		cur = deriveRotatedToken(cur, h.Salt)
-		if subtle.ConstantTimeCompare([]byte(sessionTokenSID(cur)), []byte(h.New)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(app.tokenSID(cur)), []byte(h.New)) != 1 {
 			return "", false
 		}
 	}
@@ -174,10 +174,15 @@ func (app *liveApp) presentedSID(r *http.Request) string {
 	}
 	if !app.headerSessions {
 		v, _ := readSessionCookie(r, app.cookieNameOrDefault())
+		// An id of another shape, or of another app's namespace
+		// (live_namespace.go), is never looked up in this app's store.
+		if !app.presentedMayBeOwn(v) {
+			return ""
+		}
 		return v
 	}
 	if t := presentedSessionToken(r); t != "" {
-		return sessionTokenSID(t)
+		return app.tokenSID(t)
 	}
 	if sid, ok := r.Context().Value(sseTicketSIDKey{}).(string); ok {
 		return sid
@@ -208,14 +213,14 @@ func writeSessionToken(w http.ResponseWriter, token string) {
 // tokenAfterRotation returns the token the holder of token (which names
 // oldSid) has now that oldSid rotated, and whether it could be derived.
 func (app *liveApp) tokenAfterRotation(token, oldSid string) (string, bool) {
-	if !app.headerSessions || token == "" || sessionTokenSID(token) != oldSid {
+	if !app.headerSessions || token == "" || app.tokenSID(token) != oldSid {
 		return "", false
 	}
 	_, hops, ok := app.followAlias(oldSid)
 	if !ok {
 		return "", false
 	}
-	return tokenThroughHops(token, hops)
+	return app.tokenThroughHops(token, hops)
 }
 
 // tokenThroughHopsFrom derives, from a presented token whose id rotated, the
@@ -224,11 +229,11 @@ func tokenThroughHopsFrom(app *liveApp, token string) (string, bool) {
 	if !app.headerSessions || token == "" {
 		return "", false
 	}
-	_, hops, ok := app.followAlias(sessionTokenSID(token))
+	_, hops, ok := app.followAlias(app.tokenSID(token))
 	if !ok {
 		return "", false
 	}
-	return tokenThroughHops(token, hops)
+	return app.tokenThroughHops(token, hops)
 }
 
 // ─── the token on the goroutine trace context ───────────────────────

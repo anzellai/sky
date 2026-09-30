@@ -138,6 +138,13 @@ func (ls *liveServer) runCleanups() {
 // Live.serve). A store refusal and the console invariant are errors, never an
 // exit; the host owns shutdown.
 func buildLiveServer(cfg any, embedded bool) (ls *liveServer, err error) {
+	return buildLiveServerFor(cfg, embedded, false)
+}
+
+// buildLiveServerFor is buildLiveServer; served is true for an app started
+// with Live.serve / App.serve, which gets its own session namespace
+// (live_namespace.go).
+func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err error) {
 	app := &liveApp{
 		init:               Field(cfg, "Init"),
 		update:             Field(cfg, "Update"),
@@ -298,6 +305,7 @@ func buildLiveServer(cfg any, embedded bool) (ls *liveServer, err error) {
 	// URL needs the real port (port 0 asks the kernel for a free one), and a
 	// port already in use is reported before the app announces itself.
 	port := resolveLivePort(cfg)
+	configuredPort := port
 	bindHost, _ := resolveBindHost()
 	ln, lerr := net.Listen("tcp", joinBindAddr(bindHost, port))
 	if lerr != nil {
@@ -312,6 +320,22 @@ func buildLiveServer(cfg any, embedded bool) (ls *liveServer, err error) {
 		port = tcp.Port
 	}
 	ls.port = port
+	// A served app gets its own session namespace (live_namespace.go): the
+	// process-owning app keeps `sky_sid` and 32-hex ids.
+	if served {
+		_, memStore := app.store.(*memoryStore)
+		ns, nerr := resolveServedNamespace(cfg, configuredPort, port, !memStore)
+		if nerr != nil {
+			return ls, nerr
+		}
+		release, cerr := claimLiveNamespace(ns)
+		if cerr != nil {
+			return ls, cerr
+		}
+		ls.addCleanup(release)
+		app.ns = ns
+		app.cookieName = "sky_sid_" + ns
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sky/event", app.handleEvent)
@@ -561,7 +585,7 @@ func liveStartError(err error, embedded bool) any {
 // until Live.stop.
 func Live_serve(cfg any) any {
 	return func() any {
-		ls, err := buildLiveServer(cfg, true)
+		ls, err := buildLiveServerFor(cfg, true, true)
 		if err != nil {
 			return Err[any, any](liveStartError(err, true))
 		}

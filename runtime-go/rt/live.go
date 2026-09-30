@@ -1154,6 +1154,9 @@ type liveApp struct {
 	// parent's session cookie and the sub-app's session cookie don't
 	// collide on the same browser origin. v0.16.1 PR10.
 	cookieName string
+	// ns: the session namespace of a served app (live_namespace.go). Empty
+	// for the process-owning app, whose ids stay 32 hex characters.
+	ns string
 	// skyIDPrefix: the prefix prepended to every assignSkyIDs walk.
 	// Defaults to "r" for root-mounted apps. Sub-apps use a distinct
 	// prefix (e.g. "sky-console") so logs / diffs / handler lookups
@@ -1267,7 +1270,7 @@ func (a *liveApp) cookieNameOrDefault() string {
 func (a *liveApp) consoleModelFor(r *http.Request) any {
 	name := a.cookieNameOrDefault()
 	for _, c := range r.Cookies() {
-		if !isSessionCookieName(c.Name, name) || c.Value == "" {
+		if !isSessionCookieName(c.Name, name) || c.Value == "" || !a.presentedMayBeOwn(c.Value) {
 			continue
 		}
 		a.locker.Lock(c.Value)
@@ -2439,7 +2442,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			} else {
 				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
 			}
-			w.Header().Set("X-Sky-Sid", cur)
+			app.tellSID(w, cur)
 			sid = cur
 		}
 	}
@@ -2823,7 +2826,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// a session that is demonstrably alive.
 	app.issueSession(w, r, sid)
 	if bs.tellSid {
-		w.Header().Set("X-Sky-Sid", sid)
+		app.tellSID(w, sid)
 	}
 	// Header mode: the token this request presented. When it names an id
 	// that rotated (bs.setCookie: the rotating tab, inside the grace window)
@@ -2860,7 +2863,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			} else {
 				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
 			}
-			w.Header().Set("X-Sky-Sid", cur)
+			app.tellSID(w, cur)
 			sid = cur
 		}
 	}
@@ -3095,7 +3098,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			} else {
 				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
 			}
-			w.Header().Set("X-Sky-Sid", cur)
+			app.tellSID(w, cur)
 		}
 	}
 
@@ -5290,7 +5293,7 @@ func writeSessionCookie(r *http.Request, w http.ResponseWriter, cookieName, sid 
 	// runtime minted (32 hex) is expired: Sky.Spa signs its own session into
 	// a `sky_sid` cookie of a different shape, and that one is not ours.
 	if name != base && r != nil {
-		if c, err := r.Cookie(base); err == nil && c != nil && validSessionID(c.Value) {
+		if c, err := r.Cookie(base); err == nil && c != nil && looksLikeLiveSID(c.Value) {
 			http.SetCookie(w, &http.Cookie{
 				Name:     base,
 				Value:    "",

@@ -242,7 +242,8 @@ func TestSessionRotation_OldCookieCannotDriveSignedInSession(t *testing.T) {
 	if c := cookieFromResponse(rr, "sky_sid"); c == newSid {
 		t.Fatalf("FIXATION: the old cookie was handed the new sid")
 	}
-	if strings.Contains(rr.Body.String(), newSid) || rr.Header().Get("X-Sky-Sid") == newSid {
+	if strings.Contains(rr.Body.String(), newSid) || rr.Header().Get("X-Sky-Sid") == newSid ||
+		rr.Header().Get("X-Sky-Sid") == sidTag(newSid) {
 		t.Fatalf("FIXATION: the response to the old cookie leaked the new sid")
 	}
 	if got := modelOf(t, app, newSid); got != before {
@@ -319,11 +320,23 @@ func TestSessionRotation_OtherTabWithNewCookieAndOldBodySid(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("new cookie + old body sid must dispatch, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if got := rr.Header().Get("X-Sky-Sid"); got != newSid {
-		t.Fatalf("the response must tell the tab its new sid: X-Sky-Sid=%q, want %q", got, newSid)
+	// E-13: cookie mode names the session by its tag, never by the id (a
+	// response header is logged by proxies; the id is the credential).
+	if got := rr.Header().Get("X-Sky-Sid"); got != sidTag(newSid) {
+		t.Fatalf("the response must tell the tab its new session tag: X-Sky-Sid=%q, want %q", got, sidTag(newSid))
 	}
 	if got := modelOf(t, app, newSid); got != "seed!" {
 		t.Fatalf("event did not dispatch into the rotated session: model %q", got)
+	}
+	// The tab echoes the tag from now on, and that dispatches.
+	rr = postEventTab(app, "sky_sid="+newSid, sidTag(newSid), clickHandlerID(t, app, newSid), "tab-b")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("an event echoing the session tag must dispatch, got %d: %s", rr.Code, rr.Body.String())
+	}
+	// A tag of ANOTHER session does not.
+	rr = postEventTab(app, "sky_sid="+newSid, sidTag(newLiveSessionID()), clickHandlerID(t, app, newSid), "tab-b")
+	if rr.Code == http.StatusOK {
+		t.Fatal("an event echoing another session's tag dispatched")
 	}
 }
 
@@ -344,8 +357,8 @@ func TestSessionRotation_ActingTabEventGetsNewCookie(t *testing.T) {
 	if got := cookieFromResponse(rr, "sky_sid"); got != newSid {
 		t.Fatalf("the acting tab must get the new cookie, got %q want %q", got, newSid)
 	}
-	if got := rr.Header().Get("X-Sky-Sid"); got != newSid {
-		t.Fatalf("X-Sky-Sid = %q, want %q", got, newSid)
+	if got := rr.Header().Get("X-Sky-Sid"); got != sidTag(newSid) {
+		t.Fatalf("X-Sky-Sid = %q, want the tag %q", got, sidTag(newSid))
 	}
 }
 
@@ -866,5 +879,24 @@ func TestSessionRotation_RotateIsCSRFCheckedThroughTheListener(t *testing.T) {
 	}
 	if got := cookieFromResponse(ok, "sky_sid"); got != newSid {
 		t.Fatalf("the redeemed rotate must set the new cookie, got %q want %q", got, newSid)
+	}
+}
+
+// E-13: X-Sky-Sid carries the session id only in header transport (where
+// the token already travels in headers); cookie mode sends the one-way tag.
+func TestTellSIDNamesTheIDOnlyInHeaderMode(t *testing.T) {
+	sid := newLiveSessionID()
+	rr := httptest.NewRecorder()
+	(&liveApp{}).tellSID(rr, sid)
+	if got := rr.Header().Get("X-Sky-Sid"); got == sid || got != sidTag(sid) || strings.Contains(got, sid) {
+		t.Fatalf("cookie mode X-Sky-Sid = %q, want the tag", got)
+	}
+	rr = httptest.NewRecorder()
+	(&liveApp{headerSessions: true}).tellSID(rr, sid)
+	if got := rr.Header().Get("X-Sky-Sid"); got != sid {
+		t.Fatalf("header mode X-Sky-Sid = %q, want the id", got)
+	}
+	if !claimsSID(sidTag(sid), sid) || !claimsSID(sid, sid) || claimsSID(sidTag(sid), newLiveSessionID()) {
+		t.Fatal("claimsSID must accept the id and its tag, and nothing else")
 	}
 }

@@ -275,7 +275,8 @@ func TestHostGuard403NamesEveryWayIn(t *testing.T) {
 	if strings.Contains(body, "dev server") {
 		t.Fatalf("403 body still says \"dev server\": %q", body)
 	}
-	for _, want := range []string{"SKY_ALLOWED_HOSTS", "SKY_PUBLIC_URL", "evil.example"} {
+	for _, want := range []string{"SKY_ALLOWED_HOSTS", "SKY_PUBLIC_URL", "evil.example",
+		"see docs/migration/v0.27.md#loopback-host-guard"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("403 body does not name %s: %q", want, body)
 		}

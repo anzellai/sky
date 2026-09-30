@@ -193,7 +193,8 @@ func rejectForeignHost(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("403 Forbidden: this server is bound to loopback and does not answer Host " +
 		strings.TrimSpace(r.Host) + ". Add the name to " + skyEnvName("ALLOWED_HOSTS") +
 		" (comma list, *.example.test wildcards, * turns the check off) or to " +
-		skyEnvName("PUBLIC_URL") + ", or run with ENV=production behind your proxy.\n"))
+		skyEnvName("PUBLIC_URL") + ", or run with ENV=production behind your proxy; " +
+		"see docs/migration/v0.27.md#loopback-host-guard\n"))
 }
 
 // devWebSocketOriginPatterns are the WebSocket origin patterns used when an
