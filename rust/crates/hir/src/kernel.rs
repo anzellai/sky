@@ -658,6 +658,7 @@ pub const KERNEL_FUNCTIONS: &[(&str, &[&str])] = &[
             "getCookie",
             "cookie",
             "withCookie",
+            "addCookie",
             "withHeader",
             "any",
             "method",

@@ -629,3 +629,102 @@ fn under_applied_point_free_def_builds_and_runs() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ===========================================================================
+// Defect 6 (C-8) — a record LITERAL with a FUNCTION field, wrapped by a
+// builtin container ctor (`Just`/`Ok`) or placed in a sealed-ctor / list slot,
+// nested inside another record literal.
+//
+// `ctor_call` lowered the wrapped record at `GoTy::Any` (only a bare FUNCTION
+// element was threaded), and `lower_record` deliberately renders a record with
+// a func field as the all-`any` anonymous struct (the TEA-cfg form). So
+// `rt.Just[struct{A int; F func(int) string}](struct{A any; F any}{…})` reached
+// `go build`, which rejects it: check passed, build failed. Origin R1 (doc 14
+// §3, the `coerce_if_needed` fall-through never fired because the slot was
+// `any`); lever §5.2 (slot-typed construction): the literal is BUILT at the
+// slot's concrete struct, its func fields lowered at their func slots, so no
+// `rt.Coerce` is needed at all.
+// ===========================================================================
+
+const RECORD_FN_FIELD_IN_CONTAINER: &str = "module Main exposing (main)\n\n\
+     import Sky.Core.Prelude exposing (..)\n\
+     import Sky.Core.List as List\n\
+     import Sky.Core.String as String\n\
+     import Std.Log exposing (println)\n\n\
+     type alias W m =\n    { a : m, f : m -> String }\n\n\
+     type alias Outer =\n    { w : Maybe (W Int) }\n\n\
+     type alias Outer2 =\n    { w : Maybe { a : Int, f : Int -> String } }\n\n\
+     type alias Outer3 =\n    { r : Result String { a : Int, f : Int -> String } }\n\n\
+     type alias Outer4 =\n    { ws : List (Maybe { a : Int, f : Int -> String }) }\n\n\
+     type Box\n    = Box { a : Int, f : Int -> String }\n\n\
+     type alias Wiring model =\n    { restore : String -> model, persist : model -> String, enabled : Bool }\n\n\
+     type alias Cfg =\n    { wiring : Maybe (Wiring Int) }\n\n\
+     o1 : Outer\no1 =\n    { w = Just { a = 3, f = String.fromInt } }\n\n\
+     o2 : Outer2\no2 =\n    { w = Just { a = 4, f = String.fromInt } }\n\n\
+     o3 : Outer3\no3 =\n    { r = Ok { a = 5, f = \\n -> String.fromInt (n * 10) } }\n\n\
+     o4 : Outer4\no4 =\n    { ws = [ Just { a = 6, f = String.fromInt }, Nothing ] }\n\n\
+     box : Box\nbox =\n    Box { a = 7, f = String.fromInt }\n\n\
+     cfg : Cfg\ncfg =\n    { wiring = Just { restore = \\s -> String.length s, persist = String.fromInt, enabled = True } }\n\n\
+     runW : Maybe { a : Int, f : Int -> String } -> String\n\
+     runW m =\n    case m of\n        Just r ->\n            r.f r.a\n\n        Nothing ->\n            \"-\"\n\n\
+     main =\n\
+     \x20   let\n\
+     \x20       one =\n            runW o1.w\n\n\
+     \x20       three =\n            case o3.r of\n                Ok r ->\n                    r.f r.a\n\n                Err e ->\n                    e\n\n\
+     \x20       four =\n            String.join \",\" (List.map runW o4.ws)\n\n\
+     \x20       seven =\n            case box of\n                Box r ->\n                    r.f r.a\n\n\
+     \x20       wired =\n            case cfg.wiring of\n                Just w ->\n                    w.persist (w.restore \"four\")\n\n                Nothing ->\n                    \"-\"\n\
+     \x20   in\n\
+     \x20   println (String.join \" \" [ one, runW o2.w, three, four, seven, wired ])\n";
+
+/// Emission leg — no container ctor may receive the all-`any` anonymous
+/// struct for a concrete func-field struct slot.
+#[test]
+fn record_with_fn_field_in_container_is_built_at_the_slot_type() {
+    let dir = project("recfn-emit", RECORD_FN_FIELD_IN_CONTAINER);
+    let log = build(&dir);
+    let src = emitted_go(&dir, &log);
+    for bad in [
+        "](struct{A any; F any}{",
+        "](struct{ A any; F any }{",
+        "](struct{Enabled any; Persist any; Restore any}{",
+        "](struct{ Enabled any; Persist any; Restore any }{",
+    ] {
+        assert!(
+            !src.contains(bad),
+            "a record literal with a function field in a concrete container slot must be \
+             built AT the slot's struct type (doc 14 lever §5.2), not as the all-`any` \
+             struct `{bad}`. Emitted:\n{src}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Build + run leg — it type-checks, so it must `go build` and compute the
+/// right values.
+#[test]
+fn record_with_fn_field_in_container_builds_and_runs() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("recfn-run", RECORD_FN_FIELD_IN_CONTAINER);
+    let log = build(&dir);
+    let bin = dir.join("sky-out").join("app");
+    assert!(
+        bin.is_file(),
+        "`sky check` ≡ `sky build`: `{{ w = Just {{ a = 4, f = String.fromInt }} }}` \
+         type-checks, so the emitted Go must compile. Log:\n{log}"
+    );
+    let out = Command::new(&bin)
+        .current_dir(&dir)
+        .output()
+        .expect("run app");
+    let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
+    combined.push_str(&String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "Output:\n{combined}");
+    assert!(
+        combined.contains("3 4 50 6,- 7 4"),
+        "each func field must run on its own record's value. Output:\n{combined}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

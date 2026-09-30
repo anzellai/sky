@@ -34,7 +34,21 @@ type LazyCaf[T any] struct {
 
 // Get returns the cell's value, running compute exactly once across all callers
 // and all goroutines.
+//
+// The computation runs with the Sky.Live session stamp CLEARED. A CAF is one
+// value for the whole process, but it is forced lazily, on whichever goroutine
+// uses it first. When that was a Sky.Live session's goroutine, a handle the
+// CAF opened (`shell = Task.run (Process.spawn …)`, a watcher, a WebSocket)
+// was owned by that one session: closed when the session ended, and refused to
+// every other session. Clearing the stamp makes the value process-owned, the
+// same as if `main` had forced it. The stamp is restored for the caller.
 func (c *LazyCaf[T]) Get(compute func() T) T {
-	c.once.Do(func() { c.val = compute() })
+	c.once.Do(func() {
+		if sess := currentLiveSession(); sess != nil {
+			clearGoroutineLiveSession()
+			defer setGoroutineLiveSession(sess)
+		}
+		c.val = compute()
+	})
 	return c.val
 }

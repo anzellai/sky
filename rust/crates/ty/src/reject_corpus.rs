@@ -140,7 +140,9 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// (ordering needs a comparable type, C-11) and
 /// `bounds_codec_auto_through_a_helper.sky` (`Codec.auto` needs an Encodable
 /// type, carried through an annotated helper, B-1).
-pub const EXPECTED_CORPUS_FILES: usize = 88;
+/// **89 since v0.27.0 final batch (S3d)**: `pattern_ctor_too_many_args.sky` pins a
+/// constructor pattern's arity as `[E2007]` at the pattern.
+pub const EXPECTED_CORPUS_FILES: usize = 89;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -165,7 +167,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// **38 since v0.27.0 judge round 2** (`ffi_kernel_through_another_qualifier.sky`).
 /// **40 since v0.27.0 final batch (S3a)** (the two `value_restriction_*.sky` files).
 /// **42 since v0.27.0 final batch (S3b)** (the two `bounds_*.sky` files).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 42;
+/// **43 since v0.27.0 final batch (S3d)** (`pattern_ctor_too_many_args.sky`).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 43;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the
