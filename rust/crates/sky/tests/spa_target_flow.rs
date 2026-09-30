@@ -406,7 +406,8 @@ main =
 /// synthesis into a `spaRpcError_` binding, and the generated frontend
 /// `Applied<Msg> (Err e)` arm dispatches `update (spaRpcError_ e) model` so the
 /// app's view can show the error — parity with Sky.Live. Without the builder the
-/// arm keeps the loud-log floor (`( model, Cmd.none )`). RED before item 4: the
+/// arm keeps the model and reports loudly (`( model, Spa.reportRpcFailure e )`).
+/// RED before item 4: the
 /// Err arm was ALWAYS `( model, Cmd.none )`, with no way to reach `update`.
 ///
 /// Heavy full `sky build --target web:app` (wasm + Go cross-compile) — #[ignore]d
@@ -449,15 +450,15 @@ fn web_app_with_rpc_error_routes_a_failed_rpc_into_update() {
         "item 4: the frontend Err arm must route the failed RPC into update:\n{front}"
     );
     assert!(
-        !front.contains("AppliedPersist (Err _) ->"),
-        "item 4: with the handler present the Err arm must NOT keep the swallow floor:\n{front}"
+        !front.contains("AppliedPersist (Err _) ->") && !front.contains("reportRpcFailure"),
+        "item 4: with the handler present the Err arm must NOT keep the floor or report the failure as unhandled:\n{front}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Item 4 control — WITHOUT `App.withRpcError`, the same app keeps the loud-log
-/// floor: the Err arm is `( model, Cmd.none )` (the transport failure is still
-/// surfaced at the runtime perform site, not swallowed).
+/// Item 4 control — WITHOUT `App.withRpcError`, the same app keeps the model
+/// and reports the failure: the Err arm is `( model, Spa.reportRpcFailure e )`
+/// (the loud console line lives in that arm, not at the runtime perform site).
 ///
 /// Heavy full web:app build — #[ignore]d for the T1 budget; nightly via
 /// `--ignored`. Per-commit codegen coverage: the same
@@ -502,8 +503,8 @@ fn web_app_without_rpc_error_keeps_the_floor() {
         "item 4 control: no withRpcError means no spaRpcError_ binding:\n{front}"
     );
     assert!(
-        front.contains("AppliedPersist (Err _) ->"),
-        "item 4 control: without the handler the Err arm keeps the floor:\n{front}"
+        front.contains("AppliedPersist (Err e) ->") && front.contains("Spa.reportRpcFailure e"),
+        "item 4 control: without the handler the Err arm keeps the model and reports:\n{front}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -8465,7 +8465,7 @@ fn gen_frontend_update(
     // synthesis into a `spaRpcError_ : Error -> Msg` binding), route a failed RPC
     // INTO `update` via that constructor, so the app's own view can show the
     // error — parity with Sky.Live's `Cmd.perform task ToMsg` error arm. Absent
-    // the hook, keep the loud-log floor (model kept, perform site reports). The
+    // the hook, keep the model and report loudly (`Spa.reportRpcFailure`). The
     // presence flag is resolved by the caller against the ENTRY (see the param).
     let mut arms_out = String::new();
     let arm_count = case.arms().count();
@@ -8656,18 +8656,19 @@ fn gen_frontend_update(
         // The Err arm. When the app declared `App.withRpcError`, route the error
         // INTO `update` via `spaRpcError_ e` so the app's own view can show it
         // (item 4 — parity with Sky.Live's `Cmd.perform task ToMsg` error arm).
-        // Otherwise keep the model (the write-set never applied): the failure is
-        // still NOT swallowed silently — the client's perform choke point surfaces
-        // every non-network RPC Err loudly (runtime-go spa_neterror.go /
-        // live_wasm.go performTask) and a network Err arms the retry overlay — so
-        // keeping the model is the correct floor, not a discard.
+        // Otherwise keep the model (the write-set never applied) and return
+        // `Spa.reportRpcFailure e`: the loud console line lives HERE, the one
+        // place where "no app-level handler" is true (runtime-go spa_perform.go).
+        // The runtime's delivery logs nothing, so a client-local perform's Err
+        // and a handled RPC Err are never reported as unhandled failures. A
+        // network Err arms the retry overlay and the report skips it.
         let err_arm = if has_rpc_error {
             format!(
                 "        Applied{m} (Err e) ->\n            -- item 4: route the failed RPC into the app's own update.\n            update (spaRpcError_ e) {model_param}\n\n"
             )
         } else {
             format!(
-                "        Applied{m} (Err _) ->\n            -- transport error surfaced loudly by the client perform site\n            -- (runtime-go performTask); model kept (write-set did not apply).\n            ( {model_param}, Cmd.none )\n\n"
+                "        Applied{m} (Err e) ->\n            -- no App.withRpcError: keep the model (the write-set did not\n            -- apply) and report the failure loudly on the console.\n            ( {model_param}, Spa.reportRpcFailure e )\n\n"
             )
         };
         arms_out.push_str(&format!(
@@ -9667,7 +9668,8 @@ mod fix7_tests {
     // `sky build --target web:app` flow tests in crates/sky/tests/spa_target_flow.rs
     // are #[ignore]d for the T1 budget). With a `spaRpcError_` binding present,
     // the generated frontend `Applied<Msg> (Err e)` arm routes into `update`;
-    // without it, it keeps the loud-log floor `( model, Cmd.none )`.
+    // without it, it keeps the model and reports loudly
+    // (`( model, Spa.reportRpcFailure e )`).
     //
     // RED before item 4: the Err arm was ALWAYS `( model, Cmd.none )`.
     fn gen_update_for(with_rpc_error: bool) -> String {
@@ -9719,14 +9721,21 @@ mod fix7_tests {
             "item 4: with withRpcError the Err arm must route into update:\n{with}"
         );
         assert!(
-            !with.contains("AppliedSave (Err _) ->"),
+            !with.contains("AppliedSave (Err _) ->") && with.contains("AppliedSave (Err e) ->"),
             "item 4: with the handler the swallow floor must be gone:\n{with}"
         );
 
         let without = gen_update_for(false);
         assert!(
-            without.contains("AppliedSave (Err _) ->") && without.contains("( model, Cmd.none )"),
-            "item 4: without withRpcError the Err arm keeps the loud-log floor:\n{without}"
+            without.contains("AppliedSave (Err e) ->")
+                && without.contains("( model, Spa.reportRpcFailure e )"),
+            "item 4: without withRpcError the Err arm keeps the model and reports loudly:\n{without}"
+        );
+        // v0.27.0: the loud report lives only in the no-handler arm. With the
+        // handler the failure is the app's, and nothing reports it as unhandled.
+        assert!(
+            !with.contains("reportRpcFailure"),
+            "with withRpcError the Err arm must not report the failure as unhandled:\n{with}"
         );
         assert!(
             !without.contains("spaRpcError_"),

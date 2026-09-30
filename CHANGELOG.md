@@ -1266,6 +1266,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **Sky.Spa logged a handled client Task error as an RPC failure.** A
+  client-local `Cmd.perform` that failed, such as `Native.secureGet` in a
+  browser (`Unavailable`) or a `Task.fail`, wrote `[sky.spa] RPC failed; kept
+  last good model (no app-level handler for this transport error): …` to the
+  console, although no RPC ran, the app's own Msg arm handled the `Err` and the
+  model changed. A server RPC that the app routed into `update` with
+  `App.withRpcError` wrote the same line. The client's result delivery logged
+  every non-network `Err` it saw. It now delivers an `Err` to its Msg like an
+  `Ok` and logs nothing. The loud line moved to the one place where it is
+  true: the generated `Applied<Msg> (Err e)` arm of an app with no
+  `App.withRpcError` now keeps the model and returns the new
+  `Spa.reportRpcFailure e`, which logs it (a network error still arms the
+  retry overlay instead). (`TestSpaPerform_*`, `TestSpaRpcDeliver_*`,
+  `TestSpaReportRpcFailure_*`, `rpc_error_arm_routes_into_update`, and the
+  `spa-handled-err` stage of `scripts/spa-rpc-order-e2e.sh` in Chromium and
+  WebKit under `SKY_CSP=strict`.)
 - **Sky.Spa: an RPC's whole write was dropped when its follow-up Msg also ran
   inside a server chain.** An arm like "Add to basket" that writes the model
   and tracks the event (`Cmd.perform … Tracked`) answered `200`, but the basket

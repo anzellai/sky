@@ -696,7 +696,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2213,
+    "stdlib_entries": 2214,
     "stdlib_modules": 113,
     "surfaces_covered": 169,
     "surfaces_covered_pct": 93.9,
@@ -13889,12 +13889,13 @@
           ]
         },
         "Std.Spa": {
-          "count": 19,
+          "count": 20,
           "symbols": [
             "AppConfig",
             "Route",
             "followUps",
             "reportError",
+            "reportRpcFailure",
             "route",
             "routeInt",
             "rpc",
@@ -14155,7 +14156,7 @@
           ]
         }
       },
-      "count": 662,
+      "count": 663,
       "pct_of_denominator": 29.9
     },
     "symbols_unreferenced_strict": {
@@ -15063,12 +15064,13 @@
           ]
         },
         "Std.Spa": {
-          "count": 19,
+          "count": 20,
           "symbols": [
             "AppConfig",
             "Route",
             "followUps",
             "reportError",
+            "reportRpcFailure",
             "route",
             "routeInt",
             "rpc",
@@ -15343,7 +15345,7 @@
           ]
         }
       },
-      "count": 752,
+      "count": 753,
       "pct_of_denominator": 34.0
     }
   },
@@ -15366,10 +15368,10 @@
       "id": "apps:cli-verbs",
       "modules_imported": 61,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 393,
-      "refs_qualified": 369,
+      "refs_generous": 394,
+      "refs_qualified": 370,
       "role": "Layer2",
-      "sky_files": 187,
+      "sky_files": 188,
       "sky_toml_sections": []
     },
     {

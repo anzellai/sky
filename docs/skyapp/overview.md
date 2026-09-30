@@ -200,8 +200,9 @@ command instead.
 On the `web:app` (Sky.Spa) target each server branch runs as a `POST
 /_rpc/<Msg>` round-trip. When one fails — a 5xx the backend answered, a response
 the shared codec cannot decode, or a network drop — the client keeps the model
-(the write-set never applied) and reports the failure loudly to the console, and
-a network drop arms a retry overlay. That is safe, but silent to your UI.
+(the write-set never applied) and reports the failure loudly to the console
+(`[sky.spa] RPC failed; kept last good model …`), and a network drop arms a
+retry overlay. That is safe, but silent to your UI.
 
 `App.withRpcError (\err -> RpcFailed err)` routes the error **into your own
 `update`** instead, so your view can show it — parity with Sky.Live's
@@ -219,8 +220,13 @@ App.app { init = init, update = update, view = view, subscriptions = subscriptio
 ```
 
 `withRpcError : (Error -> msg) -> App … -> App …`. It is opt-in: without it the
-loud-log floor stands. Web (Sky.Live) and terminal targets have no RPC boundary
-and ignore the hook — there a failed task surfaces through its own `ToMsg`.
+loud-log floor stands. With it, the failure is your app's, and the console line
+is not written. Web (Sky.Live) and terminal targets have no RPC boundary and
+ignore the hook — there a failed task surfaces through its own `ToMsg`.
+
+A client-local `Cmd.perform` is not an RPC. Its `Err` (a `Task.fail`, a
+`Std.Native` call in a browser with no native shell, a client `Http` call) goes
+to the Msg you gave it, like an `Ok`, and the client logs nothing for it.
 
 ## The Sky Console for your own admins — `App.withConsoleAuth`
 
