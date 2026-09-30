@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Server_addCookie is `Sky.Http.Server.addCookie : Cookie -> Response ->

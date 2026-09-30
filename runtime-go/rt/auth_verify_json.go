@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Auth_verifyTokenT is the typed kernel entry point (doc 14 §5.3) behind

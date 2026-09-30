@@ -44,11 +44,7 @@ type LazyCaf[T any] struct {
 // same as if `main` had forced it. The stamp is restored for the caller.
 func (c *LazyCaf[T]) Get(compute func() T) T {
 	c.once.Do(func() {
-		if sess := currentLiveSession(); sess != nil {
-			clearGoroutineLiveSession()
-			defer setGoroutineLiveSession(sess)
-		}
-		c.val = compute()
+		runOutsideLiveSession(func() { c.val = compute() })
 	})
 	return c.val
 }
