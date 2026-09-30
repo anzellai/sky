@@ -320,7 +320,7 @@ how to test must be green* is the gate.
 
 **The lesson (2026-08-20), which is why this rule exists.** A `record_update`
 typed-emit **codegen regression shipped in v0.21.0**. It type-checked, all 60
-examples built, and both sky-lang.org and darraghstudio deployed cleanly —
+examples built, and both live apps deployed cleanly —
 because the trigger (an annotated row-poly record-update function passed to a
 typed `List.map`) is a synthetic pattern real code avoids. Per-commit CI and
 the Release gate ran the light tier and passed. The **nightly** T2
