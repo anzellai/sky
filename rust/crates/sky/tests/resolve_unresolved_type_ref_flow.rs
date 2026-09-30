@@ -1,8 +1,10 @@
 //! Regression for a masked diagnostic (v0.27.0, found while fixing the Sky.Spa
 //! split's dependency types).
 //!
-//! `import Geo.Shape` binds the qualifier `Shape`, so an annotation that names
-//! the type by the full module path, `p0 : Geo.Shape.Point`, does not resolve.
+//! `import Geo.Shape as Shape` binds only the qualifier `Shape`, so an
+//! annotation that names the type by the full module path,
+//! `p0 : Geo.Shape.Point`, does not resolve. (A bare `import Geo.Shape` makes
+//! the full path valid since C-15, as in Elm, so the fixture uses an alias.)
 //! The resolver reported `[E1001] Undefined name: Geo.Shape.Point`, but the
 //! build printed the type error that followed from it instead: the checker
 //! still needs a type there, the unresolved name fell back to a bare
@@ -41,7 +43,7 @@ fn scratch() -> PathBuf {
     .unwrap();
     std::fs::write(
         dir.join("src/Main.sky"),
-        "module Main exposing (main)\n\nimport Geo.Shape\nimport Sky.Core.Prelude exposing (..)\nimport Std.Log exposing (println)\n\n\np0 : Geo.Shape.Point\np0 =\n    { x = 3, y = 4 }\n\n\nmain =\n    println (String.fromInt p0.x)\n",
+        "module Main exposing (main)\n\nimport Geo.Shape as Shape\nimport Sky.Core.Prelude exposing (..)\nimport Std.Log exposing (println)\n\n\np0 : Geo.Shape.Point\np0 =\n    { x = 3, y = 4 }\n\n\nmain =\n    println (String.fromInt p0.x)\n",
     )
     .unwrap();
     dir
