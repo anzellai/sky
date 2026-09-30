@@ -1,0 +1,13 @@
+wk.log:bench failed: page.evaluate: TypeError: null is not an object (evaluating 'target.dispatchEvent')
+wk.log:bench failed: page.evaluate: TypeError: null is not an object (evaluating 'target.dispatchEvent')
+wk.log:[live/svg/webkit] n=10 static=13 hit=12 few=12 all=12 as=svg
+wk.log:[live/svg/webkit] n=100 static=13 hit=6 few=12 all=12 as=svg
+wk.log:[live/svg/webkit] n=1000 static=315 hit=13 few=13 all=27 as=svg
+wk.log:[live/svg/webkit] n=5000 static=93258 hit=75 few=46 all=258 as=svg
+wk.log:bench failed: page.evaluate: Target page, context or browser has been closed
+run1.log:[live/svg/chromium] n=10 static=6.1 hit=5.7 few=5.4 all=5.5 as=svg
+run1.log:[live/svg/chromium] n=100 static=6.4 hit=5.1 few=5.7 all=5.7 as=svg
+run1.log:[live/svg/chromium] n=1000 static=72 hit=10.9 few=9.7 all=17.5 as=svg
+run1.log:[live/svg/chromium] n=5000 static=389.1 hit=35.1 few=33.3 all=132.6 as=svg
+run1.log:[live/svg/chromium] n=20000 static=3096.4 hit=187.3 few=166.9 all=1982.6 as=svg
+run1.log:bench failed: page.evaluate: TypeError: null is not an object (evaluating 'target.dispatchEvent')

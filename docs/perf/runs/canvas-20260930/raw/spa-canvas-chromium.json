@@ -1,0 +1,460 @@
+{
+ "target": "spa",
+ "backend": "canvas",
+ "browser": "chromium",
+ "channel": "chrome",
+ "headless": false,
+ "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+ "dpr": 2,
+ "sizes": {
+  "10": {
+   "static": [
+    11,
+    3.4,
+    5.4
+   ],
+   "static_state": [
+    9,
+    2.2,
+    1.7
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 41418752,
+    "js_heap_used_bytes": 2802072,
+    "cdp_nodes": 99
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 6,
+     "full": 6,
+     "partial": 0,
+     "drawn": 11,
+     "lastMs": 0.10000002384185791
+    }
+   },
+   "hit_us": 0.9,
+   "hit_ms": [
+    2.2,
+    5.6,
+    5.5
+   ],
+   "hit_state_ms": [
+    1.8,
+    1.6,
+    1.4
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 5,
+    "p95_ms": 5.7,
+    "mean_ms": 4.99,
+    "state_median_ms": 1.6,
+    "task_ms_per_frame": 2.88,
+    "script_ms_per_frame": 2.1,
+    "painter_calls_ms_per_frame": 0.08,
+    "layout_style_ms_per_frame": 0.09,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 0.1,
+     "last_drawn": 11
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 5.4,
+    "p95_ms": 5.7,
+    "mean_ms": 5.26,
+    "state_median_ms": 1.5,
+    "task_ms_per_frame": 2.45,
+    "script_ms_per_frame": 1.63,
+    "painter_calls_ms_per_frame": 0.08,
+    "layout_style_ms_per_frame": 0.09,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 0,
+     "last_drawn": 11
+    }
+   }
+  },
+  "100": {
+   "static": [
+    9.5,
+    6.1,
+    6.1
+   ],
+   "static_state": [
+    7,
+    5.6,
+    5.6
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 45875200,
+    "js_heap_used_bytes": 3203300,
+    "cdp_nodes": 100
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 60,
+     "full": 60,
+     "partial": 0,
+     "drawn": 101,
+     "lastMs": 0.09999990463256836
+    }
+   },
+   "hit_us": 1,
+   "hit_ms": [
+    4.4,
+    5.8,
+    4.2
+   ],
+   "hit_state_ms": [
+    4.1,
+    4,
+    3.9
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 4.6,
+    "p95_ms": 7.4,
+    "mean_ms": 5.23,
+    "state_median_ms": 4,
+    "task_ms_per_frame": 5.37,
+    "script_ms_per_frame": 4.74,
+    "painter_calls_ms_per_frame": 0.05,
+    "layout_style_ms_per_frame": 0.08,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 0,
+     "last_drawn": 6
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 5.2,
+    "p95_ms": 7.3,
+    "mean_ms": 5.59,
+    "state_median_ms": 4.4,
+    "task_ms_per_frame": 5.86,
+    "script_ms_per_frame": 5.08,
+    "painter_calls_ms_per_frame": 0.2,
+    "layout_style_ms_per_frame": 0.08,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 0.2,
+     "last_drawn": 101
+    }
+   }
+  },
+  "1000": {
+   "static": [
+    57.6,
+    52.9,
+    52.1
+   ],
+   "static_state": [
+    54.1,
+    51.4,
+    50.5
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 49807360,
+    "js_heap_used_bytes": 3971340,
+    "cdp_nodes": 82
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 114,
+     "full": 94,
+     "partial": 20,
+     "drawn": 1001,
+     "lastMs": 0.8999999761581421
+    }
+   },
+   "hit_us": 6.7,
+   "hit_ms": [
+    41.7,
+    39.7,
+    40.9
+   ],
+   "hit_state_ms": [
+    41.2,
+    39.4,
+    40.6
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 39.5,
+    "p95_ms": 42.8,
+    "mean_ms": 40.01,
+    "state_median_ms": 39.1,
+    "task_ms_per_frame": 40.28,
+    "script_ms_per_frame": 39.61,
+    "painter_calls_ms_per_frame": 0.12,
+    "layout_style_ms_per_frame": 0.08,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 0.1,
+     "last_drawn": 9
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 47,
+    "p95_ms": 51.4,
+    "mean_ms": 47.59,
+    "state_median_ms": 45.4,
+    "task_ms_per_frame": 48.31,
+    "script_ms_per_frame": 46.84,
+    "painter_calls_ms_per_frame": 1.29,
+    "layout_style_ms_per_frame": 0.09,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 0.8,
+     "last_drawn": 1001
+    }
+   }
+  },
+  "5000": {
+   "static": [
+    252.3,
+    245.8,
+    250
+   ],
+   "static_state": [
+    243,
+    239.1,
+    243.7
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 70254592,
+    "js_heap_used_bytes": 10170128,
+    "cdp_nodes": 82
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 168,
+     "full": 128,
+     "partial": 40,
+     "drawn": 5001,
+     "lastMs": 4.200000047683716
+    }
+   },
+   "hit_us": 27.3,
+   "hit_ms": [
+    184,
+    191.6,
+    161.8
+   ],
+   "hit_state_ms": [
+    182.9,
+    191.2,
+    160.2
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 190.7,
+    "p95_ms": 196.6,
+    "mean_ms": 190.92,
+    "state_median_ms": 189.8,
+    "task_ms_per_frame": 191.46,
+    "script_ms_per_frame": 190.4,
+    "painter_calls_ms_per_frame": 0.26,
+    "layout_style_ms_per_frame": 0.09,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 0.1,
+     "last_drawn": 13
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 224.9,
+    "p95_ms": 232.2,
+    "mean_ms": 225.4,
+    "state_median_ms": 218.5,
+    "task_ms_per_frame": 226.92,
+    "script_ms_per_frame": 223.19,
+    "painter_calls_ms_per_frame": 5.99,
+    "layout_style_ms_per_frame": 0.09,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 4.4,
+     "last_drawn": 5001
+    }
+   }
+  },
+  "20000": {
+   "static": [
+    1131.3,
+    959.3,
+    946
+   ],
+   "static_state": [
+    1096.9,
+    934.5,
+    921.2
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 359923712,
+    "js_heap_used_bytes": 34244512,
+    "cdp_nodes": 82
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 222,
+     "full": 162,
+     "partial": 60,
+     "drawn": 20001,
+     "lastMs": 16.90000009536743
+    }
+   },
+   "hit_us": 241.7,
+   "hit_ms": [
+    754.3,
+    786.8,
+    750.9
+   ],
+   "hit_state_ms": [
+    754,
+    786.4,
+    750.5
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 763.7,
+    "p95_ms": 788.5,
+    "mean_ms": 756.34,
+    "state_median_ms": 762.7,
+    "task_ms_per_frame": 757.83,
+    "script_ms_per_frame": 755.88,
+    "painter_calls_ms_per_frame": 0.36,
+    "layout_style_ms_per_frame": 0.09,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 0.4,
+     "last_drawn": 13
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 896.3,
+    "p95_ms": 922.4,
+    "mean_ms": 898.18,
+    "state_median_ms": 871.9,
+    "task_ms_per_frame": 902.11,
+    "script_ms_per_frame": 890.64,
+    "painter_calls_ms_per_frame": 25.61,
+    "layout_style_ms_per_frame": 0.1,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 17.3,
+     "last_drawn": 20001
+    }
+   }
+  }
+ },
+ "violations": 0,
+ "errors": [
+  "Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

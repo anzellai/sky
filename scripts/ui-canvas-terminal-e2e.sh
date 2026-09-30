@@ -9,10 +9,13 @@
 #   * the ui-terminal fixture for Sky.Live (--target web), and checks that
 #     the same program built for Sky.Spa is REFUSED with the error that names
 #     Std.Ui.Terminal and the target that works.
-# Then drives each app in headless Chromium with SKY_CSP=strict.
-# scripts/ui-canvas-terminal-verify.mjs has the case list: scene pointer
-# events in scene units, a new shape patched into a live scene is an SVG
-# element (the Sky.Spa client created it in the HTML namespace before), a
+# Then drives each app in headless Chromium with SKY_CSP=strict
+# (UI_E2E_HEADED=1 shows the browser). scripts/ui-canvas-terminal-verify.mjs
+# has the case list: scene pointer events in scene units, a new shape patched
+# into a live Sky.Live scene is an SVG element; on Sky.Spa (Chromium and
+# WebKit) the scene is a canvas the client draws: labelled, with a text
+# alternative, at devicePixelRatio 2 backing pixels, its shapes' pixels drawn,
+# a new shape drawn in one more paint and hit-tested; a
 # click on a shape, two texts in a column are two lines and a long text wraps
 # in a narrow box; a terminal bound to `sh` draws on a canvas, prints `echo
 # hi` (text layer and lit canvas pixels), lets a mouse selection of `hi` be
@@ -30,9 +33,13 @@
 # vim's "^[" then wrapped at the bottom row and scrolled row 0 away (about 3
 # runs in 10 in either browser).
 #
-# Proven to FAIL on the Sky.Spa canvas case when the wasm renderer creates SVG
-# elements in the HTML namespace (the pre-fix renderer: the scene drew nothing
-# and took no pointer events), and on the terminal reload case before widget
+# The Sky.Live WebKit case FAILS on the client that parsed each new SVG child
+# through its own Range (3,000 new shapes: 10,418 ms, the bound is 2 s;
+# docs/perf/runs/canvas-20260930/README.md section 5) and PASSES on the fixed
+# one. Before Sky.Spa drew scenes on a canvas, the Sky.Spa case
+# was proven to FAIL when the wasm renderer created SVG elements in the HTML
+# namespace (the scene drew nothing and took no pointer events); it now
+# checks the canvas. Proven to FAIL on the terminal reload case before widget
 # events sent from mount() were held until the page's client is ready and
 # before widget commands pushed with no SSE connection were kept for the next
 # one (the terminal stayed blank after a reload); PASSES on the fixed runtime.
@@ -115,9 +122,15 @@ fi
 echo "==> Std.Ui.Canvas on Sky.Live (--target web)"
 with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$CANVAS_WEB_APP" \
   --port "$BASE_PORT" --mode canvas-live --cwd "$CANVAS_WEB" || rc=1
-echo "==> Std.Ui.Canvas on Sky.Spa (--target web:app, from the split backend)"
+echo "==> Std.Ui.Canvas on Sky.Live (--target web), WebKit (the desktop window's engine)"
+with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$CANVAS_WEB_APP" \
+  --port $((BASE_PORT + 1)) --mode canvas-live --browser webkit --cwd "$CANVAS_WEB" || rc=1
+echo "==> Std.Ui.Canvas on Sky.Spa (--target web:app, from the split backend): the canvas backend, Chromium"
 with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$CANVAS_SPA_APP" \
   --port $((BASE_PORT + 2)) --mode canvas-spa --cwd "$CANVAS_SPA_BACKEND" || rc=1
+echo "==> Std.Ui.Canvas on Sky.Spa: the canvas backend, WebKit (the desktop window's engine)"
+with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$CANVAS_SPA_APP" \
+  --port $((BASE_PORT + 3)) --mode canvas-spa --browser webkit --cwd "$CANVAS_SPA_BACKEND" || rc=1
 echo "==> Std.Ui.Terminal on Sky.Live (--target web)"
 with_timeout 300 node "$ROOT/scripts/ui-canvas-terminal-verify.mjs" "$TERM_WEB_APP" \
   --port $((BASE_PORT + 4)) --mode terminal --cwd "$TERM_WEB" || rc=1

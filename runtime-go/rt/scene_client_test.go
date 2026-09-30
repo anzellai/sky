@@ -137,13 +137,16 @@ if (!process.exitCode) console.log("ALL OK");
 
 // Both clients carry the scene runtime and the terminal widget right after
 // the island runtime, so a scene's pointer events and a Std.Ui.Terminal work
-// on Sky.Live and Sky.Spa alike.
+// on Sky.Live and Sky.Spa alike. Only the Sky.Spa boot file carries the
+// canvas painter (Sky.Live draws scenes as SVG), between the two.
 func TestSceneAndTerminal_ShipInBothClients(t *testing.T) {
-	want := islandClientJS + sceneClientJS + terminalWidgetJS
-	if !strings.HasPrefix(liveClientJS, want) {
+	if !strings.HasPrefix(liveClientJS, islandClientJS+sceneClientJS+terminalWidgetJS) {
 		t.Fatal("the Sky.Live client does not start with the island, scene and terminal runtimes")
 	}
-	if !strings.HasPrefix(SpaBootJS, want) {
-		t.Fatal("the Sky.Spa boot file does not start with the island, scene and terminal runtimes")
+	if strings.Contains(liveClientJS, "Sky.sceneCanvas") {
+		t.Fatal("the Sky.Live client carries the canvas painter (Sky.Live draws scenes as SVG)")
+	}
+	if !strings.HasPrefix(SpaBootJS, islandClientJS+sceneClientJS+scenePainterJS+terminalWidgetJS) {
+		t.Fatal("the Sky.Spa boot file does not start with the island, scene, painter and terminal runtimes")
 	}
 }
