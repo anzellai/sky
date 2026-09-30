@@ -34,7 +34,7 @@ Changes that stop the build (the error shows the fix):
 - `Auth.verifyToken` returns `Result Error Json.Value`. [#auth-verifytoken-json](docs/migration/v0.27.md#auth-verifytoken-json)
 - `Server.withCookie` is typed (four arguments); a `Cookie` value goes through the new `Server.addCookie`. [#server-withcookie-typed](docs/migration/v0.27.md#server-withcookie-typed)
 - The constructors of `WebSocket`, `WebSocketServer`, `StreamId`, `StreamWriter` and `Cache` are hidden. [#opaque-handle-constructors](docs/migration/v0.27.md#opaque-handle-constructors)
-- New stdlib names make a bare name that two `exposing (..)` imports both export ambiguous (`[E1012]`): `Done`, `Event`, `Running`, `Step`, `address`, `close`, `island`, `onIslandEvent`, `raw`, `rpc`, `serve`, `spawn`, `stop`, `toMaybe`, `value`, `withClientCrypto`, `withEmbedded`, `withSessionTransport`. The error names the new export and both fixes. [#new-stdlib-names](docs/migration/v0.27.md#new-stdlib-names)
+- New stdlib names make a bare name that two `exposing (..)` imports both export ambiguous (`[E1012]`): `Done`, `Event`, `Running`, `Step`, `address`, `close`, `island`, `onIslandEvent`, `raw`, `rpc`, `serve`, `spawn`, `stop`, `toMaybe`, `value`, `withClientCrypto`, `withEmbedded`, `withName`, `withSessionTransport`. The error names the new export and both fixes. [#new-stdlib-names](docs/migration/v0.27.md#new-stdlib-names)
 - A recursive `type alias` is `[E1016]`. [#recursive-type-alias](docs/migration/v0.27.md#recursive-type-alias)
 - `init : () -> …` in `App.app` / `web` / `cli` / `tui`; new fields in `WebOpts` (`embedded`, `sessionTransport`), `WebSocketServerCfg` and `App.DurableWiring`; six new `Bundle.Permission` constructors; mobile builds need the permission for each native capability; `Spa.rpc` takes the body as a value. [#init-takes-unit](docs/migration/v0.27.md#init-takes-unit), [#webopts-record-literals](docs/migration/v0.27.md#webopts-record-literals), [#native-permissions](docs/migration/v0.27.md#native-permissions), [#spa-rpc-body-value](docs/migration/v0.27.md#spa-rpc-body-value)
 - The Sky.Spa split refuses two wire records with one name, one module under several aliases, and a server arm it cannot read; `sky check` now refuses what the split refuses. [#spa-split-refusals](docs/migration/v0.27.md#spa-split-refusals), [#sky-check-runs-the-spa-split](docs/migration/v0.27.md#sky-check-runs-the-spa-split)
@@ -366,7 +366,7 @@ Operations:
   module that imports two modules with `exposing (..)` and uses one of
   `Done`, `Event`, `Running`, `Step`, `address`, `close`, `island`,
   `onIslandEvent`, `raw`, `rpc`, `serve`, `spawn`, `stop`, `toMaybe`,
-  `value`, `withClientCrypto`, `withEmbedded`, `withSessionTransport` bare
+  `value`, `withClientCrypto`, `withEmbedded`, `withName`, `withSessionTransport` bare
   may stop compiling. The error names the export that is new since v0.26.1
   and both fixes: the qualified name, or `import M exposing (name)`.
 - **A Sky.Live session cannot use a process, watcher, client WebSocket or

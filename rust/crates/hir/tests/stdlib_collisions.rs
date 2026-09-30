@@ -54,6 +54,7 @@ const EXPECTED_COLLISIONS: &[&str] = &[
     "value value",
     "value withClientCrypto",
     "value withEmbedded",
+    "value withName",
     "value withSessionTransport",
 ];
 
