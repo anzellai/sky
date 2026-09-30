@@ -17,12 +17,8 @@ import (
 // daemon, which perl's POSIX module makes in one line on every CI runner.
 func requirePerl(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("perl"); err != nil {
-		if os.Getenv("SKY_LIVE_TESTS") == "skip" {
-			t.Skip("perl not installed (SKY_LIVE_TESTS=skip)")
-		}
-		t.Fatal("this test needs perl on PATH (install perl, or set SKY_LIVE_TESTS=skip)")
-	}
+	_, err := exec.LookPath("perl")
+	requireLive(t, "perl on PATH", "install perl", err == nil)
 }
 
 // daemonHoldingStdin is a shell line that starts a daemon which escapes every
