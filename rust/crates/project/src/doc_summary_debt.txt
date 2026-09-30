@@ -664,13 +664,11 @@ sky-stdlib/Std/Ui.sky: inFront
 sky-stdlib/Std/Ui.sky: landscape
 sky-stdlib/Std/Ui.sky: lgAndUp
 sky-stdlib/Std/Ui.sky: lightMode
-sky-stdlib/Std/Ui.sky: link
 sky-stdlib/Std/Ui.sky: maximum
 sky-stdlib/Std/Ui.sky: mdAndUp
 sky-stdlib/Std/Ui.sky: minimum
 sky-stdlib/Std/Ui.sky: none
 sky-stdlib/Std/Ui.sky: onChange
-sky-stdlib/Std/Ui.sky: onClick
 sky-stdlib/Std/Ui.sky: onFocus
 sky-stdlib/Std/Ui.sky: onLeft
 sky-stdlib/Std/Ui.sky: onMouseOut
@@ -680,7 +678,6 @@ sky-stdlib/Std/Ui.sky: overflow
 sky-stdlib/Std/Ui.sky: portrait
 sky-stdlib/Std/Ui.sky: px
 sky-stdlib/Std/Ui.sky: reducedMotion
-sky-stdlib/Std/Ui.sky: rgb
 sky-stdlib/Std/Ui.sky: rgb255
 sky-stdlib/Std/Ui.sky: row
 sky-stdlib/Std/Ui.sky: scrollbarY
@@ -688,7 +685,6 @@ sky-stdlib/Std/Ui.sky: shrink
 sky-stdlib/Std/Ui.sky: smAndUp
 sky-stdlib/Std/Ui.sky: tablet
 sky-stdlib/Std/Ui.sky: touchDevice
-sky-stdlib/Std/Ui.sky: transitionRaw
 sky-stdlib/Std/Ui.sky: transparent
 sky-stdlib/Std/Ui.sky: vw
 sky-stdlib/Std/Ui.sky: white
@@ -709,11 +705,9 @@ sky-stdlib/Std/Ui/Animation.sky: linear
 sky-stdlib/Std/Ui/Animation.sky: none
 sky-stdlib/Std/Ui/Animation.sky: once
 sky-stdlib/Std/Ui/Animation.sky: times
-sky-stdlib/Std/Ui/Background.sky: hoverColor
 sky-stdlib/Std/Ui/Border.sky: color
 sky-stdlib/Std/Ui/Border.sky: dashed
 sky-stdlib/Std/Ui/Border.sky: dotted
-sky-stdlib/Std/Ui/Border.sky: hoverColor
 sky-stdlib/Std/Ui/Chart.sky: area
 sky-stdlib/Std/Ui/Chart.sky: bar
 sky-stdlib/Std/Ui/Chart.sky: defaultCfg
@@ -737,7 +731,6 @@ sky-stdlib/Std/Ui/Font.sky: bold
 sky-stdlib/Std/Ui/Font.sky: center
 sky-stdlib/Std/Ui/Font.sky: color
 sky-stdlib/Std/Ui/Font.sky: extraBold
-sky-stdlib/Std/Ui/Font.sky: hoverColor
 sky-stdlib/Std/Ui/Font.sky: justify
 sky-stdlib/Std/Ui/Font.sky: light
 sky-stdlib/Std/Ui/Font.sky: monospace
@@ -748,10 +741,6 @@ sky-stdlib/Std/Ui/Font.sky: serif
 sky-stdlib/Std/Ui/Font.sky: size
 sky-stdlib/Std/Ui/Font.sky: typeface
 sky-stdlib/Std/Ui/Font.sky: weight
-sky-stdlib/Std/Ui/Grid.sky: fr
-sky-stdlib/Std/Ui/Grid.sky: trackToCss
-sky-stdlib/Std/Ui/Grid.sky: tracks
-sky-stdlib/Std/Ui/Input.sky: button
 sky-stdlib/Std/Ui/Input.sky: labelAbove
 sky-stdlib/Std/Ui/Input.sky: labelBelow
 sky-stdlib/Std/Ui/Input.sky: labelHidden
@@ -770,14 +759,9 @@ sky-stdlib/Std/Ui/Responsive.sky: bigDesktop
 sky-stdlib/Std/Ui/Responsive.sky: classifyDevice
 sky-stdlib/Std/Ui/Responsive.sky: desktop
 sky-stdlib/Std/Ui/Responsive.sky: tablet
-sky-stdlib/Std/Ui/Transform.sky: propToCssPair
-sky-stdlib/Std/Ui/Transform.sky: translateX
-sky-stdlib/Std/Ui/Transition.sky: attribute
 sky-stdlib/Std/Ui/Transition.sky: defaultDuration
 sky-stdlib/Std/Ui/Transition.sky: defaultEasing
 sky-stdlib/Std/Ui/Transition.sky: easeIn
 sky-stdlib/Std/Ui/Transition.sky: easeInOut
 sky-stdlib/Std/Ui/Transition.sky: easeOut
-sky-stdlib/Std/Ui/Transition.sky: easingToCss
 sky-stdlib/Std/Ui/Transition.sky: linear
-sky-stdlib/Std/Ui/Transition.sky: property
