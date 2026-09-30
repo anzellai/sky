@@ -1192,6 +1192,11 @@ impl World {
             ("compare", fun(cmp(), fun(cmp(), int_()))),
             ("min", fun(cmp(), fun(cmp(), cmp()))),
             ("max", fun(cmp(), fun(cmp(), cmp()))),
+            // v0.27.0: the unannotated `Sky.Core.Basics` bodies. With no scheme
+            // a call site fell to a wildcard flex (`not "s"` checked).
+            ("identity", fun(a(), a())),
+            ("always", fun(a(), fun(b(), a()))),
+            ("not", fun(bool_(), bool_())),
         ];
 
         // F8 — Maybe core combinators (`withDefault : a -> Maybe a -> a`, etc.).
@@ -1202,6 +1207,8 @@ impl World {
         // matches the `sky-stdlib/Sky/Core/Maybe.sky` bodies (`andMap ma mfn`).
         let maybe_specs: Vec<(&str, Ty)> = vec![
             ("withDefault", fun(a(), fun(maybe(a()), a()))),
+            ("isJust", fun(maybe(a()), bool_())),
+            ("isNothing", fun(maybe(a()), bool_())),
             ("map", fun(fun(a(), b()), fun(maybe(a()), maybe(b())))),
             (
                 "andThen",
@@ -1258,13 +1265,28 @@ impl World {
         // check-sigs here for cross-module payload checking (`Result.map2 f (Ok 1)
         // (Ok "s")` must reject). Arg order matches `Sky.Core.Result.sky`
         // (`andMap ra rfn`, `map2 fn ra rb`).
-        // NOTE: only the map2..5 / andMap / combine holes are seeded. withDefault
-        // / map / andThen / mapError are deliberately LEFT to the existing lenient
-        // path — the oracle accepts `Result.withDefault "" (Task.run (loadEnv …))`
-        // where the payload is `()` (17-skymon), so pinning `withDefault`'s payload
-        // to the default's type would make Rust stricter than the oracle (a
-        // divergence, not a fix).
+        // v0.27.0: withDefault / map / andThen / mapError are seeded too. They
+        // were left lenient for oracle parity (`Result.withDefault ""` over a
+        // `()` payload, once in 17-skymon, since removed), which let
+        // `Ok "s" |> Result.map k` check with `k : Int -> Int` (S3c). "If it
+        // compiles it works" outranks parity with the retired oracle.
         let result_specs: Vec<(&str, Ty)> = vec![
+            ("withDefault", fun(a(), fun(result(x(), a()), a()))),
+            (
+                "map",
+                fun(fun(a(), b()), fun(result(x(), a()), result(x(), b()))),
+            ),
+            (
+                "andThen",
+                fun(
+                    fun(a(), result(x(), b())),
+                    fun(result(x(), a()), result(x(), b())),
+                ),
+            ),
+            (
+                "mapError",
+                fun(fun(x(), e()), fun(result(x(), a()), result(e(), a()))),
+            ),
             (
                 "map2",
                 fun(
