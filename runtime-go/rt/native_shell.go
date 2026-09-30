@@ -271,7 +271,28 @@ func nativeScanCodeVia(t nativeShellTransport, formats []string, prompt string) 
 // ("unavailable:", the macOS desktop window), `web` shows it with the Web
 // Notification API.
 func nativeNotifyVia(t nativeShellTransport, web func() SkyResult[any, any], title, body string) SkyResult[any, any] {
+	return nativeNotifyWith(t, nil, web, title, body)
+}
+
+// nativeLegacyNotify posts through the notify entry point of a shell built
+// before v0.27.0 (iOS: the `{type:"notify"}` message; Android:
+// SkyNative.notify). ok is false when the shell has no such entry point.
+type nativeLegacyNotify func(title, body string) (SkyResult[any, any], bool)
+
+// nativeNotifyWith is nativeNotifyVia with the pre-v0.27 fallback (E-16). A
+// shell built by v0.26.1 answers the `sky:notify` op with "no native handler
+// for 'sky:notify'"; the notification then goes through its old entry point,
+// and when it has none the Err says to update the app.
+func nativeNotifyWith(t nativeShellTransport, legacy nativeLegacyNotify, web func() SkyResult[any, any], title, body string) SkyResult[any, any] {
 	r := t(nativeOpNotify, nativePayload(map[string]string{"title": title, "body": body}))
+	if r.Present && !r.Ok && strings.Contains(r.Data, "no native handler for '"+nativeOpNotify+"'") {
+		if legacy != nil {
+			if res, ok := legacy(title, body); ok {
+				return res
+			}
+		}
+		return Err[any, any](ErrUnavailable("notify: this app's native shell was built by an older Sky and has no notification bridge; update the app"))
+	}
 	switch {
 	case !r.Present:
 		return web()

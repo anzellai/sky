@@ -76,6 +76,7 @@ module Std.App exposing
     , withDurableId
     , withEmbedded
     , withSessionTransport
+    , withName
     , DurableWiring
     , baseDefaults
     , webDefaults
@@ -207,6 +208,7 @@ type alias WebOpts =
     , csrf : Bool
     , embedded : Bool
     , sessionTransport : SessionTransport
+    , name : Maybe String
     }
 
 -- | How a Sky.Live session id travels between the browser and the server.
@@ -236,6 +238,7 @@ webDefaults =
     , csrf = True
     , embedded = False
     , sessionTransport = CookieSession
+    , name = Nothing
     }
 
 -- | Tablet-target config — same Live-backed shape as [`WebOpts`].
@@ -1013,6 +1016,59 @@ headerSessionIn_ configs =
             headerSessionIn_ rest
 
 
+-- | Name the session namespace of an app started with [`serve`]. Two apps
+-- served in one process must not share sessions, so every served app is
+-- namespaced: its cookie is `sky_sid_<name>` and its session ids carry the
+-- name. Without a name a served app is namespaced by its port
+-- (`port-<N>`); a served app on port 0 with a durable session store needs a
+-- name, because the port (and with it every stored session) changes at each
+-- boot. The app started with [`run`] is never namespaced: its cookie stays
+-- `sky_sid`, so existing sessions keep working.
+--
+--     admin =
+--         adminApp |> App.withName "admin"
+withName : String -> App fallback seed page model msg key -> App fallback seed page model msg key
+withName n (App a) =
+    App
+        { a | configs = a.configs ++ [ WebConfig { webDefaults | name = Just n } ]
+        }
+
+
+-- | The first name set by [`withName`] in the config list.
+nameIn_ : List Config -> Maybe String
+nameIn_ configs =
+    case configs of
+
+        [] ->
+            Nothing
+
+        (WebConfig o) :: rest ->
+            case o.name of
+
+                Just n ->
+                    Just n
+
+                Nothing ->
+                    nameIn_ rest
+
+        (TabletConfig o) :: rest ->
+            case o.name of
+
+                Just n ->
+                    Just n
+
+                Nothing ->
+                    nameIn_ rest
+
+        _ :: rest ->
+            nameIn_ rest
+
+
+liveWithName_ : String -> Live.AppConfig model msg -> Live.AppConfig model msg
+liveWithName_ =
+    Ffi.kernel "Live_withName"
+
+
 -- | True when any web / tablet config in the list asks for embedded mode.
 embeddedIn_ : List Config -> Bool
 embeddedIn_ configs =
@@ -1435,8 +1491,16 @@ liveConfig_ (App a) =
 
                     else
                         withEmbedded_
+                withName_ =
+                    case nameIn_ a.configs of
+
+                        Just n ->
+                            liveWithName_ n withTransport_
+
+                        Nothing ->
+                            withTransport_
             in
-                Just withTransport_
+                Just withName_
 
         Nothing ->
             Nothing
@@ -1810,12 +1874,26 @@ runLiveWindow (App a) =
         -- window then waited out its probe and failed with no cause. The
         -- server task reports its own failure and ends the process instead.
     in
-        Task.andThen
-            (\_ ->
-                openLiveWindow_
-                    (livePort_ w.port)
-                    { title = d.title, size = ( d.width, d.height ) })
-            (Task.spawn (runLive (App a) |> Task.onError liveWindowServerFailed_))
+        desktopWindowMode_ ()
+            |> Task.andThen
+                   (\_ ->
+                       Task.spawn
+                           (runLive (App a)
+                               |> Task.onError liveWindowServerFailed_))
+            |> Task.andThen
+                   (\_ ->
+                       openLiveWindow_
+                           (livePort_ w.port)
+                           { title = d.title, size = ( d.width, d.height ) })
+
+
+-- | Mark the process as a desktop window BEFORE its Live server starts: the
+-- server then binds loopback in every mode, keeps the Host guard in
+-- production, and does not mount the open dev console (a packaged desktop app
+-- runs with no ENV, and any local process could read that console).
+desktopWindowMode_ : () -> Task Error ()
+desktopWindowMode_ =
+    Ffi.kernel "Std_App_desktopWindowMode"
 
 
 -- | The Live server of a desktop window failed to start: say why, then end

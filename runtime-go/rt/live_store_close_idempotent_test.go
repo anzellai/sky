@@ -4,10 +4,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
 )
 
 // TestSessionStoreCloseIsIdempotent — the behavioural half of the contract.
@@ -53,10 +54,7 @@ func TestSessionStoreCloseIsIdempotent(t *testing.T) {
 	})
 
 	t.Run("postgres", func(t *testing.T) {
-		dsn := os.Getenv("SKY_TEST_POSTGRES_DSN")
-		if dsn == "" {
-			t.Skip("SKY_TEST_POSTGRES_DSN unset — skipping real-Postgres backend")
-		}
+		dsn := requirePostgresDSN(t)
 		s, err := newPostgresStore(dsn, time.Minute, 0)
 		if err != nil {
 			t.Fatalf("newPostgresStore: %v", err)
@@ -65,11 +63,15 @@ func TestSessionStoreCloseIsIdempotent(t *testing.T) {
 	})
 
 	t.Run("redis", func(t *testing.T) {
-		addr := os.Getenv("SKY_TEST_REDIS_ADDR")
-		if addr == "" {
-			t.Skip("SKY_TEST_REDIS_ADDR unset — skipping real-Redis backend")
+		// In-process Redis (miniredis), as the other Redis store tests use:
+		// this leg used to skip whenever SKY_TEST_REDIS_ADDR was unset, which
+		// was every run, CI included.
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("miniredis.Run: %v", err)
 		}
-		s, err := newRedisStore(addr, time.Minute, 0)
+		t.Cleanup(mr.Close)
+		s, err := newRedisStore(mr.Addr(), time.Minute, 0)
 		if err != nil {
 			t.Fatalf("newRedisStore: %v", err)
 		}

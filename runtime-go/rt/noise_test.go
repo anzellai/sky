@@ -390,3 +390,98 @@ func TestNoiseKernelBlake2sRoundTripAndSuiteMismatch(t *testing.T) {
 		t.Fatal("an unknown suite was accepted")
 	}
 }
+
+// B-7: interop vectors with an independent implementation that cover REKEY.
+// The IK vectors above use two transport messages, so nothing pinned
+// rekeySend / rekeyReceive against another implementation. These were made
+// with github.com/flynn/noise v1.1.0 (the cacophony keys above, prologue
+// "sky-interop", payloads "m0" / "m1"): four initiator→responder messages
+// "a0".."a3" and four responder→initiator messages "b0".."b3", each side
+// rekeying its sending cipher before message 2.
+var noiseRekeyVectors = []struct {
+	suite  string
+	m0, m1 string
+	a, b   [4]string
+	hash   string
+}{
+	{"SHA256",
+		"358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd1662544f8445e5dc2467b1e32653192d05dee85c4781bf0dd8d33ceebb5905a7a069f050e15e9de78c01472775e40165c647fe1a624265c21434c56e1b8307a54c93629e35",
+		"64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d48466d21e0b80ebe9c749f691775552ffac5108ee",
+		[4]string{"3a39dc6051436e78fc9556589d449edbeca9", "993e334ecb15b629991e34a7af78a98f805c", "e793d86d531122e7a0c38cd18d2fb352a943", "30aca3e104c8df578d5e8d97c750dc18e62e"},
+		[4]string{"819d54636e2ae732b23561df141d510604e5", "6a603ad250225a7500313c1a68b0815e5a0b", "c6adb9fd81f343f4c26f2ee0a73e974a01e3", "8fe9b7a81d243dd6b95cce33adc40650d7b1"},
+		"f6dfca5b67cd7ded94ecf9882fc7ec7393789f10b5a815da72d7d2a403268e89"},
+	{"BLAKE2s",
+		"358072d6365880d1aeea329adf9121383851ed21a28e3b75e965d0d2cd166254c9f0dff42c86abe5677abe74f6c87301577dbc1f3ffb2213827ca694a057fdbb044b916ec25e34a2e7da5b5ea590cb7c6a4303db22d330495fa0f5815d26d6de7cd4",
+		"64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d4846666495b75f040bc25871c262f54385c9adfe2",
+		[4]string{"410304a0a221fd9ee9abf185cfef8612b4ff", "992f56996874cacc08f87038a40239166fad", "e316b4a19bdda4a45581adbd6c4d67b46c3a", "780ebdd4100156ffe0a0bce749e47ee84486"},
+		[4]string{"735f093562d8912a6dceef1a31b1c23cc075", "168153b176691808a859b2a8063e6377a6be", "f2d33c29620578717e6874a0242a0c03e617", "22de877c4b663fea3296a290222f62d771c3"},
+		"65b46ce4aaf4ae188ba17cb4182498d92e47b0038bd23d51317a22dc1d40ee61"},
+}
+
+func TestNoiseRekeyInteropVectors(t *testing.T) {
+	for _, v := range noiseRekeyVectors {
+		suite, err := noiseSuiteByName(v.suite)
+		if err != nil {
+			t.Fatal(err)
+		}
+		is, rs := unhex(t, noiseInitStatic), unhex(t, noiseRespStatic)
+		ini := noiseNewSuite(suite, true, is, kxPublic(rs), "sky-interop", unhex(t, noiseInitEph))
+		res := noiseNewSuite(suite, false, rs, "", "sky-interop", unhex(t, noiseRespEph))
+		ini, m0, err := ini.writeMessage([]byte("m0"))
+		if err != nil || fmt.Sprintf("%x", m0) != v.m0 {
+			t.Fatalf("%s m0: %v\n got %x", v.suite, err, m0)
+		}
+		res, _, err = res.readMessage(m0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, m1, err := res.writeMessage([]byte("m1"))
+		if err != nil || fmt.Sprintf("%x", m1) != v.m1 {
+			t.Fatalf("%s m1: %v\n got %x", v.suite, err, m1)
+		}
+		ini, _, err = ini.readMessage(m1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var it, rt_ any
+		it = cryOk(t, Noise_transport(ini))
+		rt_ = cryOk(t, Noise_transport(res))
+		if got := fmt.Sprintf("%x", Noise_handshakeHash(it).(string)); got != v.hash {
+			t.Fatalf("%s handshake hash %s, want flynn's %s", v.suite, got, v.hash)
+		}
+		for i := 0; i < 4; i++ {
+			if i == 2 {
+				it = cryOk(t, Noise_rekeySend(it))
+				rt_ = cryOk(t, Noise_rekeyReceive(rt_))
+			}
+			e := Noise_encrypt(fmt.Sprintf("a%d", i), it).(SkyResult[any, any])
+			tup := e.OkValue.(SkyTuple2)
+			it = tup.V0
+			if got := fmt.Sprintf("%x", tup.V1.(string)); e.Tag != 0 || got != v.a[i] {
+				t.Fatalf("%s a%d: got %s, want flynn's %s", v.suite, i, got, v.a[i])
+			}
+			d := Noise_decrypt(unhex(t, v.a[i]), rt_).(SkyResult[any, any])
+			if d.Tag != 0 || d.OkValue.(SkyTuple2).V1.(string) != fmt.Sprintf("a%d", i) {
+				t.Fatalf("%s: responder could not read flynn's a%d", v.suite, i)
+			}
+			rt_ = d.OkValue.(SkyTuple2).V0
+		}
+		for i := 0; i < 4; i++ {
+			if i == 2 {
+				rt_ = cryOk(t, Noise_rekeySend(rt_))
+				it = cryOk(t, Noise_rekeyReceive(it))
+			}
+			e := Noise_encrypt(fmt.Sprintf("b%d", i), rt_).(SkyResult[any, any])
+			tup := e.OkValue.(SkyTuple2)
+			rt_ = tup.V0
+			if got := fmt.Sprintf("%x", tup.V1.(string)); e.Tag != 0 || got != v.b[i] {
+				t.Fatalf("%s b%d: got %s, want flynn's %s", v.suite, i, got, v.b[i])
+			}
+			d := Noise_decrypt(unhex(t, v.b[i]), it).(SkyResult[any, any])
+			if d.Tag != 0 || d.OkValue.(SkyTuple2).V1.(string) != fmt.Sprintf("b%d", i) {
+				t.Fatalf("%s: initiator could not read flynn's b%d", v.suite, i)
+			}
+			it = d.OkValue.(SkyTuple2).V0
+		}
+	}
+}

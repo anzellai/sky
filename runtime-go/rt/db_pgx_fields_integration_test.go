@@ -39,7 +39,8 @@ func openPgFieldsDb(t *testing.T) *SkyDb {
 		t.Fatalf("open postgres: %v", err)
 	}
 	if err := conn.Ping(); err != nil {
-		t.Skipf("postgres unreachable at SKY_TEST_POSTGRES_DSN: %v", err)
+		// Set but unreachable is a broken environment, not a reason to pass.
+		t.Fatalf("postgres unreachable at SKY_TEST_POSTGRES_DSN: %v", err)
 	}
 	for _, stmt := range []string{
 		`DROP TABLE IF EXISTS pgfields_items`,

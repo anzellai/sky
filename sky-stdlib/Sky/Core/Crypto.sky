@@ -46,6 +46,7 @@ module Sky.Core.Crypto exposing
     , xchacha20Poly1305Open
     , aesKeyFromPassword
     , chachaKeyFromPassword
+    , keyFromPasswordStrong
     , randomBytes
     , randomToken
     )
@@ -256,7 +257,11 @@ chacha20Decrypt =
 
 -- | `aesKeyFromPassword password salt` — derive a 32-byte
 -- AES-256 key from a password + salt via PBKDF2-HMAC-SHA256
--- (100 000 iterations — OWASP recommended floor as of 2026).
+-- with 100 000 iterations. That is below OWASP's recommendation
+-- (600 000 for PBKDF2-HMAC-SHA256); the count is fixed so data
+-- already encrypted with it stays readable. For new data use
+-- `keyFromPasswordStrong`. A salt shorter than 16 bytes is
+-- warned about once per process.
 -- `password` is an opaque `Secret`; the derived key is itself a
 -- secret, so it comes back as a `Secret` you pass straight to
 -- `aesGcmEncrypt` (which reveals it internally for the cipher).
@@ -277,6 +282,27 @@ aesKeyFromPassword =
 chachaKeyFromPassword : Secret -> String -> Secret
 chachaKeyFromPassword =
     Ffi.kernel "Crypto_chachaKeyFromPassword"
+
+
+-- | `keyFromPasswordStrong { iterations, salt } password` — derive a
+-- 32-byte key (for `aesGcmEncrypt` / `chacha20Encrypt`) with
+-- PBKDF2-HMAC-SHA256 at a cost you choose, never below the floor:
+-- `iterations` must be at least 600 000 (at most 10 000 000) and
+-- `salt` at least 16 bytes, else the Task fails with `InvalidInput`.
+-- Store the salt and the iteration count with the record, so the
+-- key can be derived again. It is a `Task` because it takes real
+-- CPU time; at most one derivation per CPU runs at once. Server
+-- only. NOT for password storage: use `Std.Auth.hashPassword`.
+--
+--     Crypto.randomBytes 16
+--         |> Task.andThen
+--                (\salt ->
+--                    Crypto.keyFromPasswordStrong { iterations = 600000, salt = salt } password)
+keyFromPasswordStrong : { iterations : Int
+, salt : String
+} -> Secret -> Task Error Secret
+keyFromPasswordStrong =
+    Ffi.kernel "Crypto_keyFromPasswordStrong"
 
 
 -- ─── Entropy (Task — touches the OS RNG) ───────────────────────────

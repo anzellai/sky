@@ -169,10 +169,7 @@ func TestJsonValue_RedisStoreRoundTrip(t *testing.T) {
 // real-Postgres store tests (live_store_postgres_test.go, which is behind the
 // `integration` tag; this one is not, so it runs whenever the DSN is set).
 func TestJsonValue_PostgresStoreCrossInstance(t *testing.T) {
-	dsn := os.Getenv("SKY_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SKY_TEST_POSTGRES_DSN unset — skipping real-Postgres integration test")
-	}
+	dsn := requirePostgresDSN(t)
 	writer, err := newPostgresStore(dsn, time.Hour, 0)
 	if err != nil {
 		t.Fatalf("newPostgresStore: %v", err)

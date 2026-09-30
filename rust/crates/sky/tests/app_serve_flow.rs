@@ -6,7 +6,10 @@
 //! `Sky.Core.Http`, stops one with `App.stop` (the port stops answering, the
 //! other app keeps serving), restarts it on the SAME port, stops twice, and
 //! starts a third app with `App.withSessionTransport HeaderToken` whose page
-//! load hands out a session token and sets no session cookie. The Go-level
+//! load hands out a session token and sets no session cookie. Last, two apps
+//! named with `App.withName` share ONE sqlite session store: the browser sends
+//! the first app's cookie to the second, which must show its own init state
+//! (A-2). The Go-level
 //! legs (runtime-go/rt/live_serve_test.go, live_session_header_test.go) run
 //! per commit.
 //!
@@ -141,7 +144,12 @@ fn a_task_program_serves_stops_and_restarts_live_apps() {
             .env_remove("SKY_LIVE_PORT")
             .env_remove("SKY_LIVE_SESSION_TRANSPORT")
             .env_remove("ENV")
-            .env_remove("SKY_ENV"),
+            .env_remove("SKY_ENV")
+            .env_remove("SKY_LIVE_STORE")
+            .env_remove("SKY_LIVE_STORE_PATH")
+            // One Set-Cookie per page (the session cookie): the fixture reads
+            // the first Set-Cookie header of a response.
+            .env("SKY_CSRF", "off"),
         "app-serve binary",
     );
     let out = both(&run);
@@ -156,6 +164,10 @@ fn a_task_program_serves_stops_and_restarts_live_apps() {
         "STOP_TWICE Ok",
         "HEADER_TOKEN True",
         "HEADER_NO_COOKIE True",
+        // A-2: two named served apps on one sqlite store keep their own
+        // sessions, under their own cookie names.
+        "NAMESPACED_COOKIE True",
+        "ISOLATED True",
         "SERVE_FLOW_DONE",
     ] {
         assert!(out.contains(want), "missing {want:?} in:\n{out}");

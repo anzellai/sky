@@ -127,7 +127,8 @@ func serveGetPage(t *testing.T, addr, cookie string) (string, string) {
 	}
 	set := ""
 	for _, c := range resp.Cookies() {
-		if isSessionCookieName(c.Name, "sky_sid") {
+		// A served app's cookie is sky_sid_<namespace> (live_namespace.go).
+		if strings.HasPrefix(strings.TrimPrefix(c.Name, "__Host-"), "sky_sid") {
 			set = c.Name + "=" + c.Value
 		}
 	}

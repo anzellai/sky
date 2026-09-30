@@ -208,12 +208,26 @@ tests =
     , Test.test
           "Ed25519 verify rejects a changed message, a wrong key and a short signature"
           (\_ ->
-              Test.equal
-                  ( False, False, False )
-                  ( verifyWith test2Key (hex "73") (hex (signHex test2Key "72"))
-                  , verifyWith test1Key (hex "72") (hex (signHex test2Key "72"))
-                  , verifyWith test2Key (hex "72") "short"
-                  ))
+              -- Both keys must import first: verifyWith answers False for a
+              -- key that failed to import, which would pass every negative.
+              case ( test1Key, test2Key ) of
+
+                  ( Ok k1, Ok k2 ) ->
+                      Test.equal
+                          ( False, False, False )
+                          ( Sign.verify
+                                (Sign.publicKey k2)
+                                (hex "73")
+                                (hex (signHex test2Key "72"))
+                          , Sign.verify
+                                (Sign.publicKey k1)
+                                (hex "72")
+                                (hex (signHex test2Key "72"))
+                          , Sign.verify (Sign.publicKey k2) (hex "72") "short"
+                          )
+
+                  _ ->
+                      Test.fail "the RFC 8032 test keys did not import")
     , Test.test
           "Ed25519 generate is a Task that signs and verifies"
           (\_ ->

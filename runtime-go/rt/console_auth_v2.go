@@ -173,6 +173,12 @@ func resolveConsoleAuthMode() consoleAuthMode {
 	case "app":
 		return consoleAuthModeApp
 	case "":
+		// A desktop window (std_app_desktop.go) never mounts the dev-open
+		// console: any local process could read it on the loopback port.
+		// An explicit SKY_CONSOLE_AUTH still chooses a mode.
+		if desktopWindowActive() {
+			return consoleAuthModeOff
+		}
 		// Unset — gate by env.
 		if prod {
 			return consoleAuthModeUnsetProd

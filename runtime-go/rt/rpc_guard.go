@@ -79,6 +79,15 @@ func rpcRequestGuard(w http.ResponseWriter, r *http.Request, method string) bool
 			"this RPC endpoint accepts "+method+" only")
 		return false
 	}
+	// E-4: a tab running another wire schema (an old wasm across a deploy)
+	// is told to reload before the handler runs (spa_wire.go).
+	if spaWireCheck(r.Header.Get(spaWireHeader)) == spaWireMismatch {
+		w.Header().Set("X-Sky-Status", "reload")
+		w.Header().Set("Cache-Control", "no-store")
+		rpcRefuse(w, http.StatusConflict, "rpc_wire",
+			"this page was built for another version of the app; reload it")
+		return false
+	}
 	if !rpcIsJSON(r.Header.Get("Content-Type")) {
 		rpcRefuse(w, http.StatusForbidden, "rpc_content_type",
 			"an RPC request body must be Content-Type: application/json")

@@ -126,10 +126,18 @@ func openSpaRevocationStore() (SessionStore, error) {
 	kind := resolveStoreKind("")
 	path := resolveStorePath("")
 	implicit := kind == ""
+	prod := productionFromEnv()
 	if implicit {
 		dir := spaSecretDataDir()
 		if err := os.MkdirAll(dir, 0o700); err == nil {
 			kind, path = "sqlite", filepath.Join(dir, "spa-sessions.db")
+		} else if prod {
+			// A-6: production never keeps sign-outs in memory without a
+			// word. A copy of a signed-out cookie would work again after the
+			// next restart. Refuse every signed session instead.
+			e := fmt.Errorf("no session store is configured and the data dir %s is not writable (%v); set SKY_LIVE_STORE, or SKY_DATA_DIR to a writable directory; see docs/migration/v0.27.md#spa-sign-out-store", dir, err)
+			log.Printf("[sky.spa] ERROR: sign-outs cannot be recorded: %v. Every signed session is refused until this is fixed.", e)
+			return nil, e
 		} else {
 			kind = "memory"
 			log.Printf("[sky.spa] WARNING: the data dir %s is not writable (%v): sign-out records are kept in memory and are lost on restart", dir, err)
@@ -141,6 +149,15 @@ func openSpaRevocationStore() (SessionStore, error) {
 			refusal = fmt.Errorf(format, args...)
 		}
 	})
+	if refusal != nil && implicit && prod {
+		// A-6: the implicit sqlite file in the data dir cannot open (a
+		// read-only image layer, a lock held by another replica). Production
+		// refuses rather than falling back to memory in silence.
+		_ = st.Close()
+		e := fmt.Errorf("the sign-out record file in the data dir cannot open (%v); set SKY_LIVE_STORE, or SKY_DATA_DIR to a writable directory; see docs/migration/v0.27.md#spa-sign-out-store", refusal)
+		log.Printf("[sky.spa] ERROR: sign-outs cannot be recorded: %v. Every signed session is refused until this is fixed.", e)
+		return nil, e
+	}
 	if refusal != nil && !implicit {
 		// A store the operator configured is unusable in production (a Sky.Live
 		// app would refuse to start here). A per-process memory fallback would
@@ -162,6 +179,26 @@ func openSpaRevocationStore() (SessionStore, error) {
 			"SKY_LIVE_STORE to postgres or redis (docs/skyspa/auto-split.md §25).")
 	}
 	return st, nil
+}
+
+// Spa_sessionBoot — `Spa_sessionBoot : () -> Task Error ()`. The generated
+// `main` of a Sky.Spa backend WITH a session projection runs it before the
+// server starts (A-6). It resolves the signing key (A-7: a production key
+// that cannot be persisted is reported in the start-up report) and opens
+// the sign-out record store eagerly. In production with no store configured
+// and no writable data dir it is an Err, so the backend refuses to start
+// instead of recording sign-outs nowhere. A store the operator configured
+// that is down at boot is NOT an Err: every signed session is refused until
+// it answers, and the open is retried (spaRevRetryAfter).
+func Spa_sessionBoot(_ any) any {
+	return func() any {
+		_ = Spa_sessionSecret(nil)
+		_, err := spaRevocationStore()
+		if err != nil && productionFromEnv() && resolveStoreKind("") == "" {
+			return Err[any, any](ErrUnavailable("Sky.Spa did not start: sign-outs cannot be recorded: " + err.Error()))
+		}
+		return Ok[any, any](struct{}{})
+	}
 }
 
 // spaSessionEnded reports whether a session id was signed out.

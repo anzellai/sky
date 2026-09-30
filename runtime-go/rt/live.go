@@ -1154,6 +1154,9 @@ type liveApp struct {
 	// parent's session cookie and the sub-app's session cookie don't
 	// collide on the same browser origin. v0.16.1 PR10.
 	cookieName string
+	// ns: the session namespace of a served app (live_namespace.go). Empty
+	// for the process-owning app, whose ids stay 32 hex characters.
+	ns string
 	// skyIDPrefix: the prefix prepended to every assignSkyIDs walk.
 	// Defaults to "r" for root-mounted apps. Sub-apps use a distinct
 	// prefix (e.g. "sky-console") so logs / diffs / handler lookups
@@ -1267,7 +1270,7 @@ func (a *liveApp) cookieNameOrDefault() string {
 func (a *liveApp) consoleModelFor(r *http.Request) any {
 	name := a.cookieNameOrDefault()
 	for _, c := range r.Cookies() {
-		if !isSessionCookieName(c.Name, name) || c.Value == "" {
+		if !isSessionCookieName(c.Name, name) || c.Value == "" || !a.presentedMayBeOwn(c.Value) {
 			continue
 		}
 		a.locker.Lock(c.Value)
@@ -1949,6 +1952,11 @@ func resolveBindHost() (string, bindSource) {
 	if h := strings.TrimSpace(skyGetenv("HOST")); h != "" {
 		return h, bindFromSkyHost
 	}
+	// A desktop window's server is for its own window only: loopback in
+	// every mode (std_app_desktop.go).
+	if desktopWindowActive() {
+		return "127.0.0.1", bindDevDefault
+	}
 	if productionFromEnv() {
 		return "", bindProductionDefault
 	}
@@ -2434,7 +2442,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 			} else {
 				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
 			}
-			w.Header().Set("X-Sky-Sid", cur)
+			app.tellSID(w, cur)
 			sid = cur
 		}
 	}
@@ -2818,7 +2826,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	// a session that is demonstrably alive.
 	app.issueSession(w, r, sid)
 	if bs.tellSid {
-		w.Header().Set("X-Sky-Sid", sid)
+		app.tellSID(w, sid)
 	}
 	// Header mode: the token this request presented. When it names an id
 	// that rotated (bs.setCookie: the rotating tab, inside the grace window)
@@ -2855,7 +2863,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			} else {
 				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
 			}
-			w.Header().Set("X-Sky-Sid", cur)
+			app.tellSID(w, cur)
 			sid = cur
 		}
 	}
@@ -3090,7 +3098,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			} else {
 				writeSessionCookie(r, w, app.cookieNameOrDefault(), cur, app.sessionTTL)
 			}
-			w.Header().Set("X-Sky-Sid", cur)
+			app.tellSID(w, cur)
 		}
 	}
 
@@ -3973,12 +3981,50 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx
 	})
 }
 
-func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
+// performMsg runs a Cmd.perform's Task and its toMsg on this goroutine and
+// returns the Msg. C-1b: this goroutine is spawned by `go app.runPerform`,
+// so a panic here (a classified DivisionByZero or CoerceFailure in the Task,
+// or one re-raised from a Task.parallel branch) used to end the whole server
+// process. It is recovered here: the classified panic is logged with an
+// errId, the session's tabs get the skyerror banner, and the Msg is dropped
+// (ok false). No Msg can be built instead: the Task's error type is the
+// app's own, and a panic is not a value of it.
+func (app *liveApp) performMsg(sess *liveSession, task any, toMsg any) (msg any, ok bool) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		errId := newErrId()
+		rawMsg := fmt.Sprintf("%v", r)
+		kind, hint := classifyPanic(rawMsg)
+		logEmit(logLevelError, "error",
+			"Sky.Live Cmd.perform panic: "+kind+" (ref "+errId+") — "+hint,
+			map[string]any{
+				"errId":     errId,
+				"panicKind": kind,
+				"panicMsg":  rawMsg,
+				"hint":      hint,
+				"stackFrame": panicStackForLog("sky.live.perform",
+					"Cmd.perform", r, capturePanicStack(), 8),
+			})
+		sess.mu.Lock()
+		sess.pushDispatchError(errId)
+		sess.mu.Unlock()
+		msg, ok = nil, false
+	}()
 	// task is a Sky Task — a zero-arg func() any returning SkyResult.
 	// Wrap its execution in a cmd.perform span (Tier 1 auto-trace).
 	result := WithCmdSpan("perform", func() any { return sky_call(task, nil) })
 	// toMsg : Result err a -> Msg — convert result to Msg
-	msg := sky_call(toMsg, result)
+	return sky_call(toMsg, result), true
+}
+
+func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
+	msg, ok := app.performMsg(sess, task, toMsg)
+	if !ok {
+		return
+	}
 	// Push update through locked dispatch, then emit an SSE frame
 	// carrying the session-wide seq. Keeping frame construction under
 	// the same lock as dispatch means the seq reflects the actual
@@ -5247,7 +5293,7 @@ func writeSessionCookie(r *http.Request, w http.ResponseWriter, cookieName, sid 
 	// runtime minted (32 hex) is expired: Sky.Spa signs its own session into
 	// a `sky_sid` cookie of a different shape, and that one is not ours.
 	if name != base && r != nil {
-		if c, err := r.Cookie(base); err == nil && c != nil && validSessionID(c.Value) {
+		if c, err := r.Cookie(base); err == nil && c != nil && looksLikeLiveSID(c.Value) {
 			http.SetCookie(w, &http.Cookie{
 				Name:     base,
 				Value:    "",

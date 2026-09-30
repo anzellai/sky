@@ -174,6 +174,9 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 		// Before this these fell to an error (→ null record) or, for a sealed
 		// variant, were mis-read as a record (`{"v0":7}`, untagged, undecodable).
 		if name, _, fields, ok := unwrapADTShape(rv.Interface()); ok {
+			if codecIsHandleADT(rv.Interface()) {
+				return nil, codecUnencodableError("the runtime handle " + name)
+			}
 			switch name {
 			// Std.Decimal — shopspring-backed; its canonical string round-trips.
 			case "Decimal__Internal":
@@ -203,7 +206,16 @@ func codecAutoEncodeVal(rv reflect.Value, snake bool) (any, error) {
 			}
 			return obj, nil
 		}
+		// A Json.Value field carries its JSON as it is.
+		if t == reflect.TypeOf(JsonValue{}) {
+			return rv.Interface().(JsonValue).raw, nil
+		}
+		if codecOpaqueStruct(t) {
+			return nil, codecUnencodableError(codecOpaqueTypeName(t))
+		}
 		return codecAutoEncodeStruct(rv, snake)
+	case reflect.Func:
+		return nil, codecUnencodableError("a function")
 	case reflect.Interface:
 		if rv.IsNil() {
 			return nil, nil
@@ -555,6 +567,12 @@ func codecFieldOptional(f reflect.StructField) bool {
 }
 
 func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value, error) {
+	if rt == reflect.TypeOf(JsonValue{}) {
+		return reflect.ValueOf(JsonValue{raw: raw}), nil
+	}
+	if codecOpaqueStruct(rt) {
+		return reflect.Value{}, codecUndecodableError(codecOpaqueTypeName(rt))
+	}
 	m, ok := raw.(map[string]any)
 	if !ok {
 		return reflect.Value{}, fmt.Errorf("Codec.auto: expected object for %s", rt.Name())
@@ -585,6 +603,9 @@ func codecAutoDecodeStruct(rt reflect.Type, raw any, snake bool) (reflect.Value,
 // codecAutoDecodeTyped decodes using the declared Sky type (from the field tag):
 // a registered enum decodes its name back to the ordinal; Maybe[T]/[]T unwrap.
 func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake bool) (reflect.Value, error) {
+	if codecHandleDeclared(declaredType) {
+		return reflect.Value{}, codecUndecodableError("the runtime handle " + declaredType)
+	}
 	if declaredType != "" {
 		if isRegisteredEnum(declaredType) {
 			switch gt.Kind() {
@@ -724,6 +745,9 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 					if !built {
 						val, built = BuildAdtFromWire(declaredType, tag, rawArgs, -1)
 					}
+					if built && codecIsHandleADT(val) {
+						return reflect.Value{}, codecUndecodableError("the runtime handle " + tag)
+					}
 					if built {
 						// The field's Go type may be a SEALED INTERFACE (sealed-variant
 						// ADT — `Convert` can't target an interface) or a concrete
@@ -752,6 +776,20 @@ func codecAutoDecodeTyped(gt reflect.Type, declaredType string, raw any, snake b
 // Codec_autoDecoder : a -> Decoder a. A JSON decoder that reflection-builds the
 // witness's type.
 func Codec_autoDecoder(snakeArg, witness any) any {
+	// C-3: a union blank (`Codec.auto Red`) is a sealed VARIANT value. Its
+	// reflect type is that one variant's struct, so decoding against it
+	// turned every object into the blank's variant. Decode against the
+	// union instead: read the tag and build the variant it names.
+	if adt, ok := codecVariantUnion(witness); ok {
+		snake := AsBool(snakeArg)
+		return JsonDecoder{run: func(raw any) any {
+			v, err := codecAutoDecodeUnion(adt, raw, snake)
+			if err != nil {
+				return Err[any, any](ErrDecode(err.Error()))
+			}
+			return Ok[any, any](v)
+		}}
+	}
 	wt := reflect.TypeOf(witness)
 	return JsonDecoder{run: func(raw any) any {
 		v, err := codecAutoDecodeVal(wt, raw, AsBool(snakeArg))
@@ -914,4 +952,86 @@ func enumOrdinalForName(typeName, name string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// codecVariantUnion returns the registry name of the union a sealed variant
+// value belongs to (`main.Main_Color` for a `main.Main_Color_Red_V`), when the
+// union's constructors are registered for wire decoding.
+func codecVariantUnion(v any) (string, bool) {
+	sv, ok := v.(SkyVariant)
+	if !ok {
+		return "", false
+	}
+	suffix := "_" + sv.SkyVariantName() + "_V"
+	tname := reflect.TypeOf(v).String()
+	if !strings.HasSuffix(tname, suffix) {
+		return "", false
+	}
+	adt := strings.TrimSuffix(tname, suffix)
+	if _, found := LookupAdtVariant(adt, sv.SkyVariantName()); !found {
+		return "", false
+	}
+	return adt, true
+}
+
+// codecAutoDecodeUnion decodes the tagged `{"tag":<ctor>,"v0":…}` the encoder
+// writes for a union value. The variant is built by the union's own wire
+// factory, and then encoded back: a payload the factory could not take (a
+// wrong JSON type, a missing argument, an extra one) does not match the input,
+// so it is an Err, never a zero value.
+func codecAutoDecodeUnion(adt string, raw any, snake bool) (any, error) {
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("Codec.auto: expected a tagged object for %s, got %s", adt, jsonValueKind(raw))
+	}
+	tag, ok := obj["tag"].(string)
+	if !ok {
+		return nil, fmt.Errorf("Codec.auto: the object for %s has no \"tag\"", adt)
+	}
+	if _, found := LookupAdtVariant(adt, tag); !found {
+		return nil, fmt.Errorf("Codec.auto: %s has no variant %q", adt, tag)
+	}
+	var rawArgs []json.RawMessage
+	for i := 0; ; i++ {
+		v, present := obj[fmt.Sprintf("v%d", i)]
+		if !present {
+			break
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("Codec.auto: %s argument %d: %v", tag, i, err)
+		}
+		rawArgs = append(rawArgs, b)
+	}
+	val, built := BuildAdtFromWire(adt, tag, rawArgs, -1)
+	if !built {
+		return nil, fmt.Errorf("Codec.auto: cannot build %s variant %q", adt, tag)
+	}
+	back, err := codecAutoEncodeVal(reflect.ValueOf(val), snake)
+	if err != nil {
+		return nil, fmt.Errorf("Codec.auto: %s variant %q: %v", adt, tag, err)
+	}
+	if !codecSameJSON(back, raw) {
+		return nil, fmt.Errorf("Codec.auto: the payload of %s variant %q does not match its type", adt, tag)
+	}
+	return val, nil
+}
+
+// codecSameJSON reports whether two JSON-shaped values are the same JSON
+// (object key order and number representation aside).
+func codecSameJSON(a, b any) bool {
+	norm := func(v any) (any, bool) {
+		bs, err := json.Marshal(v)
+		if err != nil {
+			return nil, false
+		}
+		var out any
+		if err := json.Unmarshal(bs, &out); err != nil {
+			return nil, false
+		}
+		return out, true
+	}
+	na, okA := norm(a)
+	nb, okB := norm(b)
+	return okA && okB && reflect.DeepEqual(na, nb)
 }

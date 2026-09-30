@@ -37,6 +37,22 @@ package rt
 // container, an operator's SKY_HOST=0.0.0.0) the guard does not apply: a
 // reverse proxy may legitimately rewrite Host, and there the production
 // console gate is the defence.
+//
+// In production the guard does not apply on a loopback bind either. The
+// documented layout "production process on loopback behind a local proxy"
+// (ENV=production SKY_HOST=127.0.0.1) receives the public Host from the
+// proxy, and the guard answered it 403. The guard exists for the OPEN dev
+// console; a production console is authenticated, and a rebinding page
+// reaches only what the proxy already serves publicly, without the victim's
+// cookies. The residual: an internal production app that uses a loopback
+// bind as its only access control, on a host where a browser also runs.
+//
+// Two listeners keep the guard in every mode: the Sky.Webview loopback server
+// (webviewLoopbackGuard) and a Sky.Live server in a desktop window
+// (std_app_desktop.go). Neither is ever behind a proxy.
+//
+// <PREFIX>_PUBLIC_URL (comma list, the same variable the /_rpc origin guard
+// reads) also admits its hosts, so a dev or staging proxy name is listed once.
 
 import (
 	"net"
@@ -80,6 +96,11 @@ func newHostAllowList(bindHost string) hostAllowList {
 	// read unprefixed, as the build and the desktop shell read it.
 	if raw := strings.TrimSpace(os.Getenv("SKY_APP_URL")); raw != "" {
 		if u, err := url.Parse(raw); err == nil && u.Host != "" {
+			a.exact[normaliseHostName(u.Host)] = true
+		}
+	}
+	for _, part := range strings.Split(skyGetenv("PUBLIC_URL"), ",") {
+		if u, err := url.Parse(strings.TrimSpace(part)); err == nil && u.Host != "" {
 			a.exact[normaliseHostName(u.Host)] = true
 		}
 	}
@@ -130,18 +151,27 @@ func (a hostAllowList) allows(hostHeader string) bool {
 }
 
 // hostGuardApplies reports whether the listener bound to bindHost gets the
-// Host guard: only a loopback bind does.
+// Host guard: a loopback bind outside production, or any loopback bind of a
+// desktop window.
 func hostGuardApplies(bindHost string) bool {
-	return isLoopbackBindHost(bindHost)
+	if !isLoopbackBindHost(bindHost) {
+		return false
+	}
+	return desktopWindowActive() || !isProductionMode()
 }
 
-// hostGuardMiddleware wraps a listener's whole handler. On a loopback bind a
-// request with a foreign Host gets a 403 that names the variable that admits
-// it; on any other bind it returns next unchanged.
+// hostGuardMiddleware wraps a listener's whole handler. When the guard
+// applies (hostGuardApplies) a request with a foreign Host gets a 403 that
+// names the variables that admit it; otherwise it returns next unchanged.
 func hostGuardMiddleware(bindHost string, next http.Handler) http.Handler {
 	if !hostGuardApplies(bindHost) {
 		return next
 	}
+	return guardHosts(bindHost, next)
+}
+
+// guardHosts applies the Host check to next, whatever the mode.
+func guardHosts(bindHost string, next http.Handler) http.Handler {
 	allow := newHostAllowList(bindHost)
 	if allow.disabled {
 		return next
@@ -160,9 +190,11 @@ func rejectForeignHost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte("403 Forbidden: this dev server is bound to loopback and does not answer Host " +
+	_, _ = w.Write([]byte("403 Forbidden: this server is bound to loopback and does not answer Host " +
 		strings.TrimSpace(r.Host) + ". Add the name to " + skyEnvName("ALLOWED_HOSTS") +
-		" (comma list, *.example.test wildcards, * turns the check off).\n"))
+		" (comma list, *.example.test wildcards, * turns the check off) or to " +
+		skyEnvName("PUBLIC_URL") + ", or run with ENV=production behind your proxy; " +
+		"see docs/migration/v0.27.md#loopback-host-guard\n"))
 }
 
 // devWebSocketOriginPatterns are the WebSocket origin patterns used when an
@@ -196,4 +228,11 @@ func devWebSocketOriginPatterns() []string {
 		out = append(out, host, host+":*")
 	}
 	return out
+}
+
+// webviewLoopbackGuard is the Host guard of the Sky.Webview loopback server.
+// It applies in every mode: that server is never behind a proxy, and it
+// serves the user's rendered data to a browser engine on this machine.
+func webviewLoopbackGuard(next http.Handler) http.Handler {
+	return guardHosts("127.0.0.1", next)
 }

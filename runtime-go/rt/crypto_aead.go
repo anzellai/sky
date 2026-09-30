@@ -9,8 +9,12 @@
 // single opaque string safe for Postgres TEXT / cookie / SQLite
 // VARCHAR storage.  The decrypt helper splits the nonce back off.
 //
-// PBKDF2-HMAC-SHA256 (100 000 iterations) for password→key
-// derivation matches OWASP's 2026 recommended floor.  The salt
+// PBKDF2-HMAC-SHA256 with 100 000 iterations for password→key
+// derivation (aesKeyFromPassword / chachaKeyFromPassword). That is
+// BELOW OWASP's recommendation for PBKDF2-HMAC-SHA256 (600 000 since
+// 2023); the count is kept so data encrypted under these keys stays
+// readable. New data should use Crypto.keyFromPasswordStrong, which
+// enforces at least 600 000 iterations and a 16-byte salt. The salt
 // MUST be unique per record — pass 16 bytes from `randomBytes 16`.
 package rt
 
@@ -23,6 +27,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
+	"runtime"
+	"sync"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -178,12 +185,70 @@ func Crypto_chacha20Decrypt(key any, encoded any) any {
 // at this one boundary); the derived key IS a secret, so it is returned
 // wrapped in a Secret — it feeds straight into aesGcmEncrypt's Secret key.
 func Crypto_aesKeyFromPassword(password any, salt any) any {
-	return Secret{v: string(pbkdf2.Key([]byte(secretReveal(password)), readBytes(salt), pbkdf2Iterations, aeadKeyBytes, sha256.New))}
+	s := readBytes(salt)
+	warnShortSalt(s)
+	return Secret{v: string(pbkdf2.Key([]byte(secretReveal(password)), s, pbkdf2Iterations, aeadKeyBytes, sha256.New))}
 }
 
 // Crypto.chachaKeyFromPassword : Secret -> String -> Secret
 func Crypto_chachaKeyFromPassword(password any, salt any) any {
-	return Secret{v: string(pbkdf2.Key([]byte(secretReveal(password)), readBytes(salt), pbkdf2Iterations, aeadKeyBytes, sha256.New))}
+	s := readBytes(salt)
+	warnShortSalt(s)
+	return Secret{v: string(pbkdf2.Key([]byte(secretReveal(password)), s, pbkdf2Iterations, aeadKeyBytes, sha256.New))}
+}
+
+// strongKdfMinIterations and strongKdfMinSalt are the floor
+// keyFromPasswordStrong enforces (OWASP, PBKDF2-HMAC-SHA256).
+// strongKdfMaxIterations bounds the CPU one call can take.
+const (
+	strongKdfMinIterations = 600_000
+	strongKdfMaxIterations = 10_000_000
+	strongKdfMinSalt       = 16
+)
+
+// shortSaltWarning makes the short-salt warning once per process.
+var shortSaltWarning sync.Once
+
+// warnShortSalt logs once when a password key is derived with a salt under
+// 16 bytes: the same password then gives the same key across records.
+func warnShortSalt(salt []byte) {
+	if len(salt) >= strongKdfMinSalt {
+		return
+	}
+	shortSaltWarning.Do(func() {
+		log.Printf("[sky.crypto] WARNING: a password key was derived with a salt shorter than 16 bytes (%d). "+
+			"Use a unique 16-byte salt per record (Crypto.randomBytes 16), and Crypto.keyFromPasswordStrong for new data.", len(salt))
+	})
+}
+
+// strongKdfSlots bounds concurrent strong derivations to the CPU count, so a
+// flood of requests queues instead of taking every core.
+var strongKdfSlots = make(chan struct{}, runtime.NumCPU())
+
+// Crypto.keyFromPasswordStrong : { iterations : Int, salt : String } -> Secret -> Task Error Secret
+//
+// PBKDF2-HMAC-SHA256, 32-byte output, with at least 600 000 iterations and a
+// salt of at least 16 bytes (both enforced). A Task, because it takes real
+// CPU time: it runs behind a process-wide limit of one derivation per CPU.
+func Crypto_keyFromPasswordStrong(opts any, password any) any {
+	return func() any {
+		iters := AsInt(Field(opts, "Iterations"))
+		salt := readBytes(Field(opts, "Salt"))
+		if iters < strongKdfMinIterations || iters > strongKdfMaxIterations {
+			return Err[any, any](ErrInvalidInput(fmt.Sprintf(
+				"Crypto.keyFromPasswordStrong: iterations must be between %d and %d, got %d",
+				strongKdfMinIterations, strongKdfMaxIterations, iters)))
+		}
+		if len(salt) < strongKdfMinSalt {
+			return Err[any, any](ErrInvalidInput(fmt.Sprintf(
+				"Crypto.keyFromPasswordStrong: the salt must be at least %d bytes, got %d (use Crypto.randomBytes 16, stored with the record)",
+				strongKdfMinSalt, len(salt))))
+		}
+		strongKdfSlots <- struct{}{}
+		defer func() { <-strongKdfSlots }()
+		key := pbkdf2.Key([]byte(secretReveal(password)), salt, iters, aeadKeyBytes, sha256.New)
+		return Ok[any, any](Secret{v: string(key)})
+	}
 }
 
 // ═══════════════════════════════════════════════════════════

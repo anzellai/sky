@@ -566,8 +566,9 @@ func startWebviewLoopback(staticDir string, state *webviewState) (*http.Server, 
 	})
 
 	// The Host guard (host_guard.go) refuses a DNS-rebinding page: the
-	// loopback bind keeps other machines out, not other websites.
-	srv := &http.Server{Handler: hostGuardMiddleware("127.0.0.1", mux)}
+	// loopback bind keeps other machines out, not other websites. It stays
+	// on in production too (webviewLoopbackGuard).
+	srv := &http.Server{Handler: webviewLoopbackGuard(mux)}
 	safeGo("Webview.app loopback server", func() {
 		// http.Serve returns ErrServerClosed on graceful Close —
 		// suppress that one. Any other error gets logged.

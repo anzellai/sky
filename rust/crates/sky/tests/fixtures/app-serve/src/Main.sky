@@ -13,12 +13,15 @@ module Main exposing (main)
 --   STOP_TWICE Ok                    a second App.stop is harmless
 --   HEADER_TOKEN True                a header-transport app hands out a token
 --   HEADER_NO_COOKIE True            ... and sets no session cookie
+--   NAMESPACED_COOKIE True           a served app's cookie is sky_sid_<name>
+--   ISOLATED True                    two named apps on ONE sqlite store: app
+--                                    adm shows its own init for app pub's cookie
 --   SERVE_FLOW_DONE
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.Error as Error exposing (Error)
-import Sky.Core.Http as Http
+import Sky.Core.Http as Http exposing (HttpResponse)
 import Sky.Core.String as String
 import Sky.Core.Task as Task
 import Std.App as App exposing (Config(..), SessionTransport(..), webDefaults)
@@ -158,6 +161,7 @@ main =
         |> Task.andThen
                (\a -> App.serve (appOn "B" 0) |> Task.andThen (\b -> both a b))
         |> Task.andThen (\_ -> checkHeaderMode)
+        |> Task.andThen (\_ -> isolation)
         |> Task.andThen (\_ -> Log.println "SERVE_FLOW_DONE")
 
 
@@ -189,3 +193,62 @@ restart port =
                    status again
                        |> Task.andThen (\s -> Log.println ("RESTART_A " ++ s))
                        |> Task.andThen (\_ -> App.stop again))
+
+-- A-2: two served apps on ONE sqlite session store (the default `sqlite`
+-- path in the project directory). The browser sends app pub's cookie to app
+-- adm (cookies ignore the port); adm must show its own init state.
+tagApp origin =
+    App.app
+        { init = \_ -> ( { origin = origin }, Cmd.none )
+        , update = \_ m -> ( m, Cmd.none )
+        , view = \m -> Ui.text ("ORIGIN=" ++ m.origin)
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.withConfig
+               (WebConfig { webDefaults | port = 0, store = Just "sqlite" })
+        |> App.withName origin
+
+
+sessionCookieOf : HttpResponse -> String
+sessionCookieOf r =
+    header "Set-Cookie" r.headers |> Maybe.withDefault "" |> String.split ";"
+        |> List.head
+        |> Maybe.withDefault ""
+
+
+crossVisit : App.Running -> App.Running -> Task Error ()
+crossVisit pub adm =
+    Http.get (url pub) |> Task.map sessionCookieOf
+        |> Task.andThen (visitWithCookie adm)
+
+
+visitWithCookie : App.Running -> String -> Task Error ()
+visitWithCookie adm cookie =
+    Log.println
+        ("NAMESPACED_COOKIE "
+            ++ boolText (String.startsWith "sky_sid_pub=" cookie))
+        |> Task.andThen
+               (\_ ->
+                   Http.request
+                       (Http.defaultRequest (url adm)
+                           |> Http.withHeader "Cookie" cookie))
+        |> Task.map
+               (\r ->
+                   String.contains "ORIGIN=adm" r.body
+                       && not (String.contains "ORIGIN=pub" r.body))
+        |> Task.andThen (\ok -> Log.println ("ISOLATED " ++ boolText ok))
+
+
+isolation : Task Error ()
+isolation =
+    App.serve (tagApp "pub")
+        |> Task.andThen
+               (\pub ->
+                   App.serve (tagApp "adm") |> Task.andThen (isolationWith pub))
+
+
+isolationWith : App.Running -> App.Running -> Task Error ()
+isolationWith pub adm =
+    crossVisit pub adm |> Task.andThen (\_ -> App.stop pub)
+        |> Task.andThen (\_ -> App.stop adm)

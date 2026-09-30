@@ -344,7 +344,7 @@ func (app *liveApp) rotateSessionLocked(sess *liveSession, originTab string) str
 	if app == nil || app.store == nil || old == "" {
 		return old
 	}
-	newSid := newLiveSessionID()
+	newSid := app.newSID()
 	ticket := newLiveSessionID()
 	now := time.Now()
 	// Header session transport (live_session_header.go): the new id is the id
@@ -354,10 +354,10 @@ func (app *liveApp) rotateSessionLocked(sess *liveSession, originTab string) str
 	// derive its token, and the session ends after the grace window.
 	salt := ""
 	if app.headerSessions {
-		if tok := currentLiveSessionToken(); tok != "" && sessionTokenSID(tok) == old {
+		if tok := currentLiveSessionToken(); tok != "" && app.tokenSID(tok) == old {
 			salt = newLiveSessionID()
 			newTok := deriveRotatedToken(tok, salt)
-			newSid = sessionTokenSID(newTok)
+			newSid = app.tokenSID(newTok)
 			// A second rotation started later on this goroutine derives from
 			// the new token.
 			SetGoroutineTraceContext(context.WithValue(CurrentTraceContext(), liveSessionTokenKeyT{}, newTok))
@@ -421,6 +421,37 @@ func (app *liveApp) endSessionNow(sess *liveSession) {
 	if app.store != nil && sid != "" {
 		app.store.putAlias(sid, sessionAlias{})
 	}
+}
+
+// ─── X-Sky-Sid ──────────────────────────────────────────────────────
+
+// sidTag is what X-Sky-Sid carries in cookie mode (E-13). The tab only needs
+// a value it can echo in its event bodies that names its session; the cookie
+// is the credential. The session id itself in a response header was recorded
+// by every proxy or APM tool that logs response headers. The tag is a
+// one-way digest of the id: it names the session to the server, and it
+// cannot be turned back into the cookie.
+func sidTag(sid string) string {
+	h := sha256.Sum256([]byte("sky.live.sid-tag:" + sid))
+	return "t" + hex.EncodeToString(h[:16])
+}
+
+// claimsSID reports whether a tab's echoed value names sid: the id itself
+// (from the page config or /_sky/rotate) or its X-Sky-Sid tag.
+func claimsSID(claimed, sid string) bool {
+	return subtle.ConstantTimeCompare([]byte(claimed), []byte(sid)) == 1 ||
+		subtle.ConstantTimeCompare([]byte(claimed), []byte(sidTag(sid))) == 1
+}
+
+// tellSID tells the tab which session it now belongs to. Header mode sends
+// the id (the token already travels in headers there); cookie mode sends
+// the tag.
+func (app *liveApp) tellSID(w http.ResponseWriter, sid string) {
+	if app.headerSessions {
+		w.Header().Set("X-Sky-Sid", sid)
+		return
+	}
+	w.Header().Set("X-Sky-Sid", sidTag(sid))
 }
 
 // ─── resolving a presented id ───────────────────────────────────────
@@ -503,7 +534,7 @@ func (app *liveApp) resolveBoundSession(r *http.Request, claimed, tab string) bo
 	if val == "" {
 		return boundSession{verdict: sessionLost}
 	}
-	eq := func(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
+	eq := claimsSID
 	if _, live := app.store.Get(val); live {
 		if claimed == "" || eq(claimed, val) {
 			return boundSession{sid: val, verdict: sessionBound}
@@ -583,7 +614,7 @@ func (app *liveApp) pageSessionID(w http.ResponseWriter, r *http.Request) (sid, 
 	}
 	base := app.cookieNameOrDefault()
 	val, _ := readSessionCookie(r, base)
-	if val != "" && validSessionID(val) && app.store != nil {
+	if val != "" && app.ownsSID(val) && app.store != nil {
 		if _, live := app.store.Get(val); live {
 			writeSessionCookie(r, w, base, val, app.sessionTTL)
 			return val, "", true
@@ -597,14 +628,14 @@ func (app *liveApp) pageSessionID(w http.ResponseWriter, r *http.Request) (sid, 
 		if ok && hops[0].inGrace(now) {
 			if aliasChainAllows(hops, r.Header.Get("X-Sky-Tab"), now) {
 				writeSessionCookie(r, w, base, final, app.sessionTTL)
-				w.Header().Set("X-Sky-Sid", final)
+				app.tellSID(w, final)
 				return final, "", true
 			}
 			writeRotatingPage(w)
 			return "", "", false
 		}
 	}
-	sid = newLiveSessionID()
+	sid = app.newSID()
 	writeSessionCookie(r, w, base, sid, app.sessionTTL)
 	return sid, "", true
 }
@@ -613,7 +644,7 @@ func (app *liveApp) pageSessionID(w http.ResponseWriter, r *http.Request) (sid, 
 func (app *liveApp) pageSessionFromToken(w http.ResponseWriter, r *http.Request) (string, string, bool) {
 	tok := presentedSessionToken(r)
 	if tok != "" && app.store != nil {
-		sid := sessionTokenSID(tok)
+		sid := app.tokenSID(tok)
 		if _, live := app.store.Get(sid); live {
 			writeSessionToken(w, tok)
 			return sid, tok, true
@@ -626,9 +657,9 @@ func (app *liveApp) pageSessionFromToken(w http.ResponseWriter, r *http.Request)
 		now := time.Now()
 		if ok && hops[0].inGrace(now) {
 			if aliasChainAllows(hops, r.Header.Get("X-Sky-Tab"), now) {
-				if nt, derived := tokenThroughHops(tok, hops); derived {
+				if nt, derived := app.tokenThroughHops(tok, hops); derived {
 					writeSessionToken(w, nt)
-					w.Header().Set("X-Sky-Sid", final)
+					app.tellSID(w, final)
 					return final, nt, true
 				}
 			}
@@ -638,7 +669,7 @@ func (app *liveApp) pageSessionFromToken(w http.ResponseWriter, r *http.Request)
 	}
 	tok = newLiveSessionID()
 	writeSessionToken(w, tok)
-	return sessionTokenSID(tok), tok, true
+	return app.tokenSID(tok), tok, true
 }
 
 // ─── /_sky/rotate ───────────────────────────────────────────────────
@@ -714,7 +745,7 @@ func (app *liveApp) handleRotate(w http.ResponseWriter, r *http.Request) {
 	if app.headerSessions {
 		// The new token is derived from the old one the request carries; the
 		// server never stored it.
-		nt, derived := tokenThroughHops(presentedSessionToken(r), hops)
+		nt, derived := app.tokenThroughHops(presentedSessionToken(r), hops)
 		if !derived {
 			http.Error(w, "rotation refused", http.StatusForbidden)
 			return

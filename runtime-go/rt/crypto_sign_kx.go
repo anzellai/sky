@@ -33,7 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
+	"math/big"
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/curve25519"
@@ -231,19 +231,112 @@ func Sign_publicKeyFromBytes(b any) any {
 	if !ed25519PointValid(raw) {
 		return Err[any, any](ErrInvalidInput("Sign.publicKeyFromBytes: the bytes are not a valid Ed25519 public key"))
 	}
+	if ed25519SmallOrder(raw) {
+		return Err[any, any](ErrInvalidInput("Sign.publicKeyFromBytes: the key is a small-order point, which verifies forged signatures; it is refused (ask the peer for a real Ed25519 key); see docs/migration/v0.27.md#ed25519-small-order-keys"))
+	}
 	return Ok[any, any](SignPublicKey{k: string(raw)})
 }
 
-// ed25519PointValid reports whether raw decodes to a curve point. Verifying
-// any signature against it runs the same decode, and ed25519.Verify returns
-// false (never panics) on a point that does not decode, so a probe verify of
-// a fixed message tells the two cases apart: a non-point fails the decode on
-// every call, and a valid key rejects the zero signature by the equation
-// check. The decode path is what distinguishes them, so it is read directly
-// from the error of VerifyWithOptions.
+// ed25519PointValid reports whether raw is the canonical encoding of a point
+// on the Ed25519 curve (RFC 8032 §5.1.3), decoded here directly: y < p, and
+// x² = (y² − 1) / (d·y² + 1) has a root, with x = 0 only when the sign bit is
+// clear. (B-6: it used to match the text of an error inside crypto/ed25519.)
 func ed25519PointValid(raw []byte) bool {
-	err := ed25519.VerifyWithOptions(ed25519.PublicKey(raw), nil, make([]byte, ed25519.SignatureSize), &ed25519.Options{})
-	return err == nil || !strings.Contains(err.Error(), "bad public key")
+	_, _, ok := ed25519Decode(raw)
+	return ok
+}
+
+// ed25519SmallOrder reports whether the point has order dividing 8: [8]P is
+// the identity. B-3: such a key (the identity above all) accepts one fixed
+// signature for EVERY message under Go's cofactorless verify.
+func ed25519SmallOrder(raw []byte) bool {
+	x, y, ok := ed25519Decode(raw)
+	if !ok {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		x, y = ed25519Add(x, y, x, y)
+	}
+	return x.Sign() == 0 && y.Cmp(big.NewInt(1)) == 0
+}
+
+var (
+	ed25519P = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(19))
+	// d = −121665 / 121666 mod p.
+	ed25519D = func() *big.Int {
+		num := new(big.Int).Sub(ed25519P, big.NewInt(121665))
+		den := new(big.Int).ModInverse(big.NewInt(121666), ed25519P)
+		return num.Mul(num, den).Mod(num, ed25519P)
+	}()
+	// sqrt(−1) = 2^((p−1)/4) mod p.
+	ed25519SqrtM1 = new(big.Int).Exp(big.NewInt(2),
+		new(big.Int).Rsh(new(big.Int).Sub(ed25519P, big.NewInt(1)), 2), ed25519P)
+)
+
+// ed25519Decode decodes a 32-byte point encoding to affine (x, y).
+func ed25519Decode(raw []byte) (x, y *big.Int, ok bool) {
+	if len(raw) != 32 {
+		return nil, nil, false
+	}
+	le := make([]byte, 32)
+	copy(le, raw)
+	sign := le[31] >> 7
+	le[31] &= 0x7f
+	be := make([]byte, 32)
+	for i := range le {
+		be[31-i] = le[i]
+	}
+	p := ed25519P
+	y = new(big.Int).SetBytes(be)
+	if y.Cmp(p) >= 0 {
+		return nil, nil, false // non-canonical
+	}
+	y2 := new(big.Int).Mul(y, y)
+	y2.Mod(y2, p)
+	u := new(big.Int).Sub(y2, big.NewInt(1))
+	u.Mod(u, p)
+	v := new(big.Int).Mul(ed25519D, y2)
+	v.Add(v, big.NewInt(1)).Mod(v, p)
+	x2 := new(big.Int).Mul(u, new(big.Int).ModInverse(v, p))
+	x2.Mod(x2, p)
+	// Candidate root x = x2^((p+3)/8); fix it by sqrt(−1) when x² = −x2.
+	x = new(big.Int).Exp(x2, new(big.Int).Rsh(new(big.Int).Add(p, big.NewInt(3)), 3), p)
+	check := new(big.Int).Mul(x, x)
+	check.Mod(check, p)
+	if check.Cmp(x2) != 0 {
+		x.Mul(x, ed25519SqrtM1).Mod(x, p)
+		check.Mul(x, x).Mod(check, p)
+		if check.Cmp(x2) != 0 {
+			return nil, nil, false // no root: not a point
+		}
+	}
+	if x.Sign() == 0 && sign == 1 {
+		return nil, nil, false // −0 is not a canonical encoding
+	}
+	if uint(x.Bit(0)) != uint(sign) {
+		x.Sub(p, x)
+	}
+	return x, y, true
+}
+
+// ed25519Add adds two affine points on −x² + y² = 1 + d·x²·y² (the formulas
+// are complete for this curve, so doubling uses them too).
+func ed25519Add(x1, y1, x2, y2 *big.Int) (*big.Int, *big.Int) {
+	p := ed25519P
+	x1y2 := new(big.Int).Mul(x1, y2)
+	y1x2 := new(big.Int).Mul(y1, x2)
+	y1y2 := new(big.Int).Mul(y1, y2)
+	x1x2 := new(big.Int).Mul(x1, x2)
+	dxy := new(big.Int).Mul(ed25519D, x1x2)
+	dxy.Mul(dxy, y1y2).Mod(dxy, p)
+	nx := new(big.Int).Add(x1y2, y1x2)
+	dx := new(big.Int).Add(big.NewInt(1), dxy)
+	ny := new(big.Int).Add(y1y2, x1x2)
+	dy := new(big.Int).Sub(big.NewInt(1), dxy)
+	dy.Mod(dy, p)
+	x3 := nx.Mul(nx, new(big.Int).ModInverse(dx.Mod(dx, p), p))
+	y3 := ny.Mul(ny, new(big.Int).ModInverse(dy, p))
+	return x3.Mod(x3, p), y3.Mod(y3, p)
 }
 
 // Sign.publicKeyToBytes : PublicKey -> Bytes.

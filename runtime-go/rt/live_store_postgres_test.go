@@ -4,7 +4,6 @@
 package rt
 
 import (
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -22,15 +21,6 @@ import (
 //	  go test -tags integration ./rt/ -run Postgres
 //
 // CI supplies the DSN via a `postgres:16` service container.
-
-func requirePostgresDSN(t *testing.T) string {
-	t.Helper()
-	dsn := os.Getenv("SKY_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("SKY_TEST_POSTGRES_DSN unset — skipping real-Postgres integration test")
-	}
-	return dsn
-}
 
 // The CROSS-INSTANCE round-trip is the meaningful test: postgresStore.Get hits
 // an in-process memCache first, so writing and reading through the SAME instance

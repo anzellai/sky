@@ -186,6 +186,9 @@ func printStartupReportConsole(port int, consoleHere bool) {
 	// clean app's startup output is byte-identical to before. None of its lines
 	// contains "listening" (the substring the supervisor + verify.sh parse).
 	lines = append(lines, legacyMigrationNotices()...)
+	// Deployment problems a subsystem found before the listener started
+	// (startup_warnings.go). Printed in production too.
+	lines = append(lines, startupWarningLines()...)
 	if len(lines) == 0 {
 		return
 	}

@@ -449,3 +449,44 @@ func TestNotifyGoesThroughTheShellAndKeepsItsAnswer(t *testing.T) {
 		t.Errorf("no native notifications: %d Web API calls, want 2", webCalls)
 	}
 }
+
+// E-16: an iOS or Android shell built by v0.26.1 does not know the
+// `sky:notify` op ("skyNative: no native handler for 'sky:notify'" on iOS,
+// "no native handler for 'sky:notify'" on Android), but it does have the old
+// notify entry point. A v0.27 wasm loaded from the backend into such a shell
+// falls back to that entry point instead of failing.
+func TestNativeNotifyFallsBackToAShellBuiltBeforeV027(t *testing.T) {
+	webCalls, legacyCalls := 0, 0
+	web := func() SkyResult[any, any] { webCalls++; return Ok[any, any](struct{}{}) }
+	legacy := func(title, body string) (SkyResult[any, any], bool) {
+		legacyCalls++
+		if title != "Sky" || body != "shipped" {
+			t.Fatalf("legacy notify got %q %q", title, body)
+		}
+		return Ok[any, any](struct{}{}), true
+	}
+	for _, rej := range []string{
+		"skyNative: no native handler for 'sky:notify'",
+		"no native handler for 'sky:notify'",
+	} {
+		old := func(string, string) nativeShellReply {
+			return nativeShellReply{Present: true, Ok: false, Data: rej}
+		}
+		r := nativeNotifyWith(old, legacy, web, "Sky", "shipped")
+		if r.Tag != 0 {
+			t.Fatalf("%q: a v0.26.1 shell's notify failed: %+v", rej, r)
+		}
+	}
+	if legacyCalls != 2 || webCalls != 0 {
+		t.Fatalf("legacy calls %d, web calls %d; want 2 and 0", legacyCalls, webCalls)
+	}
+	// A shell with neither protocol: a named Err that says to update the app.
+	none := func(string, string) (SkyResult[any, any], bool) { return SkyResult[any, any]{}, false }
+	old := func(string, string) nativeShellReply {
+		return nativeShellReply{Present: true, Data: "no native handler for 'sky:notify'"}
+	}
+	r := nativeNotifyWith(old, none, web, "t", "b")
+	if _, msg := errKind(t, r); !strings.Contains(msg, "update the app") {
+		t.Fatalf("an old shell with no notify: %q, want a message to update the app", msg)
+	}
+}

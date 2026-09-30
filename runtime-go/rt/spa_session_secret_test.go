@@ -39,7 +39,8 @@ func TestSpaSessionSecretMintPersistAndReread(t *testing.T) {
 	if len(first) < spaSessionSecretMinBytes {
 		t.Fatalf("minted secret must be >= %d bytes, got %d", spaSessionSecretMinBytes, len(first))
 	}
-	path := filepath.Join(dir, "spa-session-secret")
+	// Development names its key `.dev` (A-7); production never reads it.
+	path := filepath.Join(dir, "spa-session-secret.dev")
 	onDisk, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("minted secret must be persisted at %s: %v", path, err)

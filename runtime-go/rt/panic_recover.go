@@ -134,6 +134,9 @@ func classifyPanic(msg string) (kind, hint string) {
 		strings.Contains(msg, "runtime error: nil"):
 		return "NilDereference",
 			"Tried to use a nil FFI value as if it were initialised. Most Go FFI bindings return `*T` — check for nil before using."
+	case strings.Contains(msg, "Codec.auto: cannot encode"):
+		return "JsonEncodeFailure",
+			"Codec.auto was given a value with no JSON form: a function, a Secret, a key, a crypto state or a runtime handle (Process, WebSocket, Cache, ...). Keep it out of records you save or send, or write the field's codec by hand."
 	case strings.Contains(msg, "rt.JsonEnc_encode: cannot encode"):
 		return "JsonEncodeFailure",
 			"Json.Encode.encode was given a value JSON cannot represent: a NaN or infinite Float (`Math.nan`, `Math.inf`, `Math.sqrt` of a negative number, a Float overflow). JSON has no such number. Check the Float (`Math.isNaN`) before you encode it."

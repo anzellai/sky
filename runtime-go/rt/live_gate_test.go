@@ -103,3 +103,17 @@ func TestLiveModeParse(t *testing.T) {
 		}
 	}
 }
+
+// requirePostgresDSN returns SKY_TEST_POSTGRES_DSN, or fails the test naming
+// it (SKY_LIVE_TESTS=skip: skips it). G-8: the real-PostgreSQL tests used to
+// end with `t.Skip` when the DSN was unset, so a run without a database
+// printed `ok` for tests that never ran, and the live-gate guard did not see
+// them.
+func requirePostgresDSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv("SKY_TEST_POSTGRES_DSN")
+	requireLive(t, "a PostgreSQL database (SKY_TEST_POSTGRES_DSN)",
+		"start one (`docker run -e POSTGRES_PASSWORD=sky -p 5432:5432 postgres:16`, or `sky db start`) "+
+			"and set SKY_TEST_POSTGRES_DSN=postgres://…", dsn != "")
+	return dsn
+}
