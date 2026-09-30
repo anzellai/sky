@@ -1418,13 +1418,18 @@ fn reserved_rewrite(name: &str) -> String {
 // ---- kernel-alias detection --------------------------------------------
 
 /// Detect a `name = Ffi.kernel "Raw"` body — the resolved shape is
-/// `Call(Var(Res::Kernel{func:"kernel"}), [Str raw])`.
+/// `Call(Var(Res::Kernel{module:"Ffi", func:"kernel"}), [Str raw])`.
+///
+/// Only the `Ffi` pseudo-module binds a kernel by name. This used to match
+/// `func == "kernel"` from ANY module, so `Webview.kernel "Crypto_sha256"` was
+/// bound like `Ffi.kernel` while the checker's `[E1011]` scan looked only at
+/// `Ffi` (see `hir::FFI_PLUMBING`; the resolver now refuses that spelling).
 fn detect_kernel_alias(body: &Body) -> Option<String> {
     let root = body.root?;
     if let Expr::Call(callee, args) = &body.exprs[root] {
         if args.len() == 1 {
-            if let Expr::Var(Res::Kernel { func, .. }) = &body.exprs[*callee] {
-                if func.as_str() == "kernel" {
+            if let Expr::Var(Res::Kernel { module, func }) = &body.exprs[*callee] {
+                if module.as_str() == "Ffi" && func.as_str() == "kernel" {
                     if let Expr::Str(raw) = &body.exprs[args[0]] {
                         return Some(raw.to_string());
                     }

@@ -130,7 +130,10 @@ pub const CORPUS_REL_DIR: &str = "rust/crates/ty/tests/reject/corpus";
 /// monomorphic).
 /// **83 since v0.27.0 round 5**: `ffi_go_type_is_not_an_app_type.sky` pins a Go
 /// FFI type's own identity (an app record of the same bare name is rejected).
-pub const EXPECTED_CORPUS_FILES: usize = 83;
+/// **84 since v0.27.0 judge round 2**: `ffi_kernel_through_another_qualifier.sky`
+/// pins `Webview.kernel` as `[E1011]` (`Sky.Ffi` plumbing under another
+/// qualifier bypassed the scan).
+pub const EXPECTED_CORPUS_FILES: usize = 84;
 
 /// The EXACT number of corpus files tagged `-- gate: known-leniency` — programs
 /// the ORACLE rejects that the Rust checker deliberately accepts for a
@@ -152,7 +155,8 @@ pub const EXPECTED_HARD_GATE_FILES: usize = EXPECTED_CORPUS_FILES - EXPECTED_KNO
 /// same commit.
 /// **36 since v0.27.0 round 3** (`let_application_not_generalised.sky`).
 /// **37 since v0.27.0 round 5** (`ffi_go_type_is_not_an_app_type.sky`).
-pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 37;
+/// **38 since v0.27.0 judge round 2** (`ffi_kernel_through_another_qualifier.sky`).
+pub const EXPECTED_FILES_WITH_RUST_CODE: usize = 38;
 
 /// The EXACT number of corpus files whose expectation is DERIVED from the
 /// `-- oracle: reject [CODE…]` header, on the assumption that Rust and the

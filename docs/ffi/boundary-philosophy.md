@@ -52,6 +52,13 @@ to its own code: a project the Sky.Spa split generated may bind the split's
 `Spa_*` kernels, and a module whose text is the compiler's bundled-app source
 (the Sky Console, the doc server) keeps full `Sky.Ffi`.
 
+The four are members of `Sky.Ffi` only. Spelled through any other kernel
+module (`Webview.kernel`, `import Webview exposing (kernel)`) they are
+`[E1011]` in every module, the stdlib included, so no qualifier reaches a
+kernel by name except `Ffi`. A fetched registry package (`.skydeps/`) is
+checked like application code and gets no grant: a package is pure Sky and
+ships no Go kernel.
+
 What keeps the stdlib's own `Ffi.kernel` bindings honest is a set of gates,
 not the checker. `xtask kernel-members` and
 `rust/crates/project/tests/kernel_surface.rs` prove every bound symbol is a

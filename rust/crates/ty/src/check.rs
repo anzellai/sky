@@ -242,7 +242,8 @@ impl<'a> Typer<'a> {
 
 /// `Sky.Ffi` members that bind a runtime kernel or a registered Go binding by
 /// name. Stdlib-only (see the `[E1011]` scan in [`check_modules_with_world`]).
-const STDLIB_ONLY_FFI: &[&str] = &["kernel", "call", "callPure", "callTask"];
+/// One list with the resolver's (`hir::FFI_PLUMBING`), so the two cannot drift.
+const STDLIB_ONLY_FFI: &[&str] = hir::FFI_PLUMBING;
 
 /// The `[E1011]` diagnostic text for an app-code `Sky.Ffi.<member>` reference.
 /// `symbol` is the literal kernel symbol of an `Ffi.kernel "Sym"` application.
@@ -647,13 +648,59 @@ pub fn check_modules_with_world(
                     let Expr::Var(Res::Kernel { module, func }) = expr else {
                         continue;
                     };
-                    if module.as_str() != "Ffi" || !STDLIB_ONLY_FFI.contains(&func.as_str()) {
+                    // A member of a kernel pseudo-module with no static member
+                    // list (`Webview`, `Live`, `Tui`, `Cli`, `Jobs`) resolves
+                    // leniently when its module is not imported. With no
+                    // signature it would type as a fresh variable and lower to
+                    // `rt.<Mod>_<func>` — a runtime kernel bound with a type the
+                    // checker cannot know, the `[E1011]` hole by another name.
+                    // Every real member has a signature (the stdlib's own def
+                    // of it), so a member without one is refused.
+                    let key = (module.as_str().to_string(), func.as_str().to_string());
+                    if module.as_str() != "Ffi"
+                        && hir::kernel_functions(module.as_str()).is_none()
+                        && !STDLIB_ONLY_FFI.contains(&func.as_str())
+                        && !world.kernel_sigs.contains_key(&key)
+                        && !world.check_kernel_sigs.contains_key(&key)
+                    {
+                        out.name_errors += 1;
+                        out.diagnostics.push(Diagnostic {
+                            severity: Severity::Error,
+                            code: Code("E1001".to_string()),
+                            message: format!(
+                                "`{m}` has no member `{f}`",
+                                m = module.as_str(),
+                                f = func.as_str()
+                            ),
+                            labels: body
+                                .expr_span(e)
+                                .map(|sp| {
+                                    vec![diagnostics::Label {
+                                        span: trim_leading_ws(&module_src, sp),
+                                        message: "no such member".into(),
+                                    }]
+                                })
+                                .unwrap_or_default(),
+                            suggestion: None,
+                        });
+                        continue;
+                    }
+                    if !STDLIB_ONLY_FFI.contains(&func.as_str()) {
+                        continue;
+                    }
+                    // The resolver refuses plumbing spelled through another
+                    // kernel qualifier (`Webview.kernel`) with its own `[E1011]`
+                    // and never mints this `Res::Kernel`. A reference that still
+                    // carries one (a future resolution path) is refused here
+                    // too, and no grant opens it: a grant opens `Sky.Ffi` only.
+                    let granted = module.as_str() == "Ffi" && {
+                        let symbol = kernel_syms.get(&e).map(String::as_str);
+                        sky.ffi_member_allowed(&mname, func.as_str(), symbol)
+                    };
+                    if granted {
                         continue;
                     }
                     let symbol = kernel_syms.get(&e).map(String::as_str);
-                    if sky.ffi_member_allowed(&mname, func.as_str(), symbol) {
-                        continue;
-                    }
                     let (message, suggestion) = ffi_stdlib_only_text(&world, func.as_str(), symbol);
                     out.name_errors += 1;
                     out.diagnostics.push(Diagnostic {

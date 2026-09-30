@@ -970,8 +970,9 @@ fn def_is_kernel_alias_to(db: &dyn SkyDb, def: DefId, targets: &[&str]) -> bool 
     };
     if let Expr::Call(callee, args) = &body.exprs[root] {
         if args.len() == 1 {
-            if let Expr::Var(Res::Kernel { func, .. }) = &body.exprs[*callee] {
-                if func.as_str() == "kernel" {
+            if let Expr::Var(Res::Kernel { module, func }) = &body.exprs[*callee] {
+                // Only `Ffi.kernel` binds a kernel (see `hir::FFI_PLUMBING`).
+                if module.as_str() == "Ffi" && func.as_str() == "kernel" {
                     if let Expr::Str(sym) = &body.exprs[args[0]] {
                         let sym_str: &str = sym;
                         return targets.contains(&sym_str);

@@ -1383,7 +1383,7 @@ impl<'a> Resolver<'a> {
                         None => self.kernel_open.push(pseudo.clone()),
                     }
                 } else {
-                    self.bind_exposing_kernel(pseudo, &c);
+                    self.bind_exposing_kernel(pseudo, &c, exposing_span);
                 }
             }
             (ImportSource::Foreign(pkg), Some(c)) => {
@@ -1625,9 +1625,19 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn bind_exposing_kernel(&mut self, pseudo: &str, c: &cst::ExposingClause) {
+    fn bind_exposing_kernel(
+        &mut self,
+        pseudo: &str,
+        c: &cst::ExposingClause,
+        exposing_span: Option<Span>,
+    ) {
         for it in &c.items {
             match it {
+                cst::ExposedItem::Value(v) if crate::ffi::is_ffi_plumbing_elsewhere(pseudo, v) => {
+                    // `import Webview exposing (kernel)`: not a member of
+                    // `Webview`, so nothing is bound (see `hir::FFI_PLUMBING`).
+                    self.report_ffi_plumbing_elsewhere(v, pseudo, v, exposing_span);
+                }
                 cst::ExposedItem::Value(v) => {
                     self.bind_var_imported(
                         v.clone(),
@@ -3109,9 +3119,15 @@ impl<'a> Resolver<'a> {
             return r;
         }
         // lenient kernel-exposing-all fallback
-        if let Some(pseudo) = self.kernel_open.first() {
+        if let Some(pseudo) = self.kernel_open.first().cloned() {
+            // `import Webview exposing (..)` does not make `kernel` a member of
+            // `Webview` (see `hir::FFI_PLUMBING`).
+            if crate::ffi::is_ffi_plumbing_elsewhere(&pseudo, name) {
+                self.report_ffi_plumbing_elsewhere(name, &pseudo, name, span);
+                return Res::Error;
+            }
             return Res::Kernel {
-                module: Name::new(pseudo),
+                module: Name::new(&pseudo),
                 func: Name::new(name),
             };
         }
@@ -3427,6 +3443,13 @@ impl<'a> Resolver<'a> {
         name: &str,
         span: Option<Span>,
     ) -> Option<Res> {
+        // `Sky.Ffi` plumbing is a member of `Ffi` and of no other pseudo. The
+        // lenient branch below used to let `Webview.kernel` through, and
+        // lowering bound it like `Ffi.kernel` (see `hir::FFI_PLUMBING`).
+        if crate::ffi::is_ffi_plumbing_elsewhere(pseudo, name) {
+            self.report_ffi_plumbing_elsewhere(&format!("{qual}.{name}"), pseudo, name, span);
+            return Some(Res::Error);
+        }
         let Some(funcs) = crate::kernel::kernel_functions(pseudo) else {
             // No ENUMERATED kernel members for this pseudo. Two sub-cases:
             //   * A `.sky`-migrated kernel module (`Std.Live`/`Std.Jobs`/
@@ -3502,6 +3525,43 @@ impl<'a> Resolver<'a> {
             });
         }
         Some(Res::Error)
+    }
+
+    /// `[E1011]` for a `Sky.Ffi` plumbing member (`kernel`, `call`, `callPure`,
+    /// `callTask`) reached through the kernel pseudo-module `pseudo`, which is
+    /// not `Ffi`. `shown` is the reference as written (`Webview.kernel`).
+    ///
+    /// Reported in every module, the stdlib and granted modules included: a
+    /// grant opens `Sky.Ffi`, never the same member under another name.
+    fn report_ffi_plumbing_elsewhere(
+        &mut self,
+        shown: &str,
+        pseudo: &str,
+        name: &str,
+        span: Option<Span>,
+    ) {
+        if self.quiet != 0 {
+            return;
+        }
+        let mut diag = Diagnostic::error(
+            "E1011",
+            format!(
+                "`{shown}` is not a member of `{pseudo}`. `{name}` belongs to `Sky.Ffi`, \
+                 which binds a runtime kernel or a Go binding by name with a type the \
+                 checker cannot know. It is not exposed through any other module, and \
+                 `Sky.Ffi` itself is not exposed to application code."
+            ),
+        );
+        diag.suggestion = Some(
+            "call the typed stdlib function that wraps the kernel, or for Go code \
+             `sky add <go/module>` and `import` the binding: its pinned signature \
+             returns `Result Error a`."
+                .to_string(),
+        );
+        if let Some(sp) = span {
+            diag = diag.with_label(sp, "not a member");
+        }
+        self.result.diagnostics.push(diag);
     }
 
     /// The closest known member name to `name` within edit-distance 2, ties

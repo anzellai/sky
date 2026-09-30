@@ -16,6 +16,25 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// The `Sky.Ffi` plumbing members: they bind a runtime kernel or a registered
+/// Go binding by NAME, with a type the checker cannot know.
+///
+/// They are members of the `Ffi` kernel pseudo-module and of no other. The
+/// resolver refuses one reached through any other kernel qualifier
+/// (`Webview.kernel`, `import Webview exposing (kernel)`, …) with `[E1011]`,
+/// in every module, trusted or not; the checker's `[E1011]` scan refuses the
+/// `Sky.Ffi` spelling in app code; and lowering binds `kernel` only as
+/// `Ffi.kernel`. Before this list existed, a pseudo-module with no static member
+/// list resolved `Webview.kernel` leniently and lowering bound it like
+/// `Ffi.kernel`, which bypassed the checker's scan.
+pub const FFI_PLUMBING: &[&str] = &["kernel", "call", "callPure", "callTask"];
+
+/// Is `pseudo.name` a `Sky.Ffi` plumbing member spelled through another kernel
+/// pseudo-module (where it is never a member)?
+pub fn is_ffi_plumbing_elsewhere(pseudo: &str, name: &str) -> bool {
+    pseudo != "Ffi" && FFI_PLUMBING.contains(&name)
+}
+
 /// One Go-FFI function's pinned shape.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FfiFnSig {
@@ -56,12 +75,18 @@ pub struct FfiSurface {
 ///
 /// A module is never trusted by its NAME: a project module declared as
 /// `module Sky.Evil` is app code like any other.
+///
+/// `packages` names the modules of fetched registry packages (`.skydeps/`).
+/// No grant reaches them: a package is pure Sky and ships no Go kernel, so
+/// `Sky.Ffi` has no legitimate use there, even in a Sky.Spa-generated project.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FfiTrust {
     /// Module names granted full `Sky.Ffi` (compiler-owned source).
     pub modules: std::collections::BTreeSet<String>,
     /// Kernel-symbol prefixes any checked module may bind with `Ffi.kernel`.
     pub kernel_prefixes: std::collections::BTreeSet<String>,
+    /// Registry-package modules: never granted `Sky.Ffi`, whatever else holds.
+    pub packages: std::collections::BTreeSet<String>,
 }
 
 impl FfiTrust {
@@ -69,6 +94,9 @@ impl FfiTrust {
     /// symbol of an `Ffi.kernel "Sym"` application, `None` when the reference
     /// is not applied to a string literal.
     pub fn allows(&self, module: &str, member: &str, symbol: Option<&str>) -> bool {
+        if self.packages.contains(module) {
+            return false;
+        }
         if self.modules.contains(module) {
             return true;
         }

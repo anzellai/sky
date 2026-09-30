@@ -1148,6 +1148,31 @@ clone probe entirely (offline-friendly for a known Go module). A Sky package is
 declared Sky dep isn't fetched; `sky remove --sky <path>` drops the entry and its
 `.skydeps/` tree.
 
+**A fetched package is checked as your code.** `sky check`, `sky build` and
+`sky test` parse-check and type-check every module under `.skydeps/<slug>/src/`
+on every build, with the rules your own modules follow, and report an error
+under the package file (`.skydeps/<slug>/src/Evil/Probe.sky:8:5`). Three
+consequences:
+
+- A package gets no `Sky.Ffi` (`[E1011]` for `Ffi.kernel`, `Ffi.call`,
+  `Ffi.callPure`, `Ffi.callTask`, under any qualifier). A package is pure Sky
+  and ships no Go kernel, so it calls the typed stdlib like an application
+  does.
+- A package's Go FFI call is typed from the project's pinned surface
+  (`sky-ffi/<pkg>.kernel.json`) and returns `Result Error a`, as in your code.
+  `sky install` does not install a package's Go dependencies; the project
+  declares them.
+- A package that does not type-check under this compiler fails the build that
+  uses it, at the package file.
+
+Why every build, and not once per pinned version: a pin fixes the package's
+text, not the result of checking it. The same text can be checked by a newer
+compiler, against a newer stdlib or another Go surface, and give a different
+answer, so a verdict cached under the package's hash would need all of those
+in its key to be sound. The check is the same pass that runs over your own
+modules, packages are small, and the `go build` that follows costs far more,
+so the build re-checks them rather than trust a cached verdict.
+
 The FFI inspector (`sky-ffi-inspect`) is embedded in the `sky`
 binary and self-provisions into `$XDG_CACHE_HOME/sky/tools/` on
 first use — no separate install required. Cold start costs one
@@ -1189,7 +1214,8 @@ sky add ./libs/widgets  # has sky.toml or .sky sources → [dependencies] "widge
   parse-checked and type-checked by `sky check`, `sky build` and `sky test`,
   and a diagnostic names the file in the dependency relative to the project
   (`../widgets/src/Widget.sky:8:5`). A fetched registry package under
-  `.skydeps/` is pinned and is not re-checked.
+  `.skydeps/` is checked the same way, on every build (see *A fetched package
+  is checked as your code* above).
 - **Paths are relative to the project root**, not the working directory, and
   are resolved against it at build time. An absolute argument is stored as
   given.

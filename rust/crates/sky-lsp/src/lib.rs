@@ -386,6 +386,17 @@ impl Analysis {
                 .kernel_prefixes
                 .insert(project::SPA_GENERATED_KERNEL_PREFIX.to_string());
         }
+        // A fetched registry package gets no grant (`hir::FfiTrust::packages`),
+        // as in `sky check`.
+        for (name, &i) in &self.by_name {
+            let in_skydeps = self.docs[i]
+                .url
+                .to_file_path()
+                .is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".skydeps"));
+            if in_skydeps {
+                trust.packages.insert(name.clone());
+            }
+        }
         trust
     }
 

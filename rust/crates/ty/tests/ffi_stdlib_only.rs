@@ -264,3 +264,154 @@ main =
 ";
     assert!(check(&[("Main", src)], FfiTrust::default()).is_empty());
 }
+
+// ---- `Sky.Ffi` plumbing is reachable ONLY as a `Sky.Ffi` member ----------
+//
+// The `[E1011]` scan used to match only `Res::Kernel { module: "Ffi", .. }`,
+// while lowering bound `func == "kernel"` from ANY kernel pseudo-module. A
+// pseudo with no static member list (`Webview`, `Live`, `Tui`, `Cli`, `Jobs`)
+// resolved an unknown member leniently, so `Webview.kernel "Crypto_sha256"`
+// passed `sky check` with no `Webview` import and the binary panicked with a
+// TypeMismatch. Every route below must now be refused with `[E1011]`.
+
+/// A module whose `probe : String -> Int` is bound by `body`, with `imports`.
+fn route(imports: &str, body: &str) -> String {
+    format!(
+        "\
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+{imports}
+
+
+probe : String -> Int
+probe =
+{body}
+
+
+main =
+    println (String.fromInt (probe \"abc\" + 1))
+"
+    )
+}
+
+fn assert_e1011(imports: &str, body: &str) {
+    let src = route(imports, body);
+    let d = check(&[("Main", &src)], FfiTrust::default());
+    assert!(
+        codes(&d).contains(&"E1011".to_string()),
+        "expected [E1011] for\n{src}\ngot {d:?}"
+    );
+}
+
+#[test]
+fn the_judges_case_webview_kernel_is_rejected_with_e1011() {
+    let src = route("", "    Webview.kernel \"Crypto_sha256\"");
+    let d = check(&[("Main", &src)], FfiTrust::default());
+    assert_eq!(codes(&d), vec!["E1011".to_string()], "{d:?}");
+    assert!(
+        d[0].1.contains("`Webview.kernel`") && d[0].1.contains("`Sky.Ffi`"),
+        "{}",
+        d[0].1
+    );
+}
+
+#[test]
+fn ffi_plumbing_through_any_other_kernel_qualifier_is_rejected() {
+    for q in [
+        "Webview", "Live", "Tui", "Cli", "Jobs", "Crypto", "Fmt", "Basics",
+    ] {
+        for m in ["kernel", "call", "callPure", "callTask"] {
+            assert_e1011("", &format!("    {q}.{m} \"Crypto_sha256\""));
+        }
+    }
+}
+
+#[test]
+fn ffi_plumbing_through_an_aliased_or_opened_kernel_import_is_rejected() {
+    assert_e1011("import Webview as W", "    W.kernel \"Crypto_sha256\"");
+    // `Std.Webview` is a Sky module: `kernel` is simply not one of its exports.
+    let src = route("import Std.Webview as W", "    W.kernel \"Crypto_sha256\"");
+    let d = check(&[("Main", &src)], FfiTrust::default());
+    assert!(codes(&d).contains(&"E1001".to_string()), "{d:?}");
+    assert_e1011(
+        "import Webview exposing (..)",
+        "    kernel \"Crypto_sha256\"",
+    );
+    assert_e1011(
+        "import Webview exposing (kernel)",
+        "    kernel \"Crypto_sha256\"",
+    );
+    assert_e1011(
+        "import Fmt exposing (callPure)",
+        "    callPure \"Crypto_sha256\"",
+    );
+    assert_e1011(
+        "import Webview exposing (..)\nimport Sky.Ffi exposing (..)",
+        "    kernel \"Crypto_sha256\"",
+    );
+}
+
+#[test]
+fn every_sky_ffi_route_to_a_kernel_is_rejected() {
+    assert_e1011(
+        "import Sky.Ffi exposing (..)",
+        "    kernel \"Crypto_sha256\"",
+    );
+    assert_e1011(
+        "import Sky.Ffi exposing (kernel)",
+        "    kernel \"Crypto_sha256\"",
+    );
+    assert_e1011("import Sky.Ffi as F", "    F.kernel \"Crypto_sha256\"");
+    // No import at all: `Ffi` is an ambient kernel qualifier.
+    assert_e1011("", "    Ffi.kernel \"Crypto_sha256\"");
+    // A let-bound alias, a record field, a partial application and a value
+    // passed to a function: the reference itself is refused, applied or not.
+    assert_e1011(
+        "",
+        "    let\n        k =\n            Ffi.kernel\n    in\n    k \"Crypto_sha256\"",
+    );
+    assert_e1011(
+        "",
+        "    let\n        r =\n            { k = Ffi.kernel }\n    in\n    r.k \"Crypto_sha256\"",
+    );
+    assert_e1011("", "    identity Ffi.kernel \"Crypto_sha256\"");
+    assert_e1011("", "    (\\f -> f \"Crypto_sha256\") Ffi.kernel");
+    assert_e1011("", "    Ffi.callPure \"Crypto_sha256\"");
+    assert_e1011(
+        "",
+        "    Ffi.callTask \"Crypto_sha256\" |> (\\_ -> String.length)",
+    );
+}
+
+#[test]
+fn a_trusted_module_still_cannot_reach_plumbing_through_another_qualifier() {
+    // `FfiTrust::modules` opens `Sky.Ffi`; it does not make `Webview.kernel` a
+    // member of `Webview`.
+    let src = route("", "    Webview.kernel \"Crypto_sha256\"");
+    let trust = FfiTrust {
+        modules: ["Main".to_string()].into_iter().collect(),
+        ..FfiTrust::default()
+    };
+    let d = check(&[("Main", &src)], trust);
+    assert!(codes(&d).contains(&"E1011".to_string()), "{d:?}");
+}
+
+#[test]
+fn an_unknown_member_of_an_unlisted_kernel_module_is_refused_at_check() {
+    // `Live` / `Webview` / `Tui` / `Cli` / `Jobs` have no static member list.
+    // Unimported, an unknown member resolved to a signature-less kernel
+    // reference: a fresh type, lowered to `rt.<Mod>_<member>`.
+    for q in ["Webview", "Live", "Tui", "Cli", "Jobs"] {
+        let src = route("", &format!("    {q}.notAMember"));
+        let d = check(&[("Main", &src)], FfiTrust::default());
+        assert!(codes(&d).contains(&"E1001".to_string()), "{q}: {d:?}");
+    }
+    // A real member keeps its stdlib signature, so a wrong annotation is a
+    // type error rather than a run-time panic.
+    let src = route("", "    Live.address");
+    let d = check(&[("Main", &src)], FfiTrust::default());
+    assert_eq!(codes(&d), vec!["E2001".to_string()], "{d:?}");
+}

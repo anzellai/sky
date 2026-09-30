@@ -293,6 +293,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   generated and bundled code keeps its grant: a Sky.Spa-generated project
   binds only the split's `Spa_*` kernels, and the Sky Console and doc
   server modules are trusted only while their text is the bundled source.
+  The four are members of `Sky.Ffi` and of no other module: `Webview.kernel
+  "Crypto_sha256"` (no import needed) used to pass `sky check` and panic at
+  run time, because the check matched only the `Ffi` qualifier while the
+  build bound `kernel` from any kernel module. The same member through any
+  other kernel qualifier, an alias of one (`import Webview as W`) or an
+  `exposing` list (`import Webview exposing (kernel)`, `exposing (..)`) is
+  now `[E1011]` in every module, the stdlib included. A member of `Webview`,
+  `Live`, `Tui`, `Cli` or `Jobs` that the stdlib does not define is
+  `[E1001]` at check time (it was a codegen `[E4005]`).
+- **A fetched registry package is checked like your own code.** Its
+  modules under `.skydeps/` were trusted and never checked, so a package
+  that bound a kernel with `Ffi.kernel` and a wrong annotation, or that
+  used a Go FFI `Result` as its payload, passed `sky check` and panicked at
+  run time. `sky check`, `sky build` and `sky test` now parse-check and
+  type-check every package module, report an error under the package
+  file (`.skydeps/<slug>/src/Evil/Probe.sky:8:5`), and give a package no
+  `Sky.Ffi` at all: a package is pure Sky and ships no Go kernel. A
+  package that does not type-check under this compiler now fails the
+  build that uses it (`docs/tooling/cli.md`).
 
 - **`Crypto.aesGcmEncrypt` and `Crypto.chacha20Encrypt` return
   `Task Error String`, not `Result Error String`.** Each draws a random

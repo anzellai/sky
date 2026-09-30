@@ -1,0 +1,22 @@
+-- gate: reject
+-- defect: `Webview.kernel` bound a runtime kernel with no import, bypassing [E1011]
+-- rust: reject [E1011] `Sky.Ffi` plumbing is a member of `Sky.Ffi` only
+--
+-- The [E1011] scan matched only the `Ffi` qualifier, while lowering bound
+-- `kernel` from ANY kernel module. `Webview` has no static member list, so
+-- `Webview.kernel "Crypto_sha256"` resolved leniently, passed `sky check`, and
+-- the binary panicked (`rt.AsInt: expected numeric value, got string`).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+
+probe : String -> Int
+probe =
+    Webview.kernel "Crypto_sha256"
+
+
+main =
+    println (String.fromInt (probe "abc" + 1))

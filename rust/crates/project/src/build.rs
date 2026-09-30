@@ -297,18 +297,26 @@ fn assemble_and_emit_with(
     }
     // The Sky dependencies, loaded by the routines every loader shares
     // (`load_source_db` too, so the Sky.Spa split analyses the program the
-    // build compiles). Registry packages are trusted and registered here.
-    for note in load_registry_dependencies(&mut db, &mut next_id, example_dir, repo_root)? {
+    // build compiles).
+    let (registry, notes) = load_registry_dependencies(&db, &mut next_id, example_dir, repo_root)?;
+    for note in notes {
         eprintln!("  {note}");
     }
     //
-    // A path dependency is local source the user edits, not a fetched, pinned
-    // package: its modules are APP modules — parse-gated, type-checked, and
-    // reported under their own path — registered before the project's own so
-    // a same-named local module still shadows them. Trusting them like
-    // `.skydeps` let a parse or type error in one pass `sky check` and panic
-    // at run time. They never provide the entry.
-    let (mut dep_locals, dep_files) = load_path_dependency_sources(&db, &mut next_id, example_dir);
+    // Every dependency module is CHECKED like the project's own: parse-gated,
+    // type-checked, and reported under its own path, registered before the
+    // project's modules so a same-named local module still shadows it. That
+    // holds for a path dependency (local source the user edits) and for a
+    // fetched registry package alike: trusting either let a parse or type
+    // error, or an `Ffi.kernel` binding, pass `sky check` and panic at run
+    // time. Registry packages come first, then path dependencies. Neither
+    // ever provides the entry.
+    let registry_files: Vec<(String, skydb::SourceFile)> =
+        registry.iter().map(|(n, f, _)| (n.clone(), *f)).collect();
+    let (path_locals, mut dep_files) = load_path_dependency_sources(&db, &mut next_id, example_dir);
+    dep_files.extend(registry.iter().map(|(_, _, p)| p.clone()));
+    let mut dep_locals = registry;
+    dep_locals.extend(path_locals);
 
     let source_root = configured_source_root(&example_dir);
     let mut locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
@@ -350,10 +358,11 @@ fn assemble_and_emit_with(
     // Parse-error gate accumulator (`[E0001]` class). Collected HERE, in the
     // app-module loop, reading each app module's parse (from the tracked `parse`
     // query, keyed by its `SourceFile` input) BEFORE `&mut db` registration — the
-    // `&db` borrow closes before `add_module`. Only APP modules are gated: the
-    // stdlib + `.skydeps` parse clean (the `roundtrip` gate asserts 0 ERROR nodes
-    // across the whole corpus) and are trusted, exactly like the type/name/
-    // exhaustive gates scope to `check_ids`.
+    // `&db` borrow closes before `add_module`. Every module in this loop is
+    // gated — the project's own, its path dependencies and its fetched
+    // `.skydeps` packages. Only the stdlib is trusted (the `roundtrip` gate
+    // asserts 0 ERROR nodes across it), exactly like the type/name/exhaustive
+    // gates scope to `check_ids`.
     //
     // Keyed by `ModuleId`: a module reached twice (two source roots, or a
     // name declared twice) is checked once, against the file the db holds —
@@ -406,9 +415,10 @@ fn assemble_and_emit_with(
         // `path_map` is declared). Overwritten on a second registration, like
         // the db's file.
         path_map.insert(base::FileId(id.index()), display_path(example_dir, &p));
-        // Every app-code module (the project's own `src/` + any `extra_dirs`
-        // like `tests/`) is type-checked. Stdlib + `.skydeps` are trusted
-        // signatures, never re-checked — mirrors the `xtask infer` gate, whose
+        // Every module in this loop (the project's own `src/`, any `extra_dirs`
+        // like `tests/`, the path dependencies and the fetched `.skydeps`
+        // packages) is type-checked. Only the stdlib is trusted signatures,
+        // never re-checked — mirrors the `xtask infer` gate, whose
         // zero-type-error accept-parity property this preserves. A module
         // reached through two source roots (`add_module` returns the existing
         // id) is checked once, so its diagnostics are not printed twice.
@@ -492,7 +502,9 @@ fn assemble_and_emit_with(
     // lowering refuses it with a `sky install` hint.
     let registry = load_ffi_surface(example_dir);
     let mut surface = ffi_type_surface(&registry);
-    surface.set_trust(ffi_trust(&db, repo_root, example_dir, &check_ids));
+    let mut trust = ffi_trust(&db, repo_root, example_dir, &check_ids);
+    trust.packages = registry_package_names(&db, &registry_files);
+    surface.set_trust(trust);
     db.set_ffi_surface(std::sync::Arc::new(surface));
     let t_check = crate::timings::phase("canonicalise + typecheck");
     let checked = ty::check_modules(&db, &check_ids);
@@ -2708,17 +2720,21 @@ pub(crate) fn load_source_db(
     for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
-    for note in load_registry_dependencies(&mut db, &mut next_id, example_dir, repo_root)? {
+    let (registry, notes) = load_registry_dependencies(&db, &mut next_id, example_dir, repo_root)?;
+    for note in notes {
         eprintln!("  {note}");
     }
-    // The path dependencies, as the build loads them: registered before the
-    // project's own modules (which shadow a same-named one) and type-checked
-    // below. They are not in `check_ids`: an analysis over this db (the
-    // Sky.Spa split) treats them as the dependencies the generated projects
-    // declare, never as project modules to copy.
+    let registry_files: Vec<(String, skydb::SourceFile)> =
+        registry.iter().map(|(n, f, _)| (n.clone(), *f)).collect();
+    // The registry packages and the path dependencies, as the build loads
+    // them: registered before the project's own modules (which shadow a
+    // same-named one) and type-checked below. They are not in `check_ids`: an
+    // analysis over this db (the Sky.Spa split) treats them as the
+    // dependencies the generated projects declare, never as project modules
+    // to copy.
     let (path_locals, _) = load_path_dependency_sources(&db, &mut next_id, example_dir);
     let mut path_mods: Vec<(base::ModuleId, PathBuf)> = Vec::new();
-    for (n, file, p) in path_locals {
+    for (n, file, p) in registry.into_iter().chain(path_locals) {
         path_mods.push((db.add_module(&n, file), p));
     }
     let source_root = configured_source_root(example_dir);
@@ -2747,11 +2763,14 @@ pub(crate) fn load_source_db(
     // analysis over this db (the Sky.Spa partition) types FFI calls exactly as
     // `sky check` does.
     let mut surface = ffi_type_surface(&load_ffi_surface(example_dir));
-    surface.set_trust(ffi_trust(&db, repo_root, example_dir, &check_ids));
+    let mut trust = ffi_trust(&db, repo_root, example_dir, &check_ids);
+    trust.packages = registry_package_names(&db, &registry_files);
+    surface.set_trust(trust);
     db.set_ffi_surface(std::sync::Arc::new(surface));
-    // A path dependency is app code: check it, as the build does, and report
-    // an error under the module's own path. A module the project shadows (it
-    // declares the same name) is the project's and is checked by the caller.
+    // A dependency module (registry package or path dependency) is checked,
+    // as the build does, and an error is reported under the module's own
+    // path. A module the project shadows (it declares the same name) is the
+    // project's and is checked by the caller.
     path_mods.retain(|(m, _)| !check_ids.contains(m));
     if !path_mods.is_empty() {
         let ids: Vec<base::ModuleId> = path_mods.iter().map(|(m, _)| *m).collect();
@@ -2791,10 +2810,20 @@ pub(crate) fn load_source_db(
     Ok((db, entry, check_ids))
 }
 
-/// Load the project's fetched REGISTRY Sky packages (`.skydeps/<pkg>/src/`)
-/// into `db` as trusted dependency modules, and check the local path
-/// dependencies are present. Returns the notes of any local Go path
-/// dependency whose stale FFI surface was refreshed, for the caller to print.
+/// Load the project's fetched REGISTRY Sky packages (`.skydeps/<pkg>/src/`),
+/// parsed but NOT registered, and check the local path dependencies are
+/// present. Returns the package modules (name, file, path) and the notes of any
+/// local Go path dependency whose stale FFI surface was refreshed, for the
+/// caller to print.
+///
+/// The caller registers the package modules as CHECKED modules, exactly as it
+/// does a path dependency's: parse-gated, type-checked (the `[E1011]` scan and
+/// the Go-FFI `Result` included) and reported under their own path. v0.27.0:
+/// they used to be registered here as trusted, never in `check_ids`, so a
+/// package binding `probe : String -> Int = Ffi.kernel "Crypto_sha256"` passed
+/// `sky check` and panicked at run time. A pinned version is not a verdict: the
+/// same text can be fetched into a project whose compiler, stdlib or Go
+/// surface differs from the one its author checked against.
 ///
 /// One of the two dependency loaders every db shares (the build,
 /// [`assemble_and_emit_with`], and every analysis db, [`load_source_db`]:
@@ -2809,11 +2838,11 @@ pub(crate) fn load_source_db(
 /// install`, and a declared path directory that is gone stops the load the
 /// same way. (An empty or absent `[dependencies]` section is a no-op.)
 pub(crate) fn load_registry_dependencies(
-    db: &mut skydb::SkyDatabase,
+    db: &skydb::SkyDatabase,
     next_id: &mut u32,
     example_dir: &Path,
     repo_root: &Path,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<(String, skydb::SourceFile, PathBuf)>, Vec<String>), String> {
     for (path, _spec) in crate::ffi_ops::read_sky_dependencies(&example_dir.join("sky.toml")) {
         let slug = path.replace('/', "_");
         if !example_dir.join(".skydeps").join(&slug).is_dir() {
@@ -2822,9 +2851,7 @@ pub(crate) fn load_registry_dependencies(
             ));
         }
     }
-    for (n, file) in load_skydeps(db, next_id, &example_dir.join(".skydeps")) {
-        db.add_module(&n, file);
-    }
+    let packages = load_skydeps(db, next_id, &example_dir.join(".skydeps"));
     if let Some(e) = crate::path_deps::missing_error(example_dir) {
         return Err(e);
     }
@@ -2832,7 +2859,8 @@ pub(crate) fn load_registry_dependencies(
     // was generated is re-inspected now, before the surface is loaded: the
     // bindings would otherwise call a function that no longer exists (or miss
     // a new one). Registry dependencies keep their pinned surface.
-    crate::ffi_ops::refresh_stale_path_surfaces(example_dir, repo_root)
+    let notes = crate::ffi_ops::refresh_stale_path_surfaces(example_dir, repo_root)?;
+    Ok((packages, notes))
 }
 
 /// The modules of the project's local Sky PATH dependencies (`sky add ./dir`,
@@ -2872,7 +2900,7 @@ pub(crate) fn load_skydeps(
     sdb: &skydb::SkyDatabase,
     next_id: &mut u32,
     skydeps: &Path,
-) -> Vec<(String, skydb::SourceFile)> {
+) -> Vec<(String, skydb::SourceFile, PathBuf)> {
     let mut out = Vec::new();
     for path in enumerate_skydep_files(skydeps) {
         let Ok(src) = std::fs::read_to_string(&path) else {
@@ -2882,9 +2910,26 @@ pub(crate) fn load_skydeps(
         if n == "Main" || n == "main" {
             continue;
         }
-        out.push((n, file));
+        out.push((n, file, path));
     }
     out
+}
+
+/// The registry-package module names still held by `db` after registration
+/// (a same-named project or path module replaces the package's file and is
+/// not a package module any more). These get no `Sky.Ffi` grant
+/// (`hir::FfiTrust::packages`).
+fn registry_package_names(
+    db: &skydb::SkyDatabase,
+    packages: &[(String, skydb::SourceFile)],
+) -> std::collections::BTreeSet<String> {
+    packages
+        .iter()
+        .filter(|(n, file)| {
+            hir::SkyDb::module_by_name(db, n).is_some_and(|m| db.source_file(m) == *file)
+        })
+        .map(|(n, _)| n.clone())
+        .collect()
 }
 
 /// Enumerate every `.sky` source file under `<skydeps>/<pkg>/src/`, sorted, over
