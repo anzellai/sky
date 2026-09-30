@@ -11,12 +11,16 @@ package rt
 
 import (
 	"bytes"
+	"container/list"
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -374,10 +378,17 @@ var (
 	analyticsProcState *analyticsSessionState
 )
 
-// currentAnalyticsState returns the CURRENT session's analytics state — for a
-// Sky.Live app the goroutine-local session stamp keys it PER SESSION, so one
-// user's identity never bleeds into another's events; for a CLI / non-Live
-// Task (no live session in scope) it returns the single process-global state.
+// currentAnalyticsState returns the CURRENT visitor's analytics state:
+//   - a Sky.Live session: keyed PER SESSION by the goroutine-local session stamp;
+//   - an HTTP request outside a Live session (a Sky.Spa `/_rpc` call, its SSR
+//     page, an `App.api` / `Sky.Http.Server` handler): keyed PER VISITOR by the
+//     request stamp (analyticsEnterRequest);
+//   - a CLI / background Task (no request in scope): the one process state.
+//
+// Before v0.27.0 the second case fell through to the process state, so every
+// visitor of a Sky.Spa app shared one anonymous id, one identity and one
+// consent choice (audit H-4): one visitor's `setConsent Denied` stopped the
+// capture of all of them.
 func currentAnalyticsState() *analyticsSessionState {
 	if sess := currentLiveSession(); sess != nil {
 		analyticsInitMu.Lock()
@@ -387,12 +398,122 @@ func currentAnalyticsState() *analyticsSessionState {
 		}
 		return sess.analytics
 	}
+	if v, ok := CurrentTraceContext().Value(analyticsVisitorCtxKey{}).(*analyticsRequestVisitor); ok && v != nil {
+		return v.state()
+	}
 	analyticsInitMu.Lock()
 	defer analyticsInitMu.Unlock()
 	if analyticsProcState == nil {
 		analyticsProcState = newAnalyticsState()
 	}
 	return analyticsProcState
+}
+
+// ── per-visitor state for requests outside a Sky.Live session (H-4) ─────────
+
+// analyticsVisitorCtxKey carries the request's *analyticsRequestVisitor in the
+// goroutine trace context, so the Tasks the handler runs (and the goroutines
+// they spawn with RunWithTraceContext) see the same visitor.
+type analyticsVisitorCtxKey struct{}
+
+// analyticsRequestVisitor is one request's visitor. Its key (a hash of the
+// visitor's long-lived cookie) is derived on first use, so a handler that
+// never touches analytics pays only for the stamp.
+type analyticsRequestVisitor struct {
+	req  *http.Request // read only when the handler uses analytics
+	once sync.Once
+	st   *analyticsSessionState
+}
+
+// state returns the visitor's state: the one kept for its key, or, for a
+// request with no visitor cookie, a state of this request alone (a fresh
+// anonymous id; nothing it sets reaches another visitor).
+func (v *analyticsRequestVisitor) state() *analyticsSessionState {
+	v.once.Do(func() {
+		key := analyticsVisitorKey(v.req)
+		if key == "" {
+			v.st = newAnalyticsState()
+			return
+		}
+		v.st = analyticsVisitors.get(key)
+	})
+	return v.st
+}
+
+// analyticsVisitorKey derives the visitor key from the request's long-lived
+// per-browser cookie: the CSRF double-submit cookie (issued to every visitor,
+// sliding, 30 days or more), else the session cookie. Only a hash is kept, so
+// the cookie value never lands in analytics or in memory as-is, and the
+// anonymous id stays a separate random value (analyticsNewAnonID).
+func analyticsVisitorKey(r *http.Request) string {
+	names := []string{csrfCookieNameForPath(r.URL.Path), "__Host-sky_sid", "sky_sid"}
+	for _, name := range names {
+		if c, err := r.Cookie(name); err == nil && c.Value != "" {
+			sum := sha256.Sum256([]byte(name + "\x00" + c.Value))
+			return hex.EncodeToString(sum[:16])
+		}
+	}
+	return ""
+}
+
+// analyticsEnterRequest stamps the calling goroutine (an HTTP handler) with the
+// request's analytics visitor and returns the function that removes the stamp.
+// Called by dispatchSkyHandler for every Sky HTTP handler.
+func analyticsEnterRequest(r *http.Request) func() {
+	prev := CurrentTraceContext()
+	SetGoroutineTraceContext(context.WithValue(prev, analyticsVisitorCtxKey{}, &analyticsRequestVisitor{req: r}))
+	return func() { SetGoroutineTraceContext(prev) }
+}
+
+// analyticsVisitorMax bounds the per-visitor states a process keeps; the least
+// recently seen is dropped first (its visitor then starts a new anonymous id).
+// analyticsVisitorIdle drops a visitor unseen for that long.
+var (
+	analyticsVisitorMax  = 100_000
+	analyticsVisitorIdle = 30 * 24 * time.Hour
+)
+
+type analyticsVisitorEntry struct {
+	key  string
+	st   *analyticsSessionState
+	seen time.Time
+}
+
+// analyticsVisitorTable is a bounded LRU of visitor states.
+type analyticsVisitorTable struct {
+	mu    sync.Mutex
+	byKey map[string]*list.Element
+	lru   *list.List // front = most recently seen
+}
+
+var analyticsVisitors = &analyticsVisitorTable{byKey: map[string]*list.Element{}, lru: list.New()}
+
+func (t *analyticsVisitorTable) get(key string) *analyticsSessionState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	if el, ok := t.byKey[key]; ok {
+		e := el.Value.(*analyticsVisitorEntry)
+		if now.Sub(e.seen) <= analyticsVisitorIdle {
+			e.seen = now
+			t.lru.MoveToFront(el)
+			return e.st
+		}
+		t.lru.Remove(el)
+		delete(t.byKey, key)
+	}
+	e := &analyticsVisitorEntry{key: key, st: newAnalyticsState(), seen: now}
+	t.byKey[key] = t.lru.PushFront(e)
+	for t.lru.Len() > analyticsVisitorMax {
+		last := t.lru.Back()
+		t.lru.Remove(last)
+		delete(t.byKey, last.Value.(*analyticsVisitorEntry).key)
+	}
+	for last := t.lru.Back(); last != nil && now.Sub(last.Value.(*analyticsVisitorEntry).seen) > analyticsVisitorIdle; last = t.lru.Back() {
+		t.lru.Remove(last)
+		delete(t.byKey, last.Value.(*analyticsVisitorEntry).key)
+	}
+	return e.st
 }
 
 // analyticsNewAnonID mints a random anonymous id — deliberately SEPARATE from

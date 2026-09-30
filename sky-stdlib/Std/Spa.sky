@@ -78,6 +78,7 @@ module Std.Spa exposing
     , config
     , route
     , routeInt
+    , serverRoute
     , withRoutes
     , withNotFound
     , withOnNavigate
@@ -179,6 +180,16 @@ route =
 routeInt : String -> (Int -> page) -> Route
 routeInt =
     Ffi.kernel "Spa_routeInt"
+
+
+-- | `serverRoute spec` — a path the BACKEND serves (`"GET /logout"`, `"/webhook"`),
+-- registered beside the client routes with `withRoutes`. It routes nothing in the
+-- client: a link to it is a full browser navigation even when a client route
+-- would also match it, so a sign-out or an OAuth link reaches the server. A path
+-- no client route matches is a full navigation anyway.
+serverRoute : String -> Route
+serverRoute =
+    Ffi.kernel "Spa_serverRoute"
 
 
 -- | Register the client-side routes. The runtime resolves `location.pathname`

@@ -61,9 +61,12 @@ var (
 	// routing; a route-less app keeps native <a href> behaviour). spaNotFound is
 	// the 404 page value (nil ⇒ leave the model's Page unchanged on a miss).
 	// spaOnNavigate is the optional (page -> msg) hook fired after each nav.
-	spaRoutes     []spaRoute
-	spaNotFound   any
-	spaOnNavigate any
+	spaRoutes []spaRoute
+	// spaServerRoutes are the server-only paths (App.api) in the same list: a link
+	// to one is a full navigation (live_wasm_router.go).
+	spaServerRoutes []spaServerRoute
+	spaNotFound     any
+	spaOnNavigate   any
 	// spaLastSettledPath tracks the URL pathname as of the last settled render,
 	// so a render that MOVED the path (a genuine navigation) scrolls the new page
 	// to the top while an in-place update (a timer tick, a filter change that
@@ -110,6 +113,7 @@ func spaRun(cfg any) any {
 	// Routing config (P4). All optional — a route-less app leaves these empty
 	// and behaves exactly as before P4.
 	spaRoutes = asSpaRoutes(fieldOrNil(cfg, "Routes"))
+	spaServerRoutes = asSpaServerRoutes(fieldOrNil(cfg, "Routes"))
 	spaNotFound = fieldOrNil(cfg, "NotFound")
 	spaOnNavigate = fieldOrNil(cfg, "OnNavigate")
 	// Client scratch-state persistence (P2). The encoder (`model -> String`) and
@@ -502,6 +506,11 @@ func spaInstallRouter() {
 		if p := a.Get("pathname"); p.Type() == js.TypeString && p.String() != "" {
 			path = p.String()
 		}
+		// A path the client has no route for (a server route, a runtime path, a
+		// static file) is the server's: let the browser load it (H-3).
+		if spaLinkIsServerPath(spaRoutes, spaServerRoutes, path) {
+			return nil
+		}
 		ev.Call("preventDefault")
 		if hist := js.Global().Get("history"); hist.Truthy() {
 			hist.Call("pushState", js.Null(), "", h)
@@ -558,6 +567,16 @@ func spaNavApply(nc navCmd) {
 		target += hash
 	}
 	oldPath, oldSearch, oldHash := loc.Get("pathname").String(), loc.Get("search").String(), loc.Get("hash").String()
+	// A path the client does not route is the server's (H-3): load it, as the
+	// same link would.
+	if len(spaRoutes) > 0 && (path != oldPath || search != oldSearch) && spaLinkIsServerPath(spaRoutes, spaServerRoutes, path) {
+		if nc.Replace {
+			loc.Call("replace", target)
+		} else {
+			loc.Call("assign", target)
+		}
+		return
+	}
 	if nc.Replace {
 		hist.Call("replaceState", hist.Get("state"), "", target)
 	} else {

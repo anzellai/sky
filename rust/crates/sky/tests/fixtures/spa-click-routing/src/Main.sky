@@ -1,0 +1,249 @@
+module Main exposing (main)
+
+-- Sky.Spa click and link routing e2e regression
+-- (scripts/spa-click-routing-verify.mjs, run by scripts/spa-rpc-order-e2e.sh).
+--
+--   H-2  one click runs exactly one element's Msg. The card on /list is a
+--        clickable column; the page it opens has a clickable "Back" element in
+--        the same place, and the header logo navigates home. The render that the
+--        card's Msg causes runs INSIDE the click's dispatch, so the click then
+--        bubbles through nodes the patch re-bound: before the fix the "Back" or
+--        the logo Msg ran as well and the page moved again.
+--   nested an inner and an outer handler both run for one click (as on Sky.Live
+--        and Elm), each with the Msg of the view the click was delivered to.
+--   H-3  a link to a server route (App.api), to a path with no client route and
+--        to /_sky/ is a full browser navigation, not an in-app 404.
+--   H-4  Std.Analytics in a server branch keys identity and consent per visitor.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Http.Server as Server
+import Std.Analytics as Analytics
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Region as Region
+
+type Page
+    = Home
+    | Listing
+    | Post String
+    | Missing
+
+type alias Model =
+    { page : Page
+    , log : List String
+    , count : Int
+    }
+
+type Msg
+    = Navigate Page
+    | Inner
+    | Outer Int
+    | Track
+    | Deny
+    | Tracked (Result Error ())
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { page = Home, log = [], count = 0 }, Cmd.none )
+
+
+pageName : Page -> String
+pageName page =
+    case page of
+
+        Home ->
+            "home"
+
+        Listing ->
+            "list"
+
+        Post slug ->
+            "post-" ++ slug
+
+        Missing ->
+            "missing"
+
+
+remember : String -> Model -> Model
+remember entry model =
+    { model | log = model.log ++ [ entry ] }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigate page ->
+            ( remember ("nav:" ++ pageName page) { model | page = page }
+            , Cmd.none
+            )
+
+        Inner ->
+            ( remember "inner" { model | count = model.count + 1 }, Cmd.none )
+
+        Outer n ->
+            ( remember ("outer:" ++ String.fromInt n) model, Cmd.none )
+
+        Track ->
+            ( model
+            , Cmd.perform
+                  (Analytics.track (Analytics.event "fixture_click" []))
+                  Tracked
+            )
+
+        Deny ->
+            ( model
+            , Cmd.perform (Analytics.setConsent Analytics.Denied) Tracked
+            )
+
+        Tracked (Ok _) ->
+            ( remember "tracked" model, Cmd.none )
+
+        Tracked (Err _) ->
+            ( remember "track-failed" model, Cmd.none )
+
+
+testId : String -> Ui.Attribute msg
+testId name =
+    Ui.htmlAttribute "data-testid" name
+
+
+header : Element Msg
+header =
+    Ui.row
+        [ Ui.spacing 16 ]
+        [ Ui.el
+              [ Ui.pointer, Ui.onClick (Navigate Home), testId "logo" ]
+              (Ui.text "Logo")
+        , Ui.el
+              [ Ui.pointer, Ui.onClick (Navigate Listing), testId "to-list" ]
+              (Ui.text "List")
+        , Ui.link
+              [ testId "server-link" ]
+              { url = "/server/hello", label = Ui.text "Server route" }
+        , Ui.link
+              [ testId "unrouted-link" ]
+              { url = "/no/client/route", label = Ui.text "Unrouted" }
+        , Ui.link
+              [ testId "sky-link" ]
+              { url = "/_sky/healthz", label = Ui.text "Sky path" }
+        , Ui.link
+              [ testId "client-link" ]
+              { url = "/list", label = Ui.text "Client link" }
+        ]
+
+
+card : String -> Element Msg
+card slug =
+    Ui.column
+        [ Ui.pointer
+        , Ui.onClick (Navigate (Post slug))
+        , Ui.spacing 8
+        , testId ("card-" ++ slug)
+        ]
+        [ Ui.el [] (Ui.text ("Title " ++ slug))
+        , Ui.el [] (Ui.text "Summary")
+        , Ui.el [ testId ("card-more-" ++ slug) ] (Ui.text "Read more")
+        ]
+
+
+body : Model -> Element Msg
+body model =
+    case model.page of
+
+        Home ->
+            Ui.column
+                [ Ui.spacing 8 ]
+                [ Ui.text "Home page"
+                , Ui.row
+                      [ Ui.pointer
+                      , Ui.onClick (Outer model.count)
+                      , testId "outer"
+                      ]
+                      [ Ui.el
+                            [ Ui.pointer, Ui.onClick Inner, testId "inner" ]
+                            (Ui.text "Nested")
+                      ]
+                , Ui.el
+                      [ Ui.pointer, Ui.onClick Track, testId "track" ]
+                      (Ui.text "Track")
+                , Ui.el
+                      [ Ui.pointer, Ui.onClick Deny, testId "deny" ]
+                      (Ui.text "Deny")
+                ]
+
+        Listing ->
+            Ui.column
+                [ Ui.spacing 32 ]
+                [ Ui.el [ Region.heading 1 ] (Ui.text "The list")
+                , Ui.paragraph [] [ Ui.text "Notes from the fixture." ]
+                , Ui.column [ Ui.spacing 12 ] (List.map card [ "a", "b" ])
+                ]
+
+        Post slug ->
+            Ui.column
+                [ Ui.spacing 28 ]
+                [ Ui.el
+                      [ Ui.pointer
+                      , Ui.onClick (Navigate Listing)
+                      , testId "back"
+                      ]
+                      (Ui.el [] (Ui.text "Back to the list"))
+                , Ui.el [] (Ui.text ("Post " ++ slug))
+                , Ui.row
+                      [ Ui.spacing 12 ]
+                      [ Ui.text "Author", Ui.text "Published" ]
+                , Ui.el [] (Ui.text "Body")
+                ]
+
+        Missing ->
+            Ui.text "Client 404"
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 20 ]
+        [ header
+        , Ui.el [ testId "page" ] (Ui.text (pageName model.page))
+        , Ui.el [ testId "log" ] (Ui.text (String.join "," model.log))
+        , body model
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+serverHello : Server.Request -> Task Error Server.Response
+serverHello _ =
+    Task.succeed (Server.text "served-by-the-server")
+
+
+routes : List (App.Route Page)
+routes =
+    [ App.route "/" Home
+    , App.route "/list" Listing
+    , App.routeParam "/post/:slug" Post
+    , App.api "GET /server/hello" serverHello
+    ]
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes routes
+        |> App.withNotFound Missing
+
+
+main =
+    App.run app
