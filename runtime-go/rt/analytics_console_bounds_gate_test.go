@@ -13,6 +13,7 @@ package rt
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -140,13 +141,6 @@ func openSeededStore(t *testing.T, rows int) *sql.DB {
 // stop at consoleAnalyticsRowCap while the table holds far more than that.
 const consoleAnalyticsSeedRows = 200000
 
-// consoleAnalyticsBudget is the wall-clock ceiling for one render of the tab
-// against consoleAnalyticsSeedRows. Measured on the dev host at ~54 ms bounded
-// over 120k rows; 3 s is a ceiling for a loaded CI runner, not a target. The
-// PLAN assertions are what pin the shape — this bound catches a regression
-// that keeps an index but walks the whole table through it.
-const consoleAnalyticsBudget = 3 * time.Second
-
 // TestConsoleAnalyticsQueriesAreBounded — every statement the console's
 // Analytics tab runs is bounded by a window AND a row cap, plans without a
 // full table scan, and the whole tab renders inside its budget.
@@ -225,17 +219,24 @@ func TestConsoleAnalyticsQueriesAreBounded(t *testing.T) {
 		t.Errorf("the total counted %d rows against a cap of %d", total, consoleAnalyticsRowCap)
 	}
 
-	// (e) the whole tab renders inside its budget.
+	// (e) the whole tab costs a fraction of walking the store. The bound is
+	// RELATIVE, measured in this process against this fixture: a fixed
+	// wall-clock ceiling measured the machine, not the queries. Under -race the
+	// pure-Go SQLite driver is ~25-30x slower (a 76 ms render took 1.9-2.4 s,
+	// and 3.5 s on a loaded runner against a 3 s ceiling), while the ratio
+	// between the capped render and a full walk does not move. The render reads
+	// at most consoleAnalyticsRowCap of the consoleAnalyticsSeedRows rows (a
+	// tenth); a regression that walks the whole table through its index costs
+	// as much as the full walk and fails the half-of-the-walk bound.
 	n++
-	start := time.Now()
-	renderConsoleAnalytics(t, db, cutoff)
-	elapsed := time.Since(start)
-	t.Logf("console analytics render over %d rows: %v (budget %v)",
-		consoleAnalyticsSeedRows, elapsed, consoleAnalyticsBudget)
-	if elapsed > consoleAnalyticsBudget {
-		t.Errorf("the Analytics tab took %v over %d rows, budget %v — it is doing work "+
-			"proportional to the whole store on a pool shared with the session store",
-			elapsed, consoleAnalyticsSeedRows, consoleAnalyticsBudget)
+	render := bestOf(3, func() { renderConsoleAnalytics(t, db, cutoff) })
+	walk := bestOf(3, func() { walkWholeAnalyticsStore(t, db) })
+	t.Logf("console analytics render over %d rows: %v; full walk of the store: %v (bound: half the walk)",
+		consoleAnalyticsSeedRows, render, walk)
+	if render > walk/2 {
+		t.Errorf("the Analytics tab took %v over %d rows, more than half of a full walk of the "+
+			"store (%v) — it is doing work proportional to the whole store on a pool shared "+
+			"with the session store", render, consoleAnalyticsSeedRows, walk)
 	}
 
 	reportAssertions(t, n)
@@ -260,6 +261,46 @@ func renderConsoleAnalytics(t *testing.T, db *sql.DB, cutoff int64) {
 	}
 	_ = analyticsRecentEvents(db, cutoff)
 	_, _ = analyticsRevenueByCurrency(db, cutoff)
+}
+
+// walkWholeAnalyticsStore is the reference cost the bound is measured
+// against: the pre-fix shape of the tab, which read every props row and
+// parsed it in Go, and counted over the whole table.
+func walkWholeAnalyticsStore(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var total, unique int64
+	_ = db.QueryRow(`SELECT count(*) FROM analytics_events`).Scan(&total)
+	_ = db.QueryRow(`SELECT count(DISTINCT user_id) FROM analytics_events`).Scan(&unique)
+	rows, err := db.Query(`SELECT props FROM analytics_events WHERE props IS NOT NULL`)
+	if err != nil {
+		t.Fatalf("full walk: %v", err)
+	}
+	defer rows.Close()
+	walked := 0
+	for rows.Next() {
+		var props string
+		_ = rows.Scan(&props)
+		var m map[string]any
+		_ = json.Unmarshal([]byte(props), &m)
+		walked++
+	}
+	if walked < consoleAnalyticsSeedRows/2 {
+		t.Fatalf("the reference walk read %d rows of %d: it is not a full walk", walked, consoleAnalyticsSeedRows)
+	}
+}
+
+// bestOf returns the shortest of n timed runs of f: the least disturbed by
+// other work on the machine.
+func bestOf(n int, f func()) time.Duration {
+	best := time.Duration(-1)
+	for i := 0; i < n; i++ {
+		start := time.Now()
+		f()
+		if d := time.Since(start); best < 0 || d < best {
+			best = d
+		}
+	}
+	return best
 }
 
 // consoleQueryCallSite matches a `db.Query(` / `db.QueryRow(` whose first
