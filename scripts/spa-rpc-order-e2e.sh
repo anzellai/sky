@@ -23,6 +23,13 @@
 # fails with no App.withRpcError keeps the model and logs the loud
 # "RPC failed" line exactly once.
 #
+# A third stage builds rust/crates/sky/tests/fixtures/spa-click-routing
+# (--target web:app) and checks (scripts/spa-click-routing-verify.mjs): one
+# click runs exactly one element's Msg even when its render re-binds an
+# ancestor on the event's path; a link to an App.api route, a /_sky/ path or a
+# path with no client route is a full navigation; Std.Analytics identity and
+# consent are per visitor on the Spa backend.
+#
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
 # uses Google Chrome; SKY_E2E_HEADED=1 runs them headed.
 #
@@ -74,6 +81,18 @@ echo "==> driving the error reports in a browser"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 300 node "$ROOT/scripts/spa-handled-err-verify.mjs" "$ERR" --port "${HANDLED_ERR_PORT:-9363}"
 
+mkdir -p "$TMP/click"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-click-routing/." "$TMP/click/"
+echo "==> building fixture spa-click-routing (--target web:app)"
+(cd "$TMP/click" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky) >"$TMP/build-click.log" 2>&1 \
+  || { cat "$TMP/build-click.log" >&2; echo "spa-rpc-order-e2e: spa-click-routing build failed" >&2; exit 1; }
+CLICK="$TMP/click/.skyapp/web-app/.split/backend/sky-out/app"
+[ -x "$CLICK" ] || { echo "spa-rpc-order-e2e: backend not built at $CLICK" >&2; exit 1; }
+echo "==> driving one-click dispatch, the link router and per-visitor analytics in a browser"
+SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
+  with_timeout 300 node "$ROOT/scripts/spa-click-routing-verify.mjs" "$CLICK" --port "${CLICK_ROUTING_PORT:-9365}"
+
 echo "spa-rpc-order-e2e: PASS — web:app runs each Msg once, in order, with its Cmds, as Sky.Live does;"
-echo "  a handled client Err logs nothing, an unhandled RPC failure logs once."
+echo "  a handled client Err logs nothing, an unhandled RPC failure logs once;"
+echo "  one click runs one Msg, server paths are full navigations, analytics are per visitor."
 rm -rf "$TMP"
