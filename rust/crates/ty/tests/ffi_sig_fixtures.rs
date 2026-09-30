@@ -76,6 +76,7 @@ fn every_fixture_signature_parses_to_a_result_scheme() {
         "Bool",
         "List",
         "Maybe",
+        "Dict",
     ];
     let mut parsed = 0;
     let mut missing = Vec::new();
@@ -104,29 +105,25 @@ fn every_fixture_signature_parses_to_a_result_scheme() {
             let mut ns = Vec::new();
             names(&s.scheme.ty, &mut ns);
             for n in ns {
+                // Since surface format 3 (v0.27.0) an opaque Go type is its own
+                // nominal type, `go@<Pkg>.<Type>`, never the wildcard.
                 assert!(
-                    allowed.contains(&n.as_str()),
-                    "{pkg}.{name} ({sky}): nominal `{n}` leaked — Go residue and opaque \
-                     types must normalise or become the wildcard"
+                    allowed.contains(&n.as_str()) || n.starts_with("go@"),
+                    "{pkg}.{name} ({sky}): nominal `{n}` leaked — Go residue must \
+                     normalise, and an opaque Go type must be a `go@` type"
                 );
             }
         }
     }
-    // The three bindings the inspector emits WITHOUT a skyType (net/http's
-    // `closeNotifierCloseNotify`, `requestCancel`, `requestSetCancel`).
-    assert_eq!(
-        missing,
-        vec![
-            "net_http.closeNotifierCloseNotify",
-            "net_http.requestCancel",
-            "net_http.requestSetCancel"
-        ]
-    );
+    // Surface format 3 gives every emitted binding a skyType (the three
+    // net/http bindings that had none now carry `go@Go.GoChan`), and skips the
+    // bindings that need an unexported Go type.
+    assert!(missing.is_empty(), "bindings with no skyType: {missing:?}");
     assert!(
         unparseable.is_empty(),
         "every present fixture skyType must parse (arity + wrapper): {unparseable:#?}"
     );
-    assert_eq!(parsed, 82 + 77 + 510 - 3);
+    assert_eq!(parsed, 82 + 77 + 504);
 }
 
 #[test]
@@ -139,7 +136,6 @@ fn normalisations_and_wildcards_on_real_entries() {
         scheme_for(&s, a).scheme.ty
     };
     let int = Ty::app("Int", vec![]);
-    let any = Ty::var("any");
     let res = |p: Ty| Ty::app("Result", vec![Ty::app(FFI_ERROR_TYPE, vec![]), p]);
     // `byte -> Result Error String` — byte normalises to Int.
     assert_eq!(
@@ -157,25 +153,40 @@ fn normalisations_and_wildcards_on_real_entries() {
             Box::new(res(Ty::Tuple(vec![int.clone(), int.clone()])))
         )
     );
-    // `Bytes -> Result Error UUID@…` — both wildcards.
+    // Surface format 3 (v0.27.0): `Bytes` is a `String`, and an opaque Go type
+    // is its own nominal `go@` type (it was the wildcard).
+    let go = |n: &str| Ty::app(&format!("go@{n}"), vec![]);
     assert_eq!(
         get("uuid", "fromBytes"),
-        Ty::Fun(Box::new(any.clone()), Box::new(res(any.clone())))
+        Ty::Fun(
+            Box::new(Ty::app("String", vec![])),
+            Box::new(res(go("Github.Com.Google.Uuid.UUID")))
+        )
     );
-    // `RouteMatch@… -> Result Error (Dict String String)` — Dict is a wildcard.
+    // A Go map keeps its key type: `map[string]string` is `Dict String String`.
+    let string = || Ty::app("String", vec![]);
     assert_eq!(
         get("mux", "routeMatchVars"),
-        Ty::Fun(Box::new(any.clone()), Box::new(res(any.clone())))
+        Ty::Fun(
+            Box::new(go("Github.Com.Gorilla.Mux.RouteMatch")),
+            Box::new(res(Ty::app("Dict", vec![string(), string()])))
+        )
     );
-    // A function-typed payload is a wildcard.
+    // A function-typed Go payload is the opaque `go@Go.GoFunc`.
     assert_eq!(
         get("net_http", "clientCheckRedirect"),
-        Ty::Fun(Box::new(any.clone()), Box::new(res(any.clone())))
+        Ty::Fun(
+            Box::new(go("Net.Http.Client")),
+            Box::new(res(go("Go.GoFunc")))
+        )
     );
-    // A callback parameter keeps its arrows; its result is the wildcard.
+    // A callback parameter keeps its arrows and its typed result.
     let Ty::Fun(_, rest) = get("net_http", "clientConnSetStateHook") else {
         panic!()
     };
     let Ty::Fun(cb, _) = *rest else { panic!() };
-    assert_eq!(*cb, Ty::Fun(Box::new(any.clone()), Box::new(any.clone())));
+    assert_eq!(
+        *cb,
+        Ty::Fun(Box::new(go("Net.Http.ClientConn")), Box::new(Ty::Unit))
+    );
 }
