@@ -90,3 +90,31 @@ pub fn is_new_import_member(path: &str, name: &str) -> bool {
         .find(|(p, _)| *p == path)
         .is_some_and(|(_, k)| is_new_since_previous(&format!("kernel:{k}"), name))
 }
+
+/// The stdlib handle types whose constructors v0.27.0 stopped exporting
+/// (audit A-1b): `(module, constructor)`. Each id is now random and owned by
+/// the session that opened it, so a program may keep and pass the value but
+/// never build or match it.
+pub const OPAQUE_HANDLE_CONSTRUCTORS: &[(&str, &str)] = &[
+    ("Sky.Core.WebSocket", "WebSocket"),
+    ("Sky.Http.Server.WebSocket", "WebSocketServer"),
+    ("Sky.Core.Http.Stream", "StreamId"),
+    ("Sky.Http.Server.Stream", "StreamWriter"),
+    ("Std.Cache", "Cache"),
+];
+
+/// The migration sentence for a hidden constructor that v0.27.0 made opaque,
+/// or `None` for any other constructor.
+pub fn opaque_handle_hint(module: &str, ctor: &str) -> Option<String> {
+    OPAQUE_HANDLE_CONSTRUCTORS
+        .iter()
+        .any(|(m, c)| *m == module && *c == ctor)
+        .then(|| {
+            format!(
+                "In v0.27.0 the constructor `{ctor}` of `{module}` is no longer exported: a \
+                 handle is opaque and its id is random. Use the module's functions instead of \
+                 building or matching the value (for example keep the `{ctor}` value itself in \
+                 your model). See docs/migration/v0.27.md#opaque-handle-constructors"
+            )
+        })
+}

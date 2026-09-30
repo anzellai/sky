@@ -1688,11 +1688,17 @@ impl<'a> Resolver<'a> {
                             if picked.is_empty() {
                                 if let Some(u) = source_union {
                                     if u.ctors.is_empty() {
+                                        let hint = crate::stdlib_history::opaque_handle_hint(
+                                            module_name,
+                                            name,
+                                        )
+                                        .map(|h| format!(". {h}"))
+                                        .unwrap_or_default();
                                         let mut diag = Diagnostic::error(
                                             "E1013",
                                             format!(
                                                 "module `{module_name}` exposes the type \
-                                                 `{name}` but not its constructors"
+                                                 `{name}` but not its constructors{hint}"
                                             ),
                                         );
                                         if let Some(sp) = span {
@@ -3401,6 +3407,10 @@ impl<'a> Resolver<'a> {
                     } else {
                         format!("constructor of `{ty}`, which `{dep_name}` does not export")
                     };
+                    let how = match crate::stdlib_history::opaque_handle_hint(&dep_name, name) {
+                        Some(h) => format!("{how}. {h}"),
+                        None => how,
+                    };
                     self.track_class_a_detail(
                         Some(qual.to_string()),
                         name,
@@ -3461,6 +3471,10 @@ impl<'a> Resolver<'a> {
                     )
                 } else {
                     format!("constructor of `{ty}`, which `{dep_name}` does not export")
+                };
+                let how = match crate::stdlib_history::opaque_handle_hint(&dep_name, name) {
+                    Some(h) => format!("{how}. {h}"),
+                    None => how,
                 };
                 self.track_class_a_detail(
                     Some(qual.to_string()),
