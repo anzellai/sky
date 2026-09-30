@@ -387,6 +387,60 @@ main =\n    println (banner \"sky\")\n",
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// F-5: `sky add` finds the project root as every other verb does. Run from
+/// `src/`, it edits the project's own `sky.toml` (the typed path resolved
+/// against the working directory, recorded relative to the project root) and
+/// writes no `sky.toml` into `src/`. Outside any project it refuses and writes
+/// nothing.
+#[test]
+fn sky_add_from_a_subdirectory_edits_the_project_manifest() {
+    let base = scratch("subdir");
+    let lib = base.join("lib");
+    write(
+        &lib.join("sky.toml"),
+        "name = \"lib\"\nversion = \"0.1.0\"\n\n[lib]\n",
+    );
+    write(
+        &lib.join("src/Lib.sky"),
+        "module Lib exposing (x)\n\n\nx : Int\nx =\n    1\n",
+    );
+    let app = base.join("app");
+    write(
+        &app.join("sky.toml"),
+        "name = \"subdir\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    );
+    write(
+        &app.join("src/Main.sky"),
+        "module Main exposing (main)\n\nimport Std.Log exposing (println)\n\n\nmain =\n    println \"hi\"\n",
+    );
+    let (ok, log) = run(&app.join("src"), SKY, &["add", "../../lib"]);
+    assert!(ok, "sky add from src/:\n{log}");
+    assert!(
+        !app.join("src/sky.toml").exists(),
+        "no sky.toml is written into src/:\n{log}"
+    );
+    let toml = std::fs::read_to_string(app.join("sky.toml")).unwrap();
+    assert!(
+        toml.contains("\"lib\" = { path = \"../lib\" }"),
+        "recorded relative to the project root:\n{toml}"
+    );
+
+    let empty = base.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let (ok, log) = run(&empty, SKY, &["add", "../lib"]);
+    assert!(!ok, "outside a project sky add must refuse:\n{log}");
+    assert!(
+        log.contains("no sky.toml")
+            && log.contains("docs/migration/v0.27.md#sky-add-finds-the-project-root"),
+        "the refusal links the migration guide: {log}"
+    );
+    assert!(
+        !empty.join("sky.toml").exists(),
+        "no stray sky.toml:\n{log}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn a_missing_path_is_an_error_everywhere() {
     let base = scratch("missing");

@@ -437,6 +437,35 @@ fn sky_test_json_has_one_line_per_case() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// F-12: `SKY_TEST_JSON=<path>` writes the per-case report in `--format
+/// json` mode too, as in text mode. It used to be ignored there.
+#[test]
+fn sky_test_json_mode_still_writes_the_sky_test_json_report() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let dir = project("testreport", CLEAN, "");
+    std::fs::create_dir_all(dir.join("tests")).unwrap();
+    std::fs::write(dir.join("tests/AppTest.sky"), SUITE.replace("BAD", "2")).unwrap();
+    let report = dir.join("report.json");
+    let out = Command::new(SKY)
+        .args(["test", "--format", "json", "tests/AppTest.sky"])
+        .env("SKY_TEST_JSON", &report)
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&report).expect("SKY_TEST_JSON report written");
+    let v: Value = serde_json::from_str(&text).expect("the report is JSON");
+    assert_eq!(v["cases"].as_array().map(Vec::len), Some(3), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn fmt_check_json_names_the_unformatted_file() {
     let dir = project("fmt", CLEAN, "");
@@ -468,6 +497,117 @@ fn fmt_check_json_names_the_unformatted_file() {
         .output()
         .unwrap();
     assert_eq!(o.status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// F-8: `sky fmt` on a file that does not parse is an error in every mode:
+/// `--check` exits 1 with an `[E0001]` diagnostic (json: one error, `ok:
+/// false`), write mode exits non-zero and leaves the file alone, and `--stdin`
+/// exits non-zero. It used to pass as "already formatted".
+#[test]
+fn fmt_refuses_a_file_that_does_not_parse() {
+    let broken = format!("{CLEAN}\nbroken = (\n");
+    let dir = project("fmtparse", &broken, "");
+    let o = sky(
+        &dir,
+        &["fmt", "--check", "--format", "json", "src/Main.sky"],
+    );
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    check_stream(&o);
+    let ds = diags(&o);
+    assert!(!ds.is_empty(), "a parse error diagnostic: {:?}", o.lines);
+    assert!(
+        ds.iter()
+            .all(|d| d["severity"] == "error" && d["code"] == "E0001"),
+        "{ds:?}"
+    );
+    assert_eq!(ds[0]["file"], "src/Main.sky");
+    let text = Command::new(SKY)
+        .args(["fmt", "--check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(text.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&text.stderr);
+    assert!(
+        stderr.contains("Fix: correct the syntax error")
+            && stderr.contains("docs/migration/v0.27.md#fmt-refuses-a-file-that-does-not-parse"),
+        "{stderr}"
+    );
+    let write = Command::new(SKY)
+        .args(["fmt", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        !write.status.success(),
+        "write mode must fail on a parse error"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("src/Main.sky")).unwrap(),
+        broken,
+        "the file is left as it was"
+    );
+    let mut child = Command::new(SKY)
+        .args(["fmt", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(broken.as_bytes())
+            .unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert!(!out.status.success(), "--stdin must fail on a parse error");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// F-15: a failure the command reports only on stderr (a missing entry, an
+/// unknown target) reaches the json stream with its real message, and a
+/// source file that is not UTF-8 is named rather than reported as "no .sky".
+#[test]
+fn json_failures_carry_the_real_message() {
+    let dir = project("realmsg", CLEAN, "");
+    let o = sky(&dir, &["check", "--format", "json", "src/Nope.sky"]);
+    assert_ne!(o.code, 0);
+    check_stream(&o);
+    let msg = diags(&o)[0]["message"].as_str().unwrap().to_string();
+    assert!(msg.contains("src/Nope.sky"), "the real message: {msg}");
+    let o = sky(
+        &dir,
+        &[
+            "check",
+            "--format",
+            "json",
+            "--target",
+            "nope:nope",
+            "src/Main.sky",
+        ],
+    );
+    assert_ne!(o.code, 0);
+    check_stream(&o);
+    let msg = diags(&o)[0]["message"].as_str().unwrap().to_string();
+    assert!(msg.contains("nope"), "the real message: {msg}");
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        b"module Main exposing (main)\n\xff\xfe\n",
+    )
+    .unwrap();
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_ne!(o.code, 0);
+    check_stream(&o);
+    let msg = diags(&o)[0]["message"].as_str().unwrap().to_string();
+    assert!(
+        msg.contains("src/Main.sky") && msg.contains("not valid UTF-8"),
+        "the file is named: {msg}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

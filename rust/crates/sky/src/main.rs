@@ -50,9 +50,11 @@ mod leg_plan;
 mod native_pkg;
 mod plist;
 mod precompress;
+mod private_fs;
 mod split_diag;
 mod store_upload;
 mod target;
+mod version_notice;
 mod xmlmini;
 
 fn main() -> ExitCode {
@@ -66,6 +68,21 @@ fn main() -> ExitCode {
     }
     // Best-effort "newer version available" nudge — cached, non-blocking, TTY-only.
     maybe_notify_update(args.first().map(String::as_str));
+    // The one-time "Sky upgraded X -> Y" notice: stderr text, or one `notice`
+    // record in a `--format json` stream (json_out emits it there).
+    if let Some(n) = version_notice::check(
+        args.first().map(String::as_str),
+        &version_notice::this_version(),
+    ) {
+        let json = args
+            .get(1..)
+            .is_some_and(|rest| matches!(json_out::take_format(rest), Ok((_, true))));
+        if json {
+            version_notice::set_pending(n);
+        } else {
+            eprint!("{}", version_notice::text(&n));
+        }
+    }
 
     // `--timings` on build / check: the per-phase wall-clock report. It is
     // carried as `SKY_TIMINGS=1` so the child `sky build`s a Sky.Spa or Std.App
@@ -274,6 +291,16 @@ fn cmd_package(args: &[String]) -> ExitCode {
         }
     };
     let canonical = tgt.canonical();
+    // A value flag given with no value is an error, never ignored: `--upload`
+    // alone used to run a plain release with no upload (F-17).
+    for flag in ["--upload", "--ipa", "--target"] {
+        if let Some(i) = args.iter().position(|a| a == flag) {
+            if args.get(i + 1).is_none_or(|v| v.starts_with("--")) {
+                eprintln!("sky package: {flag} needs a value");
+                return ExitCode::from(2);
+            }
+        }
+    }
     let flag_value = |flag: &str| -> Option<String> {
         let eq = format!("{flag}=");
         args.iter()
@@ -520,6 +547,26 @@ fn run_testflight_upload(canonical: &str, plan: &TestflightPlan, ipa: &Path) -> 
         eprintln!("sky package --target {canonical} --upload testflight: {e}");
         return ExitCode::FAILURE;
     }
+    // The archive must be this project's app and build: `--ipa` used to upload
+    // any signed archive and report the project's id and build for it (F-10).
+    match store_upload::ipa_identity(ipa) {
+        Ok((id, version)) if id == plan.bundle_id && version == build => {}
+        Ok((id, version)) => {
+            eprintln!(
+                "sky package --target {canonical} --upload testflight: {} is the app {id}, \
+                 build {version}, but this project's `bundle` says {}, build {build}. Upload \
+                 the archive this project built, or fix Bundle.withId / Bundle.withBuild. {}",
+                ipa.display(),
+                plan.bundle_id,
+                project::migration_see("testflight-ipa-must-match-the-project")
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            eprintln!("sky package --target {canonical} --upload testflight: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     match store_upload::upload_testflight(&plan.xcrun, ipa, &plan.key, &plan.bundle_id, &build) {
         Ok(report) => {
             println!(
@@ -673,6 +720,10 @@ fn cmd_upgrade_install(
     match download_and_replace_binary(&tag, artifact) {
         Ok(dest) => {
             println!("Upgraded to {tag} — {}", dest.display());
+            println!(
+                "What changed and how to migrate: {}",
+                project::MIGRATION_GUIDE
+            );
             // Warm the Go build cache for the NEW runtime, so the first build after
             // the upgrade is not a cold multi-minute compile. Runs the NEW binary
             // (it embeds the new `rt`); best-effort — a failure never fails the
@@ -1053,75 +1104,124 @@ fn download_and_replace_binary(tag: &str, artifact: &str) -> Result<PathBuf, Str
                 .into(),
         );
     }
-    let url = format!("https://github.com/anzellai/sky/releases/download/{tag}/{artifact}.tar.gz");
-    let tmp = std::env::temp_dir().join(format!("sky-upgrade-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("could not create temp dir: {e}"))?;
-    let archive = tmp.join(format!("{artifact}.tar.gz"));
+    let cur = std::env::current_exe().map_err(|e| format!("could not locate current exe: {e}"))?;
+    let base = format!("https://github.com/anzellai/sky/releases/download/{tag}");
+    install_release_archive(&base, artifact, &cur)?;
+    Ok(cur)
+}
 
-    // Download the tarball.
-    let dl = std::process::Command::new("curl")
-        .args(["-fSL", "-o"])
-        .arg(&archive)
-        .arg(&url)
-        .status()
-        .map_err(|e| format!("could not run curl ({e})"))?;
-    if !dl.success() {
-        let _ = std::fs::remove_dir_all(&tmp);
-        return Err(format!("download failed ({url})"));
+/// The checksum manifest every release publishes next to its assets
+/// (`release.yml`, "Generate checksums": `sha256sum -- * > checksums.txt`).
+const RELEASE_CHECKSUMS: &str = "checksums.txt";
+
+/// Download `<base>/<artifact>.tar.gz`, verify it against `<base>/checksums.txt`
+/// and replace `dest` with the `artifact` binary it holds (F-9).
+///
+/// - The manifest is fetched FIRST, so nothing is downloaded without something
+///   to check it against. An asset the manifest does not list is refused.
+/// - The digest is taken from the bytes that landed. A mismatch is refused and
+///   `dest` is never touched.
+/// - The work directory is a fresh private directory (0700, random name,
+///   refused if it exists) NEXT TO `dest`, never a predictable path in a shared
+///   `/tmp` where another local user could swap the binary between `tar` and
+///   the `rename`. Next to `dest` also keeps the final rename on one
+///   filesystem.
+///
+/// `base` is a URL `curl` fetches: `https://…` for a release, `file://…` in
+/// the tests, which run with no network.
+fn install_release_archive(base: &str, artifact: &str, dest: &Path) -> Result<(), String> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", dest.display()))?;
+    let tmp = private_fs::private_dir_in(parent, ".sky-upgrade-")?;
+    let result = install_release_archive_in(&tmp, base, artifact, dest);
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
+}
+
+fn install_release_archive_in(
+    tmp: &Path,
+    base: &str,
+    artifact: &str,
+    dest: &Path,
+) -> Result<(), String> {
+    let fetch = |url: &str, to: &Path| -> Result<(), String> {
+        let ok = std::process::Command::new("curl")
+            .args(["-fsSL", "--proto", "=https,file", "-o"])
+            .arg(to)
+            .arg(url)
+            .status()
+            .map_err(|e| format!("could not run curl ({e})"))?
+            .success();
+        if ok {
+            Ok(())
+        } else {
+            Err(format!("download failed ({url})"))
+        }
+    };
+    let asset = format!("{artifact}.tar.gz");
+    let sums_url = format!("{base}/{RELEASE_CHECKSUMS}");
+    let sums_path = tmp.join(RELEASE_CHECKSUMS);
+    fetch(&sums_url, &sums_path).map_err(|e| {
+        format!(
+            "{e}\n(the checksum manifest is fetched first: nothing is installed unverified; {})",
+            project::migration_see("upgrades-and-installs-verify-checksums")
+        )
+    })?;
+    let sums = std::fs::read_to_string(&sums_path)
+        .map_err(|e| format!("could not read {}: {e}", sums_path.display()))?;
+    let expected = db_provision::parse_sha256sums(&sums, &asset)
+        .ok_or_else(|| format!("{sums_url} does not list {asset}; refusing to install it"))?;
+
+    let url = format!("{base}/{asset}");
+    let archive = tmp.join(&asset);
+    fetch(&url, &archive)?;
+    let actual = db_provision::sha256_file(&archive)?;
+    if actual != expected {
+        return Err(format!(
+            "{url} does not match its published checksum (expected {expected}, got {actual}); \
+             refusing to install it"
+        ));
     }
 
     // Extract (tarball holds `<artifact>` + `sky-ffi-inspect-<artifact>`).
+    let extract = tmp.join("x");
+    private_fs::create_private_dir(&extract)
+        .map_err(|e| format!("could not create {}: {e}", extract.display()))?;
     let ex = std::process::Command::new("tar")
         .arg("xzf")
         .arg(&archive)
         .arg("-C")
-        .arg(&tmp)
+        .arg(&extract)
         .status()
         .map_err(|e| format!("could not run tar ({e})"))?;
     if !ex.success() {
-        let _ = std::fs::remove_dir_all(&tmp);
         return Err("could not extract the release tarball".into());
     }
-
-    let new_bin = tmp.join(artifact);
-    if !new_bin.is_file() {
-        let _ = std::fs::remove_dir_all(&tmp);
-        return Err(format!("release tarball did not contain `{artifact}`"));
+    let new_bin = extract.join(artifact);
+    if !std::fs::symlink_metadata(&new_bin)
+        .map(|m| m.file_type().is_file())
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "release tarball did not contain the file `{artifact}`"
+        ));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&new_bin, std::fs::Permissions::from_mode(0o755));
+        std::fs::set_permissions(&new_bin, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("could not mark {} executable: {e}", new_bin.display()))?;
     }
-
-    // Atomically replace the running executable. On Unix, renaming over the
-    // running binary is safe (the live process keeps its open inode). Stage the
-    // new binary as a sibling of the destination so the final rename is
-    // same-filesystem (atomic); fall back to a copy across filesystems.
-    let cur = std::env::current_exe().map_err(|e| format!("could not locate current exe: {e}"))?;
-    let staged = cur.with_extension("sky-upgrade-new");
-    if std::fs::rename(&new_bin, &staged).is_err() {
-        std::fs::copy(&new_bin, &staged).map_err(|e| {
-            format!(
-                "could not stage the new binary next to {}: {e}",
-                cur.display()
-            )
-        })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
-        }
-    }
-    std::fs::rename(&staged, &cur).map_err(|e| {
-        let _ = std::fs::remove_file(&staged);
+    // On Unix, renaming over the running binary is safe (the live process
+    // keeps its open inode). The work directory is next to `dest`, so this is
+    // one atomic same-filesystem rename.
+    std::fs::rename(&new_bin, dest).map_err(|e| {
         format!(
             "could not replace {} ({e}); you may need elevated permissions",
-            cur.display()
+            dest.display()
         )
-    })?;
-    let _ = std::fs::remove_dir_all(&tmp);
-    Ok(cur)
+    })
 }
 
 // ---- build / check -------------------------------------------------------
@@ -1898,6 +1998,12 @@ fn check_std_app(
                 ));
                 return ExitCode::FAILURE;
             }
+            // The build synthesises a `Spa.app` entry and splits it; a wire
+            // field the split has no codec for fails the build, so it fails
+            // the check too (C-10).
+            if let Err(code) = check_std_app_split(repo_root, project_dir, entry_file, tgt) {
+                return code;
+            }
         }
         ExitCode::SUCCESS
     } else if json_out::active() {
@@ -1914,6 +2020,40 @@ fn check_std_app(
         }
         ExitCode::FAILURE
     }
+}
+
+/// Run the split analysis `sky build --target <client>` runs on a Std.App
+/// entry: synthesise the `Spa.app` entry exactly as [`build_std_app`] does,
+/// stage it under `.skyapp/check-split/`, and hand it to [`check_spa_split`].
+fn check_std_app_split(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_file: &Path,
+    tgt: target::Target,
+) -> Result<(), ExitCode> {
+    let entry_src = std::fs::read_to_string(entry_file).unwrap_or_default();
+    let synthesized = synthesize_spa_source(&entry_src, false).map_err(|e| {
+        eprintln!(
+            "sky check --target {}: cannot derive the client build from your `App` value:\n  {e}",
+            tgt.canonical()
+        );
+        ExitCode::FAILURE
+    })?;
+    let out_root = project_dir.join(".skyapp").join("check-split");
+    let src_to = stage_std_app_derived(project_dir, &out_root)?;
+    let synth_entry = src_to.join(entry_file.file_name().unwrap_or_default());
+    std::fs::write(&synth_entry, synthesized).map_err(|e| {
+        eprintln!("sky check: write synthesised Spa entry: {e}");
+        ExitCode::FAILURE
+    })?;
+    let static_mount = project::spa_split::declared_static_mount(&entry_src, project_dir);
+    check_spa_split(
+        repo_root,
+        &out_root,
+        entry_module_name(&synth_entry).as_deref(),
+        static_mount,
+        Some(project_dir),
+    )
 }
 
 /// `Std.App` builders the BUILD reads for the native shell around the client
@@ -3523,6 +3663,73 @@ fn bake_backend_wasm_name(backend_main: &Path, dist: &Path) {
     }
 }
 
+/// Report a split the generator refused, as `sky build` and `sky check` both
+/// do: the message on stderr, mapped back to the user's construct when the
+/// analysed project was derived from theirs, and one unlocated diagnostic.
+fn report_split_failure(e: &str, analysed: &Path, user_project: Option<&Path>) {
+    eprintln!("sky spa-split: {e}");
+    // The app's own source checked clean before the split ran, so a located
+    // error here is in the entry the build DERIVED from it.
+    if let Some(user_root) = user_project {
+        report_generated_failure(
+            e,
+            &split_diag::SplitSites {
+                user_project: user_root,
+                analysed,
+                legs: &[],
+            },
+        );
+    }
+    // The split refuses the app as a whole ("cannot auto-split: …"): the
+    // generator reports no source span, so the message is the diagnostic,
+    // unlocated.
+    json_out::diagnostic(&project::diagnostics::Reported::plain(
+        project::diagnostics::Severity::Error,
+        project::diagnostics::Origin::Sky,
+        e.to_string(),
+    ));
+}
+
+/// `sky check` ≡ `sky build` for a split target (C-10): run the split's
+/// partition and wire-codec analysis (the generator itself) into a private
+/// throw-away directory, so a program the build refuses ("no codec for a
+/// field of type …") is refused by the check with the same diagnostic.
+/// Nothing is built, and nothing is written into the project.
+fn check_spa_split(
+    repo_root: &Path,
+    analysed: &Path,
+    entry_module: Option<&str>,
+    static_mount: Option<(String, String)>,
+    user_project: Option<&Path>,
+) -> Result<(), ExitCode> {
+    let scratch =
+        private_fs::private_dir_in(&std::env::temp_dir(), "sky-check-split-").map_err(|e| {
+            eprintln!("sky check: {e}");
+            ExitCode::FAILURE
+        })?;
+    let result = project::spa_split::generate(
+        repo_root,
+        analysed,
+        entry_module,
+        &scratch.join("split"),
+        None,
+        static_mount,
+    );
+    let _ = std::fs::remove_dir_all(&scratch);
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let e = format!(
+                "{e}\n(`sky check` runs the Sky.Spa split analysis since v0.27.0, so it refuses \
+                 what `sky build` refuses. {})",
+                project::migration_see("sky-check-runs-the-spa-split")
+            );
+            report_split_failure(&e, analysed, user_project);
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
 /// Generate the Sky.Spa split (wasm frontend + native backend + shared codec
 /// contract) under `out_dir`, print the branch report, and — when `do_build` —
 /// build both trees with THIS compiler (backend native, frontend for `target`).
@@ -3569,27 +3776,7 @@ fn spa_split_and_build(
     ) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("sky spa-split: {e}");
-            // The app's own source checked clean before the split ran, so a
-            // located error here is in the entry the build DERIVED from it.
-            if user_project.is_some() {
-                report_generated_failure(
-                    &e,
-                    &split_diag::SplitSites {
-                        user_project: user_root,
-                        analysed: project_dir,
-                        legs: &[],
-                    },
-                );
-            }
-            // The split refuses the app as a whole ("cannot auto-split: …"):
-            // the generator reports no source span, so the message is the
-            // diagnostic, unlocated.
-            json_out::diagnostic(&project::diagnostics::Reported::plain(
-                project::diagnostics::Severity::Error,
-                project::diagnostics::Origin::Sky,
-                e.to_string(),
-            ));
+            report_split_failure(&e, project_dir, user_project);
             return Err(ExitCode::FAILURE);
         }
     };
@@ -3981,6 +4168,13 @@ fn build_and_run_fuzz_harness(
 /// one). This replaces the former `sky spa-diff-fuzz` verb — its coverage is now
 /// `sky fuzz --target web:app`.
 fn cmd_fuzz(args: &[String]) -> ExitCode {
+    if wants_help(args) {
+        println!(
+            "usage: sky fuzz <file.sky> [--target family[:variant]] [--iters N] [--seed S]  \
+             (or run inside a Sky app project)"
+        );
+        return ExitCode::SUCCESS;
+    }
     let iters: usize = args
         .iter()
         .position(|a| a == "--iters")
@@ -4291,6 +4485,16 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         },
         None => None,
     };
+    // `sky check` in a LIBRARY (no `entry`, a `[lib]` table or no `Main`):
+    // there is no program to lower, so check every module the way `sky
+    // verify` does. It used to exit 1 with "no entry main" after the types
+    // passed, so a library could not use `sky check` as a gate.
+    if check_only && positional.is_empty() {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        if let Some(dir) = nearest_project_dir(&cwd).filter(|d| is_verify_library(d)) {
+            return check_library_verb(&dir);
+        }
+    }
     let file = match resolve_entry_arg(
         &positional,
         &format!(
@@ -4306,6 +4510,9 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         return ExitCode::FAILURE;
     };
     json_out::set_root(&project_dir);
+    if check_only && is_verify_library(&project_dir) {
+        return check_library_verb(&project_dir);
+    }
     // Resolve the build identity ONCE, here at the user's project root, and pin
     // it for every child build this command spawns (Std.App derived entry,
     // both Sky.Spa split legs, a desktop shell), so all of them embed the same
@@ -4457,6 +4664,27 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     // `.split/frontend/src/Main.sky` directly. The backend is a `Sky.Http.Server`
     // (no `Std.Spa` import), so it is never a candidate here.
     let explicit_wasm = args.iter().any(|a| a == "--wasm");
+    // `sky check` on a direct `Spa.app` entry runs the split's wire-codec
+    // analysis too (C-10): the build splits the app, and a field the split has
+    // no codec for fails the build. An error in the app's own source is left
+    // to the ordinary check below, which reports it at the user's line.
+    if check_only
+        && !explicit_wasm
+        && is_spa_app_entry(file)
+        && !is_generated_split_project(&project_dir)
+        && project::front_half_errors(&repo_root, &project_dir, entry_module_name(file).as_deref())
+            .is_empty()
+    {
+        if let Err(code) = check_spa_split(
+            &repo_root,
+            &project_dir,
+            entry_module_name(file).as_deref(),
+            None,
+            None,
+        ) {
+            return code;
+        }
+    }
     if !check_only
         && !explicit_wasm
         && is_spa_app_entry(file)
@@ -5518,12 +5746,97 @@ fn entry_rel_path(project_dir: &Path) -> String {
         .unwrap_or_else(|| "src/Main.sky".to_string())
 }
 
-/// Is the byte offset `at` inside a `--` line comment? (True if a `--` precedes
-/// it on the same source line.) A conservative guard so a `withX` mentioned in a
-/// comment is not read as a real declaration.
-fn in_line_comment(src: &str, at: usize) -> bool {
-    let line_start = src[..at].rfind('\n').map(|n| n + 1).unwrap_or(0);
-    src[line_start..at].contains("--")
+/// Which bytes of `src` are CODE, as opposed to a comment or the inside of a
+/// string or char literal. A lexer pass, so the source scans below never read
+/// a `withX` call out of a `{- … -}` block comment (nested ones included), a
+/// `--` line comment, or a string, and a `--` inside a string (`withName
+/// "A -- B"`) does not hide a real call later on the same line (F-2). The
+/// opening quote of a literal counts as code, so a scan can read the literal
+/// that starts there.
+fn code_mask(src: &str) -> Vec<bool> {
+    let b = src.as_bytes();
+    let mut mask = vec![true; b.len()];
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'-' && b.get(i + 1) == Some(&b'-') {
+            while i < b.len() && b[i] != b'\n' {
+                mask[i] = false;
+                i += 1;
+            }
+        } else if b[i] == b'{' && b.get(i + 1) == Some(&b'-') {
+            let mut depth = 0usize;
+            while i < b.len() {
+                if b[i] == b'{' && b.get(i + 1) == Some(&b'-') {
+                    depth += 1;
+                    mask[i] = false;
+                    mask[i + 1] = false;
+                    i += 2;
+                } else if b[i] == b'-' && b.get(i + 1) == Some(&b'}') {
+                    depth -= 1;
+                    mask[i] = false;
+                    mask[i + 1] = false;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    mask[i] = false;
+                    i += 1;
+                }
+            }
+        } else if b[i..].starts_with(b"\"\"\"") {
+            i += 3;
+            while i < b.len() && !b[i..].starts_with(b"\"\"\"") {
+                mask[i] = false;
+                if b[i] == b'\\' && i + 1 < b.len() {
+                    mask[i + 1] = false;
+                    i += 1;
+                }
+                i += 1;
+            }
+            i += 3;
+        } else if b[i] == b'"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' && b[i] != b'\n' {
+                mask[i] = false;
+                if b[i] == b'\\' && i + 1 < b.len() {
+                    mask[i + 1] = false;
+                    i += 1;
+                }
+                i += 1;
+            }
+            if i < b.len() {
+                mask[i] = false;
+            }
+            i += 1;
+        } else if b[i] == b'\''
+            && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_'))
+        {
+            // A char literal: `'x'` or `'\''`.
+            let end = if b.get(i + 1) == Some(&b'\\') {
+                i + 3
+            } else {
+                i + 2
+            };
+            if b.get(end) == Some(&b'\'') {
+                for m in mask.iter_mut().take(end + 1).skip(i + 1) {
+                    *m = false;
+                }
+                i = end + 1;
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    mask
+}
+
+/// Is byte offset `at` code (not inside a comment or a literal)? See
+/// [`code_mask`].
+fn is_code(mask: &[bool], at: usize) -> bool {
+    mask.get(at).copied().unwrap_or(false)
 }
 
 /// If `s` starts with a `"…"` string literal, return its (unescaped) contents;
@@ -5566,6 +5879,7 @@ fn string_literal_prefix(s: &str) -> Option<String> {
 fn scan_bundle_calls_all(src: &str, func: &str) -> Vec<String> {
     let bytes = src.as_bytes();
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mask = code_mask(src);
     let mut out = Vec::new();
     let mut from = 0;
     while let Some(rel) = src[from..].find(func) {
@@ -5574,7 +5888,7 @@ fn scan_bundle_calls_all(src: &str, func: &str) -> Vec<String> {
         let after = at + func.len();
         let before_ok = at == 0 || !is_word(bytes[at - 1]);
         let after_ok = bytes.get(after).map(|b| !is_word(*b)).unwrap_or(true);
-        if !before_ok || !after_ok || in_line_comment(src, at) {
+        if !before_ok || !after_ok || !is_code(&mask, at) {
             continue;
         }
         // The argument must be a string literal IMMEDIATELY after the call name
@@ -5587,10 +5901,12 @@ fn scan_bundle_calls_all(src: &str, func: &str) -> Vec<String> {
     out
 }
 
-/// The first `withX` string-literal argument (the singular identity fields:
-/// name / id / icon / version). See [`scan_bundle_calls_all`].
+/// The LAST `withX` string-literal argument (the singular identity fields:
+/// name / id / icon / version). The last call wins, as it does in the
+/// `bundle` pipeline at run time, so the packaged identity and the runtime
+/// value agree. See [`scan_bundle_calls_all`].
 fn scan_bundle_call(src: &str, func: &str) -> Option<String> {
-    scan_bundle_calls_all(src, func).into_iter().next()
+    scan_bundle_calls_all(src, func).into_iter().last()
 }
 
 /// Recursively copy the CONTENTS of `src` into `dest`, preserving the relative
@@ -6142,7 +6458,7 @@ fn build_android_apk(
             java_exts.len(),
             java_exts
                 .iter()
-                .map(|(s, _)| s.as_str())
+                .map(|(s, p)| native_file_label(project_dir, s, p))
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -6267,17 +6583,43 @@ fn collect_native_dirs(project_dir: &Path, platform: &str) -> Vec<PathBuf> {
     if own.is_dir() {
         dirs.push(own);
     }
+    let mut packages: Vec<PathBuf> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(project_dir.join(".skydeps")) {
         let mut slugs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
         slugs.sort();
-        for slug in slugs {
-            let d = slug.join("native").join(platform);
-            if d.is_dir() {
-                dirs.push(d);
-            }
+        packages.extend(slugs);
+    }
+    // A local Sky path dependency ships native code exactly as a registry
+    // package does. Its native dir used to be skipped, so the two kinds of
+    // dependency disagreed (F-7).
+    packages.extend(project::path_deps::sky_package_dirs(project_dir));
+    for pkg in packages {
+        let d = pkg.join("native").join(platform);
+        if d.is_dir() && !dirs.contains(&d) {
+            dirs.push(d);
         }
     }
     dirs
+}
+
+/// `stem`, or `stem (from <dependency dir>)` when the file is a dependency's:
+/// the build names every native file a dependency compiles into the shell
+/// (F-7).
+fn native_file_label(project_dir: &Path, stem: &str, path: &Path) -> String {
+    if path.starts_with(project_dir.join("native")) {
+        return stem.to_string();
+    }
+    let pkg = path
+        .ancestors()
+        .find(|a| a.file_name().is_some_and(|n| n == "native"))
+        .and_then(Path::parent)
+        .unwrap_or(path);
+    let shown = pkg
+        .strip_prefix(project_dir)
+        .unwrap_or(pkg)
+        .display()
+        .to_string();
+    format!("{stem} (from {shown})")
 }
 
 /// Every `*.<ext>` source across the native dirs for `platform`, as
@@ -6583,7 +6925,7 @@ fn build_ios_app(
             swift_exts.len(),
             swift_exts
                 .iter()
-                .map(|(s, _)| s.as_str())
+                .map(|(s, p)| native_file_label(project_dir, s, p))
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -9246,6 +9588,17 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
             eprintln!("sky fmt: could not read stdin");
             return ExitCode::FAILURE;
         }
+        // A source that does not parse is an error, never "formatted" (F-8).
+        let errors = project::parse_errors(&src, "<stdin>");
+        if !errors.is_empty() {
+            for e in &errors {
+                eprintln!("{}", e.rendered);
+            }
+            if !check {
+                print!("{src}");
+            }
+            return ExitCode::FAILURE;
+        }
         let out = format_source(&src);
         if check {
             return if out == src {
@@ -9275,12 +9628,41 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
             d.file = Some(f.replace('\\', "/"));
             json_out::diagnostic(&d);
         };
-        let Ok(src) = std::fs::read_to_string(path) else {
-            eprintln!("sky fmt: could not read {f}");
-            fmt_diag("could not read the file".to_string());
+        let src = match std::fs::read(path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    let at = e.utf8_error().valid_up_to();
+                    eprintln!("sky fmt: {f} is not valid UTF-8 (byte {at})");
+                    fmt_diag(format!("the file is not valid UTF-8 (byte {at})"));
+                    changed_or_error = true;
+                    continue;
+                }
+            },
+            Err(e) => {
+                eprintln!("sky fmt: could not read {f}: {e}");
+                fmt_diag(format!("could not read the file: {e}"));
+                changed_or_error = true;
+                continue;
+            }
+        };
+        // A file that does not parse is an error in both modes, never
+        // "already formatted": the formatter reprints broken input verbatim,
+        // so `--check` used to pass it and write mode to exit 0 (F-8).
+        let errors = project::parse_errors(&src, &f.replace('\\', "/"));
+        if !errors.is_empty() {
+            for e in &errors {
+                eprintln!("{}", e.rendered);
+                json_out::diagnostic(e);
+            }
+            eprintln!(
+                "sky fmt: {f} does not parse, so it is not formatted (since v0.27.0 this is \
+                 an error). Fix: correct the syntax error above. {}",
+                project::migration_see("fmt-refuses-a-file-that-does-not-parse")
+            );
             changed_or_error = true;
             continue;
-        };
+        }
         if check {
             if !is_formatted(&src) {
                 println!("would reformat: {f}");
@@ -9395,6 +9777,17 @@ fn cmd_test_json(suite: &Path, out_dir_name: &str) -> ExitCode {
     let report: Option<Value> = std::fs::read_to_string(&report_path)
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok());
+    // The user's own `SKY_TEST_JSON=<path>` report is written in this mode
+    // too: the runner points the suite at a private path for the stream, so
+    // the user's file is a copy of that report (F-12).
+    if let Some(user) = std::env::var_os("SKY_TEST_JSON").filter(|v| !v.is_empty()) {
+        if let Err(e) = std::fs::copy(&report_path, &user) {
+            eprintln!(
+                "sky test: could not write SKY_TEST_JSON report {}: {e}",
+                Path::new(&user).display()
+            );
+        }
+    }
     let _ = std::fs::remove_file(&report_path);
     let (mut passed, mut failed) = (0u64, 0u64);
     let cases = report
@@ -9619,7 +10012,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
         println!(
             "sky init [name] [--production]\n\n\
              Scaffold a new Sky project in ./<name> (default: sky-project):\n  \
-             sky.toml, src/Main.sky, .gitignore, docker-compose.yml, .env.example, AGENTS.md, CLAUDE.md.\n\n\
+             sky.toml, src/Main.sky, .gitignore, .dockerignore, docker-compose.yml, .env.example, AGENTS.md, CLAUDE.md.\n\n\
              Default is SQLite + in-memory sessions — zero setup, `sky run` and go.\n\
              The production path (one Postgres for app data + sessions + analytics +\n\
              telemetry) is documented inline in sky.toml + ready in docker-compose.yml.\n\n\
@@ -9656,45 +10049,32 @@ fn cmd_init(args: &[String]) -> ExitCode {
     // Postgres identifiers can't contain '-', so derive a safe db/user/role name.
     let pg = name.replace(['-', '.', ' '], "_");
 
+    // No legacy runtime keys (`[live] port/store`, `[database] path`): every
+    // check of a fresh project used to print "3 runtime settings moved into
+    // typed app config" about the scaffold's own `sky.toml` (F-13). The dev
+    // defaults (port 8000, in-memory sessions) need no key at all; the
+    // production settings come from `.env` (the operator's environment) and
+    // the typed builders shown below.
     let live_db_block = if production {
-        format!(
-            "[live]\n\
-             port  = 8000\n\
-             store = \"postgres\"        # sessions in the shared Postgres (DATABASE_URL)\n\
-             ttl   = 1800\n\n\
-             [database]\n\
-             driver = \"postgres\"       # no path → falls back to DATABASE_URL (.env)\n\n\
-             [analytics]\n\
-             retention = \"180d\"        # prune old events so the table stays bounded\n\n\
-             # PRODUCTION-GRADE scaffold. `docker compose up -d` starts Postgres; copy\n\
-             # .env.example → .env (set DATABASE_URL + the secret). ONE connection string\n\
-             # wires app data + sessions + analytics + telemetry into one database.\n\
-             # For a quick local run WITHOUT Docker: set store=\"memory\" + driver=\"sqlite\"\n\
-             # path=\"app.db\". Use BIGINT (not INTEGER) for millisecond timestamps.\n"
-        )
+        "# PRODUCTION-GRADE scaffold. `docker compose up -d` starts Postgres; copy\n\
+         # .env.example → .env. Its DATABASE_URL + SKY_LIVE_STORE=postgres wire app\n\
+         # data + sessions + analytics + telemetry into ONE database (the operator's\n\
+         # environment always wins over the code). Use BIGINT (not INTEGER) for\n\
+         # millisecond timestamps.\n"
+            .to_string()
     } else {
-        "# ── Local dev: SQLite + in-memory sessions. Zero setup — just `sky run`.\n\
-         #    Ideal for a prototype, playground, or single-instance small app.\n\
-         [live]\n\
-         port  = 8000\n\
-         store = \"memory\"          # dev sessions (memory | sqlite | postgres | redis)\n\n\
-         [database]\n\
-         driver = \"sqlite\"\n\
-         path   = \"app.db\"\n\n\
-         # ── PRODUCTION (scaling / multi-instance): one Postgres for everything.\n\
-         #    `docker compose up -d`, copy .env.example → .env, then uncomment below.\n\
-         #    ONE DATABASE_URL (.env) wires app data + sessions + analytics + telemetry\n\
-         #    into a single database — no separate paths. Also set ENV=production\n\
-         #    (locks the dev console; see the production gate in AGENTS.md).\n\
-         #    Use BIGINT (not INTEGER) for millisecond timestamps on Postgres.\n\
-         #    Know you'll scale? Scaffold production-grade: `sky init <name> --production`.\n\
+        "# ── Local dev: in-memory sessions on port 8000. Zero setup — just `sky run`.\n\
+         #    Settings live in code, typed: in src/Main.sky add for example\n\
+         #      |> App.withConfig (App.WebConfig { App.webDefaults | store = Just \"sqlite:sessions.db\" })\n\
+         #      |> App.withBase { App.baseDefaults | database = Just (Sqlite \"app.db\") }\n\
+         #    (`import Sky.Config exposing (Database(..))` for `Sqlite`).\n\
          #\n\
-         # [live]\n\
-         # store = \"postgres\"\n\
-         # [database]\n\
-         # driver = \"postgres\"      # falls back to DATABASE_URL\n\
-         # [analytics]\n\
-         # retention = \"180d\"\n"
+         # ── PRODUCTION (scaling / multi-instance): one Postgres for everything.\n\
+         #    `docker compose up -d`, copy .env.example → .env and uncomment its\n\
+         #    production lines: ONE DATABASE_URL wires app data + sessions + analytics\n\
+         #    + telemetry into a single database. Also set ENV=production (locks the\n\
+         #    dev console; see the production gate in AGENTS.md).\n\
+         #    Know you'll scale? Scaffold production-grade: `sky init <name> --production`.\n"
             .to_string()
     };
 
@@ -9710,7 +10090,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
          {live_db_block}\n\
          # [auth]            # Std.Auth (uncomment to use)\n\
          # driver     = \"jwt\"\n\
-         # cookieName = \"sky_sid\"       # secret from SKY_AUTH_TOKEN_SECRET (>=32 bytes)\n\n\
+         # cookieName = \"sky_auth\"      # the secret you pass to Auth.signToken (>=32 bytes)\n\n\
          # [\"go.dependencies\"]         # `sky add <pkg>` records these\n\
          # \"github.com/google/uuid\" = \"latest\"\n"
     );
@@ -9779,10 +10159,20 @@ main =
     App.run app
 "#
     .replace("{name}", &name);
+    // Written as `sky fmt` lays it out, so a fresh project passes `sky verify`'s
+    // fmt phase (F-13).
+    let main_sky = fmt::format_source(&main_sky);
     // `.skydata/` holds the local PostgreSQL cluster `sky db start` supervises —
     // a whole data directory, WAL included. Committing it would put a binary
     // database (and its `postmaster.pid`) into git.
     let gitignore = "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
+    // `.dockerignore`: a `COPY . .` must not bake local state into an image.
+    // `.skydata/` holds the dev Sky.Spa session key and the local database
+    // cluster; `.env` holds secrets (A-7).
+    let dockerignore = "# Local state and secrets never go into an image.\n\
+                        .skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n\
+                        # Build outputs are rebuilt inside the image.\n\
+                        sky-out/\n.skycache/\n.skydeps/\n.skyapp/\n.split/\n.git/\n";
 
     // docker-compose.yml — always scaffolded so the production path is one command
     // away, whether or not you start on Postgres. Host port 5433 avoids clashing
@@ -9844,6 +10234,7 @@ main =
         (root.join("sky.toml"), toml),
         (root.join("src/Main.sky"), main_sky),
         (root.join(".gitignore"), gitignore.to_string()),
+        (root.join(".dockerignore"), dockerignore.to_string()),
         (root.join("docker-compose.yml"), compose),
         (root.join(".env.example"), env_example),
     ];
@@ -9878,6 +10269,7 @@ main =
     println!("  sky.toml");
     println!("  src/Main.sky");
     println!("  .gitignore");
+    println!("  .dockerignore        (keeps .skydata/ keys and .env out of images)");
     println!("  docker-compose.yml   (production Postgres — optional)");
     println!("  .env.example         (copy to .env for production)");
     if copied_agents {
@@ -10023,6 +10415,16 @@ fn cmd_doc(args: &[String]) -> ExitCode {
     // `sky doc --api <format>` — a machine-readable API contract. `openapi` ships
     // now; `proto`/`grpc`/`asyncapi` are the reserved future formats.
     if let Some(api_kind) = flag_value(args, "--api") {
+        // An API spec describes a project's own routes. Outside a project it
+        // used to print an empty spec titled after the directory and exit 0
+        // (F-17).
+        if !project_dir.join("sky.toml").is_file() {
+            eprintln!(
+                "sky doc --api: no sky.toml in {}. Run it inside a Sky app project.",
+                project_dir.display()
+            );
+            return ExitCode::FAILURE;
+        }
         return cmd_doc_api(&repo_root, &project_dir, &api_kind, args);
     }
 
@@ -12582,12 +12984,38 @@ use project::{
 /// oracle's cwd-relative behaviour); the repo root supplies the stdlib +
 /// `tools/sky-ffi-inspect` source (bring-up reads assets from the repo tree).
 fn resolve_ffi_ctx() -> Option<(PathBuf, PathBuf)> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    resolve_ffi_ctx_at(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+/// The dependency verbs' `(repo_root, project_dir)` from `cwd`. The project is
+/// the nearest directory at or above `cwd` that holds a `sky.toml`, as every
+/// other verb finds it. With none, the verb refuses: `sky add` run in `src/`
+/// or outside any project used to write a new `sky.toml` into the working
+/// directory, which then broke the real project's build (F-5).
+fn resolve_ffi_ctx_at(cwd: &Path) -> Option<(PathBuf, PathBuf)> {
+    let Some(project_dir) = nearest_project_dir(cwd) else {
+        eprintln!(
+            "sky: no sky.toml in {} or any parent directory. Since v0.27.0 this verb edits \
+             the project that holds the working directory. Fix: cd into the project (or \
+             run `sky init` first). {}",
+            cwd.display(),
+            project::migration_see("sky-add-finds-the-project-root")
+        );
+        return None;
+    };
     // Dev reads the inspector source + runtime from the repo tree; standalone
     // extracts the embedded copy (ensure_inspector then `go build`s it, so FFI
     // works outside the repo). See doc 09 §E / §C.3.
-    let repo_root = assets_root_for(&cwd)?;
-    Some((repo_root, cwd))
+    let repo_root = assets_root_for(&project_dir)?;
+    Some((repo_root, project_dir))
+}
+
+/// The nearest directory at or above `dir` holding a `sky.toml`.
+fn nearest_project_dir(dir: &Path) -> Option<PathBuf> {
+    let abs = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    abs.ancestors()
+        .find(|d| d.join("sky.toml").is_file())
+        .map(Path::to_path_buf)
 }
 
 fn emit_ffi_report(r: FfiReport) -> ExitCode {
@@ -12623,10 +13051,13 @@ fn cmd_add(args: &[String]) -> ExitCode {
             (_, true) => Some(project::path_deps::PathDepKind::Sky),
             _ => None,
         };
+        // A relative path is the one the user typed, so it resolves against
+        // the working directory; it is recorded relative to the project root.
+        let cwd = std::env::current_dir().unwrap_or_else(|_| project_dir.clone());
         return emit_ffi_report(project::ffi_add_path(
             &project_dir,
             &repo_root,
-            &project_dir,
+            &cwd,
             raw,
             force,
         ));
@@ -13191,17 +13622,24 @@ fn is_ffi_path(p: &str) -> bool {
 /// When sky.toml declares `[live]`/`[auth]`, `SKY_AUTH_TOKEN_SECRET` must be
 /// ≥ 32 bytes (the runtime hard-fails at boot otherwise).
 fn check_auth_secret(root: &Path) -> Vec<Finding> {
-    let Ok(c) = std::fs::read_to_string(root.join("sky.toml")) else {
-        return Vec::new();
-    };
-    // Only an UNCOMMENTED `[live]`/`[auth]` section header counts — a bare
-    // `contains("[live]")` also matches the COMMENTED `# [live]` template lines
-    // that `sky init` scaffolds, so it warned on every pristine project.
-    let declares_live_or_auth = c.lines().any(|line| {
-        let t = line.trim();
-        t == "[live]" || t == "[auth]"
+    // Nothing in the runtime reads SKY_AUTH_TOKEN_SECRET: it is the name the
+    // docs give the secret an app passes to `Auth.signToken`. So the check
+    // applies only to a project that imports `Std.Auth` (F-13); a Sky.Live app
+    // without it used to fail `sky doctor` on a fresh `sky init`.
+    let uses_auth = project_sky_files(root).iter().any(|f| {
+        std::fs::read_to_string(f)
+            .map(|src| {
+                src.lines().any(|l| {
+                    let t = l.trim_start();
+                    ["import Std.Auth", "import Auth"].iter().any(|p| {
+                        t.strip_prefix(p)
+                            .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+                    })
+                })
+            })
+            .unwrap_or(false)
     });
-    if !declares_live_or_auth {
+    if !uses_auth {
         return Vec::new();
     }
     match std::env::var("SKY_AUTH_TOKEN_SECRET") {
@@ -13216,7 +13654,8 @@ fn check_auth_secret(root: &Path) -> Vec<Finding> {
         Err(_) => vec![Finding {
             check: "auth-secret-missing",
             severity: Severity::Warn,
-            message: "SKY_AUTH_TOKEN_SECRET is unset (Sky.Live / Std.Auth in use)".into(),
+            message: "SKY_AUTH_TOKEN_SECRET is unset (Std.Auth in use; pass it to Auth.signToken)"
+                .into(),
             hint: "export SKY_AUTH_TOKEN_SECRET=\"$(openssl rand -hex 32)\"".into(),
             fix: None,
         }],
@@ -13362,7 +13801,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
              1. fmt     — every .sky file is already `sky fmt`-clean\n  \
              2. check   — type-checks + `go build`s (the production build)\n  \
              3. test    — every tests/*.sky suite passes\n\n\
-             In the compiler repo (an examples/ dir), build AND run every example.\n\
+             In the compiler repo, build AND run every example.\n\
              Non-zero exit if any phase fails."
         );
         return ExitCode::SUCCESS;
@@ -13459,8 +13898,8 @@ fn cmd_verify(args: &[String]) -> ExitCode {
 }
 
 /// The single project a `sky verify` should run the full gate on: an explicit
-/// path holding a `sky.toml`, or `cwd` itself when it's a project AND there's no
-/// `examples/` dir (which would mean the compiler repo → the build+run sweep).
+/// path holding a `sky.toml`, or `cwd` itself when it's a project and not the
+/// compiler repository (which runs the build+run sweep of its examples).
 /// A named `examples/<x>` target returns `None` so the sweep path handles it.
 fn single_project_target(cwd: &Path, target: Option<&str>) -> Option<PathBuf> {
     match target {
@@ -13472,8 +13911,12 @@ fn single_project_target(cwd: &Path, target: Option<&str>) -> Option<PathBuf> {
                 None
             }
         }
+        // Only the compiler repository itself runs the examples sweep. A
+        // project (often a library) with its own `examples/` is still a
+        // project: keyed on `examples/`, `sky verify` skipped its fmt, check
+        // and tests and reported green (F-3).
         None => {
-            if cwd.join("sky.toml").is_file() && !cwd.join("examples").is_dir() {
+            if cwd.join("sky.toml").is_file() && !is_compiler_repo_root(cwd) {
                 Some(cwd.to_path_buf())
             } else {
                 None
@@ -13501,10 +13944,10 @@ fn verify_project_gate(dir: &Path, out_override: Option<String>) -> ExitCode {
     let files = project_sky_files(dir);
     let mut unformatted = Vec::new();
     for f in &files {
-        if let Ok(src) = std::fs::read_to_string(f) {
-            if !fmt::is_formatted(&src) {
-                unformatted.push(f.clone());
-            }
+        match std::fs::read_to_string(f) {
+            // A file that does not parse is not fmt-clean either (F-8).
+            Ok(src) if fmt::is_formatted(&src) && project::parse_errors(&src, "").is_empty() => {}
+            _ => unformatted.push(f.clone()),
         }
     }
     if unformatted.is_empty() {
@@ -13637,6 +14080,31 @@ fn is_verify_library(dir: &Path) -> bool {
         project::declared_module_name(f)
             .is_some_and(|n| n == "Main" || n == "main" || n.ends_with(".Main"))
     })
+}
+
+/// `sky check` for a library package: every module under the source root is
+/// type-checked, lowered and `go build`t through [`check_library_modules`].
+fn check_library_verb(dir: &Path) -> ExitCode {
+    json_out::set_root(dir);
+    let Some(repo_root) = assets_root_for(dir) else {
+        eprintln!("sky check: could not locate the Sky stdlib + runtime");
+        return ExitCode::FAILURE;
+    };
+    match check_library_modules(&repo_root, dir) {
+        Ok(n) => {
+            println!("Checked library: {n} module(s) type-check and build.");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky check: {e}");
+            json_out::diagnostic(&project::diagnostics::Reported::plain(
+                project::diagnostics::Severity::Error,
+                project::diagnostics::Origin::Sky,
+                e,
+            ));
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// The module `sky verify` synthesises to check a library: it imports every
@@ -15148,6 +15616,92 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// F-9: `sky upgrade` installs only an archive whose digest matches the
+    /// release's `checksums.txt`, works in a private directory next to the
+    /// binary, and leaves nothing behind. Runs with no network (`file://`).
+    #[cfg(unix)]
+    #[test]
+    fn upgrade_installs_only_a_verified_archive() {
+        let base = std::env::temp_dir().join(format!(
+            "sky-upgrade-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let rel = base.join("release");
+        let stage = base.join("stage");
+        let bin_dir = base.join("bin");
+        for d in [&rel, &stage, &bin_dir] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let artifact = "sky-test-arch";
+        std::fs::write(stage.join(artifact), "#!/bin/sh\necho new\n").unwrap();
+        let ok = std::process::Command::new("tar")
+            .arg("czf")
+            .arg(rel.join(format!("{artifact}.tar.gz")))
+            .arg("-C")
+            .arg(&stage)
+            .arg(artifact)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "tar");
+        let digest = db_provision::sha256_file(&rel.join(format!("{artifact}.tar.gz"))).unwrap();
+        let dest = bin_dir.join("sky");
+        let url = format!("file://{}", rel.display());
+        let leftovers = |d: &Path| {
+            std::fs::read_dir(d)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with(".sky-upgrade-"))
+                .count()
+        };
+
+        // A digest that does not match: refused, the binary is untouched.
+        std::fs::write(dest.as_path(), "old").unwrap();
+        std::fs::write(
+            rel.join("checksums.txt"),
+            format!("{}  {artifact}.tar.gz\n", "0".repeat(64)),
+        )
+        .unwrap();
+        let e = install_release_archive(&url, artifact, &dest).unwrap_err();
+        assert!(e.contains("does not match its published checksum"), "{e}");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "old");
+        assert_eq!(leftovers(&bin_dir), 0, "the work dir is removed");
+
+        // An asset the manifest does not list: refused.
+        std::fs::write(
+            rel.join("checksums.txt"),
+            format!("{digest}  other.tar.gz\n"),
+        )
+        .unwrap();
+        let e = install_release_archive(&url, artifact, &dest).unwrap_err();
+        assert!(e.contains("does not list"), "{e}");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "old");
+
+        // No manifest at all: refused before the archive is fetched.
+        std::fs::remove_file(rel.join("checksums.txt")).unwrap();
+        let e = install_release_archive(&url, artifact, &dest).unwrap_err();
+        assert!(
+            e.contains("checksum manifest is fetched first")
+                && e.contains("docs/migration/v0.27.md#upgrades-and-installs-verify-checksums"),
+            "{e}"
+        );
+
+        // The published digest: installed.
+        std::fs::write(
+            rel.join("checksums.txt"),
+            format!("{digest}  {artifact}.tar.gz\n"),
+        )
+        .unwrap();
+        install_release_archive(&url, artifact, &dest).unwrap();
+        assert!(std::fs::read_to_string(&dest).unwrap().contains("echo new"));
+        assert_eq!(leftovers(&bin_dir), 0, "the work dir is removed");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn verify_single_project_routing() {
         // #11: cwd-with-sky.toml (no examples/) → single-project gate; a cwd with
@@ -15157,10 +15711,22 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("sky.toml"), "name=\"x\"\n").unwrap();
         assert!(single_project_target(&dir, None).is_some());
+        // F-3: a project (often a library) with its own examples/ is still
+        // a project. Treating it as the compiler repo skipped fmt, check and
+        // tests on the project and reported green.
         std::fs::create_dir_all(dir.join("examples")).unwrap();
         assert!(
+            single_project_target(&dir, None).is_some(),
+            "a project with examples/ still runs the project gate"
+        );
+        // Only the compiler repo itself runs the examples sweep.
+        std::fs::create_dir_all(dir.join("rust")).unwrap();
+        std::fs::write(dir.join("rust/Cargo.toml"), "[workspace]\n").unwrap();
+        std::fs::create_dir_all(dir.join("sky-stdlib")).unwrap();
+        std::fs::create_dir_all(dir.join("runtime-go")).unwrap();
+        assert!(
             single_project_target(&dir, None).is_none(),
-            "a repo with examples/ runs the sweep, not the single-project gate"
+            "the compiler repo runs the examples sweep"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -15695,6 +16261,48 @@ mod tests {
         );
         // A withPermission in a comment is not a real declaration.
         let perm = "-- Bundle.withPermission Bundle.Camera\nbundle = Bundle.withPermission Bundle.Location";
+        let ctors: Vec<String> = native_pkg::scan_permissions(perm)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.ctor)
+            .collect();
+        assert_eq!(ctors, vec!["Location".to_string()]);
+    }
+
+    /// F-2: a call inside a `{- … -}` block comment (a doc example) is not
+    /// read, a `--` inside a string does not hide a real call on the same
+    /// line, and the last of two calls wins, as in the pipeline.
+    #[test]
+    fn scan_bundle_call_skips_block_comments_and_strings() {
+        let block = "{- Example:\n   {- nested -} Bundle.withId \"com.wrong.id\"\n-}\nbundle = Bundle.default |> Bundle.withId \"com.right.app\"";
+        assert_eq!(
+            scan_bundle_call(block, "withId").as_deref(),
+            Some("com.right.app")
+        );
+        let dash = "bundle = Bundle.withName \"A -- B\" |> Bundle.withId \"com.a.b\"";
+        assert_eq!(scan_bundle_call(dash, "withId").as_deref(), Some("com.a.b"));
+        assert_eq!(
+            scan_bundle_call(dash, "withName").as_deref(),
+            Some("A -- B")
+        );
+        let in_string =
+            "x = \"Bundle.withId \\\"com.in.string\\\"\"\nbundle = Bundle.withId \"com.real\"";
+        assert_eq!(
+            scan_bundle_call(in_string, "withId").as_deref(),
+            Some("com.real")
+        );
+        let twice = "bundle = Bundle.withId \"com.first\" |> Bundle.withId \"com.second\"";
+        assert_eq!(
+            scan_bundle_call(twice, "withId").as_deref(),
+            Some("com.second")
+        );
+        let triple =
+            "doc = \"\"\"\nBundle.withId \"com.doc\"\n\"\"\"\nbundle = Bundle.withId \"com.code\"";
+        assert_eq!(
+            scan_bundle_call(triple, "withId").as_deref(),
+            Some("com.code")
+        );
+        let perm = "{- Bundle.withPermission Bundle.Camera -}\nbundle = Bundle.withPermission Bundle.Location";
         let ctors: Vec<String> = native_pkg::scan_permissions(perm)
             .unwrap()
             .into_iter()

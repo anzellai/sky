@@ -84,11 +84,44 @@ fn zero_default(kind: &str) -> Option<Value> {
     }
 }
 
+/// The prefix of the tables the Sky runtime keeps in the app's own database
+/// (`sky_session_aliases`, `sky_session_bindings`, the analytics and telemetry
+/// tables). They are the runtime's, never the app's schema.
+pub const RUNTIME_TABLE_PREFIX: &str = "sky_";
+
 /// Diff the type-derived `target` against the committed `snapshot`.
+///
+/// A `sky_*` table is the runtime's (E-15): a migration never creates, alters
+/// or drops one, whichever side lists it. A snapshot taken from a database
+/// the runtime has used, or a hand-edited one, would otherwise quarantine a
+/// `DROP TABLE sky_session_aliases`.
 pub fn diff(target: &Schema, snapshot: &Schema) -> Diff {
+    let app_only = |s: &Schema| Schema {
+        tables: s
+            .tables
+            .iter()
+            .filter(|t| !t.name.starts_with(RUNTIME_TABLE_PREFIX))
+            .cloned()
+            .collect(),
+    };
+    let reserved: Vec<&str> = target
+        .tables
+        .iter()
+        .filter(|t| t.name.starts_with(RUNTIME_TABLE_PREFIX))
+        .map(|t| t.name.as_str())
+        .collect();
+    let (target, snapshot) = (&app_only(target), &app_only(snapshot));
     let mut ops = Vec::new();
     let mut destructive = Vec::new();
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<String> = reserved
+        .iter()
+        .map(|n| {
+            format!(
+                "table {n} is skipped: names starting with `{RUNTIME_TABLE_PREFIX}` are \
+                 reserved for the Sky runtime's own tables; rename the Store table"
+            )
+        })
+        .collect();
 
     // New + changed tables.
     for t in &target.tables {
@@ -362,6 +395,40 @@ pub fn migration_file_json(id: &str, diff: &Diff) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// E-15: the runtime's own `sky_*` tables never enter a migration, on
+    /// either side of the diff.
+    #[test]
+    fn runtime_tables_never_enter_a_migration() {
+        let table = |name: &str| SchemaTable {
+            name: name.to_string(),
+            pk: "id".to_string(),
+            columns: vec![SchemaColumn {
+                name: "id".to_string(),
+                kind: "text".to_string(),
+                nullable: false,
+                autoinc: false,
+                unique: false,
+                default: None,
+            }],
+        };
+        let target = Schema {
+            tables: vec![table("todos"), table("sky_session_aliases")],
+        };
+        let snapshot = Schema {
+            tables: vec![table("todos"), table("sky_session_bindings")],
+        };
+        let d = super::diff(&target, &snapshot);
+        assert!(d.ops.is_empty(), "{:?}", d.ops);
+        assert!(d.destructive.is_empty(), "{:?}", d.destructive);
+        assert!(
+            d.warnings
+                .iter()
+                .any(|w| w.contains("sky_session_aliases") && w.contains("reserved")),
+            "{:?}",
+            d.warnings
+        );
+    }
+
     use super::*;
 
     fn col(name: &str, kind: &str, nullable: bool) -> SchemaColumn {

@@ -89,6 +89,25 @@ pub fn take_format(args: &[String]) -> Result<(Vec<String>, bool), String> {
 pub fn run(command: &'static str, f: impl FnOnce() -> ExitCode) -> ExitCode {
     let _ = std::io::stdout().flush();
     let out = redirect_stdout();
+    // Everything written to stderr during the run is kept, so a failure that
+    // produced no diagnostic is explained by its real message rather than a
+    // pointer to stderr (F-15).
+    let capture = StderrCapture::start();
+    let code = run_with(out, command, f, &|| capture.as_ref().map(|c| c.text()));
+    drop(capture);
+    code
+}
+
+/// The body of [`run`], writing the stream to `out`. `stderr_text` returns
+/// what the run printed on stderr so far, when that was captured. A panic in
+/// `f` still ends the stream with an error diagnostic and the summary: the
+/// stream promises a summary line last whatever happens (F-16).
+pub fn run_with(
+    out: Box<dyn Write>,
+    command: &'static str,
+    f: impl FnOnce() -> ExitCode,
+    stderr_text: &dyn Fn() -> Option<String>,
+) -> ExitCode {
     SINK.with(|s| {
         *s.borrow_mut() = Some(Sink {
             out,
@@ -101,7 +120,27 @@ pub fn run(command: &'static str, f: impl FnOnce() -> ExitCode) -> ExitCode {
             extra: Vec::new(),
         })
     });
-    let code = f();
+    // The one-time upgrade notice is a record of the stream, never stderr text
+    // mixed into a json run (`version_notice`).
+    if let Some(n) = crate::version_notice::take_pending() {
+        emit_line(&crate::version_notice::json_line(&n), None);
+    }
+    let code = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(code) => code,
+        Err(payload) => {
+            let what = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "a panic with no message".to_string());
+            diagnostic(&Reported::plain(
+                Severity::Error,
+                project::diagnostics::Origin::Sky,
+                format!("internal compiler error in sky {command}: {what}. Please report it."),
+            ));
+            ExitCode::from(101)
+        }
+    };
     let _ = std::io::stdout().flush();
     let ok = code == ExitCode::SUCCESS;
     if !ok
@@ -111,10 +150,18 @@ pub fn run(command: &'static str, f: impl FnOnce() -> ExitCode) -> ExitCode {
                 .is_some_and(|k| k.errors == 0 && k.failed_tests == 0)
         })
     {
+        let _ = std::io::stderr().flush();
+        let message = stderr_text()
+            .map(|t| last_lines(&t, 20))
+            .filter(|t| !t.is_empty())
+            .map(|t| format!("sky {command} failed: {t}"))
+            .unwrap_or_else(|| {
+                format!("sky {command} failed; the human-readable report is on stderr")
+            });
         diagnostic(&Reported::plain(
             Severity::Error,
             project::diagnostics::Origin::Sky,
-            format!("sky {command} failed; the human-readable report is on stderr"),
+            message,
         ));
     }
     SINK.with(|s| {
@@ -141,6 +188,121 @@ pub fn run(command: &'static str, f: impl FnOnce() -> ExitCode) -> ExitCode {
         }
     });
     code
+}
+
+/// The last `n` non-blank lines of `text`, joined by newlines, with any
+/// terminal colour codes removed.
+fn last_lines(text: &str, n: usize) -> String {
+    let plain = strip_ansi(text);
+    let lines: Vec<&str> = plain
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let start = lines.len().saturating_sub(n);
+    lines[start..].join("\n")
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for d in chars.by_ref() {
+                if d.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A copy of everything written to file descriptors 1 and 2 while a json
+/// command runs (both point at stderr then). The bytes still reach the real
+/// stderr through a pump thread; the copy is what [`run`] reads when a
+/// failure produced no diagnostic. `None` when the pipe cannot be set up (the
+/// run then falls back to pointing at stderr) and on non-unix hosts.
+struct StderrCapture {
+    #[cfg(unix)]
+    saved: std::os::fd::OwnedFd,
+    buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    #[cfg(unix)]
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+impl StderrCapture {
+    #[cfg(unix)]
+    fn start() -> Option<Self> {
+        use std::io::Read;
+        use std::os::fd::{AsFd, AsRawFd};
+        let _ = std::io::stderr().flush();
+        let saved = std::io::stderr().as_fd().try_clone_to_owned().ok()?;
+        let (r, w) = nix::unistd::pipe().ok()?;
+        nix::unistd::dup2(w.as_raw_fd(), 2).ok()?;
+        if nix::unistd::dup2(w.as_raw_fd(), 1).is_err() {
+            let _ = nix::unistd::dup2(saved.as_raw_fd(), 2);
+            return None;
+        }
+        drop(w);
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let copy = buf.clone();
+        let mut real = std::fs::File::from(saved.try_clone().ok()?);
+        let (tx, done) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = std::fs::File::from(r);
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = reader.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                let _ = real.write_all(&chunk[..n]);
+                if let Ok(mut b) = copy.lock() {
+                    // Keep the tail only: a long build log is not the error.
+                    b.extend_from_slice(&chunk[..n]);
+                    let over = b.len().saturating_sub(64 * 1024);
+                    b.drain(..over);
+                }
+            }
+            let _ = tx.send(());
+        });
+        Some(StderrCapture { saved, buf, done })
+    }
+
+    #[cfg(not(unix))]
+    fn start() -> Option<Self> {
+        None
+    }
+
+    /// What the run has printed so far.
+    fn text(&self) -> String {
+        let _ = std::io::stderr().flush();
+        // Give the pump a moment to copy what was just written.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        self.buf
+            .lock()
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for StderrCapture {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        let _ = std::io::stderr().flush();
+        // Point 1 and 2 back at the real stderr; the pipe's last writer closes
+        // and the pump ends (bounded: a child still holding the pipe must not
+        // hang sky's exit).
+        let _ = nix::unistd::dup2(self.saved.as_raw_fd(), 2);
+        let _ = nix::unistd::dup2(self.saved.as_raw_fd(), 1);
+        let _ = self
+            .done
+            .recv_timeout(std::time::Duration::from_millis(500));
+    }
 }
 
 /// Point fd 1 at stderr and return a writer on a private duplicate of the
@@ -413,5 +575,73 @@ mod tests {
             line,
             r#"{"kind":"diagnostic","schema":1,"file":"src/Main.sky","range":{"start":{"line":6,"character":4},"end":{"line":6,"character":10}},"severity":"error","code":"E2001","message":"[main] type mismatch: `String` vs `Int`","source":"sky"}"#
         );
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+    impl Write for Shared {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn lines_of(buf: &Arc<Mutex<Vec<u8>>>) -> Vec<Value> {
+        String::from_utf8(buf.lock().unwrap().clone())
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("NDJSON"))
+            .collect()
+    }
+
+    /// F-16: a panic inside a json command still ends the stream with an
+    /// error diagnostic and a summary line with `ok: false`.
+    #[test]
+    fn a_panic_still_ends_the_stream_with_a_summary() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let code = run_with(
+            Box::new(Shared(buf.clone())),
+            "check",
+            || panic!("boom"),
+            &|| None,
+        );
+        assert_ne!(code, ExitCode::SUCCESS);
+        let lines = lines_of(&buf);
+        let last = lines.last().expect("a summary line");
+        assert_eq!(last["kind"], "summary");
+        assert_eq!(last["ok"], false);
+        assert_eq!(last["errors"], 1);
+        assert!(lines[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("internal compiler error"));
+        assert!(lines[0]["message"].as_str().unwrap().contains("boom"));
+    }
+
+    /// F-15: a failure with no diagnostic carries what the command printed
+    /// on stderr, not only a pointer to it.
+    #[test]
+    fn a_failure_without_a_diagnostic_carries_the_real_message() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let code = run_with(
+            Box::new(Shared(buf.clone())),
+            "check",
+            || ExitCode::FAILURE,
+            &|| Some("progress\n\u{1b}[31msky: no such file: src/Nope.sky\u{1b}[0m\n".to_string()),
+        );
+        assert_eq!(code, ExitCode::FAILURE);
+        let lines = lines_of(&buf);
+        let msg = lines[0]["message"].as_str().unwrap();
+        assert!(msg.contains("no such file: src/Nope.sky"), "{msg}");
+        assert!(!msg.contains('\u{1b}'), "no colour codes: {msg}");
+        assert_eq!(lines.last().unwrap()["ok"], false);
     }
 }
