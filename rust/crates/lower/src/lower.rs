@@ -5740,10 +5740,42 @@ impl<'a> Ctx<'a> {
             .iter()
             .map(|a| {
                 let e = self.lower_expr(*a, &GoTy::Any);
+                let e = Self::kernel_to_kernel(e);
                 self.widen(e)
             })
             .collect();
         self.kernel_call_lowered(go, largs, actual)
+    }
+
+    /// A kernel's result passed straight on as another kernel's argument needs
+    /// no narrowing: the argument slot is `any` (every runtime kernel is
+    /// `any`-based), so `rt.K2(any(rt.Coerce[T](rt.K1(…))))` narrows a value
+    /// only to widen it again. Drop the R5 narrowing and hand `K2` exactly what
+    /// `K1` returned, which is the representation every kernel consumes
+    /// (`Server.html … |> Server.addCookie c` passes the runtime's own
+    /// `SkyResponse` on, instead of converting it to the emitted
+    /// `Sky_Http_Server_Response_R` and back).
+    ///
+    /// Doc 14: origin R5 (`kernel_call_lowered`, the kernel return), lever §5.3
+    /// generalised to a kernel-to-kernel edge, floor check §1: the slot is `any`,
+    /// so no narrowing is required at all. Only an R5 narrowing of a DIRECT
+    /// kernel call is dropped; a narrowing of any other value (a user def, a
+    /// literal, an FFI return) is kept.
+    fn kernel_to_kernel(e: GoExpr) -> GoExpr {
+        match e.kind {
+            GoExprKind::Coerce {
+                inner,
+                from: GoTy::Any,
+                reason: CoerceReason::FfiReturn,
+                ..
+            } if matches!(&inner.kind, GoExprKind::Call(f, _)
+                if matches!(&f.kind, GoExprKind::Ident(n) if n.starts_with("rt.")))
+                && inner.ty == GoTy::Any =>
+            {
+                *inner
+            }
+            kind => GoExpr { kind, ty: e.ty },
+        }
     }
 
     /// Build the reflect-free `rt.SpaFns{…}` client dispatch table from a
