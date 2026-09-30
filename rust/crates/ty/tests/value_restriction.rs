@@ -19,8 +19,11 @@
 //! variables in covariant positions (`List a`, `Cmd msg`, `Element msg`).
 //! Stdlib types are invariant unless allowlisted (`crate::variance`); user
 //! types get their variance by fixpoint. `any` in a user signature is filled
-//! from the body. Every rejection is `[E2012]`; a misuse of a filled `any` is an
-//! ordinary `[E2001]`.
+//! from the body. A variable the rule does not generalise becomes WEAK (one
+//! fixed opaque type, as OCaml keeps a `_weak` variable): a use that needs a
+//! specific type there is rejected `[E2012]`, a use that does not care stays
+//! legal. A misuse of a filled `any` is an ordinary `[E2001]` with a migration
+//! note.
 
 use hir::SourceDb;
 use std::path::{Path, PathBuf};
@@ -89,6 +92,7 @@ const HDR: &str = "module Main exposing (main)\n\
                    import Std.Cache as Cache\n\
                    import Std.Cmd as Cmd\n\
                    import Std.Ui as Ui\n\
+                   import Std.App as App\n\
                    import Std.Log exposing (println)\n\n";
 
 fn program(body: &str) -> String {
@@ -187,7 +191,17 @@ fn unannotated_ref_caf_over_a_later_sibling_is_rejected() {
 
 
 initial =
-    []"#,
+    []
+
+
+useIt : Task Error ()
+useIt =
+    case shared of
+        Ok r ->
+            Sync.set [ 1 ] r
+
+        Err e ->
+            Task.fail e"#,
         "E2012",
     );
 }
@@ -198,7 +212,17 @@ fn polymorphic_cache_caf_is_rejected() {
     assert_rejects(
         r#"cache : Result Error (Cache.Cache String v)
 cache =
-    Task.run (Cache.new Cache.defaultCfg)"#,
+    Task.run (Cache.new Cache.defaultCfg)
+
+
+useIt : Task Error ()
+useIt =
+    case cache of
+        Ok c ->
+            Cache.put c "k" 1
+
+        Err e ->
+            Task.fail e"#,
         "E2012",
     );
 }
@@ -219,7 +243,12 @@ makePrinter _ _ =
 
 printer : a -> Printer a
 printer =
-    makePrinter True"#,
+    makePrinter True
+
+
+forInts : Printer Int
+forInts =
+    printer 5"#,
         "E2012",
     );
 }
@@ -234,8 +263,51 @@ fn user_contravariant_type_caf_is_rejected() {
 
 always : Pred a
 always =
-    identity (Pred (\_ -> True))"#,
+    identity (Pred (\_ -> True))
+
+
+check : Bool
+check =
+    case always of
+        Pred f ->
+            f 1"#,
         "E2012",
+    );
+}
+
+/// A weak variable no use fixes stays legal: the value is only ever used
+/// opaquely (the `appDef` shape: `App.run appDef` with an unset `key`).
+#[test]
+fn weak_variable_used_opaquely_is_accepted() {
+    assert_accepts(
+        r#"pending : Result Error (Sync.Ref (List a))
+pending =
+    Task.run (Sync.newRef [])
+
+
+isReady : Bool
+isReady =
+    case pending of
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+type Handlers k
+    = Handlers (k -> Int)
+
+
+handlers =
+    identity (Handlers (\_ -> 1))
+
+
+count : Int
+count =
+    case handlers of
+        Handlers _ ->
+            1"#,
     );
 }
 
@@ -246,7 +318,17 @@ fn concrete_ref_caf_is_accepted() {
     assert_accepts(
         r#"shared : Result Error (Sync.Ref (List Int))
 shared =
-    Task.run (Sync.newRef [])"#,
+    Task.run (Sync.newRef [])
+
+
+useIt : Task Error ()
+useIt =
+    case shared of
+        Ok r ->
+            Sync.set [ 1 ] r
+
+        Err e ->
+            Task.fail e"#,
     );
 }
 
@@ -335,7 +417,17 @@ fn any_ref_caf_left_open_is_rejected() {
     assert_rejects(
         r#"shared : Result Error (Sync.Ref (List any))
 shared =
-    Task.run (Sync.newRef [])"#,
+    Task.run (Sync.newRef [])
+
+
+useIt : Task Error ()
+useIt =
+    case shared of
+        Ok r ->
+            Sync.set [ 1 ] r
+
+        Err e ->
+            Task.fail e"#,
         "E2012",
     );
 }
@@ -446,7 +538,17 @@ fn diagnostic_names_the_variable_and_suggests_a_concrete_type() {
     let errs = errors(&program(
         r#"shared : Result Error (Sync.Ref (List a))
 shared =
-    Task.run (Sync.newRef [])"#,
+    Task.run (Sync.newRef [])
+
+
+useIt : Task Error ()
+useIt =
+    case shared of
+        Ok r ->
+            Sync.set [ 1 ] r
+
+        Err e ->
+            Task.fail e"#,
     ));
     let e = errs
         .iter()
@@ -473,7 +575,17 @@ fn diagnostic_for_an_open_any_hole_links_the_any_migration_note() {
     let errs = errors(&program(
         r#"shared : Result Error (Sync.Ref (List any))
 shared =
-    Task.run (Sync.newRef [])"#,
+    Task.run (Sync.newRef [])
+
+
+useIt : Task Error ()
+useIt =
+    case shared of
+        Ok r ->
+            Sync.set [ 1 ] r
+
+        Err e ->
+            Task.fail e"#,
     ));
     let e = errs
         .iter()
@@ -549,7 +661,33 @@ holder : Holder a
 holder =
     { cell = Task.run (Sync.newRef [])
     , label = "x"
-    }"#,
+    }
+
+
+useIt : Task Error ()
+useIt =
+    case holder.cell of
+        Ok r ->
+            Sync.set [ 1 ] r
+
+        Err e ->
+            Task.fail e"#,
         "E2012",
+    );
+}
+
+/// A route list that leaves `page` open (the API-route shape) joined with the
+/// page routes: `Std.App.Route` is covariant, so `page` stays polymorphic.
+#[test]
+fn open_route_list_joined_with_page_routes_is_accepted() {
+    assert_accepts(
+        r#"noRoutes : List (App.Route page)
+noRoutes =
+    List.filter (\_ -> True) []
+
+
+both : List (App.Route Int)
+both =
+    List.map identity [ App.route "/" 1 ] ++ noRoutes"#,
     );
 }

@@ -106,6 +106,10 @@ impl Variance {
 /// * `Std.Ui.Element`, `Std.Ui.Attribute`: `msg` reaches the representation
 ///   only through `AttrEvent any` / `Raw any`, so it is phantom there.
 /// * `Std.Ui.Canvas.Shape`, `Std.Ui.Canvas.Attr`: the same shape as `Std.Ui`.
+/// * `Std.App.Route`: plain data, `RouteStatic String page`,
+///   `RouteParam String (String -> page)` and `RouteApi String (Request -> …)`;
+///   `page` occurs only covariantly. (Found by the S3a measurement: an API
+///   route list leaves `page` open and is joined with the page routes.)
 ///
 /// Everything else in the stdlib is INVARIANT, on purpose: `Codec`, `Cache`,
 /// `Table`, `Job`, `Store`, `WorkflowDef`, `AppConfig`, the `Std.Sync` types,
@@ -128,6 +132,15 @@ pub const COVARIANT_STDLIB: &[&str] = &[
     "Std.Ui.Attribute",
     "Std.Ui.Canvas.Shape",
     "Std.Ui.Canvas.Attr",
+    "Std.App.Route",
+    // Kernel-implicit BARE spellings (`hir::KERNEL_IMPLICIT_TYPES`): a user
+    // annotation `App.Route page` or `Attribute msg` can resolve to the bare
+    // name. Every stdlib type with that name and a parameter is listed above
+    // (`Std.App.Route`; `Std.Ui.Attribute`, `Std.Html.Attributes.Attribute`),
+    // so the bare name is covariant too. `Store`, `Handler`, `Session`, … stay
+    // invariant.
+    "Route",
+    "Attribute",
 ];
 
 /// Is `module` part of the stdlib (a kernel pseudo-module, `Sky.*` or `Std.*`)?
@@ -370,6 +383,9 @@ pub struct Violation {
     /// The variable was minted by inference (an `any` hole or an unannotated
     /// def), not written by the user.
     pub from_inference: bool,
+    /// The variable as it is spelt in the checked type (before display
+    /// renaming): what pass 6b substitutes.
+    pub raw: String,
 }
 
 /// The type variables of `t` that the relaxed value restriction forbids a CAF
@@ -415,6 +431,7 @@ pub fn violations(
             var: display,
             reason,
             from_inference: is_internal_var(v.as_str()),
+            raw: v.as_str().to_string(),
         });
     }
     (shown, out)
@@ -535,4 +552,96 @@ mod tests {
         let rec = Ty::Record(vec![], Some(Name::new("a")));
         assert_eq!(t.occurrence(&a, &rec, Variance::Co), Variance::Co);
     }
+}
+
+/// The name prefix of a WEAK variable's opaque type (C-2). Pass 6b replaces a
+/// variable the value restriction does not generalise, in the scheme callers
+/// see, by `Ty::App("<WEAK_PREFIX><def id>_<var>")`: a nominal type with no
+/// constructors that unifies only with itself. No dots, so the printer shows
+/// it whole and [`crate::infer`] can find it in a mismatch message.
+pub const WEAK_PREFIX: &str = "SkyWeak_";
+
+/// A weak variable, for the `[E2012]` message at a use that fixes it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct WeakVar {
+    /// The CAF that owns it.
+    pub def: String,
+    /// The variable as the diagnostic shows it.
+    pub var: String,
+    /// Where it occurs (`inside `Ref``).
+    pub reason: String,
+    /// The fix sentence(s), ending with the migration link.
+    pub fix: String,
+}
+
+/// The fix sentences shared by the definition-site and use-site `[E2012]`
+/// messages: a concrete type first, then the alternative, then the link.
+pub struct VrInfo {
+    pub fix: String,
+}
+
+/// Build the [`VrInfo`] for the CAF `name` whose (display-renamed) type is
+/// `shown` and whose checked type is `ty`.
+pub fn vr_info(
+    name: &str,
+    shown: &Ty,
+    ty: &Ty,
+    viols: &[Violation],
+    annotated_any: bool,
+) -> VrInfo {
+    let bad: Vec<String> = viols.iter().map(|v| v.var.clone()).collect();
+    let concrete = concretise(shown, &bad, &Ty::app("Int", vec![])).render();
+    let from_any = annotated_any && viols.iter().any(|v| v.from_inference);
+    let (why_any, anchor) = if from_any {
+        (
+            " In v0.27.0 an `any` in a signature is filled from the body, and this body \
+             leaves it open, so write the type instead of `any`.",
+            "any-in-annotations",
+        )
+    } else {
+        ("", "value-restriction")
+    };
+    let other = if matches!(ty, Ty::Fun(..)) {
+        format!(
+            " Or give `{name}` its parameter, so the body is a function and not a value \
+             computed once: `{name} x = … x`."
+        )
+    } else {
+        " Or, if every use really needs its own value, make it a function of `()`; each \
+         call then builds a new value."
+            .to_string()
+    };
+    VrInfo {
+        fix: format!(
+            "{why_any} Fix: give it a concrete type, for example `{name} : {concrete}`.{other} \
+             See docs/migration/v0.27.md#{anchor}"
+        ),
+    }
+}
+
+/// `t` with each violating variable replaced by its weak opaque type, and the
+/// [`WeakVar`] records for them. `def_key` makes the names unique per def.
+pub fn weaken(
+    t: &Ty,
+    def_key: &str,
+    def_name: &str,
+    viols: &[Violation],
+    info: &VrInfo,
+) -> (Ty, Vec<(String, WeakVar)>) {
+    let mut out = t.clone();
+    let mut weak = Vec::new();
+    for v in viols {
+        let wname = format!("{WEAK_PREFIX}{def_key}_{}", v.raw);
+        out = concretise(&out, std::slice::from_ref(&v.raw), &Ty::app(&wname, vec![]));
+        weak.push((
+            wname,
+            WeakVar {
+                def: def_name.to_string(),
+                var: v.var.clone(),
+                reason: v.reason.clone(),
+                fix: info.fix.clone(),
+            },
+        ));
+    }
+    (out, weak)
 }

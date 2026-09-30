@@ -130,6 +130,10 @@ pub struct Infer<'a> {
     /// Every instantiation of a `poly_locals` binder, in order. Read by
     /// [`Infer::collapse_let_poly`] at the end of the def.
     poly_insts: Vec<(LocalId, TyVarId)>,
+    /// The value-restriction verdict of the last CAF checked (C-2): its
+    /// checked type, the variables it may not generalise, and the fix text.
+    /// Read by pass 6b (`World::apply_value_restriction`).
+    pub last_vr: Option<(Ty, Vec<crate::variance::Violation>, crate::variance::VrInfo)>,
 }
 
 impl<'a> Infer<'a> {
@@ -150,6 +154,7 @@ impl<'a> Infer<'a> {
             ffi_schemes: HashMap::new(),
             poly_locals: HashMap::new(),
             poly_insts: Vec::new(),
+            last_vr: None,
         }
     }
 
@@ -828,9 +833,26 @@ impl<'a> Infer<'a> {
     /// (), persist = \_ _ -> … }` is expansive only through `Task.succeed ()`,
     /// whose type mentions no `model`, so `DurableWiring model` stays
     /// polymorphic. The sub-expression types come from this run's recorded
-    /// per-expression table (the check path records it); without it every
-    /// variable counts as reached, which is the plain rule.
+    /// per-expression table; without it every variable counts as reached,
+    /// which is the plain rule.
+    ///
+    /// What happens to a variable that may not be generalised:
+    ///
+    /// * **App and dependency code: it becomes a WEAK variable.** Pass 6b
+    ///   (`World::apply_value_restriction`) replaces it, in the scheme callers
+    ///   see, by an opaque type of its own (`variance::WEAK_PREFIX`), exactly as OCaml
+    ///   keeps a `'_weak` variable. A use that needs a specific type there
+    ///   (`Sync.set [ 1, 2, 3 ] r`) is rejected `[E2012]` at that use; a use
+    ///   that does not care (`App.run appDef`, whose `key` no builder set)
+    ///   stays legal. This is the whole soundness property (no two uses can
+    ///   pick two types) with no false rejection of a value used opaquely.
+    /// * **Stdlib code: the definition itself is rejected `[E2012]`.** The
+    ///   stdlib is trusted, so its CAFs must be clean at the definition (the
+    ///   stdlib annotation gate checks every stdlib module).
+    ///
+    /// The result is left in [`Infer::last_vr`] for pass 6b to read.
     fn check_value_restriction(&mut self, body: &Body, ty: &Ty, annotated_any: bool) {
+        self.last_vr = None;
         let Some(root) = body.root else { return };
         let Some(def) = self.self_def else { return };
         if !body.params.is_empty() || is_syntactic_value(body, root) {
@@ -860,54 +882,58 @@ impl<'a> Infer<'a> {
         if viols.is_empty() {
             return;
         }
-        let name = self
-            .db
-            .def_loc(def)
-            .map(|l| l.name.as_str().to_string())
-            .unwrap_or_else(|| "this definition".to_string());
-        let shown_ty = shown.render();
-        let vars: Vec<String> = viols
-            .iter()
-            .map(|v| format!("`{}` ({})", v.var, v.reason))
-            .collect();
-        let bad: Vec<String> = viols.iter().map(|v| v.var.clone()).collect();
-        let concrete = crate::variance::concretise(&shown, &bad, &Ty::app("Int", vec![])).render();
-        let from_any = annotated_any && viols.iter().any(|v| v.from_inference);
-        let (why_any, anchor) = if from_any {
-            (
-                " In v0.27.0 an `any` in a signature is filled from the body, and this \
-                 body leaves it open, so write the type instead of `any`.",
-                "any-in-annotations",
-            )
-        } else {
-            ("", "value-restriction")
+        let Some(loc) = self.db.def_loc(def) else {
+            return;
         };
-        let other = if matches!(ty, Ty::Fun(..)) {
-            format!(
-                " Or give `{name}` its parameter, so the body is a function and not a \
-                 value computed once: `{name} x = … x`."
-            )
-        } else {
-            " Or, if every use really needs its own value, make it a function of `()`; \
-             each call then builds a new value."
-                .to_string()
-        };
-        self.errors.push(TypeError {
-            message: format!(
-                "`{name}` has no parameters, so its body runs once and every use shares \
-                 that one value. Since v0.27.0 such a value may be polymorphic only in \
-                 covariant positions (the value restriction: `List a`, `Cmd msg` and \
-                 `Html msg` are fine), and its type `{shown_ty}` leaves {} open, so two \
-                 uses could store and read that one value at two different types.{why_any} \
-                 Fix: give it a concrete type, for example `{name} : {concrete}`.{other} \
-                 See docs/migration/v0.27.md#{anchor}",
-                vars.join(", ")
-            ),
-            span: body.expr_span(root),
-            code: "E2012",
-        });
+        let stdlib = crate::variance::is_stdlib_module(self.db.module_name(loc.module));
+        let name = loc.name.as_str().to_string();
+        let info = crate::variance::vr_info(&name, &shown, ty, &viols, annotated_any);
+        if stdlib {
+            let vars: Vec<String> = viols
+                .iter()
+                .map(|v| format!("`{}` ({})", v.var, v.reason))
+                .collect();
+            self.errors.push(TypeError {
+                message: format!(
+                    "`{name}` has no parameters, so its body runs once and every use shares \
+                     that one value. Since v0.27.0 such a value may be polymorphic only in \
+                     covariant positions (the value restriction: `List a`, `Cmd msg` and \
+                     `Html msg` are fine), and its type `{}` leaves {} open, so two uses \
+                     could store and read that one value at two different types.{}",
+                    shown.render(),
+                    vars.join(", "),
+                    info.fix
+                ),
+                span: body.expr_span(root),
+                code: "E2012",
+            });
+        }
+        self.last_vr = Some((ty.clone(), viols, info));
     }
 
+    /// If `message` names a weak variable (`variance::WEAK_PREFIX`), the `[E2012]`
+    /// message for a use that fixed it to a specific type.
+    fn weak_use_message(&self, message: &str) -> Option<String> {
+        let start = message.find(crate::variance::WEAK_PREFIX)?;
+        let tail = &message[start..];
+        let end = tail
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(tail.len());
+        let weak = &tail[..end];
+        let w = self.world.weak_vars.get(weak)?;
+        let shown = message.replace(weak, &format!("<the one type of `{}`>", w.var));
+        Some(format!(
+            "`{def}` has no parameters, so its body runs once and every use shares that \
+             one value. Since v0.27.0 its type variable `{var}` ({reason}) is therefore \
+             one fixed type, not chosen by each use (the value restriction: only \
+             covariant positions such as `List a`, `Cmd msg` and `Html msg` stay \
+             polymorphic), and this use needs a specific type there ({shown}).{fix}",
+            def = w.def,
+            var = w.var,
+            reason = w.reason,
+            fix = w.fix,
+        ))
+    }
     /// D-ANY migration note. When `e` (or the callee `e` applies) is a def
     /// whose signature had `any` filled from its body (pass 6, check path),
     /// the sentence to append to a clash there: before v0.27.0 that `any` was
@@ -952,6 +978,16 @@ impl<'a> Infer<'a> {
 
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
         if let Err(m) = self.uf.unify(a, b) {
+            // A clash on a weak variable (C-2) is the value restriction at a
+            // use: say so, with the migration fix.
+            if let Some(message) = self.weak_use_message(&m.message) {
+                self.errors.push(TypeError {
+                    message,
+                    span: self.cur_span,
+                    code: "E2012",
+                });
+                return;
+            }
             self.errors.push(TypeError {
                 message: m.message,
                 span: self.cur_span,

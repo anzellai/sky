@@ -64,15 +64,21 @@ pub struct World {
     /// row-polymorphism became sound) so cross-module record
     /// misuse is caught. Empty until pass 5 populates it.
     pub app_check_sigs: HashMap<DefId, Scheme>,
-    /// CHECK-ONLY pins of a wildcard-`any` RESULT to the body-inferred concrete
-    /// type (D1). For an ANNOTATED, non-polymorphic def whose declared result
-    /// contains `any` and whose body returns a fully-monomorphic type
-    /// (`f : Int -> any; f x = x` → `Int -> Int`), this pins the result so callers
-    /// can't absorb it at an arbitrary type (`List.length (f 5)` rejects, matching
-    /// the oracle). Same isolation as `check_sigs`/`app_check_sigs`: consulted only
-    /// at `!use_inferred`, never by the lowerer → Go emission byte-identical.
-    /// Populated by pass 6; empty on the lowerer path.
+    /// CHECK-ONLY override of an ANNOTATED def's scheme, as callers see it
+    /// (v0.27.0). Two writers:
+    /// * pass 6 (D-ANY): the signature with every `any` filled from the body
+    ///   (`coerce : a -> any; coerce x = x` → `a -> a`), so `any` is no longer
+    ///   a cast;
+    /// * pass 6b (C-2): an annotated CAF whose variables the value restriction
+    ///   does not generalise, with those variables made weak.
+    ///
+    /// Same isolation as `check_sigs`/`app_check_sigs`: consulted only at
+    /// `!use_inferred`, never by the lowerer → Go emission byte-identical.
+    /// Empty on the lowerer path.
     pub any_result_check_sigs: HashMap<DefId, Scheme>,
+    /// Weak variables (C-2, pass 6b), keyed by their opaque type name
+    /// (`variance::WEAK_PREFIX`): what the `[E2012]` message at a use names.
+    pub weak_vars: HashMap<String, crate::variance::WeakVar>,
     /// LOWERING-PATH ONLY: full closed-record result types for zero-param,
     /// unannotated top-level defs (D2). Consulted ONLY in the `Expr::Update` arm
     /// on the `use_inferred` (codegen region-type) path, to close the row var when
@@ -262,6 +268,9 @@ impl World {
 
         // ---- pass 6: wildcard-`any` RESULT pins (D1, check-only) ----
         self.infer_any_result_check_sigs(db);
+
+        // ---- pass 6b: the value restriction for app CAFs (C-2, check-only) ----
+        self.apply_value_restriction(db);
 
         // ---- pass 7: full record result types (D2, lowering-path only) ----
         self.infer_record_result_sigs(db);
@@ -530,6 +539,7 @@ impl World {
             check_kernel_sigs: HashMap::new(),
             app_check_sigs: HashMap::new(),
             any_result_check_sigs: HashMap::new(),
+            weak_vars: HashMap::new(),
             record_result_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
@@ -928,6 +938,73 @@ impl World {
             }
             if !changed {
                 break;
+            }
+        }
+    }
+
+    /// Pass 6b (see `build`). C-2 — the relaxed value restriction for the
+    /// top-level CAFs of APP and dependency modules (check-only).
+    ///
+    /// For every zero-parameter def whose body is expansive, run the checker's
+    /// own inference (`infer_def_against` for an annotated def, `infer_def`
+    /// otherwise), which leaves the value-restriction verdict in
+    /// `Infer::last_vr`. Each variable it may not generalise becomes WEAK: the
+    /// scheme callers see (`any_result_check_sigs` for an annotated def,
+    /// `app_check_sigs` otherwise) carries an opaque type of its own there, so
+    /// a use that needs a specific type is rejected `[E2012]` at that use and a
+    /// use that does not care stays legal (`main = App.run appDef`, whose `key`
+    /// no builder set). Stdlib CAFs are rejected at the definition instead
+    /// (see `Infer::check_value_restriction`).
+    fn apply_value_restriction(&mut self, db: &dyn SkyDb) {
+        use crate::infer::Infer;
+        for m in db.module_ids() {
+            let mname = db.module_name(m).to_string();
+            if crate::variance::is_stdlib_module(&mname) {
+                continue;
+            }
+            let resolved = db.resolve(m);
+            let names: HashMap<DefId, String> = resolved
+                .top_defs
+                .iter()
+                .map(|td| (td.def, td.name.as_str().to_string()))
+                .collect();
+            for (def, body) in &resolved.bodies {
+                let Some(name) = names.get(def) else {
+                    continue;
+                };
+                let Some(root) = body.root else {
+                    continue;
+                };
+                if !body.params.is_empty() || crate::infer::is_syntactic_value(body, root) {
+                    continue;
+                }
+                let annotated = self.value_sigs.get(def).cloned();
+                let verdict = {
+                    let mut infer = Infer::new(self, db)
+                        .with_self_def(Some(*def))
+                        .with_record_exprs(true);
+                    match &annotated {
+                        Some(s) => infer.infer_def_against(body, s),
+                        None => {
+                            infer.infer_def(body);
+                        }
+                    }
+                    infer.last_vr.take()
+                };
+                let Some((ty, viols, info)) = verdict else {
+                    continue;
+                };
+                let key = format!("{}_{}", mname.replace('.', "_"), name);
+                let (weak_ty, recs) = crate::variance::weaken(&ty, &key, name, &viols, &info);
+                let scheme = Scheme::generalize(weak_ty);
+                if annotated.is_some() {
+                    self.any_result_check_sigs.insert(*def, scheme);
+                } else {
+                    self.app_check_sigs.insert(*def, scheme);
+                }
+                for (k, w) in recs {
+                    self.weak_vars.insert(k, w);
+                }
             }
         }
     }
