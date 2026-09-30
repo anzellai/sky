@@ -373,7 +373,7 @@ fn verify_one(
     // it.
     if let MutationKind::ReplaceOnce { path, .. } = m.kind {
         if path.ends_with(".rs") {
-            if let Err(e) = rebuild_xtask(&opts.repo_root, budget) {
+            if let Err(e) = rebuild_xtask(&opts.repo_root, &opts.exe, budget) {
                 return FalsifyReport {
                     gate: gate.name,
                     mutation: m.id,
@@ -469,7 +469,7 @@ fn verify_one(
         if let Some((p, _)) = &restore_target {
             set_mtime(p, std::time::SystemTime::now());
         }
-        if let Err(e) = rebuild_xtask(&opts.repo_root, budget) {
+        if let Err(e) = rebuild_xtask(&opts.repo_root, &opts.exe, budget) {
             eprintln!(
                 "harness: WARNING — could not rebuild after reverting {}: {e}\n\
                  The binary may still contain the mutation. Rebuild before trusting \
@@ -502,22 +502,42 @@ fn set_mtime(path: &Path, mt: std::time::SystemTime) {
     }
 }
 
+/// The cargo target directory that `exe` was built into: the parent of its
+/// `release/` directory. `None` when `exe` does not sit in a `release/`
+/// directory, so no `cargo build --release` can be pointed at it.
+fn cargo_target_dir_of(exe: &Path) -> Option<PathBuf> {
+    let release = exe.parent()?;
+    if release.file_name()? != "release" {
+        return None;
+    }
+    release.parent().map(Path::to_path_buf)
+}
+
 /// Rebuild the `xtask` binary in place, bounded.
 ///
 /// Used when a mutation edits Rust source: the child re-execs the binary at
-/// `opts.exe`, so the mutation only exists once it has been compiled into that
+/// `exe`, so the mutation only exists once it has been compiled into that
 /// path.
-fn rebuild_xtask(root: &Path, budget: Duration) -> Result<(), String> {
+fn rebuild_xtask(root: &Path, exe: &Path, budget: Duration) -> Result<(), String> {
     use std::process::{Command, Stdio};
 
+    // Build into the target directory `exe` lives in, whatever it is called.
+    // Neither an inherited CARGO_TARGET_DIR nor the default `rust/target` is
+    // right in general: a harness started from `rust/isolated-target` that
+    // rebuilt into `rust/target` re-ran its own pre-mutation image, and the
+    // gate came back VACUOUS although its assertion is live. When the
+    // directory cannot be derived, say so: the mutation cannot reach the binary.
+    let Some(target_dir) = cargo_target_dir_of(exe) else {
+        return Err(format!(
+            "cannot rebuild the running xtask at {}: it is not in a cargo `release` \
+             directory, so a Rust-source mutation cannot be compiled into it",
+            exe.display()
+        ));
+    };
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release", "-p", "xtask"])
         .current_dir(root.join("rust"))
-        // The harness is itself usually invoked under a wrapping CARGO_TARGET_DIR;
-        // inheriting it here would build into a different tree than the one
-        // `opts.exe` points at, and the mutation would silently not take effect
-        // — the exact failure this function exists to remove.
-        .env_remove("CARGO_TARGET_DIR")
+        .env("CARGO_TARGET_DIR", &target_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -564,6 +584,33 @@ fn rebuild_xtask(root: &Path, budget: Duration) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The rebuild targets the directory the RUNNING binary lives in. A harness
+    // run from `rust/isolated-target` once rebuilt into `rust/target`, re-ran
+    // its own unmutated image, and reported a live gate as VACUOUS.
+    #[test]
+    fn rebuild_targets_the_running_binarys_own_target_dir() {
+        assert_eq!(
+            cargo_target_dir_of(Path::new("/r/rust/isolated-target/release/xtask")),
+            Some(PathBuf::from("/r/rust/isolated-target"))
+        );
+        assert_eq!(
+            cargo_target_dir_of(Path::new("/r/rust/target/release/xtask")),
+            Some(PathBuf::from("/r/rust/target"))
+        );
+        assert_eq!(
+            cargo_target_dir_of(Path::new("/r/rust/target/debug/xtask")),
+            None
+        );
+        assert_eq!(cargo_target_dir_of(Path::new("xtask")), None);
+        let err = rebuild_xtask(
+            Path::new("/nonexistent"),
+            Path::new("/r/target/debug/xtask"),
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(err.contains("not in a cargo `release` directory"), "{err}");
+    }
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(

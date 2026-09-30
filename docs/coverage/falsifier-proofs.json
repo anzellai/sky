@@ -74,14 +74,14 @@
     },
     "canary": {
       "inputs_files": 2,
-      "inputs_hash": "5a67625bf0336de6b775019c6e1322d727c6cf33",
+      "inputs_hash": "3eed11f511ea0709448b8a2393cf4209683f05a1",
       "mutation": "canary.noop",
       "mutations": [
         "canary.noop"
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1790749438
+      "proven_at_unix": 1790777341
     },
     "cli-verbs": {
       "mutation": "cli-verbs.break-an-expectation",
@@ -185,10 +185,15 @@
       "proven_at_unix": 1790272664
     },
     "kernel-members": {
+      "inputs_files": 117,
+      "inputs_hash": "a0c78706c336b692089438024844aa7feb8ddcca",
       "mutation": "kernel-members.drop-a-real-member",
+      "mutations": [
+        "kernel-members.drop-a-real-member"
+      ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790272664
+      "proven_at_unix": 1790777341
     },
     "live-time-every-mutex-survives-a-panic": {
       "mutation": "time-every.unlock-only-on-the-happy-path",
