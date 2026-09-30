@@ -225,3 +225,31 @@ func TestSpaSignOutRecordExpiresWithItsToken(t *testing.T) {
 		t.Fatalf("the sweep must drop expired records, %d left", n)
 	}
 }
+
+// A store that could not be opened is tried again after spaRevRetryAfter, so a
+// store that was down at first use is picked up once it is back.
+func TestSpaRevocationStoreRetriesAFailedOpen(t *testing.T) {
+	restore := setSpaRevocationStoreForTest(nil, errors.New("store down"))
+	defer restore()
+	if _, err := spaRevocationStore(); err == nil {
+		t.Fatal("the injected failure must be returned")
+	}
+	spaRevMu.Lock()
+	spaRev.retryAt = time.Now().Add(time.Hour)
+	spaRevMu.Unlock()
+	if _, err := spaRevocationStore(); err == nil {
+		t.Fatal("before retryAt the failure must stand (fail closed)")
+	}
+	// Past retryAt the open runs again; with no store configured in the test
+	// environment it resolves the data-dir sqlite file (SKY_DATA_DIR).
+	t.Setenv("SKY_DATA_DIR", t.TempDir())
+	t.Setenv("SKY_LIVE_STORE", "")
+	spaRevMu.Lock()
+	spaRev.retryAt = time.Now().Add(-time.Second)
+	spaRevMu.Unlock()
+	got, err := spaRevocationStore()
+	if err != nil || got == nil {
+		t.Fatalf("past retryAt the store must be opened again: %v", err)
+	}
+	_ = got.Close()
+}

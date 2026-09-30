@@ -1390,6 +1390,7 @@ store is configured, the backend logs a warning when it first opens the store:
 a sign-out would then be refused only on the replica that served it. A store the
 operator configured that cannot be opened in production refuses every signed
 session (and logs why), rather than fall back to a per-process memory store.
+The backend tries to open it again every 30 seconds.
 
 **Cost.** One store read per verified request (a primary-key lookup on sqlite
 or postgres, a `GET` on redis). A request with no `sky_sid` cookie reads

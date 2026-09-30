@@ -70,20 +70,33 @@ type spaRevState struct {
 	opened bool
 	store  SessionStore
 	err    error
+	// retryAt: when err is set by a failed open, the next open attempt is made
+	// after this time, so a store that was down at first use is picked up once
+	// it is back (zero: never retry, the test helper's injected error).
+	retryAt time.Time
 }
+
+// spaRevRetryAfter is how long a failed store open is kept before the next
+// attempt. Until then every signed session is refused (fail closed).
+const spaRevRetryAfter = 30 * time.Second
 
 var (
 	spaRevMu sync.Mutex
 	spaRev   spaRevState
 )
 
-// spaRevocationStore returns the sign-out record store, opening it once.
+// spaRevocationStore returns the sign-out record store, opening it on first
+// use (and again, spaRevRetryAfter after a failed open).
 func spaRevocationStore() (SessionStore, error) {
 	spaRevMu.Lock()
 	defer spaRevMu.Unlock()
-	if !spaRev.opened {
-		spaRev.store, spaRev.err = openSpaRevocationStore()
-		spaRev.opened = true
+	retry := spaRev.err != nil && !spaRev.retryAt.IsZero() && time.Now().After(spaRev.retryAt)
+	if !spaRev.opened || retry {
+		st, err := openSpaRevocationStore()
+		spaRev = spaRevState{opened: true, store: st, err: err}
+		if err != nil {
+			spaRev.retryAt = time.Now().Add(spaRevRetryAfter)
+		}
 	}
 	return spaRev.store, spaRev.err
 }
@@ -134,7 +147,7 @@ func openSpaRevocationStore() (SessionStore, error) {
 		// make a sign-out on one replica invisible to the others, so refuse
 		// every signed session instead: loud and safe.
 		_ = st.Close()
-		log.Printf("[sky.spa] ERROR: the configured session store cannot record sign-outs: %v. Every signed session is refused until the store is fixed.", refusal)
+		log.Printf("[sky.spa] ERROR: the configured session store cannot record sign-outs: %v. Every signed session is refused until the store is reachable (next attempt in %s).", refusal, spaRevRetryAfter)
 		return nil, refusal
 	}
 	RegisterResourceCloser("spa.signOutRecords", func() {
