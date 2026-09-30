@@ -7,10 +7,19 @@ cookies, and the `/_rpc` origin guard. An earlier run on 2026-09-28 used an
 older build and kept its evidence only in a scratch directory. This run
 replaces it.
 
-**Verdict: NOT clean.** The run found one Sky regression that breaks a real
-shop flow (finding 1). The guard, cookie and console checks pass.
+**Run 1 (`afd32383`): NOT clean.** It found one Sky regression that breaks a
+real shop flow (finding 1). The guard, cookie and console checks pass.
 
-## What was measured
+**Run 2 (`68052886`, see [Run 2](#run-2-68052886-the-fixed-head)): clean.**
+Finding 1 is fixed in Sky, and findings 4 and 5 are fixed in sky-lang.org.
+Every check below passes in Chrome and WebKit.
+
+## Run 1 (`afd32383`)
+
+The files for this run are at the top of
+[`real-apps-behind-caddy/`](real-apps-behind-caddy/).
+
+### What was measured
 
 | Item | Value |
 |---|---|
@@ -28,7 +37,7 @@ The apps ran from scratch copies of their working trees (tracked and
 untracked files, no ignored files, no production env files). No app
 repository was changed. No deploy, remote host or third-party OAuth was used.
 
-## Topology
+### Topology
 
 Each app runs as production runs it: the Sky.Spa split backend binary from
 `.skyapp/web-app/.split/backend`, with `../frontend/dist` beside it, behind
@@ -53,7 +62,7 @@ Adaptations to each Caddyfile, and nothing else:
 
 Caddy keeps the `Host` header, so `SKY_PUBLIC_URL` was not set.
 
-## Commands
+### Commands
 
 ```bash
 git fetch origin && git checkout -B verify/v027-real-apps origin/release/v0.27.0
@@ -94,7 +103,7 @@ Env: `ENV=production`, `SKY_CONSOLE_AUTH=app`, `SKY_ADMIN_TOKEN`, a random
 Browser checks: `node harness.mjs <cfg> chrome|webkit <out.json>` with the
 files in [`real-apps-behind-caddy/`](real-apps-behind-caddy/).
 
-## Build and tests
+### Build and tests
 
 | Check | sky-lang.org | darraghstudio |
 |---|---|---|
@@ -105,13 +114,13 @@ files in [`real-apps-behind-caddy/`](real-apps-behind-caddy/).
 | app tests | none (`tests/` is empty) | ShopTest 39/39, OrderTxnTest 5/5, CheckoutWebhookTest 7/7 (with `DS_STRIPE_WEBHOOK_SECRET=whsec_test DS_EMAIL_DRY_RUN=1`, as the test header says) |
 | source changes for v0.27.0 | none | none |
 
-## Browser checks
+### Browser checks
 
 Every value below is from the JSON files in
 [`real-apps-behind-caddy/`](real-apps-behind-caddy/). "C" is Chrome, "W" is
 WebKit. The two browsers gave the same values in every row.
 
-### Pages
+#### Pages
 
 | App | Pages | Status | wasm booted | Console errors | CSP violations | CSP header |
 |---|---|---|---|---|---|---|
@@ -121,7 +130,7 @@ WebKit. The two browsers gave the same values in every row.
 Page loads have zero console errors. The console errors in finding 1 come
 from an interaction, not a page load.
 
-### `/_rpc` origin guard
+#### `/_rpc` origin guard
 
 The target is `/_rpc/LoadPosts` (sky-lang.org) and `/_rpc/AddToBasket`
 (darraghstudio). The explicit-header rows use Playwright's request API. The
@@ -141,7 +150,7 @@ two browser rows use the browser's own network stack.
 | v0.26.1, POST `text/plain` from `Origin: https://evil.example` | 400: reached the handler (no guard) | not run |
 | v0.26.1, GET | 400 (no method check) | not run |
 
-### Cookies
+#### Cookies
 
 | App | Cookie | Secure | HttpOnly | SameSite | When |
 |---|---|---|---|---|---|
@@ -156,7 +165,7 @@ This matches the CHANGELOG. The Sky.Spa session cookie stays `sky_sid` and
 gets `Secure` behind the TLS proxy. The Sky.Live session cookie (here the
 console sub-app's) is `__Host-`-prefixed.
 
-### Sign-in and session cookie (darraghstudio; sky-lang.org has none)
+#### Sign-in and session cookie (darraghstudio; sky-lang.org has none)
 
 | Step | C | W |
 |---|---|---|
@@ -172,14 +181,14 @@ console sub-app's) is `__Host-`-prefixed.
 The last row is finding 3. It is the design of the stateless Sky.Spa
 session, not a v0.27.0 change.
 
-### An `/_rpc` interaction through the UI
+#### An `/_rpc` interaction through the UI
 
 | App | Interaction | C | W |
 |---|---|---|---|
 | sky-lang.org | `/admin/dev-login` → Admin → "+ New post" → "Save draft" | `/_rpc/EditorSaveDraft` 200, flash shown, 0 console errors | same |
 | darraghstudio | product page → "Add to basket" | `/_rpc/AddToBasket` 200, **basket stays empty**, 1 console error | same |
 
-### Console
+#### Console
 
 | App | Anonymous `/_sky/console/` | Anonymous `/_sky/console/api/overview` | With the local credential |
 |---|---|---|---|
@@ -187,7 +196,7 @@ session, not a v0.27.0 change.
 | sky-lang.org, `SKY_CONSOLE_AUTH=token` | 401 (C, W) | 401 (C, W) | wrong token 401; right token 303 → `/_sky/console` 200 (C, W) |
 | darraghstudio, `SKY_CONSOLE_AUTH=app` | 403 (C, W) | 403 (C, W) | 200 after an admin signs in (C, W) |
 
-### Precompressed wasm and `/_sky/sub`
+#### Precompressed wasm and `/_sky/sub`
 
 | App | Browser fetch of `main.<hash>.wasm` | `Accept-Encoding: br` | `gzip` | `identity` | `wasm_exec.js` |
 |---|---|---|---|---|---|
@@ -197,9 +206,9 @@ session, not a v0.27.0 change.
 Neither app names a push topic (`Sub.none` / `Sub.every` only), so the
 generated backend mounts no `/_sky/sub`. That check does not apply.
 
-## Findings
+### Findings
 
-### 1. Sky regression: a server-internal follow-up Msg discards the RPC's model write (Sky.Spa)
+#### 1. Sky regression: a server-internal follow-up Msg discards the RPC's model write (Sky.Spa) — FIXED in `68052886`
 
 Severity: release blocker. It breaks "Add to basket" in darraghstudio on
 v0.27.0, in Chrome and WebKit. The same app built with v0.26.1 works. The
@@ -236,7 +245,7 @@ Minimal repro: [`real-apps-behind-caddy/repro-follow-up/`](real-apps-behind-cadd
 branches, `Tracked` is not server-internal and the generated encoder has a
 `Tracked` arm (seen in the first build of the repro).
 
-### 2. Stale runbook note (app documentation, not Sky)
+#### 2. Stale runbook note (app documentation, not Sky)
 
 `deploy/SPA-SSR-RUNBOOK.md` in sky-lang.org says the split backend does not
 run the app's bootstrap. On v0.27.0 it does: the backend logs
@@ -245,7 +254,7 @@ ready`. The seed then finds no `content/` beside `backend/`. The schema and
 the posts from the one-off Sky.Live run were in place, so the site served
 them.
 
-### 3. A Sky.Spa session cookie stays valid after sign-out (design, not a regression)
+#### 3. A Sky.Spa session cookie stays valid after sign-out (design, not a regression)
 
 The split backend signs the session into a 30-day `sky_sid` token and keeps
 no server state. Sign-out removes the cookie from the browser, but a copy of
@@ -255,7 +264,7 @@ sign-out only clears the cookie). The v0.27.0 CHANGELOG makes the rotation
 and revocation claims for Sky.Live only, so this is not a broken claim. It
 is recorded because the Sky.Live fixes in this release do not reach it.
 
-### 4. sky-lang.org console in `app` mode refuses its own admin (app gap)
+#### 4. sky-lang.org console in `app` mode refuses its own admin (app gap) — FIXED in the app
 
 `Auth.Console.consoleAdmin` reads the app's own `sky_sid` JWT cookie, and no
 code path of the app sets that cookie (the sign-in hands the session over
@@ -263,13 +272,13 @@ through `?sso=` into the model). So in `SKY_CONSOLE_AUTH=app` mode every
 request gets 403, the admin too. The Sky side works: anonymous is refused,
 and `token` mode opens the console with the local token.
 
-### 5. Reported to the owner, not detailed here
+#### 5. Reported to the owner — FIXED in the app
 
 sky-lang.org has one more app-level authorisation defect in its admin RPCs.
 It is present on v0.26.1 too, so it is not a v0.27.0 regression. The
 details went to the owner directly.
 
-## What was not tested locally, and why
+### What was not tested locally, and why
 
 - Real GitHub OAuth (sky-lang.org) and Stripe checkout (darraghstudio): they
   need third-party accounts and paid or external APIs. The dev sign-in and
@@ -280,3 +289,94 @@ details went to the owner directly.
   console sub-app uses Sky.Live here, and its sign-in is the token or app
   gate, not `Live.bindSessionUser`.
 - Port 443: another local Caddy holds it, so the origin carries `:9443`.
+
+## Run 2 (`68052886`): the fixed head
+
+The files for this run are in
+[`real-apps-behind-caddy/run2-68052886/`](real-apps-behind-caddy/run2-68052886/).
+
+### What changed since run 1
+
+- Sky (`release/v0.27.0` @ `68052886`): a follow-up Msg that a root hands to
+  the client is never classed server-internal, the backend follow-up encoder
+  has no empty-tag arm, and the client applies the RPC's write before it
+  decodes the follow-ups (finding 1).
+- sky-lang.org, branch `fix/admin-rpc-auth` (`cf99154`, what production runs
+  now): sign-in sets an HttpOnly `skylang_admin` cookie (an HS256 token plus an
+  `admin_sessions` row), `withRequest` replaces `model.session` with what that
+  cookie proves on every page and RPC, and every admin server branch re-checks
+  it (findings 4 and 5).
+
+### What was measured
+
+| Item | Value |
+|---|---|
+| Date | 2026-09-30 |
+| Sky commit | `68052886` (`origin/release/v0.27.0`, branch `verify/v027-real-apps-2`) |
+| Compiler fingerprint | `sky-embed-fp-v1:e0712fefce421cdbe11f0f77d038812c00761533dbf345e83d8ab51a8dfeae8c` |
+| Compiler sha256 | `d83ec277c1df16bd139efa30de25fcbd50bf7b9e8bc3428717398d068dd6b838` |
+| Browsers | Google Chrome 154.0.8037.58, Playwright WebKit 26.4, headed, fresh context per check |
+| Apps | fresh scratch copies; sky-lang.org from `fix/admin-rpc-auth` @ `cf99154`; darraghstudio from its working tree |
+
+Topology, adaptations, env and commands are the same as in run 1. The one
+change: the harness configs add the checks named below.
+
+### Build and tests
+
+| Check | sky-lang.org | darraghstudio |
+|---|---|---|
+| `sky check` | OK, 35 modules (32 app + 3 from `sky-github` v0.1.0) | OK |
+| clean `sky build --target web:app` | OK | OK; the build note no longer lists `Tracked` or `EmailSent` as server-internal |
+| app tests | `tests/AuthPolicyTest.sky` 8/8 | ShopTest 39/39, OrderTxnTest 5/5, CheckoutWebhookTest 7/7 |
+| source changes for v0.27.0 | none | none |
+
+### Browser checks (Chrome and WebKit gave the same values)
+
+| Check | sky-lang.org | darraghstudio |
+|---|---|---|
+| Pages: status, wasm boot, console errors, CSP violations | 4 pages: 200, booted, 0, 0 | 10 pages: 200, booted, 0, 0 |
+| `/_rpc` guard | cross-origin 403, same-site other origin 403, `Origin: null` 403, `text/plain` 403, form 403, GET 405, same-origin JSON passes, browser foreign-origin POST 403 | same values |
+| Anonymous cookies | `__sky_csrf` (Secure, HttpOnly, Strict) | same |
+| Session cookie | `skylang_admin` (the app's own): Secure, HttpOnly, Lax | `sky_sid`: Secure, HttpOnly, Lax |
+| Console, anonymous page / API | 403 / 403 | 403 / 403 |
+| Console with the local credential (`SKY_CONSOLE_AUTH=app`) | 200 after `/admin/dev-login`; `/admin/console-link` → 302 `/_sky/console/` | 200 after an admin signs in |
+| Console cookies | `__Host-sky_console` (Strict), `__Host-sky_sky_console_sid` (Lax), `__sky_csrf_sky_console` (Strict), all Secure and HttpOnly | same |
+| Precompressed wasm | `br` 2,009,740 B, `gzip` 2,987,356 B, `immutable`; `wasm_exec.js` `br` | `br` 2,216,164 B, `gzip` 3,575,615 B, `immutable`; `wasm_exec.js` `br` |
+| `/_sky/sub` | no push topics, not mounted | no push topics, not mounted |
+
+### Finding 1 is fixed: darraghstudio flows, one by one
+
+| Flow | RPC | UI result | `follow-up could not be applied` errors |
+|---|---|---|---|
+| Add to basket | `/_rpc/AddToBasket` 200 | notice "… added to your basket." shown; `/basket` after a reload lists "Big Red Bus Sticker Pack" and does not say "Your basket is empty" | 0 (C, W) |
+| Sign up | `/_rpc/DoSignUp` 200 (then `/_rpc/EmailSent` 200) | notice "Account created!" on `/` | 0 (C, W) |
+| Verify e-mail | `/_rpc/RunVerify` 200 | notice "Email verified", `sky_sid` set | 0 (C, W) |
+| Sign out | `/_rpc/__spaSignOut` 200 | `sky_sid` removed | 0 (C, W) |
+| Sign in | `/_rpc/DoSignIn` 200 | lands on `/account`, notice "Welcome back", "Sign out" shown, new `sky_sid` value | 0 (C, W) |
+| Suggest an idea | `/_rpc/DoSuggest` 200 | notice "Thank you …" shown | 0 (C, W) |
+
+Every scenario in both browsers had 0 console errors of any kind.
+
+### Findings 4 and 5 are fixed in sky-lang.org
+
+| Check | Chrome | WebKit |
+|---|---|---|
+| `scripts/verify-admin-rpc-auth.sh` (the app's own check: anonymous and forged-session calls to EditorPublish, EditorSaveDraft, ConfirmDelete, LoadEditPost, LoadPosts, and anonymous `/_sky/console/`) | 11 refused, 0 not refused (one run over curl; no browser involved) | same run |
+| Anonymous or forged-session `EditorPublish` with a real title (curl) | flash "Sign in required.", no post written | same run |
+| Admin via `/admin/dev-login` → "+ New post" → "Save draft" | `/_rpc/EditorSaveDraft` 200, flash shown | same |
+| Console after admin sign-in (`app` mode) | 200 | 200 |
+| Same `skylang_admin` value before sign-out (control) | console 200, `/admin` signed in | same |
+| That value replayed after `/admin/logout` | console 403, `/admin` signed out | same |
+
+### Unchanged
+
+Finding 3 (a Sky.Spa `sky_sid` copied before sign-out still authenticates)
+holds on this head too: darraghstudio's replay row reads signed in. It is the
+stateless Sky.Spa session design, and the v0.27.0 CHANGELOG makes no claim
+about it. Finding 2 (the stale runbook note) is app documentation.
+
+### Not tested locally (unchanged from run 1)
+
+Real GitHub OAuth, Stripe checkout, `/_sky/sub` (no topics), and the Sky.Live
+rotation grace window (no Sky.Live app). Port 443 is still held by another
+local Caddy, so the origin carries `:9443`.

@@ -1,0 +1,13 @@
+Target: https://sky-lang.localhost:9443
+REFUSED  anon EditorPublish  (HTTP 200, flash: Sign in required.)
+REFUSED  anon EditorSaveDraft  (HTTP 200, flash: Sign in required.)
+REFUSED  anon ConfirmDelete  (HTTP 200, flash: Sign in required.)
+REFUSED  anon LoadEditPost  (HTTP 200, flash: Sign in required.)
+REFUSED  anon LoadPosts (admin list)  (HTTP 200, posts: [])
+REFUSED  forged EditorPublish  (HTTP 200, flash: Sign in required.)
+REFUSED  forged EditorSaveDraft  (HTTP 200, flash: Sign in required.)
+REFUSED  forged ConfirmDelete  (HTTP 200, flash: Sign in required.)
+REFUSED  forged LoadEditPost  (HTTP 200, flash: Sign in required.)
+REFUSED  forged LoadPosts (admin list)  (HTTP 200, posts: [])
+REFUSED  anon GET /_sky/console/  (HTTP 403)
+11 refused, 0 not refused

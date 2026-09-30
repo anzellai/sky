@@ -1,0 +1,324 @@
+{
+  "app": "sky-lang.org",
+  "browser": "chrome",
+  "browserVersion": "154.0.8037.58",
+  "base": "https://sky-lang.localhost:9443",
+  "startedAt": "2026-09-30T09:26:09.235Z",
+  "pages": [
+    {
+      "path": "/",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.a67dfbe4ec9b.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/blog",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/blog",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.a67dfbe4ec9b.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/blog/why-i-built-sky-lang",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/blog/why-i-built-sky-lang",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.a67dfbe4ec9b.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    },
+    {
+      "path": "/admin",
+      "status": 200,
+      "protocol": "https:",
+      "finalPath": "/admin",
+      "wasmBooted": true,
+      "wasm": [
+        {
+          "path": "/main.a67dfbe4ec9b.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "consoleErrors": [],
+      "pageErrors": [],
+      "cspViolations": 0,
+      "cspDetail": [],
+      "cspHeader": null,
+      "rpc": [],
+      "failedRequests": []
+    }
+  ],
+  "checks": {
+    "anonCookies": [
+      {
+        "name": "__sky_csrf",
+        "secure": true,
+        "httpOnly": true,
+        "sameSite": "Strict",
+        "path": "/",
+        "domain": "sky-lang.localhost",
+        "session": false
+      }
+    ],
+    "rpcGuard": {
+      "crossOriginJson": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_origin\",\"reason\":\"Origin https://evil.example is not this app's origin\",\"hint\":\"Sky.Spa RPCs accept same-"
+      },
+      "sameSiteOtherOriginJson": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_origin\",\"reason\":\"Origin https://other.localhost:9443 is not this app's origin\",\"hint\":\"Sky.Spa RPCs acce"
+      },
+      "originNullJson": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_origin\",\"reason\":\"Origin: null is refused\",\"hint\":\"Sky.Spa RPCs accept same-origin JSON requests only. Be"
+      },
+      "sameOriginTextPlain": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_content_type\",\"reason\":\"an RPC request body must be Content-Type: application/json\",\"hint\":\"Sky.Spa RPCs "
+      },
+      "sameOriginForm": {
+        "status": 403,
+        "body": "{\"status\":\"rpc_content_type\",\"reason\":\"an RPC request body must be Content-Type: application/json\",\"hint\":\"Sky.Spa RPCs "
+      },
+      "get": {
+        "status": 405,
+        "body": "{\"status\":\"rpc_method\",\"reason\":\"this RPC endpoint accepts POST only\",\"hint\":\"Sky.Spa RPCs accept same-origin JSON reque"
+      },
+      "sameOriginJsonControl": {
+        "status": 400,
+        "body": "Decode: missing field: .currentPost"
+      },
+      "browserSameOriginFetch": {
+        "status": 400
+      },
+      "evilOrigin": "https://evil.localhost:9443",
+      "browserCrossOriginNoCors": [
+        {
+          "status": 403
+        }
+      ]
+    },
+    "precompressed": {
+      "browserWasm": [
+        {
+          "path": "/main.a67dfbe4ec9b.wasm",
+          "status": 200,
+          "contentEncoding": "br",
+          "cacheControl": "public, max-age=31536000, immutable"
+        }
+      ],
+      "br": {
+        "status": 200,
+        "contentEncoding": "br",
+        "contentLength": "2009740",
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "gzip": {
+        "status": 200,
+        "contentEncoding": "gzip",
+        "contentLength": "2987356",
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "identity": {
+        "status": 200,
+        "contentEncoding": null,
+        "contentLength": "11899119",
+        "cacheControl": "public, max-age=31536000, immutable"
+      },
+      "wasmExecBr": {
+        "status": 200,
+        "contentEncoding": "br"
+      }
+    },
+    "console": {
+      "anonymousStatus": 403,
+      "anonymousApi": 403,
+      "mode": "app",
+      "signIn": {
+        "landedOn": "/admin",
+        "status": 200,
+        "booted": true,
+        "signedInText": 1
+      },
+      "consoleLinkStatus": 302,
+      "consoleLinkLocation": "/_sky/console/",
+      "consoleStatusAfterAdminSignIn": 200,
+      "cookies": [
+        {
+          "name": "__sky_csrf_sky_console",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        },
+        {
+          "name": "__sky_csrf",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        },
+        {
+          "name": "skylang_admin",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        },
+        {
+          "name": "__Host-sky_console",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        },
+        {
+          "name": "__Host-sky_sky_console_sid",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        }
+      ]
+    },
+    "adminSignInAndRpc": {
+      "adminCookie": {
+        "name": "skylang_admin",
+        "secure": true,
+        "httpOnly": true,
+        "sameSite": "Lax"
+      },
+      "controlSameCookieBeforeLogout": {
+        "consoleStatus": 200,
+        "adminPageSignedIn": true
+      },
+      "logoutStatus": 302,
+      "cookiesAfterLogout": [
+        {
+          "name": "__sky_csrf",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        }
+      ],
+      "replayOfCookieFromBeforeLogout": {
+        "consoleStatus": 403,
+        "adminPageSignedIn": false
+      },
+      "cookiesBefore": [
+        {
+          "name": "__sky_csrf",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        }
+      ],
+      "signIn": {
+        "landedOn": "/admin",
+        "status": 200,
+        "booted": true,
+        "signedInText": 1
+      },
+      "cookiesAfter": [
+        {
+          "name": "__sky_csrf",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        },
+        {
+          "name": "skylang_admin",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Lax",
+          "path": "/",
+          "domain": "sky-lang.localhost",
+          "session": false
+        }
+      ],
+      "saveDraftRpc": {
+        "status": 200,
+        "contentType": "application/json"
+      },
+      "flashShown": true,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "rpcSeen": [
+        {
+          "method": "POST",
+          "path": "/_rpc/EditorSaveDraft",
+          "status": 200
+        }
+      ],
+      "subSeen": [],
+      "cspViolations": 0
+    }
+  },
+  "finishedAt": "2026-09-30T09:26:31.079Z"
+}
