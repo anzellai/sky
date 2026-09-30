@@ -2296,29 +2296,22 @@ function __skyInjectStatusBanner() {
 // §SSE wedge detection.
 // __skyNewEventSource opens the SSE stream. Cookie mode: a plain
 // EventSource. Header mode (__skyTok set): an EventSource cannot send
-// X-Sky-Session, so the stream is read with fetch() and a ReadableStream
-// (__SkyHdrSource); a browser without streaming fetch gets a one-time ticket
-// from POST /_sky/sse-ticket and an EventSource on ?tk=<ticket>. Both expose
-// the EventSource surface the code below uses: addEventListener, readyState,
-// close().
+// X-Sky-Session, so the client gets a one-time ticket from POST
+// /_sky/sse-ticket (with the header) and opens a native EventSource on
+// ?tk=<ticket> (__SkyHdrSource). This holds in every browser: a stream read
+// with fetch() and a ReadableStream lost prompt delivery in WebKit (a repaint
+// waited for the next server frame). The wrapper exposes the EventSource
+// surface the code below uses: addEventListener, readyState, close().
 function __skyNewEventSource(url) {
   if (!__skyTok) return new EventSource(url);
   return new __SkyHdrSource(url);
-}
-function __skySseCanStream() {
-  try {
-    return typeof fetch === "function" && typeof ReadableStream === "function" &&
-      typeof TextDecoder === "function" && typeof AbortController === "function" &&
-      typeof Response === "function" && ("body" in Response.prototype);
-  } catch (_) { return false; }
 }
 function __SkyHdrSource(url) {
   this.readyState = 0;
   this._l = {};
   this._closed = false;
   this._es = null;
-  this._ac = null;
-  if (__skySseCanStream()) this._stream(url); else this._ticket(url);
+  this._ticket(url);
 }
 __SkyHdrSource.prototype.addEventListener = function(type, fn) {
   (this._l[type] = this._l[type] || []).push(fn);
@@ -2333,7 +2326,6 @@ __SkyHdrSource.prototype._emit = function(type, ev) {
 __SkyHdrSource.prototype.close = function() {
   this._closed = true;
   this.readyState = 2;
-  if (this._ac) { try { this._ac.abort(); } catch (_) {} }
   if (this._es) { try { this._es.close(); } catch (_) {} }
 };
 // _fail ends the stream the way a failed EventSource does (readyState 2 +
@@ -2343,60 +2335,6 @@ __SkyHdrSource.prototype._fail = function() {
   this._closed = true;
   this.readyState = 2;
   this._emit("error", {type: "error"});
-};
-__SkyHdrSource.prototype._stream = function(url) {
-  var self = this;
-  self._ac = new AbortController();
-  fetch(url, {
-    headers: __skyWithSession({"Accept": "text/event-stream"}),
-    credentials: "same-origin",
-    cache: "no-store",
-    signal: self._ac.signal
-  }).then(function(r) {
-    if (self._closed) return;
-    __skyAdoptToken(r);
-    var ct = r.headers.get("Content-Type") || "";
-    if (!r.ok || ct.indexOf("text/event-stream") !== 0 || !r.body) { self._fail(); return; }
-    self.readyState = 1;
-    self._emit("open", {type: "open"});
-    var reader = r.body.getReader();
-    var dec = new TextDecoder();
-    var buf = "", evName = "", data = [];
-    var line = function(l) {
-      if (l === "") {
-        if (data.length) {
-          var name = evName || "message";
-          self._emit(name, {type: name, data: data.join("\n")});
-        }
-        evName = "";
-        data = [];
-        return;
-      }
-      if (l.charAt(0) === ":") return;
-      var i = l.indexOf(":");
-      var field = i < 0 ? l : l.slice(0, i);
-      var value = i < 0 ? "" : l.slice(i + 1);
-      if (value.charAt(0) === " ") value = value.slice(1);
-      if (field === "event") evName = value;
-      else if (field === "data") data.push(value);
-    };
-    var pump = function() {
-      return reader.read().then(function(res) {
-        if (self._closed) return;
-        if (res.done) { self._fail(); return; }
-        buf += dec.decode(res.value, {stream: true});
-        var m;
-        while ((m = /\r\n|\r|\n/.exec(buf)) !== null) {
-          var l = buf.slice(0, m.index);
-          buf = buf.slice(m.index + m[0].length);
-          line(l);
-          if (self._closed) return;
-        }
-        return pump();
-      });
-    };
-    return pump();
-  }).catch(function() { self._fail(); });
 };
 __SkyHdrSource.prototype._ticket = function(url) {
   var self = this;

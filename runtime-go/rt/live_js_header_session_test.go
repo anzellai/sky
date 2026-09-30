@@ -14,9 +14,10 @@ import (
 // browser stub, with the page's boot config carrying a session token.
 //
 // Stream run (fetch + ReadableStream available):
-//  1. the SSE stream is read with fetch, sends X-Sky-Session, parses events
-//     split across chunks (hello, patch), and adopts a token the SSE response
-//     hands over; an ended stream reports the EventSource-shaped error;
+//  1. the SSE stream still opens through the ticket path (H-6: a fetch-read
+//     stream lost prompt delivery in WebKit), adopts the token the ticket
+//     response hands over, and an ended stream reports the EventSource-shaped
+//     error;
 //  2. an event POST sends X-Sky-Session and adopts a new token from the
 //     response;
 //  3. an SSE rotate frame posts the ticket with the header and adopts the
@@ -57,7 +58,7 @@ const routes = {
     json: async () => ({ seq: 1 }), text: async () => "" }),
   "/_sky/rotate": () => ({ ok: true, status: 200, headers: new Headers({ "X-Sky-Session": T3 }),
     json: async () => ({ sid: "NEWSID", token: T3 }) }),
-  "/_sky/sse-ticket": () => ({ ok: true, status: 200, headers: new Headers({}),
+  "/_sky/sse-ticket": () => ({ ok: true, status: 200, headers: new Headers({ "X-Sky-Session": T1 }),
     json: async () => ({ ticket: "K1" }) }),
 };
 const sandbox = {
@@ -107,16 +108,18 @@ const hdr = (f) => f && f.opts && f.opts.headers ? f.opts.headers["X-Sky-Session
   g("__skyOpenSSE()");
   await tick();
   if (mode === "stream") {
-    const sse = fetches.find((f) => f.url.indexOf("/_sky/sse?") >= 0);
-    out.sseHeader = hdr(sse);
+    // H-6: even with streaming fetch available the stream opens through
+    // the ticket path (a native EventSource on ?tk=). A fetch-read stream
+    // lost prompt delivery in WebKit.
+    out.sseFetched = fetches.some((f) => f.url.indexOf("/_sky/sse?") >= 0);
     out.usedEventSource = sources.length;
-    // hello split across two chunks, then a patch frame.
-    sseController.enqueue(enc.encode(": pad\n\nevent: hel"));
-    sseController.enqueue(enc.encode("lo\ndata: {\"v\":1,\"sid\":\"SID0\",\"pe\":\"p1\"}\n\n"));
+    const es = sources[0];
+    es.fire("open");
+    es.fire("hello", JSON.stringify({ v: 1, sid: "SID0", pe: "p1" }));
     await tick(12);
     out.helloOk = g("__skyHelloOk");
     out.tokAfterSse = g("__skyTok");
-    sseController.enqueue(enc.encode("event: rotate\ndata: {\"ticket\":\"TK\"}\n\n"));
+    es.fire("rotate", JSON.stringify({ ticket: "TK" }));
     await tick(12);
     const rot = fetches.find((f) => f.url.endsWith("/_sky/rotate"));
     out.rotateHeader = hdr(rot);
@@ -130,7 +133,7 @@ const hdr = (f) => f && f.opts && f.opts.headers ? f.opts.headers["X-Sky-Session
     // The stream ends: the wrapper reports a permanent failure.
     let errState = null;
     g("__skySSE").addEventListener("error", function () { errState = this.readyState; });
-    sseController.close();
+    es.fire("error");
     await tick(12);
     out.errorOnEnd = errState;
     // Unload flush: a keepalive fetch with the header.
@@ -178,8 +181,8 @@ const hdr = (f) => f && f.opts && f.opts.headers ? f.opts.headers["X-Sky-Session
 		}
 	}
 	run("stream", []string{
-		`"sseHeader":"00000000000000000000000000000000"`,
-		`"usedEventSource":0`,
+		`"sseFetched":false`,
+		`"usedEventSource":1`,
 		`"helloOk":true`,
 		`"tokAfterSse":"11111111111111111111111111111111"`,
 		`"rotateHeader":"11111111111111111111111111111111"`,
