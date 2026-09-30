@@ -132,12 +132,12 @@ func parseAuthSlidingConfig(rec any) *authSlidingConfig {
 	if rec == nil {
 		return nil
 	}
-	cookie := slidingStringOf(Field(rec, "Cookie"))
-	secretEnv := slidingStringOf(Field(rec, "SecretEnv"))
+	cookie := slidingStringOf(fieldOrNil(rec, "Cookie"))
+	secretEnv := slidingStringOf(fieldOrNil(rec, "SecretEnv"))
 	if cookie == "" || secretEnv == "" {
 		return nil
 	}
-	sameSite := slidingStringOf(Field(rec, "SameSite"))
+	sameSite := slidingStringOf(fieldOrNil(rec, "SameSite"))
 	if strings.TrimSpace(sameSite) == "" {
 		sameSite = "Strict" // documented default, matches CSRF's default
 	}
@@ -145,7 +145,7 @@ func parseAuthSlidingConfig(rec any) *authSlidingConfig {
 		cookie:       cookie,
 		secretEnv:    secretEnv,
 		sameSite:     sameSite,
-		revokedCheck: slidingUnwrapMaybe(Field(rec, "RevokedCheck")),
+		revokedCheck: slidingUnwrapMaybe(fieldOrNil(rec, "RevokedCheck")),
 	}
 }
 
