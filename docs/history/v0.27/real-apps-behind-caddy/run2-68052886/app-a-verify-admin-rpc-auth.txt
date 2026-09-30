@@ -1,4 +1,4 @@
-Target: https://sky-lang.localhost:9443
+Target: https://app-a.localhost:9443
 REFUSED  anon EditorPublish  (HTTP 200, flash: Sign in required.)
 REFUSED  anon EditorSaveDraft  (HTTP 200, flash: Sign in required.)
 REFUSED  anon ConfirmDelete  (HTTP 200, flash: Sign in required.)

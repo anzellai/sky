@@ -1,9 +1,9 @@
 {
-  "app": "darraghstudio",
-  "browser": "webkit",
-  "browserVersion": "26.4",
-  "base": "https://darraghstudio.localhost:9443",
-  "startedAt": "2026-09-30T09:31:18.402Z",
+  "app": "app-b",
+  "browser": "chrome",
+  "browserVersion": "154.0.8037.58",
+  "base": "https://app-b.localhost:9443",
+  "startedAt": "2026-09-30T07:20:29.115Z",
   "pages": [
     {
       "path": "/",
@@ -13,7 +13,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -35,7 +35,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -57,7 +57,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -72,14 +72,14 @@
       "failedRequests": []
     },
     {
-      "path": "/products/big-red-bus-sticker-pack",
+      "path": "/products/sample-product",
       "status": 200,
       "protocol": "https:",
-      "finalPath": "/products/big-red-bus-sticker-pack",
+      "finalPath": "/products/sample-product",
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -101,7 +101,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -123,7 +123,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -145,7 +145,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -167,7 +167,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -189,7 +189,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -211,7 +211,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -234,7 +234,7 @@
         "httpOnly": true,
         "sameSite": "Strict",
         "path": "/",
-        "domain": "darraghstudio.localhost",
+        "domain": "app-b.localhost",
         "session": false
       }
     ],
@@ -280,7 +280,7 @@
     "precompressed": {
       "browserWasm": [
         {
-          "path": "/main.fb34374934a6.wasm",
+          "path": "/main.d53d2684bdeb.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -289,19 +289,19 @@
       "br": {
         "status": 200,
         "contentEncoding": "br",
-        "contentLength": "2216164",
+        "contentLength": "2201651",
         "cacheControl": "public, max-age=31536000, immutable"
       },
       "gzip": {
         "status": 200,
         "contentEncoding": "gzip",
-        "contentLength": "3575615",
+        "contentLength": "3552256",
         "cacheControl": "public, max-age=31536000, immutable"
       },
       "identity": {
         "status": 200,
         "contentEncoding": null,
-        "contentLength": "15360410",
+        "contentLength": "15226369",
         "cacheControl": "public, max-age=31536000, immutable"
       },
       "wasmExecBr": {
@@ -315,17 +315,9 @@
       "mode": "app",
       "adminSignUp": {
         "signUpRpc": 200,
-        "signUpUi": {
-          "path": "/",
-          "noticeAccountCreated": true
-        },
         "verifyRpc": {
           "path": "/_rpc/RunVerify",
           "status": 200
-        },
-        "verifyUi": {
-          "path": "/verify/7d27b31a-466b-4816-b687-1a2625914dea",
-          "noticeVerified": true
         }
       },
       "consoleStatusAfterAdminSignIn": 200,
@@ -337,7 +329,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         },
         {
@@ -346,7 +338,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         },
         {
@@ -355,7 +347,7 @@
           "httpOnly": true,
           "sameSite": "Lax",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": true
         },
         {
@@ -364,7 +356,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         },
         {
@@ -373,7 +365,7 @@
           "httpOnly": true,
           "sameSite": "Lax",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         }
       ]
@@ -381,11 +373,10 @@
     "basketRpc": {
       "booted": true,
       "addToBasketRpc": 200,
-      "noticeShownInPage": true,
-      "basketBadge": null,
-      "basketPageShowsItem": true,
-      "basketPageSaysEmpty": false,
-      "consoleErrors": [],
+      "basketShowsItem": false,
+      "consoleErrors": [
+        "[sky.spa] a server branch's follow-up could not be applied: Unexpected: sky.spa: unknown follow-up Msg "
+      ],
       "pageErrors": [],
       "rpcSeen": [
         {
@@ -397,36 +388,12 @@
       "subSeen": [],
       "cspViolations": 0
     },
-    "suggest": {
-      "booted": true,
-      "doSuggestRpc": 200,
-      "noticeThankYou": true,
-      "consoleErrors": [],
-      "pageErrors": [],
-      "rpcSeen": [
-        {
-          "method": "POST",
-          "path": "/_rpc/DoSuggest",
-          "status": 200
-        }
-      ],
-      "subSeen": [],
-      "cspViolations": 0
-    },
     "signInRotation": {
       "signUp": {
         "signUpRpc": 200,
-        "signUpUi": {
-          "path": "/",
-          "noticeAccountCreated": true
-        },
         "verifyRpc": {
           "path": "/_rpc/RunVerify",
           "status": 200
-        },
-        "verifyUi": {
-          "path": "/verify/f305a119-6d27-441d-989d-aa7943408cfd",
-          "noticeVerified": true
         }
       },
       "cookieBeforeSignIn": null,
@@ -440,11 +407,6 @@
       "signOutRpc": 200,
       "cookieAfterSignOut": null,
       "signInRpc": 200,
-      "signInUi": {
-        "path": "/account",
-        "noticeWelcomeBack": true,
-        "showsSignOut": true
-      },
       "cookieAfterPasswordSignIn": {
         "name": "sky_sid",
         "secure": true,
@@ -467,17 +429,15 @@
         "status": 200,
         "seedCarriesEmail": false
       },
-      "consoleErrors": [],
+      "consoleErrors": [
+        "[sky.spa] a server branch's follow-up could not be applied: Unexpected: sky.spa: unknown follow-up Msg ",
+        "[sky.spa] a server branch's follow-up could not be applied: Unexpected: sky.spa: unknown follow-up Msg "
+      ],
       "pageErrors": [],
       "rpcSeen": [
         {
           "method": "POST",
           "path": "/_rpc/DoSignUp",
-          "status": 200
-        },
-        {
-          "method": "POST",
-          "path": "/_rpc/EmailSent",
           "status": 200
         },
         {
@@ -499,16 +459,11 @@
           "method": "POST",
           "path": "/_rpc/DoSignIn",
           "status": 200
-        },
-        {
-          "method": "POST",
-          "path": "/_rpc/RunLoadAccount",
-          "status": 200
         }
       ],
       "subSeen": [],
       "cspViolations": 0
     }
   },
-  "finishedAt": "2026-09-30T09:32:09.827Z"
+  "finishedAt": "2026-09-30T07:21:12.061Z"
 }
