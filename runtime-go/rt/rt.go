@@ -2491,7 +2491,13 @@ func AsMapT[V any](v any) map[string]V {
 				narrowed := narrowReflectValue(sv, zeroTy)
 				if narrowed.IsValid() {
 					out[k] = narrowed.Interface().(V)
+					continue
 				}
+			}
+			if x != nil {
+				// An entry that cannot become V used to be DROPPED: the Dict
+				// came back short with no error (C-5).
+				asMapTFail[V](x, "value of key "+strconv.Quote(k))
 			}
 		}
 		return out
@@ -2527,12 +2533,31 @@ func AsMapT[V any](v any) map[string]V {
 				narrowed := narrowReflectValue(sv, valTy)
 				if narrowed.IsValid() {
 					out[k.String()] = narrowed.Interface().(V)
+					continue
 				}
+			}
+			if iv != nil {
+				asMapTFail[V](iv, "value of key "+strconv.Quote(k.String()))
 			}
 		}
 		return out
 	}
+	// nil is the empty Dict. Anything else is not a Dict at all: a Go map
+	// with a non-string key (map[int]string from an FFI return) used to come
+	// back as nil, an EMPTY Dict, with no error (C-5). The FFI wrapper
+	// converts such keys (rt.encodeDictKey); this is the backstop.
+	if v == nil || (rv.IsValid() && rv.Kind() == reflect.Map && rv.IsNil()) {
+		return nil
+	}
+	asMapTFail[V](v, "Dict")
 	return nil
+}
+
+// asMapTFail panics with a classified CoerceFailure for a value AsMapT cannot
+// turn into a Dict of V.
+func asMapTFail[V any](got any, what string) {
+	var zero V
+	panic(fmt.Sprintf("rt.Coerce: expected a string-keyed Dict of %T (%s), got %T", zero, what, got))
 }
 
 // AsInt coerces an any-typed value to int. Panics on non-numeric
