@@ -25,17 +25,17 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `stronger` | 164 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 127 |
+| corpus units | 83 |
 | stdlib modules (denominator) | 113 |
-| stdlib entries (denominator) | 2215 |
+| stdlib entries (denominator) | 2214 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 8.0% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 760 | 34.3% |
-| symbols unreferenced under the generous rule | 670 | 30.2% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 753 | 34.0% |
+| symbols unreferenced under the generous rule | 663 | 29.9% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -58,7 +58,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 24 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one unit of any role | 18 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -186,13 +186,13 @@ None.
 | `stdlib.Sky.Http.Server.Stream` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Sky.Http.Server.WebSocket` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Ai.Agent` | stdlib | None | Asserted | stronger |
-| `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Asserted | stronger |
-| `stdlib.Std.Ai.Policy` | stdlib | Runs | Asserted | stronger |
-| `stdlib.Std.Ai.Provider` | stdlib | Runs | Asserted | stronger |
-| `stdlib.Std.Ai.Tool` | stdlib | None | Asserted | stronger |
-| `stdlib.Std.Ai.Trace` | stdlib | Runs | Asserted | stronger |
-| `stdlib.Std.Analytics` | stdlib | Runs | Asserted | stronger |
+| `stdlib.Std.Ai.Agent` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Policy` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Ai.Provider` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Ai.Tool` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Trace` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Analytics` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.App` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Bundle` | stdlib | Asserted | Falsified | stronger |
@@ -216,21 +216,21 @@ None.
 | `stdlib.Std.Db.Store` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Db.Table` | stdlib | None | None | equal |
 | `stdlib.Std.Decimal` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Durable` | stdlib | Runs | Asserted | stronger |
+| `stdlib.Std.Durable` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Email` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Attributes` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Html.Events` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Image` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Jobs` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Live` | stdlib | Runs | Asserted | stronger |
-| `stdlib.Std.Live.Console` | stdlib | None | Asserted | stronger |
+| `stdlib.Std.Live` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Live.Console` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Live.Head` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Log` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Markdown` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Money` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Native` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Nav` | stdlib | None | Asserted | stronger |
+| `stdlib.Std.Nav` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.PubSub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Qr` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Spa` | stdlib | None | Falsified | stronger |

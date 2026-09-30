@@ -209,7 +209,7 @@
       "tier": "T1"
     },
     "cli-verbs": {
-      "expected_assertions": 14,
+      "expected_assertions": 13,
       "falsifier_mutation": "cli-verbs.break-an-expectation",
       "falsifier_proven": true,
       "summary": "member G — sky CLI verbs (init/clean/watch/db/install/update/upgrade/dispatch)",
@@ -602,10 +602,22 @@
           "tests/conformance"
         ]
       },
-      "Std.Ai.Memory.Pg": {
-        "path": "rust/crates/sky/tests/ai_memory_pg_flow.rs",
+      "Std.Ai.Agent": {
+        "path": "rust/crates/sky/tests",
         "units": [
-          "flow:ai_memory_pg_flow"
+          "apps:cli-verbs"
+        ]
+      },
+      "Std.Ai.Memory.Pg": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
+      "Std.Ai.Tool": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
         ]
       },
       "Std.Compression": {
@@ -633,9 +645,9 @@
         ]
       },
       "Std.Live.Console": {
-        "path": "scripts/console-live-e2e.sh",
+        "path": "rust/crates/sky/tests",
         "units": [
-          "e2e:scripts/console-live-e2e.sh"
+          "apps:cli-verbs"
         ]
       },
       "Std.Markdown": {
@@ -644,10 +656,22 @@
           "apps:dispatch"
         ]
       },
+      "Std.Nav": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
+        ]
+      },
       "Std.Qr": {
         "path": "tests/conformance",
         "units": [
           "tests/conformance"
+        ]
+      },
+      "Std.Spa": {
+        "path": "rust/crates/sky/tests",
+        "units": [
+          "apps:cli-verbs"
         ]
       },
       "Std.Sync": {
@@ -672,7 +696,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2215,
+    "stdlib_entries": 2214,
     "stdlib_modules": 113,
     "surfaces_covered": 169,
     "surfaces_covered_pct": 93.9,
@@ -683,12 +707,11 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 64,
-      "FlowTest": 44,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 127
+    "units_total": 83
   },
   "surfaces": [
     {
@@ -2779,9 +2802,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -2850,6 +2873,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
@@ -2886,11 +2914,6 @@
           },
           {
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -2973,6 +2996,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -2991,21 +3019,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -3049,51 +3062,6 @@
           },
           {
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -3206,9 +3174,9 @@
             "strength": 4
           },
           {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -3222,16 +3190,6 @@
           },
           {
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -3289,6 +3247,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -3312,56 +3275,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-examples-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -3497,101 +3410,6 @@
             "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_memory_pg_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_cons_payload_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_snapshot_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Auth (gate `sky-suites`)",
@@ -3787,6 +3605,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -3795,46 +3618,6 @@
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-examples-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -3870,14 +3653,14 @@
             "strength": 4
           },
           {
-            "by": "apps:relay (gate `apps-relay`)",
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
           {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:relay (gate `apps-relay`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -3913,26 +3696,6 @@
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           }
         ],
         "strength": 4
@@ -4047,9 +3810,9 @@
             "strength": 4
           },
           {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -4198,6 +3961,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -4216,11 +3984,6 @@
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -4369,6 +4132,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -4397,41 +4165,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -4557,81 +4290,6 @@
             "by": "examples/65-metadata-service (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_memory_pg_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_cons_payload_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_ctor_destructure_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_model_subset_record_lambda_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Core (gate `sky-suites`)",
@@ -4837,9 +4495,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -4910,6 +4568,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -4928,11 +4591,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -4986,11 +4644,6 @@
           },
           {
             "by": "examples/36-composite-server (retained; tests/ suite run by gate `sky-verify`)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -5125,19 +4778,14 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/17-skymon (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -5312,19 +4960,14 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "apps:storefront (gate `apps-ffi-scale`)",
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
           {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:storefront (gate `apps-ffi-scale`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -5395,41 +5038,6 @@
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Core (gate `sky-suites`)",
@@ -5550,6 +5158,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
@@ -5568,36 +5181,6 @@
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -5681,6 +5264,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -5709,61 +5297,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-examples-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-forms-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -5989,86 +5522,6 @@
             "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_cons_payload_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_ctor_destructure_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_rowpoly_lambda_caf_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_snapshot_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Auth (gate `sky-suites`)",
@@ -6409,6 +5862,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -6432,26 +5890,6 @@
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/08-notes-app (retained; built + run by gate `build-run` + the sweep)",
@@ -6527,36 +5965,6 @@
             "by": "examples/63-app-chat (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           }
         ],
         "strength": 4
@@ -6657,6 +6065,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -6685,46 +6098,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
@@ -6885,116 +6258,6 @@
             "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_memory_pg_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_type_decl_module_shadow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_snapshot_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:resolve_opaque_ctor_exposing_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Core (gate `sky-suites`)",
@@ -7215,6 +6478,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -7228,21 +6496,6 @@
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/02-go-stdlib (retained; built + run by gate `build-run` + the sweep)",
@@ -7293,16 +6546,6 @@
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -7492,19 +6735,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/spa-websocket-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/Core (gate `sky-suites`)",
@@ -7606,6 +6839,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -7624,16 +6862,6 @@
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-websocket-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/08-notes-app (retained; built + run by gate `build-run` + the sweep)",
@@ -7674,21 +6902,6 @@
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -7812,29 +7025,19 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:relay (gate `apps-relay`)",
             "class": "Falsified",
             "strength": 4
           },
           {
-            "by": "e2e:scripts/spa-websocket-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
             "by": "examples/33-websocket-echo (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Core (gate `sky-suites`)",
@@ -8055,30 +7258,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -8092,15 +7280,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": "flow:ai_memory_pg_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -8114,25 +7302,20 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -8152,60 +7335,20 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_type_decl_module_shadow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:resolve_opaque_ctor_exposing_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -8225,25 +7368,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -8257,25 +7390,20 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -8295,12 +7423,12 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/52-blog-analytics (retained; built + run by gate `build-run` + the sweep)",
@@ -8313,7 +7441,7 @@
             "strength": 2
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -8346,6 +7474,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -8369,86 +7502,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-examples-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-websocket-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-forms-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/09-live-counter (retained; built + run by gate `build-run` + the sweep)",
@@ -8589,56 +7642,6 @@
             "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_model_subset_record_lambda_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -8989,6 +7992,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -9012,56 +8020,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-forms-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/09-live-counter (retained; built + run by gate `build-run` + the sweep)",
@@ -9192,51 +8150,6 @@
             "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_model_subset_record_lambda_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Live (gate `sky-suites`)",
@@ -9397,6 +8310,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -9410,11 +8328,6 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/07-todo-cli (retained; built + run by gate `build-run` + the sweep)",
@@ -9485,61 +8398,6 @@
             "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_snapshot_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -9700,9 +8558,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -9733,9 +8591,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -9766,19 +8624,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -9814,19 +8662,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -10036,6 +8874,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -10049,21 +8892,6 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/07-todo-cli (retained; built + run by gate `build-run` + the sweep)",
@@ -10144,71 +8972,6 @@
             "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_memory_pg_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_snapshot_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -10437,6 +9200,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -10510,16 +9278,6 @@
             "by": "examples/63-app-chat (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -10676,60 +9434,20 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_snapshot_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -10795,6 +9513,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -10818,26 +9541,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/08-notes-app (retained; built + run by gate `build-run` + the sweep)",
@@ -10918,16 +9621,6 @@
             "by": "examples/61-app-kanban (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Std (gate `sky-suites`)",
@@ -11048,6 +9741,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -11056,21 +9754,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/08-notes-app (retained; built + run by gate `build-run` + the sweep)",
@@ -11211,24 +9894,14 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "apps:storefront (gate `apps-ffi-scale`)",
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
           {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:storefront (gate `apps-ffi-scale`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/09-live-counter (retained; built + run by gate `build-run` + the sweep)",
@@ -11420,17 +10093,12 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
@@ -11438,7 +10106,7 @@
             "strength": 2
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "Runs",
@@ -11458,15 +10126,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -11482,6 +10150,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
           {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
@@ -11509,11 +10182,6 @@
           },
           {
             "by": "examples/38-composite-ui-multibackend (retained; tests/ suite run by gate `sky-verify`)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           }
@@ -11547,6 +10215,11 @@
         "evidence": [
           {
             "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
@@ -11789,111 +10462,6 @@
             "by": "examples/test_pkg (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_memory_pg_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_policy_router_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_toolcall_continuation_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_cons_payload_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_ctor_destructure_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_rowpoly_lambda_caf_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_type_decl_module_shadow_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_agent_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_compaction_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_snapshot_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_versioning_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:resolve_opaque_ctor_exposing_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -12171,6 +10739,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
             "strength": 4
@@ -12194,16 +10767,6 @@
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:ai_trace_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:slack_agent_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -12254,24 +10817,14 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/64-app-native (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -12304,20 +10857,15 @@
     {
       "category": "stdlib",
       "cover_new": {
-        "class": "Asserted",
+        "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           }
         ],
-        "strength": 3
+        "strength": 4
       },
       "cover_today": {
         "class": "None",
@@ -12395,19 +10943,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "gate `spa-diff-fuzz`",
@@ -12437,6 +10975,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -12460,51 +11003,6 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-forms-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/09-live-counter (retained; built + run by gate `build-run` + the sweep)",
@@ -12640,56 +11138,6 @@
             "by": "examples/67-durable-counter (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_model_subset_record_lambda_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:durable_tea_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Live (gate `sky-suites`)",
@@ -13019,6 +11467,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -13037,91 +11490,6 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/nav-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/session-revocation-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-client-crypto-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-examples-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-stale-handler-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-websocket-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/ui-forms-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
@@ -13192,51 +11560,6 @@
             "by": "examples/64-app-native (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:codegen_model_subset_record_lambda_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:fuzz_verb_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:resolve_opaque_ctor_exposing_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:std_app_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:task_ws_embedded_live_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Std (gate `sky-suites`)",
@@ -13395,6 +11718,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -13408,11 +11736,6 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
@@ -13751,9 +12074,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -13842,29 +12165,19 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
           },
           {
-            "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
             "by": "examples/62-app-notes (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           }
         ],
         "strength": 4
@@ -13895,6 +12208,11 @@
             "strength": 4
           },
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:dispatch (gate `apps-dispatch`)",
             "class": "Falsified",
             "strength": 4
@@ -13913,11 +12231,6 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
@@ -14141,29 +12454,14 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "apps:fieldbook (gate `apps-fieldbook`)",
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
             "class": "Falsified",
             "strength": 4
           },
           {
-            "by": "e2e:scripts/live-client-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
-          },
-          {
-            "by": "e2e:scripts/tui-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:fieldbook (gate `apps-fieldbook`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
@@ -14199,11 +12497,6 @@
             "by": "examples/64-app-native (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
-          },
-          {
-            "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "tests/Std (gate `sky-suites`)",
@@ -14269,6 +12562,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -14282,11 +12580,6 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/37-composite-live-shop (retained; tests/ suite run by gate `sky-verify`)",
@@ -14360,6 +12653,11 @@
         "class": "Falsified",
         "evidence": [
           {
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "apps:fieldbook (gate `apps-fieldbook`)",
             "class": "Falsified",
             "strength": 4
@@ -14373,11 +12671,6 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
-          },
-          {
-            "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
           },
           {
             "by": "examples/19-skyforum (retained; built + run by gate `build-run` + the sweep)",
@@ -14481,9 +12774,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "e2e:scripts/ui-canvas-terminal-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -14600,9 +12893,9 @@
         "class": "Falsified",
         "evidence": [
           {
-            "by": "flow:process_watch_tea_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
-            "class": "Asserted",
-            "strength": 3
+            "by": "apps:cli-verbs (gate `cli-verbs`)",
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": "tests/conformance (gate `conformance`)",
@@ -15074,9 +13367,8 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 4,
+          "count": 3,
           "symbols": [
-            "Message",
             "assistant",
             "compatible",
             "cost"
@@ -15181,13 +13473,12 @@
           ]
         },
         "Std.Codec": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "ColType",
             "ObjectCodec",
             "Shape",
             "Variant",
-            "dict",
             "maybe",
             "shape",
             "var3"
@@ -15375,17 +13666,13 @@
           ]
         },
         "Std.Durable": {
-          "count": 10,
+          "count": 6,
           "symbols": [
             "RegisteredWorkflow",
-            "SnapshotEvent",
             "VersionPolicy",
-            "applyRestore",
             "deleteSnapshot",
             "isSuspend",
-            "restoreCmd",
             "saveSnapshotAuto",
-            "snapshotCmd",
             "stepValue"
           ]
         },
@@ -15602,7 +13889,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 21,
+          "count": 20,
           "symbols": [
             "AppConfig",
             "Route",
@@ -15614,7 +13901,6 @@
             "rpc",
             "rpcHold",
             "rpcWith",
-            "withClientCrypto",
             "withGuard",
             "withHead",
             "withModelDecoder",
@@ -15870,8 +14156,8 @@
           ]
         }
       },
-      "count": 670,
-      "pct_of_denominator": 30.2
+      "count": 663,
+      "pct_of_denominator": 29.9
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -16188,9 +14474,8 @@
           ]
         },
         "Std.Ai.Provider": {
-          "count": 7,
+          "count": 6,
           "symbols": [
-            "Message",
             "ToolCall",
             "ToolResponse",
             "Turn",
@@ -16302,13 +14587,12 @@
           ]
         },
         "Std.Codec": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "ColType",
             "ObjectCodec",
             "Shape",
             "Variant",
-            "dict",
             "maybe",
             "shape",
             "var3"
@@ -16506,18 +14790,14 @@
           ]
         },
         "Std.Durable": {
-          "count": 11,
+          "count": 7,
           "symbols": [
             "Ctx",
             "RegisteredWorkflow",
-            "SnapshotEvent",
             "VersionPolicy",
-            "applyRestore",
             "deleteSnapshot",
             "isSuspend",
-            "restoreCmd",
             "saveSnapshotAuto",
-            "snapshotCmd",
             "stepValue"
           ]
         },
@@ -16784,7 +15064,7 @@
           ]
         },
         "Std.Spa": {
-          "count": 21,
+          "count": 20,
           "symbols": [
             "AppConfig",
             "Route",
@@ -16796,7 +15076,6 @@
             "rpc",
             "rpcHold",
             "rpcWith",
-            "withClientCrypto",
             "withGuard",
             "withHead",
             "withModelDecoder",
@@ -17066,8 +15345,8 @@
           ]
         }
       },
-      "count": 760,
-      "pct_of_denominator": 34.3
+      "count": 753,
+      "pct_of_denominator": 34.0
     }
   },
   "units": [
@@ -17087,12 +15366,12 @@
       "db_drivers": [],
       "gate": "cli-verbs",
       "id": "apps:cli-verbs",
-      "modules_imported": 0,
+      "modules_imported": 61,
       "path": "rust/crates/sky/tests",
-      "refs_generous": 0,
-      "refs_qualified": 0,
+      "refs_generous": 394,
+      "refs_qualified": 370,
       "role": "Layer2",
-      "sky_files": 0,
+      "sky_files": 189,
       "sky_toml_sections": []
     },
     {
@@ -17200,210 +15479,6 @@
       "refs_qualified": 21,
       "role": "Layer1",
       "sky_files": 12,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/console-live-e2e.sh",
-      "modules_imported": 11,
-      "path": "scripts/console-live-e2e.sh",
-      "refs_generous": 31,
-      "refs_qualified": 29,
-      "role": "FlowTest",
-      "sky_files": 2,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/header-session-e2e.sh",
-      "modules_imported": 7,
-      "path": "scripts/header-session-e2e.sh",
-      "refs_generous": 21,
-      "refs_qualified": 18,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/islands-e2e.sh",
-      "modules_imported": 11,
-      "path": "scripts/islands-e2e.sh",
-      "refs_generous": 41,
-      "refs_qualified": 40,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/live-client-e2e.sh",
-      "modules_imported": 12,
-      "path": "scripts/live-client-e2e.sh",
-      "refs_generous": 45,
-      "refs_qualified": 43,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/nav-e2e.sh",
-      "modules_imported": 5,
-      "path": "scripts/nav-e2e.sh",
-      "refs_generous": 17,
-      "refs_qualified": 16,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/session-revocation-e2e.sh",
-      "modules_imported": 8,
-      "path": "scripts/session-revocation-e2e.sh",
-      "refs_generous": 16,
-      "refs_qualified": 15,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-client-crypto-e2e.sh",
-      "modules_imported": 11,
-      "path": "scripts/spa-client-crypto-e2e.sh",
-      "refs_generous": 30,
-      "refs_qualified": 28,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-examples-e2e.sh",
-      "modules_imported": 5,
-      "path": "scripts/spa-examples-e2e.sh",
-      "refs_generous": 13,
-      "refs_qualified": 11,
-      "role": "FlowTest",
-      "sky_files": 2,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-restore-e2e.sh",
-      "modules_imported": 12,
-      "path": "scripts/spa-restore-e2e.sh",
-      "refs_generous": 32,
-      "refs_qualified": 30,
-      "role": "FlowTest",
-      "sky_files": 3,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-rpc-consistency-e2e.sh",
-      "modules_imported": 11,
-      "path": "scripts/spa-rpc-consistency-e2e.sh",
-      "refs_generous": 32,
-      "refs_qualified": 30,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-rpc-order-e2e.sh",
-      "modules_imported": 7,
-      "path": "scripts/spa-rpc-order-e2e.sh",
-      "refs_generous": 23,
-      "refs_qualified": 22,
-      "role": "FlowTest",
-      "sky_files": 2,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-stale-handler-e2e.sh",
-      "modules_imported": 7,
-      "path": "scripts/spa-stale-handler-e2e.sh",
-      "refs_generous": 15,
-      "refs_qualified": 14,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-vdom-identity-e2e.sh",
-      "modules_imported": 13,
-      "path": "scripts/spa-vdom-identity-e2e.sh",
-      "refs_generous": 53,
-      "refs_qualified": 52,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/spa-websocket-e2e.sh",
-      "modules_imported": 5,
-      "path": "scripts/spa-websocket-e2e.sh",
-      "refs_generous": 28,
-      "refs_qualified": 23,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/tui-e2e.sh",
-      "modules_imported": 12,
-      "path": "scripts/tui-e2e.sh",
-      "refs_generous": 46,
-      "refs_qualified": 43,
-      "role": "FlowTest",
-      "sky_files": 5,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/ui-canvas-terminal-e2e.sh",
-      "modules_imported": 11,
-      "path": "scripts/ui-canvas-terminal-e2e.sh",
-      "refs_generous": 53,
-      "refs_qualified": 47,
-      "role": "FlowTest",
-      "sky_files": 2,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "e2e:scripts/ui-forms-e2e.sh",
-      "modules_imported": 5,
-      "path": "scripts/ui-forms-e2e.sh",
-      "refs_generous": 19,
-      "refs_qualified": 18,
-      "role": "FlowTest",
-      "sky_files": 1,
       "sky_toml_sections": []
     },
     {
@@ -18336,330 +16411,6 @@
         "[\"go.dependencies\"]",
         "[source]"
       ]
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:ai_memory_pg_flow",
-      "modules_imported": 6,
-      "path": "rust/crates/sky/tests/ai_memory_pg_flow.rs",
-      "refs_generous": 10,
-      "refs_qualified": 8,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:ai_native_tools_flow",
-      "modules_imported": 13,
-      "path": "rust/crates/sky/tests/ai_native_tools_flow.rs",
-      "refs_generous": 27,
-      "refs_qualified": 23,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:ai_policy_router_flow",
-      "modules_imported": 8,
-      "path": "rust/crates/sky/tests/ai_policy_router_flow.rs",
-      "refs_generous": 20,
-      "refs_qualified": 16,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:ai_toolcall_continuation_flow",
-      "modules_imported": 12,
-      "path": "rust/crates/sky/tests/ai_toolcall_continuation_flow.rs",
-      "refs_generous": 32,
-      "refs_qualified": 25,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:ai_trace_flow",
-      "modules_imported": 7,
-      "path": "rust/crates/sky/tests/ai_trace_flow.rs",
-      "refs_generous": 13,
-      "refs_qualified": 11,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:app_serve_flow",
-      "modules_imported": 10,
-      "path": "rust/crates/sky/tests/app_serve_flow.rs",
-      "refs_generous": 29,
-      "refs_qualified": 24,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:codegen_cons_payload_alias_flow",
-      "modules_imported": 4,
-      "path": "rust/crates/sky/tests/codegen_cons_payload_alias_flow.rs",
-      "refs_generous": 5,
-      "refs_qualified": 3,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:codegen_ctor_destructure_flow",
-      "modules_imported": 3,
-      "path": "rust/crates/sky/tests/codegen_ctor_destructure_flow.rs",
-      "refs_generous": 3,
-      "refs_qualified": 2,
-      "role": "FlowTest",
-      "sky_files": 2,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:codegen_model_subset_record_lambda_flow",
-      "modules_imported": 5,
-      "path": "rust/crates/sky/tests/codegen_model_subset_record_lambda_flow.rs",
-      "refs_generous": 8,
-      "refs_qualified": 7,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:codegen_rowpoly_lambda_caf_flow",
-      "modules_imported": 2,
-      "path": "rust/crates/sky/tests/codegen_rowpoly_lambda_caf_flow.rs",
-      "refs_generous": 2,
-      "refs_qualified": 1,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:codegen_type_decl_module_shadow_flow",
-      "modules_imported": 3,
-      "path": "rust/crates/sky/tests/codegen_type_decl_module_shadow_flow.rs",
-      "refs_generous": 6,
-      "refs_qualified": 4,
-      "role": "FlowTest",
-      "sky_files": 2,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:doc_flow",
-      "modules_imported": 11,
-      "path": "rust/crates/sky/tests/doc_flow.rs",
-      "refs_generous": 25,
-      "refs_qualified": 23,
-      "role": "FlowTest",
-      "sky_files": 2,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:durable_agent_flow",
-      "modules_imported": 10,
-      "path": "rust/crates/sky/tests/durable_agent_flow.rs",
-      "refs_generous": 21,
-      "refs_qualified": 18,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:durable_agent_tools_flow",
-      "modules_imported": 12,
-      "path": "rust/crates/sky/tests/durable_agent_tools_flow.rs",
-      "refs_generous": 27,
-      "refs_qualified": 23,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:durable_compaction_flow",
-      "modules_imported": 9,
-      "path": "rust/crates/sky/tests/durable_compaction_flow.rs",
-      "refs_generous": 23,
-      "refs_qualified": 18,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:durable_flow",
-      "modules_imported": 9,
-      "path": "rust/crates/sky/tests/durable_flow.rs",
-      "refs_generous": 27,
-      "refs_qualified": 22,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:durable_snapshot_flow",
-      "modules_imported": 7,
-      "path": "rust/crates/sky/tests/durable_snapshot_flow.rs",
-      "refs_generous": 10,
-      "refs_qualified": 7,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:durable_tea_cli_flow",
-      "modules_imported": 8,
-      "path": "rust/crates/sky/tests/durable_tea_cli_flow.rs",
-      "refs_generous": 12,
-      "refs_qualified": 10,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:durable_versioning_flow",
-      "modules_imported": 8,
-      "path": "rust/crates/sky/tests/durable_versioning_flow.rs",
-      "refs_generous": 22,
-      "refs_qualified": 17,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:fuzz_verb_flow",
-      "modules_imported": 7,
-      "path": "rust/crates/sky/tests/fuzz_verb_flow.rs",
-      "refs_generous": 13,
-      "refs_qualified": 11,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:json_format_flow",
-      "modules_imported": 12,
-      "path": "rust/crates/sky/tests/json_format_flow.rs",
-      "refs_generous": 39,
-      "refs_qualified": 36,
-      "role": "FlowTest",
-      "sky_files": 5,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:process_watch_tea_flow",
-      "modules_imported": 9,
-      "path": "rust/crates/sky/tests/process_watch_tea_flow.rs",
-      "refs_generous": 26,
-      "refs_qualified": 22,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:resolve_opaque_ctor_exposing_flow",
-      "modules_imported": 4,
-      "path": "rust/crates/sky/tests/resolve_opaque_ctor_exposing_flow.rs",
-      "refs_generous": 5,
-      "refs_qualified": 2,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:slack_agent_flow",
-      "modules_imported": 16,
-      "path": "rust/crates/sky/tests/slack_agent_flow.rs",
-      "refs_generous": 54,
-      "refs_qualified": 47,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:spa_split_flow",
-      "modules_imported": 36,
-      "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 146,
-      "refs_qualified": 140,
-      "role": "FlowTest",
-      "sky_files": 115,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:std_app_flow",
-      "modules_imported": 8,
-      "path": "rust/crates/sky/tests/std_app_flow.rs",
-      "refs_generous": 34,
-      "refs_qualified": 32,
-      "role": "FlowTest",
-      "sky_files": 9,
-      "sky_toml_sections": []
-    },
-    {
-      "db_drivers": [],
-      "gate": null,
-      "id": "flow:task_ws_embedded_live_flow",
-      "modules_imported": 15,
-      "path": "rust/crates/sky/tests/task_ws_embedded_live_flow.rs",
-      "refs_generous": 47,
-      "refs_qualified": 38,
-      "role": "FlowTest",
-      "sky_files": 1,
-      "sky_toml_sections": []
     },
     {
       "db_drivers": [],
