@@ -220,3 +220,29 @@ func TestServerUseAppliesTheMiddlewareToEveryRoute(t *testing.T) {
 		t.Fatalf("preflight through Server.use withCors: status %d headers %v", rec.Code, rec.Header())
 	}
 }
+
+// G-13: Server.withCookie is copy-on-write like withHeader. Two responses
+// derived from one shared base each carry their own cookie; neither the base
+// nor the sibling sees it, in Cookies or in the Set-Cookie header mirror.
+func TestWithCookieIsCopyOnWrite(t *testing.T) {
+	base, _ := asSkyResponse(Server_withHeader("X-Base", "1", SkyResponse{Status: 200, Body: "ok"}))
+	base.Cookies = make([]string, 0, 4) // spare capacity: a shared backing array would leak
+	a, _ := asSkyResponse(Server_withCookie("a", "1", "Path=/", base))
+	b, _ := asSkyResponse(Server_withCookie("b", "2", "Path=/", base))
+
+	if len(base.Cookies) != 0 {
+		t.Fatalf("the shared base response gained cookies: %v", base.Cookies)
+	}
+	if _, set := base.Headers["Set-Cookie"]; set {
+		t.Fatalf("the shared base response gained a Set-Cookie header: %v", base.Headers)
+	}
+	if len(a.Cookies) != 1 || !strings.HasPrefix(a.Cookies[0], "a=1") {
+		t.Fatalf("response a: cookies %v", a.Cookies)
+	}
+	if len(b.Cookies) != 1 || !strings.HasPrefix(b.Cookies[0], "b=2") {
+		t.Fatalf("response b: cookies %v (a sibling's cookie leaked or was overwritten)", b.Cookies)
+	}
+	if !strings.HasPrefix(a.Headers["Set-Cookie"], "a=1") || !strings.HasPrefix(b.Headers["Set-Cookie"], "b=2") {
+		t.Fatalf("Set-Cookie mirrors crossed: a=%q b=%q", a.Headers["Set-Cookie"], b.Headers["Set-Cookie"])
+	}
+}
