@@ -292,6 +292,8 @@ fn assemble_and_emit_with(
     if stdlib.is_empty() {
         return Err("no stdlib under sky-stdlib".into());
     }
+    let stdlib_names: std::collections::BTreeSet<String> =
+        stdlib.iter().map(|(n, _, _)| n.clone()).collect();
     for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
@@ -326,6 +328,7 @@ fn assemble_and_emit_with(
     if locals.is_empty() {
         return Err(format!("no .sky under {source_root}/").into());
     }
+    check_module_ownership(example_dir, &stdlib_names, &dep_locals, &locals)?;
     dep_locals.extend(locals);
     let mut locals = dep_locals;
     if let (AppScope::EntryClosure, Some(want)) = (scope, entry_module) {
@@ -2717,6 +2720,8 @@ pub(crate) fn load_source_db(
     if stdlib.is_empty() {
         return Err("no stdlib under sky-stdlib".into());
     }
+    let stdlib_names: std::collections::BTreeSet<String> =
+        stdlib.iter().map(|(n, _, _)| n.clone()).collect();
     for (n, file, _p) in stdlib {
         db.add_module(&n, file);
     }
@@ -2733,14 +2738,17 @@ pub(crate) fn load_source_db(
     // dependencies the generated projects declare, never as project modules
     // to copy.
     let (path_locals, _) = load_path_dependency_sources(&db, &mut next_id, example_dir);
-    let mut path_mods: Vec<(base::ModuleId, PathBuf)> = Vec::new();
-    for (n, file, p) in registry.into_iter().chain(path_locals) {
-        path_mods.push((db.add_module(&n, file), p));
-    }
+    let mut dep_locals = registry;
+    dep_locals.extend(path_locals);
     let source_root = configured_source_root(example_dir);
     let locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
     if locals.is_empty() {
         return Err(format!("no .sky under {source_root}/"));
+    }
+    check_module_ownership(example_dir, &stdlib_names, &dep_locals, &locals)?;
+    let mut path_mods: Vec<(base::ModuleId, PathBuf)> = Vec::new();
+    for (n, file, p) in dep_locals {
+        path_mods.push((db.add_module(&n, file), p));
     }
     let mut entry = None;
     let mut check_ids: Vec<base::ModuleId> = Vec::new();
@@ -2874,6 +2882,34 @@ pub(crate) fn load_registry_dependencies(
 /// loaded no path package, so the Sky.Spa split type-checked `import Geo.Shape
 /// exposing (Point)` against a missing module and failed with `Point vs
 /// record` on a program `sky check` accepted.
+/// Refuse a module world in which a dependency takes a standard-library or
+/// kernel name, two dependencies define one module, or the project replaces a
+/// standard-library or dependency module ([`crate::module_ownership`]). Both
+/// loaders call it with the same lists, before any module is registered.
+fn check_module_ownership(
+    example_dir: &Path,
+    stdlib: &std::collections::BTreeSet<String>,
+    deps: &[(String, skydb::SourceFile, PathBuf)],
+    app: &[(String, skydb::SourceFile, PathBuf)],
+) -> Result<(), String> {
+    use crate::module_ownership::{check, path_dep_owner, registry_owner, Owner};
+    let skydeps = example_dir.join(".skydeps");
+    let source_dirs = crate::path_deps::sky_source_dirs(example_dir);
+    let mut modules: Vec<(String, Owner, PathBuf)> = Vec::new();
+    for (n, _, p) in deps {
+        let owner = if p.starts_with(&skydeps) {
+            registry_owner(example_dir, p)
+        } else {
+            path_dep_owner(&source_dirs, p)
+        };
+        modules.push((n.clone(), owner, p.clone()));
+    }
+    for (n, _, p) in app {
+        modules.push((n.clone(), Owner::App, p.clone()));
+    }
+    check(example_dir, stdlib, &modules)
+}
+
 pub(crate) fn load_path_dependency_sources(
     db: &skydb::SkyDatabase,
     next_id: &mut u32,

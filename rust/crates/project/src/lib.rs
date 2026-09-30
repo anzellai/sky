@@ -37,6 +37,8 @@ pub mod go_jobs;
 /// Available memory and the per-project peak records (`go_jobs`, the Sky.Spa
 /// leg plan).
 pub mod memory;
+/// Which module names a dependency or the project may define (F-1).
+mod module_ownership;
 /// `sky doc --api openapi` — a valid OpenAPI 3.1 spec generated statically from
 /// the app's typed source, reusing the `diagram::wire` analysis.
 pub mod openapi;
