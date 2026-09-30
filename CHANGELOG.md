@@ -352,7 +352,10 @@ Operations:
   with an `int`, `float` or `bool` key is a `Dict` with that key (it was
   `Dict String V`, and empty at run time). A callback passed to Go is typed
   from the Go signature, result included. A Sky value where Go wants an
-  interface is the new `[E2013]`.
+  interface is the new `[E2013]`; a Go value passed where Go wants an
+  interface is checked at run time (an `Err`, never a crash). A Go value is no
+  longer a kernel `Value` (`examples/05-mux-server` now annotates
+  `startServer : Mux.Router -> Result Error ()`).
 - **`Auth.verifyToken` returns `Result Error Json.Value`** (it was
   `Result Error a`, an unchecked cast). Decode the claims with
   `Json.Decode`.
@@ -731,7 +734,10 @@ entries.
   `==`, `<`, `>`, `<=` and `>=` stay IEEE (`False` with a NaN operand).
   `compare`, `List.sort`, `List.sortBy`, `Math.min`, `Math.max` and `Set`
   order a custom type by constructor declaration order, then the arguments,
-  and a record by field name. The signatures spell `comparable`.
+  and a record by field name (`Just _` before `Nothing`, `Ok _` before
+  `Err _`, `False` before `True`); `Set.toList` is ascending. `List.sort`,
+  `List.sortBy`, `Math.min` / `max` and the `Set` functions spell
+  `comparable` in their signatures.
 - **The loopback Host guard applies only outside production.** A production
   process on loopback behind a local proxy (`ENV=production
   SKY_HOST=127.0.0.1`) answers the proxied public Host again. Outside
@@ -1690,8 +1696,10 @@ entries.
   breaks `go build` for every program that imports the package (it is
   skipped, noted in the `.skyi`); fallback wrappers return tuples and
   `Maybe` in the shapes the surface states; field getters no longer crash on
-  a nil receiver; a callback of the wrong result type is a type error, not a
-  compiler bug report.
+  a nil receiver; the generic identity-pointer binding returns a `Result`; a
+  callback whose result does not convert is an `Err`, never a zero value; a
+  callback of the wrong result type is a type error, not a compiler bug
+  report.
 - **`Bundle.withId` / `withName` inside a block comment or a string was read
   as the app's identity.** The last real call wins, as at run time.
 - **`sky fmt` accepted a file that does not parse**, and `sky add` in a
