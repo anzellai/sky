@@ -613,7 +613,7 @@ func Go_Mux_routerSetKeepContextT(value any, recv any) (out SkyResult[any, any])
 	defer SkyFfiGuardT(&out)()
 	r := FfiArg[*pkg.Router](recv)
 	if r == nil { out = Err[any, any](ErrFfi("KeepContext: nil receiver")); return }
-	r.KeepContext = value
+	r.KeepContext = FfiArg[bool](value)
 	out = Ok[any, any](FfiRet(r))
 	return
 }

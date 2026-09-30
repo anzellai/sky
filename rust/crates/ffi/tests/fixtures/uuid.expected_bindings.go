@@ -321,7 +321,7 @@ func Go_Uuid_nullUUIDSetValidT(value any, recv any) (out SkyResult[any, any]) {
 	defer SkyFfiGuardT(&out)()
 	r := FfiArg[*pkg.NullUUID](recv)
 	if r == nil { out = Err[any, any](ErrFfi("Valid: nil receiver")); return }
-	r.Valid = value
+	r.Valid = FfiArg[bool](value)
 	out = Ok[any, any](FfiRet(r))
 	return
 }

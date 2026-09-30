@@ -398,7 +398,14 @@ fn ffi_format3_hint(message: &str, body: &Body, sky: &dyn hir::SkyDb) -> Option<
             link("ffi-pointer-is-maybe")
         ));
     }
-    if message.contains("Dict") {
+    let typed_key = foreign.iter().any(|(p, n)| {
+        sky.ffi_fn(p, n).is_some_and(|s| {
+            ["Dict Int", "Dict Float", "Dict Bool"]
+                .iter()
+                .any(|k| s.sky_type.contains(k))
+        })
+    });
+    if message.contains("Dict") || typed_key {
         return Some(format!(
             "since v0.27.0 a Go map keeps its key type: `map[int]V` is `Dict Int V`, not \
              `Dict String V`. Fix: use the real key type (`Dict Int String`).{}",
@@ -668,7 +675,7 @@ pub fn check_modules_with_world(
         let mut codec_elems = codec_elem::CodecElemScan::default();
         // `[E2010]` state (per module, one diagnostic per offending call).
         let mut form_submits = crate::form_submit::FormSubmitScan::default();
-        // `[E2012]` state (per module, one diagnostic per offending argument).
+        // `[E2013]` state (per module, one diagnostic per offending argument).
         let mut ffi_ifaces = crate::ffi_iface::IfaceScan::default();
 
         // `[E1011]` — `Sky.Ffi` is stdlib-only. `Ffi.call` / `Ffi.callPure` /
@@ -882,7 +889,7 @@ pub fn check_modules_with_world(
             // ---- [E2010] form-submit handler ---------------------------
             crate::form_submit::scan_body(body, &expr_ty, sky, &dname, &mut form_submits);
 
-            // ---- [E2012] a Sky value where a Go interface is required ---
+            // ---- [E2013] a Sky value where a Go interface is required ---
             crate::ffi_iface::scan_body(body, &expr_ty, sky, &dname, &mut ffi_ifaces);
 
             // ---- [E2011] literal pub/sub topic (collected; compared below,
@@ -939,12 +946,12 @@ pub fn check_modules_with_world(
             });
         }
 
-        // One `[E2012]` per Sky value passed for a Go interface parameter.
+        // One `[E2013]` per Sky value passed for a Go interface parameter.
         for f in &ffi_ifaces.found {
             out.type_errors += 1;
             out.diagnostics.push(Diagnostic {
                 severity: Severity::Error,
-                code: Code("E2012".to_string()),
+                code: Code("E2013".to_string()),
                 message: format!("[{}] {}", f.def_name, crate::ffi_iface::message(f)),
                 labels: f
                     .span

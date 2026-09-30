@@ -1,4 +1,4 @@
-//! **`[E2012]` — a Sky value passed where a Go interface is required.**
+//! **`[E2013]` — a Sky value passed where a Go interface is required.**
 //!
 //! A Go-FFI parameter of a non-empty interface type (`io.Writer`,
 //! `http.Handler`) is `goi@…` in the pinned signature (surface format 3). The

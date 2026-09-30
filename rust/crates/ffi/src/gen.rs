@@ -211,11 +211,32 @@ fn is_error_type(t: &str) -> bool {
     t == "error"
 }
 
-fn touches_internal(t: &str) -> bool {
+/// A Go type string that names a type another package cannot spell: one in an
+/// `internal/` or `vendor/` tree, or an unexported one
+/// (`github.com/redis/go-redis/v9.commandInfoResolver`). The generator used to
+/// write the latter verbatim as a Go type (`arg1.(*github.com/…/v9.cmdable)`),
+/// which is not Go syntax, so no program importing the package could build
+/// (M-3). A binding whose signature needs one is skipped from the surface; its
+/// wrapper, if emitted, goes through reflection.
+pub(crate) fn touches_internal(t: &str) -> bool {
     t.contains("/internal.")
         || t.contains("/internal/")
         || t.contains("/vendor.")
         || t.contains("/vendor/")
+        || names_unexported_type(t)
+}
+
+/// Does `t` name an unexported type of some package (`path.lowerName`)?
+pub(crate) fn names_unexported_type(t: &str) -> bool {
+    t.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '-')))
+        .map(|tok| tok.trim_start_matches('.'))
+        .filter(|tok| tok.contains('.'))
+        .any(|tok| {
+            let last = tok.rsplit('.').next().unwrap_or("");
+            last.chars()
+                .next()
+                .is_some_and(|c| c.is_lowercase() || c == '_')
+        })
 }
 
 fn generic_hint(t: &str) -> bool {
@@ -523,6 +544,14 @@ fn emit_skyi(info: &PackageInfo) -> String {
 // used to print the raw Go results followed by "runtime wrap: Task Error",
 // which described neither the type nor the runtime behaviour.
 fn emit_skyi_fn(fn_: &Function) -> String {
+    if should_skip_fn(fn_) {
+        // Not in kernel.json, so not callable: say so, and why.
+        return format!(
+            "-- [skipped] {}: its Go signature uses a generic, internal, unexported \
+             or `error`-parameter type that Sky cannot pass",
+            fn_.name
+        );
+    }
     format!(
         "-- [{}] {} : {}",
         fn_.effect,
@@ -622,6 +651,31 @@ mod tests {
             wrapper_sky_type(&f(vec![], vec![p("string"), p("error")])),
             "() -> Result Error String"
         );
+    }
+
+    /// M-3: an unexported Go type is never written as a Go type; a binding
+    /// that needs one is skipped.
+    #[test]
+    fn unexported_types_are_detected() {
+        for t in [
+            "*github.com/redis/go-redis/v9.commandInfoResolver",
+            "github.com/redis/go-redis/v9.cmdable",
+            "[]example.com/p.inner",
+            "func(example.com/p.hook) error",
+        ] {
+            assert!(names_unexported_type(t), "{t}");
+            assert!(touches_internal(t), "{t}");
+        }
+        for t in [
+            "*github.com/redis/go-redis/v9.Client",
+            "gopkg.in/yaml.v3.Node",
+            "context.Context",
+            "func(xs ...int) string",
+            "map[string]interface{}",
+            "[]byte",
+        ] {
+            assert!(!names_unexported_type(t), "{t}");
+        }
     }
 
     #[test]
@@ -850,7 +904,10 @@ mod tests {
             skyi.contains("Task.lazy"),
             "the header must show how to defer a call:\n{skyi}"
         );
-        let fn_lines: Vec<&str> = skyi.lines().filter(|l| l.starts_with("-- [")).collect();
+        let fn_lines: Vec<&str> = skyi
+            .lines()
+            .filter(|l| l.starts_with("-- [") && !l.starts_with("-- [skipped]"))
+            .collect();
         assert!(
             !fn_lines.is_empty(),
             "the uuid fixture has bindings:\n{skyi}"

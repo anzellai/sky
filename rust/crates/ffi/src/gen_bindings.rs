@@ -778,10 +778,7 @@ fn has_generic_marker(t: &str) -> bool {
 }
 
 fn touches_internal(t: &str) -> bool {
-    t.contains("/internal.")
-        || t.contains("/internal/")
-        || t.contains("/vendor.")
-        || t.contains("/vendor/")
+    crate::gen::touches_internal(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -1077,7 +1074,7 @@ fn emit_typed_wrapper(
         };
         let typed_decl = format!(
             "func {wrapper_name}T(arg0 any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\trecv := {}\n{nil_check}\tout = Ok[any, any](FfiRet(recv.{field_name}))\n\treturn\n}}\n",
-            arg_conv("arg0", &receiver_type)
+            format!("FfiArg[{receiver_type}](arg0)")
         );
         let any_decl = format!(
             "func {wrapper_name}(arg0 any) any {{ return SkyFfiFieldGet3(arg0, {}) }}\n",
@@ -1113,8 +1110,8 @@ fn emit_typed_wrapper(
         };
         let typed_decl_set = format!(
             "func {wrapper_name}T(value any, recv any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\tr := {}\n{nil_check}\tr.{field_name} = {}\n\tout = Ok[any, any](FfiRet(r))\n\treturn\n}}\n",
-            arg_conv("recv", &receiver_type),
-            arg_conv("value", &raw_value_type)
+            format!("FfiArg[{receiver_type}](recv)"),
+            format!("FfiArg[{raw_value_type}](value)")
         );
         let any_decl_set = format!(
             "func {wrapper_name}(value any, recv any) any {{ return SkyFfiFieldSet3(value, recv, {}) }}\n",
