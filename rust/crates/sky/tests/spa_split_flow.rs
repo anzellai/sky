@@ -7670,6 +7670,20 @@ fn split_file(proj: &std::path::Path, rel: &str) -> String {
     std::fs::read_to_string(proj.join(".skyapp/web-app/.split").join(rel)).unwrap_or_default()
 }
 
+/// The `X-Sky-Wire` header a current (v0.27.0+) client sends, with the wire
+/// hash the split recorded for `proj` (E-4). A request WITHOUT it is a legacy
+/// page: its follow-up branch runs the follow-ups on the server and answers
+/// none, so a test of the follow-up a current client runs must send it.
+fn split_wire_header(proj: &std::path::Path) -> String {
+    let toml = split_file(proj, "frontend/sky.toml");
+    let wire = toml
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("wire = \""))
+        .map(|w| w.trim_end_matches('"').to_string())
+        .unwrap_or_else(|| panic!("the frontend records its wire hash:\n{toml}"));
+    format!("X-Sky-Wire: {wire}")
+}
+
 /// Start the split backend of `proj` on a free port.
 fn start_split_backend(proj: &std::path::Path) -> (Killed, u16) {
     let port = free_port();
@@ -8065,12 +8079,15 @@ fn a_result_msg_with_a_captured_argument_crosses_with_the_argument() {
     assert!(out.status.success(), "the web:app build failed:\n{log}");
     let (back, back_port) = start_split_backend(&proj);
     let url = "http://127.0.0.1:1/";
-    let posted = curl_post_status_body(
+    // A current client (E-4 wire header): the follow-up comes back for it.
+    let wire = split_wire_header(&proj);
+    let (code, _, body) = curl_post_with_headers(
         back_port,
         "/_rpc/Fetch",
         &format!(r#"{{"spaArg0_":["Ok","{url}"]}}"#),
-    )
-    .expect("POST /_rpc/Fetch");
+        &[&wire],
+    );
+    let posted = (code, body);
     drop(back);
     assert_eq!(posted.0, 200, "{posted:?}");
     let v: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
@@ -8405,8 +8422,15 @@ fn a_record_alias_from_a_path_dependency_crosses_the_split() {
     }
     assert!(out.status.success(), "the web:app build failed:\n{log}");
     let (back, back_port) = start_split_backend(&proj);
-    let posted = curl_post_status_body(back_port, "/_rpc/Jump", r#"{"at":{"x":1,"y":2},"log":""}"#)
-        .expect("POST /_rpc/Jump");
+    // A current client (E-4 wire header): the follow-up comes back for it.
+    let wire = split_wire_header(&proj);
+    let (code, _, body) = curl_post_with_headers(
+        back_port,
+        "/_rpc/Jump",
+        r#"{"at":{"x":1,"y":2},"log":""}"#,
+        &[&wire],
+    );
+    let posted = (code, body);
     drop(back);
     assert_eq!(posted.0, 200, "{posted:?}");
     // `Jump` writes `log` and returns `Landed`, which the client dispatches:
@@ -8931,10 +8955,13 @@ fn a_follow_up_also_reached_by_a_server_chain_crosses_and_the_write_applies() {
         wait_for_spa_backend(&log_path, 120),
         "the backend did not start"
     );
-    let body = curl_post(port, "/_rpc/Bump?rid=t-1", "{\"count\":0}");
+    // A current client (E-4 wire header): the follow-up comes back for it.
+    let wire = split_wire_header(&proj);
+    let (code, _, body) =
+        curl_post_with_headers(port, "/_rpc/Bump?rid=t-1", "{\"count\":0}", &[&wire]);
     drop(child);
     let _ = std::fs::remove_dir_all(&proj);
-    let body = body.expect("POST /_rpc/Bump must answer");
+    assert_eq!(code, 200, "POST /_rpc/Bump must answer:\n{body}");
     assert!(
         body.contains("\"count\":1"),
         "Bump's write must come back:\n{body}"
