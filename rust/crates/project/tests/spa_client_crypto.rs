@@ -254,7 +254,9 @@ fn a_key_inside_a_user_union_model_field_is_refused() {
         Err(e) => e,
     };
     assert!(
-        err.contains("model field `boxed`") && err.contains("Std.Crypto.Noise.Handshake"),
+        err.contains("model field `boxed`")
+            && err.contains("Std.Crypto.Noise.Handshake")
+            && err.contains("docs/migration/v0.27.md#client-crypto-keys-inside-unions"),
         "the refusal must name the field and the key it holds, got:\n{err}"
     );
     let _ = std::fs::remove_dir_all(&dir);

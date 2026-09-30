@@ -501,6 +501,17 @@ fn recorded_signature(project_dir: &Path, module: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// The package directory of every Sky path dependency that exists (the
+/// directory `sky add` named). Its `native/<platform>/` code and manifest
+/// fragments are treated as a registry package's are.
+pub fn sky_package_dirs(project_dir: &Path) -> Vec<PathBuf> {
+    read_path_dependencies_of(&project_dir.join("sky.toml"), PathDepKind::Sky)
+        .into_iter()
+        .map(|d| d.resolve(project_dir))
+        .filter(|dir| dir.is_dir())
+        .collect()
+}
+
 /// The source directories of every Sky path dependency that exists (each
 /// package's configured source root, default `src`).
 pub fn sky_source_dirs(project_dir: &Path) -> Vec<PathBuf> {

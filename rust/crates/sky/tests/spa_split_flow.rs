@@ -1764,6 +1764,209 @@ fn refuses_a_bare_data_carrying_union_wire_field_with_an_actionable_error() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// C-10: `sky check` ≡ `sky build` for a split target. A direct `Spa.app`
+/// entry whose server branch carries a bare data-carrying union is refused by
+/// `sky check` with the build's own diagnostic, in text and in json. Before
+/// v0.27.0 the check passed and only the build failed.
+#[test]
+fn sky_check_refuses_what_the_split_refuses_for_a_spa_entry() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = scratch();
+    let _ = std::fs::remove_dir_all(&dir);
+    copy_tree(
+        &bare_adt_wire_fixture_entry()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+        &dir,
+    );
+    let out = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("sky check");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "sky check must fail as the build does:\n{log}"
+    );
+    assert!(
+        log.contains("cannot DECODE a bare data-carrying union"),
+        "{log}"
+    );
+    assert!(
+        log.contains("docs/migration/v0.27.md#sky-check-runs-the-spa-split"),
+        "the refusal links the migration guide: {log}"
+    );
+    let out = Command::new(SKY)
+        .args(["check", "--format", "json", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("sky check --format json");
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "{json}");
+    assert!(
+        json.contains("cannot DECODE a bare data-carrying union") && json.contains("\"ok\":false"),
+        "the json stream carries the split's diagnostic:\n{json}"
+    );
+    assert!(
+        !dir.join(".split").exists(),
+        "a check writes no split into the project"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const STD_APP_WIRE: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.File as File
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+
+type Filter
+    = All
+    | Tagged String
+
+
+type alias Model =
+    { counts : Dict String Int
+    , FIELD
+    }
+
+
+type Msg
+    = Bump String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { counts = Dict.empty, INIT }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump k ->
+            -- SERVER: a File effect keeps this arm on the backend, so the
+            -- model fields it writes cross the wire.
+            let
+                _ =
+                    Task.run (File.writeFile "audit.txt" k)
+            in
+            ( { model | counts = Dict.insert k 1 model.counts, WRITE }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column []
+        [ Ui.text (String.fromInt (Dict.size model.counts))
+        , Ui.button [] { onPress = Just (Bump "a"), label = Ui.text "bump" }
+        ]
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ()
+        )
+"#;
+
+fn std_app_wire(extra_field: &str, init: &str, write: &str) -> PathBuf {
+    let src = STD_APP_WIRE
+        .replace("FIELD", extra_field)
+        .replace("INIT", init)
+        .replace("WRITE", write);
+    let dir = scratch_std_app("c10", &src);
+    let toml = std::fs::read_to_string(dir.join("sky.toml")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        format!("{toml}\n[app]\ntarget = \"web:app\"\n"),
+    )
+    .unwrap();
+    dir
+}
+
+/// C-10 on a Std.App entry with `[app] target = "web:app"`: a bare
+/// data-carrying union model field written by a server arm is refused by
+/// `sky check`, as by `sky build`.
+#[test]
+fn sky_check_refuses_what_the_split_refuses_for_a_web_app_target() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = std_app_wire("filter : Filter", "filter = All", "filter = Tagged k");
+    let out = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("sky check");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "sky check must refuse the split:\n{log}"
+    );
+    assert!(
+        log.contains("no codec") || log.contains("cannot DECODE"),
+        "{log}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// C-10: a `Dict String Int` model field crosses the Sky.Spa wire through the
+/// new `Codec.dict`, so both `sky check` and `sky build --target web:app`
+/// accept it. Before v0.27.0 the check passed, the build failed, and the hint
+/// asked for an unparsable `Codec Dict String Int` binding.
+#[test]
+fn a_dict_model_field_crosses_the_spa_wire() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = std_app_wire("note : String", "note = \"\"", "note = k");
+    for args in [
+        vec!["check", "src/Main.sky"],
+        vec!["build", "--target", "web:app", "src/Main.sky"],
+    ] {
+        let out = Command::new(SKY)
+            .args(&args)
+            .current_dir(&dir)
+            .output()
+            .expect("sky");
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.status.success(), "sky {args:?}:\n{log}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Server→client PUSH (SSE): the shared-counter fixture uses `Cmd.publish` +
 /// `Sub.subscribeTopic`, so the generator must turn on push mode — a shared
 /// broker, publish-interpreting RPC handlers, and the `GET /_sky/sub` SSE
@@ -7191,14 +7394,7 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
             }
             None => None,
         };
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        let live_after = std::fs::read_to_string(&live_log).unwrap_or_default();
-        let live_effect = live_after
-            .get(live_before.len()..)
-            .unwrap_or_default()
-            .lines()
-            .find_map(|l| l.find("ARM ").map(|i| l[i..].trim().to_string()))
-            .unwrap_or_default();
+        let live_effect = arm_line_after(&live_log, live_before.len(), !effect.is_empty());
         // The split: the whole argument over the RPC.
         let before = std::fs::read_to_string(&back_log).unwrap_or_default();
         let posted = curl_post_status_body(
@@ -7206,9 +7402,7 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
             &format!("/_rpc/{ctor}"),
             &format!("{{\"status\":\"ready\",\"spaArg0_\":{arg}}}"),
         );
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        let after = std::fs::read_to_string(&back_log).unwrap_or_default();
-        let new_lines = after.get(before.len()..).unwrap_or_default().to_string();
+        let rpc_effect = arm_line_after(&back_log, before.len(), !effect.is_empty());
         let rpc_status = posted.as_ref().and_then(|(code, body)| {
             (*code == 200)
                 .then(|| serde_json::from_str::<serde_json::Value>(body).ok())
@@ -7221,10 +7415,6 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
                  {rpc_status:?} ({posted:?}); both must be {want:?}"
             ));
         }
-        let rpc_effect = new_lines
-            .lines()
-            .find_map(|l| l.find("ARM ").map(|i| l[i..].trim().to_string()))
-            .unwrap_or_default();
         if rpc_effect != effect || live_effect != effect {
             failures.push(format!(
                 "case {i} {ctor} {arg}: the server effect must be {effect:?} in both: the \
@@ -7515,6 +7705,36 @@ fn start_live_app(proj: &std::path::Path) -> (Killed, u16) {
         std::fs::read_to_string(&log).unwrap_or_default()
     );
     (child, port)
+}
+
+/// The first `ARM …` line written to `log` after byte `from`. When a line is
+/// expected, the log is polled for up to 15 s: a slow runner writes it late,
+/// and a fixed sleep then read turned that into a false red (G-3). When none is
+/// expected, the log is read after a settle time, as before: absence cannot be
+/// polled for.
+fn arm_line_after(log: &std::path::Path, from: usize, expect: bool) -> String {
+    let read = || {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .get(from..)
+            .unwrap_or_default()
+            .lines()
+            .find_map(|l| l.find("ARM ").map(|i| l[i..].trim().to_string()))
+    };
+    if expect {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if let Some(line) = read() {
+                return line;
+            }
+            if std::time::Instant::now() >= deadline {
+                return String::new();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    read().unwrap_or_default()
 }
 
 /// Press the `i`-th button of the Live app and return the text that follows
@@ -8333,6 +8553,28 @@ fn a_server_arm_navigation_runs_in_the_client() {
             "Cmd.batch [ Cmd.batch [ Nav.pushUrl \"/about\" ], Spa.rpc saveReqCodec saveRespCodec \"/_rpc/Save\""
         ),
         "the client runs the server arm's navigation when it sends the RPC:\n{front}"
+    );
+    if required(Need::Go, have_go()) {
+        assert!(out.status.success(), "the web:app build failed:\n{log}");
+    }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// M-1: an arm that hands the whole model to a helper returning `( model,
+/// Cmd.perform serverTask ToMsg )` writes the whole model AND has a follow-up.
+/// The response holds the model's fields plus `spaFollow_`, so the client folds
+/// the fields back instead of taking the response as the model. The frontend
+/// used to fail to build (`record has unknown field(s) … spaFollow_`); it built
+/// on v0.26.1.
+#[test]
+fn a_whole_model_write_with_a_follow_up_builds() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-whole-model-follow", &[]);
+    let front = split_file(&proj, "frontend/src/Main.sky");
+    assert!(
+        front.contains("( { model | draft = resp.draft, notice = resp.notice }, Cmd.none )")
+            && !front.contains("( resp, Cmd.none )"),
+        "the whole-model follow-up response is folded back field by field:\n{front}"
     );
     if required(Need::Go, have_go()) {
         assert!(out.status.success(), "the web:app build failed:\n{log}");

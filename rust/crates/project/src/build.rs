@@ -321,6 +321,11 @@ fn assemble_and_emit_with(
     dep_locals.extend(path_locals);
 
     let source_root = configured_source_root(&example_dir);
+    let mut roots = vec![example_dir.join(&source_root)];
+    roots.extend(extra_dirs.iter().cloned());
+    if let Some(e) = unreadable_sources(example_dir, &roots) {
+        return Err(e.into());
+    }
     let mut locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
     for dir in extra_dirs {
         locals.extend(load_dir(&db, &mut next_id, dir));
@@ -408,6 +413,7 @@ fn assemble_and_emit_with(
                             here.push(d.clone());
                         }
                     }
+                    here = cap_parse_errors(here);
                 }
             }
             parse_diags.insert(id.index(), here);
@@ -867,6 +873,60 @@ pub fn front_half_errors(
         Ok(_) => Vec::new(),
         Err(f) => f.diagnostics,
     }
+}
+
+/// The syntax errors (`[E0001]`) of one source text, resolved for output under
+/// `display_path`. `sky fmt` reads it: a file that does not parse is an error,
+/// never "already formatted" (F-8). At most [`MAX_PARSE_ERRORS_PER_FILE`] are
+/// returned, then one line counting the rest (F-15).
+pub fn parse_errors(src: &str, display_path: &str) -> Vec<diagnostics::Reported> {
+    let parsed = syntax::parse(src, base::FileId(0));
+    let mut diags: Vec<diagnostics::Diagnostic> = parsed
+        .errors()
+        .iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error)
+        .cloned()
+        .collect();
+    if diags.is_empty() && parsed.error_node_count() > 0 {
+        diags.push(diagnostics::Diagnostic::error(
+            "E0001",
+            "PARSE ERROR: unstructured input (recovered ERROR node)".to_string(),
+        ));
+    }
+    let diags = cap_parse_errors(diags);
+    let text: std::collections::HashMap<base::FileId, String> =
+        [(base::FileId(0), src.to_string())].into_iter().collect();
+    let paths: std::collections::HashMap<base::FileId, String> =
+        [(base::FileId(0), display_path.to_string())]
+            .into_iter()
+            .collect();
+    let sources = CliSources {
+        text: &text,
+        paths: &paths,
+    };
+    diags
+        .iter()
+        .map(|d| diagnostics::Reported::from_diagnostic(d, &sources))
+        .collect()
+}
+
+/// The most parse errors reported for one file. A parser recovering from one
+/// deep mistake (a 20,000-deep expression) used to report every recovery,
+/// 19,746 diagnostics for one file (F-15).
+pub const MAX_PARSE_ERRORS_PER_FILE: usize = 50;
+
+/// Keep the first [`MAX_PARSE_ERRORS_PER_FILE`] parse errors and add one that
+/// counts the rest.
+fn cap_parse_errors(mut diags: Vec<diagnostics::Diagnostic>) -> Vec<diagnostics::Diagnostic> {
+    if diags.len() > MAX_PARSE_ERRORS_PER_FILE {
+        let rest = diags.len() - MAX_PARSE_ERRORS_PER_FILE;
+        diags.truncate(MAX_PARSE_ERRORS_PER_FILE);
+        diags.push(diagnostics::Diagnostic::error(
+            "E0001",
+            format!("{rest} more parse error(s) in this file are not shown"),
+        ));
+    }
+    diags
 }
 
 /// Build one example directory, returning a structured report (never panics).
@@ -2741,6 +2801,9 @@ pub(crate) fn load_source_db(
     let mut dep_locals = registry;
     dep_locals.extend(path_locals);
     let source_root = configured_source_root(example_dir);
+    if let Some(e) = unreadable_sources(example_dir, &[example_dir.join(&source_root)]) {
+        return Err(e);
+    }
     let locals = load_dir(&db, &mut next_id, &example_dir.join(&source_root));
     if locals.is_empty() {
         return Err(format!("no .sky under {source_root}/"));
@@ -3138,6 +3201,31 @@ fn collect_sky_unfiltered(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
+}
+
+/// A `.sky` file under `roots` that cannot be read as text. [`load_dir`]
+/// skips such a file, so a project whose only module is not valid UTF-8 was
+/// reported as "no .sky under src/" (F-15); this names the file instead.
+fn unreadable_sources(project_dir: &Path, roots: &[PathBuf]) -> Option<String> {
+    for root in roots {
+        let mut files = Vec::new();
+        collect_sky(root, &mut files);
+        for f in files {
+            let shown = display_path(project_dir, &f);
+            match std::fs::read(&f) {
+                Ok(bytes) => {
+                    if let Err(e) = std::str::from_utf8(&bytes) {
+                        return Some(format!(
+                            "{shown} is not valid UTF-8 (byte {}); Sky source must be UTF-8",
+                            e.valid_up_to()
+                        ));
+                    }
+                }
+                Err(e) => return Some(format!("cannot read {shown}: {e}")),
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn load_dir(

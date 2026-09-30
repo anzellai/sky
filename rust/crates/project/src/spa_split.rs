@@ -1131,10 +1131,12 @@ fn device_only_fields(
                 "sky.spa: model field `{}` has type `{}`, which holds `{key}`, key material the \
                  device keeps (`withClientCrypto`). The first-paint model and the saved model \
                  cannot carry it. Declare the field `Maybe {}` so the build leaves it out of \
-                 both (it is `Nothing` after a reload).",
+                 both (it is `Nothing` after a reload). A key inside a union of your own is \
+                 found too since v0.27.0: {}",
                 f.name,
                 f.ty_name,
-                tail_seg(&key)
+                tail_seg(&key),
+                crate::migration_see("client-crypto-keys-inside-unions")
             ));
         }
     }
@@ -8777,7 +8779,24 @@ fn gen_frontend_update(
             // The write-set applies FIRST, whatever the follow-ups hold: a
             // follow-up the client cannot decode is reported, and never takes
             // the branch's own write with it.
-            let inner = apply_delta.trim().to_string();
+            // A branch that writes the WHOLE model answers the model's fields
+            // plus `spaFollow_`, so the response is not a `Model` and cannot be
+            // applied as one: fold its model fields back instead (M-1; the
+            // plain whole-model answer IS the model, see `emit_apply_delta`).
+            let inner = if io.writes_whole_model && !client_made_write {
+                if model_field_names == [spa_partition::BOXED_MODEL_FIELD] {
+                    format!("( resp.{}, Cmd.none )", spa_partition::BOXED_MODEL_FIELD)
+                } else {
+                    let sets = model_field_names
+                        .iter()
+                        .map(|f| format!("{f} = resp.{f}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("( {{ {model_param} | {sets} }}, Cmd.none )")
+                }
+            } else {
+                apply_delta.trim().to_string()
+            };
             let err_body = if has_rpc_error {
                 "let\n\
                  \x20                       ( spaM2_, spaC2_ ) =\n\

@@ -117,17 +117,21 @@ pub(crate) fn check(
             errors.insert(format!(
                 "module {name} in {} ({}) uses a name reserved for the Sky standard library. \
                  A dependency may not define a module under Sky. or Std., a standard-library \
-                 module, or a kernel module name such as Auth or System. Rename the module in \
-                 the package, or remove the dependency.",
+                 module, or a kernel module name such as Auth or System (new in v0.27.0). \
+                 Fix: rename the module in the package, or remove the dependency. {}",
                 owner.describe(),
-                shown(file)
+                shown(file),
+                crate::migration_see("stdlib-module-names-are-reserved")
             ));
         }
         if *owner == Owner::App && stdlib.contains(name) {
             errors.insert(format!(
                 "module {name} ({}) has the name of a standard-library module and would \
-                 replace it for the whole program. Rename the module.",
-                shown(file)
+                 replace it for the whole program (refused since v0.27.0). Fix: rename the \
+                 module, for example to App.{}. {}",
+                shown(file),
+                name.rsplit('.').next().unwrap_or(name),
+                crate::migration_see("stdlib-module-names-are-reserved")
             ));
         }
     }
@@ -146,18 +150,21 @@ pub(crate) fn check(
                 .collect();
             errors.insert(format!(
                 "module {name} is defined more than once by dependencies: {}. \
-                 Only one package may define a module.",
-                list.join(", ")
+                 Only one package may define a module (refused since v0.27.0). Fix: remove \
+                 one of the packages. {}",
+                list.join(", "),
+                crate::migration_see("stdlib-module-names-are-reserved")
             ));
         }
         if !deps.is_empty() && !app.is_empty() {
             errors.insert(format!(
                 "module {name} ({}) has the same name as a module of {} ({}). \
-                 Which one the program gets would depend on load order. Rename the \
-                 project module.",
+                 Which one the program gets would depend on load order (refused since \
+                 v0.27.0). Fix: rename the project module. {}",
                 shown(app[0].1),
                 deps[0].0.describe(),
-                shown(deps[0].1)
+                shown(deps[0].1),
+                crate::migration_see("stdlib-module-names-are-reserved")
             ));
         }
     }
@@ -254,7 +261,9 @@ mod tests {
         assert!(
             err.contains("module Sky.Core.Path")
                 && err.contains("dependency github.com/example/evil")
-                && err.contains("reserved for the Sky standard library"),
+                && err.contains("reserved for the Sky standard library")
+                && err.contains("Fix: rename the module")
+                && err.contains("docs/migration/v0.27.md#stdlib-module-names-are-reserved"),
             "{err}"
         );
     }
@@ -303,7 +312,9 @@ mod tests {
         let dir = project("applog", &[("Std/Log.sky", log)], &[], &[]);
         let err = load(&dir).expect_err("src/Std/Log.sky replaces Std.Log");
         assert!(
-            err.contains("module Std.Log") && err.contains("standard-library module"),
+            err.contains("module Std.Log")
+                && err.contains("standard-library module")
+                && err.contains("docs/migration/v0.27.md#stdlib-module-names-are-reserved"),
             "{err}"
         );
     }
