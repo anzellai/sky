@@ -3937,7 +3937,8 @@ fn build_and_run_fuzz_harness(
     cmd.env("SKY_TEST_MODE", "1");
     cmd.env("SKY_TEST_SEED", seed.to_string());
     cmd.env("SKY_TEST_CLOCK_MS", "1704067200000");
-    if std::env::var_os("DATABASE_URL").is_none() {
+    // An empty DATABASE_URL is no DSN (testrunner::dsn_is_given).
+    if !testrunner::dsn_is_given(std::env::var("DATABASE_URL").ok().as_deref()) {
         match project::offline_db_plan(app_project_dir) {
             project::OfflineDbPlan::Postgres => {
                 cmd.env("SKY_EMBED_POSTGRES", "1");

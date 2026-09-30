@@ -11,6 +11,11 @@ module Main exposing (main)
 --          next call and its Cmd runs. The calls keep coming.
 --   pair   two independent server Msgs are in flight together: both answer in
 --          about one server delay, not two.
+--   basket `AddToBasket` writes the basket with a server price and tracks the
+--          event (`Tracked`, a follow-up). `SignIn` -> `SignedIn` -> `Tracked`
+--          settles on the server, so a server chain also reaches `Tracked`.
+--          Each add must show in the basket and count one track: before the
+--          fix `Tracked` crossed as an empty tag and the add was dropped.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Time as Time
@@ -30,6 +35,9 @@ type alias Model =
     , ticks : Int
     , pairA : String
     , pairB : String
+    , basket : List String
+    , user : String
+    , tracks : Int
     }
 
 type Msg
@@ -48,6 +56,10 @@ type Msg
     | SlowB (Result Error String)
     | GotA (Result Error String)
     | GotB (Result Error String)
+    | AddToBasket String
+    | SignIn
+    | SignedIn (Result Error String)
+    | Tracked (Result Error String)
 
 
 init : () -> ( Model, Cmd Msg )
@@ -62,6 +74,9 @@ init _ =
       , ticks = 0
       , pairA = "-"
       , pairB = "-"
+      , basket = []
+      , user = "-"
+      , tracks = 0
       }
     , Cmd.none
     )
@@ -71,6 +86,19 @@ init _ =
 nap : Int -> String -> Task Error String
 nap ms label =
     Time.sleep ms |> Task.map (\_ -> label)
+
+
+-- A server-only value, read inline: an arm that writes it into the model needs
+-- the server for its own write (a hold RPC).
+priceOf : String -> String
+priceOf item =
+    item ++ "@" ++ Result.withDefault "?" (Task.run (nap 10 "9.99"))
+
+
+-- The analytics event every basket and sign-in step records.
+track : String -> Cmd Msg
+track event =
+    Cmd.perform (nap 20 event) Tracked
 
 
 -- Both ends of an IK handshake, in the client; the initiator's transport.
@@ -230,6 +258,24 @@ update msg model =
         GotB r ->
             ( { model | pairB = Result.withDefault "err" r }, Cmd.none )
 
+        AddToBasket item ->
+            ( { model | basket = model.basket ++ [ priceOf item ] }
+            , track "add"
+            )
+
+        SignIn ->
+            ( { model | user = priceOf "user" }
+            , Cmd.perform (nap 20 "signin") SignedIn
+            )
+
+        SignedIn _ ->
+            ( { model | user = "ada" ++ String.left 0 (priceOf "x") }
+            , track "signedin"
+            )
+
+        Tracked _ ->
+            ( { model | tracks = model.tracks + 1 }, Cmd.none )
+
 
 row : String -> String -> Element Msg
 row id txt =
@@ -265,11 +311,21 @@ view m =
                   ++ " TICKS="
                   ++ String.fromInt m.ticks)
         , row "pair" ("A=" ++ m.pairA ++ " B=" ++ m.pairB)
+        , row
+              "basket"
+              ("BASKET="
+                  ++ String.join "," m.basket
+                  ++ " USER="
+                  ++ m.user
+                  ++ " TRACKS="
+                  ++ String.fromInt m.tracks)
         , btn "start" Start
         , btn "go" Go
         , btn "sealbtn" Seal
         , btn "timeron" TimerOn
         , btn "pairbtn" Pair
+        , btn "addbtn" (AddToBasket "tea")
+        , btn "signinbtn" SignIn
         ]
 
 

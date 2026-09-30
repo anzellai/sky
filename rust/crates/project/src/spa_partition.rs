@@ -4729,181 +4729,213 @@ fn compute_server_chaining(
     // client holds when it arrives. FAIL-CLOSED: any shape that is not a single
     // clean server perform to a client-pure result Msg is left to the follow-up
     // path below.
-    let already_owned: HashSet<String> = out
-        .chaining_branches
-        .iter()
-        .cloned()
-        .chain(server_internal.iter().cloned())
-        .collect();
-    for bn in server_head_set.iter() {
-        if already_owned.contains(bn) {
-            continue; // pattern-1 (chaining root or mid-chain continuation) owns it.
-        }
-        // The command, seen through a guard/HOF wrapper. Empty (or a non-wrapper
-        // shape) → nothing to reclassify.
-        let idxs = match arms_by_ctor.get(bn) {
-            Some(v) => v,
-            None => continue,
-        };
-        let mut cmd_exprs: Vec<ExprId> = Vec::new();
-        for &ai in idxs {
-            collect_guarded_tail_cmd_exprs(body, arms[ai].body, &mut cmd_exprs);
-        }
-        if cmd_exprs.is_empty() {
-            continue;
-        }
-        let mut leaves: Vec<CmdLeaf> = Vec::new();
-        for ce in &cmd_exprs {
-            resolve_cmd_leaves(db, body, *ce, &mut leaves);
-        }
-        // Require EXACTLY ONE perform, every other leaf a no-op. A publish, an
-        // unresolvable shape, a second perform, or a client-`Std.Native` task →
-        // fail closed (not a clean single server perform).
-        let mut result_msg: Option<String> = None;
-        let mut clean = true;
-        let mut perform_count = 0usize;
-        for leaf in &leaves {
-            match leaf {
-                CmdLeaf::NoneCmd => {}
-                CmdLeaf::Perform {
-                    to_msg,
-                    task_client_effect,
-                    repeated,
-                    captures,
-                } => {
-                    perform_count += 1;
-                    if *repeated {
-                        clean = false; // runs once per element: not ONE perform.
-                    }
-                    if *captures {
-                        // `Cmd.perform task (Got url)`: the answer must carry
-                        // `url` too. The follow-up path (SPA-3) returns the
-                        // whole Msg `Got url result`, captured arguments
-                        // included; the client-result answer is the task
-                        // result alone (v0.27.0: the client called
-                        // `update (Got resp.result)` without `url`).
-                        clean = false;
-                    }
-                    if *task_client_effect {
-                        clean = false; // a client Std.Native task cannot run server-side.
-                    }
-                    match to_msg {
-                        Some(m) => result_msg = Some(m.clone()),
-                        None => clean = false,
-                    }
-                }
-                CmdLeaf::Publish | CmdLeaf::Nav | CmdLeaf::Unresolvable => clean = false,
+    // PATTERN-2 and the FOLLOW-UP branches, to a fixpoint with `server_internal`.
+    // A Msg that a root hands to the client (a client-result Msg or a known
+    // follow-up) must reach the client, so it can never be server-internal —
+    // even when a server chain also reaches it (`Save` -> `Saved` -> `Tracked`
+    // while `Bump` returns `Tracked` as a follow-up). Pruned, it had no client
+    // arm and no wire codec, the backend encoded it as an empty tag, and the
+    // client dropped the root's whole write. The chain still settles it on the
+    // server (the settle folds every server-runnable perform); only the prune is
+    // withdrawn. Withdrawing a server head from `server_internal` makes it a wire
+    // entry whose own command must be classified, so the pass re-runs until no
+    // delivered Msg is server-internal (the set only shrinks, so it terminates).
+    loop {
+        out.client_result.clear();
+        out.follow_up.clear();
+        let already_owned: HashSet<String> = out
+            .chaining_branches
+            .iter()
+            .cloned()
+            .chain(server_internal.iter().cloned())
+            .collect();
+        for bn in server_head_set.iter() {
+            if already_owned.contains(bn) {
+                continue; // pattern-1 (chaining root or mid-chain continuation) owns it.
             }
-        }
-        if !clean || perform_count != 1 {
-            continue;
-        }
-        let rm = match result_msg {
-            Some(m) => m,
-            None => continue,
-        };
-        // The result Msg must be a real arm.
-        if !arms_by_ctor.contains_key(&rm) {
-            continue;
-        }
-        // FAIL-CLOSED: a result Msg whose OWN arm reaches a server effect is a
-        // DEEPER chain (out of pattern-2's scope). Handing its RESULT to the
-        // client would run that server effect in the wasm client — forbidden. Keep
-        // today's behaviour and warn.
-        if server_head_set.contains(&rm) {
-            // SPA-3: a deeper chain — the FOLLOW-UP path returns `rm result` to
-            // the client, whose `rm` arm then runs as its own RPC.
-            continue;
-        }
-        // The pattern-2 answer is the task result alone: the client dispatches
-        // `rm result` on the model it holds. A root arm that also writes the
-        // model (`{ model | status = "sending" }`) would lose that write, so it
-        // takes the follow-up path (SPA-3), which applies the write-set and
-        // then dispatches `rm result`.
-        let root_writes = branches.iter().any(|b| {
-            b.server
-                && pattern_head_ctor(&b.msg) == *bn
-                && b.io
-                    .as_ref()
-                    .is_none_or(|io| io.writes_whole_model || !io.write_fields.is_empty())
-        });
-        if root_writes {
-            continue;
-        }
-        out.client_result.push((bn.clone(), rm));
-    }
-    out.client_result.sort();
-    out.client_result.dedup();
-
-    // SPA-3 FOLLOW-UP branches: every wire server head whose command holds a
-    // `Cmd.perform` leaf and that neither pattern-1 (chaining) nor pattern-2
-    // (client-result) owns. Its RPC must still RUN that command (Sky.Live does):
-    // the generated handler runs each server perform leaf and returns the
-    // follow-up Msgs; a `Std.Native` leaf runs in the client. The follow-up
-    // constructor set is read from each leaf's `toMsg` when resolvable.
-    let owned: HashSet<String> = out
-        .chaining_branches
-        .iter()
-        .cloned()
-        .chain(server_internal.iter().cloned())
-        .chain(out.client_result.iter().map(|(r, _)| r.clone()))
-        .collect();
-    let mut heads: Vec<&String> = server_head_set.iter().collect();
-    heads.sort();
-    for bn in heads {
-        if owned.contains(bn) {
-            continue;
-        }
-        let Some(idxs) = arms_by_ctor.get(bn) else {
-            continue;
-        };
-        let mut ctors: Option<BTreeSet<String>> = Some(BTreeSet::new());
-        let mut has_perform = false;
-        let mut native = false;
-        for &ai in idxs {
-            let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
-            let mut visited: HashSet<DefId> = HashSet::new();
-            collect_tail_cmd_leaves_tagged(
-                db,
-                body,
-                arms[ai].body,
-                false,
-                &mut leaves,
-                0,
-                &mut visited,
-            );
-            for (leaf, _) in leaves {
+            // The command, seen through a guard/HOF wrapper. Empty (or a non-wrapper
+            // shape) → nothing to reclassify.
+            let idxs = match arms_by_ctor.get(bn) {
+                Some(v) => v,
+                None => continue,
+            };
+            let mut cmd_exprs: Vec<ExprId> = Vec::new();
+            for &ai in idxs {
+                collect_guarded_tail_cmd_exprs(body, arms[ai].body, &mut cmd_exprs);
+            }
+            if cmd_exprs.is_empty() {
+                continue;
+            }
+            let mut leaves: Vec<CmdLeaf> = Vec::new();
+            for ce in &cmd_exprs {
+                resolve_cmd_leaves(db, body, *ce, &mut leaves);
+            }
+            // Require EXACTLY ONE perform, every other leaf a no-op. A publish, an
+            // unresolvable shape, a second perform, or a client-`Std.Native` task →
+            // fail closed (not a clean single server perform).
+            let mut result_msg: Option<String> = None;
+            let mut clean = true;
+            let mut perform_count = 0usize;
+            for leaf in &leaves {
                 match leaf {
+                    CmdLeaf::NoneCmd => {}
                     CmdLeaf::Perform {
                         to_msg,
                         task_client_effect,
-                        ..
+                        repeated,
+                        captures,
                     } => {
-                        has_perform = true;
-                        native |= task_client_effect;
-                        match (to_msg, ctors.as_mut()) {
-                            (Some(m), Some(set)) => {
-                                set.insert(m);
-                            }
-                            _ => ctors = None,
+                        perform_count += 1;
+                        if *repeated {
+                            clean = false; // runs once per element: not ONE perform.
+                        }
+                        if *captures {
+                            // `Cmd.perform task (Got url)`: the answer must carry
+                            // `url` too. The follow-up path (SPA-3) returns the
+                            // whole Msg `Got url result`, captured arguments
+                            // included; the client-result answer is the task
+                            // result alone (v0.27.0: the client called
+                            // `update (Got resp.result)` without `url`).
+                            clean = false;
+                        }
+                        if *task_client_effect {
+                            clean = false; // a client Std.Native task cannot run server-side.
+                        }
+                        match to_msg {
+                            Some(m) => result_msg = Some(m.clone()),
+                            None => clean = false,
                         }
                     }
-                    // An opaque command may hold performs: treat it as one whose
-                    // follow-up constructors are unknown.
-                    CmdLeaf::Unresolvable => {
-                        has_perform = true;
-                        ctors = None;
-                    }
-                    CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav => {}
+                    CmdLeaf::Publish | CmdLeaf::Nav | CmdLeaf::Unresolvable => clean = false,
                 }
             }
-        }
-        if has_perform {
-            out.follow_up.push(FollowUpBranch {
-                branch: bn.clone(),
-                ctors: ctors.map(|s| s.into_iter().collect()),
-                native,
+            if !clean || perform_count != 1 {
+                continue;
+            }
+            let rm = match result_msg {
+                Some(m) => m,
+                None => continue,
+            };
+            // The result Msg must be a real arm.
+            if !arms_by_ctor.contains_key(&rm) {
+                continue;
+            }
+            // FAIL-CLOSED: a result Msg whose OWN arm reaches a server effect is a
+            // DEEPER chain (out of pattern-2's scope). Handing its RESULT to the
+            // client would run that server effect in the wasm client — forbidden. Keep
+            // today's behaviour and warn.
+            if server_head_set.contains(&rm) {
+                // SPA-3: a deeper chain — the FOLLOW-UP path returns `rm result` to
+                // the client, whose `rm` arm then runs as its own RPC.
+                continue;
+            }
+            // The pattern-2 answer is the task result alone: the client dispatches
+            // `rm result` on the model it holds. A root arm that also writes the
+            // model (`{ model | status = "sending" }`) would lose that write, so it
+            // takes the follow-up path (SPA-3), which applies the write-set and
+            // then dispatches `rm result`.
+            let root_writes = branches.iter().any(|b| {
+                b.server
+                    && pattern_head_ctor(&b.msg) == *bn
+                    && b.io
+                        .as_ref()
+                        .is_none_or(|io| io.writes_whole_model || !io.write_fields.is_empty())
             });
+            if root_writes {
+                continue;
+            }
+            out.client_result.push((bn.clone(), rm));
+        }
+        out.client_result.sort();
+        out.client_result.dedup();
+
+        // SPA-3 FOLLOW-UP branches: every wire server head whose command holds a
+        // `Cmd.perform` leaf and that neither pattern-1 (chaining) nor pattern-2
+        // (client-result) owns. Its RPC must still RUN that command (Sky.Live does):
+        // the generated handler runs each server perform leaf and returns the
+        // follow-up Msgs; a `Std.Native` leaf runs in the client. The follow-up
+        // constructor set is read from each leaf's `toMsg` when resolvable.
+        let owned: HashSet<String> = out
+            .chaining_branches
+            .iter()
+            .cloned()
+            .chain(server_internal.iter().cloned())
+            .chain(out.client_result.iter().map(|(r, _)| r.clone()))
+            .collect();
+        let mut heads: Vec<&String> = server_head_set.iter().collect();
+        heads.sort();
+        for bn in heads {
+            if owned.contains(bn) {
+                continue;
+            }
+            let Some(idxs) = arms_by_ctor.get(bn) else {
+                continue;
+            };
+            let mut ctors: Option<BTreeSet<String>> = Some(BTreeSet::new());
+            let mut has_perform = false;
+            let mut native = false;
+            for &ai in idxs {
+                let mut leaves: Vec<(CmdLeaf, bool)> = Vec::new();
+                let mut visited: HashSet<DefId> = HashSet::new();
+                collect_tail_cmd_leaves_tagged(
+                    db,
+                    body,
+                    arms[ai].body,
+                    false,
+                    &mut leaves,
+                    0,
+                    &mut visited,
+                );
+                for (leaf, _) in leaves {
+                    match leaf {
+                        CmdLeaf::Perform {
+                            to_msg,
+                            task_client_effect,
+                            ..
+                        } => {
+                            has_perform = true;
+                            native |= task_client_effect;
+                            match (to_msg, ctors.as_mut()) {
+                                (Some(m), Some(set)) => {
+                                    set.insert(m);
+                                }
+                                _ => ctors = None,
+                            }
+                        }
+                        // An opaque command may hold performs: treat it as one whose
+                        // follow-up constructors are unknown.
+                        CmdLeaf::Unresolvable => {
+                            has_perform = true;
+                            ctors = None;
+                        }
+                        CmdLeaf::NoneCmd | CmdLeaf::Publish | CmdLeaf::Nav => {}
+                    }
+                }
+            }
+            if has_perform {
+                out.follow_up.push(FollowUpBranch {
+                    branch: bn.clone(),
+                    ctors: ctors.map(|s| s.into_iter().collect()),
+                    native,
+                });
+            }
+        }
+        let delivered: Vec<String> = out
+            .client_result
+            .iter()
+            .map(|(_, m)| m.clone())
+            .chain(
+                out.follow_up
+                    .iter()
+                    .flat_map(|f| f.ctors.clone().unwrap_or_default()),
+            )
+            .filter(|m| server_internal.contains(m))
+            .collect();
+        if delivered.is_empty() {
+            break;
+        }
+        for m in delivered {
+            server_internal.remove(&m);
         }
     }
 

@@ -413,3 +413,67 @@ fn a_multi_hop_chain_settles_in_one_round_trip() {
             .collect::<Vec<_>>()
     );
 }
+
+/// A Msg that a server chain reaches (so it could be server-internal) AND that
+/// another root returns as a follow-up must still cross to the client
+/// (`tests/fixtures/spa-followup-internal`, the downstream "Add to basket"
+/// shape). Before the fix `Tracked` was server-internal, `Bump`'s follow-up
+/// encoder sent it as an empty tag, the client refused it and dropped `Bump`'s
+/// whole write.
+#[test]
+fn a_follow_up_msg_is_never_server_internal() {
+    let fixture = repo_root().join("rust/crates/sky/tests/fixtures/spa-followup-internal");
+    let r = spa_split::analyze_project(&repo_root(), &fixture, None)
+        .unwrap_or_else(|e| panic!("analyze failed: {e}"));
+    let bump = r
+        .follow_up
+        .iter()
+        .find(|f| f.branch == "Bump")
+        .unwrap_or_else(|| panic!("`Bump` must be a follow-up branch; got {:?}", r.follow_up));
+    assert_eq!(bump.ctors.as_deref(), Some(&["Tracked".to_string()][..]));
+    assert!(
+        !r.server_internal.contains(&"Tracked".to_string()),
+        "`Tracked` is `Bump`'s follow-up: it must reach the client, so it cannot be \
+         server-internal; got {:?}",
+        r.server_internal
+    );
+    assert!(
+        r.chaining_branches.contains(&"Save".to_string()),
+        "`Save` -> `Saved` -> `Tracked` still settles in one round trip; got {:?}",
+        r.chaining_branches
+    );
+
+    let out = std::env::temp_dir().join(format!("sky-spa-followup-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    spa_split::generate(&repo_root(), &fixture, None, &out, None, None)
+        .unwrap_or_else(|e| panic!("generate failed: {e}"));
+    let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    assert!(
+        back.contains("[ \"Tracked\", Codec.toJson spaFollowTrackedReqCodec"),
+        "the backend must encode `Tracked` as a follow-up:\n{back}"
+    );
+    assert!(
+        !back.contains("[ \"\", \"\" ]"),
+        "no follow-up may be encoded as an empty tag:\n{back}"
+    );
+    assert!(
+        front.contains("tag_ == \"Tracked\"") && front.contains("        Tracked "),
+        "the client must decode and run `Tracked`:\n{front}"
+    );
+    // An undecodable follow-up never drops the RPC's own write: the write-set
+    // applies first, then the error is reported.
+    let applied = front
+        .split("AppliedBump (Ok resp) ->")
+        .nth(1)
+        .and_then(|r| r.split("AppliedBump (Err").next())
+        .unwrap_or_default();
+    let write = applied.find("count = resp.count").unwrap_or(usize::MAX);
+    let decode = applied.find("spaDecodeFollows_").unwrap_or(0);
+    assert!(
+        write < decode && applied.contains("( spaM1_, Cmd.batch [ spaC1_, Spa.reportError e_ ] )"),
+        "the write must apply before the follow-ups are decoded, and a decode error \
+         must keep it:\n{applied}"
+    );
+}

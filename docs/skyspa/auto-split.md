@@ -961,9 +961,17 @@ every server perform leaf (`Spa_collectFollowUps`), encodes the resulting Msgs
 (one `SpaFollow<Ctor>Req` wire record per constructor, in `Shared`) into the
 response field `spaFollow_`, and the client decodes them and dispatches them in
 order through its own `update` (`Spa.followUps`), ahead of any Msg that waited
-behind the branch — a pure arm runs locally, a server arm sends its own RPC. A follow-up that cannot be decoded is
+behind the branch — a pure arm runs locally, a server arm sends its own RPC. The
+branch's own write-set applies FIRST: a follow-up that cannot be decoded is then
 routed to `App.withRpcError`, else reported on the console (`Spa.reportError`);
-never dropped. The split reads the follow-up constructors from the command: a
+it never takes the write with it, and it is never dropped. A known follow-up is
+never server-internal: a Msg a server chain also reaches (`Save` → `Saved` →
+`Tracked`, while `Bump` returns `Tracked`) keeps its client arm and its wire
+codec, and the chain still settles it on the server (v0.27.0: before, it was
+pruned, sent as an empty tag and `Bump`'s whole write was dropped). The backend
+encoder has no empty-tag arm: a constructor the split proved is never a
+follow-up is dropped with the classified `SpaFollowUpOutsideWire` error, and
+the rest of the response still applies. The split reads the follow-up constructors from the command: a
 `Cmd.perform _ Ctor` leaf, through helpers, `let` names, `if` / `case`, and a
 `Cmd.batch` over a list, `xs ++ ys`, `c :: cs` or `List.map` / `List.indexedMap`
 of a lambda or helper (each perform then runs once per element). A follow-up

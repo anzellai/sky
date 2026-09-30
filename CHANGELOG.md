@@ -1266,6 +1266,25 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **Sky.Spa: an RPC's whole write was dropped when its follow-up Msg also ran
+  inside a server chain.** An arm like "Add to basket" that writes the model
+  and tracks the event (`Cmd.perform … Tracked`) answered `200`, but the basket
+  stayed empty, and the console showed `[sky.spa] a server branch's follow-up
+  could not be applied: … unknown follow-up Msg`. Another chain
+  (`SignIn` → `SignedIn` → `Tracked`) made `Tracked` server-internal, so it was
+  pruned from the client, the backend sent it as an empty tag `["",""]`, and
+  the client kept the old model. A Msg a root returns to the client is now
+  never server-internal (the chain still settles it on the server); the
+  client applies the branch's write before it decodes the follow-ups, so an
+  undecodable follow-up is reported and never takes the write with it; and the
+  backend encoder has no empty-tag arm (a constructor that can never be a
+  follow-up is dropped with the classified `SpaFollowUpOutsideWire` error).
+  (`a_follow_up_msg_is_never_server_internal`,
+  `a_follow_up_also_reached_by_a_server_chain_crosses_and_the_write_applies`,
+  the basket scenario of `scripts/spa-rpc-order-e2e.sh` in Chromium and WebKit.)
+- **`sky test` started no throwaway database when `DATABASE_URL` was empty.**
+  An empty value counted as a DSN. It is now treated as unset, as the docs say
+  for a project "given no DSN" (`an_empty_database_url_still_gets_the_throwaway_database`).
 - **`Std.Watch` on macOS stopped reporting a file after an editor saved it.**
   A save by rename (write a temporary file, rename it over the original) was
   reported, and then no later change to that file was. The kqueue backend

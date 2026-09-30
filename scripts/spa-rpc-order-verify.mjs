@@ -12,6 +12,9 @@
 //          re-ran it on a spent state: "this state value was already used")
 //   timer  ticks during a call see busy = True; the calls keep coming (the old
 //          client stalled at STARTED=2 DONE=1)
+//   basket an add holds for a server price and records a follow-up
+//          (`Tracked`) that a server chain also reaches; each add applies and
+//          is tracked (the old split dropped the add: "unknown follow-up Msg")
 //   pair   two independent server Msgs are in flight together: both answer in
 //          about one server delay (1.5 s), not two
 //
@@ -115,6 +118,19 @@ async function scenario(browserName, target, url) {
     check(`${tag} pair: both answered`, pair === "A=a B=b", pair);
     check(`${tag} pair: in flight together (${ms} ms for two 1500 ms calls)`, ms < 2700, `${ms} ms`);
 
+    // ---- basket ------------------------------------------------------------
+    // Each add holds for its server price and records a `Tracked` follow-up;
+    // the sign-in chain reaches `Tracked` on the server too.
+    await page.click("#addbtn");
+    await page.click("#addbtn");
+    await page.click("#signinbtn");
+    const basket = await waitFor(page, "basket", (v) => v.endsWith("TRACKS=3"), 15000);
+    check(
+      `${tag} basket: each add applies and is tracked`,
+      basket === "BASKET=tea@9.99,tea@9.99 USER=ada TRACKS=3",
+      basket,
+    );
+
     // ---- timer -------------------------------------------------------------
     await page.click("#timeron");
     await page.waitForTimeout(7000);
@@ -125,7 +141,7 @@ async function scenario(browserName, target, url) {
     check(`${tag} timer: one call at a time`, c2 && (c2.started - c2.done === 0 || c2.started - c2.done === 1), JSON.stringify(c2));
     check(`${tag} timer: calls keep coming`, c1 && c2 && c2.done > c1.done, `${c1?.done} -> ${c2?.done}`);
     check(`${tag} no page errors`, errors.length === 0, errors.join(" | ") || "none");
-    return { seal: after, pairMs: ms, timer: c2 };
+    return { seal: after, pairMs: ms, timer: c2, basket };
   } finally {
     await browser.close();
   }
@@ -150,6 +166,7 @@ try {
     const s = results[`web:app/${b}`];
     const l = results[`live/${b}`];
     check(`${b}: seal matches Sky.Live`, s.seal === l.seal, `web:app "${s.seal}" / live "${l.seal}"`);
+    check(`${b}: basket matches Sky.Live`, s.basket === l.basket, `web:app "${s.basket}" / live "${l.basket}"`);
     check(
       `${b}: timer within Sky.Live's range`,
       Math.abs(s.timer.done - l.timer.done) <= 3,

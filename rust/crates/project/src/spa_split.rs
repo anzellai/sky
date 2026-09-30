@@ -1361,8 +1361,9 @@ fn build_follow_ctx(
     follow_up: &[spa_partition::FollowUpBranch],
     wires: &mut Vec<Wire>,
     resolver: &mut CodecResolver,
-    // Server-internal Msgs never reach the client (no client arm, pruned from
-    // the client `Msg`), so they are never a client follow-up.
+    // Server-internal Msgs have no client arm (pruned from the client `Msg`).
+    // The partition never makes a KNOWN follow-up server-internal; a Msg that
+    // only an unreadable command might return is kept off the wire (below).
     server_internal: &HashSet<String>,
     warnings: &mut Vec<String>,
 ) -> Result<Option<FollowCtx>, String> {
@@ -1412,7 +1413,15 @@ fn build_follow_ctx(
     if !unknown_branches.is_empty() {
         ctor_set.extend(all_variants.iter().cloned());
     }
-    ctor_set.retain(|c| !server_internal.contains(c));
+    // A known follow-up is never server-internal: the partition withdraws such
+    // a Msg from the prune (spa_partition::compute_server_chaining). Assert it:
+    // a pruned Msg on the wire has no client arm to decode it.
+    if let Some(c) = known.iter().find(|c| server_internal.contains(*c)) {
+        return Err(format!(
+            "sky.spa: internal error: follow-up Msg `{c}` of server branch(es) is also \
+             server-internal (it would reach the client with no arm to run it)"
+        ));
+    }
     let branch_list = fu
         .iter()
         .map(|f| format!("`{}`", f.branch))
@@ -1422,6 +1431,17 @@ fn build_follow_ctx(
     let mut outside_wire: Vec<(String, usize)> = Vec::new();
     let mut outside_why: Vec<String> = Vec::new();
     'ctor: for c in &ctor_set {
+        // A server-internal Msg that only an unreadable command might return has
+        // no client arm: it stays off the wire, and the backend drops it with the
+        // classified `SpaFollowUpOutsideWire` error if it ever occurs (R1).
+        if server_internal.contains(c) {
+            let n = union_variant_arg_types(db, msg_module, &msg_decl, c)
+                .map(|a| a.len())
+                .unwrap_or(0);
+            outside_wire.push((c.clone(), n));
+            outside_why.push(format!("`{c}` (it runs on the server inside a chain)"));
+            continue 'ctor;
+        }
         let args = union_variant_arg_types(db, msg_module, &msg_decl, c).ok_or_else(|| {
             format!("sky.spa: follow-up Msg `{c}` of server branch(es) {branch_list} is not a constructor of `{msg_ty}`")
         })?;
@@ -1554,16 +1574,20 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
             "        {pat} ->\n            spaFollowOutsideWire_ \"{c}\"\n\n"
         ));
     }
-    // A constructor the analysis proved is never a follow-up encodes as an
-    // empty tag, which the client rejects LOUDLY (never a silent drop). Only
-    // when the covered set is smaller than the union (else `_` is redundant).
-    let wildcard = if fc.ctors.len() + fc.outside_wire.len() < fc.all_ctors {
-        "        _ ->\n            [ \"\", \"\" ]\n\n"
+    // A constructor the analysis proved is never a follow-up: the arm is
+    // unreachable. Should it ever run, the backend drops that one Msg with the
+    // classified `SpaFollowUpOutsideWire` error and the rest of the response
+    // (the branch's own write included) still applies. It never sends an
+    // empty tag, which the client could not decode. Only when the covered set
+    // is smaller than the union (else `_` is redundant).
+    let has_wildcard = fc.ctors.len() + fc.outside_wire.len() < fc.all_ctors;
+    let wildcard = if has_wildcard {
+        "        _ ->\n            spaFollowOutsideWire_ \"(a Msg the split proved is never a follow-up)\"\n\n"
     } else {
         ""
     };
     // An outside-wire follow-up encodes as `[]` and is skipped here.
-    let (outside_kernel, cons_step) = if fc.outside_wire.is_empty() {
+    let (outside_kernel, cons_step) = if fc.outside_wire.is_empty() && !has_wildcard {
         (
             String::new(),
             "\x20           spaEncodeFollow_ m_ :: spaEncodeFollowList_ rest_\n".to_string(),
@@ -8600,19 +8624,27 @@ fn gen_frontend_update(
             // server branch's command produced, in order. A follow-up that cannot
             // be decoded is reported (App.withRpcError, else the console) — never
             // silently dropped.
+            // The write-set applies FIRST, whatever the follow-ups hold: a
+            // follow-up the client cannot decode is reported, and never takes
+            // the branch's own write with it.
             let inner = apply_delta.trim().to_string();
             let err_body = if has_rpc_error {
-                format!("update (spaRpcError_ e_) {model_param}")
+                "let\n\
+                 \x20                       ( spaM2_, spaC2_ ) =\n\
+                 \x20                           update (spaRpcError_ e_) spaM1_\n\
+                 \x20                   in\n\
+                 \x20                   ( spaM2_, Cmd.batch [ spaC1_, spaC2_ ] )"
+                    .to_string()
             } else {
-                format!("( {model_param}, Spa.reportError e_ )")
+                "( spaM1_, Cmd.batch [ spaC1_, Spa.reportError e_ ] )".to_string()
             };
             format!(
-                "            case spaDecodeFollows_ resp.spaFollow_ of\n\
+                "            let\n\
+                 \x20               ( spaM1_, spaC1_ ) =\n\
+                 \x20                   {inner}\n\
+                 \x20           in\n\
+                 \x20           case spaDecodeFollows_ resp.spaFollow_ of\n\
                  \x20               Ok spaFollows_ ->\n\
-                 \x20                   let\n\
-                 \x20                       ( spaM1_, spaC1_ ) =\n\
-                 \x20                           {inner}\n\
-                 \x20                   in\n\
                  \x20                   ( spaM1_, Cmd.batch [ spaC1_, Spa.followUps spaFollows_ ] )\n\n\
                  \x20               Err e_ ->\n\
                  \x20                   {err_body}"

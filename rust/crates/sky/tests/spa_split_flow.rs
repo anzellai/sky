@@ -7039,9 +7039,24 @@ fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
             "`{ctor}` must be an async RPC (Spa.rpc):\n{front}"
         );
     }
+    for ctor in ["slow", "call", "slowA", "slowB"] {
+        assert!(
+            !front.contains(&format!("Spa.rpcHold {ctor}ReqCodec")),
+            "`{ctor}` needs no server data for its own write — it may not hold:\n{front}"
+        );
+    }
+    // The basket steps write a server price: they hold. `Tracked` is both a
+    // follow-up of `AddToBasket` and reached inside the `SignIn` chain: it
+    // crosses under its own tag, never as an empty one.
     assert!(
-        !front.contains("Spa.rpcHold"),
-        "no arm of this fixture needs server data for its own write — nothing may hold:\n{front}"
+        front.contains("Spa.rpcHold addToBasketReqCodec")
+            && front.contains("Spa.rpcHold signInReqCodec")
+            && front.contains("tag_ == \"Tracked\""),
+        "the basket steps hold and `Tracked` decodes in the client:\n{front}"
+    );
+    assert!(
+        !back.contains("[ \"\", \"\" ]"),
+        "no empty follow-up tag:\n{back}"
     );
     for (root, result) in [
         ("Call", "Answered"),
@@ -7062,10 +7077,17 @@ fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
         front.contains("Noise.encrypt") && !back.contains("POST /_rpc/Seal"),
         "`Seal` is a client arm (the device holds the transport)"
     );
-    assert!(
-        !back.contains("spaChainSettle_ m2 cmd update"),
-        "no continuation of this fixture may settle on the server:\n{back}"
-    );
+    for ctor in ["call", "slow", "slowA", "slowB"] {
+        let handler = back
+            .split(&format!("{ctor}Handler req ="))
+            .nth(1)
+            .and_then(|r| r.split("\n\n\n").next())
+            .unwrap_or_default();
+        assert!(
+            !handler.contains("spaChainSettle_"),
+            "`{ctor}`'s client continuation may not settle on the server:\n{handler}"
+        );
+    }
 }
 
 /// An arm whose own model write needs server data (an inline `Task.run`) is a
@@ -8247,4 +8269,65 @@ fn sub_endpoint_refuses_every_topic_when_subscriptions_cannot_be_found() {
         "a topic the app's (unfound) subscriptions would name is refused: {count:?}"
     );
     assert_eq!(other.0, 403, "every other topic is refused: {other:?}");
+}
+
+/// Build and RUN `tests/fixtures/spa-followup-internal` (`--target web:app`):
+/// `POST /_rpc/Bump` must answer with `Bump`'s write (`count = 1`) AND its
+/// follow-up `Tracked` under its own tag, which the client decodes. Before the
+/// fix `Tracked` (also reached inside the `Save` server chain) was encoded as an
+/// empty tag `["",""]`, the client refused it and kept the old model: count
+/// stayed 0 (the downstream "Add to basket" regression). Go-gated.
+#[test]
+fn a_follow_up_also_reached_by_a_server_chain_crosses_and_the_write_applies() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-followup-internal"),
+        &proj,
+    );
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let back_dir = proj.join(".skyapp/web-app/.split/backend");
+    std::fs::copy(proj.join("sky.toml"), back_dir.join("sky.toml")).ok();
+    let port = free_port();
+    let log_path = back_dir.join("server.log");
+    let child = Killed(
+        Command::new(back_dir.join("sky-out/app"))
+            .current_dir(&back_dir)
+            .env("PORT", port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap())
+            .spawn()
+            .expect("start the backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 120),
+        "the backend did not start"
+    );
+    let body = curl_post(port, "/_rpc/Bump?rid=t-1", "{\"count\":0}");
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    let body = body.expect("POST /_rpc/Bump must answer");
+    assert!(
+        body.contains("\"count\":1"),
+        "Bump's write must come back:\n{body}"
+    );
+    assert!(
+        body.contains("Tracked") && !body.contains("[\\\"\\\",\\\"\\\"]"),
+        "the follow-up must carry its own tag, never an empty one:\n{body}"
+    );
 }

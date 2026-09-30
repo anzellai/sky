@@ -255,7 +255,8 @@ database for the run, thrown away at the end. The engine decides how: a
 **Postgres** app gets a throwaway embedded cluster; a **SQLite** app has its path
 redirected to a scratch file (it is already offline). So a scenario needs no live
 database. A DSN in the environment (`DATABASE_URL`) opts back out — the test then
-targets that database.
+targets that database. An empty `DATABASE_URL` (`DATABASE_URL=`, the usual way to
+clear one in CI) is no DSN: the run still gets its throwaway database.
 
 ### Log capture
 

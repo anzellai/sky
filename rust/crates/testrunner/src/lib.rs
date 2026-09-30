@@ -268,11 +268,11 @@ pub fn run_test_with(
             // with the scratch dir at the end of the run.
             let log_capture = scratch.join("captured-logs.txt");
             cmd.env("SKY_TEST_LOG_CAPTURE", &log_capture);
-            let mut has_dsn = std::env::var_os("DATABASE_URL").is_some();
+            let mut has_dsn = dsn_is_given(std::env::var("DATABASE_URL").ok().as_deref());
             for f in [".env.test", ".env.test.local"] {
                 if let Ok(contents) = std::fs::read_to_string(project_dir.join(f)) {
                     for (k, v) in parse_dotenv(&contents) {
-                        if k == "DATABASE_URL" {
+                        if k == "DATABASE_URL" && dsn_is_given(Some(&v)) {
                             has_dsn = true;
                         }
                         cmd.env(k, v);
@@ -314,6 +314,15 @@ pub fn run_test_with(
     // Always remove the whole scratch dir (synth entry + build output).
     let _ = std::fs::remove_dir_all(&scratch);
     Ok(run)
+}
+
+/// Whether a `DATABASE_URL` value names a database. An EMPTY (or blank) value
+/// is no DSN: the docs promise a project "given no DSN" its throwaway database,
+/// and `DATABASE_URL=` is the usual way to clear one (a CI job, a `.env.test`
+/// that blanks a developer's `.env`). Before this an empty value counted as a
+/// DSN, so `sky test` started no database and the suite ran against nothing.
+pub fn dsn_is_given(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.trim().is_empty())
 }
 
 /// Parse a minimal `.env` file for test-mode activation: `KEY=VALUE` per line,
@@ -370,6 +379,16 @@ pub fn run_stub(sources: &[&str]) -> TestSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An empty or blank `DATABASE_URL` is no DSN: `sky test` still starts the
+    /// throwaway database (tests/sky_test_empty_dsn_flow.rs runs it end to end).
+    #[test]
+    fn an_empty_dsn_is_no_dsn() {
+        assert!(!dsn_is_given(None));
+        assert!(!dsn_is_given(Some("")));
+        assert!(!dsn_is_given(Some("  ")));
+        assert!(dsn_is_given(Some("postgres://u@h/db")));
+    }
 
     #[test]
     fn runs_over_the_project_driver() {
