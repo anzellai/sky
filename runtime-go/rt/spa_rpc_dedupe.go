@@ -26,8 +26,8 @@ import (
 // entry expires after spaRpcDedupeTTL, so memory stays flat under any load. It
 // is per process: a multi-replica deploy already needs sticky sessions for the
 // split (auto-split.md §16), which keeps a client's retry on the same replica.
-// The key includes the `sky_sid` cookie, so one client cannot read another's
-// cached answer by replaying its id.
+// The key includes the session cookies (`sky_spa`, and the legacy `sky_sid`),
+// so one client cannot read another's cached answer by replaying its id.
 
 const (
 	spaRpcDedupeCap = 4096
@@ -114,9 +114,13 @@ func spaRpcDedupeKey(r *http.Request) string {
 	if rid == "" || len(rid) > 128 {
 		return ""
 	}
+	// Both session cookies (spa_session_legacy.go): `sky_spa`, and the legacy
+	// `sky_sid` a pre-v0.27 browser still sends.
 	sid := ""
-	if ck, err := r.Cookie("sky_sid"); err == nil {
-		sid = ck.Value
+	for _, name := range []string{spaSessionCookieName, spaLegacySessionCookieName} {
+		if ck, err := r.Cookie(name); err == nil {
+			sid += ck.Value + "\x00"
+		}
 	}
 	return sid + "\x00" + r.URL.Path + "\x00" + rid
 }

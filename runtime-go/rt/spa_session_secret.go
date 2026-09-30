@@ -1,8 +1,11 @@
+//go:build !js
+
 package rt
 
 import (
 	crand "crypto/rand"
 	"encoding/hex"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -76,8 +79,31 @@ func resolveSpaSessionSecret() string {
 		return v
 	}
 	// No operator secret: mint + persist under the data dir for a single node.
+	//
+	// A-7: the data dir defaults to <cwd>/.skydata, and a `COPY . .` image
+	// built on a developer's machine carried the developer's key, which
+	// production then trusted (anyone with the image could sign a session for
+	// any user). A key made in development is therefore named
+	// `spa-session-secret.dev`, and production never reads that name. An
+	// existing development key under the production name is renamed to
+	// `.dev` on the first development run, so development keeps its key and
+	// later images no longer carry one production reads. Production never
+	// renames anything.
 	dir := spaSecretDataDir()
-	path := filepath.Join(dir, "spa-session-secret")
+	prod := productionFromEnv()
+	legacyPath := filepath.Join(dir, "spa-session-secret")
+	path := legacyPath
+	if !prod {
+		path = legacyPath + ".dev"
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if _, lerr := os.Stat(legacyPath); lerr == nil {
+				if rerr := os.Rename(legacyPath, path); rerr != nil {
+					log.Printf("[sky.spa] could not rename the development session key %s to %s: %v", legacyPath, path, rerr)
+					path = legacyPath
+				}
+			}
+		}
+	}
 	if b, err := os.ReadFile(path); err == nil && len(b) >= spaSessionSecretMinBytes {
 		return string(b)
 	}
@@ -89,8 +115,15 @@ func resolveSpaSessionSecret() string {
 	// Best-effort persist. A read-only FS (an ephemeral serverless deploy) keeps
 	// the in-memory secret for this process — it just will not survive a
 	// restart, which such a deploy already implies. Perms 0600: run user only.
-	if err := os.MkdirAll(dir, 0o700); err == nil {
-		_ = os.WriteFile(path, []byte(secret), 0o600)
+	var perr error
+	if perr = os.MkdirAll(dir, 0o700); perr == nil {
+		perr = os.WriteFile(path, []byte(secret), 0o600)
+	}
+	if perr != nil && prod {
+		// Loud: every restart mints a new key and signs every visitor out.
+		log.Printf("[sky.spa] ERROR: the session signing key cannot be persisted at %s (%v): every restart signs every visitor out. Set %s (32 bytes or more), or SKY_DATA_DIR to a writable directory.", path, perr, spaSessionSecretEnv)
+		addStartupWarning("Sky.Spa session key not persisted (" + perr.Error() + "): set " + spaSessionSecretEnv +
+			" or a writable SKY_DATA_DIR; see docs/migration/v0.27.md#spa-session-key")
 	}
 	return secret
 }
