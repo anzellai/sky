@@ -51,6 +51,22 @@ func wsTaskConnect(t *testing.T, url string, ping time.Duration) int64 {
 	return id
 }
 
+// wsTaskConnectIn connects inside a Sky.Live session, so the socket is that
+// session's (a session reaches only its own sockets).
+func wsTaskConnectIn(t *testing.T, sess *liveSession, url string) int64 {
+	t.Helper()
+	var res SkyResult[any, any]
+	runWithLiveSession(sess, func() {
+		res = doWebSocketConnect(url, nil, nil, 5*time.Second, 0).(SkyResult[any, any])
+	})
+	if res.Tag != 0 {
+		t.Fatalf("connect failed: %v", res.ErrValue)
+	}
+	id := res.OkValue.(int64)
+	t.Cleanup(func() { runWithLiveSession(sess, func() { runWsTask(WebSocket_close(id)) }) })
+	return id
+}
+
 func runWsTask(task any) SkyResult[any, any] {
 	return task.(func() any)().(SkyResult[any, any])
 }
@@ -247,15 +263,19 @@ func TestWsReceive_SubOwnedSocketIsRefused(t *testing.T) {
 	url := wsScriptServer(t, func(ctx context.Context, conn *websocket.Conn) {
 		_, _, _ = conn.Read(ctx)
 	})
-	id := wsTaskConnect(t, url, 0)
+	// The socket, the Sub and the receive all belong to one session: a
+	// session reaches only its own sockets (v0.27.0, A-1).
 	sess := &liveSession{done: make(chan struct{})}
 	t.Cleanup(func() { close(sess.done) })
+	id := wsTaskConnectIn(t, sess, url)
 	app := &liveApp{}
 	ignore := func(any) any { return nil }
 	app.applyWsSubsDiff(sess, map[string]subT{
 		"k": {kind: "subscribeWebSocket", socketID: id, wsKind: "message", toMsg: ignore},
 	})
-	if got := wsReceived(runWsTask(WebSocket_receive(id))); got != "Err:InvalidInput" {
+	var res SkyResult[any, any]
+	runWithLiveSession(sess, func() { res = runWsTask(WebSocket_receiveWithin(5000, id)) })
+	if got := wsReceived(res); got != "Err:InvalidInput" {
 		t.Fatalf("receive on a Sub-owned socket = %q, want Err:InvalidInput", got)
 	}
 }
@@ -271,12 +291,16 @@ func TestWsSub_OnTaskOwnedSocketDoesNotStealFrames(t *testing.T) {
 		_ = conn.Write(ctx, websocket.MessageText, []byte("two"))
 		_, _, _ = conn.Read(ctx)
 	})
-	id := wsTaskConnect(t, url, 0)
-	if got := wsReceived(runWsTask(WebSocket_receive(id))); got != "Text:one" {
-		t.Fatalf("first receive = %q", got)
-	}
 	sess := &liveSession{done: make(chan struct{})}
 	t.Cleanup(func() { close(sess.done) })
+	id := wsTaskConnectIn(t, sess, url)
+	inSess := func(task any) (r SkyResult[any, any]) {
+		runWithLiveSession(sess, func() { r = runWsTask(task) })
+		return r
+	}
+	if got := wsReceived(inSess(WebSocket_receive(id))); got != "Text:one" {
+		t.Fatalf("first receive = %q", got)
+	}
 	app := &liveApp{}
 	ignore := func(any) any { return nil }
 	app.applyWsSubsDiff(sess, map[string]subT{
@@ -289,7 +313,7 @@ func TestWsSub_OnTaskOwnedSocketDoesNotStealFrames(t *testing.T) {
 		t.Fatalf("a Sub on a Task-owned socket was registered (%d subs)", registered)
 	}
 	close(next)
-	if got := wsReceived(runWsTask(WebSocket_receiveWithin(5000, id))); got != "Text:two" {
+	if got := wsReceived(inSess(WebSocket_receiveWithin(5000, id))); got != "Text:two" {
 		t.Fatalf("receive after the refused Sub = %q, want Text:two", got)
 	}
 }
