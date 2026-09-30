@@ -1308,21 +1308,71 @@ fn is_generated(path: &Path) -> bool {
     })
 }
 
-fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
-    entries.sort();
-    for p in entries {
-        if is_generated(&p) {
-            continue;
+/// The repo's tracked files: the ONLY file set the ledger enumerates from.
+///
+/// The ledger is checked in and `--check`ed on a fresh CI checkout, so it must
+/// be a pure function of tracked sources. A filesystem walk is not: it counts a
+/// fixture's build output, an untracked scratch example, or a staged `.skyapp/`
+/// copy in one checkout and not in another, and the check then goes red (or
+/// green) on the machine instead of on the tree. File CONTENTS are still read
+/// from the working tree; only membership comes from git.
+pub(crate) struct TrackedSources {
+    files: BTreeSet<String>,
+}
+
+impl TrackedSources {
+    pub(crate) fn load(repo_root: &Path) -> Result<TrackedSources, String> {
+        let t = crate::harness::proof_inputs::Tracked::load(repo_root)
+            .map_err(|e| format!("cannot list tracked files in {}: {e}", repo_root.display()))?;
+        Ok(TrackedSources {
+            files: t.paths().clone(),
+        })
+    }
+
+    #[cfg(test)]
+    fn from_paths<I: IntoIterator<Item = S>, S: Into<String>>(paths: I) -> TrackedSources {
+        TrackedSources {
+            files: paths.into_iter().map(Into::into).collect(),
         }
-        if p.is_dir() {
-            collect_sky(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("sky") {
-            out.push(p);
-        }
+    }
+
+    /// Tracked files strictly beneath `dir` (repo-relative), sorted.
+    fn under<'a>(&'a self, dir: &str) -> impl Iterator<Item = &'a String> + 'a {
+        let prefix = format!("{}/", dir.trim_end_matches('/'));
+        self.files
+            .range(prefix.clone()..)
+            .take_while(move |f| f.starts_with(&prefix))
+    }
+
+    /// Tracked files that are DIRECT children of `dir`, sorted.
+    fn children<'a>(&'a self, dir: &str) -> impl Iterator<Item = &'a String> + 'a {
+        let depth = dir.trim_end_matches('/').len() + 1;
+        self.under(dir).filter(move |f| !f[depth..].contains('/'))
+    }
+
+    /// Names of the immediate subdirectories of `dir` that hold a tracked file.
+    fn subdirs(&self, dir: &str) -> BTreeSet<String> {
+        let depth = dir.trim_end_matches('/').len() + 1;
+        self.under(dir)
+            .filter_map(|f| f[depth..].split_once('/').map(|(d, _)| d.to_string()))
+            .collect()
+    }
+
+    fn has(&self, rel: &str) -> bool {
+        self.files.contains(rel)
+    }
+
+    fn has_under(&self, dir: &str) -> bool {
+        self.under(dir).next().is_some()
+    }
+
+    /// Tracked `.sky` files beneath `dir`, outside every generated directory,
+    /// as absolute paths under `repo_root`. Sorted.
+    fn sky_files(&self, repo_root: &Path, dir: &str) -> Vec<PathBuf> {
+        self.under(dir)
+            .filter(|f| f.ends_with(".sky") && !is_generated(Path::new(f.as_str())))
+            .map(|f| repo_root.join(f))
+            .collect()
     }
 }
 
@@ -1880,7 +1930,13 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
     }
 
     // ---- 3. units ----------------------------------------------------------
-    let mut units = enumerate_units(repo_root, &surf)?;
+    // Units are enumerated from the TRACKED file set, never a filesystem walk:
+    // the ledger is checked in and `--check`ed on a fresh CI checkout, so it
+    // must be a pure function of what git tracks. A walk counts a fixture's
+    // build output, an untracked scratch example or a staged `.skyapp/` copy
+    // in one checkout and not in the next.
+    let tracked = TrackedSources::load(repo_root)?;
+    let mut units = enumerate_units(repo_root, &tracked, &surf)?;
     units.sort_by(|a, b| a.id.cmp(&b.id));
 
     let proofs = read_proofs(repo_root);
@@ -2030,17 +2086,11 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
     let verb_parents = cli_verb_parents(
         &std::fs::read_to_string(repo_root.join("rust/crates/sky/src/main.rs")).unwrap_or_default(),
     );
-    if let Ok(rd) = std::fs::read_dir(repo_root.join("rust/crates/sky/tests")) {
-        let mut paths: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
-        paths.sort();
-        for p in paths {
-            if p.file_name()
-                .and_then(|f| f.to_str())
-                .map(|f| f.ends_with("_flow.rs"))
-                .unwrap_or(false)
-            {
+    {
+        for rel in tracked.children("rust/crates/sky/tests") {
+            if rel.ends_with("_flow.rs") {
                 flow_verbs.extend(flow_invoked_verbs(
-                    &std::fs::read_to_string(&p).unwrap_or_default(),
+                    &std::fs::read_to_string(repo_root.join(rel)).unwrap_or_default(),
                 ));
             }
         }
@@ -2491,8 +2541,17 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
     Ok(Ledger { surfaces, doc })
 }
 
-fn enumerate_units(repo_root: &Path, surf: &Surfaces) -> Result<Vec<Unit>, String> {
+fn enumerate_units(
+    repo_root: &Path,
+    tracked: &TrackedSources,
+    surf: &Surfaces,
+) -> Result<Vec<Unit>, String> {
     let mut units: Vec<Unit> = Vec::new();
+    // A unit's `sky.toml`, only when git tracks it.
+    let tracked_toml = |dir: &str| -> Option<PathBuf> {
+        let rel = format!("{}/sky.toml", dir.trim_end_matches('/'));
+        tracked.has(&rel).then(|| repo_root.join(rel))
+    };
 
     let build = |id: String,
                  role: Role,
@@ -2537,36 +2596,30 @@ fn enumerate_units(repo_root: &Path, surf: &Surfaces) -> Result<Vec<Unit>, Strin
     };
 
     // --- Example ------------------------------------------------------------
-    let ex_root = repo_root.join("examples");
-    let mut ex_dirs: Vec<PathBuf> = std::fs::read_dir(&ex_root)
-        .map_err(|e| format!("cannot read {}: {e}", ex_root.display()))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_dir() && (p.join("sky.toml").is_file() || p.join("src").is_dir()))
-        .collect();
-    ex_dirs.sort();
-    for dir in ex_dirs {
-        let name = dir.file_name().unwrap().to_string_lossy().to_string();
-        let mut files = Vec::new();
-        collect_sky(&dir, &mut files);
-        let tests_dir = dir.join("tests");
-        let has_assertions = tests_dir.is_dir() && {
-            let mut tf = Vec::new();
-            collect_sky(&tests_dir, &mut tf);
-            tf.iter().any(|p| {
+    // An example is a tracked `examples/<name>/` that carries a tracked
+    // `sky.toml` or tracked sources under `src/`.
+    for name in tracked.subdirs("examples") {
+        let rel = format!("examples/{name}");
+        if !(tracked.has(&format!("{rel}/sky.toml")) || tracked.has_under(&format!("{rel}/src"))) {
+            continue;
+        }
+        let files = tracked.sky_files(repo_root, &rel);
+        let has_assertions = tracked
+            .sky_files(repo_root, &format!("{rel}/tests"))
+            .iter()
+            .any(|p| {
                 let src = std::fs::read_to_string(p).unwrap_or_default();
                 ASSERTION_FNS
                     .iter()
                     .any(|f| src.contains(&format!("Test.{f}")))
-            })
-        };
+            });
         units.push(build(
-            format!("examples/{name}"),
+            rel.clone(),
             Role::Example,
-            format!("examples/{name}"),
+            rel.clone(),
             None,
             files,
-            Some(dir.join("sky.toml")),
+            tracked_toml(&rel),
             has_assertions,
         ));
     }
@@ -2579,46 +2632,35 @@ fn enumerate_units(repo_root: &Path, surf: &Surfaces) -> Result<Vec<Unit>, Strin
                 "apps/manifest.toml has a [[member]] without name/path: {m:?}"
             ));
         };
-        let dir = repo_root.join(path);
-        let mut files = Vec::new();
-        collect_sky(&dir, &mut files);
+        let rel = path.trim_end_matches('/');
         units.push(build(
             format!("apps:{name}"),
             Role::Layer2,
             path.clone(),
             m.get("gate").cloned(),
-            files,
-            Some(dir.join("sky.toml")),
+            tracked.sky_files(repo_root, rel),
+            tracked_toml(rel),
             true,
         ));
     }
 
     // --- Conformance --------------------------------------------------------
-    let conf = repo_root.join("tests/conformance");
-    let mut cfiles = Vec::new();
-    collect_sky(&conf, &mut cfiles);
     units.push(build(
         "tests/conformance".into(),
         Role::Conformance,
         "tests/conformance".into(),
         Some("conformance".into()),
-        cfiles,
-        Some(conf.join("sky.toml")),
+        tracked.sky_files(repo_root, "tests/conformance"),
+        tracked_toml("tests/conformance"),
         true,
     ));
 
     // --- SkySuite -----------------------------------------------------------
-    let tests_root = repo_root.join("tests");
-    let mut subs: Vec<PathBuf> = std::fs::read_dir(&tests_root)
-        .map_err(|e| format!("cannot read {}: {e}", tests_root.display()))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_dir() && p.file_name().and_then(|f| f.to_str()) != Some("conformance"))
-        .collect();
-    subs.sort();
-    for dir in subs {
-        let mut files = Vec::new();
-        collect_sky(&dir, &mut files);
+    for name in tracked.subdirs("tests") {
+        if name == "conformance" {
+            continue;
+        }
+        let mut files = tracked.sky_files(repo_root, &format!("tests/{name}"));
         files.retain(|p| {
             p.file_name()
                 .and_then(|f| f.to_str())
@@ -2628,7 +2670,6 @@ fn enumerate_units(repo_root: &Path, surf: &Surfaces) -> Result<Vec<Unit>, Strin
         if files.is_empty() {
             continue;
         }
-        let name = dir.file_name().unwrap().to_string_lossy().to_string();
         units.push(build(
             format!("tests/{name}"),
             Role::SkySuite,
@@ -2646,14 +2687,11 @@ fn enumerate_units(repo_root: &Path, surf: &Surfaces) -> Result<Vec<Unit>, Strin
     }
 
     // --- Layer 1 ------------------------------------------------------------
-    let corpus_dir = repo_root.join("rust/crates/xtask/src/corpus");
-    let mut rs: Vec<PathBuf> = std::fs::read_dir(&corpus_dir)
-        .map_err(|e| format!("cannot read {}: {e}", corpus_dir.display()))?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rs"))
+    let rs: Vec<PathBuf> = tracked
+        .children("rust/crates/xtask/src/corpus")
+        .filter(|f| f.ends_with(".rs"))
+        .map(|f| repo_root.join(f))
         .collect();
-    rs.sort();
     let mut emitted = String::new();
     for p in &rs {
         emitted.push_str(&rust_string_literals(
@@ -3557,12 +3595,169 @@ fn stale_diff(base: &Value, cur: &Value) -> String {
     // otherwise-opaque "some detail differs" into "gates.coverage-ledger.
     // expected_assertions: 148 -> 149", which points straight at the fix.
     lines.extend(gate_field_diffs(base, cur));
+    // Every other difference, by field path with old and new values. The named
+    // lines above cover the common moves; this covers the rest (a unit's
+    // `sky_files`, an evidence string, an uncovered-symbol list), which used to
+    // collapse into one catch-all line that named no field and so forced a
+    // regenerate-and-diff to find out what had changed.
+    let mut detail = Vec::new();
+    let mut omitted = 0usize;
+    for (k, cv) in cur.as_object().into_iter().flatten() {
+        if k == "summary" || k == "gates" {
+            continue; // named above
+        }
+        json_diff(
+            k,
+            base.get(k).unwrap_or(&Value::Null),
+            cv,
+            &mut detail,
+            &mut omitted,
+        );
+    }
+    for k in base.as_object().into_iter().flatten().map(|(k, _)| k) {
+        if cur.get(k).is_none() && k != "summary" && k != "gates" {
+            push_bounded(
+                &mut detail,
+                &mut omitted,
+                format!("  {k}: (section removed)"),
+            );
+        }
+    }
+    if !detail.is_empty() {
+        lines.push("  field differences (checked-in -> recomputed):".to_string());
+        lines.extend(detail);
+        if omitted > 0 {
+            lines.push(format!("  … and {omitted} more difference(s) not shown"));
+        }
+    }
     if lines.is_empty() {
-        "  (no surface, summary or gate change; a detail field differs — an evidence, \
-         sole-ownership, uncovered or units list)"
-            .to_string()
+        "  (the documents differ, but no field-level difference was found)".to_string()
     } else {
         lines.join("\n")
+    }
+}
+
+/// How many field-level differences `stale_diff` prints before it summarises.
+const MAX_DETAIL_LINES: usize = 40;
+/// How many characters of a rendered value a difference line shows.
+const MAX_VALUE_CHARS: usize = 160;
+
+fn push_bounded(out: &mut Vec<String>, omitted: &mut usize, line: String) {
+    if out.len() < MAX_DETAIL_LINES {
+        out.push(line);
+    } else {
+        *omitted += 1;
+    }
+}
+
+fn render_value(v: &Value) -> String {
+    let s = v.to_string();
+    if s.chars().count() <= MAX_VALUE_CHARS {
+        s
+    } else {
+        let head: String = s.chars().take(MAX_VALUE_CHARS).collect();
+        format!("{head}…")
+    }
+}
+
+/// Record every difference between `b` (checked-in) and `c` (recomputed) under
+/// `path`. Objects recurse by key. Arrays whose elements are all objects with a
+/// string `id` are matched by id (so an inserted unit does not shift every
+/// later one); other arrays are compared as multisets and report the elements
+/// added and removed, or a pure reordering. Scalars print `old -> new`.
+fn json_diff(path: &str, b: &Value, c: &Value, out: &mut Vec<String>, omitted: &mut usize) {
+    if b == c {
+        return;
+    }
+    match (b, c) {
+        (Value::Object(bo), Value::Object(co)) => {
+            for (k, cv) in co {
+                match bo.get(k) {
+                    Some(bv) => json_diff(&format!("{path}.{k}"), bv, cv, out, omitted),
+                    None => push_bounded(
+                        out,
+                        omitted,
+                        format!("  {path}.{k}: (absent) -> {}", render_value(cv)),
+                    ),
+                }
+            }
+            for (k, bv) in bo {
+                if !co.contains_key(k) {
+                    push_bounded(
+                        out,
+                        omitted,
+                        format!("  {path}.{k}: {} -> (absent)", render_value(bv)),
+                    );
+                }
+            }
+        }
+        (Value::Array(ba), Value::Array(ca)) => {
+            let id_of = |v: &Value| v.get("id").and_then(Value::as_str).map(str::to_string);
+            let keyed = |a: &Vec<Value>| -> Option<BTreeMap<String, Value>> {
+                let m: BTreeMap<String, Value> = a
+                    .iter()
+                    .map(|v| id_of(v).map(|id| (id, v.clone())))
+                    .collect::<Option<_>>()?;
+                (m.len() == a.len()).then_some(m)
+            };
+            if let (Some(bm), Some(cm)) = (keyed(ba), keyed(ca)) {
+                for (id, cv) in &cm {
+                    match bm.get(id) {
+                        Some(bv) => json_diff(&format!("{path}[id={id}]"), bv, cv, out, omitted),
+                        None => push_bounded(out, omitted, format!("  {path}[id={id}]: (added)")),
+                    }
+                }
+                for id in bm.keys() {
+                    if !cm.contains_key(id) {
+                        push_bounded(out, omitted, format!("  {path}[id={id}]: (removed)"));
+                    }
+                }
+                return;
+            }
+            let count = |a: &Vec<Value>| {
+                let mut m: BTreeMap<String, usize> = BTreeMap::new();
+                for v in a {
+                    *m.entry(v.to_string()).or_default() += 1;
+                }
+                m
+            };
+            let (bc, cc) = (count(ba), count(ca));
+            let mut any = false;
+            for (v, n) in &cc {
+                for _ in bc.get(v).copied().unwrap_or(0)..*n {
+                    any = true;
+                    let shown: Value = serde_json::from_str(v).unwrap_or(Value::Null);
+                    push_bounded(
+                        out,
+                        omitted,
+                        format!("  {path}: + {}", render_value(&shown)),
+                    );
+                }
+            }
+            for (v, n) in &bc {
+                for _ in cc.get(v).copied().unwrap_or(0)..*n {
+                    any = true;
+                    let shown: Value = serde_json::from_str(v).unwrap_or(Value::Null);
+                    push_bounded(
+                        out,
+                        omitted,
+                        format!("  {path}: - {}", render_value(&shown)),
+                    );
+                }
+            }
+            if !any {
+                push_bounded(
+                    out,
+                    omitted,
+                    format!("  {path}: (same elements, order changed)"),
+                );
+            }
+        }
+        _ => push_bounded(
+            out,
+            omitted,
+            format!("  {path}: {} -> {}", render_value(b), render_value(c)),
+        ),
     }
 }
 
@@ -5004,5 +5199,218 @@ fn t() {
         assert!(members
             .iter()
             .any(|m| m.get("path").map(String::as_str) == Some("examples/13-skyshop")));
+    }
+
+    /// A stale ledger whose only change is a detail field (here a unit's
+    /// `sky_files`, the field a textual merge of two branches that each added a
+    /// fixture left at 188 when the merged tree held 189) must NAME that field
+    /// with both values. It used to print "a detail field differs" and nothing
+    /// else, which sent the reader hunting for nondeterminism.
+    #[test]
+    fn stale_diff_names_a_detail_field_with_old_and_new_values() {
+        let unit = |n: u64| json!({ "id": "apps:cli-verbs", "path": "rust/crates/sky/tests", "sky_files": n });
+        let base = json!({
+            "summary": {}, "surfaces": [], "gates": {},
+            "units": [ { "id": "apps:bundled", "sky_files": 14 }, unit(188) ],
+            "uncovered": { "by_module": { "Std.Ui": { "symbols": ["a", "b"] } } },
+        });
+        let cur = json!({
+            "summary": {}, "surfaces": [], "gates": {},
+            "units": [ { "id": "apps:aaa-new", "sky_files": 1 }, { "id": "apps:bundled", "sky_files": 14 }, unit(189) ],
+            "uncovered": { "by_module": { "Std.Ui": { "symbols": ["a", "c"] } } },
+        });
+        let diff = stale_diff(&base, &cur);
+        for want in [
+            "units[id=apps:cli-verbs].sky_files: 188 -> 189",
+            "units[id=apps:aaa-new]: (added)",
+            "uncovered.by_module.Std.Ui.symbols: + \"c\"",
+            "uncovered.by_module.Std.Ui.symbols: - \"b\"",
+        ] {
+            assert!(diff.contains(want), "missing `{want}` in:\n{diff}");
+        }
+        // Matched by id: the inserted unit must not report `apps:bundled`.
+        assert!(!diff.contains("apps:bundled"), "{diff}");
+    }
+
+    /// The detail listing is bounded: a wholesale change prints at most
+    /// `MAX_DETAIL_LINES` differences and says how many it left out.
+    #[test]
+    fn stale_diff_detail_output_is_bounded() {
+        let many = |off: u64| -> Value {
+            Value::Array(
+                (0..500)
+                    .map(|i| json!({ "id": format!("u{i:03}"), "sky_files": i + off }))
+                    .collect(),
+            )
+        };
+        let base = json!({ "summary": {}, "gates": {}, "units": many(0) });
+        let cur = json!({ "summary": {}, "gates": {}, "units": many(1) });
+        let diff = stale_diff(&base, &cur);
+        let shown = diff.lines().filter(|l| l.contains("sky_files")).count();
+        assert_eq!(shown, MAX_DETAIL_LINES, "{diff}");
+        assert!(
+            diff.contains(&format!(
+                "and {} more difference(s)",
+                500 - MAX_DETAIL_LINES
+            )),
+            "{diff}"
+        );
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let st = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .status()
+            .expect("git runs");
+        assert!(st.success(), "git {args:?} failed");
+    }
+
+    fn write(root: &Path, rel: &str, body: &str) {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    }
+
+    /// The ledger's unit set is a function of TRACKED files only. Planting
+    /// build outputs, gitignored files and untracked scratch sources in a
+    /// checkout — what a fixture build, an example run or a local experiment
+    /// leaves behind — must not move a single unit, or `--check` passes in one
+    /// checkout and fails in another (CI's fresh clone). The last step tracks
+    /// one planted file and asserts the count DOES move, so the test cannot pass
+    /// by never seeing files at all.
+    #[test]
+    fn units_are_a_function_of_tracked_files_only() {
+        let root = std::env::temp_dir().join(format!(
+            "sky-ledger-tracked-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        let main = "module Main exposing (main)\n\nimport Std.Log exposing (println)\n\nmain =\n    println \"hi\"\n";
+        write(
+            &root,
+            "apps/manifest.toml",
+            "[[member]]\nname = \"cli-verbs\"\npath = \"rust/crates/sky/tests\"\ngate = \"cli-verbs\"\n",
+        );
+        write(
+            &root,
+            "examples/01-hello/sky.toml",
+            "[app]\nname = \"hello\"\n",
+        );
+        write(&root, "examples/01-hello/src/Main.sky", main);
+        write(&root, "rust/crates/sky/tests/fixtures/f/src/Main.sky", main);
+        write(&root, "rust/crates/sky/tests/a_flow.rs", "// flow\n");
+        write(&root, "tests/core/ListTest.sky", main);
+        write(&root, "tests/conformance/sky.toml", "[app]\n");
+        write(&root, "tests/conformance/src/Main.sky", main);
+        write(
+            &root,
+            "rust/crates/xtask/src/corpus/gen.rs",
+            "const S: &str = \"x\";\n",
+        );
+        write(&root, ".gitignore", "build/\n");
+        git(&root, &["add", "-A"]);
+
+        let surf = Surfaces {
+            modules: ["Std.Log".to_string()].into_iter().collect(),
+            symbols: [("Std.Log".to_string(), "println".to_string())]
+                .into_iter()
+                .collect(),
+            by_name: BTreeMap::new(),
+        };
+        let snapshot = || -> Vec<(String, usize, usize, Vec<String>)> {
+            let tracked = TrackedSources::load(&root).expect("git ls-files");
+            let mut units = enumerate_units(&root, &tracked, &surf).expect("units");
+            units.sort_by(|a, b| a.id.cmp(&b.id));
+            units
+                .iter()
+                .map(|u| {
+                    (
+                        u.id.clone(),
+                        u.files,
+                        u.imports.len(),
+                        u.toml_sections.iter().cloned().collect(),
+                    )
+                })
+                .collect()
+        };
+        let before = snapshot();
+        let fixture_files = |s: &[(String, usize, usize, Vec<String>)]| {
+            s.iter().find(|u| u.0 == "apps:cli-verbs").unwrap().1
+        };
+        assert_eq!(fixture_files(&before), 1, "{before:?}");
+        assert!(
+            before.iter().any(|u| u.0 == "examples/01-hello"),
+            "{before:?}"
+        );
+
+        // Build outputs, gitignored output, untracked scratch sources.
+        for rel in [
+            "rust/crates/sky/tests/fixtures/f/.skyapp/web/src/Main.sky",
+            "rust/crates/sky/tests/fixtures/f/.split/client/src/Main.sky",
+            "rust/crates/sky/tests/fixtures/f/build/Gen.sky",
+            "rust/crates/sky/tests/fixtures/g/src/Main.sky",
+            "examples/01-hello/src/Scratch.sky",
+            "examples/01-hello/sky-out/Emitted.sky",
+            "examples/99-scratch/src/Main.sky",
+            "tests/scratch/FooTest.sky",
+            "tests/conformance/src/Extra.sky",
+        ] {
+            write(&root, rel, main);
+        }
+        write(&root, "examples/99-scratch/sky.toml", "[app]\n");
+        write(
+            &root,
+            "rust/crates/xtask/src/corpus/scratch.rs",
+            "const S: &str = \"import Std.Log\";\n",
+        );
+        write(&root, "rust/crates/sky/tests/scratch_flow.rs", "// flow\n");
+        assert_eq!(
+            snapshot(),
+            before,
+            "an untracked or ignored file moved the ledger"
+        );
+
+        // Tracking one of them is a real change, and the ledger sees it.
+        git(
+            &root,
+            &["add", "rust/crates/sky/tests/fixtures/g/src/Main.sky"],
+        );
+        assert_eq!(fixture_files(&snapshot()), 2);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tracked_sources_listing_helpers() {
+        let t = TrackedSources::from_paths([
+            "examples/a/sky.toml",
+            "examples/a/src/Main.sky",
+            "examples/b/README.md",
+            "examples/top.md",
+            "tests/x/sky-out/Gen.sky",
+            "tests/x/y/ZTest.sky",
+        ]);
+        assert_eq!(
+            t.subdirs("examples").into_iter().collect::<Vec<_>>(),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            t.children("examples").collect::<Vec<_>>(),
+            vec!["examples/top.md"]
+        );
+        assert!(t.has_under("examples/a/src") && !t.has_under("examples/b/src"));
+        // A tracked file under a generated directory name is still skipped.
+        assert_eq!(
+            t.sky_files(Path::new("/r"), "tests/x"),
+            vec![PathBuf::from("/r/tests/x/y/ZTest.sky")]
+        );
     }
 }

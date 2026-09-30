@@ -409,6 +409,14 @@ impl Tracked {
         })
     }
 
+    /// Every tracked path, repo-relative with `/` separators, in sorted order.
+    /// `coverage_ledger` enumerates its units from this set for the same
+    /// reason the digests here resolve against it: a filesystem walk sees
+    /// build outputs and scratch files that exist in one checkout only.
+    pub fn paths(&self) -> &BTreeSet<String> {
+        &self.files
+    }
+
     /// Is `rel` a tracked file, or a directory that holds one?
     fn names(&self, rel: &str) -> bool {
         self.under(rel).next().is_some()

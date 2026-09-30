@@ -122,6 +122,25 @@ fn usage() -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Every gate scans the tree this binary was BUILT from (`repo_root` is
+    // derived from `CARGO_MANIFEST_DIR`), not the current directory. Running
+    // one worktree's `target/release/xtask` from another worktree therefore
+    // measures the first worktree, and a comparison made that way (for example
+    // "`coverage-ledger --check` passes in a clean checkout") silently reports
+    // on the wrong tree. Say so whenever the two disagree.
+    if let (Ok(cwd), Ok(root)) = (
+        std::env::current_dir().and_then(|d| d.canonicalize()),
+        repo_root().canonicalize(),
+    ) {
+        if !cwd.starts_with(&root) {
+            eprintln!(
+                "xtask: note: scanning {} (the tree this binary was built from), not the \
+                 current directory {}",
+                root.display(),
+                cwd.display()
+            );
+        }
+    }
     let code = match args.first().map(String::as_str) {
         Some("--version") | Some("version") => {
             println!("{VERSION}");
