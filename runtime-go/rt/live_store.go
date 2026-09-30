@@ -361,7 +361,7 @@ func reportSessionSaveFailure(kind, sid string, closed bool, err error) {
 // mis-encoded config surfaces as a visibly-wrong path rather than a
 // runtime panic. No secret material flows here.
 func stringField(cfg any, name string) string {
-	v := Field(cfg, name)
+	v := fieldOrNil(cfg, name)
 	if v == nil {
 		return ""
 	}

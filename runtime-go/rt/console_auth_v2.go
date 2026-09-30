@@ -675,15 +675,15 @@ func extractConsoleIdentity(v any) ConsoleIdentity {
 	if v == nil {
 		return out
 	}
-	if sub := Field(v, "Subject"); sub != nil {
+	if sub := fieldOrNil(v, "Subject"); sub != nil {
 		out.Subject = fmt.Sprintf("%v", sub)
 	}
-	if email := Field(v, "Email"); email != nil {
+	if email := fieldOrNil(v, "Email"); email != nil {
 		out.Email = fmt.Sprintf("%v", email)
 	}
 	// Claims is `Dict String String` — emitted as map[string]any or
 	// map[string]string depending on the lowerer.
-	if claims := Field(v, "Claims"); claims != nil {
+	if claims := fieldOrNil(v, "Claims"); claims != nil {
 		switch m := claims.(type) {
 		case map[string]string:
 			for k, val := range m {

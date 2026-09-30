@@ -120,18 +120,18 @@ func TestSpaSSRResolveModel_SetsPagePerRoute(t *testing.T) {
 
 	// A matching path folds that route's page into the model.
 	got := Spa_ssrResolveModel(routes, notFound, model, "/items")
-	if Field(got, "Page") != "ItemsPage" {
-		t.Fatalf("expected Page=ItemsPage for /items, got %v", Field(got, "Page"))
+	if fieldOrNil(got, "Page") != "ItemsPage" {
+		t.Fatalf("expected Page=ItemsPage for /items, got %v", fieldOrNil(got, "Page"))
 	}
 	// The root resolves to its own page.
 	root := Spa_ssrResolveModel(routes, notFound, model, "/")
-	if Field(root, "Page") != "HomePage" {
-		t.Fatalf("expected Page=HomePage for /, got %v", Field(root, "Page"))
+	if fieldOrNil(root, "Page") != "HomePage" {
+		t.Fatalf("expected Page=HomePage for /, got %v", fieldOrNil(root, "Page"))
 	}
 	// An unmatched path falls back to the notFound page.
 	miss := Spa_ssrResolveModel(routes, notFound, model, "/nope")
-	if Field(miss, "Page") != "NotFoundPage" {
-		t.Fatalf("expected Page=NotFoundPage for an unmatched path, got %v", Field(miss, "Page"))
+	if fieldOrNil(miss, "Page") != "NotFoundPage" {
+		t.Fatalf("expected Page=NotFoundPage for an unmatched path, got %v", fieldOrNil(miss, "Page"))
 	}
 }
 
@@ -162,13 +162,13 @@ func TestSpaSSRSettle_FoldsAGetSafeReadIntoTheModel(t *testing.T) {
 	}
 
 	settled := Spa_ssrSettle(model, cmd, update)
-	items, ok := Field(settled, "items").([]any)
+	items, ok := fieldOrNil(settled, "items").([]any)
 	if !ok || len(items) != 3 || items[0] != "a" || items[2] != "c" {
-		t.Fatalf("expected the read to settle into items=[a b c], got %v", Field(settled, "items"))
+		t.Fatalf("expected the read to settle into items=[a b c], got %v", fieldOrNil(settled, "items"))
 	}
 	// The unrelated Page field must survive the fold.
-	if Field(settled, "Page") != "ItemsPage" {
-		t.Fatalf("settle must preserve unrelated fields; Page=%v", Field(settled, "Page"))
+	if fieldOrNil(settled, "Page") != "ItemsPage" {
+		t.Fatalf("settle must preserve unrelated fields; Page=%v", fieldOrNil(settled, "Page"))
 	}
 }
 
@@ -190,7 +190,7 @@ func TestSpaSSRSettle_BatchFoldsEachPerform(t *testing.T) {
 	}
 	cmd := cmdT{kind: "batch", batch: []any{mk("A", "a"), mk("B", "b")}}
 	settled := Spa_ssrSettle(model, cmd, update)
-	if Field(settled, "a") != "A" || Field(settled, "b") != "B" {
-		t.Fatalf("batch settle must fold each perform; got a=%v b=%v", Field(settled, "a"), Field(settled, "b"))
+	if fieldOrNil(settled, "a") != "A" || fieldOrNil(settled, "b") != "B" {
+		t.Fatalf("batch settle must fold each perform; got a=%v b=%v", fieldOrNil(settled, "a"), fieldOrNil(settled, "b"))
 	}
 }

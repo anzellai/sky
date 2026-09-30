@@ -146,18 +146,18 @@ func buildLiveServer(cfg any, embedded bool) (ls *liveServer, err error) {
 // (live_namespace.go).
 func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err error) {
 	app := &liveApp{
-		init:               Field(cfg, "Init"),
-		update:             Field(cfg, "Update"),
-		view:               Field(cfg, "View"),
-		subscriptions:      Field(cfg, "Subscriptions"),
-		notFound:           Field(cfg, "NotFound"),
-		guard:              Field(cfg, "Guard"),
-		head:               Field(cfg, "Head"),
-		consoleAuth:        Field(cfg, "ConsoleAuth"),
-		onNavigate:         Field(cfg, "OnNavigate"),
+		init:               fieldOrNil(cfg, "Init"),
+		update:             fieldOrNil(cfg, "Update"),
+		view:               fieldOrNil(cfg, "View"),
+		subscriptions:      fieldOrNil(cfg, "Subscriptions"),
+		notFound:           fieldOrNil(cfg, "NotFound"),
+		guard:              fieldOrNil(cfg, "Guard"),
+		head:               fieldOrNil(cfg, "Head"),
+		consoleAuth:        fieldOrNil(cfg, "ConsoleAuth"),
+		onNavigate:         fieldOrNil(cfg, "OnNavigate"),
 		analyticsPageViews: analyticsPageViewsFromCfg(cfg),
 		analyticsIdentify:  analyticsIdentifyFromCfg(cfg),
-		durable:            durableCtxOf(Field(cfg, "Durable")),
+		durable:            durableCtxOf(fieldOrNil(cfg, "Durable")),
 		locker:             newSessionLocker(),
 		msgTags:            make(map[string]int),
 		bannerCfg:          resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -184,7 +184,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 	// Static file serving. Sky-side: `static = "public"` → serve
 	// <cwd>/public/* at /static/*. Mount URL can be overridden with
 	// `staticUrl = "/assets"`.
-	if sd := Field(cfg, "Static"); sd != nil {
+	if sd := fieldOrNil(cfg, "Static"); sd != nil {
 		app.staticDir = fmt.Sprintf("%v", sd)
 	} else if v := skyGetenv("LIVE_STATIC_DIR"); v != "" {
 		// <PREFIX>_LIVE_STATIC_DIR is the documented name (matches
@@ -197,7 +197,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 		app.staticDir = v
 	}
 	app.staticURL = "/static"
-	if su := Field(cfg, "StaticUrl"); su != nil {
+	if su := fieldOrNil(cfg, "StaticUrl"); su != nil {
 		if s := fmt.Sprintf("%v", su); s != "" {
 			app.staticURL = s
 		}
@@ -284,7 +284,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 	// reads the app's own config; the builder-owned login setter
 	// (Auth.setSlidingCookie) reads the process-wide one, which this claims.
 	// Absent field ⇒ nil ⇒ inert.
-	app.sliding = parseAuthSlidingConfig(Field(cfg, "AuthSliding"))
+	app.sliding = parseAuthSlidingConfig(fieldOrNil(cfg, "AuthSliding"))
 	releaseSliding, serr := claimAuthSlidingConfig(app.sliding)
 	if serr != nil {
 		return ls, serr
@@ -293,7 +293,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 	// PULL-model revocation gate (opt-in via Live.withRevocation). The app-
 	// supplied Db is where the shared sky_revocations / users.disabled_at state
 	// lives (NOT the session store). Absent field ⇒ nil ⇒ the gate stays inert.
-	if dbAny := Field(cfg, "Revocation"); dbAny != nil {
+	if dbAny := fieldOrNil(cfg, "Revocation"); dbAny != nil {
 		if d, ok := dbAny.(*SkyDb); ok && d != nil {
 			app.revocation = &revocationGateConfig{db: d, ttl: revocationCacheTTLFromEnv()}
 			liveRevocationApps.Add(1)
@@ -371,7 +371,7 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 		// Std.App.withConsoleAuth: the check also receives the console
 		// request's signed-in model. It replaces a one-argument consoleAuth
 		// if both are set.
-		if check := Field(cfg, "ConsoleAuthModel"); check != nil {
+		if check := fieldOrNil(cfg, "ConsoleAuthModel"); check != nil {
 			SetConsoleAuthCallback(check)
 			SetConsoleAuthModel(app.consoleModelFor)
 		}
@@ -500,7 +500,7 @@ func liveAppRun(cfg any) any {
 	// in a larger Task program. It installs no signal handler and never exits
 	// the process; every refusal to start is the Task's Err, and the host owns
 	// shutdown.
-	embedded := AsBoolOrFalse(Field(cfg, "Embedded"))
+	embedded := AsBoolOrFalse(fieldOrNil(cfg, "Embedded"))
 	// Shutdown on SIGINT / SIGTERM / SIGHUP (a process-owning app only). The
 	// handler is installed BEFORE the build binds the listener: once the port
 	// accepts a connection, a signal must already be ours. A signal that

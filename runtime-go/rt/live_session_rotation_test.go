@@ -662,7 +662,7 @@ func TestSessionKey_StableAcrossRotation(t *testing.T) {
 	app := newRotationTestApp(t)
 	var seedKey string
 	app.init = func(req any) any {
-		if s, ok := Field(req, "sessionKey").(string); ok {
+		if s, ok := fieldOrNil(req, "sessionKey").(string); ok {
 			seedKey = s
 		}
 		return SkyTuple2{V0: "seed", V1: cmdT{kind: "none"}}

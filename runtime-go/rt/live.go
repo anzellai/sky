@@ -1428,7 +1428,7 @@ func (app *liveApp) dispatchRoot(w http.ResponseWriter, r *http.Request) {
 func collectLiveRoutes(cfg any) ([]liveRoute, []apiRoute) {
 	var pages []liveRoute
 	var apis []apiRoute
-	for _, r := range asList(Field(cfg, "Routes")) {
+	for _, r := range asList(fieldOrNil(cfg, "Routes")) {
 		switch rr := r.(type) {
 		case liveRoute:
 			pages = append(pages, rr)
@@ -1436,7 +1436,7 @@ func collectLiveRoutes(cfg any) ([]liveRoute, []apiRoute) {
 			apis = append(apis, rr)
 		}
 	}
-	for _, r := range asList(Field(cfg, "Api")) {
+	for _, r := range asList(fieldOrNil(cfg, "Api")) {
 		if ar, ok := r.(apiRoute); ok {
 			apis = append(apis, ar)
 		}
@@ -1745,7 +1745,7 @@ func dispatchOnNavigate(app *liveApp, model any) (any, any) {
 	if app.onNavigate == nil || app.update == nil {
 		return model, nil
 	}
-	page := Field(model, "Page")
+	page := fieldOrNil(model, "Page")
 	if page == nil {
 		return model, nil
 	}
@@ -1899,7 +1899,7 @@ func resolveLivePort(cfg any) int {
 	// An unset optional is ABSENT from the config map (see live_config.go), so
 	// a non-nil `Port` field means `withPort` was actually called.
 	builder := ""
-	if p := Field(cfg, "Port"); p != nil {
+	if p := fieldOrNil(cfg, "Port"); p != nil {
 		if n := AsInt(p); n >= 0 {
 			// 0 asks the kernel for a free port (v0.27, for Live.serve /
 			// App.serve: App.address reports the port that was bound).
@@ -5417,7 +5417,7 @@ func loadLiveBannerConfig() liveBannerConfig {
 // who only want one string in their language to write both, which is
 // a worse trade-off than the typo cost).
 func resolveBannerStrings(cfg liveBannerConfig, app any) liveBannerConfig {
-	status := Field(app, "Status")
+	status := fieldOrNil(app, "Status")
 	if status == nil {
 		return cfg
 	}

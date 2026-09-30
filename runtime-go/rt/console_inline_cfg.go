@@ -14,7 +14,7 @@
 // InlineConsoleCfg accessor before handing it to
 // MountLiveSubAppInProcess.
 //
-// The "cfg" itself is a map[string]any. `Field(cfg, "Init")` in
+// The "cfg" itself is a map[string]any. `fieldOrNil(cfg, "Init")` in
 // rt's reflect-driven accessors returns the typed Sky function;
 // the sub-app's session-start path calls it via sky_call, exactly
 // as it would for a user-written Live.app.

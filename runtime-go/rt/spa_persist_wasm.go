@@ -137,9 +137,9 @@ func spaRestoreFromStorage(cfg any, doc js.Value) bool {
 	if spaModelEncoder == nil {
 		return false
 	}
-	decoder := Field(cfg, "PersistDecoder")
+	decoder := fieldOrNil(cfg, "PersistDecoder")
 	if decoder == nil {
-		decoder = Field(cfg, "ModelDecoder")
+		decoder = fieldOrNil(cfg, "ModelDecoder")
 	}
 	if decoder == nil {
 		return false

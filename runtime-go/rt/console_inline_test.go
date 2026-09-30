@@ -58,7 +58,7 @@ func TestInlineConsole_CfgExposesCanonicalLiveAppKeys(t *testing.T) {
 		t.Fatal("InlineConsoleCfg() returned nil after blank-import of console_app")
 	}
 	// The cfg must carry the four Live.app keys MountLiveSubAppInProcess
-	// reaches for via Field(cfg, ...). Any of these missing means the
+	// reaches for via fieldOrNil(cfg, ...). Any of these missing means the
 	// bundled console would fail to mount via the canonical path.
 	for _, key := range []string{"Init", "Update", "View", "Subscriptions"} {
 		if v := rt.Field(cfg, key); v == nil {

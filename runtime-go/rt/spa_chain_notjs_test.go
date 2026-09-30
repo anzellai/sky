@@ -41,8 +41,8 @@ func TestSpaSettleServerChain_FoldsAServerReadIntoTheModel(t *testing.T) {
 	if !ok {
 		t.Fatalf("Spa_settleServerChain must return a ( model, cmd ) tuple, got %T", settled)
 	}
-	if Field(m2, "note") != "file body" {
-		t.Fatalf("the server read must settle into note; got note=%v", Field(m2, "note"))
+	if fieldOrNil(m2, "note") != "file body" {
+		t.Fatalf("the server read must settle into note; got note=%v", fieldOrNil(m2, "note"))
 	}
 }
 
@@ -77,8 +77,8 @@ func TestSpaSettleServerChain_ChasesAMultiHopChainToFixpoint(t *testing.T) {
 
 	settled := Spa_settleServerChain(model, cmd, update)
 	m2, _ := tupleFirstField(settled)
-	if Field(m2, "a") != "A" || Field(m2, "b") != "B" {
-		t.Fatalf("a two-hop chain must settle BOTH writes; got a=%v b=%v", Field(m2, "a"), Field(m2, "b"))
+	if fieldOrNil(m2, "a") != "A" || fieldOrNil(m2, "b") != "B" {
+		t.Fatalf("a two-hop chain must settle BOTH writes; got a=%v b=%v", fieldOrNil(m2, "a"), fieldOrNil(m2, "b"))
 	}
 }
 
@@ -101,8 +101,8 @@ func TestSpaSettleServerChain_BatchFoldsEachPerform(t *testing.T) {
 	cmd := cmdT{kind: "batch", batch: []any{mk("X", "x"), mk("Y", "y")}}
 	settled := Spa_settleServerChain(model, cmd, update)
 	m2, _ := tupleFirstField(settled)
-	if Field(m2, "x") != "X" || Field(m2, "y") != "Y" {
-		t.Fatalf("batch settle must fold each perform; got x=%v y=%v", Field(m2, "x"), Field(m2, "y"))
+	if fieldOrNil(m2, "x") != "X" || fieldOrNil(m2, "y") != "Y" {
+		t.Fatalf("batch settle must fold each perform; got x=%v y=%v", fieldOrNil(m2, "x"), fieldOrNil(m2, "y"))
 	}
 }
 
@@ -121,7 +121,7 @@ func TestSpaSettleServerChain_TerminatesOnASelfReferentialCycle(t *testing.T) {
 	}
 	update := func(msg any, m any) any {
 		n := 0
-		if v, ok := Field(m, "n").(int); ok {
+		if v, ok := fieldOrNil(m, "n").(int); ok {
 			n = v
 		}
 		next := RecordUpdate(m, map[string]any{"n": n + 1})
@@ -136,7 +136,7 @@ func TestSpaSettleServerChain_TerminatesOnASelfReferentialCycle(t *testing.T) {
 	select {
 	case settled := <-done:
 		m2, _ := tupleFirstField(settled)
-		n, _ := Field(m2, "n").(int)
+		n, _ := fieldOrNil(m2, "n").(int)
 		// The cap bounds the number of performs run; the loop must terminate
 		// having advanced the model and stopped, never hang.
 		if n < 1 {

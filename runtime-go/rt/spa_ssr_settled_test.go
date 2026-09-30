@@ -51,8 +51,8 @@ func settleFull(t *testing.T, model, cmd, update any) (any, bool) {
 func TestSpaSSRSettleFull_AReadWithNoFollowUpIsSettled(t *testing.T) {
 	model := map[string]any{"items": "", "loading": true}
 	m, done := settleFull(t, model, ssrRead("[a,b]"), ssrSettledUpdate(nil))
-	if Field(m, "items") != "[a,b]" {
-		t.Fatalf("the read must fold into the model; items=%v", Field(m, "items"))
+	if fieldOrNil(m, "items") != "[a,b]" {
+		t.Fatalf("the read must fold into the model; items=%v", fieldOrNil(m, "items"))
 	}
 	if !done {
 		t.Fatal("a read whose update returns Cmd.none is fully settled; the page must be marked")

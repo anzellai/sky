@@ -91,7 +91,7 @@ func TestWebviewWindowSize(t *testing.T) {
 	// internal representation the type-directed lowerer would
 	// emit: a struct with a Size field that's a 2-tuple. Since we
 	// can't easily synthesise that here, exercise via the public
-	// helpers using a map proxy — Field() reads via reflect.
+	// helpers using a map proxy — fieldOrNil() reads via reflect.
 	type windowR struct {
 		Title string
 		Size  any

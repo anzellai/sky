@@ -238,11 +238,11 @@ func (s *webviewState) lookupHandler(hid string) any {
 // webviewAppRun implements the v0.1 MVP loop. Returns Ok(()) when the
 // user closes the window cleanly; Err(...) on init failure.
 func webviewAppRun(cfg any) any {
-	initFn := Field(cfg, "Init")
-	updateFn := Field(cfg, "Update")
-	viewFn := Field(cfg, "View")
-	subsFn := Field(cfg, "Subscriptions")
-	windowCfg := Field(cfg, "Window")
+	initFn := fieldOrNil(cfg, "Init")
+	updateFn := fieldOrNil(cfg, "Update")
+	viewFn := fieldOrNil(cfg, "View")
+	subsFn := fieldOrNil(cfg, "Subscriptions")
+	windowCfg := fieldOrNil(cfg, "Window")
 	if initFn == nil || updateFn == nil || viewFn == nil || windowCfg == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Webview.app: cfg must define init / update / view / window"))
@@ -583,7 +583,7 @@ func startWebviewLoopback(staticDir string, state *webviewState) (*http.Server, 
 // webviewFieldString reads a string-typed field from a record, falling
 // back to the supplied default when absent or non-string.
 func webviewFieldString(rec any, name, def string) string {
-	v := Field(rec, name)
+	v := fieldOrNil(rec, name)
 	if v == nil {
 		return def
 	}
@@ -600,7 +600,7 @@ func webviewWindowSize(windowCfg any) (int, int) {
 		defaultW = 1024
 		defaultH = 720
 	)
-	size := Field(windowCfg, "Size")
+	size := fieldOrNil(windowCfg, "Size")
 	if size == nil {
 		return defaultW, defaultH
 	}
