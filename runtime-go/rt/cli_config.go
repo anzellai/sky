@@ -13,10 +13,10 @@ package rt
 // Cli_config builds the opaque AppConfig from the four required fields.
 func Cli_config(req any) any {
 	return map[string]any{
-		"Init":          Field(req, "Init"),
-		"Update":        Field(req, "Update"),
-		"View":          Field(req, "View"),
-		"Subscriptions": Field(req, "Subscriptions"),
+		"Init":          fieldOrNil(req, "Init"),
+		"Update":        fieldOrNil(req, "Update"),
+		"View":          fieldOrNil(req, "View"),
+		"Subscriptions": fieldOrNil(req, "Subscriptions"),
 	}
 }
 

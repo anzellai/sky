@@ -162,13 +162,6 @@ func (sh *streamHandle) lastActivityUnixNano() int64 { return sh.lastActivityNan
 // Per-session registry helpers
 // ═════════════════════════════════════════════════════════════════════
 
-// streamIDCounter — monotonic source of unique stream ids. atomic
-// so concurrent HttpStream_open calls don't have to sync on a mutex
-// for ID generation. Process-wide (NOT per-session); having ids
-// unique across the process makes correlating logs / metrics
-// trivial. The Sky-side StreamId Int wraps this.
-var streamIDCounter atomic.Int64
-
 // sessionlessStreams — fallback registry for streams opened OUTSIDE
 // a live session (plain Sky.Http.Server handlers, direct-Task
 // callers, tests). Without this, `Http.Stream.close` /
@@ -191,12 +184,9 @@ var sessionlessStreams sync.Map // map[int64]*streamHandle
 // zero-valued StreamId (uninitialised model field) can't accidentally
 // resolve to a real stream.
 func nextStreamID() int64 {
-	for {
-		id := streamIDCounter.Add(1)
-		if id != 0 {
-			return id
-		}
-	}
+	// A random 62-bit id (process_handle_id.go): an id from an earlier
+	// boot, another replica or a guess names nothing.
+	return newHandleID()
 }
 
 // registerStream attaches a handle to the session map under
@@ -258,9 +248,9 @@ func lookupStream(sess *liveSession, id int64) *streamHandle {
 		sess.streamsMu.Lock()
 		sh := sess.streams[id]
 		sess.streamsMu.Unlock()
-		if sh != nil {
-			return sh
-		}
+		// No sessionless fallback inside a session: a session reaches only
+		// its own handles (process_handle_owner.go).
+		return sh
 	}
 	if v, ok := sessionlessStreams.Load(id); ok {
 		return v.(*streamHandle)

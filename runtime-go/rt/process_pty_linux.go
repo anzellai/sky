@@ -14,17 +14,21 @@ import (
 // TIOCGPTN). Returns the master (kept by the runtime) and the slave (given to
 // the child as stdin/stdout/stderr, then closed in the parent).
 func procOpenPTY(cols, rows int) (master, slave *os.File, err error) {
-	master, err = procOpenFD("/dev/ptmx", syscall.O_RDWR|syscall.O_NOCTTY)
+	// O_NONBLOCK puts the master in the Go poller (os.NewFile sees a
+	// non-blocking descriptor): close then interrupts the pump's read even
+	// while another process holds the slave (D-5). Linux epoll reports PTY
+	// readiness; macOS kqueue does not, which is why darwin stays blocking.
+	master, err = procOpenFD("/dev/ptmx", syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK)
 	if err != nil {
 		return nil, nil, err
 	}
 	unlock := int32(0)
-	if err = ptyIoctl(master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlock))); err != nil {
+	if err = ptyFileIoctl(master, syscall.TIOCSPTLCK, unsafe.Pointer(&unlock)); err != nil {
 		master.Close()
 		return nil, nil, fmt.Errorf("unlockpt: %w", err)
 	}
 	var n uint32
-	if err = ptyIoctl(master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&n))); err != nil {
+	if err = ptyFileIoctl(master, syscall.TIOCGPTN, unsafe.Pointer(&n)); err != nil {
 		master.Close()
 		return nil, nil, fmt.Errorf("ptsname: %w", err)
 	}

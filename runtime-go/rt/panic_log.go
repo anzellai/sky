@@ -85,6 +85,9 @@ func writePanicFrameFile(tag, context string, rec any, stack []byte) bool {
 // panic debuggable from the console. Production: a hint, with the full
 // frame persisted to .skylog/panic.log instead.
 func panicStackForLog(tag, context string, rec any, stack []byte, maxFrames int) string {
+	// A panic carried from a goSky goroutine (task_go.go) logs the frame
+	// where it happened, not only the one it was re-raised on.
+	stack = withPanicOrigin(rec, stack)
 	if !productionFromEnv() {
 		return compressStack(stack, maxFrames)
 	}
@@ -111,12 +114,15 @@ func LogRecoveredPanic(tag, context string, rec any) {
 // logRecoveredPanicStack is the testable seam: same policy, caller-
 // supplied stack.
 func logRecoveredPanicStack(tag, context string, rec any, stack []byte) {
+	// A panic carried from a goSky goroutine (task_go.go) logs the frame
+	// where it happened, and its original type.
+	stack = withPanicOrigin(rec, stack)
 	if productionFromEnv() {
 		writtenTo := ""
 		if !writePanicFrameFile(tag, context, rec, stack) {
 			writtenTo = " (frame not persisted: .skylog/panic.log not writable)"
 		}
-		fmt.Fprintf(os.Stderr, "[%s] panic %s (%T)%s\n", tag, context, rec, writtenTo)
+		fmt.Fprintf(os.Stderr, "[%s] panic %s (%T)%s\n", tag, context, panicValue(rec), writtenTo)
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[%s] panic %s: %v\n%s\n", tag, context, rec, stack)

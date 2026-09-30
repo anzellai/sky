@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -114,7 +115,10 @@ func newWatchBackend(w *watcher) (watchBackend, error) {
 			b.closeFDs()
 			return nil, err
 		}
-		_ = b.addFile(r.path)
+		if err := b.addFile(r.path); isWatchLimit(err) {
+			b.closeFDs()
+			return nil, err
+		}
 	}
 	go b.loop()
 	return b, nil
@@ -129,8 +133,15 @@ func (b *kqueueBackend) register(path string, isDir bool) (*kqNode, error) {
 		return n, nil
 	}
 	b.mu.Unlock()
+	// One descriptor per watched file and directory: bounded process-wide,
+	// so a big tree cannot take every descriptor the app has (D-7).
+	if watchFDsInUse.Add(1) > watchFDLimit() {
+		watchFDsInUse.Add(-1)
+		return nil, errWatchLimit
+	}
 	fd, err := syscall.Open(path, oEvtOnly|syscall.O_CLOEXEC, 0)
 	if err != nil {
+		watchFDsInUse.Add(-1)
 		return nil, err
 	}
 	ev := syscall.Kevent_t{}
@@ -138,7 +149,7 @@ func (b *kqueueBackend) register(path string, isDir bool) (*kqNode, error) {
 	ev.Fflags = syscall.NOTE_WRITE | syscall.NOTE_EXTEND | syscall.NOTE_ATTRIB |
 		syscall.NOTE_DELETE | syscall.NOTE_RENAME
 	if _, err := syscall.Kevent(b.kq, []syscall.Kevent_t{ev}, nil, nil); err != nil {
-		syscall.Close(fd)
+		kqCloseWatchFD(fd)
 		return nil, err
 	}
 	n := &kqNode{fd: fd, path: path, isDir: isDir}
@@ -216,13 +227,17 @@ func (b *kqueueBackend) addTree(dir string, report bool) error {
 		if e.isDir {
 			if b.w.opts.recursive {
 				if rel, ok := b.w.relTo(p); ok && !b.w.ignored(rel) {
-					_ = b.addTree(p, report)
+					if err := b.addTree(p, report); isWatchLimit(err) {
+						return err
+					}
 				}
 			}
 			continue
 		}
 		if b.w.wants(p) {
-			_ = b.addFile(p)
+			if err := b.addFile(p); isWatchLimit(err) {
+				return err
+			}
 		}
 	}
 	return nil
@@ -266,17 +281,17 @@ func (b *kqueueBackend) flushRetired() {
 	b.retired = nil
 	b.mu.Unlock()
 	for _, fd := range fds {
-		syscall.Close(fd)
+		kqCloseWatchFD(fd)
 	}
 }
 
 func (b *kqueueBackend) closeFDs() {
 	b.mu.Lock()
 	for fd := range b.byFD {
-		syscall.Close(fd)
+		kqCloseWatchFD(fd)
 	}
 	for _, fd := range b.retired {
-		syscall.Close(fd)
+		kqCloseWatchFD(fd)
 	}
 	b.byFD = map[int]*kqNode{}
 	b.byPath = map[string]*kqNode{}
@@ -533,13 +548,56 @@ func (b *kqueueBackend) rescan(node *kqNode) {
 			// arms it.
 			if rel, ok := b.w.relTo(p); ok && rel != "." && b.w.opts.recursive && !b.w.ignored(rel) {
 				if fresh || !b.registered(p) {
-					_ = b.addTree(p, fresh)
+					b.limitToOverflow(b.addTree(p, fresh))
 				}
 			}
 			continue
 		}
 		if b.w.wants(p) && (fresh || !b.registered(p)) {
-			_ = b.addFile(p)
+			b.limitToOverflow(b.addFile(p))
 		}
 	}
+}
+
+// kqCloseWatchFD closes a watch descriptor and returns it to the
+// process-wide budget (watchFDsInUse).
+func kqCloseWatchFD(fd int) {
+	syscall.Close(fd)
+	watchFDsInUse.Add(-1)
+}
+
+// limitToOverflow turns a watch that could not be added because the budget
+// is spent into an Overflow for the app (rescan), instead of a silently
+// unwatched file (D-7). Other errors (the entry vanished meanwhile) are the
+// normal race with the filesystem and are reported by the parent.
+func (b *kqueueBackend) limitToOverflow(err error) {
+	if isWatchLimit(err) {
+		b.w.send(rawEvent{overflow: true})
+	}
+}
+
+// watchFDsInUse counts the kqueue watch descriptors of every watcher in the
+// process; watchFDLimit bounds it at half the process's descriptor limit, so
+// a recursive watch of a huge tree (a node_modules not in `ignore`) cannot
+// leave the app's listener and database pool with EMFILE (D-7).
+var (
+	watchFDsInUse       atomic.Int64
+	watchFDLimitForTest atomic.Int64 // tests only; 0 = derive
+)
+
+func watchFDLimit() int64 {
+	if n := watchFDLimitForTest.Load(); n > 0 {
+		return n
+	}
+	var rl syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err == nil && rl.Cur > 0 {
+		half := int64(rl.Cur / 2)
+		if half > 1<<20 {
+			half = 1 << 20
+		}
+		if half >= 64 {
+			return half
+		}
+	}
+	return 64
 }

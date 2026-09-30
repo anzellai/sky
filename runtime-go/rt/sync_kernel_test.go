@@ -149,7 +149,7 @@ func TestSyncQueue(t *testing.T) {
 	if v := syncOk(t, Sync_pop(q)); !deepEq(v, Just[any]("a")) {
 		t.Fatalf("pop = %v", v)
 	}
-	<-pushed
+	recvOrFail(t, pushed, 10*time.Second)
 	for _, want := range []string{"b", "c"} {
 		if v := syncOk(t, Sync_pop(q)); !deepEq(v, Just[any](want)) {
 			t.Fatalf("pop = %v, want %s", v, want)
@@ -167,7 +167,7 @@ func TestSyncQueue(t *testing.T) {
 	go func() { got <- syncOk(t, Sync_popWithin(5000, q)) }()
 	time.Sleep(20 * time.Millisecond)
 	syncOk(t, Sync_push("d", q))
-	if v := <-got; !deepEq(v, Just[any]("d")) {
+	if v := recvOrFail(t, got, 10*time.Second); !deepEq(v, Just[any]("d")) {
 		t.Fatalf("a waiting popWithin gets the pushed item, got %v", v)
 	}
 

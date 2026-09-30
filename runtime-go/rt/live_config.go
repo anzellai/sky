@@ -20,7 +20,7 @@
 //
 //  1. Keys are the exact PascalCase names `liveAppRun` reads; values are
 //     `any`. An UNSET optional is ABSENT from the map, so `rt.Field`
-//     returns untyped nil and every `if X := Field(cfg,"…"); X != nil`
+//     returns untyped nil and every `if X := fieldOrNil(cfg,"…"); X != nil`
 //     gate in liveAppRun stays false — never store a typed-nil.
 //  2. `Live_withX` STORE the callback verbatim. They never assert it to a
 //     Go func type (that is the db_auth.go "body is not a function" defect
@@ -39,12 +39,12 @@ package rt
 // fresh map[string]any so the `withX` builders can attach optionals.
 func Live_config(req any) any {
 	return map[string]any{
-		"Init":          Field(req, "Init"),
-		"Update":        Field(req, "Update"),
-		"View":          Field(req, "View"),
-		"Subscriptions": Field(req, "Subscriptions"),
-		"Routes":        Field(req, "Routes"),
-		"NotFound":      Field(req, "NotFound"),
+		"Init":          fieldOrNil(req, "Init"),
+		"Update":        fieldOrNil(req, "Update"),
+		"View":          fieldOrNil(req, "View"),
+		"Subscriptions": fieldOrNil(req, "Subscriptions"),
+		"Routes":        fieldOrNil(req, "Routes"),
+		"NotFound":      fieldOrNil(req, "NotFound"),
 	}
 }
 
@@ -139,12 +139,12 @@ func Live_withInput(mode, cfg any) any { return liveCfgSet(cfg, "Input", mode) }
 func Live_withEmbedded(cfg any) any { return liveCfgSet(cfg, "Embedded", true) }
 
 // Live_withAnalytics — `analytics : { pageViews : Bool }` (invariant 4:
-// the record is stored verbatim and read via Field(a,"PageViews")).
+// the record is stored verbatim and read via fieldOrNil(a,"PageViews")).
 func Live_withAnalytics(a, cfg any) any { return liveCfgSet(cfg, "Analytics", a) }
 
 // Live_withAnalyticsIdentify — `identify : model -> Maybe String`, consulted on
 // each auto page-view to attribute an already-authenticated session (invariant 4:
-// the closure is stored verbatim and read via Field(cfg,"AnalyticsIdentify")).
+// the closure is stored verbatim and read via fieldOrNil(cfg,"AnalyticsIdentify")).
 func Live_withAnalyticsIdentify(f, cfg any) any {
 	return liveCfgSet(cfg, "AnalyticsIdentify", f)
 }

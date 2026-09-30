@@ -71,10 +71,10 @@ func durableCtxOf(wiring any) *durableCtx {
 	}
 	// A non-durable app carries a no-op wiring (enabled=False) rather than a
 	// nil field, so gate on the flag.
-	if enabled, ok := Field(wiring, "Enabled").(bool); ok && !enabled {
+	if enabled, ok := fieldOrNil(wiring, "Enabled").(bool); ok && !enabled {
 		return nil
 	}
-	rid, _ := Field(wiring, "RunId").(string)
+	rid, _ := fieldOrNil(wiring, "RunId").(string)
 	return &durableCtx{wiring: wiring, runId: rid}
 }
 
@@ -90,11 +90,11 @@ func (d *durableCtx) bootWith(runId string, req any, initModel any) any {
 	if d == nil || d.isRetired(runId) {
 		return initModel
 	}
-	if setupTask := Field(d.wiring, "Setup"); setupTask != nil {
+	if setupTask := fieldOrNil(d.wiring, "Setup"); setupTask != nil {
 		sky_call(setupTask, nil)
 	}
-	restoreFn := Field(d.wiring, "Restore")
-	applyFn := Field(d.wiring, "ApplyRestore")
+	restoreFn := fieldOrNil(d.wiring, "Restore")
+	applyFn := fieldOrNil(d.wiring, "ApplyRestore")
 	if restoreFn == nil || applyFn == nil {
 		return initModel
 	}
@@ -111,7 +111,7 @@ func (d *durableCtx) bootWith(runId string, req any, initModel any) any {
 	// replaced by the snapshot's copy of an EARLIER request's fields. The
 	// Live wiring carries `applyRestoreRequest`, which applies the snapshot
 	// and then re-runs the request hook over it for the current request.
-	if applyReq := Field(d.wiring, "ApplyRestoreRequest"); applyReq != nil && req != nil {
+	if applyReq := fieldOrNil(d.wiring, "ApplyRestoreRequest"); applyReq != nil && req != nil {
 		return SkyCall(applyReq, req, res, initModel)
 	}
 	return SkyCall(applyFn, res, initModel)
@@ -143,11 +143,11 @@ func (d *durableCtx) persistFixed(model any) {
 	if d.isSuspended(d.runId) {
 		return
 	}
-	persistFn := Field(d.wiring, "Persist")
+	persistFn := fieldOrNil(d.wiring, "Persist")
 	if persistFn == nil {
 		return
 	}
-	sky_call(SkyCall(persistFn, d.runId, model), nil)
+	d.runPersist(d.runId, SkyCall(persistFn, d.runId, model))
 }
 
 // persist snapshots model for runId, fire-and-forget (write-if-newer, so a lost
@@ -159,19 +159,21 @@ func (d *durableCtx) persist(runId string, model any) {
 	if d.isSuspended(runId) {
 		return
 	}
-	persistFn := Field(d.wiring, "Persist")
+	persistFn := fieldOrNil(d.wiring, "Persist")
 	if persistFn == nil {
 		return
 	}
 	task := SkyCall(persistFn, runId, model)
-	safeGo("Durable.persist", func() {
+	// goSky, not safeGo: safeGo is the terminal runtime's wrapper and ends the
+	// process on a panic. runPersist recovers a panicking write itself.
+	goSky("Durable.persist", func() {
 		mu := durableStripe(runId)
 		mu.Lock()
 		defer mu.Unlock()
 		if d.isRetired(runId) {
 			return
 		}
-		sky_call(task, nil)
+		d.runPersist(runId, task)
 	})
 }
 
@@ -182,7 +184,7 @@ func (d *durableCtx) persistSync(runId string, model any) {
 	if d == nil || runId == "" || d.isSuspended(runId) {
 		return
 	}
-	persistFn := Field(d.wiring, "Persist")
+	persistFn := fieldOrNil(d.wiring, "Persist")
 	if persistFn == nil {
 		return
 	}
@@ -192,7 +194,7 @@ func (d *durableCtx) persistSync(runId string, model any) {
 	if d.isRetired(runId) {
 		return
 	}
-	sky_call(SkyCall(persistFn, runId, model), nil)
+	d.runPersist(runId, SkyCall(persistFn, runId, model))
 }
 
 // retire drops the snapshot of runId and refuses every later persist for
@@ -211,11 +213,11 @@ func (d *durableCtx) retire(runId string) {
 		return
 	}
 	d.setupOnce.Do(func() {
-		if setupTask := Field(d.wiring, "Setup"); setupTask != nil {
+		if setupTask := fieldOrNil(d.wiring, "Setup"); setupTask != nil {
 			sky_call(setupTask, nil)
 		}
 	})
-	discardFn := Field(d.wiring, "Discard")
+	discardFn := fieldOrNil(d.wiring, "Discard")
 	if discardFn == nil {
 		logEmit(logLevelError, "error",
 			"Durable: the wiring has no discard function, so the snapshot of a retired session could not be deleted",
@@ -299,4 +301,24 @@ func durableReportRestoreFailure(runId, reason string) {
 		"until the snapshot is migrated or removed.", runId, reason)
 	logEmit(logLevelError, "error", msg, map[string]any{"class": "DurableRestoreFailed", "runId": runId})
 	tuiWarn("durable", msg)
+}
+
+// runPersist runs one snapshot write and recovers a panic in it. A write
+// panics when the Model cannot be encoded (a NaN or infinite Float reaching
+// Json.Encode is enough). The panic is logged classified and the run is
+// SUSPENDED: no later write may replace the stored snapshot, and the process
+// keeps serving. Before this, the async write ran on safeGo, the terminal
+// runtime's wrapper, which answers any panic with ExitProcess(2), so one
+// unencodable update ended a Sky.Live server.
+func (d *durableCtx) runPersist(runId string, task any) {
+	defer func() {
+		if r := recover(); r != nil {
+			d.suspended.Store(runId, true)
+			logClassifiedPanic("sky.durable", "Durable.persist", r)
+			tuiWarn("durable", fmt.Sprintf(
+				"Durable: writing the snapshot for run %q failed (%v). This run writes no more snapshots; the last stored one is kept.",
+				runId, r))
+		}
+	}()
+	sky_call(task, nil)
 }

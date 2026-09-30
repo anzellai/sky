@@ -182,8 +182,12 @@ update toMsg msg term =
                         Nothing ->
                             ( term, Cmd.none )
 
-                Resized cols rows ->
+                Resized rawCols rawRows ->
                     let
+                        -- The widget clamps its size to the PTY bound; a
+                        -- crafted event may not, so clamp here too.
+                        cols = clampDim maxCols rawCols
+                        rows = clampDim maxRows rawRows
                         next = Terminal { st | cols = cols, rows = rows }
                     in
                         case st.proc of
@@ -234,17 +238,29 @@ update toMsg msg term =
                                 in
                                     ( term, Cmd.batch (frame ++ [ follow ]) )
 
+                            ( Err _, Just _ ) ->
+                                -- The process is not live in this server any
+                                -- more (closed, its session ended, or the
+                                -- server restarted): drop it, so `process`
+                                -- is Nothing and the app can spawn and
+                                -- attach a new one.
+                                ( ended st, Cmd.none )
+
                             _ ->
                                 ( term, Cmd.none )
 
-                Waited _ result ->
+                Waited gen result ->
                     case result of
 
                         Ok status ->
                             ( Terminal { st | exit = Just status }, Cmd.none )
 
                         Err _ ->
-                            ( term, Cmd.none )
+                            if gen == st.gen then
+                                ( ended st, Cmd.none )
+
+                            else
+                                ( term, Cmd.none )
 
                 Done _ ->
                     ( term, Cmd.none )
@@ -284,6 +300,35 @@ view toMsg term attrs =
                       (\( c, r ) -> toMsg (Resized c r))
                 ]
                     ++ attrs)
+
+
+-- The attached process is gone: forget it, and retire the reads in flight.
+ended : State -> Terminal
+ended st =
+    Terminal { st | proc = Nothing, gen = st.gen + 1 }
+
+
+-- The largest PTY the runtime accepts (Process.resize refuses a larger one).
+maxCols : Int
+maxCols =
+    500
+
+
+maxRows : Int
+maxRows =
+    200
+
+
+clampDim : Int -> Int -> Int
+clampDim hi n =
+    if n < 1 then
+        1
+
+    else if n > hi then
+        hi
+
+    else
+        n
 
 
 -- Read the next screen frame for this widget: wait up to 20 s for a change,

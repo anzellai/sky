@@ -447,6 +447,10 @@ const terminalWidgetJS = `// Sky terminal widget (runtime-go/rt/island_terminal.
       if (!t) return;
       if (ev.preventDefault) ev.preventDefault();
       t = String(t).replace(/\r?\n/g, "\r");
+      // Control characters other than tab and CR are removed (A-4): pasted
+      // text containing ESC [201~ would end bracketed paste early and the
+      // rest would run as typed input, CR as Enter.
+      t = t.replace(/[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]/g, "");
       if (this.model.modes & 2) t = "\x1b[200~" + t + "\x1b[201~";
       this.queue(t);
     },

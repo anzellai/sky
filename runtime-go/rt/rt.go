@@ -2491,7 +2491,13 @@ func AsMapT[V any](v any) map[string]V {
 				narrowed := narrowReflectValue(sv, zeroTy)
 				if narrowed.IsValid() {
 					out[k] = narrowed.Interface().(V)
+					continue
 				}
+			}
+			if x != nil {
+				// An entry that cannot become V used to be DROPPED: the Dict
+				// came back short with no error (C-5).
+				asMapTFail[V](x, "value of key "+strconv.Quote(k))
 			}
 		}
 		return out
@@ -2527,12 +2533,31 @@ func AsMapT[V any](v any) map[string]V {
 				narrowed := narrowReflectValue(sv, valTy)
 				if narrowed.IsValid() {
 					out[k.String()] = narrowed.Interface().(V)
+					continue
 				}
+			}
+			if iv != nil {
+				asMapTFail[V](iv, "value of key "+strconv.Quote(k.String()))
 			}
 		}
 		return out
 	}
+	// nil is the empty Dict. Anything else is not a Dict at all: a Go map
+	// with a non-string key (map[int]string from an FFI return) used to come
+	// back as nil, an EMPTY Dict, with no error (C-5). The FFI wrapper
+	// converts such keys (rt.encodeDictKey); this is the backstop.
+	if v == nil || (rv.IsValid() && rv.Kind() == reflect.Map && rv.IsNil()) {
+		return nil
+	}
+	asMapTFail[V](v, "Dict")
 	return nil
+}
+
+// asMapTFail panics with a classified CoerceFailure for a value AsMapT cannot
+// turn into a Dict of V.
+func asMapTFail[V any](got any, what string) {
+	var zero V
+	panic(fmt.Sprintf("rt.Coerce: expected a string-keyed Dict of %T (%s), got %T", zero, what, got))
 }
 
 // AsInt coerces an any-typed value to int. Panics on non-numeric
@@ -3030,10 +3055,22 @@ func deepEq(a, b any) bool {
 // so strings compared as `0 < 0 = false` and float comparisons
 // truncated to int — a wrong-answer class that passed the type
 // checker.
-func Gt(a, b any) any  { return cmp(a, b) > 0 }
-func Lt(a, b any) any  { return cmp(a, b) < 0 }
-func Gte(a, b any) any { return cmp(a, b) >= 0 }
-func Lte(a, b any) any { return cmp(a, b) <= 0 }
+func Gt(a, b any) any  { return !anyNaN(a, b) && cmp(a, b) > 0 }
+func Lt(a, b any) any  { return !anyNaN(a, b) && cmp(a, b) < 0 }
+func Gte(a, b any) any { return !anyNaN(a, b) && cmp(a, b) >= 0 }
+func Lte(a, b any) any { return !anyNaN(a, b) && cmp(a, b) <= 0 }
+
+// anyNaN: `<`, `>`, `<=` and `>=` stay IEEE (False when an operand is NaN),
+// like `==`. Only `compare` (and so sort, Set, min and max) orders NaN, as
+// the greatest Float (cmpFloatTotal).
+func anyNaN(a, b any) bool {
+	f, ok := a.(float64)
+	if ok && f != f {
+		return true
+	}
+	f, ok = b.(float64)
+	return ok && f != f
+}
 
 // cmp returns -1/0/+1 with a type-aware compare. Panics on type
 // mismatch between a and b so the error surfaces via rt panic-recovery
@@ -3104,14 +3141,7 @@ func cmpSafe(a, b any) (int, bool) {
 		if !isNumeric(a) || !isNumeric(b) {
 			return 0, false
 		}
-		fa, fb := AsFloat(a), AsFloat(b)
-		switch {
-		case fa < fb:
-			return -1, true
-		case fa > fb:
-			return 1, true
-		}
-		return 0, true
+		return cmpFloatTotal(AsFloat(a), AsFloat(b)), true
 	}
 	// Composite comparables: Elm's `comparable` includes tuples and lists OF
 	// comparables, ordered lexicographically. The checker only admits `<`/`>` on
@@ -3194,9 +3224,25 @@ func cmpComposite(a, b any) (int, bool) {
 			return 1, true
 		}
 		return 0, true
+	case reflect.Map:
+		ma, oka := a.(map[string]any)
+		mb, okb := b.(map[string]any)
+		if !oka || !okb {
+			return 0, false
+		}
+		return cmpRecordMaps(ma, mb)
 	case reflect.Struct:
 		if vb.Kind() != reflect.Struct {
 			return 0, false
+		}
+		// A union value (a sealed variant, the legacy SkyADT, Maybe,
+		// Result): derived order (C-11).
+		if c, ok, isADT := cmpUnion(a, b, va, vb); isADT {
+			return c, ok
+		}
+		// A record struct: field by field in the order of the names.
+		if !isTupleStruct(va.Type()) || !isTupleStruct(vb.Type()) {
+			return cmpRecordStructs(va, vb)
 		}
 		n := va.NumField()
 		if vb.NumField() < n {
@@ -6028,7 +6074,30 @@ func Math_maxT(a, b int) int {
 	return b
 }
 
+// Field is the record field read EMITTED code makes (`r.name`). It is strict
+// (FIELD): a value that is not a record (a struct or a map[string]any), or a
+// record without the field, is a classified CoerceFailure, never a nil that
+// flows on as a silent wrong value. The runtime's own reads of optional
+// fields (config records, wiring, request maps that may lack a key) use
+// fieldOrNil.
 func Field(record any, field string) any {
+	v, ok := fieldLookup(record, field)
+	if !ok {
+		panic(fmt.Sprintf("rt.Coerce: expected a record with the field %q, got %T", field, record))
+	}
+	return v
+}
+
+// fieldOrNil reads a field the caller treats as optional: nil when the value
+// is not a record or has no such field. Runtime-internal only.
+func fieldOrNil(record any, field string) any {
+	v, _ := fieldLookup(record, field)
+	return v
+}
+
+// fieldLookup finds a field of a struct (or pointer to one) or a
+// map[string]any, and reports whether it exists.
+func fieldLookup(record any, field string) (any, bool) {
 	record = unwrapAny(record)
 	v := reflect.ValueOf(record)
 	if v.Kind() == reflect.Ptr {
@@ -6037,8 +6106,9 @@ func Field(record any, field string) any {
 	if v.Kind() == reflect.Struct {
 		f := v.FieldByName(field)
 		if f.IsValid() {
-			return f.Interface()
+			return f.Interface(), true
 		}
+		return nil, false
 	}
 	if m, ok := record.(map[string]any); ok {
 		// v0.16.9 — restore case-insensitive map lookup so typed
@@ -6054,7 +6124,7 @@ func Field(record any, field string) any {
 		// typed-codegen `req.path` access.  Case-insensitive
 		// fallback closes both.
 		if v, ok := m[field]; ok {
-			return v
+			return v, true
 		}
 		// Fast-path: try the swapped-case first char (handles the
 		// dominant "Path" ↔ "path" pair without scanning).
@@ -6068,17 +6138,17 @@ func Field(record any, field string) any {
 			}
 			if lc != 0 {
 				if v, ok := m[string(lc)+field[1:]]; ok {
-					return v
+					return v, true
 				}
 			}
 			if uc != 0 {
 				if v, ok := m[string(uc)+field[1:]]; ok {
-					return v
+					return v, true
 				}
 			}
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6639,194 +6709,6 @@ func maybeToResult(name string, err any, maybe any) any {
 // recursive element grows the Go stack.
 func Task_sequence(tasks any) any {
 	return mkTask(taskSeq, tasks, nil, nil)
-}
-
-// Task_parallel: goroutine-backed fan-out; preserves input order;
-// short-circuits on the FIRST error (in launch order). Match the
-// documented Task.parallel semantics: any task returning Err
-// triggers context cancellation so already-running goroutines can
-// observe it (cooperatively, via runWithRecover's panic shield
-// + the result channel select); the function returns as soon as
-// the first error is observed without blocking on every sibling
-// task's natural completion.
-//
-// Important semantic notes:
-//   - Tasks are dispatched eagerly (SkyTask thunks have no input
-//     ctx parameter), so cooperative cancel only helps siblings
-//     that finish before we observe the first Err — the remaining
-//     siblings are best-effort drained in the background via a
-//     detached goroutine that swallows their results.
-//   - Result order is preserved by index: results[i] holds task i's
-//     OkValue when the function returns Ok with the full collected
-//     slice.
-//   - When multiple tasks Err concurrently, the FIRST Err observed
-//     on the channel wins; this matches "first error short-circuits"
-//     in the docstring (declaration order is best-effort given
-//     concurrent dispatch; tie-broken by goroutine scheduling).
-func Task_parallel(tasks any) any {
-	return func() any {
-		xs := AsList(tasks)
-		n := len(xs)
-		if n == 0 {
-			return Ok[any, any]([]any{})
-		}
-		results := make([]any, n)
-		type item struct {
-			idx int
-			tag int
-			ok  any
-			err any
-		}
-		ch := make(chan item, n)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		for i, t := range xs {
-			go func(i int, t any) {
-				r := forceTask(t)
-				tag, okV, errV := r.Tag, r.OkValue, r.ErrValue
-				// Non-blocking send: if ctx is already cancelled
-				// (someone else won the race), discard so the
-				// goroutine exits cleanly without leaking.
-				select {
-				case ch <- item{idx: i, tag: tag, ok: okV, err: errV}:
-				case <-ctx.Done():
-				}
-			}(i, t)
-		}
-		received := 0
-		for received < n {
-			select {
-			case it := <-ch:
-				received++
-				if it.tag != 0 {
-					// First error short-circuits — cancel ctx to
-					// release any sibling goroutines whose work
-					// has finished but couldn't send. Remaining
-					// siblings continue running in the background
-					// (best-effort; SkyTask has no ctx-aware API),
-					// but their results are discarded via the
-					// ctx.Done branch in the sender select.
-					cancel()
-					return Err[any, any](it.err)
-				}
-				results[it.idx] = it.ok
-			}
-		}
-		return Ok[any, any](results)
-	}
-}
-
-// Task_spawn runs `t` on a background goroutine and returns Ok(unit) at once —
-// fire-and-forget. The spawned task's result and any error are discarded, so use
-// it only for a long-running background task (a server loop, a job poller) that
-// must run ALONGSIDE the caller while the caller keeps its OWN goroutine.
-//
-// The desktop runner is exactly this case: on macOS the native webview MUST be
-// created on the process main thread (`webview.New` faults on any other), so the
-// server has to run on a spawned goroutine while the main goroutine goes on to
-// open the window. `Task_parallel` cannot express that — it runs every branch on
-// a child goroutine and blocks the caller — which is why the webview used to
-// fault.
-//
-// A panic inside the spawned task is recovered, so a background failure never
-// aborts the process, and it is LOGGED through the classified panic log
-// (logClassifiedPanic: panic class, errId, hint and the production stack
-// policy). It used to be recovered by a bare `recover()` and dropped, so a
-// background server loop could die without a trace.
-func Task_spawn(t any) any {
-	return taskSpawnWith(t, nil)
-}
-
-// taskSpawnWith is Task_spawn with a completion callback. `finished`, when
-// non-nil, runs on the spawned goroutine after the task has returned AND after
-// any panic has been recovered and logged. Only tests pass it: a test that
-// returns as soon as the task body ends races the panic log that is still
-// being written on the spawned goroutine.
-func taskSpawnWith(t any, finished func()) any {
-	return func() any {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logClassifiedPanic("sky.task", "Task.spawn", r)
-				}
-				if finished != nil {
-					finished()
-				}
-			}()
-			_ = forceTask(t)
-		}()
-		return Ok[any, any](struct{}{})
-	}
-}
-
-// Task_parallelN: like Task_parallel, but runs at most `limit` tasks
-// concurrently (a semaphore-bounded fan-out) and STOPS launching further tasks
-// once the first error is observed. Same result contract as Task_parallel:
-// input order preserved, first Err short-circuits, in-flight siblings drain in
-// the background with their results discarded (no goroutine leak — every worker
-// releases its slot and exits, its send falling through to ctx.Done).
-//
-// This is the primitive to reach for under fan-out load: `Task_parallel` spawns
-// len(tasks) goroutines at once (unbounded), which for a service fanning out to
-// thousands of items is a goroutine/FD/connection storm. `parallelN` caps the
-// live worker count at `limit` and, because the dispatcher halts on the first
-// error, never launches the tail of a doomed batch. `limit` is clamped to >= 1.
-func Task_parallelN(limit any, tasks any) any {
-	return func() any {
-		lim := AsInt(limit)
-		if lim < 1 {
-			lim = 1
-		}
-		xs := AsList(tasks)
-		n := len(xs)
-		if n == 0 {
-			return Ok[any, any]([]any{})
-		}
-		results := make([]any, n)
-		type item struct {
-			idx int
-			tag int
-			ok  any
-			err any
-		}
-		ch := make(chan item, n)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		sem := make(chan struct{}, lim)
-		// Dispatcher: acquire a slot before launching each task; stop launching
-		// entirely once ctx is cancelled (first error), so a failed batch does
-		// not keep spawning work. Runs in its own goroutine so the collector
-		// loop below can short-circuit without waiting for the whole fan-out.
-		go func() {
-			for i, t := range xs {
-				select {
-				case <-ctx.Done():
-					return
-				case sem <- struct{}{}:
-				}
-				go func(i int, t any) {
-					defer func() { <-sem }()
-					r := forceTask(t)
-					tag, okV, errV := r.Tag, r.OkValue, r.ErrValue
-					select {
-					case ch <- item{idx: i, tag: tag, ok: okV, err: errV}:
-					case <-ctx.Done():
-					}
-				}(i, t)
-			}
-		}()
-		received := 0
-		for received < n {
-			it := <-ch
-			received++
-			if it.tag != 0 {
-				cancel()
-				return Err[any, any](it.err)
-			}
-			results[it.idx] = it.ok
-		}
-		return Ok[any, any](results)
-	}
 }
 
 // Task_lazy : (() -> a) -> Task e a
@@ -7647,7 +7529,10 @@ func File_readFileLimit(path any, limit any) any {
 			p := fmt.Sprintf("%v", path)
 			n := int64(AsInt(limit))
 			if n <= 0 {
-				n = defaultFileReadLimit
+				// A limit below 1 used to mean "the 100 MB default", so a
+				// computed limit that went to 0 or below read the whole file
+				// (C-18). It is refused.
+				return Err[any, any](ErrInvalidInput(fmt.Sprintf("File.readFileLimit: maxBytes must be at least 1, got %d. In v0.27.0 a limit below 1 no longer reads the whole file: pass a positive limit, e.g. File.readFileLimit path 1048576. see docs/migration/v0.27.md#readfilelimit-positive-limit", n)))
 			}
 			f, err := os.Open(p)
 			if err != nil {
@@ -10721,4 +10606,197 @@ func curryRemainingArgs(rv reflect.Value, captured []any) any {
 		}
 		return curryRemainingArgs(rv, all)
 	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Derived order (C-11): unions, records, NaN
+// ═══════════════════════════════════════════════════════════
+
+// cmpFloatTotal is `compare` on Floats: a total order with
+// -Inf < … < +Inf < NaN and NaN equal to NaN, so a sort, a Set, min and max
+// are deterministic over NaN. `==` and `<` stay IEEE (anyNaN).
+func cmpFloatTotal(fa, fb float64) int {
+	an, bn := fa != fa, fb != fb
+	switch {
+	case an && bn:
+		return 0
+	case an:
+		return 1
+	case bn:
+		return -1
+	case fa < fb:
+		return -1
+	case fa > fb:
+		return 1
+	}
+	return 0
+}
+
+// unionTag returns the constructor tag of a union value: a sealed variant
+// (SkyVariantTag, typed codegen), or a struct with an int `Tag` field (the
+// legacy SkyADT, Maybe, Result). ok is false for anything else.
+func unionTag(v any, rv reflect.Value) (int, bool) {
+	if sv, ok := v.(SkyVariant); ok {
+		return sv.SkyVariantTag(), true
+	}
+	if rv.Kind() != reflect.Struct {
+		return 0, false
+	}
+	f := rv.FieldByName("Tag")
+	if !f.IsValid() || (f.Kind() != reflect.Int && f.Kind() != reflect.Int64) {
+		return 0, false
+	}
+	// A user record may have a field named `tag`: only the union shapes
+	// (a payload field beside the tag) count.
+	if !rv.FieldByName("Fields").IsValid() && !rv.FieldByName("JustValue").IsValid() &&
+		!rv.FieldByName("OkValue").IsValid() {
+		return 0, false
+	}
+	return int(f.Int()), true
+}
+
+// unionPayload lists the constructor arguments a union value carries, in
+// order: a sealed variant's exported fields (V0, V1, …); a SkyADT's Fields;
+// the JustValue of a Just; the OkValue of an Ok or the ErrValue of an Err.
+// Never a zero-valued field of another constructor.
+func unionPayload(v any, rv reflect.Value, tag int) ([]any, bool) {
+	if _, ok := v.(SkyVariant); ok {
+		out := make([]any, 0, rv.NumField())
+		for i := 0; i < rv.NumField(); i++ {
+			f := rv.Field(i)
+			if !f.CanInterface() {
+				return nil, false
+			}
+			out = append(out, f.Interface())
+		}
+		return out, true
+	}
+	if f := rv.FieldByName("Fields"); f.IsValid() && (f.Kind() == reflect.Slice || f.Kind() == reflect.Array) {
+		out := make([]any, f.Len())
+		for i := range out {
+			out[i] = f.Index(i).Interface()
+		}
+		return out, true
+	}
+	if f := rv.FieldByName("JustValue"); f.IsValid() {
+		if tag == 0 {
+			return []any{f.Interface()}, true
+		}
+		return nil, true
+	}
+	if ok, er := rv.FieldByName("OkValue"), rv.FieldByName("ErrValue"); ok.IsValid() && er.IsValid() {
+		if tag == 0 {
+			return []any{ok.Interface()}, true
+		}
+		return []any{er.Interface()}, true
+	}
+	// A tagged struct with no payload field: a nullary constructor.
+	return nil, true
+}
+
+// cmpUnion orders two union values by constructor declaration order, then
+// payload left to right. isADT is false when a is not a union value (the
+// caller goes on to tuples and records); ok is false when b is not one, or a
+// payload pair cannot be ordered.
+func cmpUnion(a, b any, va, vb reflect.Value) (c int, ok bool, isADT bool) {
+	ta, oka := unionTag(a, va)
+	if !oka {
+		return 0, false, false
+	}
+	tb, okb := unionTag(b, vb)
+	if !okb {
+		return 0, false, true
+	}
+	switch {
+	case ta < tb:
+		return -1, true, true
+	case ta > tb:
+		return 1, true, true
+	}
+	pa, oka := unionPayload(a, va, ta)
+	pb, okb := unionPayload(b, vb, tb)
+	if !oka || !okb {
+		return 0, false, true
+	}
+	c, ok = cmpComposite(pa, pb)
+	return c, ok, true
+}
+
+// isTupleStruct reports whether a struct type is a tuple: its fields are
+// exactly V0, V1, … in order (rt.T2 … T9).
+func isTupleStruct(t reflect.Type) bool {
+	if t.NumField() == 0 {
+		return true
+	}
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).Name != "V"+strconv.Itoa(i) {
+			return false
+		}
+	}
+	return true
+}
+
+// cmpRecordStructs orders two record structs field by field in the order of
+// the field names (the Go field order is an emission detail). Both must have
+// the same exported field names.
+func cmpRecordStructs(va, vb reflect.Value) (int, bool) {
+	names := func(v reflect.Value) ([]string, bool) {
+		t := v.Type()
+		out := make([]string, 0, t.NumField())
+		for i := 0; i < t.NumField(); i++ {
+			if !t.Field(i).IsExported() {
+				return nil, false
+			}
+			out = append(out, t.Field(i).Name)
+		}
+		sort.Strings(out)
+		return out, true
+	}
+	na, oka := names(va)
+	nb, okb := names(vb)
+	if !oka || !okb || len(na) != len(nb) {
+		return 0, false
+	}
+	for i := range na {
+		if na[i] != nb[i] {
+			return 0, false
+		}
+	}
+	for _, n := range na {
+		c, ok := cmpSafe(va.FieldByName(n).Interface(), vb.FieldByName(n).Interface())
+		if !ok {
+			return 0, false
+		}
+		if c != 0 {
+			return c, true
+		}
+	}
+	return 0, true
+}
+
+// cmpRecordMaps orders two erased records (maps) the same way: field by
+// field in the order of the names. Records with different fields do not
+// order.
+func cmpRecordMaps(a, b map[string]any) (int, bool) {
+	if len(a) != len(b) {
+		return 0, false
+	}
+	keys := make([]string, 0, len(a))
+	for k := range a {
+		if _, ok := b[k]; !ok {
+			return 0, false
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		c, ok := cmpSafe(a[k], b[k])
+		if !ok {
+			return 0, false
+		}
+		if c != 0 {
+			return c, true
+		}
+	}
+	return 0, true
 }

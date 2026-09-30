@@ -170,18 +170,18 @@ func Analytics_configure(sinksArg any) any {
 // analyticsPageViewsFromCfg reads the opt-in `analytics = { pageViews = True }`
 // field off a Live.app cfg record. Absent → false (no auto-tracking).
 func analyticsPageViewsFromCfg(cfg any) bool {
-	a := Field(cfg, "Analytics")
+	a := fieldOrNil(cfg, "Analytics")
 	if a == nil {
 		return false
 	}
-	b, _ := Field(a, "PageViews").(bool)
+	b, _ := fieldOrNil(a, "PageViews").(bool)
 	return b
 }
 
 // analyticsIdentifyFromCfg reads the optional `model -> Maybe String` resolver
 // set by `Live.withAnalyticsIdentify`. Absent → nil.
 func analyticsIdentifyFromCfg(cfg any) any {
-	return Field(cfg, "AnalyticsIdentify")
+	return fieldOrNil(cfg, "AnalyticsIdentify")
 }
 
 // analyticsApplyIdentity calls the app's `identify` resolver with the current

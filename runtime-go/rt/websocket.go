@@ -258,21 +258,15 @@ func (sh *wsHandle) deliver(ev wsEvent) bool {
 // Per-session + sessionless registries
 // ═════════════════════════════════════════════════════════════════════
 
-// wsIDCounter — process-wide monotonic source of unique socket ids.
-var wsIDCounter atomic.Int64
-
 // sessionlessSockets — fallback registry for sockets opened OUTSIDE a
 // live session (plain Sky.Http.Server handlers, direct-Task callers,
 // tests). Same pattern as sessionlessStreams.
 var sessionlessSockets sync.Map // map[int64]*wsHandle
 
 func nextWsID() int64 {
-	for {
-		id := wsIDCounter.Add(1)
-		if id != 0 {
-			return id
-		}
-	}
+	// A random 62-bit id (process_handle_id.go): an id from an earlier
+	// boot, another replica or a guess names nothing.
+	return newHandleID()
 }
 
 func registerWs(sess *liveSession, sh *wsHandle) {
@@ -307,9 +301,9 @@ func lookupWs(sess *liveSession, id int64) *wsHandle {
 		sess.socketsMu.Lock()
 		sh := sess.sockets[id]
 		sess.socketsMu.Unlock()
-		if sh != nil {
-			return sh
-		}
+		// No sessionless fallback inside a session: a session reaches only
+		// its own handles (process_handle_owner.go).
+		return sh
 	}
 	if v, ok := sessionlessSockets.Load(id); ok {
 		return v.(*wsHandle)
@@ -606,7 +600,10 @@ func WebSocket_send(sidArg any, msgArg any) any {
 	return func() any {
 		sess := currentLiveSession()
 		sh := lookupWs(sess, id)
-		if sh == nil || sh.IsClosed() {
+		if sh == nil {
+			return Err[any, any](handleNotLive("websocket.send", id))
+		}
+		if sh.IsClosed() {
 			return Err[any, any](ErrUnavailable("websocket.send: socket closed"))
 		}
 		sh.writeMu.Lock()
@@ -632,7 +629,10 @@ func WebSocket_sendBinary(sidArg any, msgArg any) any {
 	return func() any {
 		sess := currentLiveSession()
 		sh := lookupWs(sess, id)
-		if sh == nil || sh.IsClosed() {
+		if sh == nil {
+			return Err[any, any](handleNotLive("websocket.sendBinary", id))
+		}
+		if sh.IsClosed() {
 			return Err[any, any](ErrUnavailable("websocket.sendBinary: socket closed"))
 		}
 		sh.writeMu.Lock()

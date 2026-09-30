@@ -23,12 +23,12 @@ func liveReqStub() any {
 func TestLiveConfigUnsetOptionalIsNil(t *testing.T) {
 	cfg := Live_config(liveReqStub())
 	for _, k := range []string{"Head", "ConsoleAuth", "OnNavigate", "Guard", "Static", "StaticUrl", "Port", "Store", "StorePath", "Ttl", "Analytics", "Status"} {
-		if v := Field(cfg, k); v != nil {
+		if v := fieldOrNil(cfg, k); v != nil {
 			t.Fatalf("unset optional %q must read as nil, got %#v", k, v)
 		}
 	}
 	for _, k := range []string{"Init", "Update", "View", "Subscriptions", "Routes", "NotFound"} {
-		if Field(cfg, k) == nil {
+		if fieldOrNil(cfg, k) == nil {
 			t.Fatalf("required field %q must be present after Live_config", k)
 		}
 	}
@@ -41,13 +41,13 @@ func TestLiveConfigSiblingIsolation(t *testing.T) {
 	c1 := Live_withHead("head-cb", base)
 	c2 := Live_withPort(9000, base)
 
-	if Field(base, "Head") != nil || Field(base, "Port") != nil {
+	if fieldOrNil(base, "Head") != nil || fieldOrNil(base, "Port") != nil {
 		t.Fatal("guard 3 violated: base config was mutated by a withX derivation")
 	}
-	if Field(c1, "Head") == nil || Field(c1, "Port") != nil {
+	if fieldOrNil(c1, "Head") == nil || fieldOrNil(c1, "Port") != nil {
 		t.Fatal("c1 must carry Head and NOT Port")
 	}
-	if Field(c2, "Port") == nil || Field(c2, "Head") != nil {
+	if fieldOrNil(c2, "Port") == nil || fieldOrNil(c2, "Head") != nil {
 		t.Fatal("c2 must carry Port and NOT Head")
 	}
 }
@@ -59,7 +59,7 @@ func TestLiveWithStoresValueVerbatim(t *testing.T) {
 	type sentinel struct{ tag string }
 	cb := &sentinel{tag: "verbatim"}
 	cfg := Live_withHead(cb, Live_config(liveReqStub()))
-	if got := Field(cfg, "Head"); got != any(cb) {
+	if got := fieldOrNil(cfg, "Head"); got != any(cb) {
 		t.Fatalf("guard 2 violated: value not stored verbatim, got %#v", got)
 	}
 }
@@ -69,11 +69,11 @@ func TestLiveWithStoresValueVerbatim(t *testing.T) {
 func TestLiveWithAnalyticsSubRecordReadable(t *testing.T) {
 	analytics := map[string]any{"PageViews": true}
 	cfg := Live_withAnalytics(analytics, Live_config(liveReqStub()))
-	a := Field(cfg, "Analytics")
+	a := fieldOrNil(cfg, "Analytics")
 	if a == nil {
 		t.Fatal("Analytics sub-record must be present")
 	}
-	if pv := Field(a, "PageViews"); pv != true {
+	if pv := fieldOrNil(a, "PageViews"); pv != true {
 		t.Fatalf("Analytics.PageViews must read back true, got %#v", pv)
 	}
 }

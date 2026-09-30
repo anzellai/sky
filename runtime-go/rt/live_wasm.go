@@ -99,7 +99,7 @@ func spaRun(cfg any) any {
 	// The Sky.Spa target always emits an rt.SpaFns (typed adapter closures);
 	// asSpaFns unwraps it reflect-free. A missing/foreign config yields nil
 	// closures — but codegen guarantees a SpaFns for every real client.
-	fns := asSpaFns(Field(cfg, "Fns"))
+	fns := asSpaFns(fieldOrNil(cfg, "Fns"))
 	spaInit = fns.Init
 	spaUpdate = fns.Update
 	spaView = fns.View
@@ -109,18 +109,18 @@ func spaRun(cfg any) any {
 	spaSubs = fns.Subs
 	// Routing config (P4). All optional — a route-less app leaves these empty
 	// and behaves exactly as before P4.
-	spaRoutes = asSpaRoutes(Field(cfg, "Routes"))
-	spaNotFound = Field(cfg, "NotFound")
-	spaOnNavigate = Field(cfg, "OnNavigate")
+	spaRoutes = asSpaRoutes(fieldOrNil(cfg, "Routes"))
+	spaNotFound = fieldOrNil(cfg, "NotFound")
+	spaOnNavigate = fieldOrNil(cfg, "OnNavigate")
 	// Client scratch-state persistence (P2). The encoder (`model -> String`) and
 	// the protected (session) field-name list are wired by the auto-split beside
 	// the SSR model decoder; both nil/empty on an app with no encoder, in which
 	// case persistence is simply off. Read once here (spa_persist_wasm.go).
-	spaGuard = Field(cfg, "Guard")
+	spaGuard = fieldOrNil(cfg, "Guard")
 	spaSch = newSpaSched(spaRpcNonce())
-	spaModelEncoder = Field(cfg, "ModelEncoder")
-	spaPersistProt = spaStringList(Field(cfg, "PersistProtectedFields"))
-	spaPersistSeed = spaStringList(Field(cfg, "PersistSeedFields"))
+	spaModelEncoder = fieldOrNil(cfg, "ModelEncoder")
+	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
+	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))
 
 	doc := js.Global().Get("document")
 	spaRoot = doc.Call("getElementById", "app")
@@ -166,7 +166,7 @@ func spaRun(cfg any) any {
 	// the ones it FINISHED (spa_ssr.go spaPlanBoot); only those are skipped
 	// below, so a command the server could not finish still runs once here.
 	seeded := false
-	if ssrModel, ok := spaBootFromSSRModel(doc, spaRoot, Field(cfg, "ModelDecoder")); ok {
+	if ssrModel, ok := spaBootFromSSRModel(doc, spaRoot, fieldOrNil(cfg, "ModelDecoder")); ok {
 		spaModel = ssrModel
 		seeded = true
 	}
@@ -257,7 +257,7 @@ func spaRun(cfg any) any {
 	// has no per-request work, a CDN deploy) never got the app's head from the
 	// server. Apply it here, once, from the first-paint model — the same rule
 	// the SSR page and Sky.Live follow (head renders on the initial load only).
-	spaApplyShellHead(doc, Field(cfg, "Head"))
+	spaApplyShellHead(doc, fieldOrNil(cfg, "Head"))
 	// The client has now rendered/hydrated, so every handler is attached: clear
 	// the first-paint hydration affordance (`<html data-sky-hydrating>` → progress
 	// cursor + top bar, liveBaseCSS). From here a click lands on a live handler.
@@ -369,7 +369,7 @@ func spaApplyURL(path string) {
 // the Msg's Cmd for the caller to run after the mount. A panic in update keeps
 // the model, is reported like any other update panic, and returns no Cmd.
 func spaPrePaintNavigate() (cmd any) {
-	page := Field(spaModel, "Page")
+	page := fieldOrNil(spaModel, "Page")
 	if page == nil {
 		return nil
 	}
@@ -398,7 +398,7 @@ func spaFireOnNavigate() {
 	if spaOnNavigate == nil {
 		return
 	}
-	page := Field(spaModel, "Page")
+	page := fieldOrNil(spaModel, "Page")
 	if page == nil {
 		return
 	}

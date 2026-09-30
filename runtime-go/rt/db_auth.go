@@ -2053,8 +2053,8 @@ func Auth_signSlidingToken(secret any, claims any, opts any) any {
 	if errRes != nil {
 		return errRes
 	}
-	window := AsInt(Field(opts, "WindowSeconds"))
-	maxLife := AsInt(Field(opts, "MaxLifetimeSeconds"))
+	window := AsInt(fieldOrNil(opts, "WindowSeconds"))
+	maxLife := AsInt(fieldOrNil(opts, "MaxLifetimeSeconds"))
 	// GATE: window must not exceed the absolute cap — else exp>aexp at issue.
 	if window > maxLife {
 		return Err[any, any](ErrInvalidInput(

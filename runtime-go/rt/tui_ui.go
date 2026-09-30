@@ -200,12 +200,12 @@ func (r *inputRegistry) currentForm() *tuiForm {
 // ─── Main loop ──────────────────────────────────────────────────────
 
 func tuiAppRun(cfg any) any {
-	initFn := Field(cfg, "Init")
-	updateFn := Field(cfg, "Update")
-	viewFn := Field(cfg, "View")
-	subsFn := Field(cfg, "Subscriptions")
-	onKeyFn := Field(cfg, "OnKey") // optional — for global hotkeys
-	guardFn := Field(cfg, "Guard") // optional — Msg -> Model -> Result Error ()
+	initFn := fieldOrNil(cfg, "Init")
+	updateFn := fieldOrNil(cfg, "Update")
+	viewFn := fieldOrNil(cfg, "View")
+	subsFn := fieldOrNil(cfg, "Subscriptions")
+	onKeyFn := fieldOrNil(cfg, "OnKey") // optional — for global hotkeys
+	guardFn := fieldOrNil(cfg, "Guard") // optional — Msg -> Model -> Result Error ()
 	if initFn == nil || updateFn == nil || viewFn == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Tui.app: cfg must define init / update / view"))
@@ -221,7 +221,7 @@ func tuiAppRun(cfg any) any {
 	}
 
 	canvas := tuiCanvas{width: 1280, height: 720}
-	if cw := Field(cfg, "CanvasWidth"); cw != nil {
+	if cw := fieldOrNil(cfg, "CanvasWidth"); cw != nil {
 		if v := AsInt(cw); v > 0 {
 			if v > tuiMaxCanvasWidth {
 				tuiWarn("canvas", fmt.Sprintf("width capped at %d (was %d)", tuiMaxCanvasWidth, v))
@@ -230,7 +230,7 @@ func tuiAppRun(cfg any) any {
 			canvas.width = v
 		}
 	}
-	if ch := Field(cfg, "CanvasHeight"); ch != nil {
+	if ch := fieldOrNil(cfg, "CanvasHeight"); ch != nil {
 		if v := AsInt(ch); v > 0 {
 			if v > tuiMaxCanvasHeight {
 				tuiWarn("canvas", fmt.Sprintf("height capped at %d (was %d)", tuiMaxCanvasHeight, v))

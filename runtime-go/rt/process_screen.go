@@ -52,6 +52,12 @@ type procScreen struct {
 	changed chan struct{}
 	shadows map[string]*termView
 	exited  bool // the exit line is on the screen
+
+	// One reply writer per process (D-6): replies queue here, bounded, and
+	// a full queue drops the reply. It used to be one goroutine per reply,
+	// each blocked on stdinMu behind a child that does not read its input.
+	replyOnce sync.Once
+	replies   chan []byte
 }
 
 type termView struct {
@@ -183,14 +189,37 @@ func (sc *procScreen) reply(b []byte) {
 	if len(b) == 0 {
 		return
 	}
+	sc.replyOnce.Do(func() {
+		sc.replies = make(chan []byte, procReplyQueue)
+		go sc.replyWriter()
+	})
+	select {
+	case sc.replies <- b:
+	default:
+		// The process is not reading its input: a device answer it asked
+		// for and never read is dropped, not queued without bound.
+	}
+}
+
+// procReplyQueue bounds the terminal answers waiting for a process to read
+// its input.
+const procReplyQueue = 16
+
+// replyWriter writes queued replies in order until the process exits.
+func (sc *procScreen) replyWriter() {
 	h := sc.h
-	go func() {
-		h.stdinMu.Lock()
-		defer h.stdinMu.Unlock()
-		if h.stdin != nil && !h.stdinClosed {
-			_, _ = h.stdin.Write(b)
+	for {
+		select {
+		case b := <-sc.replies:
+			h.stdinMu.Lock()
+			if h.stdin != nil && !h.stdinClosed.Load() {
+				_, _ = h.stdin.Write(b)
+			}
+			h.stdinMu.Unlock()
+		case <-h.exited:
+			return
 		}
-	}()
+	}
 }
 
 func (sc *procScreen) resize(cols, rows int) {

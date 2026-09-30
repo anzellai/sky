@@ -94,9 +94,12 @@ type procHandle struct {
 	pid int
 	pty *os.File // PTY master, nil without a PTY
 
+	// stdinMu orders writes. stdinClosed is atomic, and shutdown closes the
+	// descriptor WITHOUT stdinMu: a write blocked on a full pipe holds the
+	// mutex, and only closing the descriptor releases it (D-2).
 	stdinMu     sync.Mutex
 	stdin       io.WriteCloser // pipe write end, or the PTY master
-	stdinClosed bool
+	stdinClosed atomic.Bool
 
 	readers []io.Closer // our read ends (pipes), closed on close()
 	out     [2]*outRing
@@ -115,7 +118,19 @@ type procHandle struct {
 	subActive   bool
 	closed      bool
 	sess        *liveSession
-	closeOnce   sync.Once
+	// treeCookie / treeStart identify the child's tree for close (D-1,
+	// process_tree.go).
+	treeCookie string
+	treeStart  uint64
+	closeOnce  sync.Once
+
+	// D-3: a process no Sky.Live session owns is released after it exits,
+	// once its consumer has read everything (readEOF / subExitSent), or
+	// procUnownedExitGrace after the exit at the latest.
+	readEOF  [2]atomic.Bool
+	waitSeen atomic.Bool   // a Task consumer received the exit status
+	consumed chan struct{} // signalled (cap 1) when a consumer reaches an end
+	closedCh chan struct{} // closed by shutdown
 
 	// The terminal screen (process_screen.go): made by the first
 	// Subprocess_screen, then fed every stdout byte as the pump stores it.
@@ -131,16 +146,23 @@ type procHandle struct {
 
 var (
 	procRegistry sync.Map // map[int64]*procHandle
-	procIDs      atomic.Int64
 	procExitOnce sync.Once
 )
 
+// lookupProc resolves a Process handle for the calling goroutine: Err when
+// the id names nothing in this server, or when another Sky.Live session owns
+// the process (process_handle_id.go).
 func lookupProc(idArg any) (*procHandle, any) {
 	id := int64(AsInt(idArg))
-	if v, ok := procRegistry.Load(id); ok {
-		return v.(*procHandle), nil
+	v, ok := procRegistry.Load(id)
+	if !ok {
+		return nil, handleNotLive("Process", id)
 	}
-	return nil, ErrInvalidInput(fmt.Sprintf("Process: no process %d (it was closed, or its session ended)", id))
+	h := v.(*procHandle)
+	if !handleCallerAllowed(h.sess) {
+		return nil, handleOwnerRefused("Process")
+	}
+	return h, nil
 }
 
 // parseProcSpec reads the `Command` record the Sky side builds.
@@ -210,20 +232,35 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 	if s.program == "" {
 		return nil, ErrInvalidInput("Process.spawn: the program name is empty")
 	}
-	if s.pty && (s.cols <= 0 || s.rows <= 0) {
-		return nil, ErrInvalidInput("Process.spawn: a PTY needs cols and rows above 0")
+	if s.pty && (s.cols <= 0 || s.rows <= 0 || s.cols > procPtyMaxCols || s.rows > procPtyMaxRows) {
+		return nil, ErrInvalidInput(fmt.Sprintf(
+			"Process.spawn: a PTY needs 1 to %d cols and 1 to %d rows, got %dx%d. In v0.27.0 the PTY size is bounded: pass a smaller size. see docs/migration/v0.27.md#pty-size-bound",
+			procPtyMaxCols, procPtyMaxRows, s.cols, s.rows))
 	}
 	cmd := exec.Command(s.program, s.args...)
 	cmd.Dir = s.cwd
 	cmd.Env = procEnviron(s)
+	// The tree cookie (process_tree.go) lets close find a descendant that
+	// left the child's session. Not added under withClearEnv, which
+	// promises the child only the variables the program added.
+	cookie := ""
+	if !s.clearEnv {
+		cookie = newProcTreeCookie()
+		if cookie != "" {
+			cmd.Env = append(cmd.Env, procTreeCookieEnv+"="+cookie)
+		}
+	}
 	cmd.SysProcAttr = procSysAttr(s.pty)
 
 	h := &procHandle{
-		cmd:     cmd,
-		exited:  make(chan struct{}),
-		drained: make(chan struct{}),
-		ptyCols: s.cols,
-		ptyRows: s.rows,
+		cmd:        cmd,
+		treeCookie: cookie,
+		consumed:   make(chan struct{}, 1),
+		closedCh:   make(chan struct{}),
+		exited:     make(chan struct{}),
+		drained:    make(chan struct{}),
+		ptyCols:    s.cols,
+		ptyRows:    s.rows,
 	}
 	h.out[procStreamStdout] = newOutRing(s.ringSize)
 	h.out[procStreamStderr] = newOutRing(s.ringSize)
@@ -282,13 +319,18 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 	}
 	closeAll(childSide)
 	h.pid = cmd.Process.Pid
-	h.id = procIDs.Add(1)
+	h.treeStart = procStartTime(h.pid)
+	h.id = newHandleID()
+	// The owner is recorded before the handle is published, so no caller
+	// can see it unowned.
+	h.sess = currentLiveSession()
 
 	var pumps sync.WaitGroup
 	for i, src := range sources {
 		ring := h.out[i]
 		if src == nil {
 			ring.closeEOF() // PTY: one merged stream; stderr is empty
+			h.readEOF[i].Store(true)
 			continue
 		}
 		pumps.Add(1)
@@ -337,14 +379,16 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 		}
 		close(h.drained)
 		h.wakeRings()
+		if h.sess == nil {
+			h.releaseWhenConsumed()
+		}
 	}()
 
 	procRegistry.Store(h.id, h)
 	procExitOnce.Do(func() {
 		RegisterResourceCloser("process.children", killAllChildProcesses)
 	})
-	if sess := currentLiveSession(); sess != nil {
-		h.sess = sess
+	if sess := h.sess; sess != nil {
 		sess.addOwned(h.ownedKey(), func() { h.shutdown() })
 	}
 	return h, nil
@@ -379,6 +423,11 @@ func (h *procHandle) shutdown() {
 		h.mu.Lock()
 		h.closed = true
 		h.mu.Unlock()
+		close(h.closedCh)
+		// End the child's whole tree first, while its parent links are
+		// intact: a shell's background jobs are in groups of their own and
+		// outlive a kill of the child's group (D-1, process_tree.go).
+		procSweep(procTreeRoot{pid: h.pid, start: h.treeStart, cookie: h.treeCookie})
 		select {
 		case <-h.exited:
 		default:
@@ -390,12 +439,11 @@ func (h *procHandle) shutdown() {
 		}
 		// A grandchild that ignored the group kill (it moved to its own
 		// group) may still hold a pipe: closing our read ends ends the pumps.
-		h.stdinMu.Lock()
-		if h.stdin != nil && !h.stdinClosed {
-			h.stdinClosed = true
+		// No stdinMu here: a write blocked on a full pipe holds it, and
+		// closing the descriptor is what unblocks that write.
+		if h.stdin != nil && h.stdinClosed.CompareAndSwap(false, true) {
 			h.stdin.Close()
 		}
-		h.stdinMu.Unlock()
 		for _, c := range h.readers {
 			c.Close()
 		}
@@ -524,16 +572,16 @@ func readProc(idArg, streamArg, offsetArg any, timeout time.Duration) any {
 	for {
 		ready, changed := ring.wait(offset)
 		if ready {
-			return Ok[any, any](chunkValue(ring.readFrom(offset, maxProcessChunkBytes)))
+			return Ok[any, any](chunkValue(h.taskRead(s, offset)))
 		}
 		select {
 		case <-changed:
 		case <-h.drained:
 			// Exit reported with the pipe still open (a grandchild holds
 			// it): hand back what there is; a later read still sees more.
-			return Ok[any, any](chunkValue(ring.readFrom(offset, maxProcessChunkBytes)))
+			return Ok[any, any](chunkValue(h.taskRead(s, offset)))
 		case <-deadline:
-			return Ok[any, any](chunkValue(ring.readFrom(offset, maxProcessChunkBytes)))
+			return Ok[any, any](chunkValue(h.taskRead(s, offset)))
 		}
 	}
 }
@@ -564,7 +612,7 @@ func Subprocess_write(idArg, dataArg any) any {
 		data := asBytesString(dataArg)
 		h.stdinMu.Lock()
 		defer h.stdinMu.Unlock()
-		if h.stdinClosed {
+		if h.stdinClosed.Load() {
 			return Err[any, any](ErrInvalidInput("Process.write: stdin is closed"))
 		}
 		if _, err := io.WriteString(h.stdin, data); err != nil {
@@ -587,7 +635,7 @@ func Subprocess_closeStdin(idArg any) any {
 		}
 		h.stdinMu.Lock()
 		defer h.stdinMu.Unlock()
-		if h.stdinClosed {
+		if h.stdinClosed.Load() {
 			return Ok[any, any](struct{}{})
 		}
 		if h.pty != nil {
@@ -596,7 +644,9 @@ func Subprocess_closeStdin(idArg any) any {
 			}
 			return Ok[any, any](struct{}{})
 		}
-		h.stdinClosed = true
+		if !h.stdinClosed.CompareAndSwap(false, true) {
+			return Ok[any, any](struct{}{})
+		}
 		if err := h.stdin.Close(); err != nil {
 			return Err[any, any](ErrIo("Process.closeStdin: " + err.Error()))
 		}
@@ -615,8 +665,13 @@ func Subprocess_resize(idArg, colsArg, rowsArg any) any {
 			return Err[any, any](ErrInvalidInput("Process.resize: the process has no PTY (spawn it withPty)"))
 		}
 		cols, rows := AsInt(colsArg), AsInt(rowsArg)
-		if cols <= 0 || rows <= 0 || cols > 65535 || rows > 65535 {
-			return Err[any, any](ErrInvalidInput("Process.resize: cols and rows must be 1 to 65535"))
+		// One bound for the PTY and the screen (A-5 / D-4): a larger PTY
+		// than screen shows the program a size the screen does not draw,
+		// and the screen memory grows with the size.
+		if cols <= 0 || rows <= 0 || cols > procPtyMaxCols || rows > procPtyMaxRows {
+			return Err[any, any](ErrInvalidInput(fmt.Sprintf(
+				"Process.resize: cols must be 1 to %d and rows 1 to %d, got %dx%d. In v0.27.0 the PTY size is bounded: pass a smaller size. see docs/migration/v0.27.md#pty-size-bound",
+				procPtyMaxCols, procPtyMaxRows, cols, rows)))
 		}
 		if err := h.resize(cols, rows); err != nil {
 			return Err[any, any](ErrIo("Process.resize: " + err.Error()))
@@ -656,6 +711,9 @@ func Subprocess_wait(idArg any) any {
 			return Err[any, any](e)
 		}
 		<-h.exited
+		if !h.waitSeen.Swap(true) {
+			h.signalConsumed()
+		}
 		return Ok[any, any](h.exitStatusValue())
 	}
 }
@@ -671,11 +729,16 @@ func Subprocess_pid(idArg any) any {
 	}
 }
 
-// Subprocess_close : Int -> Task Error ()   (idempotent: an unknown id is Ok)
+// Subprocess_close : Int -> Task Error ()   (idempotent: an unknown id is Ok;
+// a process another session owns is refused, not closed)
 func Subprocess_close(idArg any) any {
 	return func() any {
 		if v, ok := procRegistry.Load(int64(AsInt(idArg))); ok {
-			v.(*procHandle).shutdown()
+			h := v.(*procHandle)
+			if !handleCallerAllowed(h.sess) {
+				return Err[any, any](handleOwnerRefused("Process"))
+			}
+			h.shutdown()
 		}
 		return Ok[any, any](struct{}{})
 	}
@@ -686,6 +749,9 @@ func Subprocess_events(idArg, toMsg any) SkySub {
 	id := int64(AsInt(idArg))
 	key := fmt.Sprintf("process:%d", id)
 	v, ok := procRegistry.Load(id)
+	if ok && !handleCallerAllowed(v.(*procHandle).sess) {
+		ok = false // another session's process: deliver nothing
+	}
 	if !ok {
 		// An unknown process delivers nothing; the leaf still reconciles.
 		return subT{kind: "subscribeSource", toMsg: toMsg, sourceKey: key, source: deadSource{}}
@@ -772,6 +838,7 @@ func (h *procHandle) pumpCycle(stop <-chan struct{}, emit func(ev any) bool) boo
 		h.mu.Lock()
 		h.subExitSent = true
 		h.mu.Unlock()
+		h.signalConsumed()
 		return true
 	}
 	select {
@@ -802,4 +869,69 @@ func procLiveHandles() []int64 {
 	})
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	return ids
+}
+
+// procUnownedExitGrace: how long a process no Sky.Live session owns stays
+// registered after it exited and its output drained, when its consumer has
+// not read everything. Atomic so tests can shorten it while reapers run.
+var procUnownedExitGrace atomic.Int64 // nanoseconds
+
+func init() { procUnownedExitGrace.Store(int64(30 * time.Second)) }
+
+// taskRead is a Task consumer's read of stream s: it records reaching the
+// end of the stream, which lets an unowned process be released (D-3).
+func (h *procHandle) taskRead(s int, offset int64) ringChunk {
+	c := h.out[s].readFrom(offset, maxProcessChunkBytes)
+	if c.eof && !h.readEOF[s].Swap(true) {
+		h.signalConsumed()
+	}
+	return c
+}
+
+func (h *procHandle) signalConsumed() {
+	select {
+	case h.consumed <- struct{}{}:
+	default:
+	}
+}
+
+// consumerDone reports whether the output consumer has read everything: a
+// Task reader reached the end of both streams and took the exit status, or
+// the events Sub delivered Exited.
+func (h *procHandle) consumerDone() bool {
+	switch h.owner.Load() {
+	case procOwnerTask:
+		// Both streams read to the end AND the exit status taken: a reader
+		// that reads the output, then waits, must still find the process.
+		return h.readEOF[procStreamStdout].Load() && h.readEOF[procStreamStderr].Load() && h.waitSeen.Load()
+	case procOwnerSub:
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.subExitSent
+	}
+	return false
+}
+
+// releaseWhenConsumed releases an exited, drained process that no Sky.Live
+// session owns (D-3). Such a process used to stay registered, with its two
+// rings (up to 1 MiB each) and its screen, until someone called
+// Process.close: an HTTP handler running `spawn |> andThen wait` per request
+// grew the registry by one handle and up to 2 MiB per request, forever. It
+// is released as soon as its consumer has read everything, and
+// procUnownedExitGrace after the exit at the latest. Runs on the reaper
+// goroutine, after h.drained.
+func (h *procHandle) releaseWhenConsumed() {
+	grace := time.NewTimer(time.Duration(procUnownedExitGrace.Load()))
+	defer grace.Stop()
+	for !h.consumerDone() {
+		select {
+		case <-h.consumed:
+		case <-h.closedCh:
+			return
+		case <-grace.C:
+			h.shutdown()
+			return
+		}
+	}
+	h.shutdown()
 }

@@ -73,7 +73,7 @@
 -- close only with `Normal` or `Custom 3000`-`4999`; the browser answers
 -- pings itself.  See docs/skyspa/overview.md, "WebSocket from the client".
 module Sky.Core.WebSocket exposing
-    ( WebSocket(..)
+    ( WebSocket
     , WebSocketMessage(..)
     , CloseCode(..)
     , WebSocketCfg

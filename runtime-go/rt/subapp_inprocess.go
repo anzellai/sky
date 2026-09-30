@@ -254,7 +254,7 @@ func longestFirst(rs []inProcessSubAppRoute) {
 // normalises via normaliseBasePath (handles "//x" or "/x/" defensively).
 //
 // `cfg` is a Sky-side `Live.app` cfg value (the same record shape
-// that `Live_app` consumes). Field lookup goes through `Field(cfg, ...)`.
+// that `Live_app` consumes). Field lookup goes through `fieldOrNil(cfg, ...)`.
 //
 // Example (Go-side wiring):
 //
@@ -372,14 +372,14 @@ func mountLiveSubAppInProcessWithGate(
 // handler methods.
 func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	app := &liveApp{
-		init:          Field(cfg, "Init"),
-		update:        Field(cfg, "Update"),
-		view:          Field(cfg, "View"),
-		subscriptions: Field(cfg, "Subscriptions"),
-		notFound:      Field(cfg, "NotFound"),
-		guard:         Field(cfg, "Guard"),
-		head:          Field(cfg, "Head"),
-		consoleAuth:   Field(cfg, "ConsoleAuth"),
+		init:          fieldOrNil(cfg, "Init"),
+		update:        fieldOrNil(cfg, "Update"),
+		view:          fieldOrNil(cfg, "View"),
+		subscriptions: fieldOrNil(cfg, "Subscriptions"),
+		notFound:      fieldOrNil(cfg, "NotFound"),
+		guard:         fieldOrNil(cfg, "Guard"),
+		head:          fieldOrNil(cfg, "Head"),
+		consoleAuth:   fieldOrNil(cfg, "ConsoleAuth"),
 		locker:        newSessionLocker(),
 		msgTags:       make(map[string]int),
 		bannerCfg:     resolveBannerStrings(loadLiveBannerConfig(), cfg),
@@ -387,22 +387,22 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 		cookieName:    opts.cookieName,
 		skyIDPrefix:   opts.skyIDPrefix,
 	}
-	for _, r := range asList(Field(cfg, "Routes")) {
+	for _, r := range asList(fieldOrNil(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {
 			app.routes = append(app.routes, lr)
 		}
 	}
-	for _, r := range asList(Field(cfg, "Api")) {
+	for _, r := range asList(fieldOrNil(cfg, "Api")) {
 		if ar, ok := r.(apiRoute); ok {
 			app.api = append(app.api, ar)
 		}
 	}
 	// Static dir — same precedence as liveAppRun.
-	if sd := Field(cfg, "Static"); sd != nil {
+	if sd := fieldOrNil(cfg, "Static"); sd != nil {
 		app.staticDir = fmt.Sprintf("%v", sd)
 	}
 	app.staticURL = "/static"
-	if su := Field(cfg, "StaticUrl"); su != nil {
+	if su := fieldOrNil(cfg, "StaticUrl"); su != nil {
 		if s := fmt.Sprintf("%v", su); s != "" {
 			app.staticURL = s
 		}

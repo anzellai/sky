@@ -626,10 +626,10 @@ func Db_dumpProject(tablesArg any) any {
 		}{}
 		for _, t := range AsList(tablesArg) {
 			jt := jtable{
-				Name: fmt.Sprintf("%v", Field(t, "Name")),
-				Pk:   fmt.Sprintf("%v", Field(t, "Pk")),
+				Name: fmt.Sprintf("%v", fieldOrNil(t, "Name")),
+				Pk:   fmt.Sprintf("%v", fieldOrNil(t, "Pk")),
 			}
-			for _, c := range AsList(Field(t, "Cols")) {
+			for _, c := range AsList(fieldOrNil(t, "Cols")) {
 				tup := AsTuple2(c)
 				raw := AsString(tup.V1)
 				base, nullable := codecSplitKind(raw)

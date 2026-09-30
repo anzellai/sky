@@ -58,16 +58,14 @@
 -- See `docs/skylive/http-streaming.md` (§"Server-side") for the
 -- architectural write-up and `examples/30-sse-server-demo` for a
 -- runnable SSE counter.
-module Sky.Http.Server.Stream exposing (StreamWriter(..), stream, emit, finish, withContentType)
+module Sky.Http.Server.Stream exposing (StreamWriter, stream, emit, finish, withContentType)
 
 import Sky.Ffi as Ffi
 import Sky.Core.Error exposing (Error)
 import Sky.Core.Task as Task
 
--- | Opaque handle for an in-flight streaming response.  The wrapped
--- `Int` is the runtime's per-stream id; user code treats it as
--- opaque (constructors are exposed only so JSON round-trip is
--- expressible if absolutely required).
+-- | Opaque handle for an in-flight streaming response. The constructor
+-- is not exported: the runtime gives each writer a random id.
 type StreamWriter
     = StreamWriter Int
 

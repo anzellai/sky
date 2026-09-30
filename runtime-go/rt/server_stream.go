@@ -38,7 +38,7 @@
 // Concurrency contract:
 //
 //   - Each streaming response gets its own serverStreamHandle with
-//     a unique id (process-global atomic counter, NEVER zero).
+//     a unique id (a random 62-bit value, never zero; process_handle_id.go).
 //
 //   - Handles live on serverStreamHandles (a sync.Map) for the
 //     lifetime of the user's handler.  serveStreamingResponse
@@ -110,21 +110,13 @@ type serverStreamHandle struct {
 // defer-sweep neutralises this for normal handler exits + panics.
 var serverStreamHandles sync.Map
 
-// serverStreamIDCounter — monotonic source of unique stream ids.
-// Process-wide, atomic for lock-free allocation under concurrent
-// requests.
-var serverStreamIDCounter atomic.Int64
-
 // nextServerStreamID — fresh non-zero id.  0 is reserved so a zero-
 // valued StreamWriter (uninitialised model field) can't accidentally
 // resolve to a live stream.
 func nextServerStreamID() int64 {
-	for {
-		id := serverStreamIDCounter.Add(1)
-		if id != 0 {
-			return id
-		}
-	}
+	// A random 62-bit id (process_handle_id.go): an id from an earlier
+	// boot, another replica or a guess names nothing.
+	return newHandleID()
 }
 
 // lookupServerStream — resolve an id to the in-flight handle.
@@ -156,13 +148,14 @@ func lookupServerStream(id int64) *serverStreamHandle {
 // this map before routing to serveStreamingResponse.  The entry is
 // removed on lookup so a long-lived token can't leak indefinitely.
 var pendingStreamHandlers sync.Map // map[string]any (any = handler closure)
-var pendingStreamTokenSeq atomic.Int64
 
 const pendingStreamSentinelPrefix = "__sky_stream:"
 
 func registerPendingStreamHandler(handler any) string {
-	id := pendingStreamTokenSeq.Add(1)
-	token := fmt.Sprintf("%d", id)
+	// Random, not a counter: the token travels in a response body, and a
+	// handler that echoes client input could otherwise name ANOTHER
+	// request's pending token and take over its handler.
+	token := fmt.Sprintf("%d", newHandleID())
 	pendingStreamHandlers.Store(token, handler)
 	return token
 }
