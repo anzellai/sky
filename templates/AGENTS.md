@@ -555,6 +555,7 @@ sky watch src/Main.sky       # rebuild + restart on save
 sky add <go/pkg> | remove | install | update   # Go FFI deps
 sky add ./local/dir          # a local Go module (go.mod) or Sky package (type-checked with your code), by path
 sky package --release --target mobile:ios   # signed store artefact → sky-out/release/ (also mobile:android, desktop:mac)
+sky package --release --target mobile:ios --upload testflight   # + validate and upload to TestFlight (SKY_ASC_KEY_ID/ISSUER_ID/KEY_PATH)
 ```
 
 **Sky.Spa entries auto-split.** Building the same `App.app` source to a client

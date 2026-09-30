@@ -187,7 +187,7 @@ rebuild. The app reports them at `/_sky/buildinfo` (with `source`: `git`,
 Your own `go build -ldflags "-X sky-app/rt.buildCommit=..."` (also `buildAt`,
 `skyVersion`) still wins, field by field. See `docs/observability.md`.
 
-### `sky package --release --target <t> [path]`
+### `sky package --release --target <t> [--upload testflight [--ipa <file>]] [path]`
 
 Builds the store / distribution artefact for a native shell into
 `sky-out/release/`: a signed `.ipa` for `mobile:ios` (unsigned
@@ -205,6 +205,18 @@ Signing comes from the environment only (`SKY_IOS_SIGN_IDENTITY`,
 target that is not a native shell, a local or plain-`http` backend address, a
 generic permission purpose string, missing Android signing, and an iOS identity
 without a provisioning profile. Guide: `docs/skyapp/native.md`.
+
+`--upload testflight` (with `--target mobile:ios` or `tablet:ipad`, on macOS
+with Xcode) then validates the signed `.ipa` and uploads it to App Store
+Connect with `xcrun altool`, which makes it a TestFlight build. The API key
+comes from `SKY_ASC_KEY_ID`, `SKY_ASC_ISSUER_ID` and `SKY_ASC_KEY_PATH` (the
+`.p8`, which never goes on a command line). `--ipa <file>` uploads an `.ipa`
+packaged earlier, without a build. Before any build or network call it refuses
+an unknown destination or a non-iOS target (exit 2), a missing `Bundle.withId`
+or `Bundle.withBuild`, a missing key variable or key file, and a build that is
+not signed for App Store distribution (exit 1). Apple's errors are printed as
+Apple wrote them with the fix, and the exit status is 1. Guide:
+`docs/skyapp/native.md#upload-to-testflight--sky-package---upload-testflight`.
 
 ### `sky spa-split <path> --out <dir> [--build | --target <t>]`
 

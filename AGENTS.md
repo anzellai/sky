@@ -407,7 +407,11 @@ from the camera: VisionKit on iOS, ZXing on Android; `Err Unavailable` in a
 browser and on the iOS simulator) reach the device, and `sky package --release
 --target mobile:ios|mobile:android|desktop:mac` makes the signed store artefact
 (signing from `SKY_IOS_*` / `SKY_ANDROID_*` / `SKY_MACOS_*`; the dev backend
-address is refused). See `docs/skyapp/native.md`.
+address is refused); `--upload testflight` then validates and uploads the
+signed `.ipa` to App Store Connect with `xcrun altool` (API key from
+`SKY_ASC_KEY_ID` / `SKY_ASC_ISSUER_ID` / `SKY_ASC_KEY_PATH`; needs
+`Bundle.withId` and a `Bundle.withBuild` that rises per upload). See
+`docs/skyapp/native.md`.
 `web` requires `App.withNotFound` (compile-enforced). Invalid combos are rejected
 at parse time (`web:ios` → *"did you mean `mobile:ios`?"*). `sky check` checks
 the same target a bare `sky build` builds (`--target`, else `[app] target`, else
@@ -531,6 +535,7 @@ sky spa-split src/Main.sky --out .split --build   # explicit Sky.Spa split (adva
 sky add <go/module> | remove | install | update                # Go FFI deps
 sky add ./local/dir              # local path dep: go.mod → Go module, sky.toml/src → Sky package (type-checked with your code)
 sky package --release --target mobile:ios|mobile:android|desktop:mac   # store artefact → sky-out/release/
+sky package --release --target mobile:ios --upload testflight          # + validate and upload to TestFlight (SKY_ASC_*)
 sky doctor [--fix] | upgrade | upgrade-claude | clean
 ```
 
