@@ -72,16 +72,19 @@ filterMap =
     Ffi.kernel "List_filterMap"
 
 
--- | `sort list` — ascending sort by the runtime's structural ordering
--- (`Int`/`Float`/`String`/`Char`/tuples/lists of those). Stable.
-sort : List a -> List a
+-- | `sort list` — ascending, stable sort. The elements must be comparable:
+-- `Int`, `Float`, `String`, `Char`, `Bool`, a `List`, `Maybe`, `Result` or
+-- tuple of comparables, a closed record of comparables, or a custom type whose
+-- constructors hold only comparables (ordered by constructor declaration
+-- order, then payload).
+sort : List comparable -> List comparable
 sort =
     Ffi.kernel "List_sort"
 
 
--- | `sortBy keyFn list` — stable sort by the `keyFn elem` projection's
--- structural ordering.
-sortBy : (a -> b) -> List a -> List a
+-- | `sortBy keyFn list` — stable sort by the key `keyFn elem`, which must be
+-- comparable (see `sort`).
+sortBy : (a -> comparable) -> List a -> List a
 sortBy =
     Ffi.kernel "List_sortBy"
 

@@ -1,0 +1,29 @@
+-- defect: ordering was unconstrained. `compare`, `<`, `List.sort`, `sortBy`,
+-- `min`/`max` and `Set` accepted any type: `compare` on two functions and
+-- `List.sort` over a custom type holding a function type-checked, and the
+-- runtime answered with an arbitrary order (the v0.27.0 audit repros C/cmp-7
+-- and C/cmp-9). Since v0.27.0 an ordering needs a comparable type, and a
+-- custom type is comparable only when its constructors hold comparables. The
+-- bound survives generalisation: `mySort` is unannotated, and its scheme
+-- carries `comparable` to this caller. The accepted twins (a union of plain
+-- data, `comparable` in an annotation) are in ty/tests/qualified_bounds.rs.
+--
+-- rust: reject [E2001] — ordering needs a comparable type (C-11).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Std.Log exposing (println)
+
+
+type Handler
+    = Handler (Int -> Int)
+
+
+mySort xs =
+    List.sort xs
+
+
+main : Task Error ()
+main =
+    println (String.fromInt (List.length (mySort [ Handler identity, Handler (\n -> n + 1) ])))

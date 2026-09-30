@@ -64,15 +64,36 @@ pub struct World {
     /// row-polymorphism became sound) so cross-module record
     /// misuse is caught. Empty until pass 5 populates it.
     pub app_check_sigs: HashMap<DefId, Scheme>,
-    /// CHECK-ONLY pins of a wildcard-`any` RESULT to the body-inferred concrete
-    /// type (D1). For an ANNOTATED, non-polymorphic def whose declared result
-    /// contains `any` and whose body returns a fully-monomorphic type
-    /// (`f : Int -> any; f x = x` → `Int -> Int`), this pins the result so callers
-    /// can't absorb it at an arbitrary type (`List.length (f 5)` rejects, matching
-    /// the oracle). Same isolation as `check_sigs`/`app_check_sigs`: consulted only
-    /// at `!use_inferred`, never by the lowerer → Go emission byte-identical.
-    /// Populated by pass 6; empty on the lowerer path.
+    /// CHECK-ONLY override of an ANNOTATED def's scheme, as callers see it
+    /// (v0.27.0). Two writers:
+    /// * pass 6 (D-ANY): the signature with every `any` filled from the body
+    ///   (`coerce : a -> any; coerce x = x` → `a -> a`), so `any` is no longer
+    ///   a cast;
+    /// * pass 6b (C-2): an annotated CAF whose variables the value restriction
+    ///   does not generalise, with those variables made weak.
+    ///
+    /// Same isolation as `check_sigs`/`app_check_sigs`: consulted only at
+    /// `!use_inferred`, never by the lowerer → Go emission byte-identical.
+    /// Empty on the lowerer path.
     pub any_result_check_sigs: HashMap<DefId, Scheme>,
+    /// Weak variables (C-2, pass 6b), keyed by their opaque type name
+    /// (`variance::WEAK_PREFIX`): what the `[E2012]` message at a use names.
+    pub weak_vars: HashMap<String, crate::variance::WeakVar>,
+    /// CHECK-ONLY schemes that carry a BOUND the def's own signature does not
+    /// spell (v0.27.0 qualified bounds, `crate::obligations`). Two writers:
+    /// * pass 4: the stdlib APIs that encode a free type by reflection
+    ///   (`Codec.auto : encodable -> Codec encodable`, `App.withDurable`,
+    ///   `Table.table`/`insert`, `Jobs.define`/`enqueue`, `Auth.signToken`),
+    ///   whose `.sky` signatures stay as they are;
+    /// * pass 6c: an annotated def whose body forces `Encodable` on one of its
+    ///   plain variables (`persist : a -> Codec a; persist b = Codec.auto b`).
+    ///
+    /// Consulted FIRST at a `Res::Def` on the check path; never by the
+    /// lowerer, so Go emission is unchanged.
+    pub bound_check_sigs: HashMap<DefId, Scheme>,
+    /// The `Res::Kernel` face of [`World::bound_check_sigs`], keyed
+    /// `(pseudo-module, func)`.
+    pub bound_kernel_sigs: HashMap<(String, String), Scheme>,
     /// LOWERING-PATH ONLY: full closed-record result types for zero-param,
     /// unannotated top-level defs (D2). Consulted ONLY in the `Expr::Update` arm
     /// on the `use_inferred` (codegen region-type) path, to close the row var when
@@ -262,6 +283,13 @@ impl World {
 
         // ---- pass 6: wildcard-`any` RESULT pins (D1, check-only) ----
         self.infer_any_result_check_sigs(db);
+
+        // ---- pass 6b: the value restriction for app CAFs (C-2, check-only) ----
+        self.apply_value_restriction(db);
+
+        // ---- pass 6c: qualified bounds carried through helpers (C-11/B-1,
+        // check-only) — see `crate::obligations`. ----
+        self.infer_bounds_fixpoint(db);
 
         // ---- pass 7: full record result types (D2, lowering-path only) ----
         self.infer_record_result_sigs(db);
@@ -530,6 +558,9 @@ impl World {
             check_kernel_sigs: HashMap::new(),
             app_check_sigs: HashMap::new(),
             any_result_check_sigs: HashMap::new(),
+            weak_vars: HashMap::new(),
+            bound_check_sigs: HashMap::new(),
+            bound_kernel_sigs: HashMap::new(),
             record_result_sigs: HashMap::new(),
             ctors: HashMap::new(),
             ctors_by_def: HashMap::new(),
@@ -830,20 +861,71 @@ impl World {
                 }
                 self.app_check_sigs.entry(*def).or_insert(scheme);
             }
+            // C-2 (v0.27.0): re-infer this module's unannotated CAFs with an
+            // EXPANSIVE body (zero parameters, not a syntactic value) until
+            // their schemes stop changing. The loop above infers defs in
+            // source order, so a CAF that uses a LATER sibling saw it as a
+            // fresh variable and its scheme came out over-general. For a
+            // function that only loosens caller checks; for an expansive CAF
+            // it would export a variable the value restriction must see, since
+            // the checker applies the restriction to exactly this scheme (the
+            // type every caller instantiates). Bounded: each round only
+            // narrows.
+            let cafs: Vec<DefId> = resolved
+                .bodies
+                .iter()
+                .filter(|(def, body)| {
+                    names.contains_key(*def)
+                        && !self.value_sigs.contains_key(*def)
+                        && self.app_check_sigs.contains_key(*def)
+                        && body.params.is_empty()
+                        && body
+                            .root
+                            .is_some_and(|r| !crate::infer::is_syntactic_value(body, r))
+                })
+                .map(|(def, _)| *def)
+                .collect();
+            for _round in 0..4 {
+                let mut changed = false;
+                for def in &cafs {
+                    let Some(body) = resolved.bodies.get(def) else {
+                        continue;
+                    };
+                    let mut infer = Infer::new(self, db).with_self_def(Some(*def));
+                    let Some(scheme) = infer.infer_def_scheme(body, true) else {
+                        continue;
+                    };
+                    if self.app_check_sigs.get(def) != Some(&scheme) {
+                        self.app_check_sigs.insert(*def, scheme);
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
         }
     }
 
-    /// Pass 6 (see `build`). D1 — wildcard-`any` RESULT pins (check-only). For an
-    /// ANNOTATED, non-polymorphic APP def whose declared result contains `any`
-    /// and whose body returns a fully-monomorphic type, pin that concrete result
-    /// into `any_result_check_sigs` so a caller can't absorb the result at an
-    /// arbitrary type (`f : Int -> any; f x = x` → `List.length (f 5)` rejects,
-    /// matching the oracle). Stdlib modules are skipped (kernel + `Std.`/`Sky.`
-    /// namespaces) — the predicate already excludes every stdlib `any`-result def
-    /// (they are polymorphic or have polymorphic bodies), and the namespace skip
-    /// makes that immunity structural.
+    /// Pass 6 (see `build`). D-ANY (v0.27.0) — fill every `any` in a USER
+    /// annotation from the body (check-only). For every ANNOTATED app def whose
+    /// signature contains `any` anywhere, `Infer::infer_any_fill` infers the
+    /// body against the signature and records the signature with each `any`
+    /// replaced by the type the body gives it, into `any_result_check_sigs`.
+    /// Callers on the check path instantiate that filled scheme, so `any` is no
+    /// longer an unchecked cast: `coerce : a -> any; coerce x = x` exports
+    /// `a -> a`, and `f : Int -> any; f x = x` exports `Int -> Int` (the old D1
+    /// pin, which only covered a monomorphic result, is the special case).
+    ///
+    /// Stdlib modules are skipped (kernel + `Std.`/`Sky.` namespaces): stdlib
+    /// signatures keep per-occurrence `any`, and the CAST gate audits them.
+    ///
+    /// A fill can depend on another def's fill (a body calling a sibling whose
+    /// annotation has `any`), so the pass repeats until no fill changes. It
+    /// only ever narrows a scheme, so it converges; the bound is a backstop.
     fn infer_any_result_check_sigs(&mut self, db: &dyn SkyDb) {
         use crate::infer::Infer;
+        let mut targets: Vec<(DefId, Scheme, hir::Body)> = Vec::new();
         for m in db.module_ids() {
             let mname = db.module_name(m).to_string();
             if KERNEL_MODULES.iter().any(|(p, _)| *p == mname)
@@ -854,26 +936,95 @@ impl World {
             }
             let resolved = db.resolve(m);
             for (def, body) in &resolved.bodies {
-                // Clause 1 (annotated) + clause 2 (non-polymorphic: `Scheme::
-                // generalize` already drops `any` from `vars`, so `vars` empty ⟺
-                // the only free type var is `any`).
                 let Some(anno) = self.value_sigs.get(def) else {
                     continue;
                 };
-                if !anno.vars.is_empty() {
+                if !crate::infer::ty_contains_any(&anno.ty) {
                     continue;
                 }
-                // Clause 3: the declared RESULT position contains `any`.
-                if !result_contains_any(&anno.ty, body.params.len()) {
-                    continue;
-                }
-                let anno_ty = anno.ty.clone();
-                // Clause 4: the body-inferred pin must be fully monomorphic (a
-                // polymorphic body is left unpinned — the oracle does not pin it
-                // either). `infer_any_result_pin` returns `None` otherwise.
+                targets.push((*def, anno.clone(), body.clone()));
+            }
+        }
+        for _round in 0..4 {
+            let mut changed = false;
+            for (def, anno, body) in &targets {
                 let mut infer = Infer::new(self, db).with_self_def(Some(*def));
-                if let Some(scheme) = infer.infer_any_result_pin(body, &anno_ty, true) {
+                let filled = infer.infer_any_fill(body, anno);
+                if let Some(scheme) = filled {
+                    if self.any_result_check_sigs.get(def) != Some(&scheme) {
+                        self.any_result_check_sigs.insert(*def, scheme);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// Pass 6b (see `build`). C-2 — the relaxed value restriction for the
+    /// top-level CAFs of APP and dependency modules (check-only).
+    ///
+    /// For every zero-parameter def whose body is expansive, run the checker's
+    /// own inference (`infer_def_against` for an annotated def, `infer_def`
+    /// otherwise), which leaves the value-restriction verdict in
+    /// `Infer::last_vr`. Each variable it may not generalise becomes WEAK: the
+    /// scheme callers see (`any_result_check_sigs` for an annotated def,
+    /// `app_check_sigs` otherwise) carries an opaque type of its own there, so
+    /// a use that needs a specific type is rejected `[E2012]` at that use and a
+    /// use that does not care stays legal (`main = App.run appDef`, whose `key`
+    /// no builder set). Stdlib CAFs are rejected at the definition instead
+    /// (see `Infer::check_value_restriction`).
+    fn apply_value_restriction(&mut self, db: &dyn SkyDb) {
+        use crate::infer::Infer;
+        for m in db.module_ids() {
+            let mname = db.module_name(m).to_string();
+            if crate::variance::is_stdlib_module(&mname) {
+                continue;
+            }
+            let resolved = db.resolve(m);
+            let names: HashMap<DefId, String> = resolved
+                .top_defs
+                .iter()
+                .map(|td| (td.def, td.name.as_str().to_string()))
+                .collect();
+            for (def, body) in &resolved.bodies {
+                let Some(name) = names.get(def) else {
+                    continue;
+                };
+                let Some(root) = body.root else {
+                    continue;
+                };
+                if !body.params.is_empty() || crate::infer::is_syntactic_value(body, root) {
+                    continue;
+                }
+                let annotated = self.value_sigs.get(def).cloned();
+                let verdict = {
+                    let mut infer = Infer::new(self, db)
+                        .with_self_def(Some(*def))
+                        .with_record_exprs(true);
+                    match &annotated {
+                        Some(s) => infer.infer_def_against(body, s),
+                        None => {
+                            infer.infer_def(body);
+                        }
+                    }
+                    infer.last_vr.take()
+                };
+                let Some((ty, viols, info)) = verdict else {
+                    continue;
+                };
+                let key = format!("{}_{}", mname.replace('.', "_"), name);
+                let (weak_ty, recs) = crate::variance::weaken(&ty, &key, name, &viols, &info);
+                let scheme = Scheme::generalize(weak_ty);
+                if annotated.is_some() {
                     self.any_result_check_sigs.insert(*def, scheme);
+                } else {
+                    self.app_check_sigs.insert(*def, scheme);
+                }
+                for (k, w) in recs {
+                    self.weak_vars.insert(k, w);
                 }
             }
         }
@@ -1027,11 +1178,20 @@ impl World {
         // oracle is genuinely LENIENT on those (`abs "x"` / `min "a" 2` accept), so
         // pinning them would make Rust stricter than the oracle — a divergence, not
         // a fix. Verified against the absolute-path differential, 2026-07-20.
+        // v0.27.0 (C-11): the ordering kernels need a comparable type. They
+        // have no `.sky` definition (`compare` dispatches by reflection), so
+        // the bound lives here, in the check-only channel: the lowerer's view
+        // of them is unchanged. The oracle's leniency on `min "a" 2` is
+        // superseded by the qualified-bounds decision (FINAL-PLAN §3).
+        let cmp = || Ty::var("comparable");
         let basics_specs: Vec<(&str, Ty)> = vec![
             ("fst", fun(tup2(a(), b()), a())),
             ("snd", fun(tup2(a(), b()), b())),
             ("modBy", fun(int_(), fun(int_(), int_()))),
             ("clamp", fun(int_(), fun(int_(), fun(int_(), int_())))),
+            ("compare", fun(cmp(), fun(cmp(), int_()))),
+            ("min", fun(cmp(), fun(cmp(), cmp()))),
+            ("max", fun(cmp(), fun(cmp(), cmp()))),
         ];
 
         // F8 — Maybe core combinators (`withDefault : a -> Maybe a -> a`, etc.).
@@ -1166,6 +1326,7 @@ impl World {
             ),
         ];
 
+        crate::obligations::seed_bound_overrides(self, db);
         for (pseudo, path, specs) in [
             ("List", "Sky.Core.List", list_specs),
             ("Basics", "Sky.Core.Basics", basics_specs),
@@ -1539,21 +1700,6 @@ fn substitute(ty: &Ty, sub: &HashMap<String, Ty>) -> Ty {
 
 fn intern_value(db: &dyn SkyDb, m: ModuleId, name: &str) -> DefId {
     db.intern_def(m, &Name::new(name), DefKind::Value)
-}
-
-/// True iff peeling `n_params` arrows off `ty` leaves a residual whose free vars
-/// include `"any"` — i.e. the declared RESULT position carries a wildcard (D1
-/// clause 3). Peeling only the param arrows keeps ARGUMENT-position `any`
-/// (`any -> any -> Int`) out of scope, preserving its per-occurrence semantics.
-fn result_contains_any(ty: &Ty, n_params: usize) -> bool {
-    let mut cur = ty;
-    for _ in 0..n_params {
-        match cur {
-            Ty::Fun(_, b) => cur = b,
-            _ => break,
-        }
-    }
-    cur.free_vars().iter().any(|n| n.as_str() == "any")
 }
 
 // ---- F1c app-check-sig support: cycle detection, topo order, Unit spine ----

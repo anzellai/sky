@@ -17,17 +17,20 @@ mod check;
 pub mod codec_elem;
 mod db;
 pub mod dictkey;
+pub mod encodable;
 mod exhaustive;
 pub mod ffi_sig;
 pub mod form_submit;
 mod infer;
 pub mod nominal;
+mod obligations;
 pub mod pubsub_topic;
 pub mod reject_corpus;
 pub mod shared;
 mod sig;
 pub mod tytable;
 mod unify;
+pub mod variance;
 
 pub use check::{
     check_modules, check_modules_with_world, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
@@ -130,15 +133,35 @@ impl Ty {
         });
         let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut counter = 0usize;
+        let mut used: std::collections::HashSet<String> = kept.clone();
         self.for_each_var(&mut |n| {
             if is_internal_var(n) && !map.contains_key(n) {
-                let clean = loop {
-                    let cand = display_var_name(counter);
-                    counter += 1;
-                    if !kept.contains(&cand) {
-                        break cand;
+                // A minted bounded variable (`comparable12`) shows as its
+                // label (`comparable`, then `comparable1`, …), so the bound
+                // stays visible in hover and diagnostics.
+                let clean = if let Some(label) = unify::SuperType::minted_label(n) {
+                    let mut i = 0usize;
+                    loop {
+                        let cand = if i == 0 {
+                            label.to_string()
+                        } else {
+                            format!("{label}{i}")
+                        };
+                        i += 1;
+                        if !used.contains(&cand) {
+                            break cand;
+                        }
+                    }
+                } else {
+                    loop {
+                        let cand = display_var_name(counter);
+                        counter += 1;
+                        if !used.contains(&cand) {
+                            break cand;
+                        }
                     }
                 };
+                used.insert(clean.clone());
                 map.insert(n.to_string(), clean);
             }
         });
@@ -226,9 +249,10 @@ impl Ty {
 /// User annotation vars (`msg`, `a`, `model`) never match.
 fn is_internal_var(n: &str) -> bool {
     let mut chars = n.chars();
-    matches!(chars.next(), Some('t') | Some('r'))
+    (matches!(chars.next(), Some('t') | Some('r'))
         && !n[1..].is_empty()
-        && n[1..].chars().all(|c| c.is_ascii_digit())
+        && n[1..].chars().all(|c| c.is_ascii_digit()))
+        || unify::SuperType::minted_label(n).is_some()
 }
 
 /// The nth display var name: `a`, `b`, … `z`, `a1`, `b1`, …

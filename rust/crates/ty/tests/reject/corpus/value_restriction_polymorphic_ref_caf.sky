@@ -1,0 +1,50 @@
+-- defect: a top-level definition with no parameters (a CAF) whose body is an
+-- APPLICATION, annotated polymorphic in a variable that sits inside a mutable
+-- stdlib type. The body runs once, so every use shares ONE `Ref`: `writeInts`
+-- stores a `List Int` and `readNames` reads it back as a list of records.
+-- Before v0.27.0 this checked, built and printed `<nil>!,<nil>!,<nil>!` (the
+-- v0.27.0 audit repro C/t6). The relaxed value restriction generalises a CAF
+-- with an expansive body only over covariant variables; `Std.Sync.Ref` is
+-- invariant. The accepted twins (`Ref (List Int)`, `divider : Element msg`,
+-- `Cmd.batch []`) are in ty/tests/value_restriction.rs.
+--
+-- rust: reject [E2012] — the value restriction for top-level CAFs (C-2).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Task as Task
+import Std.Sync as Sync
+import Std.Log exposing (println)
+
+
+shared : Result Error (Sync.Ref (List a))
+shared =
+    Task.run (Sync.newRef [])
+
+
+writeInts : Task Error ()
+writeInts =
+    case shared of
+        Ok r ->
+            Sync.set [ 1, 2, 3 ] r
+
+        Err e ->
+            Task.fail e
+
+
+readNames : Task Error String
+readNames =
+    case shared of
+        Ok r ->
+            Sync.get r |> Task.map (\xs -> String.join "," (List.map (\x -> x.name ++ "!") xs))
+
+        Err e ->
+            Task.fail e
+
+
+main : Task Error ()
+main =
+    writeInts
+        |> Task.andThen (\_ -> readNames)
+        |> Task.andThen println

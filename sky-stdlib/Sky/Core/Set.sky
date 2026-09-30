@@ -12,9 +12,9 @@
 -- every entry.  The runtime bodies live in `runtime-go/rt/rt.go`
 -- (`Set_*` helpers).
 --
--- Internally a `Set a` is represented as a `map[string]struct{}` so
--- equality + hash semantics inherit Sky's stringified-key contract
--- (the same one Dict uses). Order of iteration is unspecified.
+-- The elements of a set are comparable (see `List.sort`): building or
+-- querying a set of functions, secrets or handles is a type error.
+-- `toList` returns the elements in ascending order.
 module Sky.Core.Set exposing
     ( empty
     , size
@@ -46,20 +46,20 @@ size =
 
 
 -- | `member x s` — `True` iff `x` is in `s`.
-member : a -> Set a -> Bool
+member : comparable -> Set comparable -> Bool
 member =
     Ffi.kernel "Set_member"
 
 
 -- ─── Mutation (returns new Set) ────────────────────────────────────
 -- | `insert x s` — add `x` to `s`. No-op if already present.
-insert : a -> Set a -> Set a
+insert : comparable -> Set comparable -> Set comparable
 insert =
     Ffi.kernel "Set_insert"
 
 
 -- | `remove x s` — drop `x` from `s`. No-op if absent.
-remove : a -> Set a -> Set a
+remove : comparable -> Set comparable -> Set comparable
 remove =
     Ffi.kernel "Set_remove"
 
@@ -72,25 +72,25 @@ toList =
 
 
 -- | Build a set from a list, de-duplicating along the way.
-fromList : List a -> Set a
+fromList : List comparable -> Set comparable
 fromList =
     Ffi.kernel "Set_fromList"
 
 
 -- ─── Set algebra ───────────────────────────────────────────────────
 -- | `union a b` — every element in `a` OR `b`.
-union : Set a -> Set a -> Set a
+union : Set comparable -> Set comparable -> Set comparable
 union =
     Ffi.kernel "Set_union"
 
 
 -- | `intersect a b` — every element in BOTH `a` and `b`.
-intersect : Set a -> Set a -> Set a
+intersect : Set comparable -> Set comparable -> Set comparable
 intersect =
     Ffi.kernel "Set_intersect"
 
 
 -- | `diff a b` — every element in `a` BUT NOT in `b`.
-diff : Set a -> Set a -> Set a
+diff : Set comparable -> Set comparable -> Set comparable
 diff =
     Ffi.kernel "Set_diff"

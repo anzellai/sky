@@ -1,0 +1,23 @@
+-- defect: `any` in a user signature was a fresh type variable at EVERY use, so
+-- `coerce : a -> any` was an unchecked cast: `String.length (coerce 5)`
+-- checked and built, and handed an Int to a String function at run time.
+-- Since v0.27.0 each `any` in a user signature is filled from the body, so
+-- `coerce` exports `a -> a` and this use is an ordinary type error. The
+-- accepted twin (`String.length (coerce "five")`) is in
+-- ty/tests/value_restriction.rs.
+--
+-- rust: reject [E2001] — `any` is a partial-signature hole, not a cast (D-ANY).
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+
+coerce : a -> any
+coerce x =
+    x
+
+
+main : Task Error ()
+main =
+    println (String.fromInt (String.length (coerce 5)))
