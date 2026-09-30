@@ -547,9 +547,17 @@ function __skyReplaceHTMLPreservingFocus(container, newHTML) {
   // inline-SVG icon <path> children are the common victims.
   var tmp;
   if (container.namespaceURI && container.namespaceURI !== "http://www.w3.org/1999/xhtml") {
-    var range = document.createRange();
-    range.selectNodeContents(container);
-    tmp = range.createContextualFragment(newHTML);
+    // A detached element of the container's own kind parses the markup in
+    // its namespace (an <svg>'s children stay SVG). Not a Range: WebKit
+    // keeps every Range live until it is collected and updates each one on
+    // every later DOM change, so a Range per new child made a patch that
+    // adds 5,000 shapes to a scene take 93 s in WebKit
+    // (docs/perf/runs/canvas-20260930/README.md).
+    var ctxEl = document.createElementNS(container.namespaceURI, container.localName);
+    ctxEl.innerHTML = newHTML;
+    var frag = document.createDocumentFragment();
+    while (ctxEl.firstChild) frag.appendChild(ctxEl.firstChild);
+    tmp = frag;
   } else {
     tmp = document.createElement("div");
     tmp.innerHTML = newHTML;
@@ -1619,9 +1627,17 @@ function __skyApplyPatches(patches) {
 // missing (a desync the caller resyncs).
 function __skyParseInto(container, html) {
   if (container.namespaceURI && container.namespaceURI !== "http://www.w3.org/1999/xhtml") {
-    var range = document.createRange();
-    range.selectNodeContents(container);
-    return range.createContextualFragment(html);
+    // A detached element of the container's own kind parses the markup in
+    // its namespace (an <svg>'s children stay SVG). Not a Range: WebKit
+    // keeps every Range live until it is collected and updates each one on
+    // every later DOM change, so a Range per new child made a patch that
+    // adds 5,000 shapes to a scene take 93 s in WebKit
+    // (docs/perf/runs/canvas-20260930/README.md).
+    var ctxEl = document.createElementNS(container.namespaceURI, container.localName);
+    ctxEl.innerHTML = html;
+    var frag = document.createDocumentFragment();
+    while (ctxEl.firstChild) frag.appendChild(ctxEl.firstChild);
+    return frag;
   }
   var t = document.createElement("template");
   t.innerHTML = html;

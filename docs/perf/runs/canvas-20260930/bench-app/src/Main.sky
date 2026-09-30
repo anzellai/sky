@@ -1,0 +1,272 @@
+module Main exposing (main)
+
+{-| The Std.Ui.Canvas benchmark app (docs/perf/runs/canvas-20260930/).
+
+A scene of N shapes (N from the buttons: 10, 100, 1000, 5000, 20000) on an
+800 x 600 grid, mixed in turn: a rectangle, a circle, a path (a triangle) and
+a text. Every shape has `onClick (Hit i)`, and the scene reports pointer moves.
+
+  - `step` advances the frame counter `t`.
+  - In `few` mode only shapes 0 to 4 move with `t` (an animated scene where a
+    few shapes change per frame).
+  - In `all` mode every shape moves with `t` (a particle or plot scene).
+
+The bench (bench.mjs) reads `#t`, `#hit` and `#n` to know a frame, a hit and a
+new scene are in the page.
+
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Math as Math
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
+import Std.Cmd as Cmd exposing (Cmd)
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Canvas as Canvas exposing (PathCommand(..), Point)
+
+type alias Model =
+    { n : Int
+    , t : Int
+    , all : Bool
+    , hit : Int
+    , moved : String
+    , grid : List Cell
+    }
+
+-- A shape's place, computed once per scene size (SetN), so the view does no
+-- Int-to-Float conversion per frame.
+type alias Cell =
+    { i : Int
+    , x : Float
+    , y : Float
+    , s : Float
+    }
+
+type Msg
+    = SetN Int
+    | Few
+    | All
+    | Step
+    | Hit Int
+    | Moved Point
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, t = 0, all = False, hit = -1, moved = "none", grid = [] }
+    , Cmd.none
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        SetN n ->
+            ( { model | n = n, t = 0, hit = -1, grid = grid n }, Cmd.none )
+
+        Few ->
+            ( { model | all = False }, Cmd.none )
+
+        All ->
+            ( { model | all = True }, Cmd.none )
+
+        Step ->
+            ( { model | t = model.t + 1 }, Cmd.none )
+
+        Hit i ->
+            ( { model | hit = i }, Cmd.none )
+
+        Moved p ->
+            ( { model | moved =
+                  String.fromInt (Math.round p.x) ++ ","
+                      ++ String.fromInt (Math.round p.y)
+              }
+            , Cmd.none
+            )
+
+
+-- toF converts an Int to a Float (the stdlib has no direct conversion).
+toF : Int -> Float
+toF n =
+    Maybe.withDefault 0.0 (String.toFloat (String.fromInt n))
+
+
+-- The grid: `c` columns, enough rows for n shapes, over 800 x 600.
+grid : Int -> List Cell
+grid n =
+    let
+        c = Math.round (Math.sqrt (toF n * 1.3333)) + 1
+        rows = n // c + 1
+        cw = 800.0 / toF c
+        ch = 600.0 / toF rows
+        s =
+            if cw < ch then
+                cw * 0.4
+
+            else
+                ch * 0.4
+        cell i =
+            { i = i
+            , x = toF (modBy c i) * cw + cw * 0.5
+            , y = toF (i // c) * ch + ch * 0.5
+            , s = s
+            }
+    in
+        List.map cell (List.range 0 (n - 1))
+
+
+-- The offset of a moving shape, 0 to 6 tenths of its size.
+offset : Int -> Float
+offset k =
+    case k of
+
+        0 ->
+            0.0
+
+        1 ->
+            0.1
+
+        2 ->
+            0.2
+
+        3 ->
+            0.3
+
+        4 ->
+            0.4
+
+        5 ->
+            0.5
+
+        _ ->
+            0.6
+
+
+shape : Model -> Cell -> Canvas.Shape Msg
+shape model cell =
+    let
+        i = cell.i
+        s = cell.s
+        moving = model.all || i < 5
+        d =
+            if moving then
+                offset (modBy 7 (model.t + i)) * s
+
+            else
+                0.0
+        x = cell.x + d
+        y = cell.y
+        hue = modBy 200 (i * 7)
+        paint = Canvas.fill (Ui.rgb (40 + hue) 90 (240 - hue))
+    in
+        case modBy 4 i of
+
+            0 ->
+                Canvas.rect
+                    { x = x - s
+                    , y = y - s * 0.6
+                    , width = s * 2.0
+                    , height = s * 1.2
+                    }
+                    [ paint, Canvas.onClick (Hit i) ]
+
+            1 ->
+                Canvas.circle
+                    { x = x, y = y, radius = s }
+                    [ paint, Canvas.onClick (Hit i) ]
+
+            2 ->
+                Canvas.path
+                    [ MoveTo x (y - s)
+                    , LineTo (x + s) (y + s)
+                    , LineTo (x - s) (y + s)
+                    , Close
+                    ]
+                    [ paint
+                    , Canvas.stroke (Ui.rgb 0 0 0)
+                    , Canvas.strokeWidth (s * 0.1)
+                    , Canvas.onClick (Hit i)
+                    ]
+
+            _ ->
+                Canvas.text
+                    { x = x, y = y + s * 0.5 }
+                    (String.fromInt i)
+                    [ paint
+                    , Canvas.fontSize (Math.round (s * 1.2) + 1)
+                    , Canvas.anchorMiddle
+                    , Canvas.onClick (Hit i)
+                    ]
+
+
+scene : Model -> Element Msg
+scene model =
+    Canvas.sceneWith
+        [ Canvas.onPointerMove Moved ]
+        { width = 800, height = 600, label = "Benchmark scene" }
+        (List.map (shape model) model.grid)
+
+
+btn : String -> Msg -> Element Msg
+btn id msg =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just msg, label = Ui.text id }
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 4, Ui.padding 4 ]
+        [ Ui.row
+              [ Ui.spacing 4 ]
+              [ btn "n0" (SetN 0)
+              , btn "n10" (SetN 10)
+              , btn "n100" (SetN 100)
+              , btn "n1000" (SetN 1000)
+              , btn "n5000" (SetN 5000)
+              , btn "n20000" (SetN 20000)
+              , btn "few" Few
+              , btn "all" All
+              , btn "step" Step
+              ]
+        , Ui.row
+              [ Ui.spacing 8 ]
+              [ Ui.el
+                    [ Ui.htmlAttribute "id" "n" ]
+                    (Ui.text (String.fromInt model.n))
+              , Ui.el
+                    [ Ui.htmlAttribute "id" "t" ]
+                    (Ui.text (String.fromInt model.t))
+              , Ui.el
+                    [ Ui.htmlAttribute "id" "hit" ]
+                    (Ui.text (String.fromInt model.hit))
+              , Ui.el [ Ui.htmlAttribute "id" "moved" ] (Ui.text model.moved)
+              ]
+        , Ui.el
+              [ Ui.htmlAttribute "id" "scene-box", Ui.width (Ui.px 800) ]
+              (scene model)
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app

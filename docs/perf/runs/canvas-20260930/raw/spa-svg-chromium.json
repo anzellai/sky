@@ -1,0 +1,295 @@
+{
+ "target": "spa",
+ "backend": "svg",
+ "browser": "chromium",
+ "channel": "chrome",
+ "headless": false,
+ "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+ "dpr": 2,
+ "sizes": {
+  "10": {
+   "static": [
+    9.2,
+    4.9,
+    5.6
+   ],
+   "static_state": [
+    8.1,
+    2.5,
+    2.4
+   ],
+   "drawn_as": "svg",
+   "memory": {
+    "dom_elements": 56,
+    "scene_elements": 13,
+    "wasm_bytes": 41680896,
+    "js_heap_used_bytes": 2470724,
+    "cdp_nodes": 131
+   },
+   "canvas": null,
+   "hit_us": 2.4,
+   "hit_ms": [
+    2.2,
+    5.6,
+    5.7
+   ],
+   "hit_state_ms": [
+    1.7,
+    1.7,
+    1.5
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 5.2,
+    "p95_ms": 5.5,
+    "mean_ms": 5.14,
+    "state_median_ms": 1.5,
+    "task_ms_per_frame": 2.72,
+    "script_ms_per_frame": 1.92,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 0.15
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 5.2,
+    "p95_ms": 5.4,
+    "mean_ms": 5.04,
+    "state_median_ms": 1.5,
+    "task_ms_per_frame": 2.44,
+    "script_ms_per_frame": 1.66,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 0.16
+   }
+  },
+  "100": {
+   "static": [
+    13,
+    11.7,
+    10.4
+   ],
+   "static_state": [
+    11.2,
+    10.6,
+    9.6
+   ],
+   "drawn_as": "svg",
+   "memory": {
+    "dom_elements": 146,
+    "scene_elements": 103,
+    "wasm_bytes": 46333952,
+    "js_heap_used_bytes": 4096772,
+    "cdp_nodes": 601
+   },
+   "canvas": null,
+   "hit_us": 3.5,
+   "hit_ms": [
+    4.3,
+    4.4,
+    4.8
+   ],
+   "hit_state_ms": [
+    3.9,
+    4.1,
+    4
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 4.9,
+    "p95_ms": 6.9,
+    "mean_ms": 5.17,
+    "state_median_ms": 3.9,
+    "task_ms_per_frame": 5.07,
+    "script_ms_per_frame": 4.41,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 0.13
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 6.9,
+    "p95_ms": 10.1,
+    "mean_ms": 7.56,
+    "state_median_ms": 6.1,
+    "task_ms_per_frame": 8.07,
+    "script_ms_per_frame": 6.69,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 0.27
+   }
+  },
+  "1000": {
+   "static": [
+    109.7,
+    110.2,
+    116.4
+   ],
+   "static_state": [
+    104.7,
+    104.3,
+    112.6
+   ],
+   "drawn_as": "svg",
+   "memory": {
+    "dom_elements": 1046,
+    "scene_elements": 1003,
+    "wasm_bytes": 53477376,
+    "js_heap_used_bytes": 4287528,
+    "cdp_nodes": 3831
+   },
+   "canvas": null,
+   "hit_us": 20.6,
+   "hit_ms": [
+    41.6,
+    39.7,
+    40.6
+   ],
+   "hit_state_ms": [
+    40.6,
+    38.9,
+    39.8
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 41.3,
+    "p95_ms": 43.2,
+    "mean_ms": 41.32,
+    "state_median_ms": 40.3,
+    "task_ms_per_frame": 41.56,
+    "script_ms_per_frame": 40.31,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 0.23
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 73.5,
+    "p95_ms": 78.5,
+    "mean_ms": 73.96,
+    "state_median_ms": 70.5,
+    "task_ms_per_frame": 75.21,
+    "script_ms_per_frame": 71.2,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 1.53
+   }
+  },
+  "5000": {
+   "static": [
+    558.9,
+    541.8,
+    562.5
+   ],
+   "static_state": [
+    537.4,
+    513,
+    544.1
+   ],
+   "drawn_as": "svg",
+   "memory": {
+    "dom_elements": 5046,
+    "scene_elements": 5003,
+    "wasm_bytes": 141754368,
+    "js_heap_used_bytes": 13456624,
+    "cdp_nodes": 12581
+   },
+   "canvas": null,
+   "hit_us": 94.4,
+   "hit_ms": [
+    216.6,
+    193.7,
+    196.8
+   ],
+   "hit_state_ms": [
+    213.9,
+    185.8,
+    193.7
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 196.3,
+    "p95_ms": 208.6,
+    "mean_ms": 197.54,
+    "state_median_ms": 193.5,
+    "task_ms_per_frame": 197.79,
+    "script_ms_per_frame": 194.6,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 0.55
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 439,
+    "p95_ms": 458.2,
+    "mean_ms": 438.77,
+    "state_median_ms": 426.9,
+    "task_ms_per_frame": 441.44,
+    "script_ms_per_frame": 425.6,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 7.36
+   }
+  },
+  "20000": {
+   "static": [
+    2056.9,
+    2436.6,
+    2160.6
+   ],
+   "static_state": [
+    1959.4,
+    2348.4,
+    2045.4
+   ],
+   "drawn_as": "svg",
+   "memory": {
+    "dom_elements": 20046,
+    "scene_elements": 20003,
+    "wasm_bytes": 426246144,
+    "js_heap_used_bytes": 10980892,
+    "cdp_nodes": 50080
+   },
+   "canvas": null,
+   "hit_us": 603.5,
+   "hit_ms": [
+    896.9,
+    801.4,
+    753.4
+   ],
+   "hit_state_ms": [
+    885.3,
+    789.1,
+    740
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 806.7,
+    "p95_ms": 831.2,
+    "mean_ms": 800.71,
+    "state_median_ms": 792,
+    "task_ms_per_frame": 803.96,
+    "script_ms_per_frame": 787.78,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 2.21
+   },
+   "all": {
+    "frames": 17,
+    "capped": true,
+    "median_ms": 3714.2,
+    "p95_ms": 3835.5,
+    "mean_ms": 3721.05,
+    "state_median_ms": 3653.7,
+    "task_ms_per_frame": 3728.12,
+    "script_ms_per_frame": 3656.28,
+    "painter_calls_ms_per_frame": 0,
+    "layout_style_ms_per_frame": 39.99
+   }
+  }
+ },
+ "violations": 0,
+ "errors": [
+  "Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}

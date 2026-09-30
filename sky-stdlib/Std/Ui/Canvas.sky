@@ -21,10 +21,14 @@
 --                 [ Canvas.stroke (Ui.rgb 0 0 0), Canvas.strokeWidth 2.0 ]
 --             ]
 --
--- Rendering. Every web backend (Sky.Live, Sky.Spa, the desktop window) draws
--- the scene as inline SVG, diffed like any other element: a changed shape is
--- one attribute patch. A terminal (Sky.Tui) rasterises it into Braille cells
--- (2×4 dots per cell), with text on the cell grid.
+-- Rendering. Sky.Live (and the desktop window of `--target desktop`) draws the
+-- scene as server-rendered inline SVG, diffed like any other element. The
+-- Sky.Spa client (`web:app` and the native shells) draws it on a `<canvas>`:
+-- one draw pass per animation frame, only the region of the shapes that
+-- changed, at the screen's device pixel ratio, with the same pointer events
+-- and the label as the canvas's accessible name. A terminal (Sky.Tui)
+-- rasterises it into Braille cells (2×4 dots per cell), with text on the cell
+-- grid.
 --
 -- Pointer events carry scene coordinates. `onPointerMove`, `onPointerDown`
 -- and `onPointerUp` give a `Point` in the scene's own units, whatever size the
@@ -33,7 +37,8 @@
 --
 -- Accessibility. `label` is required: it is the scene's accessible name
 -- (`role="img"` with `aria-label`, and a `<title>`), so a screen reader
--- announces what the picture shows.
+-- announces what the picture shows. On a canvas the text alternative
+-- (`aria-describedby`) is the label and the scene's texts.
 module Std.Ui.Canvas exposing
     ( Shape
     , Attr

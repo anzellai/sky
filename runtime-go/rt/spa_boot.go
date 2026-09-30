@@ -30,7 +30,7 @@ import (
 // terminal widget (island_terminal.go), then the loader. `document.currentScript` is the <script> element
 // that is running it (a classic, non-module script), so its data-wasm
 // attribute names the wasm to instantiate.
-const SpaBootJS = islandClientJS + sceneClientJS + terminalWidgetJS + spaBootLoaderJS
+const SpaBootJS = islandClientJS + sceneClientJS + scenePainterJS + terminalWidgetJS + spaBootLoaderJS
 
 // spaBootLoaderJS is the loader proper. It follows the widget-island runtime
 // (island_client.go), which a widget file needs before the wasm boots.

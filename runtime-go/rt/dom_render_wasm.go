@@ -163,6 +163,16 @@ func spaHydrate(mount js.Value, root VNode) {
 // skips non-elements) so they bind nothing; spaShouldHydrate has already proven
 // the child structure matches the server DOM, so positional text is aligned.
 func hydrateVNode(scope js.Value, el VNode) {
+	// The server painted a canvas-drawn scene as its SVG (the first paint
+	// works before the client runs): swap in the canvas.
+	if el.SkyID != "" && spaSceneCanvas(&el) {
+		node := scope.Call("querySelector", `[sky-id="`+escAttr(el.SkyID)+`"]`)
+		if node.Truthy() && !spaIsSceneCanvas(node) {
+			releaseDOMSubtree(node)
+			node.Call("replaceWith", buildDOM(el))
+		}
+		return
+	}
 	if el.SkyID != "" {
 		node := scope.Call("querySelector", `[sky-id="`+escAttr(el.SkyID)+`"]`)
 		if node.Truthy() {
@@ -251,6 +261,10 @@ func buildDOMNS(el VNode, ns string) js.Value {
 		span.Set("innerHTML", el.Text)
 		return span
 	default: // "element"
+		// A Std.Ui.Canvas scene the client draws on a canvas (scene_canvas.go).
+		if el.Tag == "svg" && spaSceneCanvas(&el) {
+			return spaBuildSceneCanvas(el)
+		}
 		if el.Tag == "svg" {
 			ns = spaSVGNS
 		}
@@ -734,8 +748,14 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 		openSel = active
 	}
 
+	// Patches inside a Std.Ui.Canvas scene drawn on a canvas have no DOM node
+	// to land on: they become draw-list updates, sent after the loop.
+	scenes := newSpaScenePass(newRoot)
 	for i := range patches {
 		p := patches[i]
+		if scenes != nil && scenes.take(&p) {
+			continue
+		}
 		el := doc.Call("querySelector", `[sky-id="`+escAttr(p.ID)+`"]`)
 		if !el.Truthy() {
 			if c := js.Global().Get("console"); c.Truthy() {
@@ -781,6 +801,9 @@ func spaApplyPatches(patches []Patch, oldRoot, newRoot *VNode) {
 			releaseDOMSubtree(el)
 			el.Call("remove")
 		}
+	}
+	if scenes != nil {
+		scenes.finish(newRoot)
 	}
 }
 

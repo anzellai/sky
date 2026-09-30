@@ -1,0 +1,448 @@
+{
+ "target": "spa",
+ "backend": "canvas",
+ "browser": "webkit",
+ "channel": null,
+ "headless": false,
+ "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Safari/605.1.15",
+ "dpr": 2,
+ "sizes": {
+  "10": {
+   "static": [
+    10,
+    13,
+    12
+   ],
+   "static_state": [
+    9,
+    3,
+    2
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 41418752
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 6,
+     "full": 6,
+     "partial": 0,
+     "drawn": 11,
+     "lastMs": 0
+    }
+   },
+   "hit_us": 1,
+   "hit_ms": [
+    7,
+    13,
+    12
+   ],
+   "hit_state_ms": [
+    2,
+    2,
+    1
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 12,
+    "p95_ms": 13,
+    "mean_ms": 11.75,
+    "state_median_ms": 2,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 0.05,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 0,
+     "last_drawn": 11
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 12,
+    "p95_ms": 13,
+    "mean_ms": 12.1,
+    "state_median_ms": 2,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 0.15,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 0,
+     "last_drawn": 11
+    }
+   }
+  },
+  "100": {
+   "static": [
+    13,
+    14,
+    14
+   ],
+   "static_state": [
+    6,
+    6,
+    6
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 45875200
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 60,
+     "full": 60,
+     "partial": 0,
+     "drawn": 101,
+     "lastMs": 0
+    }
+   },
+   "hit_us": 2,
+   "hit_ms": [
+    5,
+    11,
+    13
+   ],
+   "hit_state_ms": [
+    4,
+    3,
+    4
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 12,
+    "p95_ms": 13,
+    "mean_ms": 12.15,
+    "state_median_ms": 4,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 0.1,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 0,
+     "last_drawn": 6
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 12,
+    "p95_ms": 13,
+    "mean_ms": 12.2,
+    "state_median_ms": 4,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 0.3,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 1,
+     "last_drawn": 101
+    }
+   }
+  },
+  "1000": {
+   "static": [
+    53,
+    48,
+    47
+   ],
+   "static_state": [
+    50,
+    46,
+    44
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 49807360
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 114,
+     "full": 94,
+     "partial": 20,
+     "drawn": 1001,
+     "lastMs": 1
+    }
+   },
+   "hit_us": 6,
+   "hit_ms": [
+    35,
+    33,
+    36
+   ],
+   "hit_state_ms": [
+    33,
+    33,
+    35
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 34,
+    "p95_ms": 37,
+    "mean_ms": 34.35,
+    "state_median_ms": 33,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 0.1,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 1,
+     "last_drawn": 9
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 41,
+    "p95_ms": 43,
+    "mean_ms": 41.1,
+    "state_median_ms": 39,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 1.45,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 2,
+     "last_drawn": 1001
+    }
+   }
+  },
+  "5000": {
+   "static": [
+    252,
+    215,
+    202
+   ],
+   "static_state": [
+    238,
+    206,
+    193
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 122355712
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 168,
+     "full": 128,
+     "partial": 40,
+     "drawn": 5001,
+     "lastMs": 8
+    }
+   },
+   "hit_us": 21,
+   "hit_ms": [
+    162,
+    154,
+    161
+   ],
+   "hit_state_ms": [
+    161,
+    153,
+    160
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 160,
+    "p95_ms": 168,
+    "mean_ms": 160.6,
+    "state_median_ms": 159,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 0.05,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 1,
+     "last_drawn": 13
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 193,
+    "p95_ms": 198,
+    "mean_ms": 192.8,
+    "state_median_ms": 184,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 5.75,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 7,
+     "last_drawn": 5001
+    }
+   }
+  },
+  "20000": {
+   "static": [
+    917,
+    886,
+    804
+   ],
+   "static_state": [
+    868,
+    838,
+    756
+   ],
+   "drawn_as": "canvas",
+   "memory": {
+    "dom_elements": 45,
+    "scene_elements": 2,
+    "wasm_bytes": 351731712
+   },
+   "canvas": {
+    "backing": [
+     1600,
+     1200
+    ],
+    "css": [
+     800,
+     600
+    ],
+    "role": "img",
+    "label": "Benchmark scene",
+    "described": true,
+    "stats": {
+     "paints": 222,
+     "full": 162,
+     "partial": 60,
+     "drawn": 20001,
+     "lastMs": 47
+    }
+   },
+   "hit_us": 113,
+   "hit_ms": [
+    651,
+    586,
+    637
+   ],
+   "hit_state_ms": [
+    650,
+    586,
+    637
+   ],
+   "few": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 634,
+    "p95_ms": 656,
+    "mean_ms": 631.75,
+    "state_median_ms": 632,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 0.5,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 19,
+     "last_paint_ms": 1,
+     "last_drawn": 13
+    }
+   },
+   "all": {
+    "frames": 20,
+    "capped": false,
+    "median_ms": 775,
+    "p95_ms": 793,
+    "mean_ms": 777.95,
+    "state_median_ms": 727,
+    "task_ms_per_frame": null,
+    "script_ms_per_frame": null,
+    "painter_calls_ms_per_frame": 23.85,
+    "layout_style_ms_per_frame": null,
+    "canvas": {
+     "paints": 20,
+     "frames": 20,
+     "partial_paints": 0,
+     "last_paint_ms": 49,
+     "last_drawn": 20001
+    }
+   }
+  }
+ },
+ "violations": 0,
+ "errors": []
+}

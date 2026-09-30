@@ -5,7 +5,7 @@
 // driven by scripts/ui-canvas-terminal-e2e.sh. Every app runs with
 // SKY_CSP=strict (script-src 'self' 'wasm-unsafe-eval', no inline script).
 //
-//   --mode canvas-live | canvas-spa  (fixture rust/crates/sky/tests/fixtures/ui-canvas)
+//   --mode canvas-live  (fixture rust/crates/sky/tests/fixtures/ui-canvas)
 //     * the scene is an SVG in the SVG namespace (an SVGRectElement, drawn);
 //     * a pointer move over the scene arrives as the typed Msg with the
 //       position in SCENE units (moved=x,y);
@@ -15,8 +15,26 @@
 //       draws nothing);
 //     * a click on a shape arrives as its Msg, and does not also fire the
 //       backdrop's pointer handler;
+//     * a children patch adding 3,000 shapes to an SVG applies in under 2 s
+//       as SVG elements (--browser webkit too: a Range per new child made it
+//       quadratic in WebKit);
 //     * two Ui.text in a column are two lines; a long Ui.text in a narrow box
 //       wraps inside it and does not overflow.
+//
+//   --mode canvas-spa  (the same fixture, Sky.Spa; --browser chromium |
+//   webkit; the page at devicePixelRatio 2)
+//     * the scene is a <canvas> the wasm client draws (scene_canvas.go), with
+//       role="img", the label as aria-label and a text alternative
+//       (aria-describedby: the label and the scene's text); no SVG is left;
+//     * crisp: the backing store is the CSS size times devicePixelRatio;
+//     * pixels drawn: the red square, the black line and the text;
+//     * the painter's hit test finds the square, the backdrop and, once it
+//       is added, the new dot;
+//     * a pointer move arrives as Moved in scene units; a pointer down on
+//       the backdrop adds a dot, drawn (blue pixels where it went down) in
+//       exactly one more paint; a model change outside the scene paints
+//       nothing; a click on the square is Square and adds no dot;
+//     * the Ui.text cases as above.
 //
 //   --mode terminal  (fixture ui-terminal, Sky.Live)
 //     * the terminal widget mounts, reports a size and draws on a canvas;
@@ -124,17 +142,138 @@ async function waitFor(page, fn, a, ms = 10000) {
   }
 }
 
-const text = (page, sel) => page.evaluate((s) => (document.querySelector(s) || {}).innerText || "", sel);
+const text = (page, sel) => page.evaluate((s) => ((document.querySelector(s) || {}).innerText || "").trim(), sel);
+
+// The Sky.Spa client draws a scene on a canvas (scene_canvas.go).
+async function canvasSpaCases(page) {
+  check(
+    "the wasm client booted",
+    await waitFor(page, () => !document.documentElement.hasAttribute("data-sky-hydrating") && !!document.querySelector("#app [sky-id]"), null, 30000)
+  );
+  const S = "canvas[data-sky-scene]";
+  check(
+    "the scene is a canvas drawn by the client, role img, labelled",
+    await waitFor(
+      page,
+      (s) => {
+        const c = document.querySelector(s);
+        return !!(c && c.getAttribute("role") === "img" && c.getAttribute("aria-label") === "Test scene" && c.getAttribute("data-sky-scene-backend") === "canvas");
+      },
+      S,
+      10000
+    )
+  );
+  check("no SVG scene is left in the page", await page.evaluate(() => !document.querySelector("svg[data-sky-scene]")));
+  const alt = await page.evaluate((s) => {
+    const c = document.querySelector(s);
+    const d = c && document.getElementById(c.getAttribute("aria-describedby") || "");
+    return d ? d.textContent : "";
+  }, S);
+  check("the text alternative names the scene and its text", alt === "Test scene. Text in the scene: scene.", alt);
+  const geo = await page.evaluate((s) => {
+    const c = document.querySelector(s);
+    const r = c.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height, bw: c.width, bh: c.height, dpr: devicePixelRatio };
+  }, S);
+  check("the scene is drawn at 400x200 CSS px", Math.round(geo.w) === 400 && Math.round(geo.h) === 200, JSON.stringify(geo));
+  check(
+    "crisp: the backing store is 400x200 times devicePixelRatio 2",
+    geo.dpr === 2 && geo.bw === 800 && geo.bh === 400,
+    JSON.stringify(geo)
+  );
+  // Pixels at scene points (after the painter's frame).
+  const pixel = (x, y) =>
+    page.evaluate(
+      ([s, x, y]) => {
+        const c = document.querySelector(s);
+        const k = c.width / 400;
+        return Array.from(c.getContext("2d").getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data);
+      },
+      [S, x, y]
+    );
+  const isRed = (p) => p[0] > 180 && p[1] < 80 && p[2] < 80 && p[3] > 200;
+  check(
+    "pixels drawn: the red square",
+    await waitFor(
+      page,
+      (s) => {
+        const c = document.querySelector(s);
+        const k = c.width / 400;
+        const p = c.getContext("2d").getImageData(Math.round(330 * k), Math.round(50 * k), 1, 1).data;
+        return p[0] > 180 && p[1] < 80 && p[2] < 80 && p[3] > 200;
+      },
+      S,
+      10000
+    ),
+    JSON.stringify(await pixel(330, 50))
+  );
+  const line = await pixel(200, 190);
+  check("pixels drawn: the black line", line[3] > 200 && line[0] < 80 && line[1] < 80 && line[2] < 80, JSON.stringify(line));
+  const inked = await page.evaluate((s) => {
+    const c = document.querySelector(s);
+    const k = c.width / 400;
+    const d = c.getContext("2d").getImageData(Math.round(8 * k), Math.round(6 * k), Math.round(50 * k), Math.round(18 * k)).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 128) n++;
+    return n;
+  }, S);
+  check("pixels drawn: the text", inked > 20, `${inked} inked pixels`);
+  const hits = await page.evaluate((s) => {
+    const c = document.querySelector(s);
+    return [window.Sky.sceneCanvas.hitTest(c, 330, 50), window.Sky.sceneCanvas.hitTest(c, 200, 100)];
+  }, S);
+  check("the hit test finds the square (record 1) and the backdrop (record 0)", hits[0] === 1 && hits[1] === 0, JSON.stringify(hits));
+  const paints = () => page.evaluate((s) => window.Sky.sceneCanvas.stats(document.querySelector(s)).paints, S);
+
+  const box = { x: geo.x, y: geo.y };
+  const p0 = await paints();
+  await page.mouse.move(box.x + 100, box.y + 50);
+  await page.mouse.move(box.x + 120, box.y + 70, { steps: 4 });
+  check(
+    "a pointer move arrives as Moved with scene coordinates",
+    await waitFor(page, () => /moved=12[01],(69|70|71)/.test(document.body.innerText), null, 10000),
+    await text(page, "#moved")
+  );
+  await page.waitForTimeout(200);
+  check("a model change outside the scene paints nothing", (await paints()) === p0, `${p0} -> ${await paints()}`);
+
+  await page.mouse.move(box.x + 60, box.y + 120);
+  await page.mouse.down();
+  await page.mouse.up();
+  check("a pointer down arrives as Down", await waitFor(page, () => document.body.innerText.includes("dots=1"), null, 10000), await text(page, "#dots"));
+  check(
+    "the new dot is drawn where the pointer went down",
+    await waitFor(
+      page,
+      (s) => {
+        const c = document.querySelector(s);
+        const k = c.width / 400;
+        const p = c.getContext("2d").getImageData(Math.round(60 * k), Math.round(120 * k), 1, 1).data;
+        return p[2] > 150 && p[0] < 80 && p[3] > 200;
+      },
+      S,
+      10000
+    ),
+    JSON.stringify(await pixel(60, 120))
+  );
+  await page.waitForTimeout(200);
+  check("the dot cost exactly one paint", (await paints()) === p0 + 1, `${p0} -> ${await paints()}`);
+  check(
+    "the hit test finds the new dot",
+    (await page.evaluate((s) => window.Sky.sceneCanvas.hitTest(document.querySelector(s), 60, 120), S)) === 4
+  );
+
+  await page.mouse.click(box.x + 330, box.y + 50);
+  check("a click on the square arrives as Square", await waitFor(page, () => document.body.innerText.includes("clicks=1"), null, 10000), await text(page, "#clicks"));
+  await page.waitForTimeout(400);
+  check("the click on a shape did not also add a dot", (await text(page, "#dots")) === "dots=1", await text(page, "#dots"));
+  check("the square is still red", isRed(await pixel(330, 50)), JSON.stringify(await pixel(330, 50)));
+  await textCases(page);
+}
 
 async function canvasCases(page) {
-  if (MODE === "canvas-spa") {
-    check(
-      "the wasm client booted",
-      await waitFor(page, () => !document.documentElement.hasAttribute("data-sky-hydrating") && !!document.querySelector("#app [sky-id]"), null, 30000)
-    );
-  } else {
-    await page.waitForTimeout(1200); // the SSE handshake
-  }
+  if (MODE === "canvas-spa") return canvasSpaCases(page);
+  await page.waitForTimeout(1200); // the SSE handshake
   check(
     "the scene is an SVG in the SVG namespace, labelled",
     await page.evaluate(() => {
@@ -188,6 +327,28 @@ async function canvasCases(page) {
   await page.waitForTimeout(400);
   check("the click on a shape did not also add a dot", (await text(page, "#dots")) === "dots=1", await text(page, "#dots"));
 
+  // A children patch that adds many shapes to an SVG. The client used to
+  // parse each new child through its own Range, and WebKit updates every
+  // Range it has made on each later DOM change: 3,000 new shapes took about
+  // 10 s in WebKit (5,000 took 93 s). Applied to a detached copy, so the live
+  // scene is not touched.
+  const kidsMs = await page.evaluate(() => {
+    const host = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    document.body.appendChild(host);
+    const kids = [];
+    for (let i = 0; i < 3000; i++) kids.push({ html: '<circle sky-id="bulk.' + i + '" cx="' + (i % 400) + '" cy="5" r="1"></circle>' });
+    const t0 = performance.now();
+    __skyApplyKids(host, kids);
+    const ms = performance.now() - t0;
+    const ok = host.childElementCount === 3000 && host.lastElementChild instanceof SVGCircleElement;
+    host.remove();
+    return ok ? ms : -1;
+  });
+  check("a patch adding 3,000 shapes to an SVG applies in under 2 s, as SVG elements", kidsMs >= 0 && kidsMs < 2000, `${Math.round(kidsMs)} ms`);
+  await textCases(page);
+}
+
+async function textCases(page) {
   // Ui.text wrapping.
   const two = await page.evaluate(() => {
     const spans = Array.from(document.querySelectorAll("#two-texts > span"));
@@ -469,8 +630,12 @@ try {
     csp || "(no Content-Security-Policy header)"
   );
 
-  browser = await (BROWSER === "webkit" ? webkit : chromium).launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1000, height: 900 } });
+  // UI_E2E_HEADED=1 runs a visible browser (a local run on a desktop).
+  browser = await (BROWSER === "webkit" ? webkit : chromium).launch({ headless: !process.env.UI_E2E_HEADED });
+  const context = await browser.newContext({
+    viewport: { width: 1000, height: 900 },
+    ...(MODE === "canvas-spa" ? { deviceScaleFactor: 2 } : {}),
+  });
   const violations = [];
   const consoleErrors = [];
   await context.exposeBinding("__skyCspReport", (_src, v) => violations.push(v));
@@ -495,7 +660,12 @@ try {
   page.on("console", (m) => {
     // A request that fails while the test holds the browser offline is the
     // point of that step, not an error of the page.
-    if (m.type() === "error" && !(offline || /ERR_INTERNET_DISCONNECTED|net::ERR_/.test(m.text()))) consoleErrors.push(m.text());
+    if (m.type() !== "error" || offline || /ERR_INTERNET_DISCONNECTED|net::ERR_/.test(m.text())) return;
+    // A headed Chromium asks for /favicon.ico, which the fixtures do not
+    // serve; that 404 is the browser's, not the page's.
+    const at = (m.location() || {}).url || "";
+    if (/status of 404/.test(m.text()) && /\/favicon\.ico$/.test(at)) return;
+    consoleErrors.push(m.text() + (at ? " (" + at + ")" : ""));
   });
   page.on("pageerror", (e) => consoleErrors.push("[pageerror] " + e.message));
   const origSetOffline = context.setOffline.bind(context);

@@ -668,15 +668,44 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `onPointerMove` (coalesced to one per animation frame) and
   `onPointerUp` give a typed `Point` in scene units, whatever size the
   scene is drawn at; `sceneWith` puts events on the whole scene. `label` is
-  required and is the scene's accessible name. Every web backend (Sky.Live,
-  Sky.Spa, the desktop window) draws the scene as inline SVG diffed like
-  any element; a batched `<canvas>` draw list was not taken for Sky.Spa and
-  the desktop client, because it would repaint every shape per frame
-  through one wasm-to-JS call per operation and lose per-shape hit testing
-  and the accessibility tree (the reasoning is in
-  `docs/skyui/overview.md`). Sky.Tui rasterises the scene into Braille
-  cells. (`sky-stdlib/Std/Ui/Canvas.sky`, `runtime-go/rt/scene_client.go`,
+  required and is the scene's accessible name. Sky.Live (and `--target
+  desktop`) draws the scene as server-rendered inline SVG diffed like any
+  element. The Sky.Spa client (`web:app` and the native shells) draws it on
+  a batched `<canvas>`: the scene is a draw list the page's painter decodes
+  in one call and draws in one pass per animation frame, a frame where a
+  few shapes changed redraws only the region they cover, the backing store
+  follows `devicePixelRatio`, pointer events are hit-tested against the
+  painter's scene index (box, then path fill and stroke) and reach the
+  shape and its groups as in SVG, and the canvas has `role="img"`, the
+  label and a text alternative (`aria-describedby`: the label and the
+  scene's texts). Sky.Tui rasterises the scene into Braille cells.
+  (`sky-stdlib/Std/Ui/Canvas.sky`, `runtime-go/rt/scene_client.go`,
+  `scene_canvas.go`, `scene_canvas_wasm.go`, `dom_render_wasm.go`,
   `runtime-go/rt/tui_scene.go`.)
+- **`Std.Ui.Canvas` backends, measured** (`docs/perf/runs/canvas-20260930/`,
+  method, raw JSON and figures there). Scenes of 10, 100, 1,000, 5,000 and
+  20,000 mixed shapes (rectangles, circles, paths, texts), headed Chrome and
+  WebKit at devicePixelRatio 2 under `SKY_CSP=strict`: static render,
+  per-frame time with a few shapes moving and with every shape moving, click
+  latency, hit-test time and memory, for SVG on Sky.Live and Sky.Spa and the
+  canvas on Sky.Spa. No size is faster as SVG on Sky.Spa (10 and 100 shapes
+  tie); from 1,000 shapes the canvas renders a scene 2.1 to 2.6 times
+  faster, moves every shape 1.6 to 5.9 times faster (20,000 shapes: 896 ms
+  against 3,714 ms a frame in Chrome, 775 against 4,578 ms in WebKit) and
+  hit-tests 2.5 to 15 times faster, with 45 DOM elements whatever the size.
+  So Sky.Spa draws every scene on the canvas (no size threshold) and
+  Sky.Live, server-rendered, keeps SVG. On Sky.Spa a frame of a large scene
+  is still `view` and the diff in wasm (about 190 ms at 5,000 shapes on
+  either backend); Sky.Live does that work on the server (35 ms).
+- **Sky.Live and the desktop window: adding many SVG children was quadratic
+  in WebKit.** The clients parsed each new child of an `<svg>` through its
+  own `Range`, and WebKit updates every live `Range` on each later DOM
+  change: a patch adding 5,000 shapes took 93 s in WebKit (1,000: 315 ms).
+  Both clients now parse through a detached element of the container's own
+  kind: 5,000 shapes render in 138 ms in WebKit, and 20,000 in 395 ms in
+  Chrome (was 3,096 ms). (`runtime-go/rt/live_client_asset.go`,
+  `webview.go`; a WebKit case in `scripts/ui-canvas-terminal-e2e.sh` that
+  fails at 10 s on the old client.)
 - **`Std.Ui.Terminal`: an interactive terminal element bound to a PTY
   process.** `Terminal.init id`, `Terminal.attach toMsg process`,
   `Terminal.update toMsg msg` and `Terminal.view toMsg terminal attrs` wire a
@@ -739,15 +768,20 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 - **Tests:** conformance suites `UiTextWrapConformanceTest` (12) and
   `UiCanvasConformanceTest` (18: the exact SVG, the pointer markers, the
   terminal element); Go tests for the Braille cell golden, the text wrap,
-  the pointer runtime (node), the server terminal screen against known
+  the pointer runtime (node), the canvas backend's draw list and patch
+  routing and its painter in node against a recording canvas (one pass per
+  frame, partial repaints, hit tests, pointer mapping, the text
+  alternative, the device pixel ratio), the server terminal screen against known
   sequences and every frame applied to a model of the widget (random
   sequences, resizes and floods), the widget in node (the op model, gap
   detection, draw batching against a recording canvas, and Go-made frames
   applied by the JS model), a real shell on a PTY (remount repaint, a ring
   overflow, the check frame, resize), and the widget-command queue; a
   Sky.Spa split test; and `scripts/ui-canvas-terminal-e2e.sh` (Playwright
-  under `SKY_CSP=strict`: scene pointer events on Sky.Live and Sky.Spa, text
-  wrapping, and a terminal bound to `sh` that draws `echo hi` on the canvas,
+  under `SKY_CSP=strict`: scene pointer events on Sky.Live in Chromium and
+  WebKit, the Sky.Spa canvas in Chromium and WebKit (labelled, text
+  alternative, backing store at devicePixelRatio 2, shapes' pixels drawn, a
+  new shape in exactly one more paint, hit tests), text wrapping, and a terminal bound to `sh` that draws `echo hi` on the canvas,
   copies a selection, runs a full-screen redraw loop within its frame
   budget, follows a resize, survives a dropped SSE connection and is
   repainted after a reload by one frame), wired into the release and nightly

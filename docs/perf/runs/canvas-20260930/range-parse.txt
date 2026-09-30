@@ -1,0 +1,2 @@
+webkit {"range-per-kid 1000":305,"range-per-kid 5000":49199,"one-range 1000":4,"one-range 5000":17,"svg-innerHTML 1000":6,"svg-innerHTML 5000":24}
+chromium {"range-per-kid 1000":7,"range-per-kid 5000":123,"one-range 1000":4,"one-range 5000":17,"svg-innerHTML 1000":4,"svg-innerHTML 5000":20}
