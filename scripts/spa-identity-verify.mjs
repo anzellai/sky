@@ -111,7 +111,8 @@ try {
       }
       return o;
     });
-  const sid = async () => (await ctx.cookies()).find((c) => c.name === "sky_sid");
+  // v0.27.0: the Sky.Spa session cookie is `sky_spa` (A-2b).
+  const sid = async () => (await ctx.cookies()).find((c) => c.name === "sky_spa");
   const holdIdentity = async (cookie) => {
     await ctx.clearCookies();
     if (cookie) await ctx.addCookies([cookie]);
@@ -126,7 +127,7 @@ try {
   await click(A, "note");
   check("A: scratch state", await view(A), "who=practitioner:u1 note=u1-private clicks=2");
   const cookieA = await sid();
-  if (!cookieA) throw new Error("sign-in set no sky_sid cookie");
+  if (!cookieA) throw new Error("sign-in set no sky_spa cookie");
 
   // Tab B: a signed-out load (another person's browser session) never sees A's state.
   await holdIdentity(null);

@@ -2158,6 +2158,20 @@ pub(crate) fn emit_build_req(
     }
 }
 
+/// E-4: the hash of the generated wire schema: the shared wire module (every
+/// request/response record and codec) plus the RPC route set. Two backends
+/// that can read each other's requests share it; a deploy that changes the
+/// wire changes it. 16 hex digits.
+pub(crate) fn wire_schema_hash(shared_src: &str, server: &[(String, BranchIo)]) -> String {
+    let mut h = crate::sha256::Sha256::new();
+    h.update(shared_src.as_bytes());
+    for (name, _) in server {
+        h.update(b"\n/_rpc/");
+        h.update(name.as_bytes());
+    }
+    h.finish()[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// SHARED WIRE EMIT — server leg: encode the write-set into the RPC `Resp` value,
 /// read from the post-`update` model. The exact inverse of [`emit_apply_delta`].
 /// `result_model` is the Sky binding holding the model to read (`m2`, or `mFinal`
@@ -3859,6 +3873,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         })
     };
     let settle_plan = build_settle_plan(&db, &check_ids, entry, &report, &model_field_names);
+    let wire_hash = wire_schema_hash(&shared_src, &server);
     let backend_src = gen_backend(
         &file,
         &src,
@@ -3880,6 +3895,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &settle_plan,
         &device_only,
         ssr_model_anno(&file, &src).as_deref(),
+        &wire_hash,
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
@@ -3979,7 +3995,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     write(
         "frontend/sky.toml",
         &format!(
-            "{}{dep_sections}",
+            "{}wire = \"{wire_hash}\"\n{dep_sections}",
             sky_toml(&format!("{proj_name}-frontend"), "frontend")
         ),
         &mut files,
@@ -6730,6 +6746,10 @@ fn gen_backend(
     // The model's type as the entry can name it (see [`ssr_model_anno`]):
     // the first-paint encoder is annotated with it.
     model_anno: Option<&str>,
+    // E-4: the hash of the generated wire schema, set at boot and carried by
+    // every page (`<meta name="sky-wire">`), so a tab from an older deploy is
+    // told to reload instead of sending a request the backend cannot read.
+    wire_hash: &str,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -7083,7 +7103,10 @@ fn gen_backend(
     // server-runnable perform leaf back through `update` to a fixpoint and
     // returns the settled model (runtime-go/rt/spa_chain_notjs.go). `model` is a
     // plain type variable (the concrete Model binds it at the call site).
-    if any_chaining {
+    let any_follow = follow
+        .map(|(fc, _)| !fc.branches.is_empty())
+        .unwrap_or(false);
+    if any_chaining || any_follow {
         handlers.push_str(
             "-- Server-internal effect chaining: settle a `Cmd.perform` chain\n\
              -- server-side to its fixpoint and answer with the final model diff\n\
@@ -7091,6 +7114,20 @@ fn gen_backend(
              spaChainSettle_ : model -> any -> any -> ( model, any )\n\
              spaChainSettle_ =\n\
              \x20   Ffi.kernel \"Spa_settleServerChain\"\n\n\n",
+        );
+    }
+    if any_follow {
+        handlers.push_str(
+            "-- E-4: a request with no `X-Sky-Wire` header came from a page built\n\
+             -- before v0.27.0, which cannot run follow-ups itself.\n\
+             spaIsLegacyRpc_ : Request -> Bool\n\
+             spaIsLegacyRpc_ =\n\
+             \x20   Ffi.kernel \"Spa_isLegacyRpc\"\n\n\n\
+             spaLegacySettle_ req m cmd =\n\
+             \x20   if spaIsLegacyRpc_ req then\n\
+             \x20       spaChainSettle_ m cmd update\n\n\
+             \x20   else\n\
+             \x20       ( m, cmd )\n\n\n",
         );
     }
     // PATTERN-2 (client-result perform): run the single server task inside a
@@ -7223,13 +7260,28 @@ fn gen_backend(
              spaEndSession_ : Secret -> String -> Task Error ()\n\
              spaEndSession_ =\n\
              \x20   Ffi.kernel \"Spa_endSession\"\n\n\n\
+             -- v0.27.0: the Spa session cookie is `sky_spa` (A-2b). The runtime reads\n\
+             -- it, else a legacy `sky_sid` that verifies as a Spa token, converting a\n\
+             -- pre-v0.27 token once (E-3); `spaSessionCookies_` moves the cookie on\n\
+             -- the response (runtime-go/rt/spa_session_legacy.go).\n\
+             spaSessionToken_ : Secret -> Request -> String\n\
+             spaSessionToken_ =\n\
+             \x20   Ffi.kernel \"Spa_sessionToken\"\n\n\n\
+             spaSessionCookies_ : Secret -> Request -> Response -> Response\n\
+             spaSessionCookies_ =\n\
+             \x20   Ffi.kernel \"Spa_sessionCookies\"\n\n\n\
+             -- A-6: open the sign-out store at boot; an Err (production, no store,\n\
+             -- an unwritable data dir) stops start-up with the message.\n\
+             spaSessionBoot_ : () -> Task Error ()\n\
+             spaSessionBoot_ =\n\
+             \x20   Ffi.kernel \"Spa_sessionBoot\"\n\n\n\
              spaSessionCookie_ : Request -> String\n\
              spaSessionCookie_ req =\n\
-             \x20   case Server.getCookie \"sky_sid\" req of\n\
-             \x20       Just tok ->\n\
-             \x20           tok\n\n\
-             \x20       Nothing ->\n\
-             \x20           \"\"\n\n\n",
+             \x20   spaSessionToken_ sessionSecret_ req\n\n\n\
+             -- Every RPC, SSR and sign-out answer passes through here, so a\n\
+             -- request that came in on the legacy cookie leaves on `sky_spa`.\n\
+             spaWithSession_ req answer_ =\n\
+             \x20   Task.map (spaSessionCookies_ sessionSecret_ req) answer_\n\n\n",
         );
         // One verify helper per identity field: return the TRUSTED value from the
         // signed cookie, or the init value when there is no valid cookie — NEVER
@@ -7245,19 +7297,22 @@ fn gen_backend(
             let cname = session_codec_name(&p.name);
             handlers.push_str(&format!(
                 "{vname} req initVal =\n\
-                 \x20   case Server.getCookie \"sky_sid\" req of\n\
-                 \x20       Just tok ->\n\
-                 \x20           case spaVerifySession_ sessionSecret_ tok of\n\
-                 \x20               Ok claims ->\n\
-                 \x20                   case Codec.fromJson {cname} claims.p{idx} of\n\
-                 \x20                       Ok v ->\n\
-                 \x20                           v\n\n\
-                 \x20                       Err _ ->\n\
-                 \x20                           initVal\n\n\
-                 \x20               Err _ ->\n\
-                 \x20                   initVal\n\n\
-                 \x20       Nothing ->\n\
-                 \x20           initVal\n\n\n",
+                 \x20   let\n\
+                 \x20       tok =\n\
+                 \x20           spaSessionCookie_ req\n\
+                 \x20   in\n\
+                 \x20   if tok == \"\" then\n\
+                 \x20       initVal\n\n\
+                 \x20   else\n\
+                 \x20       case spaVerifySession_ sessionSecret_ tok of\n\
+                 \x20           Ok claims ->\n\
+                 \x20               case Codec.fromJson {cname} claims.p{idx} of\n\
+                 \x20                   Ok v ->\n\
+                 \x20                       v\n\n\
+                 \x20                   Err _ ->\n\
+                 \x20                       initVal\n\n\
+                 \x20           Err _ ->\n\
+                 \x20               initVal\n\n\n",
             ));
         }
         // signedResponse_ req m resp: re-issue the `sky_sid` cookie from the model
@@ -7285,7 +7340,7 @@ fn gen_backend(
             "signedResponse_ req m resp =\n\
              \x20   case spaSignSession_ sessionSecret_ (spaSessionCookie_ req) {{ {claims} }} of\n\
              \x20       Ok tok ->\n\
-             \x20           Server.withCookie \"sky_sid\" tok \"Path=/; HttpOnly; SameSite=Lax\" resp\n\n\
+             \x20           Server.withCookie \"sky_spa\" tok \"Path=/; HttpOnly; SameSite=Lax\" resp\n\n\
              \x20       Err _ ->\n\
              \x20           resp\n\n\n"
         ));
@@ -7298,9 +7353,13 @@ fn gen_backend(
         handlers.push_str(
             "spaSignOutHandler : Handler\n\
              spaSignOutHandler req =\n\
+             \x20   spaWithSession_ req (spaSignOutInner_ req)\n\n\n\
+             -- Clears `sky_spa` only: `sky_sid` may be a Sky.Live app's cookie on the\n\
+             -- same host (A-2b).\n\
+             spaSignOutInner_ req =\n\
              \x20   let\n\
              \x20       cleared_ =\n\
-             \x20           Server.withCookie \"sky_sid\" \"\" \"Path=/; HttpOnly; SameSite=Lax; Max-Age=0\" (Server.json \"{}\")\n\
+             \x20           Server.withCookie \"sky_spa\" \"\" \"Path=/; HttpOnly; SameSite=Lax; Max-Age=0\" (Server.json \"{}\")\n\
              \x20   in\n\
              \x20   spaEndSession_ sessionSecret_ (spaSessionCookie_ req)\n\
              \x20       |> Task.map (\\_ -> cleared_)\n\
@@ -7396,7 +7455,13 @@ fn gen_backend(
                 .unwrap_or(false);
         // The model the response reads from: the chain's final model when
         // chaining, else the branch's own updated model.
-        let result_model = if is_chaining { "mFinal" } else { "m2" };
+        let result_model = if is_chaining {
+            "mFinal"
+        } else if is_follow {
+            "m3_"
+        } else {
+            "m2"
+        };
         // The response value.
         let resp_val = if is_client_result {
             "{ result = result }".to_string()
@@ -7458,7 +7523,13 @@ fn gen_backend(
             } else if is_client_result {
                 format!("\n{indent}result =\n{indent}    spaRunPerform_ cmd\n")
             } else if is_follow {
-                format!("\n{indent}follow_ =\n{indent}    spaEncodeFollows_ (spaFollowUps_ cmd)\n")
+                // E-4: a request from a pre-v0.27 page (no `X-Sky-Wire`) runs the
+                // server-runnable follow-ups inline, as v0.26.1 did, and answers
+                // only what is left, so nothing runs twice.
+                format!(
+                    "\n{indent}( m3_, cmd3_ ) =\n{indent}    spaLegacySettle_ req m2 cmd\n\
+                     \n{indent}follow_ =\n{indent}    spaEncodeFollows_ (spaFollowUps_ cmd3_)\n"
+                )
             } else {
                 String::new()
             }
@@ -7495,11 +7566,26 @@ fn gen_backend(
                  \x20           {answer}\n"
             )
         };
+        // A-2b/E-3: with a session projection every answer passes through
+        // `spaWithSession_`, which moves a legacy `sky_sid` to `sky_spa`.
+        let handler_body_name = if session_proj.is_empty() {
+            handler.clone()
+        } else {
+            handlers.push_str(&format!(
+                "{handler} : Handler\n{handler} req =\n    spaWithSession_ req ({handler}Inner_ req)\n\n\n"
+            ));
+            format!("{handler}Inner_")
+        };
+        let handler_sig = if session_proj.is_empty() {
+            format!("{handler} : Handler\n")
+        } else {
+            String::new()
+        };
         handlers.push_str(&format!(
             "-- Generated endpoint for the SERVER branch `{name}`: decode the read-set,\n\
              -- reuse the app's own init + update to run the REAL effect, encode the write-set.\n\
-             {handler} : Handler\n\
-             {handler} req =\n\
+             {handler_sig}\
+             {handler_body_name} req =\n\
              \x20   case Codec.fromJson {req_codec} req.body of\n\
              \x20       Ok p ->\n\
              \x20           let\n\
@@ -7781,6 +7867,18 @@ fn gen_backend(
                 ));
             }
         }
+        // A-2b/E-3: with a session projection the page answer passes through
+        // `spaWithSession_` too (the legacy cookie moves to `sky_spa`).
+        let (ssr_head_decl, ssr_name) = if session_proj.is_empty() {
+            ("ssrHandler : Handler\n".to_string(), "ssrHandler")
+        } else {
+            (String::new(), "ssrInner_")
+        };
+        if !session_proj.is_empty() {
+            handlers.push_str(
+                "ssrHandler : Handler\nssrHandler req =\n    spaWithSession_ req (ssrInner_ req)\n\n\n",
+            );
+        }
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -7792,15 +7890,15 @@ fn gen_backend(
              -- model codec from the value — it compiles for ANY model (an\n\
              -- unencodable field degrades the blob at runtime, never breaks the build).\n\
              -- `data-sky-settled` names the commands finished here (SPA-10).\n\
-             ssrHandler : Handler\n\
-             ssrHandler {req_param} =\n\
+             {ssr_head_decl}\
+             {ssr_name} {req_param} =\n\
              \x20   let\n\
              {lets}\
              \x20   in\n\
              \x20   Task.succeed\n\
              \x20       (Server.html\n\
              \x20           (spaSsrPageSeeded\n\
-             \x20               (spaSsrRenderHead spaHead_ resolved)\n\
+             \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
              \x20               modelJson\n\
@@ -7942,18 +8040,35 @@ fn gen_backend(
     if has_synth_console_auth {
         startup.push("Server.setConsoleAuth spaConsoleGate_");
     }
+    // Boot tasks that run, in order, before the server listens; an Err stops
+    // start-up. E-4: record the wire hash. A-6: open the sign-out store.
+    let mut boot: Vec<String> = vec![format!("spaSetWireHash_ \"{wire_hash}\"")];
+    if !session_proj.is_empty() {
+        boot.push("spaSessionBoot_ ()".to_string());
+    }
+    handlers.push_str(
+        "-- E-4: the wire-schema hash this backend answers for; a request from a\n\
+         -- page built for another hash gets 409 + `X-Sky-Status: reload`\n\
+         -- (runtime-go/rt/spa_wire.go).\n\
+         spaSetWireHash_ : String -> Task Error ()\n\
+         spaSetWireHash_ =\n\
+         \x20   Ffi.kernel \"Spa_setWireHash\"\n\n\n",
+    );
+    handlers.push_str(&format!(
+        "spaListen_ : Task Error ()\nspaListen_ =\n    Server.listen\n        serverPort\n{listen_arg}\n\n\n"
+    ));
+    let boot_expr = format!(
+        "Task.sequence [ {} ]\n        |> Task.andThen (\\_ -> spaListen_)",
+        boot.join(", ")
+    );
     let main_decl = if startup.is_empty() {
-        format!(
-            "main : Task Error ()\nmain =\n    Server.listen\n        serverPort\n{listen_arg}\n"
-        )
+        format!("main : Task Error ()\nmain =\n    {boot_expr}\n")
     } else {
         let lets: String = startup
             .iter()
             .map(|task| format!("        _ =\n            {task}\n"))
             .collect();
-        format!(
-            "main : Task Error ()\nmain =\n    let\n{lets}    in\n    Server.listen\n        serverPort\n{listen_arg}\n"
-        )
+        format!("main : Task Error ()\nmain =\n    let\n{lets}    in\n    {boot_expr}\n")
     };
     handlers.push_str(&main_decl);
 

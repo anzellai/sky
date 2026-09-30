@@ -5075,13 +5075,25 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
         .map_err(|e| format!("write {boot_name}: {e}"))?;
 
     // index.html — always regenerated so it references the current hashed wasm.
-    std::fs::write(
-        dist.join("index.html"),
-        WASM_INDEX_HTML
-            .replace("{{WASM}}", &wasm_name)
-            .replace("{{BOOT}}", &boot_name),
-    )
-    .map_err(|e| format!("write index.html: {e}"))?;
+    // A split frontend also carries its wire-schema hash (E-4), which the
+    // client sends with every RPC (`[spa] wire` in the generated sky.toml).
+    let mut index = WASM_INDEX_HTML
+        .replace("{{WASM}}", &wasm_name)
+        .replace("{{BOOT}}", &boot_name);
+    if let Some(wire) = dist
+        .parent()
+        .and_then(|p| project::sky_toml_section_key(p, "spa", "wire"))
+        .filter(|w| w.chars().all(|c| c.is_ascii_hexdigit()) && !w.is_empty())
+    {
+        index = index.replacen(
+            "<meta charset=\"utf-8\" />",
+            &format!(
+                "<meta charset=\"utf-8\" />\n    <meta name=\"sky-wire\" content=\"{wire}\" />"
+            ),
+            1,
+        );
+    }
+    std::fs::write(dist.join("index.html"), index).map_err(|e| format!("write index.html: {e}"))?;
     t_stage.end();
 
     // Precompress the wasm + loader so a static host / Caddy can serve them with

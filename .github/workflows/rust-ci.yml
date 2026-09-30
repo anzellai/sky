@@ -1601,8 +1601,11 @@ jobs:
           node-version: '22'
       - name: rt tests under the race detector, with a live PostgreSQL
         working-directory: runtime-go
+        # The DSN-gated live tests fail, never skip, without it (G-8,
+        # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: CGO_ENABLED=1 go test -race ./rt/... -count=1
       - name: Bound the Go caches before save
         if: always()

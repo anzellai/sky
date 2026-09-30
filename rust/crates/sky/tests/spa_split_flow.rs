@@ -4791,7 +4791,8 @@ fn curl_post_full(
             }
         } else if line.to_ascii_lowercase().starts_with("set-cookie:") {
             let v = line[line.find(':').unwrap() + 1..].trim();
-            if v.starts_with("sky_sid=") {
+            // v0.27.0: the Sky.Spa session cookie is `sky_spa` (A-2b).
+            if v.starts_with("sky_spa=") {
                 set_cookie = Some(v.split(';').next().unwrap_or(v).trim().to_string());
             }
         } else if line.trim().is_empty() {
@@ -4867,7 +4868,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     // back to the init value (never the wire value) when there is no valid cookie.
     assert!(
         backend.contains("case Codec.fromJson spaSessionCodecSession_ claims.p0 of")
-            && backend.contains("Nothing ->\n            initVal"),
+            && backend.contains("if tok == \"\" then\n        initVal"),
         "the verify helper must decode the signed claim and fall back to initVal:\n{backend}"
     );
     // (c) the login branch signs a Set-Cookie around its response.
@@ -4876,8 +4877,22 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
         "the establishing (login) branch must sign a Set-Cookie:\n{backend}"
     );
     assert!(
-        backend.contains(r#"Server.withCookie "sky_sid" tok "Path=/; HttpOnly; SameSite=Lax""#),
-        "signedResponse_ must set an httpOnly sky_sid cookie:\n{backend}"
+        backend.contains(r#"Server.withCookie "sky_spa" tok "Path=/; HttpOnly; SameSite=Lax""#),
+        "signedResponse_ must set an httpOnly sky_spa cookie:\n{backend}"
+    );
+    // A-2b / E-3 / A-6 (generator half; the runtime is S2's): the token is read
+    // through the runtime (legacy `sky_sid` converted once), every answer moves
+    // the cookie to `sky_spa`, and the sign-out store is opened at boot.
+    assert!(
+        backend.contains("spaSessionToken_ sessionSecret_ req")
+            && backend.contains("spaWithSession_ req (")
+            && !backend.contains("Server.getCookie \"sky_sid\""),
+        "the session token and cookie move go through the runtime:\n{backend}"
+    );
+    let main_at = backend.find("\nmain =").expect("a main");
+    assert!(
+        backend[main_at..].contains("spaSessionBoot_ ()"),
+        "main opens the sign-out store before it listens:\n{backend}"
     );
     // a SaveAdmin (write-set {note}, no session) must NOT sign a cookie.
     assert!(
@@ -5184,7 +5199,7 @@ fn spa_sign_out_revokes_the_signed_session_cookie() {
         "the sign-out endpoint must answer 200: {ctx}"
     );
     assert!(
-        signout.2.as_deref() == Some("sky_sid="),
+        signout.2.as_deref() == Some("sky_spa="),
         "the sign-out endpoint must clear the cookie, got {:?}: {ctx}",
         signout.2
     );
@@ -6843,7 +6858,10 @@ fn web_app_boot_setup_runs_in_backend_main_not_frontend() {
     // The backend `main` forces `spaBootSetup_`, and it appears BEFORE the
     // `Server.listen` call (so setup runs first).
     let boot_at = back.find("_ =\n            spaBootSetup_");
-    let listen_at = back.find("Server.listen");
+    // v0.27.0: `main` listens through `spaListen_` after its boot tasks.
+    let listen_at = back
+        .find("main =")
+        .and_then(|m| back[m..].find("spaListen_").map(|i| m + i));
     assert!(
         boot_at.is_some(),
         "backend `main` must force `spaBootSetup_` in a `let … in Server.listen`:\n{back}"
@@ -7082,7 +7100,7 @@ fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
     let cookie = login
         .1
         .lines()
-        .find(|l| l.to_ascii_lowercase().starts_with("set-cookie: sky_sid="))
+        .find(|l| l.to_ascii_lowercase().starts_with("set-cookie: sky_spa="))
         .map(|l| {
             let v = l[l.find(':').unwrap() + 1..].trim();
             v.split(';').next().unwrap().to_string()
@@ -8579,6 +8597,105 @@ fn a_whole_model_write_with_a_follow_up_builds() {
     if required(Need::Go, have_go()) {
         assert!(out.status.success(), "the web:app build failed:\n{log}");
     }
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// POST `body` to `path` with extra `headers`; returns (status, response
+/// headers lower-cased, body).
+fn curl_post_with_headers(
+    port: u16,
+    path: &str,
+    body: &str,
+    headers: &[&str],
+) -> (u32, String, String) {
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-s",
+        "-i",
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+    ]);
+    for h in headers {
+        cmd.args(["-H", h]);
+    }
+    let out = cmd
+        .args(["-d", body, &format!("http://127.0.0.1:{port}{path}")])
+        .output()
+        .expect("curl");
+    let text = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    let (head, body) = text.split_once("\n\n").unwrap_or((&text, ""));
+    let status = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    (status, head.to_ascii_lowercase(), body.to_string())
+}
+
+/// E-4 (the generator half; the runtime is S2's): the split stamps a
+/// wire-schema hash into the backend (`Spa_setWireHash` at boot) and the page
+/// (`<meta name="sky-wire">` in the static index), and a follow-up branch
+/// answers a pre-v0.27 page (no `X-Sky-Wire`) by running the server-runnable
+/// follow-ups inline, so nothing runs twice.
+/// - a request for another wire hash gets 409 + `X-Sky-Status: reload`;
+/// - a current request answers the follow-up for the client to run;
+/// - a header-less (legacy) request runs it on the server and answers none.
+#[test]
+fn the_wire_hash_and_legacy_follow_ups_are_generated() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build("spa-whole-model-follow", &[]);
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let front_toml = split_file(&proj, "frontend/sky.toml");
+    let wire = front_toml
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("wire = \""))
+        .map(|w| w.trim_end_matches('"').to_string())
+        .unwrap_or_else(|| panic!("the frontend records its wire hash:\n{front_toml}"));
+    let back = split_file(&proj, "backend/src/Main.sky");
+    assert!(
+        back.contains(&format!("spaSetWireHash_ \"{wire}\"")),
+        "the backend sets the same hash at boot:\n{back}"
+    );
+    let index = split_file(&proj, "frontend/dist/index.html");
+    assert!(
+        index.contains(&format!("<meta name=\"sky-wire\" content=\"{wire}\" />")),
+        "the page carries the hash:\n{index}"
+    );
+    let (_child, port) = start_split_backend(&proj);
+    let body = r#"{"draft":"","notice":"","text":"hi"}"#;
+    let (code, head, _) =
+        curl_post_with_headers(port, "/_rpc/Ask", body, &["X-Sky-Wire: 0000000000000000"]);
+    assert_eq!(code, 409, "another wire hash is told to reload:\n{head}");
+    assert!(head.contains("x-sky-status: reload"), "{head}");
+    let wire_header = format!("X-Sky-Wire: {wire}");
+    let (code, _, current) = curl_post_with_headers(port, "/_rpc/Ask", body, &[&wire_header]);
+    assert_eq!(code, 200, "{current}");
+    let v: serde_json::Value = serde_json::from_str(&current).expect("json");
+    assert!(
+        v["spaFollow_"]
+            .as_str()
+            .is_some_and(|f| f.contains("Submitted")),
+        "a current client runs the follow-up itself: {current}"
+    );
+    let (code, _, legacy) = curl_post_with_headers(port, "/_rpc/Ask", body, &[]);
+    assert_eq!(code, 200, "{legacy}");
+    let v: serde_json::Value = serde_json::from_str(&legacy).expect("json");
+    assert_eq!(
+        v["spaFollow_"].as_str(),
+        Some("[]"),
+        "a legacy page gets no follow-up to run a second time: {legacy}"
+    );
+    assert_ne!(
+        v["notice"].as_str(),
+        Some("sending"),
+        "the follow-up ran on the server for the legacy page: {legacy}"
+    );
     let _ = std::fs::remove_dir_all(&proj);
 }
 
