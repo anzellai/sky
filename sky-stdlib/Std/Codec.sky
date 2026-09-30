@@ -398,16 +398,16 @@ buildObject (ObjectCodec o) =
 --     userCodec : Codec User
 --     userCodec = Codec.auto blankUser
 auto : a -> Codec a
-auto =
-    autoBase True
+auto witness =
+    autoBase True witness
 
 
 -- | Like `auto`, but keeps camelCase column / JSON-key names (`priceMinor` stays
 -- `priceMinor`) — for a camelCase schema or API. `auto` (snake_case) is the
 -- default; per-column control still uses an explicit `Codec.field`.
 autoCamel : a -> Codec a
-autoCamel =
-    autoBase False
+autoCamel witness =
+    autoBase False witness
 
 
 autoBase : Bool -> a -> Codec a
