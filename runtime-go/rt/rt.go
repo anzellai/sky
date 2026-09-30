@@ -7459,7 +7459,10 @@ func File_readFileLimit(path any, limit any) any {
 			p := fmt.Sprintf("%v", path)
 			n := int64(AsInt(limit))
 			if n <= 0 {
-				n = defaultFileReadLimit
+				// A limit below 1 used to mean "the 100 MB default", so a
+				// computed limit that went to 0 or below read the whole file
+				// (C-18). It is refused.
+				return Err[any, any](ErrInvalidInput(fmt.Sprintf("File.readFileLimit: maxBytes must be at least 1, got %d. In v0.27.0 a limit below 1 no longer reads the whole file: pass a positive limit, e.g. File.readFileLimit path 1048576. see docs/migration/v0.27.md#readfilelimit-positive-limit", n)))
 			}
 			f, err := os.Open(p)
 			if err != nil {

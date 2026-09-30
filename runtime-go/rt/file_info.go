@@ -123,6 +123,13 @@ func File_chmod(modeArg, pathArg any) any {
 			return r
 		}
 		mode := AsInt(modeArg)
+		if mode == -1 {
+			// File.permissions gives -1 for a digit outside 0 to 7 (v0.27.0).
+			return Err[any, any](ErrInvalidInput(
+				"File.chmod: the mode came from File.permissions with a digit outside 0 to 7. " +
+					"In v0.27.0 a digit is no longer clamped into range: pass digits 0 to 7, " +
+					"e.g. File.permissions 6 4 4. see docs/migration/v0.27.md#file-permissions-no-clamp"))
+		}
 		if mode < 0 || mode > 0o7777 {
 			return Err[any, any](ErrInvalidInput(fmt.Sprintf(
 				"File.chmod: mode %#o is outside 0 .. 0o7777", mode)))
@@ -175,6 +182,11 @@ func File_realPath(pathArg any) any {
 // promptly and do not let untrusted parties write links inside the root.
 func File_resolveWithin(rootArg, pathArg any) any {
 	return func() any {
+		// An empty root would resolve against the working directory (C-18):
+		// a confinement check must name its root.
+		if AsString(rootArg) == "" {
+			return Err[any, any](ErrInvalidInput("File.resolveWithin: the root is empty. In v0.27.0 an empty root is refused instead of meaning the working directory: pass the root, e.g. File.resolveWithin \"./public\" path. see docs/migration/v0.27.md#resolvewithin-empty-root"))
+		}
 		root, err := filepath.Abs(AsString(rootArg))
 		if err != nil {
 			return Err[any, any](fileError("File.resolveWithin", err))
@@ -191,6 +203,11 @@ func File_resolveWithin(rootArg, pathArg any) any {
 			p = filepath.Join(realRoot, p)
 		}
 		resolved, err := resolvePath(p)
+		if errors.Is(err, errResolveDotDotAfterMissing) {
+			return Err[any, any](ErrPermissionDenied(fmt.Sprintf(
+				"File.resolveWithin: %s has `..` after a component that does not exist, so it cannot be checked against the root %s",
+				AsString(pathArg), realRoot)))
+		}
 		if err != nil {
 			return Err[any, any](fileError("File.resolveWithin", err))
 		}
@@ -216,12 +233,17 @@ func pathWithin(root, p string) bool {
 	return strings.HasPrefix(p, prefix)
 }
 
+// errResolveDotDotAfterMissing: a `..` follows a component that does not
+// exist (resolvePath).
+var errResolveDotDotAfterMissing = errors.New("`..` after a component that does not exist")
+
 // resolvePath resolves an absolute path one component at a time, the way the
 // kernel walks it: a symlink is replaced by its target (relative targets
 // against the link's directory) and re-walked, `..` steps to the parent of
 // what has been resolved so far (so `link/..` is the parent of the link's
 // TARGET, not of the link). A component that does not exist ends the
-// resolution; the rest of the path is appended lexically.
+// resolution; the rest of the path is appended lexically, except that a
+// `..` after it is an error (errResolveDotDotAfterMissing).
 func resolvePath(p string) (string, error) {
 	links := 0
 	vol := filepath.VolumeName(p)
@@ -235,6 +257,12 @@ func resolvePath(p string) (string, error) {
 		case "", ".":
 			continue
 		case "..":
+			if missing {
+				// The component `..` would step out of does not exist, so
+				// what follows cannot be checked against the filesystem: an
+				// existing symlink after it would never be read (A-3).
+				return "", errResolveDotDotAfterMissing
+			}
 			cur = filepath.Dir(cur)
 			continue
 		}

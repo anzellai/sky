@@ -48,8 +48,9 @@ readFile =
     Ffi.kernel "File_readFile"
 
 
--- | `readFileLimit path maxBytes` — read at most `maxBytes` from
--- the file.  Useful to cap memory on untrusted-size inputs.
+-- | `readFileLimit path maxBytes` — read the file, refusing one larger than
+-- `maxBytes`. Useful to cap memory on untrusted-size inputs. A `maxBytes`
+-- below 1 is `Err InvalidInput`.
 readFileLimit : String -> Int -> Task Error String
 readFileLimit =
     Ffi.kernel "File_readFileLimit"
@@ -235,22 +236,21 @@ chmod =
 
 -- | `permissions owner group other` — a mode from its three octal digits
 -- (each 0 to 7: 4 read, 2 write, 1 execute): `permissions 6 4 4` is 420,
--- the octal 644. A digit outside 0 to 7 is clamped into it.
+-- the octal 644. A digit outside 0 to 7 is not a mode: the result is -1,
+-- which `chmod` refuses with `Err InvalidInput` (a digit is never clamped
+-- into range in silence).
 permissions : Int -> Int -> Int -> Int
 permissions owner group other =
-    permDigit owner * 64 + permDigit group * 8 + permDigit other
-
-
-permDigit : Int -> Int
-permDigit d =
-    if d < 0 then
-        0
-
-    else if d > 7 then
-        7
+    if validDigit owner && validDigit group && validDigit other then
+        owner * 64 + group * 8 + other
 
     else
-        d
+        -1
+
+
+validDigit : Int -> Bool
+validDigit d =
+    d >= 0 && d <= 7
 
 
 -- | `resolveWithin root path` — resolve `path` (a relative path is taken

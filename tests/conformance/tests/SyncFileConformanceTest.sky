@@ -228,6 +228,14 @@ tests =
                             |> Task.map .mode)))
     , Test.test "permissions 6 4 4 is octal 644"
         (\_ -> Test.equal 420 (File.permissions 6 4 4))
+    , Test.test "permissions: a digit outside 0 to 7 gives a mode chmod refuses"
+        (\_ ->
+            Test.expectErrorKind Error.InvalidInput
+                (fixture (\dir -> File.chmod (File.permissions 9 -1 5) (dir ++ "/root/sub/f.txt"))))
+    , Test.test "readFileLimit: a limit below 1 is InvalidInput, not the whole file"
+        (\_ ->
+            Test.expectErrorKind Error.InvalidInput
+                (fixture (\dir -> File.readFileLimit (dir ++ "/root/sub/f.txt") -1)))
     , Test.test "stat of a missing path is NotFound"
         (\_ -> Test.expectErrorKind Error.NotFound (kindOf "/nope" File.stat))
     , Test.test "resolveWithin: a path inside the root"
@@ -242,6 +250,12 @@ tests =
         (\_ -> Test.expectErrorKind Error.PermissionDenied (within "escape/secret"))
     , Test.test "resolveWithin: an absolute path outside is PermissionDenied"
         (\_ -> Test.expectErrorKind Error.PermissionDenied (within "/"))
+    , Test.test "resolveWithin: an empty root is InvalidInput, not the working directory"
+        (\_ -> Test.expectErrorKind Error.InvalidInput (Task.run (File.resolveWithin "" "x")))
+    , Test.test "resolveWithin: .. after a missing component cannot hide a symlink"
+        (\_ ->
+            Test.expectErrorKind Error.PermissionDenied
+                (fixture (\dir -> File.resolveWithin (dir ++ "/root") (dir ++ "/root/nothere/../escape/secret"))))
 
     -- ─── Std.Sync ─────────────────────────────────────────────────
     , Test.test "Ref: 100 parallel updates all land"
