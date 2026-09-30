@@ -1241,7 +1241,7 @@ fn clear_device_only(base: &str, device_only: &[String]) -> String {
 /// real secret must never be embedded in the first-paint HTML the client can
 /// read. Detected on the resolved type's nominal tail (the same tail-segment
 /// convention `field_ty_codec` uses), with a surface-name fallback.
-fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
+fn codec_auto_unencodable(f: &ModelFieldTy, db: Option<&dyn ty::TyDb>) -> Option<(String, String)> {
     // The nominal tail, e.g. `Sky.Core.Set.Set` -> "Set". Same tail convention
     // `field_ty_codec` uses.
     fn tail(name: &str) -> &str {
@@ -1317,6 +1317,15 @@ fn codec_auto_unencodable(f: &ModelFieldTy) -> Option<(String, String)> {
             "`Set a` has no Go representation of its own — it erases to `any`. The SSR embed encodes it as a JSON array, but `Codec.auto`'s client decode has no `Set` arm and fails (\"cannot decode kind interface\"), so the first paint falls back to `init` (empty) while Sky.Live renders the Set. Model the field as a `List a` (dedup in `update`), which round-trips.".to_string()
         }
     };
+    // The shared `Encodable` rule (B-1): the checker and the split agree on
+    // which types encode (a function, a `Secret`, a crypto key, a runtime
+    // handle, ...). `Set` is the split's own extra case below: it encodes, but
+    // the first-paint decode has no `Set` arm.
+    if let (Some(t), Some(db)) = (&f.ty, db) {
+        if let Some(bad) = ty::encodable::check(t, db) {
+            return Some((f.ty_name.clone(), bad.message()));
+        }
+    }
     if let Some(t) = &f.ty {
         if let Some(kind) = scan(t) {
             return Some((f.ty_name.clone(), why(kind)));
@@ -3896,6 +3905,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &device_only,
         ssr_model_anno(&file, &src).as_deref(),
         &wire_hash,
+        &db,
     )?;
     // P2 client persistence: the SESSION projection field NAMES threaded into the
     // frontend so the client keeps them from the server-verified SSR seed on
@@ -6750,6 +6760,8 @@ fn gen_backend(
     // every page (`<meta name="sky-wire">`), so a tab from an older deploy is
     // told to reload instead of sending a request the backend cannot read.
     wire_hash: &str,
+    // The type world, for the shared `Encodable` check on the first-paint model.
+    db: &dyn ty::TyDb,
 ) -> Result<String, String> {
     // Imports: keep every input import EXCEPT Std.Spa (framework, main-only),
     // then add the server-side machinery.
@@ -6976,7 +6988,7 @@ fn gen_backend(
             if device_only.contains(&f.name) {
                 continue;
             }
-            if let Some((ty_label, why)) = codec_auto_unencodable(f) {
+            if let Some((ty_label, why)) = codec_auto_unencodable(f, Some(db)) {
                 warnings.push(format!(
                     "model field `{}` has type `{}`, which `Codec.auto` cannot round-trip through the Sky.Spa SSR model embed. {}",
                     f.name, ty_label, why
@@ -9829,9 +9841,9 @@ mod fix7_tests {
     // slipped through and degraded silently at runtime.
     #[test]
     fn secret_and_set_are_flagged_others_are_not() {
-        let flagged = |f: &ModelFieldTy| codec_auto_unencodable(f).is_some();
+        let flagged = |f: &ModelFieldTy| codec_auto_unencodable(f, None).is_some();
         let reason = |f: &ModelFieldTy| {
-            codec_auto_unencodable(f)
+            codec_auto_unencodable(f, None)
                 .map(|(_, why)| why)
                 .unwrap_or_default()
         };
@@ -10150,6 +10162,32 @@ mod type_identity_tests {
         assert!(ty_matches(&app("Pending"), &app("Main.Pending")));
     }
 
+    /// The first-paint check applies the checker's shared `Encodable` rule
+    /// (`ty::encodable::check`) when it has the type world: a function-typed
+    /// model field cannot be embedded either, and the message carries the
+    /// migration link. RED before: the split's own scan knew only `Secret`,
+    /// the crypto keys and `Set`.
+    #[test]
+    fn the_first_paint_check_uses_the_shared_encodable_rule() {
+        let db = hir::SourceDb::new();
+        let int = || ty::Ty::app("Int", vec![]);
+        let f = ModelFieldTy {
+            name: "onSave".into(),
+            ty_name: "Int -> Int".into(),
+            codec: None,
+            ty: Some(ty::Ty::Fun(Box::new(int()), Box::new(int()))),
+        };
+        let (_, why) = codec_auto_unencodable(&f, Some(&db)).expect("a function is unencodable");
+        assert!(why.contains("encodable-bound"), "{why}");
+        let ok = ModelFieldTy {
+            name: "n".into(),
+            ty_name: "Int".into(),
+            codec: None,
+            ty: Some(int()),
+        };
+        assert!(codec_auto_unencodable(&ok, Some(&db)).is_none());
+    }
+
     /// The first-paint check reads a resolved type by its module: the app's
     /// own `SecretKey` / `Secret` is not the stdlib's, the stdlib's still is.
     #[test]
@@ -10161,14 +10199,14 @@ mod type_identity_tests {
             ty: Some(app(t)),
         };
         for own in ["Main.SecretKey", "Main.Secret", "Main.Pending"] {
-            assert!(codec_auto_unencodable(&field(own)).is_none(), "{own}");
+            assert!(codec_auto_unencodable(&field(own), None).is_none(), "{own}");
         }
         for key in [
             "Std.Crypto.Kx.SecretKey",
             "Std.Crypto.Cpace.Pending",
             "Sky.Core.Secret.Secret",
         ] {
-            assert!(codec_auto_unencodable(&field(key)).is_some(), "{key}");
+            assert!(codec_auto_unencodable(&field(key), None).is_some(), "{key}");
         }
     }
 
