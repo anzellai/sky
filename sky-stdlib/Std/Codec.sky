@@ -42,6 +42,7 @@ module Std.Codec exposing
     , maybe
     , list
     , result
+    , dict
     , error
     , map
     , object
@@ -63,6 +64,7 @@ import Sky.Ffi as Ffi
 import Sky.Core.Json.Encode as E exposing (Value)
 import Sky.Core.Json.Decode as D exposing (Decoder)
 import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.List as List
 import Sky.Core.String as String
 
@@ -218,6 +220,24 @@ result (Codec ce) (Codec ca) =
                     else
                         D.map Err (D.index 1 ce.dec))
                 (D.index 0 D.string)
+        , shp = SBlob
+        }
+
+
+-- | Codec for a `Dict k v` given codecs for the key and the value. Encodes as a
+-- JSON array of `[key, value]` pairs in key order, so any comparable key type
+-- round-trips (a JSON object could hold only `String` keys); stored as a JSON
+-- TEXT blob on the DB side. A Sky.Spa model or message field of type
+-- `Dict k v` crosses the wire through it with no hand-written codec.
+dict : Codec comparable -> Codec v -> Codec (Dict comparable v)
+dict (Codec ck) (Codec cv) =
+    Codec
+        { enc =
+            \d ->
+                E.list (\( k, v ) -> E.list identity [ ck.enc k, cv.enc v ]) (Dict.toList d)
+        , dec =
+            D.map Dict.fromList
+                (D.list (D.map2 (\k v -> ( k, v )) (D.index 0 ck.dec) (D.index 1 cv.dec)))
         , shp = SBlob
         }
 

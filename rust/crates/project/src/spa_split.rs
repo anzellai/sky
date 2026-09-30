@@ -392,6 +392,9 @@ struct CodecResolver<'a> {
     /// The app opted in to client-held crypto: a device key type is refused on
     /// every wire this resolver builds a codec for.
     device_keys: bool,
+    /// Each user union's constructor payloads, so a key held inside a union
+    /// (`type KeyBox = KeyBox Noise.Handshake`) is found (B-2).
+    unions: UnionPayloads,
 }
 
 /// One auto-derived record codec: the record's qualified key, how `Shared`
@@ -412,6 +415,7 @@ impl<'a> CodecResolver<'a> {
             synth_stack: Vec::new(),
             external_modules: BTreeSet::new(),
             device_keys: false,
+            unions: UnionPayloads::new(),
         }
     }
 
@@ -419,7 +423,7 @@ impl<'a> CodecResolver<'a> {
         // `withClientCrypto`: a device-held key never gets a wire codec, whatever
         // codec binding the project declares for it.
         if self.device_keys {
-            if let Some(key) = device_key_in(t) {
+            if let Some(key) = device_key_in(t, &self.unions) {
                 return Err(device_key_wire_error(&key));
             }
         }
@@ -457,6 +461,18 @@ impl<'a> CodecResolver<'a> {
                 return Ok(ResolvedCodec {
                     codec: format!("(Codec.maybe {})", inner.codec),
                     surface: format!("Maybe {}", wrap_arg(&inner.surface)),
+                });
+            }
+            // (b'') `Dict k v` from the key + value codecs (`Std.Codec.dict`,
+            // a JSON array of `[k, v]` pairs). Before v0.27.0 a `Dict` model
+            // field had no codec, and the hint asked for a `Codec Dict …`
+            // binding the user could not write without the combinator.
+            if tail == "Dict" && args.len() == 2 {
+                let key = self.resolve(&args[0])?;
+                let val = self.resolve(&args[1])?;
+                return Ok(ResolvedCodec {
+                    codec: format!("(Codec.dict {} {})", key.codec, val.codec),
+                    surface: format!("Dict {} {}", wrap_arg(&key.surface), wrap_arg(&val.surface)),
                 });
             }
             // (b') `Result e a` from the error + value codecs. `Std.Codec.result`
@@ -593,10 +609,7 @@ impl<'a> CodecResolver<'a> {
             ));
         }
         // (d) No codec — fail closed with an actionable message.
-        Err(format!(
-            "no codec for a field of type `{0}` — define a top-level `Codec {0}` binding in the project (spa-split copies it into Shared) or reduce the field to a record / `List` / `Maybe` / `Int` / `String` / `Bool` / `Float`",
-            render_ty(t)
-        ))
+        Err(no_codec_msg(&render_ty(t)))
     }
 
     /// Record that record `key` (qualified) needs an auto-derived `Codec.auto`
@@ -721,6 +734,16 @@ impl<'a> CodecResolver<'a> {
             }
         })
     }
+}
+
+/// The actionable error for a wire field type with no codec. The type in the
+/// suggested binding is parenthesised when it is an application, so the hint
+/// is Sky that parses (`Codec (Set String)`, not `Codec Set String`).
+fn no_codec_msg(surface: &str) -> String {
+    format!(
+        "no codec for a field of type `{surface}` — define a top-level `Codec {}` binding in the project (spa-split copies it into Shared) or reduce the field to a record / `List` / `Maybe` / `Dict` / `Int` / `String` / `Bool` / `Float`",
+        wrap_arg(surface)
+    )
 }
 
 /// The actionable error for a bare top-level union that `Codec.auto` cannot
@@ -1011,21 +1034,63 @@ const DEVICE_KEY_TYPES: &[&str] = &[
     "Sky.Core.Secret.Secret",
 ];
 
-/// The first device-held key type anywhere in `t` (inside `List` / `Maybe` /
-/// `Result` / a tuple / a record / a function), as its qualified name.
-fn device_key_in(t: &ty::Ty) -> Option<String> {
-    match t {
-        ty::Ty::App(name, args) => {
-            if DEVICE_KEY_TYPES.contains(&name.as_str()) {
-                return Some(name.as_str().to_string());
-            }
-            args.iter().find_map(device_key_in)
+/// The constructor payload types of every union the program declares, keyed by
+/// the union's type name as a resolved type carries it (module-qualified when
+/// the world qualifies it, else bare). Read from the type world's constructor
+/// schemes, so a payload that names another type is already resolved.
+pub(crate) type UnionPayloads = HashMap<String, Vec<ty::Ty>>;
+
+/// Build [`UnionPayloads`] from the db's type world.
+fn union_payloads(db: &SkyDatabase) -> UnionPayloads {
+    use ty::TyDb;
+    let world = db.type_world();
+    let mut out: UnionPayloads = HashMap::new();
+    for scheme in world.ctors.values() {
+        let mut t = &scheme.ty;
+        let mut args: Vec<ty::Ty> = Vec::new();
+        while let ty::Ty::Fun(a, b) = t {
+            args.push((**a).clone());
+            t = b;
         }
-        ty::Ty::Record(fields, _) => fields.iter().find_map(|(_, t)| device_key_in(t)),
-        ty::Ty::Tuple(items) => items.iter().find_map(device_key_in),
-        ty::Ty::Fun(a, b) => device_key_in(a).or_else(|| device_key_in(b)),
-        _ => None,
+        if let ty::Ty::App(name, _) = t {
+            out.entry(name.as_str().to_string())
+                .or_default()
+                .extend(args);
+        }
     }
+    out
+}
+
+/// The first device-held key type anywhere in `t` (inside `List` / `Maybe` /
+/// `Result` / a tuple / a record / a function, or the constructor payloads of
+/// a user union, B-2), as its qualified name. `unions` gives each union's
+/// payload types; a union already on the walk is not entered again, so a
+/// recursive type terminates.
+fn device_key_in(t: &ty::Ty, unions: &UnionPayloads) -> Option<String> {
+    fn walk(t: &ty::Ty, unions: &UnionPayloads, seen: &mut Vec<String>) -> Option<String> {
+        match t {
+            ty::Ty::App(name, args) => {
+                let n = name.as_str();
+                if DEVICE_KEY_TYPES.contains(&n) {
+                    return Some(n.to_string());
+                }
+                if let Some(k) = args.iter().find_map(|a| walk(a, unions, seen)) {
+                    return Some(k);
+                }
+                if seen.iter().any(|s| s == n) {
+                    return None;
+                }
+                let payloads = unions.get(n)?;
+                seen.push(n.to_string());
+                payloads.iter().find_map(|p| walk(p, unions, seen))
+            }
+            ty::Ty::Record(fields, _) => fields.iter().find_map(|(_, t)| walk(t, unions, seen)),
+            ty::Ty::Tuple(items) => items.iter().find_map(|t| walk(t, unions, seen)),
+            ty::Ty::Fun(a, b) => walk(a, unions, seen).or_else(|| walk(b, unions, seen)),
+            _ => None,
+        }
+    }
+    walk(t, unions, &mut Vec::new())
 }
 
 /// The refusal for a device-held key on the client/server wire.
@@ -1043,13 +1108,16 @@ fn device_key_wire_error(key_ty: &str) -> String {
 /// page HTML nor localStorage carries the key, and it is `Nothing` after a
 /// reload. Any other shape that holds a key is an `Err`: neither the first paint
 /// nor the saved model could leave it out.
-fn device_only_fields(model_fields: &[ModelFieldTy]) -> Result<Vec<String>, String> {
+fn device_only_fields(
+    model_fields: &[ModelFieldTy],
+    unions: &UnionPayloads,
+) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for f in model_fields {
         let Some(t) = &f.ty else {
             continue;
         };
-        let Some(key) = device_key_in(t) else {
+        let Some(key) = device_key_in(t, unions) else {
             continue;
         };
         let top_maybe_key = matches!(t, ty::Ty::App(n, args)
@@ -1111,15 +1179,16 @@ fn declared_record_fields(
 fn with_declared_field_types(
     fields: &[ModelFieldTy],
     declared: &[(String, ty::Ty)],
+    unions: &UnionPayloads,
 ) -> Vec<ModelFieldTy> {
     let mut out: Vec<ModelFieldTy> = fields
         .iter()
         .map(|f| {
             let mut f = f.clone();
-            let inferred_key = f.ty.as_ref().and_then(device_key_in);
+            let inferred_key = f.ty.as_ref().and_then(|t| device_key_in(t, unions));
             if inferred_key.is_none() {
                 if let Some((_, t)) = declared.iter().find(|(n, _)| *n == f.name) {
-                    if device_key_in(t).is_some() {
+                    if device_key_in(t, unions).is_some() {
                         f.ty = Some(t.clone());
                         f.ty_name = render_ty(t);
                     }
@@ -2226,7 +2295,10 @@ fn build_wire(
     };
     for f in req.iter_mut().chain(resp.iter_mut()) {
         if resolver.device_keys {
-            if let Some(key) = f.ty.as_ref().and_then(device_key_in) {
+            if let Some(key) =
+                f.ty.as_ref()
+                    .and_then(|t| device_key_in(t, &resolver.unions))
+            {
                 return Err(format!(
                     "branch `{name}`, field `{}`: {}",
                     f.name,
@@ -2950,13 +3022,19 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let client_result_map = build_client_result_map(&db, &check_ids, &report.client_result);
     let mut resolver = CodecResolver::new(&registry, &shapes);
     resolver.device_keys = report.client_crypto;
+    if report.client_crypto {
+        resolver.unions = union_payloads(&db);
+    }
     // `withClientCrypto`: the model fields the first paint and the saved model
     // leave out (a `Maybe` key); any other key-holding field is refused here.
     let device_only: Vec<String> = if report.client_crypto {
         let declared = ssr_model_anno(&file, &src)
             .map(|t| declared_record_fields(&db, &check_ids, &t))
             .unwrap_or_default();
-        device_only_fields(&with_declared_field_types(&report.model_fields, &declared))?
+        device_only_fields(
+            &with_declared_field_types(&report.model_fields, &declared, &resolver.unions),
+            &resolver.unions,
+        )?
     } else {
         Vec::new()
     };
@@ -9444,6 +9522,16 @@ fn nth_arrow_segment(anno: &str, n: usize) -> Option<String> {
 #[cfg(test)]
 mod fix7_tests {
     use super::*;
+
+    /// C-10: the no-codec hint suggests a binding that parses. An applied type
+    /// is parenthesised (`Codec (Set String)`); a bare name is not.
+    #[test]
+    fn the_no_codec_hint_parenthesises_an_applied_type() {
+        let m = no_codec_msg("Set String");
+        assert!(m.contains("`Codec (Set String)` binding"), "{m}");
+        let m = no_codec_msg("Widget");
+        assert!(m.contains("`Codec Widget` binding"), "{m}");
+    }
 
     #[test]
     fn the_built_wasm_name_is_baked_into_the_backend_once() {

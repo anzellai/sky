@@ -226,6 +226,77 @@ fn a_key_field_that_is_not_a_maybe_is_refused() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// B-2: a key held inside a user union is still a key. A model field
+/// `Maybe KeyBox`, where `type KeyBox = KeyBox Noise.Handshake`, is refused:
+/// the saved model and the first paint can only clear a `Maybe K` whose `K` is
+/// the key type itself.
+#[test]
+fn a_key_inside_a_user_union_model_field_is_refused() {
+    let dir = variant(
+        "unionfield",
+        &[
+            (
+                "type alias Model =\n",
+                "type KeyBox\n    = KeyBox Noise.Handshake\n\n\ntype alias Model =\n",
+            ),
+            (
+                "    , handshake : Maybe Noise.Handshake\n",
+                "    , handshake : Maybe Noise.Handshake\n    , boxed : Maybe KeyBox\n",
+            ),
+            (
+                "handshake = Nothing, note = \"\" }",
+                "handshake = Nothing, note = \"\", boxed = Nothing }",
+            ),
+        ],
+    );
+    let err = match generate(&dir, "unionfield") {
+        Ok(_) => panic!("a `Maybe KeyBox` model field must be refused"),
+        Err(e) => e,
+    };
+    assert!(
+        err.contains("model field `boxed`") && err.contains("Std.Crypto.Noise.Handshake"),
+        "the refusal must name the field and the key it holds, got:\n{err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// B-2: a server-arm Msg that carries a union holding a key gets the
+/// device-key refusal, never the generic "define a `Codec KeyBox`" hint that
+/// would steer the user towards writing a codec for key material.
+#[test]
+fn a_key_inside_a_user_union_on_the_wire_gets_the_key_refusal() {
+    let dir = variant(
+        "unionwire",
+        &[
+            (
+                "type alias Model =\n",
+                "type KeyBox\n    = KeyBox Noise.Handshake\n\n\ntype alias Model =\n",
+            ),
+            (
+                "    | Refresh\n",
+                "    | Refresh\n    | Stash KeyBox\n",
+            ),
+            (
+                "            --VARIANT-REFRESH--\n",
+                "            --VARIANT-REFRESH--\n            ( model, Cmd.perform (File.readFile \"data/note.txt\") Refreshed )\n\n        Stash box ->\n",
+            ),
+        ],
+    );
+    let err = match generate(&dir, "unionwire") {
+        Ok(_) => panic!("a server arm carrying a KeyBox must be refused"),
+        Err(e) => e,
+    };
+    assert!(
+        err.contains("Std.Crypto.Noise.Handshake") && err.contains("never crosses"),
+        "the device-key refusal, got:\n{err}"
+    );
+    assert!(
+        !err.contains("Codec KeyBox"),
+        "no hint to write a codec for key material, got:\n{err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_key_operations_stay_in_the_frontend_and_get_no_rpc() {
     let (out, r) =
