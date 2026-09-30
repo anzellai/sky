@@ -1312,6 +1312,22 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `TestSpaReportRpcFailure_*`, `rpc_error_arm_routes_into_update`, and the
   `spa-handled-err` stage of `scripts/spa-rpc-order-e2e.sh` in Chromium and
   WebKit under `SKY_CSP=strict`.)
+- **Sky.Live: a `Process.events` or `Watch.changes` Sub asked for again just
+  after it was dropped could be refused.** Dropping a source Sub does not wait
+  for its runner: an `update` that turns the Sub off runs on the runner's own
+  goroutine, so the runner releases its claim on the process or watcher a
+  moment after the dispatch returns. A dispatch that asked for the same source
+  inside that window (a quick toggle) was refused as a second consumer
+  (`[sky.sub] subscription process:N ignored: … already has an events Sub`),
+  and the session got no more output until some later dispatch happened to
+  re-request it. The new runner now takes the claim over: it waits until the
+  stopping runner has released it, then resumes the stream where that runner
+  stopped. A source held by a runner that is still running is refused, as
+  before. (`TestLiveSourceSubReRequestedWhileReleasingIsHandedOver`,
+  `TestSourceRunnerHandsOverAStoppingClaim`,
+  `TestSourceRunnerDroppedDuringHandoverNeverClaims`; the flaky
+  `TestLiveSourceSubDeliversAndTearsDown` now keeps its Sub requested until it
+  drops it itself, so it waits on the runner it drops.)
 - **Sky.Spa: an RPC's whole write was dropped when its follow-up Msg also ran
   inside a server chain.** An arm like "Add to basket" that writes the model
   and tracks the event (`Cmd.perform … Tracked`) answered `200`, but the basket

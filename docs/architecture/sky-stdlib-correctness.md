@@ -751,7 +751,14 @@ corpus Family S surfaces `process`, `watch`; the TEA flow
   single-process loops the manager waits for that before `update` returns
   (`TestProcessEventsSubTeardownStreamLeavesFirst`), no Msg is sent after
   the drop, and no goroutine is left (`TestProcessNoGoroutineLeak`,
-  `TestWatchCloseStopsDelivery`).
+  `TestWatchCloseStopsDelivery`). In Sky.Live the drop does not wait (an
+  `update` that drops its own Sub runs on the runner's goroutine), so a Sub
+  asked for again while the dropped runner is still releasing is handed
+  over: the new runner claims once the old one released and continues from
+  its cursor, never refused and never reading alongside it
+  (`TestLiveSourceSubReRequestedWhileReleasingIsHandedOver`,
+  `TestSourceRunnerHandsOverAStoppingClaim`). A runner that is still
+  running is a real second consumer and is refused.
 * **PTY.** The child sees a terminal of the requested size; `resize`
   changes what `stty size` reports; `resize` without a PTY is `Err`. Linux
   and macOS only; elsewhere `Err Unavailable`, never a panic.
