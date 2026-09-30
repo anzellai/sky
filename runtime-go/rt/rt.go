@@ -3055,10 +3055,22 @@ func deepEq(a, b any) bool {
 // so strings compared as `0 < 0 = false` and float comparisons
 // truncated to int — a wrong-answer class that passed the type
 // checker.
-func Gt(a, b any) any  { return cmp(a, b) > 0 }
-func Lt(a, b any) any  { return cmp(a, b) < 0 }
-func Gte(a, b any) any { return cmp(a, b) >= 0 }
-func Lte(a, b any) any { return cmp(a, b) <= 0 }
+func Gt(a, b any) any  { return !anyNaN(a, b) && cmp(a, b) > 0 }
+func Lt(a, b any) any  { return !anyNaN(a, b) && cmp(a, b) < 0 }
+func Gte(a, b any) any { return !anyNaN(a, b) && cmp(a, b) >= 0 }
+func Lte(a, b any) any { return !anyNaN(a, b) && cmp(a, b) <= 0 }
+
+// anyNaN: `<`, `>`, `<=` and `>=` stay IEEE (False when an operand is NaN),
+// like `==`. Only `compare` (and so sort, Set, min and max) orders NaN, as
+// the greatest Float (cmpFloatTotal).
+func anyNaN(a, b any) bool {
+	f, ok := a.(float64)
+	if ok && f != f {
+		return true
+	}
+	f, ok = b.(float64)
+	return ok && f != f
+}
 
 // cmp returns -1/0/+1 with a type-aware compare. Panics on type
 // mismatch between a and b so the error surfaces via rt panic-recovery
@@ -3129,14 +3141,7 @@ func cmpSafe(a, b any) (int, bool) {
 		if !isNumeric(a) || !isNumeric(b) {
 			return 0, false
 		}
-		fa, fb := AsFloat(a), AsFloat(b)
-		switch {
-		case fa < fb:
-			return -1, true
-		case fa > fb:
-			return 1, true
-		}
-		return 0, true
+		return cmpFloatTotal(AsFloat(a), AsFloat(b)), true
 	}
 	// Composite comparables: Elm's `comparable` includes tuples and lists OF
 	// comparables, ordered lexicographically. The checker only admits `<`/`>` on
@@ -3219,9 +3224,25 @@ func cmpComposite(a, b any) (int, bool) {
 			return 1, true
 		}
 		return 0, true
+	case reflect.Map:
+		ma, oka := a.(map[string]any)
+		mb, okb := b.(map[string]any)
+		if !oka || !okb {
+			return 0, false
+		}
+		return cmpRecordMaps(ma, mb)
 	case reflect.Struct:
 		if vb.Kind() != reflect.Struct {
 			return 0, false
+		}
+		// A union value (a sealed variant, the legacy SkyADT, Maybe,
+		// Result): derived order (C-11).
+		if c, ok, isADT := cmpUnion(a, b, va, vb); isADT {
+			return c, ok
+		}
+		// A record struct: field by field in the order of the names.
+		if !isTupleStruct(va.Type()) || !isTupleStruct(vb.Type()) {
+			return cmpRecordStructs(va, vb)
 		}
 		n := va.NumField()
 		if vb.NumField() < n {
@@ -10585,4 +10606,197 @@ func curryRemainingArgs(rv reflect.Value, captured []any) any {
 		}
 		return curryRemainingArgs(rv, all)
 	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Derived order (C-11): unions, records, NaN
+// ═══════════════════════════════════════════════════════════
+
+// cmpFloatTotal is `compare` on Floats: a total order with
+// -Inf < … < +Inf < NaN and NaN equal to NaN, so a sort, a Set, min and max
+// are deterministic over NaN. `==` and `<` stay IEEE (anyNaN).
+func cmpFloatTotal(fa, fb float64) int {
+	an, bn := fa != fa, fb != fb
+	switch {
+	case an && bn:
+		return 0
+	case an:
+		return 1
+	case bn:
+		return -1
+	case fa < fb:
+		return -1
+	case fa > fb:
+		return 1
+	}
+	return 0
+}
+
+// unionTag returns the constructor tag of a union value: a sealed variant
+// (SkyVariantTag, typed codegen), or a struct with an int `Tag` field (the
+// legacy SkyADT, Maybe, Result). ok is false for anything else.
+func unionTag(v any, rv reflect.Value) (int, bool) {
+	if sv, ok := v.(SkyVariant); ok {
+		return sv.SkyVariantTag(), true
+	}
+	if rv.Kind() != reflect.Struct {
+		return 0, false
+	}
+	f := rv.FieldByName("Tag")
+	if !f.IsValid() || (f.Kind() != reflect.Int && f.Kind() != reflect.Int64) {
+		return 0, false
+	}
+	// A user record may have a field named `tag`: only the union shapes
+	// (a payload field beside the tag) count.
+	if !rv.FieldByName("Fields").IsValid() && !rv.FieldByName("JustValue").IsValid() &&
+		!rv.FieldByName("OkValue").IsValid() {
+		return 0, false
+	}
+	return int(f.Int()), true
+}
+
+// unionPayload lists the constructor arguments a union value carries, in
+// order: a sealed variant's exported fields (V0, V1, …); a SkyADT's Fields;
+// the JustValue of a Just; the OkValue of an Ok or the ErrValue of an Err.
+// Never a zero-valued field of another constructor.
+func unionPayload(v any, rv reflect.Value, tag int) ([]any, bool) {
+	if _, ok := v.(SkyVariant); ok {
+		out := make([]any, 0, rv.NumField())
+		for i := 0; i < rv.NumField(); i++ {
+			f := rv.Field(i)
+			if !f.CanInterface() {
+				return nil, false
+			}
+			out = append(out, f.Interface())
+		}
+		return out, true
+	}
+	if f := rv.FieldByName("Fields"); f.IsValid() && (f.Kind() == reflect.Slice || f.Kind() == reflect.Array) {
+		out := make([]any, f.Len())
+		for i := range out {
+			out[i] = f.Index(i).Interface()
+		}
+		return out, true
+	}
+	if f := rv.FieldByName("JustValue"); f.IsValid() {
+		if tag == 0 {
+			return []any{f.Interface()}, true
+		}
+		return nil, true
+	}
+	if ok, er := rv.FieldByName("OkValue"), rv.FieldByName("ErrValue"); ok.IsValid() && er.IsValid() {
+		if tag == 0 {
+			return []any{ok.Interface()}, true
+		}
+		return []any{er.Interface()}, true
+	}
+	// A tagged struct with no payload field: a nullary constructor.
+	return nil, true
+}
+
+// cmpUnion orders two union values by constructor declaration order, then
+// payload left to right. isADT is false when a is not a union value (the
+// caller goes on to tuples and records); ok is false when b is not one, or a
+// payload pair cannot be ordered.
+func cmpUnion(a, b any, va, vb reflect.Value) (c int, ok bool, isADT bool) {
+	ta, oka := unionTag(a, va)
+	if !oka {
+		return 0, false, false
+	}
+	tb, okb := unionTag(b, vb)
+	if !okb {
+		return 0, false, true
+	}
+	switch {
+	case ta < tb:
+		return -1, true, true
+	case ta > tb:
+		return 1, true, true
+	}
+	pa, oka := unionPayload(a, va, ta)
+	pb, okb := unionPayload(b, vb, tb)
+	if !oka || !okb {
+		return 0, false, true
+	}
+	c, ok = cmpComposite(pa, pb)
+	return c, ok, true
+}
+
+// isTupleStruct reports whether a struct type is a tuple: its fields are
+// exactly V0, V1, … in order (rt.T2 … T9).
+func isTupleStruct(t reflect.Type) bool {
+	if t.NumField() == 0 {
+		return true
+	}
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).Name != "V"+strconv.Itoa(i) {
+			return false
+		}
+	}
+	return true
+}
+
+// cmpRecordStructs orders two record structs field by field in the order of
+// the field names (the Go field order is an emission detail). Both must have
+// the same exported field names.
+func cmpRecordStructs(va, vb reflect.Value) (int, bool) {
+	names := func(v reflect.Value) ([]string, bool) {
+		t := v.Type()
+		out := make([]string, 0, t.NumField())
+		for i := 0; i < t.NumField(); i++ {
+			if !t.Field(i).IsExported() {
+				return nil, false
+			}
+			out = append(out, t.Field(i).Name)
+		}
+		sort.Strings(out)
+		return out, true
+	}
+	na, oka := names(va)
+	nb, okb := names(vb)
+	if !oka || !okb || len(na) != len(nb) {
+		return 0, false
+	}
+	for i := range na {
+		if na[i] != nb[i] {
+			return 0, false
+		}
+	}
+	for _, n := range na {
+		c, ok := cmpSafe(va.FieldByName(n).Interface(), vb.FieldByName(n).Interface())
+		if !ok {
+			return 0, false
+		}
+		if c != 0 {
+			return c, true
+		}
+	}
+	return 0, true
+}
+
+// cmpRecordMaps orders two erased records (maps) the same way: field by
+// field in the order of the names. Records with different fields do not
+// order.
+func cmpRecordMaps(a, b map[string]any) (int, bool) {
+	if len(a) != len(b) {
+		return 0, false
+	}
+	keys := make([]string, 0, len(a))
+	for k := range a {
+		if _, ok := b[k]; !ok {
+			return 0, false
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		c, ok := cmpSafe(a[k], b[k])
+		if !ok {
+			return 0, false
+		}
+		if c != 0 {
+			return c, true
+		}
+	}
+	return 0, true
 }
