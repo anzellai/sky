@@ -972,8 +972,10 @@ fn driver_source_root_relocates_discovery() {
 /// holds for a project with no Sky dependencies, but a dep module that shares a
 /// name with a local one makes `add_module` return the EXISTING id on re-add
 /// (dedup), shifting `file_id` and `ModuleId` apart for every module loaded
-/// after it — so an error resolved to the WRONG file's path (a sibling). This
-/// sets up exactly that shift and asserts the error names its own file.
+/// after it — so an error resolved to the WRONG file's path (a sibling). Since
+/// v0.27.0 that collision is refused before the build (asserted first); the
+/// test then renames the dependency's module and asserts the error still names
+/// its own file.
 #[test]
 fn diagnostic_names_correct_file_across_skydep_module_id_shift() {
     let repo = repo_root();
@@ -1028,6 +1030,26 @@ fn diagnostic_names_correct_file_across_skydep_module_id_shift() {
     .unwrap();
 
     let out = dir.join("sky-out-test");
+    // Since v0.27.0 the colliding module name is refused outright, before the
+    // shift can happen: which `AaShared` the program gets would depend on
+    // load order.
+    let refused = build_example(&opts_for(&repo, &dir, &out));
+    assert!(
+        refused.note.contains(
+            "module AaShared (src/AaShared.sky) has the same name as a module of dependency"
+        ),
+        "a local module named like a dependency module must be refused, got: {}",
+        refused.note
+    );
+    // The dependency still loads BEFORE every local module, so its modules
+    // take the first ids. Name it apart and the misattribution check still
+    // holds: the error in the last-loaded module is named under its own file.
+    std::fs::remove_file(dep_src.join("AaShared.sky")).unwrap();
+    std::fs::write(
+        dep_src.join("AaDep.sky"),
+        "module AaDep exposing (depValue)\n\ndepValue : Int\ndepValue =\n    1\n",
+    )
+    .unwrap();
     let report = build_example(&opts_for(&repo, &dir, &out));
 
     assert!(
