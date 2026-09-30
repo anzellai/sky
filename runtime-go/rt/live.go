@@ -3978,12 +3978,50 @@ func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any, parentCtx
 	})
 }
 
-func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
+// performMsg runs a Cmd.perform's Task and its toMsg on this goroutine and
+// returns the Msg. C-1b: this goroutine is spawned by `go app.runPerform`,
+// so a panic here (a classified DivisionByZero or CoerceFailure in the Task,
+// or one re-raised from a Task.parallel branch) used to end the whole server
+// process. It is recovered here: the classified panic is logged with an
+// errId, the session's tabs get the skyerror banner, and the Msg is dropped
+// (ok false). No Msg can be built instead: the Task's error type is the
+// app's own, and a panic is not a value of it.
+func (app *liveApp) performMsg(sess *liveSession, task any, toMsg any) (msg any, ok bool) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		errId := newErrId()
+		rawMsg := fmt.Sprintf("%v", r)
+		kind, hint := classifyPanic(rawMsg)
+		logEmit(logLevelError, "error",
+			"Sky.Live Cmd.perform panic: "+kind+" (ref "+errId+") — "+hint,
+			map[string]any{
+				"errId":     errId,
+				"panicKind": kind,
+				"panicMsg":  rawMsg,
+				"hint":      hint,
+				"stackFrame": panicStackForLog("sky.live.perform",
+					"Cmd.perform", r, capturePanicStack(), 8),
+			})
+		sess.mu.Lock()
+		sess.pushDispatchError(errId)
+		sess.mu.Unlock()
+		msg, ok = nil, false
+	}()
 	// task is a Sky Task — a zero-arg func() any returning SkyResult.
 	// Wrap its execution in a cmd.perform span (Tier 1 auto-trace).
 	result := WithCmdSpan("perform", func() any { return sky_call(task, nil) })
 	// toMsg : Result err a -> Msg — convert result to Msg
-	msg := sky_call(toMsg, result)
+	return sky_call(toMsg, result), true
+}
+
+func (app *liveApp) runPerformBody(sess *liveSession, task any, toMsg any) {
+	msg, ok := app.performMsg(sess, task, toMsg)
+	if !ok {
+		return
+	}
 	// Push update through locked dispatch, then emit an SSE frame
 	// carrying the session-wide seq. Keeping frame construction under
 	// the same lock as dispatch means the seq reflects the actual
