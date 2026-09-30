@@ -7615,10 +7615,19 @@ fn websocket_fixture_builds_both_trees() {
         && split.join("backend/sky-out/app").is_file()
         && dist_has_wasm(&split.join("frontend/dist"));
     let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap_or_default();
+    let front = std::fs::read_to_string(split.join("frontend/src/Main.sky")).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&proj);
     assert!(
         ok,
         "the web:app build must produce the backend and the wasm client:\n{log}"
+    );
+    // The client-held socket (`sock : Maybe WebSocket`) cannot be encoded
+    // (the v0.27.0 Encodable rule): the saved model writes it `Nothing` and a
+    // decoded model clears it, through `Spa_modelToJson` / `Spa_modelFromJson`.
+    assert!(
+        front.contains("spaModelToJson_ ({ m_ | sock = Nothing")
+            && front.contains("m_ | sock = Nothing"),
+        "the saved model must leave the client socket out:\n{front}"
     );
     // `withRoutes routes` names ONE table that mixes a page route with the
     // `App.api "GET /ws"` upgrade: the endpoint must be mounted on the backend

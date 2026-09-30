@@ -1212,6 +1212,19 @@ fn with_declared_field_types(
     out
 }
 
+/// Runtime handles a Sky.Spa CLIENT holds in its model (a socket it opened
+/// with `WebSocket.connect`). A top-level `Maybe` of one is client-only, like
+/// a device key (see [`device_only_fields`]).
+const CLIENT_HANDLE_TYPES: &[&str] = &["Sky.Core.WebSocket.WebSocket"];
+
+/// `Maybe H`, with `H` one of [`CLIENT_HANDLE_TYPES`].
+fn is_maybe_client_handle(t: &ty::Ty) -> bool {
+    matches!(t, ty::Ty::App(n, args)
+        if tail_seg(n.as_str()) == "Maybe"
+            && args.len() == 1
+            && matches!(&args[0], ty::Ty::App(h, _) if CLIENT_HANDLE_TYPES.contains(&h.as_str())))
+}
+
 /// The model JSON writer for a model that holds a device key
 /// (`withClientCrypto`). `Codec.auto`'s `Encodable` bound refuses a key
 /// ANYWHERE in the type, and the model type still names `Maybe
@@ -3076,7 +3089,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     }
     // `withClientCrypto`: the model fields the first paint and the saved model
     // leave out (a `Maybe` key); any other key-holding field is refused here.
-    let device_only: Vec<String> = if report.client_crypto {
+    let mut device_only: Vec<String> = if report.client_crypto {
         let declared = ssr_model_anno(&file, &src)
             .map(|t| declared_record_fields(&db, &check_ids, &t))
             .unwrap_or_default();
@@ -3087,6 +3100,25 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     } else {
         Vec::new()
     };
+    // A client-held runtime handle (`sock : Maybe WebSocket`, a socket the wasm
+    // client opened) is written `Nothing` in the first-paint and saved model
+    // the same way: a handle cannot be encoded (the `Encodable` rule), a
+    // decoded one would be forged, and the socket is gone after a reload.
+    {
+        let declared = ssr_model_anno(&file, &src)
+            .map(|t| declared_record_fields(&db, &check_ids, &t))
+            .unwrap_or_default();
+        for f in &report.model_fields {
+            let declared_ty = declared.iter().find(|(n, _)| *n == f.name).map(|(_, t)| t);
+            let held = [f.ty.as_ref(), declared_ty]
+                .into_iter()
+                .flatten()
+                .any(is_maybe_client_handle);
+            if held && !device_only.contains(&f.name) {
+                device_only.push(f.name.clone());
+            }
+        }
+    }
     // With device-only fields the model JSON is written by
     // `spaModelToJson_` (see [`DEVICE_MODEL_TO_JSON`]), not `Codec.auto`, so
     // the checker's `Encodable` bound no longer sees the model type. Apply the
