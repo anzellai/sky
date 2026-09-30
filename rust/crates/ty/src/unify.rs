@@ -50,6 +50,10 @@ impl SuperType {
     /// Round-trips through `Codec.auto` (B-1): no function, `Secret`, key,
     /// crypto state or runtime handle anywhere inside.
     pub const Encodable: SuperType = SuperType(8);
+    /// A Go value (`go@…`) or still undetermined: the type a Go FFI binding's
+    /// non-empty interface parameter (`goi@…`) takes. A Sky value never
+    /// implements a Go interface (`[E2013]`, v0.27.0).
+    pub const GoValue: SuperType = SuperType(16);
 
     pub fn is_empty(self) -> bool {
         self.0 == 0
@@ -79,7 +83,9 @@ impl SuperType {
     }
     /// Some type satisfies every bound in the set.
     pub fn is_satisfiable(self) -> bool {
+        let orders = SuperType(1 | 2 | 4);
         !(self.has(SuperType::Number) && self.has(SuperType::Appendable))
+            && !(self.has(SuperType::GoValue) && !self.intersect(orders).is_empty())
     }
     /// What the ELEMENTS of a container must satisfy for the container to
     /// satisfy `self` (a list is comparable when its elements are).
@@ -90,7 +96,9 @@ impl SuperType {
     /// The variable-name prefix that spells this (closed) set.
     pub fn label(self) -> &'static str {
         let b = self.closure();
-        if b.has(SuperType::Number) {
+        if b.has(SuperType::GoValue) {
+            "govalue"
+        } else if b.has(SuperType::Number) {
             "number"
         } else if b.has(SuperType::CompAppend) {
             "compappend"
@@ -107,7 +115,8 @@ impl SuperType {
     /// The bound a variable NAME carries (Elm's rule: a prefix). `None` for
     /// an ordinary variable.
     pub fn from_var_name(name: &str) -> Option<SuperType> {
-        const PREFIXES: [(&str, SuperType); 6] = [
+        const PREFIXES: [(&str, SuperType); 7] = [
+            ("govalue", SuperType::GoValue),
             ("compappend", SuperType::CompAppend),
             ("comparable", SuperType::Comparable),
             ("appendable", SuperType::Appendable),
@@ -125,6 +134,7 @@ impl SuperType {
     /// inference artefact, like `t12`, and is shown as plain `comparable`.
     pub fn minted_label(name: &str) -> Option<&'static str> {
         [
+            "govalue",
             "compappend",
             "comparable",
             "appendable",
@@ -389,7 +399,10 @@ impl UnionFind {
             (Content::Rigid(n), Content::FlexSuper(s))
             | (Content::FlexSuper(s), Content::Rigid(n)) => {
                 let have = SuperType::from_var_name(n.as_str()).unwrap_or_default();
-                let missing = s.closure().minus(have.closure());
+                // A type variable given to a Go interface slot is left to the
+                // wrapper's run-time assertion (`ffi_iface`): not a bound the
+                // annotation must name.
+                let missing = s.closure().minus(have.closure()).minus(SuperType::GoValue);
                 if missing.is_empty() {
                     self.union(ra, rb, Content::Rigid(n));
                     Ok(())
@@ -415,6 +428,10 @@ impl UnionFind {
                 if s.is_satisfiable() {
                     self.union(ra, rb, Content::FlexSuper(s));
                     Ok(())
+                } else if s.has(SuperType::GoValue) {
+                    Err(Mismatch::new(go_value_failure(
+                        "a value that must be a number, appendable or comparable",
+                    )))
                 } else {
                     Err(Mismatch::new(
                         "no type is both a number and appendable (`++` needs a `String` or a `List`, \
@@ -442,6 +459,29 @@ impl UnionFind {
         ft: FlatTy,
     ) -> Result<(), Mismatch> {
         let s = s.closure();
+        // A Go value: only a `go@` type (or a weak variable, one fixed type
+        // chosen elsewhere) passes; every Sky shape fails. Any other bound on
+        // the same variable is then decided as usual.
+        if s.has(SuperType::GoValue) {
+            let go = matches!(&ft, FlatTy::App(n, _)
+                if crate::nominal::is_go_type(n.as_str())
+                    || n.as_str().starts_with(crate::variance::WEAK_PREFIX));
+            if !go {
+                let what = self.describe_flat(&ft, 0);
+                let shown = match &ft {
+                    FlatTy::Fun(..) => format!("a function (`{what}`)"),
+                    FlatTy::Record(..) => "a record".to_string(),
+                    _ => format!("a Sky `{what}`"),
+                };
+                return Err(Mismatch::new(go_value_failure(&shown)));
+            }
+            let rest = s.minus(SuperType::GoValue);
+            if rest.is_empty() {
+                self.union(ra, rb, Content::Structure(ft));
+                return Ok(());
+            }
+            return self.satisfy(ra, rb, rest, ft);
+        }
         let elems = s.for_elements();
         let num = s.has(SuperType::Number);
         let app = s.has(SuperType::Appendable);
@@ -881,6 +921,19 @@ pub(crate) fn bound_failure(s: SuperType, what: &str, ft: &FlatTy) -> String {
     } else {
         encodable_failure(&shown)
     }
+}
+
+/// The anchor every `[E2013]` message ends with; the checker keys the code on it.
+pub(crate) const GO_INTERFACE_ANCHOR: &str = "docs/migration/v0.27.md#ffi-go-interface-params";
+
+/// The Go-interface refusal (`[E2013]`), ending with the migration link.
+pub(crate) fn go_value_failure(shown: &str) -> String {
+    format!(
+        "{shown} is given where a Go FFI binding needs a Go value that implements a Go \
+         interface. Since v0.27.0 a Go interface parameter is checked: a Sky value never \
+         implements a Go interface. Fix: pass a Go value that implements it (one a binding \
+         returns). see {GO_INTERFACE_ANCHOR}"
+    )
 }
 
 /// The `Comparable` refusal, ending with the migration link.

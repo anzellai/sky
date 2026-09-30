@@ -1043,10 +1043,16 @@ impl<'a> Infer<'a> {
                 });
                 return;
             }
+            // A Sky value in a Go interface slot has its own code.
+            let code = if m.message.ends_with(crate::unify::GO_INTERFACE_ANCHOR) {
+                "E2013"
+            } else {
+                "E2001"
+            };
             self.errors.push(TypeError {
                 message: m.message,
                 span: self.cur_span,
-                code: "E2001",
+                code,
             });
         }
     }
@@ -1857,8 +1863,17 @@ impl<'a> Infer<'a> {
         let Some(sig) = self.db.ffi_fn(package.as_str(), name.as_str()) else {
             return self.uf.fresh_flex();
         };
-        let scheme =
-            relax_unit_arg_spine(&crate::ffi_sig::scheme_for(&sig.sky_type, sig.arity).scheme);
+        let mut scheme = crate::ffi_sig::scheme_for(&sig.sky_type, sig.arity).scheme;
+        // [E2013]: each non-empty Go interface slot (`goi@…`) becomes a
+        // variable with the "Go value" bound. The bound is part of the scheme,
+        // so it survives a binding bound to a name (generalised, then copied at
+        // every use) or passed to a higher-order function, which the
+        // application scan (`ffi_iface::scan_body`) cannot see.
+        if let Some(slots) = crate::ffi_sig::iface_params(&sig.sky_type, sig.arity) {
+            scheme =
+                crate::Scheme::generalize(crate::ffi_iface::bound_iface_slots(&scheme.ty, &slots));
+        }
+        let scheme = relax_unit_arg_spine(&scheme);
         self.ffi_schemes.insert(key, scheme.clone());
         self.instantiate(&scheme)
     }

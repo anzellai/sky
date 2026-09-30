@@ -20,10 +20,15 @@
 //! interface inside its guard (`rt.FfiArg`): a Go value that does not
 //! implement it is an `Err` the program handles, never a crash.
 //!
-//! Call forms checked: a direct or curried application and a pipe (`w |> Pkg.f
-//! x`). A binding passed as a value, bound to a name, or applied through a
-//! higher-order function is not seen here; the wrapper's run-time assertion
-//! still makes a mismatch an `Err`.
+//! Call forms checked here: a direct or curried application and a pipe (`w |>
+//! Pkg.f x`), with a message that names the call and the interface. A binding
+//! passed as a value, bound to a name, or applied through a higher-order
+//! function is checked by the unifier instead: `Infer::foreign_ref` gives each
+//! interface slot a variable with the `GoValue` bound
+//! ([`bound_iface_slots`]), the bound survives generalisation, and a Sky shape
+//! meeting it is the same `[E2013]` (`unify::go_value_failure`). A type
+//! variable stays accepted: the wrapper's run-time assertion makes a Go value
+//! that does not implement the interface an `Err`.
 
 use crate::ffi_sig::IfaceSlot;
 use crate::Ty;
@@ -133,6 +138,72 @@ fn violations(slot: &IfaceSlot, t: &Ty, out: &mut Vec<(String, Ty)>) {
         }
         _ => {}
     }
+}
+
+/// Rewrite a Go FFI binding's type so every interface position of its
+/// parameters is a variable carrying the `GoValue` bound (`govalue_<n>`, one
+/// fresh name per slot). The positions are those [`IfaceSlot`] names; a slot
+/// whose type is not a variable (a signature that pinned it) is left as is.
+pub(crate) fn bound_iface_slots(ty: &Ty, slots: &[IfaceSlot]) -> Ty {
+    fn mark(t: &Ty, slot: &IfaceSlot, n: &mut usize) -> Ty {
+        match (slot, t) {
+            (IfaceSlot::None, _) => t.clone(),
+            (IfaceSlot::Iface(_), Ty::Var(_)) => {
+                *n += 1;
+                Ty::var(&format!("govalue_{n}"))
+            }
+            (IfaceSlot::Elem(s), Ty::App(name, args)) if !args.is_empty() => {
+                let mut args = args.clone();
+                let last = args.len() - 1;
+                args[last] = mark(&args[last], s, n);
+                Ty::App(name.clone(), args)
+            }
+            (IfaceSlot::Tuple(ss), Ty::Tuple(ts)) => Ty::Tuple(
+                ts.iter()
+                    .enumerate()
+                    .map(|(i, x)| match ss.get(i) {
+                        Some(s) => mark(x, s, n),
+                        None => x.clone(),
+                    })
+                    .collect(),
+            ),
+            (IfaceSlot::CallbackResult(k, s), t) => {
+                fn under(t: &Ty, k: usize, s: &IfaceSlot, n: &mut usize) -> Ty {
+                    match t {
+                        Ty::Fun(a, b) if k > 0 => {
+                            Ty::Fun(a.clone(), Box::new(under(b, k - 1, s, n)))
+                        }
+                        _ if k == 0 => mark(t, s, n),
+                        _ => t.clone(),
+                    }
+                }
+                under(t, *k, s, n)
+            }
+            _ => t.clone(),
+        }
+    }
+    let mut n = 0;
+    let mut cur = ty;
+    let mut params = Vec::new();
+    for _ in 0..slots.len() {
+        match cur {
+            Ty::Fun(a, b) => {
+                params.push(a.as_ref().clone());
+                cur = b;
+            }
+            _ => return ty.clone(),
+        }
+    }
+    let mut out = cur.clone();
+    let marked: Vec<Ty> = params
+        .iter()
+        .zip(slots)
+        .map(|(p, s)| mark(p, s, &mut n))
+        .collect();
+    for p in marked.into_iter().rev() {
+        out = Ty::Fun(Box::new(p), Box::new(out));
+    }
+    out
 }
 
 pub fn scan_body(

@@ -524,3 +524,68 @@ fn a_sky_value_in_a_nested_or_piped_interface_position_is_rejected() {
         "main =\n    println (Result.withDefault \"\" (Pkg.middleware (\\next -> next) |> Result.map (\\_ -> \"ok\")))\n",
     );
 }
+
+/// [E2013] through a binding used as a VALUE: bound to a local or top-level
+/// name, or passed to a higher-order function. Each `goi@` slot carries a
+/// "Go value" bound from the reference, so the check survives generalisation
+/// and reaches the use.
+#[test]
+fn a_sky_value_for_a_go_interface_through_a_bound_or_passed_binding_is_rejected() {
+    for (label, body) in [
+        (
+            "let-bound binding",
+            "main =\n    let\n        w =\n            Pkg.writeTo\n    in\n    println (Result.withDefault \"\" (w \"x\" \"y\" |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+        (
+            "top-level binding",
+            "writer =\n    Pkg.writeTo\n\n\nmain =\n    println (Result.withDefault \"\" (writer \"x\" \"y\" |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+        (
+            "through a higher-order function",
+            "apply2 f a b =\n    f a b\n\n\nmain =\n    println (Result.withDefault \"\" (apply2 Pkg.writeTo \"x\" \"y\" |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+        (
+            "a nested interface through a let-bound binding",
+            "main =\n    let\n        wa =\n            Pkg.writeAll\n    in\n    println (Result.withDefault \"\" (wa [ \"a\" ] |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+    ] {
+        assert_rejects(label, body, "E2013");
+    }
+    assert_accepts(
+        "a let-bound binding given a Go value",
+        "main =\n    let\n        w =\n            Pkg.writeTo\n    in\n    println (Pkg.newRouter () |> Result.andThen (\\r -> w r \"x\") |> Result.map (\\_ -> \"\") |> Result.withDefault \"\")\n",
+    );
+    assert_accepts(
+        "a polymorphic helper that forwards to the binding",
+        "send w =\n    Pkg.writeTo w \"x\"\n\n\nmain =\n    println (Pkg.newRouter () |> Result.andThen send |> Result.map (\\_ -> \"\") |> Result.withDefault \"\")\n",
+    );
+}
+
+/// A direct call reports ONE `[E2013]`, the scan's (it names the call and the
+/// interface), not also the unifier's bound refusal of the same argument.
+#[test]
+fn a_direct_call_reports_one_go_interface_error() {
+    let src = format!(
+        "{HEADER}\nmain =\n    println (Result.withDefault \"\" (Pkg.writeTo \"x\" \"y\" |> Result.map (\\_ -> \"ok\")))\n"
+    );
+    let mut db = hir::SourceDb::new();
+    for (n, p) in stdlib() {
+        db.add_module(n, p.clone());
+    }
+    db.set_ffi_surface(std::sync::Arc::new(ty::ffi_sig::surface_from_directives(
+        &src,
+    )));
+    let m = db.add_module("Main", syntax::parse(&src, base::FileId(0)));
+    let out = ty::check_modules(&db, &[m]);
+    let e2013: Vec<_> = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.0 == "E2013")
+        .collect();
+    assert_eq!(e2013.len(), 1, "{e2013:#?}");
+    assert!(
+        e2013[0].message.contains("Io.Writer") || e2013[0].message.contains("Writer"),
+        "{}",
+        e2013[0].message
+    );
+}

@@ -861,6 +861,7 @@ pub fn check_modules_with_world(
             }
         }
 
+        let module_diag_start = out.diagnostics.len();
         for (def, body) in &resolved.bodies {
             let dname = names.get(def).cloned().unwrap_or_default();
             // `with_record_exprs` makes the solved per-expression types readable
@@ -1014,7 +1015,29 @@ pub fn check_modules_with_world(
             });
         }
 
-        // One `[E2013]` per Sky value passed for a Go interface parameter.
+        // One `[E2013]` per Sky value passed for a Go interface parameter. The
+        // application scan names the call and the interface, so in a def it
+        // covers it replaces the unifier's `GoValue`-bound refusal of the same
+        // mistake (which remains the only report for a binding used as a
+        // value: bound to a name or passed to a higher-order function).
+        let scanned: std::collections::HashSet<&str> = ffi_ifaces
+            .found
+            .iter()
+            .map(|f| f.def_name.as_str())
+            .collect();
+        let before = out.diagnostics.len();
+        let mut idx = 0usize;
+        out.diagnostics.retain(|d| {
+            idx += 1;
+            idx <= module_diag_start
+                || !(d.code.0 == "E2013"
+                    && d.message.contains("is given where a Go FFI binding needs")
+                    && d.message
+                        .strip_prefix('[')
+                        .and_then(|m| m.split_once("] "))
+                        .is_some_and(|(def, _)| scanned.contains(def)))
+        });
+        out.type_errors -= before - out.diagnostics.len();
         for f in &ffi_ifaces.found {
             out.type_errors += 1;
             out.diagnostics.push(Diagnostic {
