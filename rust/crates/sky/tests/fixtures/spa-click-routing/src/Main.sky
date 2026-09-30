@@ -12,7 +12,9 @@ module Main exposing (main)
 --   nested an inner and an outer handler both run for one click (as on Sky.Live
 --        and Elm), each with the Msg of the view the click was delivered to.
 --   H-3  a link to a server route (App.api), to a path with no client route and
---        to /_sky/ is a full browser navigation, not an in-app 404.
+--        to /_sky/ is a full browser navigation, not an in-app 404. An App.api
+--        path that a client page route also matches (/post/export against
+--        /post/:slug) is the server's, for a link as for a page load.
 --   H-4  Std.Analytics in a server branch keys identity and consent per visitor.
 
 import Sky.Core.Prelude exposing (..)
@@ -126,6 +128,9 @@ header =
               [ testId "server-link" ]
               { url = "/server/hello", label = Ui.text "Server route" }
         , Ui.link
+              [ testId "overlap-link" ]
+              { url = "/post/export", label = Ui.text "Export" }
+        , Ui.link
               [ testId "unrouted-link" ]
               { url = "/no/client/route", label = Ui.text "Unrouted" }
         , Ui.link
@@ -225,12 +230,18 @@ serverHello _ =
     Task.succeed (Server.text "served-by-the-server")
 
 
+serverExport : Server.Request -> Task Error Server.Response
+serverExport _ =
+    Task.succeed (Server.text "export-served-by-the-server")
+
+
 routes : List (App.Route Page)
 routes =
     [ App.route "/" Home
     , App.route "/list" Listing
     , App.routeParam "/post/:slug" Post
     , App.api "GET /server/hello" serverHello
+    , App.api "GET /post/export" serverExport
     ]
 
 

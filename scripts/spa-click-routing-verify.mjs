@@ -147,6 +147,12 @@ async function links(browser, tag) {
     check(`${tag} links: an App.api route is served by the server`, served.includes("served-by-the-server") && !(await samePage(page)), `${pathname(page)} body=${served.slice(0, 60)}`);
 
     await open(page, "/");
+    await Promise.all([page.waitForURL(BASE + "/post/export", { timeout: 10000 }).catch(() => {}), page.locator(byTest("overlap-link")).click()]);
+    await settle(page);
+    const exported = await page.evaluate(() => document.body.innerText).catch(() => "");
+    check(`${tag} links: an App.api path a client route also matches is served by the server`, exported.includes("export-served-by-the-server") && !(await samePage(page)), `${pathname(page)} body=${exported.slice(0, 60)}`);
+
+    await open(page, "/");
     await page.locator(byTest("unrouted-link")).click();
     await page.waitForLoadState("load");
     await settle(page);

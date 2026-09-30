@@ -1169,9 +1169,9 @@ liveRoute_ r =
 
 -- | Lower an [`App`] [`Route`] to a `Sky.Spa` route (same erasure as Live).
 -- Exposed because the `--target <spa>` build synthesises a `Sky.Spa` entry that
--- maps the app's routes through it. A raw [`api`] endpoint yields the empty list
--- — the client (Spa) backend has no server endpoints, so those are dropped
--- (`List.concatMap`) rather than routed.
+-- maps the app's routes through it. A raw [`api`] endpoint yields a
+-- `Spa.serverRoute`: the client knows the path is the backend's, so a link to it
+-- is a full navigation even when a page route also matches it.
 spaRoute : Route page -> List Spa.Route
 spaRoute r =
     case r of
@@ -1182,14 +1182,14 @@ spaRoute r =
         RouteParam path make ->
             [ Spa.route path make ]
 
-        RouteApi _ _ ->
-            []
+        RouteApi path _ ->
+            [ Spa.serverRoute path ]
 
 
 -- | Lower an [`App`] [`Route`] to the BACKEND server routes it mounts: a raw
 -- [`api`] endpoint yields `[ Server.api path handler ]`, a page route yields `[]`.
 -- The symmetric partner of [`spaRoute`] (which keeps page routes for the client
--- and drops api endpoints). Exposed for the `--target <spa>` BACKEND: `withRoutes`
+-- and turns api endpoints into client-side server routes). Exposed for the `--target <spa>` BACKEND: `withRoutes`
 -- can MIX page routes with `App.api` server endpoints (OAuth callbacks, /healthz,
 -- webhooks), and the split synthesis routes the api endpoints here so they are
 -- mounted as real `Server` handlers on the backend — the client (Spa) cannot
