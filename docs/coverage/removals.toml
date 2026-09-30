@@ -685,3 +685,90 @@ symbol = "Std.Ui.Terminal.encodeOutput"
 reason = "v0.27.0 (unreleased) terminal redesign: the widget no longer takes raw output bytes. The runtime emulates the terminal on the server (runtime-go/rt/term_screen.go) and Process.screen returns screen-diff frames, so the base64 'output' payload has no consumer. Measured and recorded in docs/perf/runs/terminal-20260928/README.md. Std.Ui.Terminal.encodeExit went with it (the exit line is written into the server screen), and Sky.Core.Process.screen was added, so stdlib.values moves by -1 net. Their conformance and corpus cases were replaced by checks of the element Terminal.view renders; the frames are covered by term_screen_test.go, island_terminal_test.go and process_terminal_test.go."
 owner  = "anzel"
 commit = "fix/v027-terminal"
+
+# ===========================================================================
+# ## The FOURTH ledger: `[[correction]]` — a false credit removed
+# ===========================================================================
+#
+# A `[[weakening]]` records coverage that was REMOVED. A `[[correction]]`
+# records that the ledger credited a surface with evidence it never had, and
+# names the true strength. `xtask coverage-ledger` lets such a surface stand
+# below the checked-in ledger at EXACTLY that strength; any other fall still
+# fails, and a stanza whose strength no longer matches the recomputed one is
+# stale. Fields: surface, strength (a class label), reason, owner, commit.
+#
+# G-2 (v0.27.0): the `cli-verbs` Layer 2 member was every `.sky` file under
+# rust/crates/sky/tests, so the fixtures other flow tests load were credited to
+# the `cli-verbs` gate (Falsified), which runs only `cli_verb_flow`. Each
+# fixture is now credited to the flow test or e2e script that loads it: counted
+# assertions in a release job, not a registered harness gate, so Asserted.
+
+[[correction]]
+surface  = "stdlib.Std.Ai.Agent"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Ai.Memory.Pg"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Ai.Policy"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Ai.Provider"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Ai.Tool"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Ai.Trace"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Analytics"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Durable"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Live.Console"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"
+
+[[correction]]
+surface  = "stdlib.Std.Nav"
+strength = "Asserted"
+reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
+owner    = "v0.27.0 fix batch, stream S4"
+commit   = "fix/v027-s4-tooling G-2"

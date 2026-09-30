@@ -1072,7 +1072,10 @@ pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
 /// 12 -> 13: v0.27.0 adds `sky package --upload testflight` and its refusal
 /// test (`package_upload_refuses_before_any_network_call`); the upload itself
 /// is proven with a fake `xcrun` in `native_shell_flow.rs`.
-pub const CLI_VERBS_EXPECTED: u64 = 13;
+///
+/// 13 -> 14: v0.27.0 adds `cli_misuse_is_refused_not_ignored` (F-17: a value
+/// flag with no value, `sky fuzz --help`, `sky doc --api` outside a project).
+pub const CLI_VERBS_EXPECTED: u64 = 14;
 
 pub fn cli_verbs(ctx: &GateCtx) -> GateOutcome {
     let suite = ctx.repo_root.join("rust/crates/sky/tests/cli_verb_flow.rs");

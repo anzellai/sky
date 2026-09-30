@@ -960,6 +960,12 @@ enum Role {
     Conformance,
     SkySuite,
     Layer1,
+    /// A `rust/crates/sky/tests/*_flow.rs` test file no Layer 2 member names:
+    /// its counted assertions run in the release `gate-core-sky-*` jobs
+    /// (`cargo nextest run -p sky`), which are not registered harness gates,
+    /// so its credit is `Asserted`, never `Falsified`. Its files are the
+    /// fixtures it loads (G-2).
+    FlowTest,
 }
 
 impl Role {
@@ -970,6 +976,7 @@ impl Role {
             Role::Conformance => "Conformance",
             Role::SkySuite => "SkySuite",
             Role::Layer1 => "Layer1",
+            Role::FlowTest => "FlowTest",
         }
     }
 }
@@ -1999,7 +2006,7 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                         Strength::None,
                     ));
                 }
-                Role::Layer2 | Role::Layer1 => {}
+                Role::Layer2 | Role::Layer1 | Role::FlowTest => {}
             }
             match u.role {
                 // Any unit that DECLARES a gate is scored by whether that gate
@@ -2031,6 +2038,17 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
                 // `Runs`; it reaches `Asserted` only by owning a tests/ suite
                 // that the registered `sky-verify` gate executes; it can never
                 // reach `Falsified` from being an example.
+                Role::FlowTest => {
+                    new.push(Ev::new(
+                        format!(
+                            "{} (counted assertions, run by a release job: gate-core-sky \
+                             for a flow test, gate-web / gate-example-e2e for an e2e \
+                             script; not a registered harness gate, so no falsifier)",
+                            u.id
+                        ),
+                        Strength::Asserted,
+                    ));
+                }
                 Role::Example => {
                     if layer2_paths.contains(&u.path_key) {
                         new.push(Ev::new(
@@ -2626,6 +2644,7 @@ fn enumerate_units(
 
     // --- Layer 2 ------------------------------------------------------------
     let members = parse_members(&repo_root.join("apps/manifest.toml"))?;
+    let mut named_flows: BTreeSet<String> = BTreeSet::new();
     for m in &members {
         let (Some(name), Some(path)) = (m.get("name"), m.get("path")) else {
             return Err(format!(
@@ -2633,13 +2652,97 @@ fn enumerate_units(
             ));
         };
         let rel = path.trim_end_matches('/');
+        // A `flow-tests` member is credited only with the fixtures its gate's
+        // flow test files actually load (`flows = "a_flow,b_flow"`), never
+        // with every `.sky` under the directory: `cli-verbs` runs only
+        // `cli_verb_flow`, and crediting it with `fixtures/nav-cmds` (loaded
+        // by `spa_split_flow`) made Std.Nav read as Falsified (G-2).
+        let files = if m.get("kind").map(String::as_str) == Some("flow-tests") {
+            let flows: Vec<String> = m
+                .get("flows")
+                .map(|f| {
+                    f.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if flows.is_empty() {
+                return Err(format!(
+                    "apps/manifest.toml member `{name}` is `kind = \"flow-tests\"` but names \
+                     no `flows`: say which flow test files its gate runs"
+                ));
+            }
+            named_flows.extend(flows.iter().cloned());
+            flow_fixture_files(repo_root, &tracked, rel, &flows)?
+        } else {
+            tracked.sky_files(repo_root, rel)
+        };
         units.push(build(
             format!("apps:{name}"),
             Role::Layer2,
             path.clone(),
             m.get("gate").cloned(),
-            tracked.sky_files(repo_root, rel),
+            files,
             tracked_toml(rel),
+            true,
+        ));
+    }
+
+    // --- Flow tests ----------------------------------------------------------
+    // Every other `rust/crates/sky/tests/*_flow.rs`, with the fixtures it
+    // loads, credited as what it is: counted assertions run by the release
+    // jobs (G-2).
+    let flow_dir = "rust/crates/sky/tests";
+    let mut flow_names: Vec<String> = tracked
+        .children(flow_dir)
+        .filter(|f| f.ends_with("_flow.rs"))
+        .filter_map(|f| {
+            Path::new(f)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+        })
+        .filter(|n| !named_flows.contains(n))
+        .collect();
+    flow_names.sort();
+    // The browser e2e scripts build fixtures too (`build_target
+    // console-analytics web`); every one runs in a release gating job
+    // (`e2e_scripts_are_gated.rs`). Credited the same way.
+    let mut e2e: Vec<String> = tracked
+        .children("scripts")
+        .filter(|f| f.ends_with("-e2e.sh"))
+        .cloned()
+        .collect();
+    e2e.sort();
+    for script in e2e {
+        let text = std::fs::read_to_string(repo_root.join(&script))
+            .map_err(|e| format!("cannot read {script}: {e}"))?;
+        let files = fixtures_named_in(repo_root, &tracked, flow_dir, &text);
+        if files.is_empty() {
+            continue;
+        }
+        units.push(build(
+            format!("e2e:{script}"),
+            Role::FlowTest,
+            script.clone(),
+            None,
+            files,
+            None,
+            true,
+        ));
+    }
+    for flow in flow_names {
+        let files = flow_fixture_files(repo_root, &tracked, flow_dir, std::slice::from_ref(&flow))?;
+        if files.is_empty() {
+            continue;
+        }
+        units.push(build(
+            format!("flow:{flow}"),
+            Role::FlowTest,
+            format!("{flow_dir}/{flow}.rs"),
+            None,
+            files,
+            None,
             true,
         ));
     }
@@ -2723,6 +2826,49 @@ fn enumerate_units(
     });
 
     Ok(units)
+}
+
+/// The tracked `.sky` files of every `<dir>/fixtures/<name>/` that one of
+/// `flows` (`<dir>/<flow>.rs`) names, as `"<name>"` or `fixtures/<name>`.
+fn flow_fixture_files(
+    repo_root: &Path,
+    tracked: &TrackedSources,
+    dir: &str,
+    flows: &[String],
+) -> Result<Vec<PathBuf>, String> {
+    let mut text = String::new();
+    for flow in flows {
+        let p = repo_root.join(dir).join(format!("{flow}.rs"));
+        text.push_str(
+            &std::fs::read_to_string(&p)
+                .map_err(|e| format!("cannot read the flow test {}: {e}", p.display()))?,
+        );
+    }
+    Ok(fixtures_named_in(repo_root, tracked, dir, &text))
+}
+
+/// The tracked `.sky` files of every `<dir>/fixtures/<name>/` that `text`
+/// names as a whole word (`"<name>"`, `fixtures/<name>`, `build_target <name>`).
+fn fixtures_named_in(
+    repo_root: &Path,
+    tracked: &TrackedSources,
+    dir: &str,
+    text: &str,
+) -> Vec<PathBuf> {
+    let fixtures = format!("{dir}/fixtures");
+    let is_edge = |c: Option<char>| {
+        c.is_none_or(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '/' | '(' | ')' | ','))
+    };
+    let mut out = Vec::new();
+    for name in tracked.subdirs(&fixtures) {
+        let named = text.match_indices(name.as_str()).any(|(i, _)| {
+            is_edge(text[..i].chars().next_back()) && is_edge(text[i + name.len()..].chars().next())
+        });
+        if named {
+            out.extend(tracked.sky_files(repo_root, &format!("{fixtures}/{name}")));
+        }
+    }
+    out
 }
 
 // -------------------------------------------------------------------- ratchet
@@ -2927,7 +3073,101 @@ fn stale_weakening_violations(surfaces: &[Surface], weakenings: &BTreeSet<String
 }
 
 fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) -> Vec<String> {
+    ratchet_with_corrections(led, base, weakenings, &BTreeMap::new())
+}
+
+/// The `[[correction]]` stanzas of `docs/coverage/removals.toml`: surface id
+/// -> the strength it is corrected to. A correction records that the ledger
+/// credited a surface with evidence it never had (a gate that does not run its
+/// code) and names the true strength. Unlike `[[weakening]]` (coverage that
+/// was REMOVED), nothing was removed: the number was false. Each stanza needs
+/// `surface`, `strength` (a class label), `reason`, `owner`, `commit`.
+fn parse_corrections(path: &Path) -> Result<BTreeMap<String, u8>, String> {
+    let Ok(src) = std::fs::read_to_string(path) else {
+        return Ok(BTreeMap::new());
+    };
+    let mut out = BTreeMap::new();
+    let mut problems = Vec::new();
+    let mut stanzas: Vec<BTreeMap<String, String>> = Vec::new();
+    let mut open: Option<BTreeMap<String, String>> = None;
+    for line in src.lines() {
+        let t = line.trim();
+        if t.starts_with('#') || t.is_empty() {
+            continue;
+        }
+        if t.starts_with('[') {
+            if let Some(f) = open.take() {
+                stanzas.push(f);
+            }
+            if t.starts_with("[[correction]]") {
+                open = Some(BTreeMap::new());
+            }
+            continue;
+        }
+        if let (Some(f), Some((k, v))) = (open.as_mut(), t.split_once('=')) {
+            f.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
+        }
+    }
+    if let Some(f) = open.take() {
+        stanzas.push(f);
+    }
+    for (i, f) in stanzas.iter().enumerate() {
+        for r in ["surface", "strength", "reason", "owner", "commit"] {
+            if f.get(r).map(|v| v.trim().is_empty()).unwrap_or(true) {
+                problems.push(format!("[[correction]] #{} is missing `{r}`", i + 1));
+            }
+        }
+        let strength = f.get("strength").map(|v| v.trim()).unwrap_or("");
+        let level = (0u8..=4).find(|n| Strength::from_u8(*n).label() == strength);
+        match (f.get("surface"), level) {
+            (Some(s), Some(l)) => {
+                out.insert(s.trim().to_string(), l);
+            }
+            (_, None) if !strength.is_empty() => problems.push(format!(
+                "[[correction]] #{}: `strength = \"{strength}\"` is not a class label \
+                 (None, Builds, Runs, Asserted, Falsified)",
+                i + 1
+            )),
+            _ => {}
+        }
+    }
+    if problems.is_empty() {
+        Ok(out)
+    } else {
+        Err(problems.join("\n"))
+    }
+}
+
+/// [`ratchet`], where a surface named by a `[[correction]]` may stand below
+/// the checked-in ledger at exactly the corrected strength. A correction whose
+/// surface is gone, or whose strength is no longer the recomputed one, is
+/// stale and fails: it may not license a later, real fall.
+fn ratchet_with_corrections(
+    led: &Ledger,
+    base: Option<&Value>,
+    weakenings: &BTreeSet<String>,
+    corrections: &BTreeMap<String, u8>,
+) -> Vec<String> {
     let mut fails: Vec<String> = Vec::new();
+    let mut stale: Vec<String> = Vec::new();
+    for (id, to) in corrections {
+        match led.surfaces.iter().find(|s| &s.id == id) {
+            None => stale.push(format!("  {id} : names no surface in the generated ledger")),
+            Some(s) if s.new_max() as u8 != *to => stale.push(format!(
+                "  {id} : corrected to {}, but the recomputed cover_new is {}",
+                Strength::from_u8(*to).label(),
+                s.new_max().label()
+            )),
+            Some(_) => {}
+        }
+    }
+    if !stale.is_empty() {
+        fails.push(format!(
+            "STALE CORRECTION — [[correction]] stanza(s) in docs/coverage/removals.toml no \
+             longer describe the ledger:\n{}\nUpdate or delete them.",
+            stale.join("\n")
+        ));
+    }
     let grandfathered = baseline_weaker(base);
 
     // STALE WEAKENING (HOLE 2). A `[[weakening]]` only authorises a surface that
@@ -3005,7 +3245,10 @@ fn ratchet(led: &Ledger, base: Option<&Value>, weakenings: &BTreeSet<String>) ->
     for s in &led.surfaces {
         let now = s.new_max() as u8;
         if let Some(was) = before.get(&s.id) {
-            if now < *was && !is_deprecated_front_door_surface(&s.id) {
+            if now < *was
+                && !is_deprecated_front_door_surface(&s.id)
+                && corrections.get(&s.id) != Some(&now)
+            {
                 dropped.push(format!(
                     "  {} : cover_new {} -> {}",
                     s.id,
@@ -3458,7 +3701,14 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
 
-    let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
+    let corrections = match parse_corrections(&repo_root.join("docs/coverage/removals.toml")) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("\nxtask coverage-ledger: docs/coverage/removals.toml is malformed\n{e}");
+            return 1;
+        }
+    };
+    let mut fails = ratchet_with_corrections(&led, baseline.as_ref(), &weakenings, &corrections);
     // Reported in BOTH modes: a proof that credits a retired mutation must not
     // be laundered into a freshly regenerated baseline either.
     let proofs = read_proofs(repo_root);
@@ -3842,7 +4092,11 @@ pub fn check_body(repo_root: &Path) -> (bool, u64, String) {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
 
-    let mut fails = ratchet(&led, baseline.as_ref(), &weakenings);
+    let corrections = match parse_corrections(&repo_root.join("docs/coverage/removals.toml")) {
+        Ok(c) => c,
+        Err(e) => return (false, 1, format!("removals.toml malformed: {e}")),
+    };
+    let mut fails = ratchet_with_corrections(&led, baseline.as_ref(), &weakenings, &corrections);
     let proofs = read_proofs(repo_root);
     fails.extend(stale_proof_violations(&proofs));
     fails.extend(inapplicable_proof_violations(&proofs, repo_root));
@@ -5010,6 +5264,84 @@ fn t() {
         assert_eq!(fails.len(), 1);
         assert!(fails[0].contains("COVER_NEW REGRESSED"), "{}", fails[0]);
         assert!(fails[0].contains("Falsified -> Asserted"), "{}", fails[0]);
+    }
+
+    /// G-2: the `cli-verbs` member is credited only with the fixtures its
+    /// gate's flow file loads. Std.Nav's fixture (`nav-cmds`) is loaded by
+    /// `spa_split_flow`, so Std.Nav is credited to that flow at `Asserted`,
+    /// never to `cli-verbs` at `Falsified`.
+    #[test]
+    fn a_fixture_is_credited_to_the_flow_that_loads_it() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        let led = compute(&root).expect("compute the ledger");
+        let nav = led
+            .surfaces
+            .iter()
+            .find(|s| s.id == "stdlib.Std.Nav")
+            .expect("a Std.Nav row");
+        let by: Vec<&str> = nav.new.iter().map(|e| e.by.as_str()).collect();
+        assert!(
+            !by.iter().any(|b| b.contains("apps:cli-verbs")),
+            "cli-verbs does not run spa_split_flow: {by:?}"
+        );
+        assert!(
+            by.iter().any(|b| b.contains("flow:spa_split_flow")),
+            "the flow that loads nav-cmds is credited: {by:?}"
+        );
+    }
+
+    /// G-2: a `[[correction]]` lets a surface stand below the checked-in
+    /// ledger at exactly the corrected strength (a false credit removed); any
+    /// other fall still fails, and a correction that no longer matches the
+    /// recomputed strength is stale.
+    #[test]
+    fn a_correction_licenses_exactly_the_corrected_strength() {
+        let led = Ledger {
+            surfaces: vec![Surface {
+                id: "stdlib.Std.Nav".into(),
+                category: "stdlib".into(),
+                description: "d".into(),
+                today: vec![Ev::new("old", Strength::None)],
+                new: vec![Ev::new("new", Strength::Asserted)],
+            }],
+            doc: json!({ "summary": { "surfaces_covered": 1 } }),
+        };
+        let base = json!({
+            "summary": { "surfaces_covered": 1 },
+            "surfaces": [ { "id": "stdlib.Std.Nav", "cover_new": { "strength": 4 } } ]
+        });
+        let none = BTreeSet::new();
+        let at = |n: u8| -> BTreeMap<String, u8> {
+            [("stdlib.Std.Nav".to_string(), n)].into_iter().collect()
+        };
+        assert!(ratchet_with_corrections(&led, Some(&base), &none, &at(3)).is_empty());
+        let fails = ratchet_with_corrections(&led, Some(&base), &none, &at(2));
+        assert!(
+            fails.iter().any(|f| f.contains("STALE CORRECTION"))
+                && fails.iter().any(|f| f.contains("COVER_NEW REGRESSED")),
+            "{fails:?}"
+        );
+        let dir = std::env::temp_dir().join(format!("sky-corr-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let toml = dir.join("removals.toml");
+        std::fs::write(
+            &toml,
+            "[[correction]]\nsurface = \"stdlib.Std.Nav\"\nstrength = \"Asserted\"\nreason = \"r\"\nowner = \"o\"\ncommit = \"c\"\n",
+        )
+        .unwrap();
+        assert_eq!(parse_corrections(&toml).unwrap(), at(3));
+        std::fs::write(
+            &toml,
+            "[[correction]]\nsurface = \"x\"\nstrength = \"Asserted\"\n",
+        )
+        .unwrap();
+        assert!(parse_corrections(&toml)
+            .unwrap_err()
+            .contains("missing `reason`"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

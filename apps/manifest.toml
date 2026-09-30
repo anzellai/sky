@@ -180,6 +180,10 @@ id = "G"
 name = "cli-verbs"
 path = "rust/crates/sky/tests"
 kind = "flow-tests"
+# The flow test files the `cli-verbs` gate runs. The ledger credits this member
+# only with the fixtures THESE files load (G-2); every other *_flow.rs is its
+# own `flow:` unit at `Asserted`.
+flows = "cli_verb_flow"
 status = "gated"
 gate = "cli-verbs"
 tier = "T1"
