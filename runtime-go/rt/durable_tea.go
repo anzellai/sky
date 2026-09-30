@@ -147,7 +147,7 @@ func (d *durableCtx) persistFixed(model any) {
 	if persistFn == nil {
 		return
 	}
-	sky_call(SkyCall(persistFn, d.runId, model), nil)
+	d.runPersist(d.runId, SkyCall(persistFn, d.runId, model))
 }
 
 // persist snapshots model for runId, fire-and-forget (write-if-newer, so a lost
@@ -164,14 +164,16 @@ func (d *durableCtx) persist(runId string, model any) {
 		return
 	}
 	task := SkyCall(persistFn, runId, model)
-	safeGo("Durable.persist", func() {
+	// goSky, not safeGo: safeGo is the terminal runtime's wrapper and ends the
+	// process on a panic. runPersist recovers a panicking write itself.
+	goSky("Durable.persist", func() {
 		mu := durableStripe(runId)
 		mu.Lock()
 		defer mu.Unlock()
 		if d.isRetired(runId) {
 			return
 		}
-		sky_call(task, nil)
+		d.runPersist(runId, task)
 	})
 }
 
@@ -192,7 +194,7 @@ func (d *durableCtx) persistSync(runId string, model any) {
 	if d.isRetired(runId) {
 		return
 	}
-	sky_call(SkyCall(persistFn, runId, model), nil)
+	d.runPersist(runId, SkyCall(persistFn, runId, model))
 }
 
 // retire drops the snapshot of runId and refuses every later persist for
@@ -299,4 +301,24 @@ func durableReportRestoreFailure(runId, reason string) {
 		"until the snapshot is migrated or removed.", runId, reason)
 	logEmit(logLevelError, "error", msg, map[string]any{"class": "DurableRestoreFailed", "runId": runId})
 	tuiWarn("durable", msg)
+}
+
+// runPersist runs one snapshot write and recovers a panic in it. A write
+// panics when the Model cannot be encoded (a NaN or infinite Float reaching
+// Json.Encode is enough). The panic is logged classified and the run is
+// SUSPENDED: no later write may replace the stored snapshot, and the process
+// keeps serving. Before this, the async write ran on safeGo, the terminal
+// runtime's wrapper, which answers any panic with ExitProcess(2), so one
+// unencodable update ended a Sky.Live server.
+func (d *durableCtx) runPersist(runId string, task any) {
+	defer func() {
+		if r := recover(); r != nil {
+			d.suspended.Store(runId, true)
+			logClassifiedPanic("sky.durable", "Durable.persist", r)
+			tuiWarn("durable", fmt.Sprintf(
+				"Durable: writing the snapshot for run %q failed (%v). This run writes no more snapshots; the last stored one is kept.",
+				runId, r))
+		}
+	}()
+	sky_call(task, nil)
 }
