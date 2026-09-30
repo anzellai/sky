@@ -331,7 +331,7 @@ func Go_Uuid_nullUUIDUUIDT(arg0 any) (out SkyResult[any, any]) {
 	defer SkyFfiGuardT(&out)()
 	recv := FfiArg[*pkg.NullUUID](arg0)
 	if recv == nil { out = Err[any, any](ErrFfi("UUID: nil receiver")); return }
-	out = Ok[any, any](FfiRet(recv.UUID))
+	out = Ok[any, any](FfiRetField(&recv.UUID))
 	return
 }
 func Go_Uuid_nullUUIDUUID(arg0 any) any { return SkyFfiFieldGet3(arg0, "UUID") }
@@ -373,7 +373,7 @@ func Go_Uuid_nullUUIDValidT(arg0 any) (out SkyResult[any, any]) {
 	defer SkyFfiGuardT(&out)()
 	recv := FfiArg[*pkg.NullUUID](arg0)
 	if recv == nil { out = Err[any, any](ErrFfi("Valid: nil receiver")); return }
-	out = Ok[any, any](FfiRet(recv.Valid))
+	out = Ok[any, any](FfiRetField(&recv.Valid))
 	return
 }
 func Go_Uuid_nullUUIDValid(arg0 any) any { return SkyFfiFieldGet3(arg0, "Valid") }

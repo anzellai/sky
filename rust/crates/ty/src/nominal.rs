@@ -134,6 +134,11 @@ pub fn same(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
+    // A Go FFI type is only ever itself: a bare Sky name with the same base
+    // (`Router`, `Request`, the kernel-implicit `Value`) is never a Go value.
+    if is_go_type(a) || is_go_type(b) {
+        return false;
+    }
     if base(a) != base(b) {
         return false;
     }
@@ -209,6 +214,14 @@ mod tests {
     fn most_specific_prefers_the_qualified_side() {
         assert_eq!(most_specific("Shape", "B.Shape"), "B.Shape");
         assert_eq!(most_specific("A.Shape", "Shape"), "A.Shape");
+    }
+
+    #[test]
+    fn a_go_type_is_only_itself() {
+        assert!(!same("go@Net.Http.Request", "Request"));
+        assert!(!same("Value", "go@Database.Sql.Driver.Value"));
+        assert!(!same("go@A.Router", "go@B.Router"));
+        assert!(same("go@A.Router", "go@A.Router"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ package rt
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -237,5 +238,72 @@ func TestFfiFieldAccess(t *testing.T) {
 	}
 	if bad := SkyFfiFieldSet3(-1, r, "U").(SkyResult[any, any]); bad.Tag != 1 {
 		t.Fatal("negative into uint64 must be Err")
+	}
+}
+
+// A callback Go runs LATER, on its own goroutine (time.AfterFunc, a server
+// handler), is outside every wrapper guard. A conversion failure there must
+// come back through the callback's `error` result when it has one, and
+// otherwise be a CLASSIFIED panic, never a raw one.
+func TestFfiAsyncCallbackConversionFailure(t *testing.T) {
+	withErr := FfiArg[func(uint64) error](func(n int) SkyResult[any, struct{}] {
+		return Ok[any, struct{}](struct{}{})
+	})
+	errc := make(chan error, 1)
+	go func() { errc <- withErr(math.MaxUint64) }()
+	err := <-errc
+	if err == nil || !strings.Contains(err.Error(), "out of range for Int") {
+		t.Fatalf("an error-returning callback must report the failure as its error, got %v", err)
+	}
+
+	noErr := FfiArg[func(uint64) string](func(n int) string { return "unreached" })
+	panicc := make(chan any, 1)
+	go func() {
+		defer func() { panicc <- recover() }()
+		noErr(math.MaxUint64)
+	}()
+	r := <-panicc
+	if r == nil {
+		t.Fatal("an out-of-range argument must fail")
+	}
+	if kind, _ := classifyPanic(fmt.Sprint(r)); kind != "FfiConversion" {
+		t.Fatalf("classifyPanic(%v) = %q, want FfiConversion", r, kind)
+	}
+}
+
+type ffiCounter struct{ n int }
+
+func (c *ffiCounter) Inc() { c.n++ }
+
+type ffiHolder struct {
+	C ffiCounter
+	T ffiThing
+}
+
+// A nil opaque value never becomes a zero struct, and a value is never
+// silently copied into a pointer receiver whose methods would then act on
+// the copy.
+func TestFfiNilAndPointerIdentity(t *testing.T) {
+	msg := ffiErrText(t, ffiGuarded(func() any { return FfiArg[ffiThing](nil) }))
+	if !strings.Contains(msg, "nil for rt.ffiThing") {
+		t.Fatalf("nil as a struct value: %q", msg)
+	}
+	if p := FfiArg[*ffiThing](nil); p != nil {
+		t.Fatal("nil stays a nil pointer")
+	}
+	msg = ffiErrText(t, ffiGuarded(func() any { return FfiArg[*ffiCounter](ffiCounter{}) }))
+	if !strings.Contains(msg, "pointer-receiver methods") {
+		t.Fatalf("value for *T with pointer methods: %q", msg)
+	}
+	// A struct field of an opaque struct type is read as its address, so a
+	// pointer method on it acts on the field, not a copy.
+	h := &ffiHolder{}
+	got := SkyFfiFieldGet3(h, "C").(SkyResult[any, any])
+	FfiArg[*ffiCounter](got.OkValue).Inc()
+	if h.C.n != 1 {
+		t.Fatalf("the field getter lost identity: n = %d", h.C.n)
+	}
+	if p, ok := FfiRetField(&h.C).(*ffiCounter); !ok || p != &h.C {
+		t.Fatal("FfiRetField keeps the field's address")
 	}
 }

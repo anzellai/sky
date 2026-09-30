@@ -44,6 +44,9 @@ const HEADER: &str = "\
 -- ffi: Pkg apply : (Int -> String) -> Result Error String
 -- ffi: Pkg writeTo : goi@Io.Writer -> String -> Result Error ()
 -- ffi: Pkg describeValue : any -> Result Error String
+-- ffi: Pkg driverValue : () -> Result Error go@Pkg.Value
+-- ffi: Pkg writeAll : List goi@Io.Writer -> Result Error ()
+-- ffi: Pkg middleware : (go@Pkg.Handler -> goi@Pkg.Handler) -> Result Error ()
 -- ffi: Pkg noType/2 :
 -- ffi: Github.Com.Google.Uuid newString : () -> Result Error String
 -- ffi: Pkg defaultClient : () -> Result Error go@Pkg.Client
@@ -363,6 +366,16 @@ fn an_opaque_go_value_is_not_an_int() {
         "asInt : Int\nasInt =\n    case Pkg.newRouter () of\n        Ok r ->\n            r\n\n        Err _ ->\n            0\n\n\nmain =\n    println (String.fromInt asInt)\n",
         "E2001",
     );
+    assert_rejects(
+        "a Go `Value` where the kernel-implicit `Value` is annotated",
+        "keep : Value -> String\nkeep _ =\n    \"k\"\n\n\nmain =\n    case Pkg.driverValue () of\n        Ok v ->\n            println (keep v)\n\n        Err _ ->\n            println \"err\"\n",
+        "E2001",
+    );
+    assert_rejects(
+        "opaque in a same-named app type",
+        "type alias Router =\n    { n : Int }\n\n\nkeep : Router -> Int\nkeep r =\n    r.n\n\n\nmain =\n    case Pkg.newRouter () of\n        Ok r ->\n            println (String.fromInt (keep r))\n\n        Err _ ->\n            println \"err\"\n",
+        "E2001",
+    );
 }
 
 /// C-12: the callback's result is typed from the pin.
@@ -484,4 +497,30 @@ fn format3_type_errors_carry_the_migration_hint() {
             "{anchor}: {hint:?}"
         );
     }
+}
+
+/// [E2013] also checks an interface nested in a parameter (a variadic list of
+/// interfaces, a callback's result) and the pipe form of a call.
+#[test]
+fn a_sky_value_in_a_nested_or_piped_interface_position_is_rejected() {
+    for (label, body) in [
+        (
+            "List of io.Writer given Strings",
+            "main =\n    println (Result.withDefault \"\" (Pkg.writeAll [ \"a\" ] |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+        (
+            "callback returning a String for an http.Handler",
+            "main =\n    println (Result.withDefault \"\" (Pkg.middleware (\\next -> \"x\") |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+        (
+            "piped String for an io.Writer",
+            "main =\n    println (Result.withDefault \"\" ((\"w\" |> Pkg.writeTo \"x\") |> Result.map (\\_ -> \"ok\")))\n",
+        ),
+    ] {
+        assert_rejects(label, body, "E2013");
+    }
+    assert_accepts(
+        "callback returning its Go handler",
+        "main =\n    println (Result.withDefault \"\" (Pkg.middleware (\\next -> next) |> Result.map (\\_ -> \"ok\")))\n",
+    );
 }

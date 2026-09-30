@@ -824,9 +824,13 @@ argument of the wrong Go type crashed the process.
 - **Floor check (§1):** the value's Go shape still exists only at run time.
   R4 therefore stays exactly one narrowing, `any → rt.SkyResult[E, T]`, and
   it is now to a slot shape that describes the value truthfully. R3 is no
-  longer a call-site narrowing for a format-3 surface: the wrapper declares a
-  non-native parameter `any` and converts it inside its guard
-  (`SkyFfiGuardT`), so a mismatch is an `Err`. The reflect `MakeFunc`
+  longer a call-site narrowing for a format-3 surface: it is RELOCATED, not
+  removed. The wrapper declares a non-native parameter `any` and narrows it
+  with `FfiArg[T]` inside its guard (`SkyFfiGuardT`), so a mismatch is an
+  `Err`. Those `FfiArg[T]` / `FfiRet` sites live in the generated
+  `sky-ffi/go/*_bindings.go`, which `coerce-floor` does not count (it counts
+  `main.go`); a fall in the `main.go` number is that relocation, and the
+  generated sites are the other half of the ledger. The reflect `MakeFunc`
   adapter moves from a call-site `rt.Coerce[func…]` into `rt.ffiCallback`.
   No `adapter` token is emitted. Floor-touching: authorised by the user for
   the v0.27.0 FFI fixes.
@@ -846,11 +850,17 @@ argument of the wrong Go type crashed the process.
   - uuid: 61/91 → 6/6
 
   Every remaining position is a checked parameter: an empty Go interface,
-  which Go itself accepts, or a non-empty one, which `[E2013]` and the
-  run-time assertion check. `xtask coerce-floor`: `narrow` is expected to
+  which Go itself accepts, or a non-empty one. `[E2013]` checks a non-empty
+  one at every depth the signature puts it (a parameter, a `List`/`Maybe`
+  element, a tuple component, a callback's result) for a direct, curried or
+  piped call; the run-time assertion in the guard covers every call form,
+  including a binding passed as a value. `xtask coerce-floor`: `narrow` is expected to
   FALL on the FFI rows as the R3 slot narrowings leave the call site, and
   `adapter` stays 0. The integration run records the measured row values
-  here when it blesses the decrease.
+  here when it blesses the decrease. The relocated sites, counted in the
+  regenerated fixtures (`rust/crates/ffi/tests/fixtures/*_bindings.go`,
+  `grep -o`): mux 109 `FfiArg[` / 65 `FfiRet(`, net/http 519 / 402, uuid 56 / 55. For the Stripe SDK (example 13) the generated file carries
+  STRIPE_COUNTS.
 - **Verification:**
   - `rust/crates/sky/tests/ffi_result_enforced_flow.rs`:
     - `format3_go_values_convert_or_are_err`: a local Go package covering

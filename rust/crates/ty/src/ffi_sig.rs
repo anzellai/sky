@@ -673,10 +673,86 @@ pub fn has_callback_param(sky_type: &str, arity: usize) -> bool {
             .any(|s| !s.garbled && s.toks.contains(&Tok::Arrow))
 }
 
-/// Which top-level parameters of a pinned signature are non-empty Go
-/// interfaces (`goi@…`): the call sites [`crate::ffi_iface`] checks after
-/// solving. `None` when the string does not parse.
-pub fn iface_params(sky_type: &str, arity: usize) -> Option<Vec<Option<String>>> {
+/// Where, inside one parameter, a pinned signature puts a non-empty Go
+/// interface (`goi@…`): the positions [`crate::ffi_iface`] checks after
+/// solving.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IfaceSlot {
+    /// No interface anywhere in this position.
+    None,
+    /// This position is the interface (its key, `Io.Writer`).
+    Iface(String),
+    /// A `List` / `Maybe` element, or a `Dict` value.
+    Elem(Box<IfaceSlot>),
+    /// Tuple components.
+    Tuple(Vec<IfaceSlot>),
+    /// A callback of `n` parameters whose RESULT holds an interface (Sky hands
+    /// the result to Go).
+    CallbackResult(usize, Box<IfaceSlot>),
+}
+
+impl IfaceSlot {
+    fn is_none(&self) -> bool {
+        matches!(self, IfaceSlot::None)
+    }
+}
+
+fn iface_slot(raw: &Raw, top: bool) -> IfaceSlot {
+    let wrap_elem = |s: IfaceSlot| {
+        if s.is_none() {
+            IfaceSlot::None
+        } else {
+            IfaceSlot::Elem(Box::new(s))
+        }
+    };
+    match raw {
+        Raw::Name(h, args) if args.is_empty() => match h.strip_prefix("goi@") {
+            Some(k) => IfaceSlot::Iface(k.to_string()),
+            None => IfaceSlot::None,
+        },
+        Raw::Name(h, args) if (h == "List" || h == "Maybe") && args.len() == 1 => {
+            wrap_elem(iface_slot(&args[0], false))
+        }
+        Raw::Name(h, args) if h == "Dict" && args.len() == 2 => {
+            wrap_elem(iface_slot(&args[1], false))
+        }
+        Raw::Tuple(items) => {
+            let parts: Vec<IfaceSlot> = items.iter().map(|x| iface_slot(x, false)).collect();
+            if parts.iter().all(IfaceSlot::is_none) {
+                IfaceSlot::None
+            } else {
+                IfaceSlot::Tuple(parts)
+            }
+        }
+        Raw::Fun(..) if top => {
+            let mut n = 0;
+            let mut cur = raw;
+            while let Raw::Fun(_, b) = cur {
+                n += 1;
+                cur = b;
+            }
+            let r = iface_slot(cur, false);
+            if r.is_none() {
+                IfaceSlot::None
+            } else {
+                IfaceSlot::CallbackResult(n, Box::new(r))
+            }
+        }
+        Raw::ZeroFun(r) if top => {
+            let r = iface_slot(r, false);
+            if r.is_none() {
+                IfaceSlot::None
+            } else {
+                IfaceSlot::CallbackResult(1, Box::new(r))
+            }
+        }
+        _ => IfaceSlot::None,
+    }
+}
+
+/// The interface positions of each top-level parameter of a pinned
+/// signature. `None` when the string does not parse.
+pub fn iface_params(sky_type: &str, arity: usize) -> Option<Vec<IfaceSlot>> {
     let toks = tokenise(sky_type)?;
     let segs = split_top(&toks);
     let (_, params) = segs.split_last()?;
@@ -686,14 +762,17 @@ pub fn iface_params(sky_type: &str, arity: usize) -> Option<Vec<Option<String>>>
     Some(
         params
             .iter()
-            .map(|seg| match seg.toks.as_slice() {
-                [Tok::Ident(h)] => h.strip_prefix("goi@").map(str::to_string),
-                _ => None,
+            .map(|seg| {
+                if seg.garbled {
+                    return IfaceSlot::None;
+                }
+                parse_full(&seg.toks)
+                    .map(|raw| iface_slot(&raw, true))
+                    .unwrap_or(IfaceSlot::None)
             })
             .collect(),
     )
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -851,7 +930,24 @@ mod tests {
         assert_eq!(r0("() -> Result Error go@Io.Writer"), go("Io.Writer"));
         assert_eq!(
             iface_params("goi@Io.Writer -> String -> Result Error ()", 2),
-            Some(vec![Some("Io.Writer".to_string()), None])
+            Some(vec![
+                IfaceSlot::Iface("Io.Writer".to_string()),
+                IfaceSlot::None
+            ])
+        );
+        // Nested: a variadic list of interfaces, a callback returning one.
+        assert_eq!(
+            iface_params("List goi@Io.Writer -> Result Error ()", 1),
+            Some(vec![IfaceSlot::Elem(Box::new(IfaceSlot::Iface(
+                "Io.Writer".to_string()
+            )))])
+        );
+        assert_eq!(
+            iface_params("(go@H.Handler -> goi@H.Handler) -> Result Error ()", 1),
+            Some(vec![IfaceSlot::CallbackResult(
+                1,
+                Box::new(IfaceSlot::Iface("H.Handler".to_string()))
+            )])
         );
     }
 

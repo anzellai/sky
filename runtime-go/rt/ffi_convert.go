@@ -45,6 +45,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"sync"
 )
 
 // FfiConvError is a Go FFI value that cannot be converted to the shape the
@@ -105,8 +106,21 @@ func ffiBasicKind(k reflect.Kind) bool {
 	return false
 }
 
+// The per-type classification is pure; it is cached, because the wrappers
+// ask it on every call.
+var ffiOpaqueCache, ffiSameRepCache sync.Map
+
 // ffiOpaque: a type Sky holds as an opaque Go value (no conversion).
 func ffiOpaque(t reflect.Type) bool {
+	if v, ok := ffiOpaqueCache.Load(t); ok {
+		return v.(bool)
+	}
+	r := ffiOpaqueUncached(t)
+	ffiOpaqueCache.Store(t, r)
+	return r
+}
+
+func ffiOpaqueUncached(t reflect.Type) bool {
 	if ffiDefined(t) && !ffiBasicKind(t.Kind()) {
 		return true
 	}
@@ -127,6 +141,15 @@ func ffiOpaque(t reflect.Type) bool {
 // ffiSameRep: a type whose Go value IS its Sky value (string, int, float64,
 // bool, and slices / String-keyed maps of those), so no copy is needed.
 func ffiSameRep(t reflect.Type) bool {
+	if v, ok := ffiSameRepCache.Load(t); ok {
+		return v.(bool)
+	}
+	r := ffiSameRepUncached(t)
+	ffiSameRepCache.Store(t, r)
+	return r
+}
+
+func ffiSameRepUncached(t reflect.Type) bool {
 	if ffiDefined(t) {
 		return false
 	}
@@ -279,7 +302,13 @@ func ffiTypeName(v any) string {
 // ffiToGo: the Go value of type t for a Sky value v.
 func ffiToGo(v any, t reflect.Type) reflect.Value {
 	if v == nil {
-		return reflect.Zero(t)
+		// Sky holds a nil Go value (a nil pointer, interface, map, …) as an
+		// opaque value it cannot test. It passes on only where Go has a nil.
+		switch t.Kind() {
+		case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
+			return reflect.Zero(t)
+		}
+		ffiFail("nil for %s", t)
 	}
 	rv := reflect.ValueOf(v)
 	if ffiOpaque(t) {
@@ -514,8 +543,13 @@ func ffiOpaqueToGo(rv reflect.Value, t reflect.Type) reflect.Value {
 		out.Set(rv.Elem())
 		return out
 	}
-	// `T` given where `*T` is wanted: a pointer to a copy.
+	// `T` given where `*T` is wanted: a pointer to a copy, unless `*T` has
+	// pointer-receiver methods, which would then act on the copy (a copied
+	// mutex, a buffer write that is lost). That fails loudly instead.
 	if t.Kind() == reflect.Ptr && rv.Type().AssignableTo(t.Elem()) {
+		if t.NumMethod() > t.Elem().NumMethod() {
+			ffiFail("%s is a value, and %s has pointer-receiver methods that would act on a copy of it", rv.Type(), t)
+		}
 		p := reflect.New(t.Elem())
 		p.Elem().Set(rv)
 		return p
@@ -556,7 +590,28 @@ func ffiCallback(sky reflect.Value, t reflect.Type) reflect.Value {
 		ins[i] = ffiAnyType
 	}
 	callable := adaptFuncValue(sky, reflect.FuncOf(ins, []reflect.Type{ffiAnyType}, false))
-	return reflect.MakeFunc(t, func(in []reflect.Value) []reflect.Value {
+	return reflect.MakeFunc(t, func(in []reflect.Value) (outs []reflect.Value) {
+		// Go may run the callback later, on its own goroutine (a server
+		// handler, time.AfterFunc), outside every wrapper guard. A conversion
+		// failure then comes back through the callback's `error` result when
+		// it has one; otherwise it stays a panic whose message
+		// `classifyPanic` names (FfiConversion), never a raw one.
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			var ce *FfiConvError
+			if e, ok := r.(error); ok && errors.As(e, &ce) && t.NumOut() > 0 && t.Out(t.NumOut()-1) == ffiErrorType {
+				outs = make([]reflect.Value, t.NumOut())
+				for i := range outs {
+					outs[i] = reflect.Zero(t.Out(i))
+				}
+				outs[len(outs)-1] = reflect.ValueOf(errors.New(ce.Msg)).Convert(ffiErrorType)
+				return
+			}
+			panic(r)
+		}()
 		if unitArg {
 			u := reflect.New(ffiAnyType).Elem()
 			u.Set(reflect.ValueOf(struct{}{}))
@@ -675,6 +730,9 @@ func SkyFfiFieldGet3(recv any, field string) (out any) {
 	if !f.IsValid() {
 		return Err[any, any](ErrFfi(field + ": no such field"))
 	}
+	if f.Kind() == reflect.Struct && ffiOpaque(f.Type()) && f.CanAddr() {
+		return Ok[any, any](f.Addr().Interface())
+	}
 	return Ok[any, any](ffiToSky(f))
 }
 
@@ -792,4 +850,15 @@ func ffiPackResults(results []reflect.Value, hasError bool) any {
 		vs[i] = ffiToSky(r)
 	}
 	return Ok[any, any](vs)
+}
+
+// FfiRetField is FfiRet for a struct field read through its address: a field
+// of an opaque struct type is returned as its ADDRESS, so a later
+// pointer-receiver call acts on the field itself, not on a copy.
+func FfiRetField[T any](p *T) any {
+	t := reflect.TypeOf(p).Elem()
+	if t.Kind() == reflect.Struct && ffiOpaque(t) {
+		return p
+	}
+	return FfiRet(*p)
 }

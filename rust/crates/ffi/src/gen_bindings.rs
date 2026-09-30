@@ -1073,7 +1073,7 @@ fn emit_typed_wrapper(
             String::new()
         };
         let typed_decl = format!(
-            "func {wrapper_name}T(arg0 any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\trecv := {}\n{nil_check}\tout = Ok[any, any](FfiRet(recv.{field_name}))\n\treturn\n}}\n",
+            "func {wrapper_name}T(arg0 any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\trecv := {}\n{nil_check}\tout = Ok[any, any](FfiRetField(&recv.{field_name}))\n\treturn\n}}\n",
             format!("FfiArg[{receiver_type}](arg0)")
         );
         let any_decl = format!(
