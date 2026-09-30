@@ -4,7 +4,7 @@
 //! inside the triggering RPC. Before this change the chaining-ROOT detection
 //! walked ONLY the DIRECT tail tuple, so a `Cmd.perform` returned THROUGH a
 //! higher-order guard wrapper (`guard model (\_ -> ( …, Cmd.perform … ))`, the
-//! darraghstudio `requireAdmin` shape) was invisible: the continuation Msg stayed
+//! shop-app `requireAdmin` shape) was invisible: the continuation Msg stayed
 //! a BROKEN wire branch (`missing field(s)` / `Result Error String vs Error`).
 //!
 //! Drives the real pipeline over `crates/sky/tests/fixtures/spa-guarded-chain`:

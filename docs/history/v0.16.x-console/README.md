@@ -36,7 +36,7 @@ small teams without Kubernetes" positioning. See
 | 6 | [SERVERLESS.md](SERVERLESS.md) | Your app deploys to Cloud Run / Lambda. |
 | 7 | [NON-SKY.md](NON-SKY.md) | You have Python / Node / Go services that should push to the hub. |
 | 8 | [OPS.md](OPS.md) | You're operating the hub in production — alerts, RBAC, replication. |
-| 9 | [MIGRATION.md](MIGRATION.md) | You're upgrading an existing app (sky-lang.org / skydeploy / ringfence as worked examples). |
+| 9 | [MIGRATION.md](MIGRATION.md) | You're upgrading an existing app (sky-lang.org / skydeploy / partner-app as worked examples). |
 
 ## Cycle scope — six patches in one minor version
 
@@ -82,7 +82,7 @@ Each design decision validated end-to-end on three real apps:
 |---|---|---|
 | **sky-lang.org** | GCE VM e2-micro | Embedded mode on tiny VM; Hub push from VM |
 | **skydeploy** | Cloud Run (per-tenant) | Serverless exporter; SIGTERM drain; multi-tenant hub UI |
-| **ringfence** | GCE VM | Multi-app federation; second canary for VM mode |
+| **partner-app** | GCE VM | Multi-app federation; second canary for VM mode |
 
 A v0.16.x patch isn't ready to tag until all three canaries are green.
 

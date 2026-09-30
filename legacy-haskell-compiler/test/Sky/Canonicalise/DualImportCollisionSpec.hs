@@ -210,7 +210,7 @@ spec = describe "Cycle 4 D5: dual-import qualifier collision detection" $ do
 
 
     it "explicit alias suppresses a bare import's auto-qualifier (3-line shape)" $ do
-        -- Same rule applied to the historical ringfence 3-import
+        -- Same rule applied to the historical partner-app 3-import
         -- workaround shape.  Under v0.17.5 the extra `import Lib.Db
         -- as LibDb` line is optional — the bare `import Lib.Db
         -- exposing (conn)` no longer collides with `Std.Db as Db`

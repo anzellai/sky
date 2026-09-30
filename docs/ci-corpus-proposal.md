@@ -195,7 +195,7 @@ header naming the bug class, and several name the exact fixed function.
 | `49-xmodule-adt` | cross-module parametric ADT, no `undefined: T1` | **`anzellai/sky#153`** `:1` |
 | `50-open-row-closure` | open-row closure param widened to `any` | divergences C001/C002, `:3-22` |
 | `51-kernel-variadic-arity` | kernel-alias arity = Sky arrow count | **`anzellai/sky#155`** `:10`; compile-only `:26-28` |
-| `53-record-update-map` | record-update over `List.map` carries full record | "DarraghStudio bug #2" `:4` |
+| `53-record-update-map` | record-update over `List.map` carries full record | "shop-app bug #2" `:4` |
 | `54-record-fieldset-collision` | same field NAMES, different field TYPES → distinct structs | `goty.rs select_record_candidate` `:10` |
 
 **B. Genuine product demos (~24).** `01`, `02`, `03`, `04`, `05`, `06`, `07`,
@@ -623,7 +623,7 @@ Postgres from identical source, driver from env.**
 | Incident | Mechanism in Ledger |
 |---|---|
 | **Session hijack** (v0.19.13, `64b4ce13`/`b263b71b`) | two-client scenario: client A's cookie + client B's session id in the `/_sky/event` body must be refused |
-| **CSRF-idle strand** (`915faf21`, "the darraghstudio incident") | `SKY_LIVE_TTL` short + hold idle past it + interact; assert no 403/offline banner |
+| **CSRF-idle strand** (`915faf21`, "the shop-app incident") | `SKY_LIVE_TTL` short + hold idle past it + interact; assert no 403/offline banner |
 | **`liveInto` silent-stale on SQL** (`20a0bee6`, branch) | reactive binding on the **Postgres** arm must either deliver or fail loudly — assert the *verdict*, never merely "no crash" |
 | **`[live] store="postgres"` silent memory fallback** (`ab13572a`) | boot with an unreachable DSN; must fail loud, not degrade |
 | **#166 record-update field drop** | `Model` carries a `Dict String String` **and** a parametric-ADT field; `update` returns `( { m \| f = v }, Cmd )` both annotated and unannotated |

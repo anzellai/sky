@@ -1,6 +1,6 @@
 # Sky Console v0.16.x — Migration guide
 
-> How sky-lang.org, skydeploy, and ringfence (the three real test apps)
+> How sky-lang.org, skydeploy, and partner-app (the three real test apps)
 > adopt v0.16.x. Plus general guidance for any Sky app upgrading from
 > v0.15.x.
 
@@ -121,16 +121,16 @@ Migration timeline:
 - Multi-app view if a tenant operates multiple SkyDeploy apps
 - Lower per-instance RAM (no in-process SQLite write-through)
 
-## ringfence migration
+## partner-app migration
 
-Currently: separate productionised app on settleby GCP (saw `ringfence-cloud` firewall tag during sky-lang.org provisioning).
+Currently: separate productionised app on settleby GCP (saw `partner-app-cloud` firewall tag during sky-lang.org provisioning).
 
-ringfence joining the unified hub is straightforward:
-1. Set `SKY_CONSOLE_HUB` + `SKY_CONSOLE_HUB_TOKEN` in ringfence's env
+partner-app joining the unified hub is straightforward:
+1. Set `SKY_CONSOLE_HUB` + `SKY_CONSOLE_HUB_TOKEN` in partner-app's env
 2. Rebuild + redeploy
-3. ringfence telemetry appears in the same hub UI alongside sky-lang.org + skydeploy
+3. partner-app telemetry appears in the same hub UI alongside sky-lang.org + skydeploy
 
-No code changes in ringfence.
+No code changes in partner-app.
 
 ## When NOT to migrate
 

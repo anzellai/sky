@@ -108,7 +108,7 @@ stays in `db.mem` until TTL — bluedb-as-session-store gets only the ~3.4×
 liveSession-object win, not the fixed cap. **sqlite / postgres / redis get the
 real near-fixed cap** (blob on disk / external). Recommendation: memory-
 constrained deployments use `SKY_LIVE_STORE=sqlite` (or redis/postgres) for
-sessions. Target apps (sky-lang.org, darraghstudio) already do.
+sessions. Target apps (sky-lang.org, shop-app) already do.
 
 **New cap (sqlite/pg/redis), given the fixes:** RAM ≈ `L × (SSE-connected ∪
 touched-within-idleEvict)` — decoupled from TTL. ~5.5× less than all-within-30m

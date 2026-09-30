@@ -44,7 +44,7 @@ was pointed only at the two bench IPs):
 
   NAME               ZONE            MACHINE_TYPE  STATUS
   sky-lang-org       us-central1-a   e2-micro      RUNNING
-  ringfence-cloud-1  europe-west1-b  e2-small      RUNNING
+  partner-app-vm-1  europe-west1-b  e2-small      RUNNING
   settleby-caddy     europe-west2-c  e2-micro      RUNNING
 
 LIFECYCLE STATUS. skylive-remote-validation.md previously recorded the

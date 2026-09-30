@@ -8,7 +8,7 @@ import (
 // A <form> with a submit handler MUST render method="post". Without a method a
 // native submit (before the client interceptor runs — the Sky.Spa wasm
 // hydration window, or JS disabled) defaults to GET and leaks its fields
-// (e.g. a password) into the URL. Regression for the darraghstudio Sky.Spa
+// (e.g. a password) into the URL. Regression for the shop-app Sky.Spa
 // sign-in credential-leak-via-GET (2026-09-11).
 func TestFormWithSubmitRendersMethodPost(t *testing.T) {
 	n := VNode{

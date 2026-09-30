@@ -1,9 +1,9 @@
 module Types exposing (..)
 
--- The darraghstudio shape: ONE module declares the `Msg` union AND a NOMINAL
+-- The shop-app shape: ONE module declares the `Msg` union AND a NOMINAL
 -- `union Page` that a `Model` field (`page : Page`) rides on. The server branch
 -- writes `page`, so `Page` crosses the RPC wire (a user `pageCodec` encodes it,
--- exactly as darraghstudio's `Data.pageCodec` does). A `union` is NOMINAL — two
+-- exactly as shop-app's `Data.pageCodec` does). A `union` is NOMINAL — two
 -- same-named unions in different modules never unify — so the split cannot keep
 -- a copy here AND a copy in `Shared` (as it does for a structural record). It
 -- must give `Shared` the SINGLE definition of `Page` and strip it from here,
@@ -21,7 +21,7 @@ type Page
     | NotFoundPage
 
 
--- A hand-written union codec (like darraghstudio's `pageCodec`). The wire needs
+-- A hand-written union codec (like shop-app's `pageCodec`). The wire needs
 -- it, so `Shared` copies it; it references the `Page` constructors, which now
 -- resolve to `Shared`'s single definition.
 pageCodec : Codec Page

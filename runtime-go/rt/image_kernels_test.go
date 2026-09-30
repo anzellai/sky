@@ -86,7 +86,7 @@ func TestImageResizeDownscalesPreservingAspect(t *testing.T) {
 	}
 }
 
-// An explicit Jpeg format re-encodes a PNG source AS jpeg (the darraghstudio
+// An explicit Jpeg format re-encodes a PNG source AS jpeg (the shop-app
 // policy: photos -> jpeg regardless of upload format).
 func TestImageResizePngToJpeg(t *testing.T) {
 	src := genPNG(t, 1200, 600)

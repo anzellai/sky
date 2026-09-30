@@ -211,7 +211,7 @@ also skips silently because no workflow installs Node, and
 |---|---|---|---|
 | SSE lifecycle, reconnect-resync | strand / desync after redeploy | `L2` browser drive | `verify-live-resilience.mjs` — invoked by **no workflow** |
 | Session store (memory / sqlite / redis / postgres) | cross-instance session loss | `L2` × store matrix | only memory + sqlite, never in CI |
-| CSRF + idle survival | the darraghstudio idle-403 incident | `L2` browser drive (~80 s) | `verify-all-web.sh:155` — CI-unreachable |
+| CSRF + idle survival | the shop-app idle-403 incident | `L2` browser drive (~80 s) | `verify-all-web.sh:155` — CI-unreachable |
 | Forms, `sky-nav`, history | double-push, back-button | `L2` browser drive | CI-unreachable |
 | Multi-tab / pub-sub fan-out | one tab updates, the other doesn't | `L2` two-context drive | `verify-pubsub-multitab.sh` — CI-unreachable |
 
@@ -457,7 +457,7 @@ So the generator uses **four strata**, each with a stated coverage guarantee:
 - *T3 = erasure source × container kind × consumer read-set.* Four source kinds
   (CAF / parameter / map-chain / `foldl` accumulator) × 3 containers × 2
   read-set relations. It is small and has a **proven 4/4 hit rate**: the
-  DarraghStudio-#2 fix `bd18f1c5` closed only the CAF cell and `5914a111` was
+  shop-app-#2 fix `bd18f1c5` closed only the CAF cell and `5914a111` was
   needed for the other three. **24 cases.**
 
 **S2 — pairwise (t=2) covering array over all of A1–A8.** A covering array
@@ -658,7 +658,7 @@ is green and the falsifying mutation for the replacement has been run** (§5).
 | CLI stdout golden | `xtask golden` (24 goldens) | silent output drift | **kept as-is**, retargeted at C3 + P5 | golden count must not decrease |
 | Std.Ui primitive matrix | `26-ui-showcase` + 22 PNGs | visual regressions | **C2**, baselines carried over unchanged | a missing baseline must FAIL, not self-bless |
 | Sky.Live "click is a no-op" | `verify-all-web.sh`, `verify-scenarios.mjs` | the v0.13 event-emission class | P2 + P4 browser drives, same assertions | must run **in CI**, unlike today |
-| Live resilience (desync, idle-80 s) | `verify-live-resilience.mjs` | the darraghstudio incidents | P2 nightly drive | reproduce both incidents on reverted fixes |
+| Live resilience (desync, idle-80 s) | `verify-live-resilience.mjs` | the shop-app incidents | P2 nightly drive | reproduce both incidents on reverted fixes |
 | Multi-tab pub/sub | `verify-pubsub-multitab.sh` | fan-out regressions | P2 two-context drive | — |
 | Console e2e | `verify-console-e2e.mjs` | console wire breakage | P4 drive | currently in a pipeline that **cannot fail**; replacement must be falsifiable |
 | Tri-backend `Std.Ui` parity | `38-composite-ui-multibackend` | one view fn diverging across backends | P6 | three renderers, one view fn, asserted |

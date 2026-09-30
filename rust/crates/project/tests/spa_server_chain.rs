@@ -111,7 +111,7 @@ fn reloaded_is_a_client_arm_and_reload_returns_its_result() {
 
 #[test]
 fn server_classified_continuation_via_helper_is_server_internal() {
-    // The darraghstudio `EmailSent` shape: `Ship` dispatches (through a HELPER
+    // The shop-app `EmailSent` shape: `Ship` dispatches (through a HELPER
     // returning `Cmd.perform`) a `Shipped` continuation whose own arm reaches a
     // SERVER effect (`Log`). `Shipped` is server-CLASSIFIED yet dispatched only
     // server-side, so it must be SERVER-INTERNAL (removed from the wire set),

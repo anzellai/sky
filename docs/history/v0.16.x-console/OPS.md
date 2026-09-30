@@ -27,8 +27,8 @@ rules:
     severity: critical
     channels: [pagerduty]
 
-  - name: ringfence-billing-stale
-    service: "ringfence"
+  - name: partner-app-billing-stale
+    service: "partner-app"
     expression: "absent(billing_sync_success, 1h)"   # no success in 1 hour
     severity: critical
     channels: [slack-ops, pagerduty]
@@ -237,7 +237,7 @@ v0.16.x stays single-VM. Sharding the hub across multiple instances (by `service
 | 2 | Retention config — replace hardcoded defaults with YAML-driven. Per-service overrides. |
 | 3 | Litestream integration for hot store. DuckDB scheduled snapshot for warm. Restore CLI command (`sky console restore`). |
 | 4 | Keyword query DSL — tokenizer + SQL builder. Hook into hub UI's filter inputs. |
-| 5 | Self-observability — hub pushes own metrics to itself. Polish. End-to-end validation on sky-lang.org + skydeploy + ringfence. |
+| 5 | Self-observability — hub pushes own metrics to itself. Polish. End-to-end validation on sky-lang.org + skydeploy + partner-app. |
 
 ## Operational checklist for v0.16.5 hub
 

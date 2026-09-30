@@ -1,4 +1,4 @@
-//! Regression for a codegen type-resolution bug (2026-09-22, found in jokeraces-bot).
+//! Regression for a codegen type-resolution bug (2026-09-22, found in a bot app).
 //!
 //! A project type whose BARE name matches a stdlib type broke the Go build while
 //! `sky check`'s type phase passed — an "if it compiles it works" break. A project

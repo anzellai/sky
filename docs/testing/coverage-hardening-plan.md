@@ -47,7 +47,7 @@ Cheap, high-value: wiring, not new tests. **DONE 2026-08-02** (Judge-pending).
 - **T2.4 ✅** `scripts/test-ci.sh` brought to CI parity: added `fmt`/`s8`/`divergences`/`lsp` gates + `golden` + the behavioral `conformance` gate (was CI-only; it's the int64-class gate). Budget 1800→2700s.
 - **T2.5 → moved to T3** SSE-frame golden + cross-restart gob are Sky.Live runtime concerns; folded into Tier 3 (T3.2 cross-process gob already covers the restart class).
 
-### Tier 3 — Production-incident e2e (the darraghstudio class)
+### Tier 3 — Production-incident e2e (the shop-app class)
 - **T3.1** Postgres session store real-engine round-trip via testcontainers (`//go:build integration`): Set→Get→Delete + `lastSeen` touch. Today Postgres — the store the prod shop runs on — is NEVER tested against a real engine, only its fail-loud branch.
 - **T3.2** L10a cross-**process** gob decode: process A writes a session with a populated `any`-field Model to sqlite/postgres; a fresh `os/exec` process reads it back. Plus a codegen golden that `RegisterSkyGobTypes([]any{…})` is emitted.
 - **T3.3** Browser desync-recovery after redeploy (Playwright): the exact original bug — load page, capture handler id, reboot binary with changed view, click stale control, assert `X-Sky-Status: desync` + DOM heals + next click round-trips, no reload, session preserved. (client-side heal path is untested by anything today)

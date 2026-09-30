@@ -7,7 +7,7 @@
 # split plumbing (build request -> reconstruct -> update -> write-set -> apply
 # delta) — and exits non-zero on a divergence. A divergence is a dropped
 # read/write-set field or a Msg-arg/Model-field collision: the silent-wrong-answer
-# class that shipped to darraghstudio (region switch, basket shipping) and that a
+# class that shipped to shop-app (region switch, basket shipping) and that a
 # plain `sky build` cannot catch. See docs/design/auto-testing.md (mode A).
 #
 # Usage:
@@ -15,7 +15,7 @@
 #
 # The in-repo CI gate is `xtask harness --only spa-diff-fuzz` (bodies::spa_diff_fuzz),
 # which fuzzes the in-repo fixtures in-process; THIS script is the runner for a
-# user's own app (e.g. darraghstudio), which lives outside the compiler tree.
+# user's own app (e.g. shop-app), which lives outside the compiler tree.
 #
 # It runs OFFLINE by design — the checkable branches are effect-free, so no DB,
 # no credentials, and no network are needed (a branch that forces an effect at

@@ -1,4 +1,4 @@
-//! Regression for a confusing diagnostic (2026-09-22, found in jokeraces-bot).
+//! Regression for a confusing diagnostic (2026-09-22, found in a bot app).
 //!
 //! `import Std.Ai.Provider exposing (Provider(..))` asks for the constructors of
 //! `Provider`, but `Std.Ai.Provider` exposes `Provider` OPAQUELY (its constructors

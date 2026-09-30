@@ -31,7 +31,7 @@
 # Every instance is named `sky-bench-*`, and this script REFUSES to
 # create or delete anything that is not. Production instances reachable
 # by the same credentials include `sky-lang-org` (the live site),
-# `darraghstudio-vm`, `ringfence-cloud-1`, `settleby-caddy`,
+# `shop-app-vm`, `partner-app-vm-1`, `settleby-caddy`,
 # `sky-pro-user-*` and `skydeploy-cp-dev`. None of them can be named by
 # this script even deliberately: the prefix check runs before every
 # mutating call, so a typo or a wrong shell variable cannot reach them.

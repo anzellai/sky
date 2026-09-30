@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- Auto-split INPUT reproducing the darraghstudio `OrderFinalized (Result Error
+-- Auto-split INPUT reproducing the shop-app `OrderFinalized (Result Error
 -- CheckoutResult)` failure: a server-result Msg carries a PLAIN RECORD with
 -- MIXED fields (String, Int, Maybe, List, and a nested record). The app declares
 -- NO `Codec` for `Receipt` / `Address`, so the split must AUTO-DERIVE one:

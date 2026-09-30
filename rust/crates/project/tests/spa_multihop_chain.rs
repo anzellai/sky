@@ -8,7 +8,7 @@
 //! -- so the further continuation Msgs live BEHIND a helper delegation. Before
 //! this change the continuation was marked "dirty" (no isolable `( model, cmd )`
 //! pair), the chain failed to settle, and the root fell to a fail-closed warning
-//! (the darraghstudio `RunFinalize`/`OrderFinalized` deeper-chain warning).
+//! (the shop-app `RunFinalize`/`OrderFinalized` deeper-chain warning).
 //!
 //! Drives the real pipeline over `crates/sky/tests/fixtures/spa-multihop-chain`
 //! (positive) and `crates/sky/tests/fixtures/spa-multihop-native` (negative):

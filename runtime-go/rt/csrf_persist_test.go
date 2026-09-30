@@ -35,7 +35,7 @@ func TestCsrfCookieIsPersistent(t *testing.T) {
 	}
 }
 
-// Bug #11 regression — the darraghstudio incident. The CSRF cookie's Max-Age must
+// Bug #11 regression — the shop-app incident. The CSRF cookie's Max-Age must
 // OUTLIVE a session that keeps SLIDING on the SSE heartbeat while the tab sits
 // IDLE (no GET/POST re-issues the cookie during idle). Keying Max-Age to a short
 // SKY_LIVE_TTL (the documented production pattern, e.g. 30m) made the cookie

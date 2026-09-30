@@ -10,7 +10,7 @@
 //! literal in real code. It arrives via a `|>` pipeline (an `Expr::Binop`, NOT a
 //! `Call`) and as a `base ++ "/path"` concat (a `++` whose literal suffix is the
 //! host-independent match). An early version that only matched `Call` nodes with
-//! a literal first argument found NOTHING on darraghstudio's Stripe calls.
+//! a literal first argument found NOTHING on shop-app's Stripe calls.
 
 use project::diagram::scaffold_mocks;
 use std::path::PathBuf;

@@ -256,7 +256,7 @@ if [ "${SKY_VERIFY_SKIP_RESILIENCE:-0}" != "1" ]; then
         FAILS+=("resilience-desync")
     fi
 
-    # idle-survival — reproduces the darraghstudio "idle → disconnected →
+    # idle-survival — reproduces the shop-app "idle → disconnected →
     # refresh fixes it" incident. HARD GATE (bug #11 FIXED): the __sky_csrf
     # cookie's Max-Age was keyed to the session TTL and NOT slid by the SSE
     # heartbeat, so an idle-but-connected session past its TTL 403'd on the next

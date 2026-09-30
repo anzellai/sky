@@ -11,7 +11,7 @@ import (
 // "firestore" (listed as a store option in the docs + sky.toml, but with no
 // branch in chooseStore) — must NOT silently fall back to memory in production.
 // Silent memory loses every session on restart and never shares across replicas
-// (the darraghstudio-class production failure). The pre-fix `default` arm
+// (the shop-app-class production failure). The pre-fix `default` arm
 // returned memory for ANY unknown kind; the v0.19.4 fail-loud work only covered
 // KNOWN stores that fail to CONNECT, not UNKNOWN store names. It must fail loud
 // (storeFatalf) in prod, and warn + fall back to memory in dev.

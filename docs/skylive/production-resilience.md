@@ -3,7 +3,7 @@
 > **Status: Tier 1 + Tier 2 SHIPPED + verified live (2026-08-01).** Branch
 > `feat/skylive-resilience` (pushed). All milestone gates green (runtime
 > `go test ./rt/`, example-sweep 29/0, verify-cli 13/0, verify-all-web PASS).
-> darraghstudio redeployed on the resilience runtime; the A1 fix is verified
+> shop-app redeployed on the resilience runtime; the A1 fix is verified
 > LIVE — a drifted-handler POST returns `200 + X-Sky-Status: desync` (soft
 > resync) instead of the bare stranding `404 "handler not found"`.
 > Tier 3 (L5-L10, seq-gap) remains tracked below. Not yet merged to main /
@@ -89,7 +89,7 @@ console) from invisible → orchestrator-visible.
 ### ✅ Tier 1 — DONE (feat/skylive-resilience: ab13572a, ab9edabd, 7882f4d6)
 All three shipped with red-on-bug regressions; full runtime `go test ./rt/` green.
 Remaining before merge: milestone gates (cargo test + xtask + example sweep +
-verify-all-web) + darraghstudio redeploy as the e2e check.
+verify-all-web) + shop-app redeploy as the e2e check.
 
 ### Tier 1 — core fundamental fixes (confirmed prod bug + meta-landmine)
 - **C1 (readiness probes).** Wire `RegisterReadinessProbe("session-store", …)` +
@@ -102,7 +102,7 @@ verify-all-web) + darraghstudio redeploy as the e2e check.
   unknown-Msg 4359). Client reads it FIRST via a *total* classifier; on
   handler-miss the server re-renders current view inline + returns it → DOM +
   handler IDs heal in one round-trip, no SSE churn, no banner, action dropped
-  (documented). Fixes the darraghstudio disconnect.
+  (documented). Fixes the shop-app disconnect.
 - **B1 (store fail-loud).** `chooseStore` retry-with-backoff (ride the boot
   race), then FATAL in production / loud WARN+memory in dev, ONLY for explicit
   durable stores (postgres/sqlite/redis). Opt-in for memory-in-prod =
@@ -255,6 +255,6 @@ unsound). The Sky.Live silent-degrade/strand class is closed.
 ## Verification bar
 
 Each fix ships with a regression that is **red-on-bug** (reproduces the prod
-symptom before the fix), plus the full milestone gates. The darraghstudio app
+symptom before the fix), plus the full milestone gates. The shop-app app
 is the real-world e2e check. All fixes are pure-runtime (no compiler/stdlib
 change) → apps get them by rebuilding with the new `sky`.

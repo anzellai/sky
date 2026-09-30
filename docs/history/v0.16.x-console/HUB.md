@@ -183,7 +183,7 @@ Lives in `OPS.md`. Optional, opt-in via `SKY_CONSOLE_HUB_LITESTREAM_BUCKET`.
 Each incoming telemetry batch carries OTLP resource attributes. The hub keys data by:
 
 ```
-service.name              required — the "app identity" (e.g., "sky-lang.org", "ringfence", "skydeploy")
+service.name              required — the "app identity" (e.g., "sky-lang.org", "partner-app", "skydeploy")
 service.instance.id       optional — distinct app instance (helpful for Cloud Run replicas)
 service.version           optional — for filtering by deployed version
 ```
@@ -259,11 +259,11 @@ Embedded + hub can both be on. Embedded gives the app a "local debug pane" even 
 |---|---|
 | 1 | Hub UI scaffolding. Sky.Live app at the hub's HTTP port. Multi-service nav. |
 | 2 | Service filter, time-range pickers, span waterfall view, log tail. Reuses Std.Ui chart primitives from v0.16.0. |
-| 3 | End-to-end: all 3 apps (sky-lang.org + skydeploy + ringfence) pushing to one hub; UI shows them all, filterable. |
+| 3 | End-to-end: all 3 apps (sky-lang.org + skydeploy + partner-app) pushing to one hub; UI shows them all, filterable. |
 
 ## Operating the hub
 
-Recommended deployment for sky-lang.org / skydeploy / ringfence shared hub:
+Recommended deployment for sky-lang.org / skydeploy / partner-app shared hub:
 
 ```bash
 # On a dedicated GCE VM (e2-small, $13/mo) at obs.your-company.com

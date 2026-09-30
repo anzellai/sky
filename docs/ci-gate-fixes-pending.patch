@@ -621,7 +621,7 @@ diff -ruN pristine/scripts/verify-all-web.sh patched/scripts/verify-all-web.sh
 -        echo "VERIFY: $pass pass / $fail fail (with resilience-desync)"
      fi
  
-     # idle-survival — reproduces the darraghstudio "idle → disconnected →
+     # idle-survival — reproduces the shop-app "idle → disconnected →
 @@ -152,7 +195,7 @@
      # ~80s (must cross the 60s memory-store cleanup tick); the idle hold is a
      # fixed wait + a deterministic POST-200 assertion, so it is not timing-flaky.

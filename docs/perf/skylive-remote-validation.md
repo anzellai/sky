@@ -320,7 +320,7 @@ independent layers, in decreasing order of trustworthiness:
 Every instance is named `sky-bench-*`, and the script **refuses to
 create or delete anything that is not**. That prefix check runs before
 every mutating call, so production instances reachable with the same
-credentials — `sky-lang-org`, `darraghstudio-vm`, `ringfence-cloud-1`,
+credentials — `sky-lang-org`, `shop-app-vm`, `partner-app-vm-1`,
 `settleby-caddy`, `sky-pro-user-*`, `skydeploy-cp-dev` — cannot be named
 by this script even deliberately. Verified:
 

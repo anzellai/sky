@@ -297,7 +297,7 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
 
 /// Read-set completeness for a model-DERIVED value threaded into a helper.
 ///
-/// Regression for a silent-wrong-answer bug found in darraghstudio prod: a SERVER
+/// Regression for a silent-wrong-answer bug found in shop-app prod: a SERVER
 /// branch `SetRegion` computed shipping through
 /// `recomputeTotals (clear { model | region = r })`, where `recomputeTotals` reads
 /// `model.basket`. That read of `basket` is reachable ONLY through the helper
@@ -376,7 +376,7 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
     // Msg-arg / Model-field NAME COLLISION: `SetScaleArg scale` binds an arg named
     // `scale`, which the Model also has. Under the whole-model request the arg must
     // ride a RENAMED field (`spaMsgArg_scale`) so the handler uses the NEW value,
-    // not the old model field. (The darraghstudio `SetRegion` "switching location
+    // not the old model field. (The shop-app `SetRegion` "switching location
     // does nothing" bug: the arg was dropped as a duplicate.)
     assert!(
         shared.contains("spaMsgArg_scale"),
@@ -1521,7 +1521,7 @@ fn splits_a_mixed_module_codec_by_copying_it_into_shared() {
 
 /// An `Error` value MAY cross the Sky.Spa RPC wire by DEFAULT — it must
 /// serialise, not be refused. A server branch whose payload is
-/// `Result Error String` (the `Cmd.perform … Sent` shape, e.g. darraghstudio's
+/// `Result Error String` (the `Cmd.perform … Sent` shape, e.g. shop-app's
 /// `EmailSent (Result Error String)`) must wire through the stdlib
 /// `Codec.result` + `Codec.error` with NO hand-written app codec. Before this fix
 /// the resolver had no `Result`/`Error` arm and refused with `no codec for a
@@ -1618,7 +1618,7 @@ fn wires_a_result_error_payload_through_the_stdlib_error_codec() {
 
 /// A plain RECORD payload crosses the Sky.Spa wire with NO hand-written codec:
 /// the split AUTO-DERIVES one (§14 #2, option B). The fixture reproduces
-/// darraghstudio's `OrderFinalized (Result Error CheckoutResult)` — a
+/// shop-app's `OrderFinalized (Result Error CheckoutResult)` — a
 /// server-result Msg carries a `Result Error Receipt` where `Receipt` is a plain
 /// record with MIXED fields (String, Int, `Maybe`, `List`, and a NESTED record
 /// `Address`). Before the fix the record solved to a structural row and the split
@@ -2550,7 +2550,7 @@ fn web_view_server_fixture_dir() -> PathBuf {
 /// sibling `View` module, both PURE — synthesises `spaView_`/`spaHead_` wrappers.
 /// Because neither reaches a server effect, BOTH must be carried into the frontend
 /// entry (defined AND referenced), and the wasm client must build. Regression for
-/// the darraghstudio dangle: the split kept `view = spaView_` / `|> Spa.withHead
+/// the shop-app dangle: the split kept `view = spaView_` / `|> Spa.withHead
 /// spaHead_` in the client `main` but dropped their definitions -> `E1001
 /// Undefined name: spaView_` / `spaHead_`. This fixture proves the carry works for
 /// a pure sibling-module view/head (the guard that the drop leg below is precise).
@@ -2620,7 +2620,7 @@ fn web_app_carries_sibling_module_view_and_head_into_the_client() {
 /// renders it. The split must DROP the optional `|> Spa.withHead spaHead_` step
 /// from the client chain (never leave a dangling `spaHead_`), while still carrying
 /// the pure `spaView_`. Pre-fix this failed with `E1001 Undefined name:
-/// spaHead_`. Reproduces the darraghstudio `spaHead_` half exactly.
+/// spaHead_`. Reproduces the shop-app `spaHead_` half exactly.
 #[test]
 fn web_app_drops_server_tainted_head_from_the_client() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -2689,7 +2689,7 @@ fn web_app_drops_server_tainted_head_from_the_client() {
 /// `Config.siteUrl` — an environment read — so the mandatory `view = spaView_`
 /// field cannot be dropped. The split must FAIL with a clear, actionable
 /// diagnostic (the client view must be pure), NEVER a bare `E1001 Undefined name:
-/// spaView_`. Reproduces the darraghstudio `spaView_` half, which is why the real
+/// spaView_`. Reproduces the shop-app `spaView_` half, which is why the real
 /// app's frontend cannot build until its view stops reading env. Synthesis-level —
 /// no Go toolchain needed (the failure is before any `go build`).
 #[test]
@@ -6509,7 +6509,7 @@ fn client_result_e2e_post_upload_returns_task_result() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// Guard-wrapped server-internal chaining (the darraghstudio `requireAdmin`
+/// Guard-wrapped server-internal chaining (the shop-app `requireAdmin`
 /// shape), end-to-end through the real `sky spa-split` generator.
 ///
 /// `Trigger x -> guard model (\_ -> ( { model | busy = True }, Cmd.perform

@@ -7,7 +7,7 @@ import (
 )
 
 // TestDbWithTransactionCommitRollback locks the two historical
-// withTransaction defects (anzellai/sky, DarraghStudio report):
+// withTransaction defects (anzellai/sky, shop-app report):
 //
 //  1. the body was applied via a raw `.(func(any) any)` assertion that never
 //     matched a compiled Sky closure → "body is not a function";

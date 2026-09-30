@@ -3918,7 +3918,7 @@ Full reference: [testing a Sky project](docs/tooling/testing.md) and the
 
 ## v0.24.3 — Sky.Spa: Msg-arg/Model-field collision + blocking hydration overlay (2026-09-12)
 
-A patch fixing two issues found running darraghstudio's basket in production. No
+A patch fixing two issues found running shop-app's basket in production. No
 breaking changes; `sky upgrade` is safe from any v0.24.x.
 
 ### Fixed

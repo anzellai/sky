@@ -2,7 +2,7 @@ module Store exposing (..)
 
 -- A server-tainted sibling that imports the co-located `Types` module via
 -- `exposing (..)` and references the wire record `Item` + `itemCodec` from it.
--- This is the darraghstudio shape: nearly every sibling reads `Types` through
+-- This is the shop-app shape: nearly every sibling reads `Types` through
 -- `exposing (..)`, so the split must keep `Item` resolvable from `Types` after
 -- it moves ownership of `Item` into `Shared`.
 

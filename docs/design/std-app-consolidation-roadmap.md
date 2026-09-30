@@ -44,7 +44,7 @@ onto an incomplete replacement.
 - [ ] **`sky init` scaffolds `Std.App`** by default.
 - [ ] **Real apps migrated and running on `Std.App`** — the repo examples, and at
       least one production app (e.g. sky-lang.org), rebuilt on `Std.App` with no
-      regression. (darraghstudio migrates on the owner's schedule — live traffic.)
+      regression. (shop-app migrates on the owner's schedule — live traffic.)
 - [ ] **A mechanical migration path exists** (`sky migrate app` / a codemod, §5)
       that rewrites `Live.app`-style entries to `Std.App` and is proven on the
       examples.
@@ -140,7 +140,7 @@ Webview), so migration is mechanical, not manual.
 
 - **Non-goal: deleting the kernels.** They are the substrate `Std.App` runs on.
   "Deprecate the modules" means *the public front doors*, not the runtimes.
-- **Live-traffic apps migrate on their owners' schedule.** darraghstudio and any
+- **Live-traffic apps migrate on their owners' schedule.** shop-app and any
   production deployment are never force-migrated; the warning window + codemod +
   the "compiles-today-compiles-tomorrow" guarantee exist precisely for them.
 - **Escape hatch preserved.** A user hand-writing `Std.Html` for server-rendered

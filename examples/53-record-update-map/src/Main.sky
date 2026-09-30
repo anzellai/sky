@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 -- Regression for the record-update-over-map narrowing panic class
--- (DarraghStudio bug #2). A record-update closure `\r -> { r | f = v }`
+-- (shop-app bug #2). A record-update closure `\r -> { r | f = v }`
 -- mapped over a list left the update's row OPEN on the erased-List.map
 -- lowering path, so its result type narrowed to `struct{ f }` — PHYSICALLY
 -- dropping the un-updated fields. A later consumer reading a dropped field
@@ -43,7 +43,7 @@ overCaf =
         List.length (List.map (\r -> r.productId ++ r.name) stamped)
 
 
--- 2. update over a PARAMETER source (the surviving darraghstudio variant)
+-- 2. update over a PARAMETER source (the surviving shop-app variant)
 overParam : List Line -> Int
 overParam lines =
     let

@@ -33,5 +33,5 @@ not by reading the rule table.
 $ gcloud compute instances list --project settleby   # remaining, all pre-existing
 NAME               ZONE            STATUS
 sky-lang-org       us-central1-a   RUNNING
-ringfence-cloud-1  europe-west1-b  RUNNING
+partner-app-vm-1  europe-west1-b  RUNNING
 settleby-caddy     europe-west2-c  RUNNING

@@ -51,7 +51,7 @@ init _ =
     ( { note = "", count = 0 }, Cmd.none )
 
 
--- The command is returned through a HELPER (the darraghstudio `shippedCmd`
+-- The command is returned through a HELPER (the shop-app `shippedCmd`
 -- shape), so the analysis must resolve INTO the helper to see the perform edge.
 -- `Shipped`'s own arm reaches a SERVER effect (`Log`), so it is server-CLASSIFIED
 -- — yet dispatched only here, so it must still be SERVER-INTERNAL (no wire route).

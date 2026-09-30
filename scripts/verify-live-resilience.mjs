@@ -4,7 +4,7 @@
 // — never verified in a real browser against the real runtime wire.
 // They reproduce two production incidents:
 //
-//   1. IDLE-SURVIVAL — the darraghstudio "idle 20-30min → reconnecting /
+//   1. IDLE-SURVIVAL — the shop-app "idle 20-30min → reconnecting /
 //      disconnected → refresh fixes it" incident. A stateful session held
 //      idle PAST its TTL under a live SSE connection must SURVIVE: the SSE
 //      heartbeat slides the server-side TTL (touchLastSeen) and the
@@ -336,7 +336,7 @@ async function scenarioIdle(browser) {
         if (sentinel !== 'alive') {
             failure = 'client RELOADED during idle (sentinel gone) — session was lost under a '
                 + 'live SSE connection: the heartbeat/sliding-cookie keep-alive FAILED. '
-                + 'This is the darraghstudio idle-disconnect bug.';
+                + 'This is the shop-app idle-disconnect bug.';
         }
 
         // Not stuck in a reconnecting/offline banner.
@@ -363,7 +363,7 @@ async function scenarioIdle(browser) {
         //     the session is ALIVE server-side but the client can no longer
         //     POST events → the action is queued + retried (all 403) → the
         //     reconnecting/offline banner → stranded until a manual refresh
-        //     re-issues the cookie via GET.  This is the darraghstudio
+        //     re-issues the cookie via GET.  This is the shop-app
         //     "idle → disconnected → refresh fixes it" incident.
         //   * count unchanged, no 403/session-lost → some other drop.
         if (!failure) {
@@ -406,7 +406,7 @@ async function scenarioIdle(browser) {
                     + 'slides the server session + sky_sid cookie but NOT the CSRF cookie. '
                     + 'The client can no longer POST → the click is queued/retried (all 403) '
                     + '→ reconnecting banner → stranded until a manual refresh. '
-                    + '[darraghstudio idle-disconnect ROOT CAUSE — runtime fix needed: '
+                    + '[shop-app idle-disconnect ROOT CAUSE — runtime fix needed: '
                     + 'slide __sky_csrf on the SSE heartbeat, or make its Max-Age outlive '
                     + 'the sliding session TTL. Verified sole cause: SKY_CSRF=off makes this '
                     + 'exact idle survive.]';

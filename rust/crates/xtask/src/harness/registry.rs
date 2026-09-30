@@ -366,7 +366,7 @@ pub static GATES: &[Gate] = &[
                               `init ()` instead of the request wire (`base.<f>` not `p.<f>`); \
                               spa-diff-narrow's SetCount then computes on init's count, so its \
                               split-vs-direct comparison must go red (the read-set-drop class — \
-                              the darraghstudio basket-read bug)",
+                              the shop-app basket-read bug)",
                 kind: MutationKind::ReplaceOnce {
                     path: "rust/crates/project/src/spa_split.rs",
                     from: "format!(\"{sep}{f} = p.{f}\")",

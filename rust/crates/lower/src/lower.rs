@@ -5090,7 +5090,7 @@ impl<'a> Ctx<'a> {
                 // type erases to `any` on the lowering path — so `expr_ty`
                 // would miss the element and leave the closure param an
                 // un-pinned subset struct (the record-update-over-param panic,
-                // DarraghStudio bug #2 param variant). The param's `local_ty`
+                // shop-app bug #2 param variant). The param's `local_ty`
                 // carries the annotated `[]Rec`, which pins the element
                 // correctly. A CAF source already reports a concrete `Slice`
                 // via `expr_ty`, so this only ADDS coverage for the param case.
@@ -7712,7 +7712,7 @@ impl<'a> Ctx<'a> {
                     // reads them hits `reflect: struct{F} as struct{G}`. Widening to
                     // `any` routes the update through the reflective rt.RecordUpdate
                     // path, which preserves every field. The ROOT fix for the
-                    // record-update-narrowing panic class (DarraghStudio bug #2) —
+                    // record-update-narrowing panic class (shop-app bug #2) —
                     // covers map-chains ([]any element), foldl accumulators, and any
                     // source whose concrete element type isn't recoverable. A param
                     // pinned to a concrete Named record is NOT a `struct{…}` here, so
@@ -7758,7 +7758,7 @@ impl<'a> Ctx<'a> {
         // in the body is a different closure (its own combinator call sets its own
         // `closure_elem`). Clear so the body doesn't inherit this one.
         self.closure_elem = None;
-        // Record-update-over-param narrowing fix (DarraghStudio bug #2).
+        // Record-update-over-param narrowing fix (shop-app bug #2).
         // For `\r -> { r | f = v }` mapped over a typed list, the row-poly
         // solver (on the erased-`List.map` lowering path) leaves the update's
         // row OPEN and it reads back as the SUBSET of updated fields — so the

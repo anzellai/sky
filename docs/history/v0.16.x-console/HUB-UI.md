@@ -29,7 +29,7 @@
 The service filter is the most important control. Three modes:
 - **all** — aggregate view across every service the user has access to
 - **single service** — focus on one (e.g., `sky-lang.org`)
-- **multi-select** — comparison view (e.g., `sky-lang.org` + `ringfence` side-by-side)
+- **multi-select** — comparison view (e.g., `sky-lang.org` + `partner-app` side-by-side)
 
 ## Tab: Overview
 
@@ -57,7 +57,7 @@ A waterfall of recent HTTP requests. Inspired by Chrome DevTools' Network tab.
 | Time | Service | Method | Route | Status | Duration | Spans |
 |---|---|---|---|---|---|---|
 | 17:42:13.234 | sky-lang.org | GET | /blog/:slug | ✓ 200 | 87 ms | ▶ 3 spans |
-| 17:42:13.198 | ringfence | POST | /api/billing | ⚠ 503 | 1.2 s | ▶ 8 spans (1 error) |
+| 17:42:13.198 | partner-app | POST | /api/billing | ⚠ 503 | 1.2 s | ▶ 8 spans (1 error) |
 
 Click a row → expands span tree inline. Click a span → expands its log lines + attributes. Click an error log → opens the full error context (stack, errId, surrounding logs).
 

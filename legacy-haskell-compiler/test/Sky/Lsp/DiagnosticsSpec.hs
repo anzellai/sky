@@ -583,7 +583,7 @@ spec = do
                             let msgs = diagnosticMessages payload
                             msgs `shouldBe` []
 
-        it "explicit-alias-wins rule silences the 3-import ringfence shape via LSP" $ do
+        it "explicit-alias-wins rule silences the 3-import partner-app shape via LSP" $ do
             -- v0.17.5 semantic change (successor to the v0.17.4 diagnostic
             -- polish).  When an explicit `as X` alias claims a qualifier for
             -- one module and a bare `import Y exposing (…)` would auto-

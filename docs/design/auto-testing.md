@@ -1,6 +1,6 @@
 # Sky auto-testing — design (draft)
 
-> Status: DESIGN, driven by the darraghstudio (DS) app as the real-world proof,
+> Status: DESIGN, driven by the shop-app (DS) app as the real-world proof,
 > the same way DS drives the compiler work. Nothing here is built yet. Next-release
 > stream, alongside `sky doc --diagram`.
 

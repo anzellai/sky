@@ -284,7 +284,7 @@ declare -a EXAMPLES=(
     # deterministic "kernel-arity ok" — the successful build is the assertion.
     "51-kernel-variadic-arity:cli"
     # 53 — record-update-over-lambda-param narrowing regression
-    # (DarraghStudio bug #2). Two List.maps in one function: map #1 is a
+    # (shop-app bug #2). Two List.maps in one function: map #1 is a
     # capturing record-update, map #2 reads other fields of its result.
     # Panicked with `reflect: struct{OrderId} as struct{ProductId;Qty}`
     # before the lower_lambda full-record-return fix.

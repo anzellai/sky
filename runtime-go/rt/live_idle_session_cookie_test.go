@@ -212,7 +212,7 @@ func TestIdleUnderLiveSSE_NextEventStillDispatches(t *testing.T) {
 			"server session %q was still ALIVE — the browser dropped sky_sid "+
 			"because its Max-Age tracked the %s TTL instead of outliving the "+
 			"sliding session. The client hard-reloads here and the user's Model "+
-			"is lost: the darraghstudio idle-disconnect incident.", sid, ttl)
+			"is lost: the shop-app idle-disconnect incident.", sid, ttl)
 	}
 	if evResp.StatusCode != http.StatusOK {
 		t.Fatalf("post-idle event: status %d (want 200)", evResp.StatusCode)

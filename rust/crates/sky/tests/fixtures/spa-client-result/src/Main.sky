@@ -65,7 +65,7 @@ persist url =
     File.writeFile "log.txt" url
 
 
--- A higher-order guard wrapper (the darraghstudio `requireAdmin` shape): the
+-- A higher-order guard wrapper (the shop-app `requireAdmin` shape): the
 -- `( model, cmd )` pair — and therefore the `Cmd.perform` — is returned from the
 -- thunk, NOT in the arm's own tail position.
 guard : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )

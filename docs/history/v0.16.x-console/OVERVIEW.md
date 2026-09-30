@@ -50,7 +50,7 @@ A Sky app runs in exactly one combination of these modes. Auto-detected from env
 ### Mode C: Hub push (the v0.16.x killer mode)
 
 ```
-[ringfence app]        ┐
+[partner-app app]        ┐
 [sky-lang.org app]     ├──OTLP──▶  [sky console serve daemon]
 [skydeploy tenants]    │             ├── OTLP gRPC + HTTP receivers
 [non-Sky services]     ┘             ├── Hot: SQLite (24h, all signals)
@@ -118,7 +118,7 @@ Six patch releases, all under v0.16.x:
 | v0.16.4 | Non-Sky ingestion — OTel SDK recipes (Python/Node/Go) | ~3 | NON-SKY.md |
 | v0.16.5 | Production polish — alerts, RBAC, Litestream replication, keyword query | ~5 | OPS.md |
 
-**Total ~25 days, ~5 weeks of focused work.** Tested incrementally on sky-lang.org + skydeploy + ringfence (the three real apps) as each patch lands.
+**Total ~25 days, ~5 weeks of focused work.** Tested incrementally on sky-lang.org + skydeploy + partner-app (the three real apps) as each patch lands.
 
 ## Backwards compatibility
 

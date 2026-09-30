@@ -69,7 +69,7 @@ noteLog m =
 
 -- SERVER (reads a File effect) but STRUCTURALLY field-preserving `Model -> Model`:
 -- updates only `tag`. Its effect changes the VALUE, never the set of updated
--- FIELDS — so its write-set is statically {tag}. This is darraghstudio's
+-- FIELDS — so its write-set is statically {tag}. This is shop-app's
 -- `recomputeTotals` shape (reads env rates, updates only {shippingMinor,
 -- vatMinor}). It runs server-side in the RPC, so narrowing it is sound.
 bumpServer : Model -> Model
@@ -102,7 +102,7 @@ handle m =
 
 
 -- DEEPLY NESTED but field-preserving `String -> Model -> ( Model, Cmd Msg )`
--- delegate (darraghstudio's `doSignIn` shape: let > if > case > if > case >
+-- delegate (shop-app's `doSignIn` shape: let > if > case > if > case >
 -- if > let). Every tail returns `{ m | … }`, writing only {log, tag}. The
 -- nesting MUST NOT trip the delegation ceiling — structural recursion inside a
 -- body preserves the budget, so this narrows to {log, tag}, NOT the whole model.
@@ -143,7 +143,7 @@ deepNarrow label m =
 -- (GAP #6c generalised): the bare model is a LATER argument, not the sole one.
 -- SERVER (File) + field-preserving write {tag}, reads {n}. An arm that calls
 -- `viaHelper label model` MUST inherit its narrow read {n} / write {tag}. This
--- is darraghstudio's `doSignIn creds model` shape.
+-- is shop-app's `doSignIn creds model` shape.
 viaHelper : String -> Model -> ( Model, Cmd Msg )
 viaHelper label m =
     let

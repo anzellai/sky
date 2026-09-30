@@ -6,7 +6,7 @@ module Main exposing (main)
 -- chain, never as a direct `model.n` in the branch. The read-set analysis must
 -- NOT drop it: it must over-approximate to the whole model, or the generated RPC
 -- runs the branch against a fresh `init ()` and returns a wrong, input-independent
--- result. Mirrors darraghstudio `SetRegion` (recomputed shipping on an empty
+-- result. Mirrors shop-app `SetRegion` (recomputed shipping on an empty
 -- basket → always 0). See spa_partition::collect_reads (the `model_write_shape`
 -- arm in `Expr::Call`).
 
@@ -94,7 +94,7 @@ update msg model =
             -- field. Under the whole-model request the arg must survive as a
             -- separate `spaMsgArg_scale` field, or the handler runs
             -- `update (SetScaleArg p.scale)` against the OLD model value and the new
-            -- scale is silently dropped (the darraghstudio `SetRegion` "switching
+            -- scale is silently dropped (the shop-app `SetRegion` "switching
             -- location does nothing" bug). `recompute` then reads the NEW scale.
             ( recompute { model | scale = scale }, Cmd.none )
 

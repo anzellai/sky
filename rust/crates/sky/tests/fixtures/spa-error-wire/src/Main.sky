@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- Auto-split INPUT reproducing the darraghstudio `EmailSent (Result Error String)`
+-- Auto-split INPUT reproducing the shop-app `EmailSent (Result Error String)`
 -- failure: a Msg carries `Result Error String` and its arm runs a SERVER effect,
 -- so the payload becomes an RPC wire field of type `Result Error String`. The
 -- resolver must wire it through the stdlib `Codec.result` + `Codec.error` (an

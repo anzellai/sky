@@ -3594,7 +3594,7 @@ fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
 }
 
 /// Looks THROUGH a guard/HOF wrapper —
-/// the `requireAdmin model (\_ -> ( model, cmd ))` shape (darraghstudio), where
+/// the `requireAdmin model (\_ -> ( model, cmd ))` shape (shop-app), where
 /// the `( model, cmd )` pair is returned from the LAST-argument thunk rather than
 /// the arm's own tail. This walk is used ONLY by the pattern-2 (client-result)
 /// detection, so the direct-tuple chaining analysis (pattern-1) is untouched: a
@@ -3928,7 +3928,7 @@ fn resolve_helper_cmd(
 /// lambda) AND, additionally, a WHOLE-ARM helper delegate `f a0 … an` that returns
 /// `( model, cmd )` — crossing INTO `f`'s body to find its OWN tail command. That
 /// last case is what lets a continuation whose arm delegates to a helper (the
-/// darraghstudio `handleFinalize` / `createOrder` shape, the `record v model`
+/// shop-app `handleFinalize` / `createOrder` shape, the `record v model`
 /// fixture) contribute its FURTHER perform continuations, so a 3+-hop all-server
 /// chain settles transitively. Depth- and cycle-bounded (a helper already on the
 /// path, or a delegation chain deeper than `CMD_RESOLVE_DEPTH`, yields
@@ -5285,7 +5285,7 @@ fn collect_reads(
                     // (the sound over-approximation, symmetric with the write side's
                     // `writes_whole`). Before this, such a threaded read was silently
                     // DROPPED, so the RPC ran the branch against a fresh `init ()`
-                    // and returned a wrong, input-independent result (darraghstudio
+                    // and returned a wrong, input-independent result (shop-app
                     // `SetRegion` recomputed shipping on an empty basket → 0).
                     //
                     // `model_write_shape` is return-type-aware: it is `None` for a

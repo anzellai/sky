@@ -4,7 +4,7 @@ module Main exposing (main)
 -- narrow wire path (emit_build_req narrow, emit_reconstruct `{ base | … }` seeded
 -- from `init`, emit_write_set_encode narrow, emit_apply_delta narrow) end to end.
 -- `spa-derived-read` covers the WHOLE-model read path + the Msg-arg collision;
--- this one covers a dropped NARROW read field — the darraghstudio basket-read bug
+-- this one covers a dropped NARROW read field — the shop-app basket-read bug
 -- class. Both branches reach the pure-typed `System.getenvOr`, so they are SERVER
 -- but force NO effect (deterministic under identical stubs) and stay checkable.
 

@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- Guard-wrapped server-internal effect chaining (the darraghstudio
+-- Guard-wrapped server-internal effect chaining (the shop-app
 -- `requireAdmin` shape) for the Sky.Spa auto-split.
 --
 --   * `Trigger x` is a SERVER branch. Its `Cmd.perform (saveThing x) Saved` is
@@ -56,7 +56,7 @@ saveThing x =
         |> Task.map (\_ -> "thing.txt")
 
 
--- The higher-order guard wrapper (darraghstudio `requireAdmin`): the
+-- The higher-order guard wrapper (shop-app `requireAdmin`): the
 -- `( model, cmd )` pair — and therefore the `Cmd.perform` — is returned from the
 -- thunk, NOT in the arm's own tail position.
 guard : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
