@@ -1,0 +1,62 @@
+module Main exposing (main)
+
+-- C-1: a classified panic inside a Task.parallel / Task.parallelN branch
+-- used to end the whole server: the branch ran on a goroutine with no
+-- recover, and the per-request recovery never saw it. The flow test
+-- (tests/task_parallel_panic_flow.rs) asks /par and /parn, which divide by
+-- zero in one branch, then /ok: the server must answer 500 twice and stay
+-- up.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Handler)
+
+
+port : Int
+port =
+    System.getenvOr "FLOW_PORT" "18941" |> String.toInt
+        |> Maybe.withDefault 18941
+
+
+main =
+    Server.listen
+        port
+        [ Server.get "/ok" (\_ -> Task.succeed (Server.text "alive"))
+        , Server.get "/seq" handleSeq
+        , Server.get "/par" handlePar
+        , Server.get "/parn" handleParN
+        ]
+
+
+ratio : Float -> Float
+ratio d =
+    10.0 / d
+
+
+handleSeq : Handler
+handleSeq _ =
+    Task.succeed 0.0 |> Task.map ratio
+        |> Task.map (\x -> Server.text (String.fromFloat x))
+
+
+handlePar : Handler
+handlePar _ =
+    Task.parallel
+        [ Task.succeed 1.0 |> Task.map ratio
+        , Task.succeed 0.0 |> Task.map ratio
+        ]
+        |> Task.map (\xs -> Server.text (toString xs))
+
+
+handleParN : Handler
+handleParN _ =
+    Task.parallelN
+        2
+        [ Task.succeed 1.0 |> Task.map ratio
+        , Task.succeed 0.0 |> Task.map ratio
+        , Task.succeed 2.0 |> Task.map ratio
+        ]
+        |> Task.map (\xs -> Server.text (toString xs))
