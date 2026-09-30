@@ -811,6 +811,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             local_names: HashMap::new(),
             local_tys: HashMap::new(),
             local_counter: 0,
+            container_record_slot: false,
+            record_at_slot: false,
             discovered: Vec::new(),
             used_types: HashSet::new(),
             warnings: Vec::new(),
@@ -2174,6 +2176,17 @@ struct Ctx<'a> {
     /// nominal instead of collapsing to a body-inferred subset record.
     local_tys: HashMap<LocalId, GoTy>,
     local_counter: u32,
+    /// Set by `ctor_call` for exactly the argument of a builtin container ctor
+    /// (`Just`/`Ok`/`Err`) whose element slot is an anonymous struct; taken by
+    /// the next `lower_expr_at` (that argument). C-8: only there does a
+    /// func-field record literal need to be BUILT at the slot's struct — the
+    /// container is monomorphised to the struct, so the all-`any` literal can
+    /// not be bridged. Everywhere else the literal keeps its all-`any` form and
+    /// the ordinary `coerce_if_needed` bridge, byte-identical (coerce-floor).
+    container_record_slot: bool,
+    /// Set by `lower_expr_at` when it adopted the container slot for a record
+    /// literal; taken by the `lower_record` of that same node.
+    record_at_slot: bool,
     discovered: Vec<DefId>,
     used_types: HashSet<String>,
     warnings: Vec<LowerDiag>,
@@ -3137,6 +3150,8 @@ impl<'a> Ctx<'a> {
     }
 
     fn lower_expr_at(&mut self, e: ExprId, expected: &GoTy) -> GoExpr {
+        let container_slot = std::mem::take(&mut self.container_record_slot);
+        let mut record_at_slot = false;
         let mut actual = self.expr_ty(e);
         // Transparent control-flow (`if` / `case` / `let … in body`) has no value
         // of its own — its arms/body flow DIRECTLY into the slot the whole
@@ -3173,6 +3188,20 @@ impl<'a> Ctx<'a> {
         // Guarded to the case where the slot is a nominal record carrying EXACTLY
         // this literal's field names, so it can only ever replace a coercion into
         // that same nominal — never re-target the literal at an unrelated shape.
+        // The same rule for the ANONYMOUS struct element of a builtin container
+        // ctor, when it carries a function field (C-8: `{ w = Just { a = 4, f =
+        // String.fromInt } }` where `w : Maybe { a : Int, f : Int -> String }`).
+        // `rt.Just[struct{…}]` is monomorphised to the slot, so the literal must
+        // be BUILT at that struct (doc 14 lever §5.2); see
+        // `container_record_slot` for why this is scoped to that one position.
+        if container_slot && *expected != GoTy::Any {
+            if let (Expr::Record(fields), GoTy::Struct(_)) = (&self.body.exprs[e], expected) {
+                if Self::slot_typed_fn_record(fields, expected) {
+                    actual = expected.clone();
+                    record_at_slot = true;
+                }
+            }
+        }
         if *expected != GoTy::Any && actual != *expected {
             if let (Expr::Record(fields), GoTy::Named(n, _)) = (&self.body.exprs[e], expected) {
                 if let Some(decl) = self.record_fields.get(n.as_str()) {
@@ -3193,7 +3222,9 @@ impl<'a> Ctx<'a> {
         // a value is emitted as its raw `any`-based runtime symbol: whether that
         // needs a bridge depends on the SLOT it lands in, not on the node's own
         // inferred type. See `kernel_value_eta` / `nullary_kernel_value`.
+        self.record_at_slot = record_at_slot;
         let node = self.lower_expr_inner(e, &actual, expected);
+        self.record_at_slot = false;
         self.coerce_if_needed(node, expected)
     }
 
@@ -4344,14 +4375,21 @@ impl<'a> Ctx<'a> {
         // field Go-type as the expected slot so the value lands typed and the
         // `coerce_if_needed` in `ctor_emit` elides — zero construction coerces in
         // the common (already-typed) case. Bag / builtin ctors keep `any`.
-        let field_tys = self
-            .sealed_ctor_field_gotys(&cname, pin.as_deref())
-            .or_else(|| self.builtin_container_fn_field_gotys(&cname, actual));
+        let sealed = self.sealed_ctor_field_gotys(&cname, pin.as_deref());
+        let from_container = sealed.is_none();
+        let field_tys =
+            sealed.or_else(|| self.builtin_container_fn_field_gotys(&cname, actual, args));
         let lowered_args: Vec<GoExpr> = match &field_tys {
             Some(ftys) => args
                 .iter()
                 .enumerate()
-                .map(|(i, a)| self.lower_expr(*a, ftys.get(i).unwrap_or(&GoTy::Any)))
+                .map(|(i, a)| {
+                    let slot = ftys.get(i).unwrap_or(&GoTy::Any);
+                    self.container_record_slot = from_container && matches!(slot, GoTy::Struct(_));
+                    let x = self.lower_expr(*a, slot);
+                    self.container_record_slot = false;
+                    x
+                })
                 .collect(),
             None => args
                 .iter()
@@ -4388,14 +4426,32 @@ impl<'a> Ctx<'a> {
     /// scalar / record / ADT payloads the arg stays `any`-lowered (byte-identical
     /// to today), so `payload_from_arg`'s record-narrowing reconciliation in
     /// `ctor_emit` is untouched (see codegen_subset_record_in_ok).
-    fn builtin_container_fn_field_gotys(&self, cname: &str, actual: &GoTy) -> Option<Vec<GoTy>> {
+    ///
+    /// The one other shape threaded is a RECORD LITERAL argument whose element
+    /// is an anonymous struct with a function field (C-8, `Just { a = 4, f =
+    /// String.fromInt }` at `Maybe { a : Int, f : Int -> String }`): the literal
+    /// is then built at the element struct (doc 14 lever §5.2, see
+    /// `slot_typed_fn_record`). Any other argument keeps the `any` lowering.
+    fn builtin_container_fn_field_gotys(
+        &self,
+        cname: &str,
+        actual: &GoTy,
+        args: &[ExprId],
+    ) -> Option<Vec<GoTy>> {
         let elem = match (cname, actual) {
             ("Just", GoTy::Named(n, ts)) if n == "rt.SkyMaybe" && ts.len() == 1 => &ts[0],
             ("Ok", GoTy::Named(n, ts)) if n == "rt.SkyResult" && ts.len() == 2 => &ts[1],
             ("Err", GoTy::Named(n, ts)) if n == "rt.SkyResult" && ts.len() == 2 => &ts[0],
             _ => return None,
         };
-        matches!(elem, GoTy::Func(_, _)).then(|| vec![elem.clone()])
+        let record_literal_slot = match (elem, args) {
+            (GoTy::Struct(_), [a]) => match &self.body.exprs[*a] {
+                Expr::Record(fields) => Self::slot_typed_fn_record(fields, elem),
+                _ => false,
+            },
+            _ => false,
+        };
+        (matches!(elem, GoTy::Func(_, _)) || record_literal_slot).then(|| vec![elem.clone()])
     }
 
     /// Eta-expand a partially-applied constructor into a Go closure that applies
@@ -7080,7 +7136,36 @@ impl<'a> Ctx<'a> {
         GoExpr::new(GoExprKind::Block(stmts), actual.clone())
     }
 
+    /// True when `slot` is an anonymous `GoTy::Struct` that has at least one
+    /// FUNCTION field and whose field names are exactly this literal's. Such a
+    /// slot is where a record literal must be built at the slot's own shape
+    /// (doc 14 lever §5.2): the all-`any` anonymous struct `lower_record` uses
+    /// for a func-field record (the TEA-cfg form) is not assignable to it, and a
+    /// container ctor (`rt.Just[struct{…}]`) gives the `coerce_if_needed`
+    /// fall-through no chance to bridge it (C-8).
+    fn slot_typed_fn_record(fields: &[(Name, ExprId)], slot: &GoTy) -> bool {
+        let GoTy::Struct(fts) = slot else {
+            return false;
+        };
+        if !fts.iter().any(|(_, t)| matches!(t, GoTy::Func(_, _))) {
+            return false;
+        }
+        let mut lit: Vec<String> = fields.iter().map(|(n, _)| capitalize(n.as_str())).collect();
+        let mut dec: Vec<String> = fts.iter().map(|(n, _)| n.as_str().to_string()).collect();
+        lit.sort_unstable();
+        dec.sort_unstable();
+        lit == dec
+    }
+
     fn lower_record(&mut self, fields: &[(Name, ExprId)], actual: &GoTy) -> GoExpr {
+        // A func-field record literal that is the element of a builtin
+        // container ctor is built at the container's concrete struct: each func
+        // field lowers at its concrete func slot (eta-adapted where the value's
+        // shape differs), so the rendered literal IS the slot type and needs no
+        // `rt.Coerce` (C-8, doc 14 lever §5.2). Set by `lower_expr_at` for this
+        // node only (`record_at_slot`); every other func-field record (the TEA
+        // cfg form) keeps the all-`any` literal below.
+        let slot_typed = std::mem::take(&mut self.record_at_slot);
         // resolve the struct name from `actual` (Named(...)); order fields by the
         // Go struct's field order via capitalisation match.
         //
@@ -7167,8 +7252,9 @@ impl<'a> Ctx<'a> {
         let concrete_struct: Option<Vec<(String, GoTy)>> = match actual {
             GoTy::Struct(fts)
                 if !fts.is_empty()
-                    && fts.iter().all(|(_, t)| !matches!(t, GoTy::Func(_, _)))
-                    && fts.iter().any(|(_, t)| !matches!(t, GoTy::Any)) =>
+                    && (slot_typed
+                        || (fts.iter().all(|(_, t)| !matches!(t, GoTy::Func(_, _)))
+                            && fts.iter().any(|(_, t)| !matches!(t, GoTy::Any)))) =>
             {
                 Some(
                     fts.iter()
