@@ -542,8 +542,8 @@ func TestProcessEventsSubTeardownStreamLeavesFirst(t *testing.T) {
 	defer m.stopAll()
 	ident := func(ev any) any { return ev }
 	m.update(func(any) any { return Subprocess_events(id, ident) }, nil)
-	<-msgCh
-	<-msgCh
+	recvOrFail(t, msgCh, 10*time.Second)
+	recvOrFail(t, msgCh, 10*time.Second)
 	m.mu.Lock()
 	r := m.sources[fmt.Sprintf("process:%d", id)]
 	m.mu.Unlock()
@@ -575,7 +575,7 @@ func TestProcessEventsSubTeardownStreamLeavesFirst(t *testing.T) {
 	// Re-subscribing resumes (the cursor lives on the handle): the next
 	// event continues the stream rather than replaying from offset 0.
 	m.update(func(any) any { return Subprocess_events(id, ident) }, nil)
-	ev := (<-msgCh).(SkyADT)
+	ev := recvOrFail(t, msgCh, 10*time.Second).(SkyADT)
 	from := ev.Fields[1].(map[string]any)["from"].(int)
 	if from == 0 {
 		t.Fatal("a re-added Sub replayed from offset 0 instead of resuming")

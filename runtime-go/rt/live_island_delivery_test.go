@@ -94,16 +94,49 @@ func pushIslands(s *liveSession, id string, n int) {
 	}
 }
 
-func waitRelayDrained(t *testing.T, s *liveSession) {
+// testRelay is the session relay (ensureSSERelay: ingress channel -> one
+// fan-out per frame) run on a goroutine the test can JOIN. waitIdle waits
+// until the ingress channel is empty, stops the relay and waits for it to
+// return, so the last fan-out has finished when the test reads the
+// connections. It replaces an "empty channel, then sleep 20 ms" that read
+// the connections while the last fan-out could still be running (G-3).
+type testRelay struct {
+	s    *liveSession
+	stop chan struct{}
+	done chan struct{}
+}
+
+func startTestRelay(s *liveSession) *testRelay {
+	r := &testRelay{s: s, stop: make(chan struct{}), done: make(chan struct{})}
+	go func() {
+		defer close(r.done)
+		for {
+			select {
+			case fr := <-s.sseCh:
+				s.fanOutFrame(fr, "")
+			case <-r.stop:
+				return
+			}
+		}
+	}()
+	return r
+}
+
+func (r *testRelay) waitIdle(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	for len(s.sseCh) > 0 {
+	for len(r.s.sseCh) > 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("the relay did not drain the ingress channel")
 		}
 		time.Sleep(time.Millisecond)
 	}
-	time.Sleep(20 * time.Millisecond) // the relay's last fan-out
+	close(r.stop)
+	select {
+	case <-r.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relay did not stop")
+	}
 }
 
 // A flood past a connection's buffer: frames are dropped at egress (and at
@@ -111,12 +144,12 @@ func waitRelayDrained(t *testing.T, s *liveSession) {
 func TestIslandDelivery_FloodPastTheBufferIsNeverSilent(t *testing.T) {
 	s := &liveSession{sseCh: make(chan sseFrame, 4), cancelSub: make(chan struct{}), done: make(chan struct{})}
 	defer close(s.done)
-	s.ensureSSERelay()
+	relay := startTestRelay(s)
 	connID, _, resync := s.registerSSEConn("tab")
 	cl := newIslandClientModel(s.islandHelloBase(connID))
 	pushIslands(s, "editor", 200)
 	pushIslands(s, "chart", 40)
-	waitRelayDrained(t, s)
+	relay.waitIdle(t)
 	if !signalled(resync) {
 		t.Fatal("a dropped island command must signal the connection's resync at once")
 	}

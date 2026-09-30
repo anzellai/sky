@@ -217,9 +217,18 @@ func TestIslandCmd_LivePushesAnIslandFrame(t *testing.T) {
 }
 
 func TestIslandCmd_TeaLoopIgnoresIt(t *testing.T) {
-	// A terminal target has no widget; the command is a no-op, not a crash.
-	l := &teaLoop{}
+	// A terminal target has no widget; the command is a no-op, not a crash:
+	// it starts no effect and sends no Msg (G-11: this test asserted
+	// nothing, so it failed only on a panic).
+	msgCh := make(chan any, 4)
+	l := newTeaLoop(msgCh, nil, nil, nil)
 	l.runCmd(Cmd_toIsland("x", "y", JsonValue{raw: nil}))
+	if n := l.inflight.Load(); n != 0 {
+		t.Fatalf("Cmd.toIsland started %d effect(s) in a terminal loop", n)
+	}
+	if len(msgCh) != 0 {
+		t.Fatalf("Cmd.toIsland sent %d Msg(s) in a terminal loop", len(msgCh))
+	}
 }
 
 // ── Sky.Spa hydration keeps the widget's DOM ────────────────────
