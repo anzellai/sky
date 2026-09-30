@@ -79,3 +79,61 @@ fn another_hidden_constructor_keeps_the_plain_message() {
     assert!(m.contains("without its constructors"), "{m}");
     assert!(!m.contains("migration"), "{m}");
 }
+
+// G-13: the plain opaque-constructor error (any module's hidden constructor)
+// names the reason and points at the user's pattern, not at the match or the
+// module.
+#[test]
+fn matching_a_hidden_constructor_names_the_opaque_type_at_the_pattern() {
+    let main = "module Main exposing (main)\nimport Lib.Box as Box\n\n\
+                unbox b =\n    case b of\n        Box.Box n ->\n            n\n\nmain =\n    1\n";
+    let r = resolve_main(main);
+    let d = r
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains("without its constructors"))
+        .unwrap_or_else(|| panic!("no opaque-constructor error: {}", messages(&r)));
+    assert!(
+        d.message.contains(
+            "type `Box` is exported by `Lib.Box` without its constructors (an opaque type), \
+             so `Box` cannot be matched or built outside it"
+        ),
+        "{}",
+        d.message
+    );
+    let at = main.find("Box.Box n").unwrap() as u32;
+    let span = d.labels.first().expect("a located error").span;
+    assert_eq!(span.file, FileId(2), "the error is in the user's module");
+    assert!(
+        span.range.0 >= at && span.range.0 < at + "Box.Box n".len() as u32,
+        "the error points at the pattern: {:?} vs {at}",
+        span.range
+    );
+}
+
+// G-13: a constructor of a type the module does not export at all says so.
+#[test]
+fn a_constructor_of_an_unexported_type_says_the_type_is_not_exported() {
+    let mut db = SourceDb::new();
+    db.add_module(
+        "Lib.Hidden",
+        syntax::parse(
+            "module Lib.Hidden exposing (make)\n\ntype Inner\n    = Inner Int\n\n\
+             make : Int -> Int\nmake n =\n    n\n",
+            FileId(0),
+        ),
+    );
+    db.add_module(
+        "Main",
+        syntax::parse(
+            "module Main exposing (main)\nimport Lib.Hidden as Hidden\n\nmain =\n    Hidden.Inner 3\n",
+            FileId(1),
+        ),
+    );
+    let r = resolve(&db, db.module_by_name("Main").unwrap());
+    let m = messages(&r);
+    assert!(
+        m.contains("constructor of `Inner`, which `Lib.Hidden` does not export"),
+        "{m}"
+    );
+}
