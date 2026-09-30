@@ -792,6 +792,76 @@ a `CoerceFailure` at run time on a program `sky check` accepted.
   the Go value through an annotated helper; rejects the record), the reject
   corpus `ffi_go_type_is_not_an_app_type.sky`, `ty/tests/ffi_result_check.rs`.
 
+### 9.7 Go FFI values crossing the boundary untyped (closed, v0.27.0, surface format 3)
+
+The pinned signature a `sky add` binding carries used a checker wildcard
+(`any`) wherever it could not describe the Go value, and the typed wrapper
+passed values through raw. As a result, a program that `sky check` accepted
+still went wrong at run time:
+
+- A `*string` result was typed `String` and panicked at R4 (C-4).
+- A `map[int]V` was typed `Dict String V` and arrived empty (C-5).
+- An opaque Go value was usable at any type and panicked at its narrowing
+  (C-6).
+- A `uint64` wrapped, and an Int argument for a `uint8` parameter was
+  truncated (C-7).
+- A callback's result was a wildcard, so `go build` failed (C-12).
+
+In addition, an argument was narrowed into its typed slot
+(`rt.Coerce[skyffi.FfiT_…_P<i>]`, R3) OUTSIDE the wrapper's recover, so an
+argument of the wrong Go type crashed the process.
+
+- **Origin:** R3 (`lower.rs` `ffi_coerce_arg`, the typed-slot narrowing) and
+  R4 (`lower.rs` `ffi_emit_call`, the Go FFI return, §4.1).
+- **Lever:**
+  - §5.1 for the callback: it is typed at the pinned signature's shape, and
+    the runtime adapter (`rt.ffiCallback`) converts its arguments and result.
+  - The §5.3 analogue for values: a typed wrapper entry that converts each
+    non-native value with `rt.FfiArg[T]` / `rt.FfiRet`
+    (`runtime-go/rt/ffi_convert.go`).
+  - The §9.6 precedent for opaque types: `go@<module>.<Name>` nominals,
+    which lower to `any`.
+- **Floor check (§1):** the value's Go shape still exists only at run time.
+  R4 therefore stays exactly one narrowing, `any → rt.SkyResult[E, T]`, and
+  it is now to a slot shape that describes the value truthfully. R3 is no
+  longer a call-site narrowing for a format-3 surface: the wrapper declares a
+  non-native parameter `any` and converts it inside its guard
+  (`SkyFfiGuardT`), so a mismatch is an `Err`. The reflect `MakeFunc`
+  adapter moves from a call-site `rt.Coerce[func…]` into `rt.ffiCallback`.
+  No `adapter` token is emitted. Floor-touching: authorised by the user for
+  the v0.27.0 FFI fixes.
+- **Change:**
+  - The inspector computes each slot's Sky type from go/types
+    (`tools/sky-ffi-inspect/sky3.go`).
+  - The generator writes surface format 3 (`ffi::gen::SURFACE_FORMAT`).
+  - The checker parses it with no unchecked wildcard (`ty/src/ffi_sig.rs`).
+  - `[E2013]` rejects a Sky value passed for a Go interface parameter
+    (`ty/src/ffi_iface.rs`).
+  - A binding of an older surface whose wrapper is unsound is refused with
+    the `sky install` fix (`ffi::surface::binding_needs_format3`).
+- **Measured:** the `ffi_sig` census of wildcard positions (bindings with at
+  least one / occurrences), before → after:
+  - mux: 74/156 → 7/8
+  - net/http: 407/731 → 74/81
+  - uuid: 61/91 → 6/6
+
+  Every remaining position is a checked parameter: an empty Go interface,
+  which Go itself accepts, or a non-empty one, which `[E2013]` and the
+  run-time assertion check. `xtask coerce-floor`: `narrow` is expected to
+  FALL on the FFI rows as the R3 slot narrowings leave the call site, and
+  `adapter` stays 0. The integration run records the measured row values
+  here when it blesses the decrease.
+- **Verification:**
+  - `rust/crates/sky/tests/ffi_result_enforced_flow.rs`:
+    - `format3_go_values_convert_or_are_err`: a local Go package covering
+      each class, run end to end.
+    - `format3_misuse_is_a_type_error_with_a_migration_hint`.
+    - `an_old_surface_is_refused_only_where_a_binding_needs_format3`.
+  - `rust/crates/ty/tests/ffi_result_check.rs`.
+  - `runtime-go/rt/ffi_convert_test.go`.
+  - `tools/sky-ffi-inspect/sky3_test.go`.
+  - The byte-golden fixtures in `rust/crates/ffi/tests/fixtures/`.
+
 ## 10. How to cite this document
 
 A claim that a tactic closes a runtime-narrowing goal must name:
