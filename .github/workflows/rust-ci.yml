@@ -1519,7 +1519,15 @@ jobs:
     # of the PostgreSQL binaries and the full `-race` pass over rt add roughly
     # 4 more (race is ~2-3x, and the live supervisor tests now actually run
     # instead of skipping). ≈ 9 min. 1.5x ≈ 14.
-    timeout-minutes: 14
+    # v0.27.0: 697-705 s across three runs (the race pass over sky-app/rt alone
+    # was 495 s in PR run 36641698044), 16% under the old 14. That is one Go
+    # package, so there is no test split to take; the job now also keeps a Go
+    # build cache (it compiled the race build cold every run) and the timeout
+    # follows §8.2: 1.5x the ~12 min measured ≈ 18.
+    timeout-minutes: 18
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     services:
       postgres:
         image: postgres:16
@@ -1540,6 +1548,16 @@ jobs:
         with:
           go-version: '1.26'
           cache: false
+      # A -race build shares nothing with the non-race caches, so it gets its
+      # own family.
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-race-linux-
       - name: Postgres session-store integration tests
         working-directory: runtime-go
         env:
@@ -1586,6 +1604,10 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
         run: CGO_ENABLED=1 go test -race ./rt/... -count=1
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
 
   # ── macOS: platform-determinism subset only (the reason for a 2nd OS) ───────
   # Byte-stable codegen (repro) + coerce floor + runtime behaviour must hold on a
@@ -1786,12 +1808,14 @@ jobs:
   # Predicted from this run's per-step numbers — the next run is the measurement.
   macos-behaviour:
     runs-on: macos-latest
-    # ~115s workspace build + ~61s rt tests + ~191s project tests + ~129s
-    # conformance (incl. its release sky build) ~= 8 min. 1.5x = 12; 20 leaves
-    # room for the colder Go cache this job now has, since `repro` no longer
-    # runs ahead of it. macOS minutes bill at 10x, so this bound is deliberately
-    # not generous.
-    timeout-minutes: 20
+    # Workspace build + rt tests + project tests. The stdlib conformance leg
+    # moved to `macos-conformance` at v0.27.0: with 42 suites the whole job ran
+    # past its 20 min limit (PR run 36641698044, cancelled at 20.5 min inside
+    # conformance; 1045-1074 s when it did finish). Measured without
+    # conformance: build 153-173 s + rt 263-285 s + project 253-297 s + setup
+    # ~60 s ≈ 14 min. Timeout = 1.5x (docs/ci-test-architecture-v2.md §8.2) = 21,
+    # rounded to 22. macOS minutes bill at 10x, so the bound is not generous.
+    timeout-minutes: 22
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -1829,15 +1853,48 @@ jobs:
         run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       - name: Gate — project integration tests (go build regressions, 2nd platform)
         run: cargo test -p project --locked
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # The stdlib behavioural conformance leg on the 2nd platform, split out of
+  # macos-behaviour at v0.27.0 (42 suites). It needs only the release `sky`
+  # binary, not the debug workspace build. Measured in the job it left: the
+  # release build + conformance.sh took 334 s warm and was still running at
+  # 410 s when that job hit its limit. Estimate ~12 min with setup;
+  # timeout = 1.5x = 18, rounded to 20. Budgeted as a macOS job (MACOS_JOBS).
+  macos-conformance:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-macos-
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
       - name: Gate — stdlib behavioral conformance (2nd platform)
         run: |
           cargo build --release -p sky --locked
           source ../scripts/lib/cargo-target.sh
           SKY_BIN="$(cargo_bin_path "$PWD" sky --release)" ../scripts/conformance.sh
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
   # ONE check that is true iff every job above succeeded, plus the tier-budget
   # assertion that per-job `timeout-minutes` structurally cannot make (§8.2).
@@ -1881,6 +1938,7 @@ jobs:
       - macos-determinism-2
       - macos-determinism-3
       - macos-behaviour
+      - macos-conformance
     # `always()` so a FAILED dependency still reaches the assertion below and is
     # reported as a failure here. Without it this job would be SKIPPED when an
     # upstream job failed, and a skipped required check is treated as neutral by
@@ -1939,7 +1997,7 @@ jobs:
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
           SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 runtime-rt licence-gate-linux'
-          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour licence-gate-macos'
+          MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance licence-gate-macos'
         run: |
           set -euo pipefail
           gh api \

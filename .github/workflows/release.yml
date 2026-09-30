@@ -294,11 +294,17 @@ jobs:
 
   gate-core:
     runs-on: ubuntu-latest
-    # Workspace tests only. They took ~37 min on the runner at v0.25.18 (run
-    # 36122173135), so the corpus gates + coerce-floor + doc examples that used
-    # to follow them here were cancelled at the old 40-min ceiling with no
-    # verdict; those moved to gate-corpus, which runs alongside this job.
-    timeout-minutes: 60
+    # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..5.
+    # They took ~37 min on the runner at v0.25.18 (run 36122173135), so the
+    # corpus gates + coerce-floor + doc examples that used to follow them here
+    # moved to gate-corpus. At v0.27.0 the sky crate alone outgrew the job: run
+    # 36643630048 was cancelled at 60 min inside `cargo test --workspace`, with
+    # the spa_split_flow binary still running after 35 min (its tests share one
+    # build lock, so `cargo test` runs them one at a time). Before sky, the other
+    # crates took ~4 min of tests after a ~5 min compile. Estimate ~15 min with
+    # setup; per-job timeout = 1.5x (docs/ci-test-architecture-v2.md §8.2) = 23,
+    # rounded to 25.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -322,13 +328,152 @@ jobs:
           sudo docker image prune -af || true
           df -h /
 
-      - name: Workspace tests
+      # `--exclude sky`: the sky crate runs in gate-core-sky-1..5 below, sliced
+      # by test with nextest. Doctests still run here (`cargo test` runs them;
+      # nextest does not, and sky is bin-only, so it has none).
+      - name: Workspace tests (every crate except sky)
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude sky --locked
 
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-core-sky-1..5 — the `sky` crate's tests, split out of gate-core.
+  # `cargo nextest run -p sky --partition slice:k/5`: slice splits the whole
+  # sorted test list evenly across the five jobs, so a long binary such as
+  # spa_split_flow (81 tests, 25-40 min alone under `cargo test`) is spread
+  # across all of them. Disjoint and total by construction;
+  # tests/workflows_parse.rs checks the five slices are all present. The
+  # `serial-servers` group in rust/.config/nextest.toml still runs the
+  # fixed-port server tests one at a time within each job. The same split the
+  # per-commit `test-sky` jobs use (7 slices there, ~10-14 min each); here each
+  # job carries 7/5 of that plus setup, ~20 min. Timeout = 1.5x = 30.
+  # The heavy `#[ignore]`d legs run in gate-app (`-- --ignored`), unchanged.
+  gate-core-sky-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 1/5 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:1/5
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 2/5 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:2/5
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 3/5 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:3/5
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 4/5 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:4/5
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 5/5 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:5/5
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -695,9 +840,9 @@ jobs:
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: falsifiers-1
-      - name: Falsifier verification (group 1 — corpus / conformance / sky-suites)
+      - name: Falsifier verification (group 1 — corpus / sky-suites)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only conformance,sky-suites,roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-suites,roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape
 
       - name: Bound the Go caches before save
         if: always()
@@ -717,7 +862,7 @@ jobs:
           neovim: 'true'
       - name: Falsifier verification (group 2 — verify-cli / lsp / config)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only verify-cli,lsp,config-matrix,cli-verbs,config-surface,kernel-members,config-migration,config-migrate
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only verify-cli,lsp,cli-verbs,config-surface,kernel-members,config-migration,config-migrate
 
       - name: Bound the Go caches before save
         if: always()
@@ -769,6 +914,15 @@ jobs:
   #
   # Group 4 is the behavioural corpus alone: its baseline and its mutated run
   # each `go build` and run every fixture (~10 min apiece).
+  #
+  # The corpus gate declares two mutations, and each proof is a full corpus
+  # build-and-run (~17 min at 468 cases). Baseline + both mutations in one job
+  # took 3,127 s of step time and 57 min of job time against its 60 min limit
+  # (release run 36643630048). So the two mutations are proven in two jobs,
+  # this one and gate-falsifiers-10, each running the baseline plus one
+  # mutation (`--mutations`); tests/workflows_parse.rs checks the two
+  # `--mutations` lists together cover every mutation the gate declares.
+  # Estimate ~40 min with setup; timeout 60 (1.5x ≈ 60).
   gate-falsifiers-4:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -779,9 +933,9 @@ jobs:
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: t2
-      - name: Falsifier verification (group 4 — the T2 behavioural corpus)
+      - name: Falsifier verification (group 4 — the T2 behavioural corpus, mutation 1 of 2)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutations corpus.wrong-expected-value
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -878,6 +1032,46 @@ jobs:
       - name: Falsifier verification (group 8 — runtime loops and locks)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-falsifiers-9 — split out of groups 1 and 2 at v0.27.0. Group 1 took
+  # 27 min of its 30 (conformance alone 520 s, 42 suites now) and group 2 took
+  # 24 of 30 (release run 36643630048). conformance (520 s) and config-matrix
+  # (254 s) move here: ~13 min of proofs + ~5 min setup. Timeout 1.5x ≈ 30.
+  gate-falsifiers-9:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: falsifiers-9
+      - name: Falsifier verification (group 9 — conformance / config-matrix)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only conformance,config-matrix
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-falsifiers-10 — the corpus gate's second mutation (see
+  # gate-falsifiers-4). Same setup and Go cache family as group 4.
+  gate-falsifiers-10:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+      - name: Falsifier verification (group 10 — the T2 behavioural corpus, mutation 2 of 2)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus --mutations corpus.wrong-stdlib-digest
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1206,6 +1400,11 @@ jobs:
       - verify-ci-green
       - build
       - gate-core
+      - gate-core-sky-1
+      - gate-core-sky-2
+      - gate-core-sky-3
+      - gate-core-sky-4
+      - gate-core-sky-5
       - gate-corpus
       - gate-t1-1
       - gate-t1-2
@@ -1223,6 +1422,8 @@ jobs:
       - gate-falsifiers-6
       - gate-falsifiers-7
       - gate-falsifiers-8
+      - gate-falsifiers-9
+      - gate-falsifiers-10
       - gate-race
       - gate-web
       - gate-sweep

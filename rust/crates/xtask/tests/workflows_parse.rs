@@ -1215,7 +1215,20 @@ fn the_release_workflow_is_the_full_suite() {
         registered.len()
     );
 
+    // Every declared mutation id, `gate.what` — the registry names each
+    // mutation with its gate's name as the prefix.
+    let mutation_ids: Vec<String> = registry
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("id: \""))
+        .filter_map(|rest| rest.split('"').next().map(str::to_string))
+        .collect();
+
+    // A gate is covered by a line that proves ALL its mutations (no
+    // `--mutations`), or by several `--mutations` lines whose ids together
+    // name every mutation it declares. The second form lets a slow gate's
+    // mutations run in parallel jobs; it must not let one of them drop out.
     let mut covered: Vec<String> = Vec::new();
+    let mut partial: Vec<(String, String)> = Vec::new(); // (gate, mutation id)
     for r in &runs {
         for line in r.lines().filter(|l| l.contains("--verify-falsifiers")) {
             assert!(
@@ -1224,9 +1237,51 @@ fn the_release_workflow_is_the_full_suite() {
                  from the checked-in ledger: {line}"
             );
             let toks: Vec<&str> = line.split_whitespace().collect();
-            if let Some(i) = toks.iter().position(|t| *t == "--only") {
-                covered.extend(toks[i + 1].split(',').map(str::to_string));
+            let Some(i) = toks.iter().position(|t| *t == "--only") else {
+                continue;
+            };
+            let gates: Vec<String> = toks[i + 1].split(',').map(str::to_string).collect();
+            let muts: Vec<String> = toks
+                .iter()
+                .position(|t| *t == "--mutations")
+                .map(|j| toks[j + 1].split(',').map(str::to_string).collect())
+                .unwrap_or_default();
+            for g in gates {
+                let prefix = format!("{g}.");
+                let named: Vec<&String> = muts.iter().filter(|m| m.starts_with(&prefix)).collect();
+                if named.is_empty() {
+                    covered.push(g);
+                } else {
+                    partial.extend(named.into_iter().map(|m| (g.clone(), m.clone())));
+                }
             }
+        }
+    }
+    let mut partial_gates: Vec<&String> = partial.iter().map(|(g, _)| g).collect();
+    partial_gates.sort();
+    partial_gates.dedup();
+    for g in partial_gates {
+        let prefix = format!("{g}.");
+        let declared: Vec<&String> = mutation_ids
+            .iter()
+            .filter(|m| m.starts_with(&prefix))
+            .collect();
+        assert!(
+            !declared.is_empty(),
+            "no declared mutations parsed for gate `{g}`"
+        );
+        let missing: Vec<&&String> = declared
+            .iter()
+            .filter(|d| !partial.iter().any(|(pg, pm)| pg == g && pm == **d))
+            .collect();
+        if missing.is_empty() {
+            covered.push(g.clone());
+        } else {
+            panic!(
+                "gate `{g}` is proven with `--mutations` in release.yml, but no job \
+                 proves its mutation(s) {missing:?} — list each in some job's \
+                 `--mutations`, or drop `--mutations` from one job"
+            );
         }
     }
     let uncovered: Vec<&str> = registered
@@ -1393,4 +1448,97 @@ fn the_console_drift_check_runs_on_a_pull_request() {
          symbols; without the build a regeneration can leave a package that \
          does not compile, and the drift check alone would bless it."
     );
+}
+
+/// Every nextest `--partition slice:k/N` split of the `sky` crate, in either
+/// workflow, runs ALL N slices exactly once, in jobs that gate the result
+/// (`ci-green` needs them in rust-ci.yml; `release` needs them in release.yml).
+///
+/// # Why this exists
+///
+/// The sky crate's tests are split by test across parallel jobs (rust-ci
+/// `test-sky` .. `test-sky-7`, release `gate-core-sky-1..5`). Each job's
+/// command names its own slice. Deleting one job, or two jobs naming the same
+/// slice, leaves a slice of tests that no job runs, and every remaining job
+/// still reports green. This makes the split disjoint-and-total a checked
+/// property instead of a hand-maintained one.
+#[test]
+fn every_sky_nextest_split_runs_every_slice_once_in_a_gating_job() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    for (file, fan_in) in [("rust-ci.yml", "ci-green"), ("release.yml", "release")] {
+        let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
+            .expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let jobs = doc.get("jobs").and_then(|j| j.as_mapping()).expect("jobs");
+        let gating: Vec<String> = jobs
+            .get(serde_yaml::Value::from(fan_in))
+            .and_then(|g| g.get("needs"))
+            .and_then(|n| n.as_sequence())
+            .map(|s| {
+                s.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut slices: Vec<(u32, u32, String)> = Vec::new();
+        for (name, job) in jobs {
+            let Some(name) = name.as_str() else { continue };
+            if job_is_disabled(job) {
+                continue;
+            }
+            for step in job
+                .get("steps")
+                .and_then(|s| s.as_sequence())
+                .into_iter()
+                .flatten()
+            {
+                let run = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
+                for line in run.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
+                    if !(line.contains("nextest run") && line.contains("-p sky")) {
+                        continue;
+                    }
+                    let toks: Vec<&str> = line.split_whitespace().collect();
+                    let Some(i) = toks.iter().position(|t| *t == "--partition") else {
+                        panic!("{file}: job `{name}` runs the sky crate under nextest without a partition, alongside sliced jobs? `{line}`");
+                    };
+                    let spec = toks[i + 1];
+                    let rest = spec
+                        .strip_prefix("slice:")
+                        .unwrap_or_else(|| panic!("{file}: `{name}` uses `{spec}`; the sky crate is split with `slice:k/N`"));
+                    let (k, n) = rest.split_once('/').expect("k/N");
+                    slices.push((
+                        k.parse().expect("k"),
+                        n.parse().expect("N"),
+                        name.to_string(),
+                    ));
+                }
+            }
+        }
+        assert!(
+            !slices.is_empty(),
+            "{file}: no sliced sky nextest run found — the parse is wrong"
+        );
+        let n = slices[0].1;
+        assert!(
+            slices.iter().all(|(_, m, _)| *m == n),
+            "{file}: sky slices disagree on N: {slices:?}"
+        );
+        let mut ks: Vec<u32> = slices.iter().map(|(k, _, _)| *k).collect();
+        ks.sort();
+        assert_eq!(
+            ks,
+            (1..=n).collect::<Vec<u32>>(),
+            "{file}: sky slices must be 1..={n}, each exactly once: {slices:?}"
+        );
+        let ungated: Vec<&String> = slices
+            .iter()
+            .map(|(_, _, j)| j)
+            .filter(|j| !gating.contains(j))
+            .collect();
+        assert!(
+            ungated.is_empty(),
+            "{file}: sky slice job(s) {ungated:?} are not in `{fan_in}: needs:`"
+        );
+    }
 }

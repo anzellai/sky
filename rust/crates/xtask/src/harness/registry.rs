@@ -94,6 +94,7 @@ impl Platform {
 /// Empty is rejected at compile time for the same reason an empty mutation set
 /// is: a gate applicable nowhere is `verified nowhere`, which is exactly the
 /// `11-fyne-stopwatch` state the mandate exists to make inexpressible.
+#[derive(Clone, Copy)]
 pub struct Platforms(&'static [Platform]);
 
 impl Platforms {

@@ -959,6 +959,21 @@ passes a "9-minute tier".
    variance; beyond that it fails, because a budget that does not fail is not a
    budget.
 
+**Keeping rule 1 true as the suite grows (v0.27.0).** A job whose measured
+elapsed comes within ~20 % of its `timeout-minutes` is split, not given a
+larger timeout, wherever the work divides: the `sky` crate's tests by test
+(`nextest --partition slice:k/N`, rust-ci `test-sky*`, release
+`gate-core-sky-*`), a falsifier group by gate, one slow gate's mutations by
+`--mutations`, a macOS job by step (`macos-conformance` left
+`macos-behaviour`). Where the work does not divide (one Go package under
+`-race` in `integration-postgres`), the timeout is re-derived as 1.5× the new
+measured estimate, with the measurement in the job's comment. A macOS job's
+timeout stays under the macOS tier ceiling (1800 s + 20 %), so a slow macOS
+runner shows up in the budget report, not only as a cancelled job.
+`tests/workflows_parse.rs` checks that every `slice:k/N` split runs all N
+slices in gating jobs, and that `--mutations` lists leave no mutation
+unproven.
+
 ### 8.3 A TZ matrix — a UTC-only runner is blind to a shipped bug class
 
 `Time.timeString`'s host-TZ defect cannot be seen by a UTC-only runner, and every
