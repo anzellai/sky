@@ -59,7 +59,10 @@ func TestAnalyticsHttpRequestsArePerVisitor(t *testing.T) {
 	prev := analyticsSink
 	analyticsSink = &sink
 	resetAnalyticsSinks()
-	t.Cleanup(func() { analyticsSink = prev })
+	// A fresh visitor table: a previous run (-count=N) left visitor-a denied.
+	prevVisitors := analyticsVisitors
+	analyticsVisitors = &analyticsVisitorTable{byKey: map[string]*list.Element{}, lru: list.New()}
+	t.Cleanup(func() { analyticsSink = prev; analyticsVisitors = prevVisitors })
 
 	a1, _ := analyticsCall(t, &sink, "/_rpc/Track", "visitor-a")
 	a2, _ := analyticsCall(t, &sink, "/_rpc/Track", "visitor-a")

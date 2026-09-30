@@ -416,10 +416,11 @@ func currentAnalyticsState() *analyticsSessionState {
 // they spawn with RunWithTraceContext) see the same visitor.
 type analyticsVisitorCtxKey struct{}
 
-// analyticsRequestVisitor is one request's visitor: key is a hash of the
-// visitor's long-lived cookie ("" when the request carries none).
+// analyticsRequestVisitor is one request's visitor. Its key (a hash of the
+// visitor's long-lived cookie) is derived on first use, so a handler that
+// never touches analytics pays only for the stamp.
 type analyticsRequestVisitor struct {
-	key  string
+	req  *http.Request // read only when the handler uses analytics
 	once sync.Once
 	st   *analyticsSessionState
 }
@@ -429,11 +430,12 @@ type analyticsRequestVisitor struct {
 // anonymous id; nothing it sets reaches another visitor).
 func (v *analyticsRequestVisitor) state() *analyticsSessionState {
 	v.once.Do(func() {
-		if v.key == "" {
+		key := analyticsVisitorKey(v.req)
+		if key == "" {
 			v.st = newAnalyticsState()
 			return
 		}
-		v.st = analyticsVisitors.get(v.key)
+		v.st = analyticsVisitors.get(key)
 	})
 	return v.st
 }
@@ -459,7 +461,7 @@ func analyticsVisitorKey(r *http.Request) string {
 // Called by dispatchSkyHandler for every Sky HTTP handler.
 func analyticsEnterRequest(r *http.Request) func() {
 	prev := CurrentTraceContext()
-	SetGoroutineTraceContext(context.WithValue(prev, analyticsVisitorCtxKey{}, &analyticsRequestVisitor{key: analyticsVisitorKey(r)}))
+	SetGoroutineTraceContext(context.WithValue(prev, analyticsVisitorCtxKey{}, &analyticsRequestVisitor{req: r}))
 	return func() { SetGoroutineTraceContext(prev) }
 }
 
