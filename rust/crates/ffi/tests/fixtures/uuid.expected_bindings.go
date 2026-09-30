@@ -307,33 +307,10 @@ func Go_Uuid_nullUUIDScanT(arg0 any, arg1 any) (out SkyResult[any, struct{}]) {
 	return
 }
 
-func Go_Uuid_nullUUIDSetUUIDT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.NullUUID](recv)
-	if r == nil { out = Err[any, any](ErrFfi("UUID: nil receiver")); return }
-	r.UUID = FfiArg[pkg.UUID](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Uuid_nullUUIDSetUUID(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "UUID") }
 
-func Go_Uuid_nullUUIDSetValidT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.NullUUID](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Valid: nil receiver")); return }
-	r.Valid = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Uuid_nullUUIDSetValid(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Valid") }
 
-func Go_Uuid_nullUUIDUUIDT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.NullUUID](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("UUID: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.UUID))
-	return
-}
 func Go_Uuid_nullUUIDUUID(arg0 any) any { return SkyFfiFieldGet3(arg0, "UUID") }
 
 // [fallible] typed wrapper for Go_Uuid_nullUUIDUnmarshalBinary (P7 adaptor target)
@@ -369,13 +346,6 @@ func Go_Uuid_nullUUIDUnmarshalTextT(arg0 any, arg1 any) (out SkyResult[any, stru
 	return
 }
 
-func Go_Uuid_nullUUIDValidT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.NullUUID](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Valid: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Valid))
-	return
-}
 func Go_Uuid_nullUUIDValid(arg0 any) any { return SkyFfiFieldGet3(arg0, "Valid") }
 
 // [fallible] typed wrapper for Go_Uuid_nullUUIDValue (P7 adaptor target)

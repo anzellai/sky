@@ -851,14 +851,3 @@ func ffiPackResults(results []reflect.Value, hasError bool) any {
 	}
 	return Ok[any, any](vs)
 }
-
-// FfiRetField is FfiRet for a struct field read through its address: a field
-// of an opaque struct type is returned as its ADDRESS, so a later
-// pointer-receiver call acts on the field itself, not on a copy.
-func FfiRetField[T any](p *T) any {
-	t := reflect.TypeOf(p).Elem()
-	if t.Kind() == reflect.Struct && ffiOpaque(t) {
-		return p
-	}
-	return FfiRet(*p)
-}

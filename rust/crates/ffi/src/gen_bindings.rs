@@ -1055,73 +1055,25 @@ fn emit_typed_wrapper(
         return emit_identity_pointer_typed(&wrapper_name);
     }
 
+    // Struct fields: only the reflective wrapper is emitted. A large SDK has
+    // tens of thousands of fields (the Stripe SDK: 25,000 getters and 25,000
+    // setters), and a typed wrapper per field, each with its guard and
+    // conversion, made `go build` of the bindings several times slower.
+    // `SkyFfiFieldGet3` / `SkyFfiFieldSet3` convert by the field's static
+    // type under their own guard (format 3): a `*string` field is a Maybe, a
+    // `uint64` one is range-checked, a nil receiver is an `Err`, and a field of
+    // an opaque struct type is read as its address.
     if fn_.is_field {
-        // Format 3: the field's Go value goes through `FfiRet` (a `*string`
-        // field is a Maybe, a `uint64` one is range-checked), and a nil
-        // receiver is an `Err` under the guard, never a nil dereference.
-        let field_name = &fn_.method_name;
-        let receiver_type = rparams.first().map(|(_, t)| t.clone()).unwrap_or_default();
-        let receiver_ok = is_simple_typed_type(&receiver_type)
-            && all_packages_known(&known_aliases, &receiver_type)
-            && !receiver_type.is_empty();
-        let nil_check = if is_pointer_type(&receiver_type) {
-            format!(
-                "\tif recv == nil {{ out = Err[any, any](ErrFfi({})); return }}\n",
-                quote(&format!("{field_name}: nil receiver"))
-            )
-        } else {
-            String::new()
-        };
-        let typed_decl = format!(
-            "func {wrapper_name}T(arg0 any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\trecv := {}\n{nil_check}\tout = Ok[any, any](FfiRetField(&recv.{field_name}))\n\treturn\n}}\n",
-            format!("FfiArg[{receiver_type}](arg0)")
-        );
-        let any_decl = format!(
+        return format!(
             "func {wrapper_name}(arg0 any) any {{ return SkyFfiFieldGet3(arg0, {}) }}\n",
-            quote(field_name)
+            quote(&fn_.method_name)
         );
-        return if receiver_ok {
-            format!("{typed_decl}{any_decl}")
-        } else {
-            any_decl
-        };
     }
-
     if fn_.is_field_set {
-        // Format 3: the Sky value is converted to the field's Go type by
-        // `FfiArg` (a `Maybe String` to a `*string` field; an Int range-checked
-        // into a `uint8` one), under the guard.
-        let field_name = &fn_.method_name;
-        let raw_value_type = rparams.first().map(|(_, t)| t.clone()).unwrap_or_default();
-        let receiver_type = rparams.get(1).map(|(_, t)| t.clone()).unwrap_or_default();
-        let params_ok = is_simple_typed_type(&raw_value_type)
-            && all_packages_known(&known_aliases, &raw_value_type)
-            && is_simple_typed_type(&receiver_type)
-            && all_packages_known(&known_aliases, &receiver_type)
-            && !raw_value_type.is_empty()
-            && !receiver_type.is_empty();
-        let nil_check = if is_pointer_type(&receiver_type) {
-            format!(
-                "\tif r == nil {{ out = Err[any, any](ErrFfi({})); return }}\n",
-                quote(&format!("{field_name}: nil receiver"))
-            )
-        } else {
-            String::new()
-        };
-        let typed_decl_set = format!(
-            "func {wrapper_name}T(value any, recv any) (out SkyResult[any, any]) {{\n\tdefer SkyFfiGuardT(&out)()\n\tr := {}\n{nil_check}\tr.{field_name} = {}\n\tout = Ok[any, any](FfiRet(r))\n\treturn\n}}\n",
-            format!("FfiArg[{receiver_type}](recv)"),
-            format!("FfiArg[{raw_value_type}](value)")
-        );
-        let any_decl_set = format!(
+        return format!(
             "func {wrapper_name}(value any, recv any) any {{ return SkyFfiFieldSet3(value, recv, {}) }}\n",
-            quote(field_name)
+            quote(&fn_.method_name)
         );
-        return if params_ok {
-            format!("{typed_decl_set}{any_decl_set}")
-        } else {
-            any_decl_set
-        };
     }
 
     if fn_.is_pkg_var {

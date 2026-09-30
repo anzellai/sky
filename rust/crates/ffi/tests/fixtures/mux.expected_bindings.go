@@ -248,70 +248,18 @@ func Go_Mux_routeMatchT(arg0 any, arg1 any, arg2 any) (out SkyResult[any, bool])
 	return
 }
 
-func Go_Mux_routeMatchHandlerT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.RouteMatch](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Handler: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Handler))
-	return
-}
 func Go_Mux_routeMatchHandler(arg0 any) any { return SkyFfiFieldGet3(arg0, "Handler") }
 
-func Go_Mux_routeMatchMatchErrT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.RouteMatch](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MatchErr: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MatchErr))
-	return
-}
 func Go_Mux_routeMatchMatchErr(arg0 any) any { return SkyFfiFieldGet3(arg0, "MatchErr") }
 
-func Go_Mux_routeMatchRouteT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.RouteMatch](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Route: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Route))
-	return
-}
 func Go_Mux_routeMatchRoute(arg0 any) any { return SkyFfiFieldGet3(arg0, "Route") }
 
-func Go_Mux_routeMatchSetHandlerT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.RouteMatch](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Handler: nil receiver")); return }
-	r.Handler = FfiArg[http.Handler](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Mux_routeMatchSetHandler(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Handler") }
 
-func Go_Mux_routeMatchSetRouteT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.RouteMatch](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Route: nil receiver")); return }
-	r.Route = FfiArg[*pkg.Route](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Mux_routeMatchSetRoute(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Route") }
 
-func Go_Mux_routeMatchSetVarsT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.RouteMatch](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Vars: nil receiver")); return }
-	r.Vars = FfiArg[map[string]string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Mux_routeMatchSetVars(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Vars") }
 
-func Go_Mux_routeMatchVarsT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.RouteMatch](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Vars: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Vars))
-	return
-}
 func Go_Mux_routeMatchVars(arg0 any) any { return SkyFfiFieldGet3(arg0, "Vars") }
 
 // [pure] typed wrapper for Go_Mux_routeMatcherFunc (P7 adaptor target)
@@ -491,13 +439,6 @@ func Go_Mux_routerHostT(arg0 any, arg1 string) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Mux_routerKeepContextT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Router](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("KeepContext: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.KeepContext))
-	return
-}
 func Go_Mux_routerKeepContext(arg0 any) any { return SkyFfiFieldGet3(arg0, "KeepContext") }
 
 // [pure] typed wrapper for Go_Mux_routerMatch (P7 adaptor target)
@@ -518,13 +459,6 @@ func Go_Mux_routerMatcherFuncT(arg0 any, arg1 any) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Mux_routerMethodNotAllowedHandlerT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Router](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MethodNotAllowedHandler: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MethodNotAllowedHandler))
-	return
-}
 func Go_Mux_routerMethodNotAllowedHandler(arg0 any) any { return SkyFfiFieldGet3(arg0, "MethodNotAllowedHandler") }
 
 // [pure] typed wrapper for Go_Mux_routerMethods (P7 adaptor target)
@@ -554,13 +488,6 @@ func Go_Mux_routerNewRouteT(arg0 any) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Mux_routerNotFoundHandlerT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Router](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("NotFoundHandler: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.NotFoundHandler))
-	return
-}
 func Go_Mux_routerNotFoundHandler(arg0 any) any { return SkyFfiFieldGet3(arg0, "NotFoundHandler") }
 
 // [pure] typed wrapper for Go_Mux_routerPath (P7 adaptor target)
@@ -609,34 +536,10 @@ func Go_Mux_routerServeHTTPT(arg0 any, arg1 any, arg2 any) (out SkyResult[any, s
 	return
 }
 
-func Go_Mux_routerSetKeepContextT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Router](recv)
-	if r == nil { out = Err[any, any](ErrFfi("KeepContext: nil receiver")); return }
-	r.KeepContext = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Mux_routerSetKeepContext(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "KeepContext") }
 
-func Go_Mux_routerSetMethodNotAllowedHandlerT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Router](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MethodNotAllowedHandler: nil receiver")); return }
-	r.MethodNotAllowedHandler = FfiArg[http.Handler](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Mux_routerSetMethodNotAllowedHandler(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MethodNotAllowedHandler") }
 
-func Go_Mux_routerSetNotFoundHandlerT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Router](recv)
-	if r == nil { out = Err[any, any](ErrFfi("NotFoundHandler: nil receiver")); return }
-	r.NotFoundHandler = FfiArg[http.Handler](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Mux_routerSetNotFoundHandler(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "NotFoundHandler") }
 
 // [pure] typed wrapper for Go_Mux_routerSkipClean (P7 adaptor target)

@@ -15,11 +15,11 @@ import (
 	"fmt"
 	bufio "bufio"
 	context "context"
-	tls "crypto/tls"
+	_ "crypto/tls"  // aliased tls; unused in emitted wrappers
 	io "io"
 	fs "io/fs"
-	log "log"
-	multipart "mime/multipart"
+	_ "log"  // aliased log; unused in emitted wrappers
+	_ "mime/multipart"  // aliased multipart; unused in emitted wrappers
 	net "net"
 	url "net/url"
 	time "time"
@@ -39,13 +39,6 @@ func Go_Http_canonicalHeaderKeyT(arg0 string) (out SkyResult[any, string]) {
 	return
 }
 
-func Go_Http_clientCheckRedirectT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Client](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("CheckRedirect: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.CheckRedirect))
-	return
-}
 func Go_Http_clientCheckRedirect(arg0 any) any { return SkyFfiFieldGet3(arg0, "CheckRedirect") }
 
 // [pure] typed wrapper for Go_Http_clientCloseIdleConnections (P7 adaptor target)
@@ -173,13 +166,6 @@ func Go_Http_clientHeadT(arg0 any, arg1 string) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Http_clientJarT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Client](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Jar: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Jar))
-	return
-}
 func Go_Http_clientJar(arg0 any) any { return SkyFfiFieldGet3(arg0, "Jar") }
 
 // [fallible] typed wrapper for Go_Http_clientPost (P7 adaptor target)
@@ -204,62 +190,16 @@ func Go_Http_clientPostFormT(arg0 any, arg1 string, arg2 any) (out SkyResult[any
 	return
 }
 
-func Go_Http_clientSetCheckRedirectT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Client](recv)
-	if r == nil { out = Err[any, any](ErrFfi("CheckRedirect: nil receiver")); return }
-	r.CheckRedirect = FfiArg[func(req *pkg.Request, via []*pkg.Request) error](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_clientSetCheckRedirect(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "CheckRedirect") }
 
-func Go_Http_clientSetJarT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Client](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Jar: nil receiver")); return }
-	r.Jar = FfiArg[pkg.CookieJar](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_clientSetJar(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Jar") }
 
-func Go_Http_clientSetTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Client](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Timeout: nil receiver")); return }
-	r.Timeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_clientSetTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Timeout") }
 
-func Go_Http_clientSetTransportT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Client](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Transport: nil receiver")); return }
-	r.Transport = FfiArg[pkg.RoundTripper](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_clientSetTransport(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Transport") }
 
-func Go_Http_clientTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Client](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Timeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Timeout))
-	return
-}
 func Go_Http_clientTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "Timeout") }
 
-func Go_Http_clientTransportT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Client](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Transport: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Transport))
-	return
-}
 func Go_Http_clientTransport(arg0 any) any { return SkyFfiFieldGet3(arg0, "Transport") }
 
 // [effectful] Go_Http.closeNotifierCloseNotify → pkg.CloseNotifierCloseNotify
@@ -278,31 +218,10 @@ func Go_Http_connStateStringT(arg0 any) (out SkyResult[any, string]) {
 	return
 }
 
-func Go_Http_cookieDomainT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Domain: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Domain))
-	return
-}
 func Go_Http_cookieDomain(arg0 any) any { return SkyFfiFieldGet3(arg0, "Domain") }
 
-func Go_Http_cookieExpiresT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Expires: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Expires))
-	return
-}
 func Go_Http_cookieExpires(arg0 any) any { return SkyFfiFieldGet3(arg0, "Expires") }
 
-func Go_Http_cookieHttpOnlyT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("HttpOnly: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.HttpOnly))
-	return
-}
 func Go_Http_cookieHttpOnly(arg0 any) any { return SkyFfiFieldGet3(arg0, "HttpOnly") }
 
 // [pure] typed wrapper for Go_Http_cookieJarCookies (P7 adaptor target)
@@ -322,225 +241,50 @@ func Go_Http_cookieJarSetCookiesT(arg0 any, arg1 any, arg2 any) (out SkyResult[a
 	return
 }
 
-func Go_Http_cookieMaxAgeT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxAge: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxAge))
-	return
-}
 func Go_Http_cookieMaxAge(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxAge") }
 
-func Go_Http_cookieNameT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Name: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Name))
-	return
-}
 func Go_Http_cookieName(arg0 any) any { return SkyFfiFieldGet3(arg0, "Name") }
 
-func Go_Http_cookiePartitionedT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Partitioned: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Partitioned))
-	return
-}
 func Go_Http_cookiePartitioned(arg0 any) any { return SkyFfiFieldGet3(arg0, "Partitioned") }
 
-func Go_Http_cookiePathT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Path: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Path))
-	return
-}
 func Go_Http_cookiePath(arg0 any) any { return SkyFfiFieldGet3(arg0, "Path") }
 
-func Go_Http_cookieQuotedT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Quoted: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Quoted))
-	return
-}
 func Go_Http_cookieQuoted(arg0 any) any { return SkyFfiFieldGet3(arg0, "Quoted") }
 
-func Go_Http_cookieRawT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Raw: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Raw))
-	return
-}
 func Go_Http_cookieRaw(arg0 any) any { return SkyFfiFieldGet3(arg0, "Raw") }
 
-func Go_Http_cookieRawExpiresT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("RawExpires: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.RawExpires))
-	return
-}
 func Go_Http_cookieRawExpires(arg0 any) any { return SkyFfiFieldGet3(arg0, "RawExpires") }
 
-func Go_Http_cookieSameSiteT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("SameSite: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.SameSite))
-	return
-}
 func Go_Http_cookieSameSite(arg0 any) any { return SkyFfiFieldGet3(arg0, "SameSite") }
 
-func Go_Http_cookieSecureT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Secure: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Secure))
-	return
-}
 func Go_Http_cookieSecure(arg0 any) any { return SkyFfiFieldGet3(arg0, "Secure") }
 
-func Go_Http_cookieSetDomainT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Domain: nil receiver")); return }
-	r.Domain = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetDomain(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Domain") }
 
-func Go_Http_cookieSetExpiresT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Expires: nil receiver")); return }
-	r.Expires = FfiArg[time.Time](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetExpires(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Expires") }
 
-func Go_Http_cookieSetHttpOnlyT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("HttpOnly: nil receiver")); return }
-	r.HttpOnly = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetHttpOnly(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "HttpOnly") }
 
-func Go_Http_cookieSetMaxAgeT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxAge: nil receiver")); return }
-	r.MaxAge = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetMaxAge(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxAge") }
 
-func Go_Http_cookieSetNameT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Name: nil receiver")); return }
-	r.Name = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetName(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Name") }
 
-func Go_Http_cookieSetPartitionedT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Partitioned: nil receiver")); return }
-	r.Partitioned = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetPartitioned(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Partitioned") }
 
-func Go_Http_cookieSetPathT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Path: nil receiver")); return }
-	r.Path = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetPath(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Path") }
 
-func Go_Http_cookieSetQuotedT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Quoted: nil receiver")); return }
-	r.Quoted = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetQuoted(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Quoted") }
 
-func Go_Http_cookieSetRawT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Raw: nil receiver")); return }
-	r.Raw = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetRaw(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Raw") }
 
-func Go_Http_cookieSetRawExpiresT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("RawExpires: nil receiver")); return }
-	r.RawExpires = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetRawExpires(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "RawExpires") }
 
-func Go_Http_cookieSetSameSiteT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("SameSite: nil receiver")); return }
-	r.SameSite = FfiArg[pkg.SameSite](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetSameSite(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "SameSite") }
 
-func Go_Http_cookieSetSecureT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Secure: nil receiver")); return }
-	r.Secure = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetSecure(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Secure") }
 
-func Go_Http_cookieSetUnparsedT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Unparsed: nil receiver")); return }
-	r.Unparsed = FfiArg[[]string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetUnparsed(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Unparsed") }
 
-func Go_Http_cookieSetValueT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Cookie](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Value: nil receiver")); return }
-	r.Value = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_cookieSetValue(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Value") }
 
 // [pure] typed wrapper for Go_Http_cookieString (P7 adaptor target)
@@ -552,13 +296,6 @@ func Go_Http_cookieStringT(arg0 any) (out SkyResult[any, string]) {
 	return
 }
 
-func Go_Http_cookieUnparsedT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Unparsed: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Unparsed))
-	return
-}
 func Go_Http_cookieUnparsed(arg0 any) any { return SkyFfiFieldGet3(arg0, "Unparsed") }
 
 // [fallible] typed wrapper for Go_Http_cookieValid (P7 adaptor target)
@@ -572,13 +309,6 @@ func Go_Http_cookieValidT(arg0 any) (out SkyResult[any, struct{}]) {
 	return
 }
 
-func Go_Http_cookieValueT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Cookie](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Value: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Value))
-	return
-}
 func Go_Http_cookieValue(arg0 any) any { return SkyFfiFieldGet3(arg0, "Value") }
 
 // [pure] typed wrapper for Go_Http_crossOriginProtectionAddInsecureBypassPattern (P7 adaptor target)
@@ -918,232 +648,52 @@ func Go_Http_getT(arg0 string) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Http_hTTP2ConfigCountErrorT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("CountError: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.CountError))
-	return
-}
 func Go_Http_hTTP2ConfigCountError(arg0 any) any { return SkyFfiFieldGet3(arg0, "CountError") }
 
-func Go_Http_hTTP2ConfigMaxConcurrentStreamsT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxConcurrentStreams: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxConcurrentStreams))
-	return
-}
 func Go_Http_hTTP2ConfigMaxConcurrentStreams(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxConcurrentStreams") }
 
-func Go_Http_hTTP2ConfigMaxDecoderHeaderTableSizeT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxDecoderHeaderTableSize: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxDecoderHeaderTableSize))
-	return
-}
 func Go_Http_hTTP2ConfigMaxDecoderHeaderTableSize(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxDecoderHeaderTableSize") }
 
-func Go_Http_hTTP2ConfigMaxEncoderHeaderTableSizeT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxEncoderHeaderTableSize: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxEncoderHeaderTableSize))
-	return
-}
 func Go_Http_hTTP2ConfigMaxEncoderHeaderTableSize(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxEncoderHeaderTableSize") }
 
-func Go_Http_hTTP2ConfigMaxReadFrameSizeT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxReadFrameSize: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxReadFrameSize))
-	return
-}
 func Go_Http_hTTP2ConfigMaxReadFrameSize(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxReadFrameSize") }
 
-func Go_Http_hTTP2ConfigMaxReceiveBufferPerConnectionT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxReceiveBufferPerConnection: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxReceiveBufferPerConnection))
-	return
-}
 func Go_Http_hTTP2ConfigMaxReceiveBufferPerConnection(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxReceiveBufferPerConnection") }
 
-func Go_Http_hTTP2ConfigMaxReceiveBufferPerStreamT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxReceiveBufferPerStream: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxReceiveBufferPerStream))
-	return
-}
 func Go_Http_hTTP2ConfigMaxReceiveBufferPerStream(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxReceiveBufferPerStream") }
 
-func Go_Http_hTTP2ConfigPermitProhibitedCipherSuitesT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("PermitProhibitedCipherSuites: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.PermitProhibitedCipherSuites))
-	return
-}
 func Go_Http_hTTP2ConfigPermitProhibitedCipherSuites(arg0 any) any { return SkyFfiFieldGet3(arg0, "PermitProhibitedCipherSuites") }
 
-func Go_Http_hTTP2ConfigPingTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("PingTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.PingTimeout))
-	return
-}
 func Go_Http_hTTP2ConfigPingTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "PingTimeout") }
 
-func Go_Http_hTTP2ConfigSendPingTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("SendPingTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.SendPingTimeout))
-	return
-}
 func Go_Http_hTTP2ConfigSendPingTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "SendPingTimeout") }
 
-func Go_Http_hTTP2ConfigSetCountErrorT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("CountError: nil receiver")); return }
-	r.CountError = FfiArg[func(errType string)](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetCountError(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "CountError") }
 
-func Go_Http_hTTP2ConfigSetMaxConcurrentStreamsT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxConcurrentStreams: nil receiver")); return }
-	r.MaxConcurrentStreams = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetMaxConcurrentStreams(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxConcurrentStreams") }
 
-func Go_Http_hTTP2ConfigSetMaxDecoderHeaderTableSizeT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxDecoderHeaderTableSize: nil receiver")); return }
-	r.MaxDecoderHeaderTableSize = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetMaxDecoderHeaderTableSize(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxDecoderHeaderTableSize") }
 
-func Go_Http_hTTP2ConfigSetMaxEncoderHeaderTableSizeT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxEncoderHeaderTableSize: nil receiver")); return }
-	r.MaxEncoderHeaderTableSize = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetMaxEncoderHeaderTableSize(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxEncoderHeaderTableSize") }
 
-func Go_Http_hTTP2ConfigSetMaxReadFrameSizeT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxReadFrameSize: nil receiver")); return }
-	r.MaxReadFrameSize = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetMaxReadFrameSize(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxReadFrameSize") }
 
-func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerConnectionT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxReceiveBufferPerConnection: nil receiver")); return }
-	r.MaxReceiveBufferPerConnection = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerConnection(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxReceiveBufferPerConnection") }
 
-func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerStreamT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxReceiveBufferPerStream: nil receiver")); return }
-	r.MaxReceiveBufferPerStream = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetMaxReceiveBufferPerStream(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxReceiveBufferPerStream") }
 
-func Go_Http_hTTP2ConfigSetPermitProhibitedCipherSuitesT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("PermitProhibitedCipherSuites: nil receiver")); return }
-	r.PermitProhibitedCipherSuites = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetPermitProhibitedCipherSuites(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "PermitProhibitedCipherSuites") }
 
-func Go_Http_hTTP2ConfigSetPingTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("PingTimeout: nil receiver")); return }
-	r.PingTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetPingTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "PingTimeout") }
 
-func Go_Http_hTTP2ConfigSetSendPingTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("SendPingTimeout: nil receiver")); return }
-	r.SendPingTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetSendPingTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "SendPingTimeout") }
 
-func Go_Http_hTTP2ConfigSetStrictMaxConcurrentRequestsT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("StrictMaxConcurrentRequests: nil receiver")); return }
-	r.StrictMaxConcurrentRequests = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetStrictMaxConcurrentRequests(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "StrictMaxConcurrentRequests") }
 
-func Go_Http_hTTP2ConfigSetWriteByteTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.HTTP2Config](recv)
-	if r == nil { out = Err[any, any](ErrFfi("WriteByteTimeout: nil receiver")); return }
-	r.WriteByteTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_hTTP2ConfigSetWriteByteTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "WriteByteTimeout") }
 
-func Go_Http_hTTP2ConfigStrictMaxConcurrentRequestsT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("StrictMaxConcurrentRequests: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.StrictMaxConcurrentRequests))
-	return
-}
 func Go_Http_hTTP2ConfigStrictMaxConcurrentRequests(arg0 any) any { return SkyFfiFieldGet3(arg0, "StrictMaxConcurrentRequests") }
 
-func Go_Http_hTTP2ConfigWriteByteTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.HTTP2Config](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("WriteByteTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.WriteByteTimeout))
-	return
-}
 func Go_Http_hTTP2ConfigWriteByteTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "WriteByteTimeout") }
 
 // [pure] typed wrapper for Go_Http_handle (P7 adaptor target)
@@ -1303,23 +853,8 @@ func Go_Http_maxBytesErrorErrorT(arg0 any) (out SkyResult[any, string]) {
 	return
 }
 
-func Go_Http_maxBytesErrorLimitT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.MaxBytesError](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Limit: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Limit))
-	return
-}
 func Go_Http_maxBytesErrorLimit(arg0 any) any { return SkyFfiFieldGet3(arg0, "Limit") }
 
-func Go_Http_maxBytesErrorSetLimitT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.MaxBytesError](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Limit: nil receiver")); return }
-	r.Limit = FfiArg[int64](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_maxBytesErrorSetLimit(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Limit") }
 
 // [pure] typed wrapper for Go_Http_maxBytesHandler (P7 adaptor target)
@@ -1548,23 +1083,8 @@ func Go_Http_protocolErrorErrorT(arg0 any) (out SkyResult[any, string]) {
 	return
 }
 
-func Go_Http_protocolErrorErrorStringT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.ProtocolError](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ErrorString: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ErrorString))
-	return
-}
 func Go_Http_protocolErrorErrorString(arg0 any) any { return SkyFfiFieldGet3(arg0, "ErrorString") }
 
-func Go_Http_protocolErrorSetErrorStringT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.ProtocolError](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ErrorString: nil receiver")); return }
-	r.ErrorString = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_protocolErrorSetErrorString(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ErrorString") }
 
 // [pure] typed wrapper for Go_Http_protocolsHTTP1 (P7 adaptor target)
@@ -1646,42 +1166,12 @@ func Go_Http_proxyURL(arg0 any) (out any) {
 	return
 }
 
-func Go_Http_pushOptionsHeaderT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.PushOptions](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Header: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Header))
-	return
-}
 func Go_Http_pushOptionsHeader(arg0 any) any { return SkyFfiFieldGet3(arg0, "Header") }
 
-func Go_Http_pushOptionsMethodT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.PushOptions](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Method: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Method))
-	return
-}
 func Go_Http_pushOptionsMethod(arg0 any) any { return SkyFfiFieldGet3(arg0, "Method") }
 
-func Go_Http_pushOptionsSetHeaderT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.PushOptions](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Header: nil receiver")); return }
-	r.Header = FfiArg[pkg.Header](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_pushOptionsSetHeader(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Header") }
 
-func Go_Http_pushOptionsSetMethodT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.PushOptions](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Method: nil receiver")); return }
-	r.Method = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_pushOptionsSetMethod(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Method") }
 
 // [fallible] typed wrapper for Go_Http_pusherPush (P7 adaptor target)
@@ -1747,22 +1237,8 @@ func Go_Http_requestBasicAuthT(arg0 any) (out SkyResult[any, SkyTuple3]) {
 	return
 }
 
-func Go_Http_requestBodyT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Body: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Body))
-	return
-}
 func Go_Http_requestBody(arg0 any) any { return SkyFfiFieldGet3(arg0, "Body") }
 
-func Go_Http_requestCancelT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Cancel: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Cancel))
-	return
-}
 func Go_Http_requestCancel(arg0 any) any { return SkyFfiFieldGet3(arg0, "Cancel") }
 
 // [pure] typed wrapper for Go_Http_requestClone (P7 adaptor target)
@@ -1774,22 +1250,8 @@ func Go_Http_requestCloneT(arg0 any, arg1 any) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Http_requestCloseT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Close: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Close))
-	return
-}
 func Go_Http_requestClose(arg0 any) any { return SkyFfiFieldGet3(arg0, "Close") }
 
-func Go_Http_requestContentLengthT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ContentLength: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ContentLength))
-	return
-}
 func Go_Http_requestContentLength(arg0 any) any { return SkyFfiFieldGet3(arg0, "ContentLength") }
 
 // [pure] typed wrapper for Go_Http_requestContext (P7 adaptor target)
@@ -1830,13 +1292,6 @@ func Go_Http_requestCookiesNamedT(arg0 any, arg1 string) (out SkyResult[any, any
 	return
 }
 
-func Go_Http_requestFormT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Form: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Form))
-	return
-}
 func Go_Http_requestForm(arg0 any) any { return SkyFfiFieldGet3(arg0, "Form") }
 
 // [fallible] typed wrapper for Go_Http_requestFormFile (P7 adaptor target)
@@ -1859,49 +1314,14 @@ func Go_Http_requestFormValueT(arg0 any, arg1 string) (out SkyResult[any, string
 	return
 }
 
-func Go_Http_requestGetBodyT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("GetBody: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.GetBody))
-	return
-}
 func Go_Http_requestGetBody(arg0 any) any { return SkyFfiFieldGet3(arg0, "GetBody") }
 
-func Go_Http_requestHeaderT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Header: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Header))
-	return
-}
 func Go_Http_requestHeader(arg0 any) any { return SkyFfiFieldGet3(arg0, "Header") }
 
-func Go_Http_requestHostT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Host: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Host))
-	return
-}
 func Go_Http_requestHost(arg0 any) any { return SkyFfiFieldGet3(arg0, "Host") }
 
-func Go_Http_requestMethodT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Method: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Method))
-	return
-}
 func Go_Http_requestMethod(arg0 any) any { return SkyFfiFieldGet3(arg0, "Method") }
 
-func Go_Http_requestMultipartFormT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MultipartForm: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MultipartForm))
-	return
-}
 func Go_Http_requestMultipartForm(arg0 any) any { return SkyFfiFieldGet3(arg0, "MultipartForm") }
 
 // [fallible] typed wrapper for Go_Http_requestMultipartReader (P7 adaptor target)
@@ -1946,22 +1366,8 @@ func Go_Http_requestPathValueT(arg0 any, arg1 string) (out SkyResult[any, string
 	return
 }
 
-func Go_Http_requestPatternT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Pattern: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Pattern))
-	return
-}
 func Go_Http_requestPattern(arg0 any) any { return SkyFfiFieldGet3(arg0, "Pattern") }
 
-func Go_Http_requestPostFormT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("PostForm: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.PostForm))
-	return
-}
 func Go_Http_requestPostForm(arg0 any) any { return SkyFfiFieldGet3(arg0, "PostForm") }
 
 // [pure] typed wrapper for Go_Http_requestPostFormValue (P7 adaptor target)
@@ -1973,13 +1379,6 @@ func Go_Http_requestPostFormValueT(arg0 any, arg1 string) (out SkyResult[any, st
 	return
 }
 
-func Go_Http_requestProtoT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Proto: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Proto))
-	return
-}
 func Go_Http_requestProto(arg0 any) any { return SkyFfiFieldGet3(arg0, "Proto") }
 
 // [pure] typed wrapper for Go_Http_requestProtoAtLeast (P7 adaptor target)
@@ -1991,22 +1390,8 @@ func Go_Http_requestProtoAtLeastT(arg0 any, arg1 int, arg2 int) (out SkyResult[a
 	return
 }
 
-func Go_Http_requestProtoMajorT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ProtoMajor: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ProtoMajor))
-	return
-}
 func Go_Http_requestProtoMajor(arg0 any) any { return SkyFfiFieldGet3(arg0, "ProtoMajor") }
 
-func Go_Http_requestProtoMinorT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ProtoMinor: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ProtoMinor))
-	return
-}
 func Go_Http_requestProtoMinor(arg0 any) any { return SkyFfiFieldGet3(arg0, "ProtoMinor") }
 
 // [pure] typed wrapper for Go_Http_requestReferer (P7 adaptor target)
@@ -2018,31 +1403,10 @@ func Go_Http_requestRefererT(arg0 any) (out SkyResult[any, string]) {
 	return
 }
 
-func Go_Http_requestRemoteAddrT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("RemoteAddr: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.RemoteAddr))
-	return
-}
 func Go_Http_requestRemoteAddr(arg0 any) any { return SkyFfiFieldGet3(arg0, "RemoteAddr") }
 
-func Go_Http_requestRequestURIT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("RequestURI: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.RequestURI))
-	return
-}
 func Go_Http_requestRequestURI(arg0 any) any { return SkyFfiFieldGet3(arg0, "RequestURI") }
 
-func Go_Http_requestResponseT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Response: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Response))
-	return
-}
 func Go_Http_requestResponse(arg0 any) any { return SkyFfiFieldGet3(arg0, "Response") }
 
 // [pure] typed wrapper for Go_Http_requestSetBasicAuth (P7 adaptor target)
@@ -2055,88 +1419,24 @@ func Go_Http_requestSetBasicAuthT(arg0 any, arg1 string, arg2 string) (out SkyRe
 	return
 }
 
-func Go_Http_requestSetBodyT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Body: nil receiver")); return }
-	r.Body = FfiArg[io.ReadCloser](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetBody(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Body") }
 
 func Go_Http_requestSetCancel(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Cancel") }
 
-func Go_Http_requestSetCloseT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Close: nil receiver")); return }
-	r.Close = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetClose(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Close") }
 
-func Go_Http_requestSetContentLengthT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ContentLength: nil receiver")); return }
-	r.ContentLength = FfiArg[int64](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetContentLength(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ContentLength") }
 
-func Go_Http_requestSetFormT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Form: nil receiver")); return }
-	r.Form = FfiArg[url.Values](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetForm(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Form") }
 
 func Go_Http_requestSetGetBody(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "GetBody") }
 
-func Go_Http_requestSetHeaderT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Header: nil receiver")); return }
-	r.Header = FfiArg[pkg.Header](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetHeader(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Header") }
 
-func Go_Http_requestSetHostT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Host: nil receiver")); return }
-	r.Host = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetHost(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Host") }
 
-func Go_Http_requestSetMethodT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Method: nil receiver")); return }
-	r.Method = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetMethod(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Method") }
 
-func Go_Http_requestSetMultipartFormT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MultipartForm: nil receiver")); return }
-	r.MultipartForm = FfiArg[*multipart.Form](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetMultipartForm(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MultipartForm") }
 
 // [pure] typed wrapper for Go_Http_requestSetPathValue (P7 adaptor target)
@@ -2149,160 +1449,36 @@ func Go_Http_requestSetPathValueT(arg0 any, arg1 string, arg2 string) (out SkyRe
 	return
 }
 
-func Go_Http_requestSetPatternT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Pattern: nil receiver")); return }
-	r.Pattern = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetPattern(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Pattern") }
 
-func Go_Http_requestSetPostFormT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("PostForm: nil receiver")); return }
-	r.PostForm = FfiArg[url.Values](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetPostForm(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "PostForm") }
 
-func Go_Http_requestSetProtoT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Proto: nil receiver")); return }
-	r.Proto = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetProto(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Proto") }
 
-func Go_Http_requestSetProtoMajorT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ProtoMajor: nil receiver")); return }
-	r.ProtoMajor = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetProtoMajor(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ProtoMajor") }
 
-func Go_Http_requestSetProtoMinorT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ProtoMinor: nil receiver")); return }
-	r.ProtoMinor = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetProtoMinor(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ProtoMinor") }
 
-func Go_Http_requestSetRemoteAddrT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("RemoteAddr: nil receiver")); return }
-	r.RemoteAddr = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetRemoteAddr(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "RemoteAddr") }
 
-func Go_Http_requestSetRequestURIT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("RequestURI: nil receiver")); return }
-	r.RequestURI = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetRequestURI(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "RequestURI") }
 
-func Go_Http_requestSetResponseT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Response: nil receiver")); return }
-	r.Response = FfiArg[*pkg.Response](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetResponse(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Response") }
 
-func Go_Http_requestSetTLST(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TLS: nil receiver")); return }
-	r.TLS = FfiArg[*tls.ConnectionState](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetTLS(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TLS") }
 
-func Go_Http_requestSetTrailerT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Trailer: nil receiver")); return }
-	r.Trailer = FfiArg[pkg.Header](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetTrailer(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Trailer") }
 
-func Go_Http_requestSetTransferEncodingT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TransferEncoding: nil receiver")); return }
-	r.TransferEncoding = FfiArg[[]string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetTransferEncoding(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TransferEncoding") }
 
-func Go_Http_requestSetURLT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Request](recv)
-	if r == nil { out = Err[any, any](ErrFfi("URL: nil receiver")); return }
-	r.URL = FfiArg[*url.URL](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_requestSetURL(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "URL") }
 
-func Go_Http_requestTLST(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TLS: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TLS))
-	return
-}
 func Go_Http_requestTLS(arg0 any) any { return SkyFfiFieldGet3(arg0, "TLS") }
 
-func Go_Http_requestTrailerT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Trailer: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Trailer))
-	return
-}
 func Go_Http_requestTrailer(arg0 any) any { return SkyFfiFieldGet3(arg0, "Trailer") }
 
-func Go_Http_requestTransferEncodingT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TransferEncoding: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TransferEncoding))
-	return
-}
 func Go_Http_requestTransferEncoding(arg0 any) any { return SkyFfiFieldGet3(arg0, "TransferEncoding") }
 
-func Go_Http_requestURLT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Request](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("URL: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.URL))
-	return
-}
 func Go_Http_requestURL(arg0 any) any { return SkyFfiFieldGet3(arg0, "URL") }
 
 // [pure] typed wrapper for Go_Http_requestUserAgent (P7 adaptor target)
@@ -2345,31 +1521,10 @@ func Go_Http_requestWriteProxyT(arg0 any, arg1 any) (out SkyResult[any, struct{}
 	return
 }
 
-func Go_Http_responseBodyT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Body: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Body))
-	return
-}
 func Go_Http_responseBody(arg0 any) any { return SkyFfiFieldGet3(arg0, "Body") }
 
-func Go_Http_responseCloseT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Close: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Close))
-	return
-}
 func Go_Http_responseClose(arg0 any) any { return SkyFfiFieldGet3(arg0, "Close") }
 
-func Go_Http_responseContentLengthT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ContentLength: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ContentLength))
-	return
-}
 func Go_Http_responseContentLength(arg0 any) any { return SkyFfiFieldGet3(arg0, "ContentLength") }
 
 // [fallible] typed wrapper for Go_Http_responseControllerEnableFullDuplex (P7 adaptor target)
@@ -2436,13 +1591,6 @@ func Go_Http_responseCookiesT(arg0 any) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Http_responseHeaderT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Header: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Header))
-	return
-}
 func Go_Http_responseHeader(arg0 any) any { return SkyFfiFieldGet3(arg0, "Header") }
 
 // [fallible] typed wrapper for Go_Http_responseLocation (P7 adaptor target)
@@ -2456,13 +1604,6 @@ func Go_Http_responseLocationT(arg0 any) (out SkyResult[any, any]) {
 	return
 }
 
-func Go_Http_responseProtoT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Proto: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Proto))
-	return
-}
 func Go_Http_responseProto(arg0 any) any { return SkyFfiFieldGet3(arg0, "Proto") }
 
 // [pure] typed wrapper for Go_Http_responseProtoAtLeast (P7 adaptor target)
@@ -2474,225 +1615,50 @@ func Go_Http_responseProtoAtLeastT(arg0 any, arg1 int, arg2 int) (out SkyResult[
 	return
 }
 
-func Go_Http_responseProtoMajorT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ProtoMajor: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ProtoMajor))
-	return
-}
 func Go_Http_responseProtoMajor(arg0 any) any { return SkyFfiFieldGet3(arg0, "ProtoMajor") }
 
-func Go_Http_responseProtoMinorT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ProtoMinor: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ProtoMinor))
-	return
-}
 func Go_Http_responseProtoMinor(arg0 any) any { return SkyFfiFieldGet3(arg0, "ProtoMinor") }
 
-func Go_Http_responseRequestT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Request: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Request))
-	return
-}
 func Go_Http_responseRequest(arg0 any) any { return SkyFfiFieldGet3(arg0, "Request") }
 
-func Go_Http_responseSetBodyT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Body: nil receiver")); return }
-	r.Body = FfiArg[io.ReadCloser](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetBody(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Body") }
 
-func Go_Http_responseSetCloseT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Close: nil receiver")); return }
-	r.Close = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetClose(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Close") }
 
-func Go_Http_responseSetContentLengthT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ContentLength: nil receiver")); return }
-	r.ContentLength = FfiArg[int64](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetContentLength(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ContentLength") }
 
-func Go_Http_responseSetHeaderT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Header: nil receiver")); return }
-	r.Header = FfiArg[pkg.Header](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetHeader(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Header") }
 
-func Go_Http_responseSetProtoT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Proto: nil receiver")); return }
-	r.Proto = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetProto(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Proto") }
 
-func Go_Http_responseSetProtoMajorT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ProtoMajor: nil receiver")); return }
-	r.ProtoMajor = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetProtoMajor(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ProtoMajor") }
 
-func Go_Http_responseSetProtoMinorT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ProtoMinor: nil receiver")); return }
-	r.ProtoMinor = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetProtoMinor(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ProtoMinor") }
 
-func Go_Http_responseSetRequestT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Request: nil receiver")); return }
-	r.Request = FfiArg[*pkg.Request](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetRequest(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Request") }
 
-func Go_Http_responseSetStatusT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Status: nil receiver")); return }
-	r.Status = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetStatus(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Status") }
 
-func Go_Http_responseSetStatusCodeT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("StatusCode: nil receiver")); return }
-	r.StatusCode = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetStatusCode(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "StatusCode") }
 
-func Go_Http_responseSetTLST(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TLS: nil receiver")); return }
-	r.TLS = FfiArg[*tls.ConnectionState](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetTLS(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TLS") }
 
-func Go_Http_responseSetTrailerT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Trailer: nil receiver")); return }
-	r.Trailer = FfiArg[pkg.Header](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetTrailer(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Trailer") }
 
-func Go_Http_responseSetTransferEncodingT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TransferEncoding: nil receiver")); return }
-	r.TransferEncoding = FfiArg[[]string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetTransferEncoding(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TransferEncoding") }
 
-func Go_Http_responseSetUncompressedT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Response](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Uncompressed: nil receiver")); return }
-	r.Uncompressed = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_responseSetUncompressed(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Uncompressed") }
 
-func Go_Http_responseStatusT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Status: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Status))
-	return
-}
 func Go_Http_responseStatus(arg0 any) any { return SkyFfiFieldGet3(arg0, "Status") }
 
-func Go_Http_responseStatusCodeT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("StatusCode: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.StatusCode))
-	return
-}
 func Go_Http_responseStatusCode(arg0 any) any { return SkyFfiFieldGet3(arg0, "StatusCode") }
 
-func Go_Http_responseTLST(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TLS: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TLS))
-	return
-}
 func Go_Http_responseTLS(arg0 any) any { return SkyFfiFieldGet3(arg0, "TLS") }
 
-func Go_Http_responseTrailerT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Trailer: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Trailer))
-	return
-}
 func Go_Http_responseTrailer(arg0 any) any { return SkyFfiFieldGet3(arg0, "Trailer") }
 
-func Go_Http_responseTransferEncodingT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TransferEncoding: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TransferEncoding))
-	return
-}
 func Go_Http_responseTransferEncoding(arg0 any) any { return SkyFfiFieldGet3(arg0, "TransferEncoding") }
 
-func Go_Http_responseUncompressedT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Response](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Uncompressed: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Uncompressed))
-	return
-}
 func Go_Http_responseUncompressed(arg0 any) any { return SkyFfiFieldGet3(arg0, "Uncompressed") }
 
 // [fallible] typed wrapper for Go_Http_responseWrite (P7 adaptor target)
@@ -2849,22 +1815,8 @@ func Go_Http_serveTLST(arg0 any, arg1 any, arg2 string, arg3 string) (out SkyRes
 	return
 }
 
-func Go_Http_serverAddrT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Addr: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Addr))
-	return
-}
 func Go_Http_serverAddr(arg0 any) any { return SkyFfiFieldGet3(arg0, "Addr") }
 
-func Go_Http_serverBaseContextT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("BaseContext: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.BaseContext))
-	return
-}
 func Go_Http_serverBaseContext(arg0 any) any { return SkyFfiFieldGet3(arg0, "BaseContext") }
 
 // [fallible] typed wrapper for Go_Http_serverClose (P7 adaptor target)
@@ -2878,22 +1830,8 @@ func Go_Http_serverCloseT(arg0 any) (out SkyResult[any, struct{}]) {
 	return
 }
 
-func Go_Http_serverConnContextT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ConnContext: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ConnContext))
-	return
-}
 func Go_Http_serverConnContext(arg0 any) any { return SkyFfiFieldGet3(arg0, "ConnContext") }
 
-func Go_Http_serverConnStateT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ConnState: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ConnState))
-	return
-}
 func Go_Http_serverConnState(arg0 any) any { return SkyFfiFieldGet3(arg0, "ConnState") }
 
 func Go_Http_serverContextKey(_ any) (out any) {
@@ -2902,49 +1840,14 @@ func Go_Http_serverContextKey(_ any) (out any) {
 	return
 }
 
-func Go_Http_serverDisableGeneralOptionsHandlerT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("DisableGeneralOptionsHandler: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.DisableGeneralOptionsHandler))
-	return
-}
 func Go_Http_serverDisableGeneralOptionsHandler(arg0 any) any { return SkyFfiFieldGet3(arg0, "DisableGeneralOptionsHandler") }
 
-func Go_Http_serverErrorLogT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ErrorLog: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ErrorLog))
-	return
-}
 func Go_Http_serverErrorLog(arg0 any) any { return SkyFfiFieldGet3(arg0, "ErrorLog") }
 
-func Go_Http_serverHTTP2T(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("HTTP2: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.HTTP2))
-	return
-}
 func Go_Http_serverHTTP2(arg0 any) any { return SkyFfiFieldGet3(arg0, "HTTP2") }
 
-func Go_Http_serverHandlerT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Handler: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Handler))
-	return
-}
 func Go_Http_serverHandler(arg0 any) any { return SkyFfiFieldGet3(arg0, "Handler") }
 
-func Go_Http_serverIdleTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("IdleTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.IdleTimeout))
-	return
-}
 func Go_Http_serverIdleTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "IdleTimeout") }
 
 // [fallible] typed wrapper for Go_Http_serverListenAndServe (P7 adaptor target)
@@ -2969,40 +1872,12 @@ func Go_Http_serverListenAndServeTLST(arg0 any, arg1 string, arg2 string) (out S
 	return
 }
 
-func Go_Http_serverMaxHeaderBytesT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxHeaderBytes: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxHeaderBytes))
-	return
-}
 func Go_Http_serverMaxHeaderBytes(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxHeaderBytes") }
 
-func Go_Http_serverProtocolsT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Protocols: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Protocols))
-	return
-}
 func Go_Http_serverProtocols(arg0 any) any { return SkyFfiFieldGet3(arg0, "Protocols") }
 
-func Go_Http_serverReadHeaderTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ReadHeaderTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ReadHeaderTimeout))
-	return
-}
 func Go_Http_serverReadHeaderTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "ReadHeaderTimeout") }
 
-func Go_Http_serverReadTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ReadTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ReadTimeout))
-	return
-}
 func Go_Http_serverReadTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "ReadTimeout") }
 
 // [pure] typed wrapper for Go_Http_serverRegisterOnShutdown (P7 adaptor target)
@@ -3037,94 +1912,22 @@ func Go_Http_serverServeTLST(arg0 any, arg1 any, arg2 string, arg3 string) (out 
 	return
 }
 
-func Go_Http_serverSetAddrT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Addr: nil receiver")); return }
-	r.Addr = FfiArg[string](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetAddr(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Addr") }
 
-func Go_Http_serverSetBaseContextT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("BaseContext: nil receiver")); return }
-	r.BaseContext = FfiArg[func(net.Listener) context.Context](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetBaseContext(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "BaseContext") }
 
-func Go_Http_serverSetConnContextT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ConnContext: nil receiver")); return }
-	r.ConnContext = FfiArg[func(ctx context.Context, c net.Conn) context.Context](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetConnContext(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ConnContext") }
 
-func Go_Http_serverSetConnStateT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ConnState: nil receiver")); return }
-	r.ConnState = FfiArg[func(net.Conn, pkg.ConnState)](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetConnState(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ConnState") }
 
-func Go_Http_serverSetDisableGeneralOptionsHandlerT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("DisableGeneralOptionsHandler: nil receiver")); return }
-	r.DisableGeneralOptionsHandler = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetDisableGeneralOptionsHandler(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "DisableGeneralOptionsHandler") }
 
-func Go_Http_serverSetErrorLogT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ErrorLog: nil receiver")); return }
-	r.ErrorLog = FfiArg[*log.Logger](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetErrorLog(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ErrorLog") }
 
-func Go_Http_serverSetHTTP2T(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("HTTP2: nil receiver")); return }
-	r.HTTP2 = FfiArg[*pkg.HTTP2Config](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetHTTP2(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "HTTP2") }
 
-func Go_Http_serverSetHandlerT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Handler: nil receiver")); return }
-	r.Handler = FfiArg[pkg.Handler](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetHandler(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Handler") }
 
-func Go_Http_serverSetIdleTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("IdleTimeout: nil receiver")); return }
-	r.IdleTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetIdleTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "IdleTimeout") }
 
 // [pure] typed wrapper for Go_Http_serverSetKeepAlivesEnabled (P7 adaptor target)
@@ -3137,74 +1940,18 @@ func Go_Http_serverSetKeepAlivesEnabledT(arg0 any, arg1 bool) (out SkyResult[any
 	return
 }
 
-func Go_Http_serverSetMaxHeaderBytesT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxHeaderBytes: nil receiver")); return }
-	r.MaxHeaderBytes = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetMaxHeaderBytes(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxHeaderBytes") }
 
-func Go_Http_serverSetProtocolsT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Protocols: nil receiver")); return }
-	r.Protocols = FfiArg[*pkg.Protocols](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetProtocols(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Protocols") }
 
-func Go_Http_serverSetReadHeaderTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ReadHeaderTimeout: nil receiver")); return }
-	r.ReadHeaderTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetReadHeaderTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ReadHeaderTimeout") }
 
-func Go_Http_serverSetReadTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ReadTimeout: nil receiver")); return }
-	r.ReadTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetReadTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ReadTimeout") }
 
-func Go_Http_serverSetTLSConfigT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TLSConfig: nil receiver")); return }
-	r.TLSConfig = FfiArg[*tls.Config](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetTLSConfig(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TLSConfig") }
 
-func Go_Http_serverSetTLSNextProtoT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TLSNextProto: nil receiver")); return }
-	r.TLSNextProto = FfiArg[map[string]func(*pkg.Server, *tls.Conn, pkg.Handler)](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetTLSNextProto(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TLSNextProto") }
 
-func Go_Http_serverSetWriteTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Server](recv)
-	if r == nil { out = Err[any, any](ErrFfi("WriteTimeout: nil receiver")); return }
-	r.WriteTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_serverSetWriteTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "WriteTimeout") }
 
 // [fallible] typed wrapper for Go_Http_serverShutdown (P7 adaptor target)
@@ -3218,31 +1965,10 @@ func Go_Http_serverShutdownT(arg0 any, arg1 any) (out SkyResult[any, struct{}]) 
 	return
 }
 
-func Go_Http_serverTLSConfigT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TLSConfig: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TLSConfig))
-	return
-}
 func Go_Http_serverTLSConfig(arg0 any) any { return SkyFfiFieldGet3(arg0, "TLSConfig") }
 
-func Go_Http_serverTLSNextProtoT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TLSNextProto: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TLSNextProto))
-	return
-}
 func Go_Http_serverTLSNextProto(arg0 any) any { return SkyFfiFieldGet3(arg0, "TLSNextProto") }
 
-func Go_Http_serverWriteTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Server](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("WriteTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.WriteTimeout))
-	return
-}
 func Go_Http_serverWriteTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "WriteTimeout") }
 
 // [pure] typed wrapper for Go_Http_setCookie (P7 adaptor target)
@@ -3808,139 +2534,34 @@ func Go_Http_transportCloseIdleConnectionsT(arg0 any) (out SkyResult[any, struct
 	return
 }
 
-func Go_Http_transportDialT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Dial: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Dial))
-	return
-}
 func Go_Http_transportDial(arg0 any) any { return SkyFfiFieldGet3(arg0, "Dial") }
 
-func Go_Http_transportDialContextT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("DialContext: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.DialContext))
-	return
-}
 func Go_Http_transportDialContext(arg0 any) any { return SkyFfiFieldGet3(arg0, "DialContext") }
 
-func Go_Http_transportDialTLST(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("DialTLS: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.DialTLS))
-	return
-}
 func Go_Http_transportDialTLS(arg0 any) any { return SkyFfiFieldGet3(arg0, "DialTLS") }
 
-func Go_Http_transportDialTLSContextT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("DialTLSContext: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.DialTLSContext))
-	return
-}
 func Go_Http_transportDialTLSContext(arg0 any) any { return SkyFfiFieldGet3(arg0, "DialTLSContext") }
 
-func Go_Http_transportDisableCompressionT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("DisableCompression: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.DisableCompression))
-	return
-}
 func Go_Http_transportDisableCompression(arg0 any) any { return SkyFfiFieldGet3(arg0, "DisableCompression") }
 
-func Go_Http_transportDisableKeepAlivesT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("DisableKeepAlives: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.DisableKeepAlives))
-	return
-}
 func Go_Http_transportDisableKeepAlives(arg0 any) any { return SkyFfiFieldGet3(arg0, "DisableKeepAlives") }
 
-func Go_Http_transportExpectContinueTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ExpectContinueTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ExpectContinueTimeout))
-	return
-}
 func Go_Http_transportExpectContinueTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "ExpectContinueTimeout") }
 
-func Go_Http_transportForceAttemptHTTP2T(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ForceAttemptHTTP2: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ForceAttemptHTTP2))
-	return
-}
 func Go_Http_transportForceAttemptHTTP2(arg0 any) any { return SkyFfiFieldGet3(arg0, "ForceAttemptHTTP2") }
 
-func Go_Http_transportGetProxyConnectHeaderT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("GetProxyConnectHeader: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.GetProxyConnectHeader))
-	return
-}
 func Go_Http_transportGetProxyConnectHeader(arg0 any) any { return SkyFfiFieldGet3(arg0, "GetProxyConnectHeader") }
 
-func Go_Http_transportHTTP2T(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("HTTP2: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.HTTP2))
-	return
-}
 func Go_Http_transportHTTP2(arg0 any) any { return SkyFfiFieldGet3(arg0, "HTTP2") }
 
-func Go_Http_transportIdleConnTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("IdleConnTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.IdleConnTimeout))
-	return
-}
 func Go_Http_transportIdleConnTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "IdleConnTimeout") }
 
-func Go_Http_transportMaxConnsPerHostT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxConnsPerHost: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxConnsPerHost))
-	return
-}
 func Go_Http_transportMaxConnsPerHost(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxConnsPerHost") }
 
-func Go_Http_transportMaxIdleConnsT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxIdleConns: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxIdleConns))
-	return
-}
 func Go_Http_transportMaxIdleConns(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxIdleConns") }
 
-func Go_Http_transportMaxIdleConnsPerHostT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxIdleConnsPerHost: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxIdleConnsPerHost))
-	return
-}
 func Go_Http_transportMaxIdleConnsPerHost(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxIdleConnsPerHost") }
 
-func Go_Http_transportMaxResponseHeaderBytesT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("MaxResponseHeaderBytes: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.MaxResponseHeaderBytes))
-	return
-}
 func Go_Http_transportMaxResponseHeaderBytes(arg0 any) any { return SkyFfiFieldGet3(arg0, "MaxResponseHeaderBytes") }
 
 // [fallible] typed wrapper for Go_Http_transportNewClientConn (P7 adaptor target)
@@ -3954,49 +2575,14 @@ func Go_Http_transportNewClientConnT(arg0 any, arg1 any, arg2 string, arg3 strin
 	return
 }
 
-func Go_Http_transportOnProxyConnectResponseT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("OnProxyConnectResponse: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.OnProxyConnectResponse))
-	return
-}
 func Go_Http_transportOnProxyConnectResponse(arg0 any) any { return SkyFfiFieldGet3(arg0, "OnProxyConnectResponse") }
 
-func Go_Http_transportProtocolsT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Protocols: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Protocols))
-	return
-}
 func Go_Http_transportProtocols(arg0 any) any { return SkyFfiFieldGet3(arg0, "Protocols") }
 
-func Go_Http_transportProxyT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("Proxy: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.Proxy))
-	return
-}
 func Go_Http_transportProxy(arg0 any) any { return SkyFfiFieldGet3(arg0, "Proxy") }
 
-func Go_Http_transportProxyConnectHeaderT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ProxyConnectHeader: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ProxyConnectHeader))
-	return
-}
 func Go_Http_transportProxyConnectHeader(arg0 any) any { return SkyFfiFieldGet3(arg0, "ProxyConnectHeader") }
 
-func Go_Http_transportReadBufferSizeT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ReadBufferSize: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ReadBufferSize))
-	return
-}
 func Go_Http_transportReadBufferSize(arg0 any) any { return SkyFfiFieldGet3(arg0, "ReadBufferSize") }
 
 // [pure] typed wrapper for Go_Http_transportRegisterProtocol (P7 adaptor target)
@@ -4009,13 +2595,6 @@ func Go_Http_transportRegisterProtocolT(arg0 any, arg1 string, arg2 any) (out Sk
 	return
 }
 
-func Go_Http_transportResponseHeaderTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("ResponseHeaderTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.ResponseHeaderTimeout))
-	return
-}
 func Go_Http_transportResponseHeaderTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "ResponseHeaderTimeout") }
 
 // [fallible] typed wrapper for Go_Http_transportRoundTrip (P7 adaptor target)
@@ -4037,234 +2616,54 @@ func Go_Http_transportSetDialTLS(value any, recv any) any { return SkyFfiFieldSe
 
 func Go_Http_transportSetDialTLSContext(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "DialTLSContext") }
 
-func Go_Http_transportSetDisableCompressionT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("DisableCompression: nil receiver")); return }
-	r.DisableCompression = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetDisableCompression(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "DisableCompression") }
 
-func Go_Http_transportSetDisableKeepAlivesT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("DisableKeepAlives: nil receiver")); return }
-	r.DisableKeepAlives = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetDisableKeepAlives(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "DisableKeepAlives") }
 
-func Go_Http_transportSetExpectContinueTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ExpectContinueTimeout: nil receiver")); return }
-	r.ExpectContinueTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetExpectContinueTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ExpectContinueTimeout") }
 
-func Go_Http_transportSetForceAttemptHTTP2T(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ForceAttemptHTTP2: nil receiver")); return }
-	r.ForceAttemptHTTP2 = FfiArg[bool](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetForceAttemptHTTP2(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ForceAttemptHTTP2") }
 
 func Go_Http_transportSetGetProxyConnectHeader(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "GetProxyConnectHeader") }
 
-func Go_Http_transportSetHTTP2T(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("HTTP2: nil receiver")); return }
-	r.HTTP2 = FfiArg[*pkg.HTTP2Config](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetHTTP2(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "HTTP2") }
 
-func Go_Http_transportSetIdleConnTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("IdleConnTimeout: nil receiver")); return }
-	r.IdleConnTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetIdleConnTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "IdleConnTimeout") }
 
-func Go_Http_transportSetMaxConnsPerHostT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxConnsPerHost: nil receiver")); return }
-	r.MaxConnsPerHost = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetMaxConnsPerHost(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxConnsPerHost") }
 
-func Go_Http_transportSetMaxIdleConnsT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxIdleConns: nil receiver")); return }
-	r.MaxIdleConns = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetMaxIdleConns(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxIdleConns") }
 
-func Go_Http_transportSetMaxIdleConnsPerHostT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxIdleConnsPerHost: nil receiver")); return }
-	r.MaxIdleConnsPerHost = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetMaxIdleConnsPerHost(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxIdleConnsPerHost") }
 
-func Go_Http_transportSetMaxResponseHeaderBytesT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("MaxResponseHeaderBytes: nil receiver")); return }
-	r.MaxResponseHeaderBytes = FfiArg[int64](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetMaxResponseHeaderBytes(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "MaxResponseHeaderBytes") }
 
-func Go_Http_transportSetOnProxyConnectResponseT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("OnProxyConnectResponse: nil receiver")); return }
-	r.OnProxyConnectResponse = FfiArg[func(ctx context.Context, proxyURL *url.URL, connectReq *pkg.Request, connectRes *pkg.Response) error](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetOnProxyConnectResponse(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "OnProxyConnectResponse") }
 
-func Go_Http_transportSetProtocolsT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("Protocols: nil receiver")); return }
-	r.Protocols = FfiArg[*pkg.Protocols](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetProtocols(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Protocols") }
 
 func Go_Http_transportSetProxy(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "Proxy") }
 
-func Go_Http_transportSetProxyConnectHeaderT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ProxyConnectHeader: nil receiver")); return }
-	r.ProxyConnectHeader = FfiArg[pkg.Header](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetProxyConnectHeader(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ProxyConnectHeader") }
 
-func Go_Http_transportSetReadBufferSizeT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ReadBufferSize: nil receiver")); return }
-	r.ReadBufferSize = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetReadBufferSize(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ReadBufferSize") }
 
-func Go_Http_transportSetResponseHeaderTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("ResponseHeaderTimeout: nil receiver")); return }
-	r.ResponseHeaderTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetResponseHeaderTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "ResponseHeaderTimeout") }
 
-func Go_Http_transportSetTLSClientConfigT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TLSClientConfig: nil receiver")); return }
-	r.TLSClientConfig = FfiArg[*tls.Config](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetTLSClientConfig(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TLSClientConfig") }
 
-func Go_Http_transportSetTLSHandshakeTimeoutT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TLSHandshakeTimeout: nil receiver")); return }
-	r.TLSHandshakeTimeout = FfiArg[time.Duration](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetTLSHandshakeTimeout(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TLSHandshakeTimeout") }
 
-func Go_Http_transportSetTLSNextProtoT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("TLSNextProto: nil receiver")); return }
-	r.TLSNextProto = FfiArg[map[string]func(authority string, c *tls.Conn) pkg.RoundTripper](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetTLSNextProto(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "TLSNextProto") }
 
-func Go_Http_transportSetWriteBufferSizeT(value any, recv any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	r := FfiArg[*pkg.Transport](recv)
-	if r == nil { out = Err[any, any](ErrFfi("WriteBufferSize: nil receiver")); return }
-	r.WriteBufferSize = FfiArg[int](value)
-	out = Ok[any, any](FfiRet(r))
-	return
-}
 func Go_Http_transportSetWriteBufferSize(value any, recv any) any { return SkyFfiFieldSet3(value, recv, "WriteBufferSize") }
 
-func Go_Http_transportTLSClientConfigT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TLSClientConfig: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TLSClientConfig))
-	return
-}
 func Go_Http_transportTLSClientConfig(arg0 any) any { return SkyFfiFieldGet3(arg0, "TLSClientConfig") }
 
-func Go_Http_transportTLSHandshakeTimeoutT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TLSHandshakeTimeout: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TLSHandshakeTimeout))
-	return
-}
 func Go_Http_transportTLSHandshakeTimeout(arg0 any) any { return SkyFfiFieldGet3(arg0, "TLSHandshakeTimeout") }
 
-func Go_Http_transportTLSNextProtoT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("TLSNextProto: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.TLSNextProto))
-	return
-}
 func Go_Http_transportTLSNextProto(arg0 any) any { return SkyFfiFieldGet3(arg0, "TLSNextProto") }
 
-func Go_Http_transportWriteBufferSizeT(arg0 any) (out SkyResult[any, any]) {
-	defer SkyFfiGuardT(&out)()
-	recv := FfiArg[*pkg.Transport](arg0)
-	if recv == nil { out = Err[any, any](ErrFfi("WriteBufferSize: nil receiver")); return }
-	out = Ok[any, any](FfiRetField(&recv.WriteBufferSize))
-	return
-}
 func Go_Http_transportWriteBufferSize(arg0 any) any { return SkyFfiFieldGet3(arg0, "WriteBufferSize") }
 
 

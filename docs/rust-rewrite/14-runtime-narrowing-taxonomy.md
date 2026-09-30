@@ -859,8 +859,14 @@ argument of the wrong Go type crashed the process.
   `adapter` stays 0. The integration run records the measured row values
   here when it blesses the decrease. The relocated sites, counted in the
   regenerated fixtures (`rust/crates/ffi/tests/fixtures/*_bindings.go`,
-  `grep -o`): mux 109 `FfiArg[` / 65 `FfiRet(`, net/http 519 / 402, uuid 56 / 55. For the Stripe SDK (example 13) the generated file carries
-  STRIPE_COUNTS.
+  `grep -o`): mux 90 `FfiArg[` / 52 `FfiRet(`, net/http 202 / 188, uuid
+  50 / 51. For the Stripe SDK (example 13) the generated file carries 8853
+  `FfiArg[` and 16418 `FfiRet(` sites. Struct fields (25,000 getters and
+  25,000 setters in that SDK) go through the reflective
+  `SkyFfiFieldGet3` / `SkyFfiFieldSet3` instead of a typed wrapper each: typed
+  field wrappers made `go build` of the bindings about 4.7 times slower (486 s
+  against 103 s for the format-2 file on the same machine). With reflective
+  fields, `sky check` of example 13 takes 58 s.
 - **Verification:**
   - `rust/crates/sky/tests/ffi_result_enforced_flow.rs`:
     - `format3_go_values_convert_or_are_err`: a local Go package covering
