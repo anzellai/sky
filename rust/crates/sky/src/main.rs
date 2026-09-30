@@ -9038,20 +9038,33 @@ fn native_preflight(
 /// both a working Xcode is installed and the build should use it. The chosen
 /// directory is passed to the build scripts explicitly.
 fn ios_developer_dir() -> Result<std::ffi::OsString, String> {
-    let mut candidates: Vec<std::ffi::OsString> = Vec::new();
-    if let Some(d) = std::env::var_os("DEVELOPER_DIR").filter(|v| !v.is_empty()) {
-        candidates.push(d);
-    }
-    candidates.push("/Applications/Xcode.app/Contents/Developer".into());
-    for dir in &candidates {
-        let ok = Command::new("xcrun")
+    pick_ios_developer_dir(std::env::var_os("DEVELOPER_DIR"), |dir| {
+        Command::new("xcrun")
             .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
             .env("DEVELOPER_DIR", dir)
             .env_remove("SDKROOT")
             .output()
             .map(|o| o.status.success() && !o.stdout.is_empty())
-            .unwrap_or(false);
-        if ok {
+            .unwrap_or(false)
+    })
+}
+
+/// The choice behind [`ios_developer_dir`], with the `xcrun` probe passed in:
+/// a non-empty `DEVELOPER_DIR` from the environment is tried first, then the
+/// standard Xcode location. The first directory whose iPhone Simulator SDK
+/// resolves wins, so a `DEVELOPER_DIR` pointing at Command Line Tools falls
+/// back to Xcode instead of failing the build.
+fn pick_ios_developer_dir(
+    env_dir: Option<std::ffi::OsString>,
+    has_simulator_sdk: impl Fn(&std::ffi::OsStr) -> bool,
+) -> Result<std::ffi::OsString, String> {
+    let mut candidates: Vec<std::ffi::OsString> = Vec::new();
+    if let Some(d) = env_dir.filter(|v| !v.is_empty()) {
+        candidates.push(d);
+    }
+    candidates.push("/Applications/Xcode.app/Contents/Developer".into());
+    for dir in &candidates {
+        if has_simulator_sdk(dir) {
             return Ok(dir.clone());
         }
     }
@@ -9062,6 +9075,47 @@ fn ios_developer_dir() -> Result<std::ffi::OsString, String> {
          iphonesimulator --show-sdk-path` must succeed; a DEVELOPER_DIR set in the\n  \
          environment is tried first.)"
         .to_string())
+}
+
+#[cfg(test)]
+mod ios_developer_dir_tests {
+    use super::pick_ios_developer_dir;
+    use std::ffi::{OsStr, OsString};
+
+    const XCODE: &str = "/Applications/Xcode.app/Contents/Developer";
+    const CLT: &str = "/Library/Developer/CommandLineTools";
+
+    /// G-13: a `DEVELOPER_DIR` pointing at Command Line Tools (no simulator
+    /// SDK) falls back to the full Xcode instead of failing the build.
+    #[test]
+    fn a_developer_dir_without_the_simulator_sdk_falls_back_to_xcode() {
+        let got = pick_ios_developer_dir(Some(CLT.into()), |d| d == OsStr::new(XCODE));
+        assert_eq!(got, Ok(OsString::from(XCODE)));
+    }
+
+    #[test]
+    fn a_working_developer_dir_is_tried_first() {
+        let custom = "/Applications/Xcode-beta.app/Contents/Developer";
+        let got = pick_ios_developer_dir(Some(custom.into()), |_| true);
+        assert_eq!(got, Ok(OsString::from(custom)));
+    }
+
+    #[test]
+    fn an_empty_developer_dir_is_ignored() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let got = pick_ios_developer_dir(Some(OsString::new()), |d| {
+            seen.borrow_mut().push(d.to_os_string());
+            true
+        });
+        assert_eq!(got, Ok(OsString::from(XCODE)));
+        assert_eq!(seen.into_inner(), vec![OsString::from(XCODE)]);
+    }
+
+    #[test]
+    fn no_simulator_sdk_anywhere_is_an_install_message() {
+        let err = pick_ios_developer_dir(Some(CLT.into()), |_| false).unwrap_err();
+        assert!(err.contains("no iOS toolchain found"), "{err}");
+    }
 }
 
 /// Verify an iOS build toolchain is present (full Xcode + the iPhone Simulator
