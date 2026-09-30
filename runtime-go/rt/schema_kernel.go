@@ -58,8 +58,8 @@ func Schema_createSchema(connArg, tablesArg any) any {
 
 // schemaRenderTable → the CREATE TABLE statement + one CREATE INDEX per index.
 func schemaRenderTable(driver string, tableArg any) []string {
-	name := fmt.Sprintf("%v", Field(tableArg, "Name"))
-	cols := AsList(Field(tableArg, "Columns"))
+	name := fmt.Sprintf("%v", fieldOrNil(tableArg, "Name"))
+	cols := AsList(fieldOrNil(tableArg, "Columns"))
 	defs := make([]string, 0, len(cols))
 	for _, c := range cols {
 		defs = append(defs, schemaRenderColumn(driver, c))
@@ -67,22 +67,22 @@ func schemaRenderTable(driver string, tableArg any) []string {
 	out := []string{
 		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n)", name, strings.Join(defs, ",\n  ")),
 	}
-	for _, idx := range AsList(Field(tableArg, "Indexes")) {
+	for _, idx := range AsList(fieldOrNil(tableArg, "Indexes")) {
 		out = append(out, schemaRenderIndex(name, idx))
 	}
 	return out
 }
 
 func schemaRenderColumn(driver string, colArg any) string {
-	name := fmt.Sprintf("%v", Field(colArg, "Name"))
-	kind := fmt.Sprintf("%v", Field(colArg, "Kind"))
-	pk := schemaBool(Field(colArg, "IsPk"))
-	notNull := schemaBool(Field(colArg, "IsNotNull"))
-	uniq := schemaBool(Field(colArg, "IsUnique"))
-	autoInc := schemaBool(Field(colArg, "IsAutoInc"))
-	defKind := fmt.Sprintf("%v", Field(colArg, "DefaultKind"))
-	defVal := fmt.Sprintf("%v", Field(colArg, "DefaultVal"))
-	fk := fmt.Sprintf("%v", Field(colArg, "ForeignKey"))
+	name := fmt.Sprintf("%v", fieldOrNil(colArg, "Name"))
+	kind := fmt.Sprintf("%v", fieldOrNil(colArg, "Kind"))
+	pk := schemaBool(fieldOrNil(colArg, "IsPk"))
+	notNull := schemaBool(fieldOrNil(colArg, "IsNotNull"))
+	uniq := schemaBool(fieldOrNil(colArg, "IsUnique"))
+	autoInc := schemaBool(fieldOrNil(colArg, "IsAutoInc"))
+	defKind := fmt.Sprintf("%v", fieldOrNil(colArg, "DefaultKind"))
+	defVal := fmt.Sprintf("%v", fieldOrNil(colArg, "DefaultVal"))
+	fk := fmt.Sprintf("%v", fieldOrNil(colArg, "ForeignKey"))
 
 	// Auto-increment PK is a single dialect-specific token that already implies
 	// PRIMARY KEY.
@@ -113,9 +113,9 @@ func schemaRenderColumn(driver string, colArg any) string {
 }
 
 func schemaRenderIndex(tableName string, idxArg any) string {
-	idxName := fmt.Sprintf("%v", Field(idxArg, "Name"))
-	uniq := schemaBool(Field(idxArg, "IsUniqueIndex"))
-	cols := AsList(Field(idxArg, "Columns"))
+	idxName := fmt.Sprintf("%v", fieldOrNil(idxArg, "Name"))
+	uniq := schemaBool(fieldOrNil(idxArg, "IsUniqueIndex"))
+	cols := AsList(fieldOrNil(idxArg, "Columns"))
 	colNames := make([]string, len(cols))
 	for i, c := range cols {
 		colNames[i] = fmt.Sprintf("%v", c)

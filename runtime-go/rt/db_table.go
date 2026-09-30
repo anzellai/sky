@@ -26,12 +26,12 @@ import (
 
 // ── Table spec access (the map[string]any the .sky builders produce) ─────────
 
-func dbTableName(t any) string { return fmt.Sprintf("%v", Field(t, "Name")) }
-func dbTableSample(t any) any  { return Field(t, "Sample") }
-func dbTablePk(t any) string   { return fmt.Sprintf("%v", Field(t, "Pk")) }
+func dbTableName(t any) string { return fmt.Sprintf("%v", fieldOrNil(t, "Name")) }
+func dbTableSample(t any) any  { return fieldOrNil(t, "Sample") }
+func dbTablePk(t any) string   { return fmt.Sprintf("%v", fieldOrNil(t, "Pk")) }
 func dbTableStrList(t any, k string) []string {
 	out := []string{}
-	for _, v := range AsList(Field(t, k)) {
+	for _, v := range AsList(fieldOrNil(t, k)) {
 		out = append(out, fmt.Sprintf("%v", v))
 	}
 	return out
@@ -40,9 +40,9 @@ func dbTableStrList(t any, k string) []string {
 // codecFor returns the (encode, decode) Sky closures registered for a column,
 // or (nil, nil).
 func dbCodecFor(t any, col string) (any, any) {
-	for _, c := range AsList(Field(t, "Codecs")) {
-		if fmt.Sprintf("%v", Field(c, "Col")) == col {
-			return Field(c, "Enc"), Field(c, "Dec")
+	for _, c := range AsList(fieldOrNil(t, "Codecs")) {
+		if fmt.Sprintf("%v", fieldOrNil(c, "Col")) == col {
+			return fieldOrNil(c, "Enc"), fieldOrNil(c, "Dec")
 		}
 	}
 	return nil, nil
@@ -52,9 +52,9 @@ func dbCodecFor(t any, col string) (any, any) {
 // Nullary enums lower to a runtime int (no constructor name), so the mapping to
 // stored TEXT is carried explicitly as value↔name pairs and matched by value.
 func dbEnumFor(t any, col string) []any {
-	for _, e := range AsList(Field(t, "Enums")) {
-		if fmt.Sprintf("%v", Field(e, "Col")) == col {
-			return AsList(Field(e, "Pairs"))
+	for _, e := range AsList(fieldOrNil(t, "Enums")) {
+		if fmt.Sprintf("%v", fieldOrNil(e, "Col")) == col {
+			return AsList(fieldOrNil(e, "Pairs"))
 		}
 	}
 	return nil
@@ -205,8 +205,8 @@ func dbEncodeField(t any, col string, fv any) any {
 	}
 	if pairs := dbEnumFor(t, col); len(pairs) > 0 {
 		for _, p := range pairs {
-			if fmt.Sprintf("%v", Field(p, "V0")) == fmt.Sprintf("%v", fv) {
-				return AsString(Field(p, "V1"))
+			if fmt.Sprintf("%v", fieldOrNil(p, "V0")) == fmt.Sprintf("%v", fv) {
+				return AsString(fieldOrNil(p, "V1"))
 			}
 		}
 		return fmt.Sprintf("%v", fv) // unmapped — store raw
@@ -256,8 +256,8 @@ func dbDecodeInto(t any, col string, dst reflect.Value, raw any, present bool) e
 	if pairs := dbEnumFor(t, col); len(pairs) > 0 {
 		name := dbRawToString(raw)
 		for _, p := range pairs {
-			if AsString(Field(p, "V1")) == name {
-				dst.Set(reflect.ValueOf(Field(p, "V0")).Convert(dst.Type()))
+			if AsString(fieldOrNil(p, "V1")) == name {
+				dst.Set(reflect.ValueOf(fieldOrNil(p, "V0")).Convert(dst.Type()))
 				return nil
 			}
 		}

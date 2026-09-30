@@ -71,13 +71,13 @@ type tuiKeyOutcome struct {
 }
 
 func tuiAppLoop(cfg any, fd int, canvas tuiCanvas, initFn, updateFn, viewFn, subsFn, onKeyFn, guardFn any) any {
-	onLineFn := Field(cfg, "OnLine")
+	onLineFn := fieldOrNil(cfg, "OnLine")
 	msgCh := make(chan any, 64)
 	quitCh := make(chan struct{})
 	eofCh := make(chan struct{})
 	defer close(quitCh)
 
-	loop := newTeaLoop(msgCh, updateFn, guardFn, durableCtxOf(Field(cfg, "Durable")))
+	loop := newTeaLoop(msgCh, updateFn, guardFn, durableCtxOf(fieldOrNil(cfg, "Durable")))
 
 	initRes := SkyCall(initFn, struct{}{})
 	// Durable: restore the persisted model (if any) before the first render.

@@ -71,10 +71,10 @@ func durableCtxOf(wiring any) *durableCtx {
 	}
 	// A non-durable app carries a no-op wiring (enabled=False) rather than a
 	// nil field, so gate on the flag.
-	if enabled, ok := Field(wiring, "Enabled").(bool); ok && !enabled {
+	if enabled, ok := fieldOrNil(wiring, "Enabled").(bool); ok && !enabled {
 		return nil
 	}
-	rid, _ := Field(wiring, "RunId").(string)
+	rid, _ := fieldOrNil(wiring, "RunId").(string)
 	return &durableCtx{wiring: wiring, runId: rid}
 }
 
@@ -90,11 +90,11 @@ func (d *durableCtx) bootWith(runId string, req any, initModel any) any {
 	if d == nil || d.isRetired(runId) {
 		return initModel
 	}
-	if setupTask := Field(d.wiring, "Setup"); setupTask != nil {
+	if setupTask := fieldOrNil(d.wiring, "Setup"); setupTask != nil {
 		sky_call(setupTask, nil)
 	}
-	restoreFn := Field(d.wiring, "Restore")
-	applyFn := Field(d.wiring, "ApplyRestore")
+	restoreFn := fieldOrNil(d.wiring, "Restore")
+	applyFn := fieldOrNil(d.wiring, "ApplyRestore")
 	if restoreFn == nil || applyFn == nil {
 		return initModel
 	}
@@ -111,7 +111,7 @@ func (d *durableCtx) bootWith(runId string, req any, initModel any) any {
 	// replaced by the snapshot's copy of an EARLIER request's fields. The
 	// Live wiring carries `applyRestoreRequest`, which applies the snapshot
 	// and then re-runs the request hook over it for the current request.
-	if applyReq := Field(d.wiring, "ApplyRestoreRequest"); applyReq != nil && req != nil {
+	if applyReq := fieldOrNil(d.wiring, "ApplyRestoreRequest"); applyReq != nil && req != nil {
 		return SkyCall(applyReq, req, res, initModel)
 	}
 	return SkyCall(applyFn, res, initModel)
@@ -143,7 +143,7 @@ func (d *durableCtx) persistFixed(model any) {
 	if d.isSuspended(d.runId) {
 		return
 	}
-	persistFn := Field(d.wiring, "Persist")
+	persistFn := fieldOrNil(d.wiring, "Persist")
 	if persistFn == nil {
 		return
 	}
@@ -159,7 +159,7 @@ func (d *durableCtx) persist(runId string, model any) {
 	if d.isSuspended(runId) {
 		return
 	}
-	persistFn := Field(d.wiring, "Persist")
+	persistFn := fieldOrNil(d.wiring, "Persist")
 	if persistFn == nil {
 		return
 	}
@@ -184,7 +184,7 @@ func (d *durableCtx) persistSync(runId string, model any) {
 	if d == nil || runId == "" || d.isSuspended(runId) {
 		return
 	}
-	persistFn := Field(d.wiring, "Persist")
+	persistFn := fieldOrNil(d.wiring, "Persist")
 	if persistFn == nil {
 		return
 	}
@@ -213,11 +213,11 @@ func (d *durableCtx) retire(runId string) {
 		return
 	}
 	d.setupOnce.Do(func() {
-		if setupTask := Field(d.wiring, "Setup"); setupTask != nil {
+		if setupTask := fieldOrNil(d.wiring, "Setup"); setupTask != nil {
 			sky_call(setupTask, nil)
 		}
 	})
-	discardFn := Field(d.wiring, "Discard")
+	discardFn := fieldOrNil(d.wiring, "Discard")
 	if discardFn == nil {
 		logEmit(logLevelError, "error",
 			"Durable: the wiring has no discard function, so the snapshot of a retired session could not be deleted",

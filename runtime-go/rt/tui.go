@@ -123,14 +123,14 @@ func Tui_program(cfg any) any {
 }
 
 func tuiProgramRun(cfg any) any {
-	initFn := Field(cfg, "Init")
-	updateFn := Field(cfg, "Update")
-	viewFn := Field(cfg, "View")
-	onKeyFn := Field(cfg, "OnKey")
-	onLineFn := Field(cfg, "OnLine")
-	subsFn := Field(cfg, "Subscriptions")
-	guardFn := Field(cfg, "Guard")
-	dur := durableCtxOf(Field(cfg, "Durable"))
+	initFn := fieldOrNil(cfg, "Init")
+	updateFn := fieldOrNil(cfg, "Update")
+	viewFn := fieldOrNil(cfg, "View")
+	onKeyFn := fieldOrNil(cfg, "OnKey")
+	onLineFn := fieldOrNil(cfg, "OnLine")
+	subsFn := fieldOrNil(cfg, "Subscriptions")
+	guardFn := fieldOrNil(cfg, "Guard")
+	dur := durableCtxOf(fieldOrNil(cfg, "Durable"))
 	if initFn == nil || updateFn == nil || viewFn == nil {
 		return Err[any, any](ErrInvalidInput(
 			"Tui.program: cfg must define init / update / view"))

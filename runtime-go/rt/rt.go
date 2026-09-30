@@ -6028,7 +6028,30 @@ func Math_maxT(a, b int) int {
 	return b
 }
 
+// Field is the record field read EMITTED code makes (`r.name`). It is strict
+// (FIELD): a value that is not a record (a struct or a map[string]any), or a
+// record without the field, is a classified CoerceFailure, never a nil that
+// flows on as a silent wrong value. The runtime's own reads of optional
+// fields (config records, wiring, request maps that may lack a key) use
+// fieldOrNil.
 func Field(record any, field string) any {
+	v, ok := fieldLookup(record, field)
+	if !ok {
+		panic(fmt.Sprintf("rt.Coerce: expected a record with the field %q, got %T", field, record))
+	}
+	return v
+}
+
+// fieldOrNil reads a field the caller treats as optional: nil when the value
+// is not a record or has no such field. Runtime-internal only.
+func fieldOrNil(record any, field string) any {
+	v, _ := fieldLookup(record, field)
+	return v
+}
+
+// fieldLookup finds a field of a struct (or pointer to one) or a
+// map[string]any, and reports whether it exists.
+func fieldLookup(record any, field string) (any, bool) {
 	record = unwrapAny(record)
 	v := reflect.ValueOf(record)
 	if v.Kind() == reflect.Ptr {
@@ -6037,8 +6060,9 @@ func Field(record any, field string) any {
 	if v.Kind() == reflect.Struct {
 		f := v.FieldByName(field)
 		if f.IsValid() {
-			return f.Interface()
+			return f.Interface(), true
 		}
+		return nil, false
 	}
 	if m, ok := record.(map[string]any); ok {
 		// v0.16.9 — restore case-insensitive map lookup so typed
@@ -6054,7 +6078,7 @@ func Field(record any, field string) any {
 		// typed-codegen `req.path` access.  Case-insensitive
 		// fallback closes both.
 		if v, ok := m[field]; ok {
-			return v
+			return v, true
 		}
 		// Fast-path: try the swapped-case first char (handles the
 		// dominant "Path" ↔ "path" pair without scanning).
@@ -6068,17 +6092,17 @@ func Field(record any, field string) any {
 			}
 			if lc != 0 {
 				if v, ok := m[string(lc)+field[1:]]; ok {
-					return v
+					return v, true
 				}
 			}
 			if uc != 0 {
 				if v, ok := m[string(uc)+field[1:]]; ok {
-					return v
+					return v, true
 				}
 			}
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // ═══════════════════════════════════════════════════════════
