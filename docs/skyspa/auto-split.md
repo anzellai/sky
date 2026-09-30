@@ -1402,5 +1402,8 @@ forged cookie writes no record, fail closed when the store is down, the record
 outlives the store TTL and a reopen, expiry); the `spa_split_flow.rs` test
 `spa_sign_out_revokes_the_signed_session_cookie` on the fixture
 `spa-session-revocation` (two replicas sharing one sqlite store, both sign-out
-paths, a fresh sign-in, the default store across a restart); and the unit
-tests `spa_split::live_store_section_tests`.
+paths, a fresh sign-in, the default store across a restart); the unit tests
+`spa_split::live_store_section_tests`; and the browser e2e
+`scripts/session-revocation-e2e.sh` (Chrome / Chromium and WebKit, strict CSP:
+a copied live cookie works from a second browser, a copy taken before either
+sign-out does not).

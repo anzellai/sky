@@ -1158,6 +1158,10 @@ fn the_release_workflow_is_the_full_suite() {
             "scripts/spa-websocket-e2e.sh",
             "e2e: the Sky.Spa client's own WebSocket",
         ),
+        (
+            "scripts/session-revocation-e2e.sh",
+            "e2e: a Sky.Spa cookie copied before sign-out is refused",
+        ),
         ("scripts/spa-restore-e2e.sh", "e2e: restore"),
         ("scripts/csp-e2e.sh", "e2e: strict Content-Security-Policy"),
         ("scripts/islands-e2e.sh", "e2e: widget islands"),

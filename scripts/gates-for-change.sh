@@ -98,6 +98,7 @@ spa_e2e() {
     add 60 "e2e: Sky.Spa stale handlers" "scripts/spa-stale-handler-e2e.sh"
     add 60 "e2e: Sky.Spa RPC consistency" "scripts/spa-rpc-consistency-e2e.sh"
     add 60 "e2e: Sky.Spa examples" "scripts/spa-examples-e2e.sh"
+    add 60 "e2e: Sky.Spa sign-out ends the signed session" "scripts/session-revocation-e2e.sh"
     add 60 "e2e: Sky.Spa + Sky.Live DOM identity" "scripts/spa-vdom-identity-e2e.sh"
     add 60 "e2e: Std.Ui forms" "scripts/ui-forms-e2e.sh"
     add 60 "e2e: strict Content-Security-Policy" "scripts/csp-e2e.sh"

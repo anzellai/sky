@@ -28,18 +28,15 @@ import Std.Sub as Sub
 import Std.Ui as Ui
 import Std.Html exposing (Html)
 
-
 type alias Session =
     { userId : String
     , role : String
     }
 
-
 type alias Model =
     { session : Maybe Session
     , note : String
     }
-
 
 type Msg
     = LogIn
@@ -56,39 +53,39 @@ init _ =
 -- A SERVER effect (File): forcing it makes a branch a server branch.
 persist : String -> String -> Task Error String
 persist name s =
-    File.writeFile name s
-        |> Task.map (\_ -> "ok")
+    File.writeFile name s |> Task.map (\_ -> "ok")
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+
         LogIn ->
             let
-                _ =
-                    Task.run (persist "login.txt" "in")
+                _ = Task.run (persist "login.txt" "in")
             in
-            ( { model | session = Just { userId = "u1", role = "admin" } }, Cmd.none )
+                ( { model | session = Just { userId = "u1", role = "admin" } }
+                , Cmd.none
+                )
 
         LogOut ->
             let
-                _ =
-                    Task.run (persist "logout.txt" "out")
+                _ = Task.run (persist "logout.txt" "out")
             in
-            ( { model | session = Nothing, note = "" }, Cmd.none )
+                ( { model | session = Nothing, note = "" }, Cmd.none )
 
         SignOutHere ->
             ( { model | session = Nothing, note = "" }, Cmd.none )
 
         SaveAdmin content ->
             case model.session of
+
                 Just s ->
                     if s.role == "admin" then
                         let
-                            _ =
-                                Task.run (persist "admin.txt" content)
+                            _ = Task.run (persist "admin.txt" content)
                         in
-                        ( { model | note = content }, Cmd.none )
+                            ( { model | note = content }, Cmd.none )
 
                     else
                         ( model, Cmd.none )
@@ -100,11 +97,19 @@ update msg model =
 status : Model -> String
 status model =
     case model.session of
+
         Just s ->
             "signed in as " ++ s.userId
 
         Nothing ->
             "signed out"
+
+
+button : String -> String -> Msg -> Ui.Element Msg
+button id label msg =
+    Ui.button
+        [ Ui.htmlAttribute "id" id ]
+        { onPress = Just msg, label = Ui.text label }
 
 
 view : Model -> Html Msg
@@ -113,14 +118,14 @@ view model =
         []
         (Ui.column
             [ Ui.spacing 8 ]
-            [ Ui.text (status model)
-            , Ui.text ("note: " ++ model.note)
-            , Ui.button [] { onPress = Just LogIn, label = Ui.text "Sign in" }
-            , Ui.button [] { onPress = Just (SaveAdmin "saved"), label = Ui.text "Save" }
-            , Ui.button [] { onPress = Just SignOutHere, label = Ui.text "Sign out" }
-            , Ui.button [] { onPress = Just LogOut, label = Ui.text "Server sign out" }
-            ]
-        )
+            [ Ui.el
+                  [ Ui.htmlAttribute "id" "state" ]
+                  (Ui.text (status model ++ " | note: " ++ model.note))
+            , button "signin" "Sign in" LogIn
+            , button "save" "Save" (SaveAdmin "saved")
+            , button "signout" "Sign out" SignOutHere
+            , button "serversignout" "Server sign out" LogOut
+            ])
 
 
 subscriptions : Model -> Sub Msg
