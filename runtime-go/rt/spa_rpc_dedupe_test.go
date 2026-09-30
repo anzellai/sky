@@ -122,3 +122,61 @@ func TestSpaRpcDedupe_Bounded(t *testing.T) {
 		t.Fatalf("cache grew to m=%d order=%d, want <= 8", len(c.m), len(c.order))
 	}
 }
+
+// H-7: an expired answer is released, not kept until 4096 newer ones push it
+// out. sky-lang.org kept every RPC reply (the whole model, ~100 KB) for the
+// cap's worth of requests, so the live heap grew under load and GOGC=400 made
+// the process RSS about five times that.
+func TestSpaRpcDedupe_ExpiredEntriesAreReleased(t *testing.T) {
+	now := time.Unix(1_000, 0)
+	c := newSpaRpcDedupeCache(4096, time.Minute)
+	c.now = func() time.Time { return now }
+	h := spaRpcDedupeWith(c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("answer")) }))
+	for i := 0; i < 50; i++ {
+		h.ServeHTTP(httptest.NewRecorder(), rpcReq("/_rpc/A", "old-"+strconv.Itoa(i), "s"))
+	}
+	now = now.Add(2 * time.Minute)
+	h.ServeHTTP(httptest.NewRecorder(), rpcReq("/_rpc/A", "new", "s"))
+	if len(c.m) != 1 || len(c.order) != 1 {
+		t.Fatalf("expired answers kept: m=%d order=%d, want 1", len(c.m), len(c.order))
+	}
+	if c.bytes != len("answer") {
+		t.Fatalf("byte count %d, want %d", c.bytes, len("answer"))
+	}
+}
+
+// The cache is bounded in BYTES as well as entries: large answers cannot hold
+// cap x size of memory. The oldest completed answers go first, and a kept
+// answer holds exactly its bytes (no buffer growth slack).
+func TestSpaRpcDedupe_ByteBudget(t *testing.T) {
+	c := newSpaRpcDedupeCache(4096, time.Hour)
+	c.maxBytes = 10_000
+	big := strings.Repeat("x", 3_000)
+	h := spaRpcDedupeWith(c, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < 3; i++ {
+			w.Write([]byte(big[:1000]))
+		}
+	}))
+	for i := 0; i < 20; i++ {
+		h.ServeHTTP(httptest.NewRecorder(), rpcReq("/_rpc/A", "r-"+strconv.Itoa(i), "s"))
+	}
+	if c.bytes > c.maxBytes {
+		t.Fatalf("kept %d bytes, budget %d", c.bytes, c.maxBytes)
+	}
+	total := 0
+	for _, e := range c.m {
+		if cap(e.body) != len(e.body) {
+			t.Fatalf("a kept answer holds %d bytes of capacity for %d bytes", cap(e.body), len(e.body))
+		}
+		total += len(e.body)
+	}
+	if total != c.bytes || len(c.m) != 3 {
+		t.Fatalf("entries=%d bytes=%d counted=%d, want 3 entries of 3000", len(c.m), total, c.bytes)
+	}
+	// The newest answer is still replayed.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, rpcReq("/_rpc/A", "r-19", "s"))
+	if rec.Header().Get("X-Sky-Rpc-Replayed") != "1" {
+		t.Fatal("the newest answer must still be replayed")
+	}
+}
