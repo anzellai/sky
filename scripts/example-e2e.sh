@@ -29,6 +29,17 @@ source "$ROOT/scripts/lib/fresh-compiler.sh"
 
 SKY="$ROOT/sky-out/sky"
 require_fresh_compiler "$SKY" "$ROOT"
+source "$ROOT/scripts/lib/with-timeout.sh"
+source "$ROOT/scripts/lib/require-tool.sh"
+# SKY_LIVE_TESTS=skip is the one opt-out; it skips the whole gate, loudly.
+require_tool jq "install jq (apt-get install jq / brew install jq)" || exit 0
+require_tool curl "install curl" || exit 0
+require_tool lsof "install lsof (apt-get install lsof)" || exit 0
+
+# A full run must run every contract that exists, and never fewer than this
+# many: a glob, a rename or a skipped build must not turn into a green run over
+# nothing (G-9). Raise it when a contract is added.
+EXAMPLE_E2E_FLOOR=17
 
 pass=0
 fail=0
@@ -237,8 +248,7 @@ run_example() {
         (
             cd "$dir"
             rm -rf sky-out .skycache
-            "$SKY" install 2>/dev/null || true
-            "$SKY" build src/Main.sky
+            with_timeout 900 "$SKY" install && with_timeout 900 "$SKY" build src/Main.sky
         ) > "$build_log" 2>&1
         build_rc=$?
         if [[ $build_rc -eq 0 ]]; then
@@ -346,7 +356,7 @@ say "pre-warming Go module cache (parallel sky install)"
 for e in "${examples[@]}"; do
     dir="examples/${e}"
     [[ -d "$dir" ]] || continue
-    ( cd "$dir" && "$SKY" install >/dev/null 2>&1 ) &
+    ( cd "$dir" && with_timeout 900 "$SKY" install >/dev/null 2>&1 ) &
 done
 wait
 
@@ -366,5 +376,13 @@ fi
 if [[ ${#fails[@]} -gt 0 ]]; then
     printf '  failures:   %s\n' "${fails[*]}"
     exit 1
+fi
+if [[ $# -eq 0 ]]; then
+    ran=$((pass+fail))
+    declared=$(find examples -mindepth 2 -maxdepth 2 -name e2e.json | wc -l | tr -d ' ')
+    if [[ "$ran" -ne "$declared" || "$ran" -lt "$EXAMPLE_E2E_FLOOR" ]]; then
+        printf '  ran %s contract(s); %s declared; floor %s\n' "$ran" "$declared" "$EXAMPLE_E2E_FLOOR"
+        exit 1
+    fi
 fi
 exit 0

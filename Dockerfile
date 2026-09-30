@@ -43,26 +43,33 @@ RUN set -e; \
             | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/'); \
     fi; \
     echo "Installing sky v${SKY_VERSION} for linux-${ARCH}"; \
-    ARCHIVE_URL="https://github.com/anzellai/sky/releases/download/v${SKY_VERSION}/sky-linux-${ARCH}.tar.gz"; \
-    RAW_URL="https://github.com/anzellai/sky/releases/download/v${SKY_VERSION}/sky-linux-${ARCH}"; \
+    BASE="https://github.com/anzellai/sky/releases/download/v${SKY_VERSION}"; \
+    ASSET="sky-linux-${ARCH}.tar.gz"; \
     # Retry with backoff: this image builds in the SAME release run that just
     # published the assets (docker `needs: release`), so a fresh tag's asset can
     # 404 for a minute while GitHub's release-asset CDN propagates. Retry the
     # download (7 attempts, ~2m total) instead of failing the build on a race.
+    # Every download is checked against the release's checksums.txt with
+    # `sha256sum -c` before it is unpacked: an asset the manifest does not
+    # list, or whose digest does not match, fails the build.
     ok=""; \
+    mkdir -p /tmp/sky-dl && cd /tmp/sky-dl; \
     for attempt in 1 2 3 4 5 6 7; do \
-        if curl -fsSL "$ARCHIVE_URL" -o /tmp/sky.tar.gz 2>/dev/null; then \
-            cd /tmp && tar xzf sky.tar.gz; \
-            mv sky-linux-${ARCH} /usr/local/bin/sky; \
-            [ -f sky-ffi-inspect-sky-linux-${ARCH} ] && mv sky-ffi-inspect-sky-linux-${ARCH} /usr/local/bin/sky-ffi-inspect; \
-            rm -f sky.tar.gz; ok=1; break; \
-        elif curl -fsSL "$RAW_URL" -o /usr/local/bin/sky 2>/dev/null; then \
-            echo "Downloaded raw binary"; ok=1; break; \
+        if curl -fsSL "$BASE/checksums.txt" -o checksums.txt 2>/dev/null \
+           && curl -fsSL "$BASE/$ASSET" -o "$ASSET" 2>/dev/null; then \
+            ok=1; break; \
         fi; \
         echo "download attempt ${attempt} failed (asset may still be propagating) — retrying in 20s"; \
         sleep 20; \
     done; \
     [ -n "$ok" ] || { echo "Failed to download sky v${SKY_VERSION} after retries" && exit 1; }; \
+    grep -E "^[0-9a-f]{64} [ *]${ASSET}\$" checksums.txt > want.sha256 \
+        || { echo "checksums.txt does not list ${ASSET}" && exit 1; }; \
+    sha256sum -c want.sha256; \
+    tar xzf "$ASSET"; \
+    mv sky-linux-${ARCH} /usr/local/bin/sky; \
+    if [ -f sky-ffi-inspect-sky-linux-${ARCH} ]; then mv sky-ffi-inspect-sky-linux-${ARCH} /usr/local/bin/sky-ffi-inspect; fi; \
+    cd / && rm -rf /tmp/sky-dl; \
     chmod +x /usr/local/bin/sky; \
     sky --version
 
