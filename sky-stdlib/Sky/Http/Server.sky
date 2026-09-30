@@ -43,6 +43,7 @@ module Sky.Http.Server exposing
     , addCookie
     , static
     , staticNotFound
+    , use
     )
 
 import Sky.Ffi as Ffi
@@ -215,6 +216,14 @@ withStatus =
 redirect : String -> Response
 redirect =
     Ffi.kernel "Server_redirect"
+
+
+-- | `use middleware routes` — wrap the handler of every route in the list
+-- with `middleware` (a `Handler -> Handler`, such as
+-- `Middleware.withLogging`). A static route passes through unchanged.
+use : (Handler -> Handler) -> List Route -> List Route
+use =
+    Ffi.kernel "Server_use"
 
 
 -- | `withHeader name value resp` — add (or override) a response
