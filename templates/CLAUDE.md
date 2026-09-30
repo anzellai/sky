@@ -8,6 +8,10 @@
 > Code picks the guide up automatically. `sky doc <Module>` is the live stdlib
 > API (never drifts — generated from source); prefer it over any hand-copied
 > table.
+>
+> Upgrading a project from Sky v0.26? The migration guide lists every change,
+> old code and new code:
+> https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md
 
 ## Response style (INVIOLABLE)
 
