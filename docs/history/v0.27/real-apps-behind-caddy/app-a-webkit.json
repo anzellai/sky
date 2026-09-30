@@ -1,9 +1,9 @@
 {
-  "app": "sky-lang.org",
-  "browser": "chrome",
-  "browserVersion": "154.0.8037.58",
-  "base": "https://sky-lang.localhost:9443",
-  "startedAt": "2026-09-30T07:10:55.085Z",
+  "app": "app-a",
+  "browser": "webkit",
+  "browserVersion": "26.4",
+  "base": "https://app-a.localhost:9443",
+  "startedAt": "2026-09-30T07:11:46.988Z",
   "pages": [
     {
       "path": "/",
@@ -50,10 +50,10 @@
       "failedRequests": []
     },
     {
-      "path": "/blog/why-i-built-sky-lang",
+      "path": "/blog/a-post",
       "status": 200,
       "protocol": "https:",
-      "finalPath": "/blog/why-i-built-sky-lang",
+      "finalPath": "/blog/a-post",
       "wasmBooted": true,
       "wasm": [
         {
@@ -102,7 +102,7 @@
         "httpOnly": true,
         "sameSite": "Strict",
         "path": "/",
-        "domain": "sky-lang.localhost",
+        "domain": "app-a.localhost",
         "session": false
       }
     ],
@@ -197,7 +197,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         },
         {
@@ -206,7 +206,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ]
@@ -219,7 +219,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -236,7 +236,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -258,5 +258,5 @@
       "cspViolations": 0
     }
   },
-  "finishedAt": "2026-09-30T07:11:14.183Z"
+  "finishedAt": "2026-09-30T07:12:08.046Z"
 }

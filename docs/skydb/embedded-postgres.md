@@ -860,6 +860,9 @@ so a misconfigured project does not sit through a compile to be told.
 
 1. Resolve the data dir (`--data-dir` / `SKY_DATA_DIR`). Never a temp path:
    production data lives here.
+   The cluster lives in `pg/` under it. A Sky.Spa backend with no `[live]
+   store` also keeps its sign-out record there, as `spa-sessions.db` beside
+   `pg/` (v0.27.0); it is not part of the cluster.
 2. First run: extract, `initdb`, write a `postgresql.conf` tuned from detected
    RAM and CPU — the app and the database now share a machine.
 3. Start PostgreSQL as a child in its own process group, on a unix socket.

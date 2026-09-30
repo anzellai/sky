@@ -1,8 +1,8 @@
 {
-  "app": "darraghstudio",
+  "app": "app-b",
   "browser": "webkit",
   "browserVersion": "26.4",
-  "base": "https://darraghstudio.localhost:9443",
+  "base": "https://app-b.localhost:9443",
   "startedAt": "2026-09-30T07:26:05.780Z",
   "pages": [
     {
@@ -72,10 +72,10 @@
       "failedRequests": []
     },
     {
-      "path": "/products/big-red-bus-sticker-pack",
+      "path": "/products/sample-product",
       "status": 200,
       "protocol": "https:",
-      "finalPath": "/products/big-red-bus-sticker-pack",
+      "finalPath": "/products/sample-product",
       "wasmBooted": true,
       "wasm": [
         {
@@ -234,7 +234,7 @@
         "httpOnly": true,
         "sameSite": "Strict",
         "path": "/",
-        "domain": "darraghstudio.localhost",
+        "domain": "app-b.localhost",
         "session": false
       }
     ],
@@ -329,7 +329,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         },
         {
@@ -338,7 +338,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         },
         {
@@ -347,7 +347,7 @@
           "httpOnly": true,
           "sameSite": "Lax",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": true
         },
         {
@@ -356,7 +356,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         },
         {
@@ -365,7 +365,7 @@
           "httpOnly": true,
           "sameSite": "Lax",
           "path": "/",
-          "domain": "darraghstudio.localhost",
+          "domain": "app-b.localhost",
           "session": false
         }
       ]

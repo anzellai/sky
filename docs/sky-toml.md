@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`compiler/versions.md`](compiler/versions.md) for the changelog.
+> [`history/compiler/versions.md`](history/compiler/versions.md) for the changelog.
 
 
 Every Sky project has a `sky.toml` at its root. It declares
@@ -42,7 +42,7 @@ That's enough — every other field has a sensible default.
 
 > **Cross-platform packaging (app name, bundle id, icon) is NOT in `sky.toml`.**
 > It lives in code, as an optional `bundle` binding built with `Std.Bundle`'s
-> `withX` API, so `sky.toml` stays lean — see [`## Packaging identity`](#packaging-identity--std-bundle) below.
+> `withX` API, so `sky.toml` stays lean — see [`## Packaging identity`](#packaging-identity--stdbundle-v021) below.
 
 > **There is no `[auth]` section.** `Std.Auth` is a library, not a framework
 > layer — it takes the JWT secret and TTL as Sky arguments — so there is nothing
@@ -237,7 +237,7 @@ routes authenticate with the session cookie.
 **`[auth]` is not a sky.toml section.** `Std.Auth` is a library, not a framework
 layer: `signToken secret claims expirySeconds` takes the secret + TTL as
 **arguments**, and the session cookie is set by your handler
-(`Server.withCookie`). There is nothing for the runtime to reconfigure, so there
+(`Server.withCookie name value attrs resp`, or `Server.addCookie`). There is nothing for the runtime to reconfigure, so there
 is nothing to seed. The block (`driver` / `cookieName` / `tokenTtl`) was parsed,
 seeded into `SKY_AUTH_*` env vars and read by nothing for four minor versions;
 it was **deleted**. A residual `[auth]` key now falls through to the standard

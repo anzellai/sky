@@ -1,4 +1,4 @@
-# Known limitations (v0.18.x)
+# Known limitations (v0.27.x)
 
 Active limitations users still hit at HEAD. Each entry explains the gap,
 why it exists, and the workaround. Closures across the v0.15 / v0.16 /
@@ -23,10 +23,9 @@ under `docs/history/`. This file lists ONLY what's still active at HEAD.
    `::`, arithmetic, comparison). Intentional — reading other people's
    code stays predictable.
 
-4. **No row-polymorphic annotation syntax.** Sky doesn't parse
-   `{ r | field : T }` in annotations. Use a closed record alias for
-   the function's input. (Row-poly inference does work at the solver
-   level; only the surface syntax is restricted.)
+4. **CLOSED — row-polymorphic annotations parse.** `{ r | field : T }`
+   works in annotations and in aliases (`type alias Named r = { r | age :
+   Int }`), and the checker keeps the other fields of the record.
 
 ## Compiler (defensive bounds)
 
@@ -174,21 +173,23 @@ context: `docs/skyspa/overview.md` + `docs/skyspa/design.md`.
   `reflect.MakeFunc`, so shrinking the bundle needs a reflection-free core or a
   Sky→JS backend — both are v2, not built (`docs/skyspa/design.md` §0/§9).
 
-* **Auto-derived client/server split = v2.** v1's boundary is **explicit**
-  (author-declared `Std.Spa.getJson` / `postJson` over a shared `Std.Codec`). The
-  compiler-derived split ("no hand-written API routes") is the v2 target
-  (`docs/skyspa/auto-split.md`); v1-dialect apps are forward-compatible.
+* **The auto-derived client/server split is built.** `sky build` on a `Spa.app`
+  entry or a `web:app` target splits the app into a wasm client and a native
+  backend (`docs/skyspa/auto-split.md`). What the split cannot carry (a server
+  arm it cannot read, two wire records of one name, a model field with no wire
+  form) is a build error, and `sky check` reports the same error.
 
 * **Client effect surface is bounded.** Client effects run through a
   single-threaded wasm interpreter: `Cmd.perform` (sync kernels inline; async
   `Http` via `fetch`) and `Sub.every` timers only. `Cmd.publish` is a documented
-  client no-op (no session bus in a single tab); `Sub.subscribeTopic` / stream /
-  websocket subscriptions are not wired on the client in v1; client
-  `HttpResponse` carries status + body (headers empty).
+  client no-op (no session bus in a single tab); `Sub.subscribeTopic` streams
+  from the backend's `/_sky/sub` endpoint, and `Sky.Core.WebSocket` uses the
+  browser WebSocket API; `Http.Stream` subscriptions are not wired on the
+  client.
 
-* **Browser pixel-check pending.** The loop, renderer, and full round-trip are
-  proven **headlessly** (Node + DOM shim); the in-browser *visual* confirmation
-  awaits a connected browser extension (confirmation, not a new risk).
+* **Browser coverage.** The client runs in Chromium and WebKit in the release
+  gate's browser e2e scripts (`scripts/spa-*-e2e.sh`); other browsers are not
+  tested.
 
 ## Roadmap (not active bugs, just deferred)
 

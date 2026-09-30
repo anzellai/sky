@@ -2,7 +2,7 @@
 // usage: node harness.mjs <appConfig.mjs> <chrome|webkit> <out.json>
 import { createRequire } from 'module';
 import fs from 'fs';
-const require = createRequire('/Users/anzel/works/playground/sky/package.json');
+const require = createRequire(new URL('../../../../package.json', import.meta.url));
 const { chromium, webkit } = require('playwright');
 
 const [, , cfgPath, browserName, outPath] = process.argv;

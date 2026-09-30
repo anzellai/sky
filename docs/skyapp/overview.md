@@ -25,7 +25,7 @@ Bare family = a Sky.Live delivery; a named platform = a native (wasm) build:
 | `web` · `tablet` | server-driven HTML + SSE (responsive) | **Sky.Live** |
 | `desktop` | Sky.Live in a native window (server + webview) | **Sky.Live** + webview |
 | `terminal:tui` (or bare `terminal`) · `terminal:cli` | full-screen ANSI · line text | **Sky.Tui / Sky.Cli** |
-| `web:app` · `desktop:mac\|windows\|linux` · `tablet:ipad\|android` · `mobile:ios\|android` | client wasm (auto-split) + native shell | **Sky.Spa** — see [client targets](#client-targets) |
+| `web:app` · `desktop:mac\|windows\|linux` · `tablet:ipad\|android` · `mobile:ios\|android` | client wasm (auto-split) + native shell | **Sky.Spa** — see [client targets](#client-targets--same-source-no-stdspa-entry) |
 
 ## The entry — `main = App.run app`
 

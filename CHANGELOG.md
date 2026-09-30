@@ -13,7 +13,134 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ## v0.27.0 — widget islands, `App.serve`, cookieless sessions, new crypto, process and UI modules, `--format json`, native packaging, and a stack-safe Task (2026-09-28)
 
+### ⚠ Breaking changes and upgrading from v0.26
+
+The short guide is **[`docs/migration/v0.27.md`](docs/migration/v0.27.md)**:
+one bullet per change, old code and new code, split into changes that stop
+the build and changes that compile but behave differently. Every v0.27.0
+compile error for a changed API ends with a link to its entry there, and the
+first run of the new `sky` prints the silent changes once. Run `sky install`
+after the upgrade (the Go FFI surface format is now 3), then `sky check`.
+
+Changes that stop the build (the error shows the fix):
+
+- The value restriction: a top-level value with no parameters whose body is an application is not polymorphic inside a mutable or invariant type (`[E2012]`). [#value-restriction](docs/migration/v0.27.md#value-restriction)
+- `any` in your own annotation is a hole the body fills, not a cast. [#any-in-annotations](docs/migration/v0.27.md#any-in-annotations)
+- Ordering (`<`, `compare`, `min`, `max`, `List.sort`, `List.sortBy` keys, `Set`) needs a comparable type. [#comparable-bound](docs/migration/v0.27.md#comparable-bound)
+- `Codec.auto`, `App.withDurable`, `Table.table`, `Jobs.define`, `Auth.signToken` need an encodable type (no function, `Secret`, key or handle). [#encodable-bound](docs/migration/v0.27.md#encodable-bound)
+- `Crypto.aesGcmEncrypt` / `chacha20Encrypt` return a `Task`. [#aead-encrypt-is-a-task](docs/migration/v0.27.md#aead-encrypt-is-a-task)
+- Go FFI: the `Result` is enforced, opaque Go values are nominal types, a pointer is a `Maybe`, map keys and callback results are typed, a Sky value for a Go interface is `[E2013]`, and an older `sky-ffi/` surface must be regenerated with `sky install`. [#ffi-result-enforced](docs/migration/v0.27.md#ffi-result-enforced), [#ffi-opaque-go-types](docs/migration/v0.27.md#ffi-opaque-go-types), [#ffi-pointer-is-maybe](docs/migration/v0.27.md#ffi-pointer-is-maybe), [#ffi-map-keys](docs/migration/v0.27.md#ffi-map-keys), [#ffi-callback-result](docs/migration/v0.27.md#ffi-callback-result), [#ffi-go-interface-params](docs/migration/v0.27.md#ffi-go-interface-params), [#ffi-surface-format-3](docs/migration/v0.27.md#ffi-surface-format-3)
+- `Sky.Ffi` is stdlib-only, and fetched packages are type-checked. [#sky-ffi-is-stdlib-only](docs/migration/v0.27.md#sky-ffi-is-stdlib-only), [#registry-packages-are-checked](docs/migration/v0.27.md#registry-packages-are-checked)
+- `Auth.verifyToken` returns `Result Error Json.Value`. [#auth-verifytoken-json](docs/migration/v0.27.md#auth-verifytoken-json)
+- `Server.withCookie` is typed (four arguments); a `Cookie` value goes through the new `Server.addCookie`. [#server-withcookie-typed](docs/migration/v0.27.md#server-withcookie-typed)
+- The constructors of `WebSocket`, `WebSocketServer`, `StreamId`, `StreamWriter` and `Cache` are hidden. [#opaque-handle-constructors](docs/migration/v0.27.md#opaque-handle-constructors)
+- New stdlib names make a bare name that two `exposing (..)` imports both export ambiguous (`[E1012]`): `Done`, `Event`, `Running`, `Step`, `address`, `close`, `island`, `onIslandEvent`, `raw`, `rpc`, `serve`, `spawn`, `stop`, `toMaybe`, `value`, `withClientCrypto`, `withEmbedded`, `withSessionTransport`. The error names the new export and both fixes. [#new-stdlib-names](docs/migration/v0.27.md#new-stdlib-names)
+- A recursive `type alias` is `[E1016]`. [#recursive-type-alias](docs/migration/v0.27.md#recursive-type-alias)
+- `init : () -> …` in `App.app` / `web` / `cli` / `tui`; new fields in `WebOpts` (`embedded`, `sessionTransport`), `WebSocketServerCfg` and `App.DurableWiring`; six new `Bundle.Permission` constructors; mobile builds need the permission for each native capability; `Spa.rpc` takes the body as a value. [#init-takes-unit](docs/migration/v0.27.md#init-takes-unit), [#webopts-record-literals](docs/migration/v0.27.md#webopts-record-literals), [#native-permissions](docs/migration/v0.27.md#native-permissions), [#spa-rpc-body-value](docs/migration/v0.27.md#spa-rpc-body-value)
+- The Sky.Spa split refuses two wire records with one name, one module under several aliases, and a server arm it cannot read; `sky check` now refuses what the split refuses. [#spa-split-refusals](docs/migration/v0.27.md#spa-split-refusals), [#sky-check-runs-the-spa-split](docs/migration/v0.27.md#sky-check-runs-the-spa-split)
+- Tooling: stdlib module names are reserved, `sky fmt` refuses a file that does not parse, `sky add` acts on the project root and refuses odd names, a store release refuses a local backend address, a dependency's native code is limited, `withClientCrypto` refuses a key inside a union, a TestFlight `--ipa` must match the project, and every download is checked against `checksums.txt`. [#stdlib-module-names-are-reserved](docs/migration/v0.27.md#stdlib-module-names-are-reserved), [#fmt-refuses-a-file-that-does-not-parse](docs/migration/v0.27.md#fmt-refuses-a-file-that-does-not-parse), [#sky-add-finds-the-project-root](docs/migration/v0.27.md#sky-add-finds-the-project-root), [#dependency-names-and-paths](docs/migration/v0.27.md#dependency-names-and-paths), [#release-refuses-local-addresses](docs/migration/v0.27.md#release-refuses-local-addresses), [#dependency-native-code](docs/migration/v0.27.md#dependency-native-code), [#client-crypto-keys-inside-unions](docs/migration/v0.27.md#client-crypto-keys-inside-unions), [#testflight-ipa-must-match-the-project](docs/migration/v0.27.md#testflight-ipa-must-match-the-project), [#upgrades-and-installs-verify-checksums](docs/migration/v0.27.md#upgrades-and-installs-verify-checksums)
+
+Changes that compile but behave differently (the guide's Silent section has
+each one): `toString` prints Sky syntax; `decodeString` and `Codec.fromJson`
+refuse trailing text; `compare` orders custom types by declaration and NaN
+last; handles belong to the session that opened them and their ids are
+random; `File.readFileLimit`, `File.permissions`, `File.resolveWithin ""` and
+PTY sizes above 500 x 200 are `Err`; `Process.close` ends the whole tree; a
+panic in a `Task.parallel` branch reaches its caller; `Codec.auto` decodes a
+union by its tag and refuses to encode a secret or handle; small-order
+Ed25519 keys are refused; the loopback Host guard applies only outside
+production; each `App.serve` app has its own cookie; the Sky.Spa cookie is
+`sky_spa`; old Sky.Spa sessions are converted once; an open Sky.Spa tab
+reloads once after a deploy that changed the wire; `X-Sky-Sid` carries a tag
+of the id.
+
+Operations:
+
+- **New tables.** The session store creates `sky_session_aliases` (a
+  `sky:alias:` key on redis) at open, and a durable app with
+  `Live.withRevocation` keeps `sky_session_bindings` in its revocation Db. The
+  database role needs `CREATE` on the first start, or the store fails to open
+  and production refuses to start. `sky db migrate --gen` never creates,
+  alters or drops a `sky_*` table. With `--embed` and no `[live] store`, the
+  Sky.Spa sign-out record is `spa-sessions.db` in `SKY_DATA_DIR`.
+- **Session rotation on the wire.** For 60 s after sign-in, an event POST
+  with the old Sky.Live id gets 409 with `Retry-After: 1`, and a page GET gets
+  503 with `Refresh: 1`: keep a 5xx alert from firing on these. `POST
+  /_sky/rotate` and `/_sky/sse-ticket` are new reserved paths. In cookie
+  transport the `X-Sky-Sid` response header carries a one-way tag of the
+  session id, never the id.
+- **Native shells.** A shell built by v0.26.1 still gets `Native.notify`
+  through its old entry point. Rebuild and ship the native shells with the
+  backend to get the other v0.27.0 native features.
+- **Rolling back to v0.26.1.** v0.26.1 ignores the Sky.Spa `sid` claim and the
+  alias table, so a sign-out recorded under v0.27.0 is no longer enforced. It
+  does not read `sky_spa` or a served app's `sky_sid_<name>` cookie, so those
+  visitors sign in again. A Sky.Live session that holds a `Json.Value` or a
+  `Decimal` does not decode on v0.26.1 and is lost. The new tables stay; drop
+  them only when the rollback is final.
+
 ### ⚠ Security
+
+- **A process, watcher, WebSocket or stream could be used from another
+  Sky.Live session.** Handle ids were small per-boot counters, so a session
+  could name another session's handle, and a handle saved before a restart
+  reached a new resource. Now a `Process`, `Watcher`, `WebSocket` or
+  `StreamId` opened in one session is `Err PermissionDenied` in any other,
+  and handle ids (`Process`, `Watcher`, `WebSocket`, `WebSocketServer`,
+  `StreamId`, `StreamWriter`, `Cache`) are random 62-bit values: a stale one
+  is `Err` ("this handle is not live in this server"). The constructors of
+  `WebSocket`, `WebSocketServer`, `StreamId`, `StreamWriter` and `Cache` are
+  no longer exported. A v0.26.1 session that stored a handle still loads.
+- **The tokens that hand a WebSocket upgrade or a stream to the server were
+  counters in the response body.** A handler that echoes client input could
+  return another request's token and take over its upgrade or stream. They
+  are random now.
+- **`Task.parallel`, `Task.parallelN` and `Task.spawn` branches lost the
+  session, the trace context and the server-side-render guard.** A write
+  (Db, File, Http.post) in a branch of a Sky.Spa server-side render was not
+  suppressed, so a GET render could change data, and a process spawned in a
+  branch had no owner. Branches now carry all three.
+- **`File.resolveWithin` let a symlink out of the root.** A path with `..`
+  after a component that does not exist passed the check. It is refused.
+- **A paste into `Std.Ui.Terminal` could end bracketed paste early.** Control
+  characters are removed from a paste (tab and Enter stay).
+- **A packaged desktop app mounted the Sky Console with no login.** A
+  `--target desktop` window ran an ordinary development server: an open
+  console on its loopback port, which any local process can reach. A desktop
+  window now binds loopback in every mode, keeps the Host guard in
+  production, and mounts no console unless `SKY_CONSOLE_AUTH` names a mode.
+- **Two apps started with `App.serve` shared one session namespace.** A
+  served app adopted any well-formed session id, so a cookie of one app was
+  looked up in the other's store. Each served app now has its own namespace
+  (cookie `sky_sid_<name>`, ids `<hex>.<name>`), named by the new
+  `App.withName` or by its port, and never looks up another app's id.
+- **`Sign.publicKeyFromBytes` accepted small-order Ed25519 keys.** The eight
+  small-order points and non-canonical encodings are refused, by a direct
+  point check (RFC 8032 §5.1.3) that does not read Go error text.
+- **`X-Sky-Sid` named the session id in cookie transport.** A proxy or APM
+  tool that logs response headers recorded a session credential. In cookie
+  transport the header now carries a one-way tag of the id.
+- **`Std.Analytics` in a Sky.Spa backend or an HTTP handler shared one state
+  for every visitor**: one anonymous id, and one visitor's consent or
+  `identify` applied to everyone. Identity and consent are per visitor.
+- **A development Sky.Spa signing key could ship in an image.** The dev key
+  is now `.skydata/spa-session-secret.dev`, which production never reads,
+  and `sky init` writes a `.dockerignore` (`.skydata/`, `.env`, `*.db`, build
+  outputs). A production key that cannot be persisted is an ERROR and a
+  start-up report line.
+- **`sky upgrade`, `install.sh` and the Docker image installed an unverified
+  download.** Each now checks the archive against the release's
+  `checksums.txt` and refuses a missing entry or a mismatch; `sky upgrade`
+  works in a private directory. The release signs a build-provenance
+  attestation for every asset (`gh attestation verify <file> -R
+  anzellai/sky`).
+- **A dependency could widen an app's native permissions.** A dependency's
+  Android fragment may add only `<uses-permission>`, `<uses-feature>` and
+  `<queries>`, a dangerous permission only when the app declares it, and a
+  native call in a dependency needs its purpose string. A store release
+  refuses every local or private-network backend address spelling. A key
+  inside a user union is refused under `App.withClientCrypto`. `sky add`
+  refuses a path or name with a quote, backslash or control character.
 
 - **Sky.Spa sign-out did not end the session on the server.** The auto-split
   signs the session projection into the `sky_sid` cookie, and the backend
@@ -33,10 +160,18 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   the old cookie. The split now copies `[live] store` / `storePath` into the
   backend manifest. With no store configured the record goes to
   `spa-sessions.db` in the data dir, so a single node keeps its sign-outs
-  across a restart. The check fails closed: a store that cannot answer
+  across a restart. In production a data dir that cannot hold that file is
+  an error, never a silent in-memory store: every signed session is refused
+  until the store opens, and a backend with a session projection and no
+  store refuses to start (development keeps the in-memory fallback with a
+  warning). The check fails closed: a store that cannot answer
   refuses the cookie, and a sign-out the store cannot record answers 503.
-  A token signed before v0.27.0 has no `sid` and is refused, so each visitor
-  signs in once more after the upgrade. When `SKY_SPA_SESSION_SECRET` is set
+  A token signed before v0.27.0 has no `sid`. It is converted once, on its
+  first request after the upgrade, to a token with a fresh `sid` and the
+  same claims and expiry, so a signed-in visitor stays signed in; a replay
+  of the old token more than 60 s later is refused. The Sky.Spa cookie is
+  now `sky_spa` (it shared `sky_sid` with Sky.Live), and a browser's old
+  cookie moves over on that request. When `SKY_SPA_SESSION_SECRET` is set
   and no shared store is configured, the backend warns that a sign-out holds
   only on the replica that served it.
   (`runtime-go/rt/spa_session_revocation.go`, `live_store_rotation.go`,
@@ -128,7 +263,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   still exempts every method. The runtime's own exemptions had the same
   flaw and are keyed the same way: every method on `/_sky/console/*` and on
   `/_sky/observability/ingest` skipped the check, so the Sky Console's own
-  state-changing requests (`/_sky/console/_sky/event`, `/_sky/rotate`) ran
+  state-changing requests (`/_sky/console/_sky/event`,
+  `/_sky/console/_sky/rotate`) ran
   with no CSRF check for a signed-in admin. Now only `GET` probes
   (`/_sky/healthz`, `/readyz`, `/metrics`, `/buildinfo`, `/sse`, `/config`),
   the console's `GET` JSON API, the console login `POST` and sign-out, and
@@ -183,13 +319,109 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### ⚠ Breaking changes
 
-- **`toString` prints Sky syntax.** `toString` / `Debug.toString` and
-  multiline-string interpolation rendered a non-String value with Go's `%v`:
-  `true`, `{Ada 40 [a b]}`, `map[1:a]`, and `toString (Just 5)` was `5`. They
-  now print `True`, `{ age = 40, name = "Ada", tags = ["a", "b"] }`,
-  `Dict.fromList [(1, "a")]` and `Just 5`. A String is still its text and an
-  Error still `<Kind>: <message>`. Int and Float print as before. Code that
-  parsed the old text must read the Sky form (see Fixed).
+- **The value restriction (`[E2012]`).** A top-level definition with no
+  parameters whose body is an application is no longer polymorphic in a
+  type variable inside a mutable or invariant type (`Std.Sync.Ref`,
+  `Std.Cache.Cache`, `Codec`, `Table`) or a function argument. Such a
+  variable is one fixed type: a use that picks a type for it is `[E2012]`.
+  This closes a silent wrong-value hole (one `Ref` shared at two types). A
+  use that picks no type (`App.run appDef`) is unaffected. Give the
+  definition a concrete type, or give a point-free function its parameter.
+- **`any` in your own annotation is a hole the body fills,** not an
+  unchecked cast. Callers see the filled type, and a misuse is `[E2001]`
+  with a note that names the filled signature. Stdlib and kernel signatures
+  keep their per-occurrence `any`, audited by a gate.
+- **Ordering needs a comparable type.** `<`, `>`, `<=`, `>=`, `compare`,
+  `min`, `max`, `List.sort`, the key of `List.sortBy` and `Set` elements take
+  `Int`, `Float`, `String`, `Char`, `Bool`, and lists, `Maybe`, `Result`,
+  tuples, closed records and custom types of those. A function, `Dict`,
+  `Set`, `Secret`, key, handle or opaque stdlib type (`Decimal`, `Money`) is
+  `[E2001]`: use `List.sortWith` with the type's own `compare`.
+- **`Codec.auto`, `App.withDurable`, `Std.Db.Table.table` / `insert`,
+  `Jobs.define` / `enqueue` and `Auth.signToken` need an encodable type.**
+  A type that holds a function, a `Secret`, a key or crypto state, or a
+  runtime handle is `[E2001]`, also through your own generic helpers. At
+  run time `Codec.auto` refuses the same values (a classified
+  `JsonEncodeFailure`) instead of writing `{}`.
+- **Go FFI surface format 3.** Run `sky install` to regenerate `sky-ffi/`. A
+  binding of an older surface whose wrapper converted a value unsoundly is
+  refused with that fix; all-native bindings still build, with a warning.
+  An opaque Go value has its own type (`Pkg.Thing`) and is no longer usable
+  at any type. A Go pointer to a non-opaque type is a `Maybe` (nil is
+  `Nothing`) in results, parameters, lists, fields and callbacks. A Go map
+  with an `int`, `float` or `bool` key is a `Dict` with that key (it was
+  `Dict String V`, and empty at run time). A callback passed to Go is typed
+  from the Go signature, result included. A Sky value where Go wants an
+  interface is the new `[E2013]`; a Go value passed where Go wants an
+  interface is checked at run time (an `Err`, never a crash). A Go value is no
+  longer a kernel `Value` (`examples/05-mux-server` now annotates
+  `startServer : Mux.Router -> Result Error ()`).
+- **`Auth.verifyToken` returns `Result Error Json.Value`** (it was
+  `Result Error a`, an unchecked cast). Decode the claims with
+  `Json.Decode`.
+- **`Server.withCookie` is typed `String -> String -> String -> Response ->
+  Response`** (it was `any`). Add a `Cookie` value with the new
+  `Server.addCookie`.
+- **New stdlib names can make an old bare name ambiguous (`[E1012]`).** A
+  module that imports two modules with `exposing (..)` and uses one of
+  `Done`, `Event`, `Running`, `Step`, `address`, `close`, `island`,
+  `onIslandEvent`, `raw`, `rpc`, `serve`, `spawn`, `stop`, `toMaybe`,
+  `value`, `withClientCrypto`, `withEmbedded`, `withSessionTransport` bare
+  may stop compiling. The error names the export that is new since v0.26.1
+  and both fixes: the qualified name, or `import M exposing (name)`.
+- **A Sky.Live session cannot use a process, watcher, client WebSocket or
+  HTTP stream opened outside it** (in `main`, for example): open it in the
+  session that uses it.
+- **`File` and `Process` arguments that were clamped are refused.**
+  `File.readFileLimit path n` with `n < 1` is `Err InvalidInput` (it read the
+  whole file); `File.permissions` with a digit outside 0 to 7 gives -1,
+  which `File.chmod` refuses; `File.resolveWithin ""` is `Err InvalidInput`;
+  `Process.resize` / `withPty` above 500 columns by 200 rows is `Err
+  InvalidInput`.
+- **A served app on port 0 with a durable session store needs a name**
+  (`|> App.withName "<name>"`): its sessions cannot be keyed by a port that
+  changes each run.
+- **Sky.Spa in production with no session store and an unwritable data dir
+  refuses to start.** Set `SKY_LIVE_STORE`, or `SKY_DATA_DIR` to a writable
+  directory.
+- **Module names under `Sky.` / `Std.`, stdlib module names and kernel names
+  are reserved.** A dependency may not define one, two dependencies may not
+  define one module, and the app may not define an exact stdlib module or a
+  dependency's module. Rename the module (`App.Log`).
+- **`sky check` runs the Sky.Spa split analysis for a split target**, so it
+  refuses what `sky build` refuses, with the same message.
+- **`sky fmt` refuses a file that does not parse** (`[E0001]`, exit 1), in
+  every mode.
+
+- **`toString` prints Sky syntax.** `toString` / `Debug.toString` rendered
+  a non-String value with Go's `%v`. They now print the Sky form:
+
+  | Value | v0.26.1 | v0.27.0 |
+  |---|---|---|
+  | `True` | `true` | `True` |
+  | `'a'` | `97` | `'a'` |
+  | `()` | `{}` | `()` |
+  | `Nothing` | `{1 <nil>}` | `Nothing` |
+  | `Just 5` / `Ok "a"` | `5` / `a` | `Just 5` / `Ok "a"` |
+  | `Just -1.5` | `-1.5` | `Just (-1.5)` |
+  | `["a","b"]` | `[a b]` | `["a", "b"]` |
+  | `{ name = "Ada", age = 40 }` | `{Ada 40}` | `{ age = 40, name = "Ada" }` (fields sorted) |
+  | `Dict.fromList [(1, "a")]` | `map[1:a]` | `Dict.fromList [(1, "a")]` |
+  | nullary union `Blue` | `2` | `Blue` |
+  | `Error.io "disk full"` | the Go struct | `IO: disk full` |
+
+  A String is still its text. Int and Float print as before. Multiline-string
+  interpolation (`{{expr}}`) is not affected: it takes a `String` only, and
+  the checker refuses any other type. For text that is stored or sent, use
+  `String.fromInt`, `String.fromFloat`, a `Codec` or your own formatter, never
+  `toString`. Code that parsed the old text must read the Sky form (see Fixed
+  and `docs/migration/v0.27.md#tostring-prints-sky-syntax`).
+- **`Json.Decode.decodeString` and `Codec.fromJson` refuse text after the
+  JSON value.** `decodeString int "3 x"` was `Ok 3`; it is now an `Err`, and
+  `Codec.fromJson` (which calls it) changes the same way. To read the first
+  JSON value of a larger text (a model's answer with prose after it, a
+  fenced block), cut the value out first
+  (`docs/migration/v0.27.md#decodestring-rejects-trailing-text`).
 - **Sky.Spa: a server RPC no longer replays the Msgs that arrived during it.**
   The client ran one RPC at a time, applied every Msg that arrived meanwhile,
   and on the answer re-ran those Msgs on top of it, without their Cmds. Now
@@ -252,8 +484,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   several apps, and a topic is a process-wide name, so the publish now goes
   to every running app (a stopped app receives nothing). One app per
   process, the common case, is unchanged.
-- **`WebOpts` has a new field, `sessionTransport`.** Code that builds a
-  `WebOpts` record literally (not through `{ webDefaults | … }`) must add
+- **`WebOpts` has two new fields, `embedded` and `sessionTransport`.** Code
+  that builds a `WebOpts` record literally (not through
+  `{ webDefaults | … }`) must add `embedded = False` and
   `sessionTransport = CookieSession`.
 - **A web app's `port = 0` now means "a free port".** It used to fall back
   to `SKY_LIVE_PORT` or 8080. `App.address` (or the start-up line) names the
@@ -312,9 +545,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   wrapper, the argument count, and `String` / `Int` / `Float` / `Bool` /
   `()` / `List` / `Maybe` / tuple arguments and payloads. The error is
   `[E2001]` (type mismatch: `Result Error Int` vs `Int`) with a hint. Go
-  opaque types (`*mux.Router`, `context.Context`, …) stay unchecked for
-  now; a later release types them. An unannotated helper that returns an
-  FFI call carries the `Result` to its callers too.
+  opaque types (`*mux.Router`, `context.Context`, …) are typed too: each
+  is its own nominal type (`Pkg.Router`), which no Sky type and no app type
+  of the same name unifies with (see the Go FFI surface format 3 entry
+  below). An unannotated helper that returns an FFI call carries the
+  `Result` to its callers too.
 - **`Sky.Ffi` is stdlib-only: `Ffi.kernel`, `Ffi.call`, `Ffi.callPure`
   and `Ffi.callTask`.** `Ffi.call*` call a Go binding by name with an
   unchecked result type, so in an application they bypassed the `Result`.
@@ -359,6 +594,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Crypto.xchachaSeal` follows the same rule. See Migration below.
 
 ### Migration
+
+The one-page guide with every change, old code and new code, is
+`docs/migration/v0.27.md`. The notes below give the longer form of some
+entries.
 
 - **An `init` that reads its seed.** Write `init : () -> ( Model, Cmd Msg )`
   (or leave the seed unused, `init _ = …`). Read the request with
@@ -490,6 +729,69 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 
 ### Changed
 
+- **`compare` is total on Float and orders custom types by declaration.**
+  `compare` orders -Inf < … < +Inf < NaN, and `compare nan nan` is `EQ`;
+  `==`, `<`, `>`, `<=` and `>=` stay IEEE (`False` with a NaN operand).
+  `compare`, `List.sort`, `List.sortBy`, `Math.min`, `Math.max` and `Set`
+  order a custom type by constructor declaration order, then the arguments,
+  and a record by field name (`Just _` before `Nothing`, `Ok _` before
+  `Err _`, `False` before `True`); `Set.toList` is ascending. `List.sort`,
+  `List.sortBy`, `Math.min` / `max` and the `Set` functions spell
+  `comparable` in their signatures.
+- **The loopback Host guard applies only outside production.** A production
+  process on loopback behind a local proxy (`ENV=production
+  SKY_HOST=127.0.0.1`) answers the proxied public Host again. Outside
+  production the hosts in `SKY_PUBLIC_URL` (a comma list) are admitted as
+  well as `SKY_ALLOWED_HOSTS`, and the 403 names every way in.
+- **The Sky.Spa session cookie is `sky_spa`** (it shared `sky_sid` with
+  Sky.Live). A browser's existing cookie moves over on its next request.
+- **An out-of-range integer across the Go FFI is an `Err`**: a `uint64` above
+  Int, an Int for a `uint8` or `int32` parameter, a callback argument. It was
+  wrapped or truncated.
+- **`Process.close`, the end of a session, `App.stop` and program exit end
+  the child's whole process tree**, including a shell's background jobs. A
+  process spawned without `withClearEnv` has `SKYPROC_TREE` in its
+  environment (a random value that close uses to find its descendants).
+- **`aesKeyFromPassword` / `chachaKeyFromPassword`**: output unchanged, now
+  pinned by an independent PBKDF2 vector; a salt under 16 bytes logs a
+  warning once.
+- **Sky.Spa nested handlers**: an inner and an outer `onClick` both run, as
+  before, and the outer one carries the Msg of the view that was clicked, as
+  on Sky.Live.
+- **`[E1012]`** names a stdlib export that is new since v0.26.1 and shows
+  both fixes.
+- **`sky verify` in a project that has an `examples/` directory verifies the
+  project** (fmt, check, tests). Only the Sky compiler repository sweeps the
+  examples.
+- **`sky add`, `remove`, `install` and `update` act on the nearest project**
+  at or above the working directory, and refuse outside a project (they
+  wrote a `sky.toml` into the working directory).
+- **`sky test --format json` also writes the `SKY_TEST_JSON=<path>` report.**
+  In `--format json`, a failure the command reported only on stderr carries
+  that text as its diagnostic, a non-UTF-8 source file is named, parse
+  errors are capped at 50 per file, and an internal panic still ends the
+  stream with an error and the summary.
+- **`sky init`** writes a `sky fmt`-clean scaffold with no legacy runtime
+  keys in `sky.toml`, and `sky doctor` checks `SKY_AUTH_TOKEN_SECRET` only
+  for a project that imports `Std.Auth`.
+- **`sky doc`** shows the summary of a value documented with a plain `--` or
+  `{-| -}` block, and union and opaque types with their type parameters
+  (`type Ref a`).
+- **A dependency's `native/<platform>` code is named in the build output**,
+  and a local Sky path dependency's `native/` directory is used like a
+  registry package's. A TestFlight `--ipa` must carry the project's
+  `Bundle.withId` and `Bundle.withBuild`; the App Store Connect key is linked,
+  never copied, into a private temporary directory.
+- **`sky db migrate --gen` never creates, alters or drops a `sky_*` table.**
+- **`sky package`**: `--upload` / `--ipa` with no value is a usage error.
+  `sky fuzz --help` exits 0. `sky doc --api` outside a project refuses.
+- **A dependency version `"0.1.3"` resolves to the tag `v0.1.3`**, and a
+  version with no tag names the fix. `sky check` in a library (no entry)
+  checks every module.
+- **CI**: `scripts/nav-e2e.sh` runs in `gate-web` and the nightly,
+  `scripts/example-e2e.sh` in the new `gate-example-e2e` release job, and
+  every e2e script checks its tools with `require_tool`.
+
 - **Recursion through `Task.andThen` no longer grows the Go stack (the Task
   trampoline).** A Task used to be a Go thunk, and each `andThen` forced its
   continuation's task inside its own Go frame, so
@@ -529,7 +831,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   even when the subject was an `rt.SkyResult[Sky_Core_Error_Error, int]`, so
   the field was boxed into `any` and asserted straight back. The payload is
   now read at its own Go type (doc 14 origin R8, lever §5.2). The coerce-floor
-  census falls from 13,063 to 12,171 `narrow` tokens across 52 projects; it
+  census falls from 13,063 to 12,171 `narrow` tokens (52 of 75 projects
+  tightened, none raised); it
   also removes the +32 Phase 3 had to bless for this shape. The embedded Sky
   Console is regenerated. (`rust/crates/lower/src/lower.rs` `bind_field_pat`;
   test `rust/crates/sky/tests/typed_result_payload_pattern.rs`.)
@@ -554,6 +857,30 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `scripts/ui-canvas-terminal-e2e.sh`.)
 
 ### Added
+
+- **`App.withName "<name>"`** names the session namespace of an app started
+  with `App.serve`.
+- **`Crypto.keyFromPasswordStrong { iterations, salt } password : Task
+  Error Secret`**: PBKDF2-HMAC-SHA256 with at least 600 000 iterations and a
+  16-byte salt, enforced.
+- **`Std.Spa.serverRoute : String -> Route`**: a server path registered
+  beside the client routes. A link to it is a full navigation even when a
+  client route also matches it.
+- **`Server.addCookie : Cookie -> Response -> Response`.**
+- **`Std.Codec.dict : Codec comparable -> Codec v -> Codec (Dict comparable
+  v)`**: a JSON array of `[key, value]` pairs. A Sky.Spa model or message
+  field of type `Dict k v` crosses the wire with no hand-written codec.
+- **Bounded type variables** (`comparable`, `number`, `appendable`,
+  `encodable`) survive generalisation, so a helper's signature can state the
+  bound its body needs.
+- **New error codes**: `[E1016]` recursive type alias
+  (`docs/errors/E1016-recursive-type-alias.md`), `[E2012]` value restriction,
+  `[E2013]` a Sky value passed where a Go interface is required.
+- **The first run of a new `sky` version prints, once, "Sky upgraded X ->
+  Y"**, the silent changes and the link to `docs/migration/v0.27.md` (on
+  stderr; a `notice` record in `--format json`). `sky upgrade` prints the
+  guide link after it succeeds.
+- **`sky init` writes a `.dockerignore`.**
 
 - **`Std.Nav`: move the address bar from `update`.** `Nav.pushUrl` /
   `Nav.replaceUrl : String -> Cmd msg` and `Nav.clearFragment : Cmd msg`
@@ -823,7 +1150,7 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   header-session transport for no measured saving, so frames stay JSON on
   the island SSE channel.
 - **Tests:** conformance suites `UiTextWrapConformanceTest` (12) and
-  `UiCanvasConformanceTest` (18: the exact SVG, the pointer markers, the
+  `UiCanvasConformanceTest` (19: the exact SVG, the pointer markers, the
   terminal element); Go tests for the Braille cell golden, the text wrap,
   the pointer runtime (node), the canvas backend's draw list and patch
   routing and its painter in node against a recording canvas (one pass per
@@ -1101,8 +1428,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   state; reusing an older value would reuse a ChaCha20-Poly1305 nonce, so it
   returns an `Err` instead (a shared guard updated by compare-and-swap).
   Consequence: do not keep a `Transport` in a top-level (memoised) binding
-  that more than one code path uses. Passes the four IK vectors of the
-  cacophony set (`runtime-go/rt/noise.go`, `noise_test.go`).
+  that more than one code path uses. Passes the four IK vectors of
+  flynn/noise's `vectors.txt` (cacophony format), and rekey interop vectors
+  made with flynn/noise v1.1.0 (`runtime-go/rt/noise.go`, `noise_test.go`).
 - **`Std.Crypto.Cpace`: the CPace PAKE, CPACE-X25519-SHA512
   (draft-irtf-cfrg-cpace-21), initiator-responder.** `start`, `respond`,
   `finish`, `messageData`. A short shared code gives both sides the same
@@ -1225,10 +1553,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   `Task.loop : (state -> Task e (Step state a)) -> state -> Task e a` runs a
   step, then again for each `Loop newState`, until `Done a`; an `Err` stops
   it. The runtime runs each step to completion in a Go `for` loop, so the
-  stack stays flat at any iteration count. A loop written as recursion
-  through `Task.andThen` grows the Go stack every step and, at two million
-  iterations, stops the process with a fatal Go stack overflow that no error
-  handler sees (`docs/KNOWN_LIMITATIONS.md` #9). `Task.forever : Task e a ->
+  stack stays flat at any iteration count. Before v0.27.0 a loop written as
+  recursion through `Task.andThen` grew the Go stack every step and, at two
+  million iterations, stopped the process with a fatal Go stack overflow; the
+  Task trampoline in this release makes that recursion stack-safe too
+  (`docs/KNOWN_LIMITATIONS.md` #9, closed), and `Task.loop` stays the clearer
+  form when the state is explicit. `Task.forever : Task e a ->
   Task e b` re-runs a task until it fails. `Step` is decoded by constructor
   name, never by tag. Import the constructors with
   `import Sky.Core.Task as Task exposing (Step(..))`
@@ -1296,6 +1626,85 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **A panic in a `Task.parallel` or `Task.parallelN` branch ended the
+  process.** It is raised again on the task that waits for the branches, so
+  a server answers 500 for that request and keeps running. A branch that
+  panics after its caller returned is logged with its own stack.
+- **A panic in a Sky.Live `Cmd.perform` Task ended the server.** It is
+  logged, classified, and the tab shows the error banner. A panic while
+  writing a durable snapshot is logged too, and that run keeps its last
+  stored snapshot.
+- **`Process.close` waited behind a `Process.write` blocked on a full
+  pipe.** The end of a session releases its processes and watchers at the
+  same time, with a bound. A process that no session owns is released after
+  it exits (at once when its output and status were read, else 30 s later).
+  On Linux, closing a PTY process ends its output reader while another
+  process holds the terminal. Terminal answers to device queries are queued
+  with a bound.
+- **A top-level binding that opens a process or watcher was owned by the
+  Sky.Live session that first used it.** It is owned by the process.
+- **The terminal size has one bound** (500 columns by 200 rows) for the PTY,
+  the screen and `Std.Ui.Terminal`, which drops a process that is no longer
+  live (`Terminal.process` is `Nothing`, and the app can attach a new one).
+- **`Std.Watch` left part of a tree unwatched past the descriptor or
+  inotify limit.** It fails at start with an `Err` that names the limit, or
+  gives an `Overflow` batch.
+- **A dropped widget-island event is logged at most 20 times a minute**, and
+  the next minute's first line counts the rest.
+- **A record field read in compiled code gave a silent `nil`** when the
+  value was not that record; it is a classified `CoerceFailure`. A Go map
+  that reaches a `Dict` with a key or value that does not convert is a
+  `CoerceFailure`, not a short `Dict`.
+- **`Codec.auto` with a union blank decoded everything as the blank's
+  variant.** It reads the tag and checks the payload. A `Json.Value` field
+  round-trips (it was written as `{}`).
+- **Pre-v0.27.0 Sky.Spa sessions stay signed in** (converted once), and an
+  open Sky.Spa tab across a deploy that changed the wire reloads once and
+  says the last action was not sent (follow-up writes were lost). Tabs from
+  before v0.27.0 get their server follow-ups run inline.
+- **Sky.Spa: one click could also run a second element's Msg** when the
+  patch re-bound an element further up the click's path. An event runs the
+  handlers of the view it was delivered to.
+- **Sky.Spa: a link to a server-only path** (an `App.api` route, a sign-out,
+  `/_sky/console`, a static file) showed the in-app not-found page. A
+  same-origin link or `Nav.pushUrl` to a path with no client route, under
+  `/_sky/` or `/_rpc/`, or on a `Spa.serverRoute`, is a full navigation.
+- **The Sky.Spa RPC retry cache kept up to 4096 whole replies** past their
+  10-minute expiry, so a busy backend's heap grew to hundreds of MB. Expired
+  replies are released and the cache is capped at 16 MB.
+- **Sky.Spa: a server branch that writes a field on only some paths** now
+  sends that field with the request, and a whole-model write with a
+  follow-up builds.
+- **Sky.Live with the header session transport in WebKit**: the repaint
+  after sign-in no longer waits for the next server frame.
+- **`Native.notify` works in an iOS or Android shell built by v0.26.1.**
+- **A record with a function field inside `Just` / `Ok` / `Err` or a sealed
+  constructor, nested in a record, failed `go build` after `sky check`
+  passed.**
+- **A recursive `type alias` passed `sky check` and failed `go build`.** It
+  is `[E1016]` at its declaration, with a `type` wrapper hint.
+- **`import Sky.Core.Prelude exposing (String, Int)` was `[E1012]`
+  ambiguous**; `import Page.B` now makes `Page.B.x` a valid reference, as in
+  Elm; `[E1004]` carries the file and line of the shadowing declaration.
+- **A wrong `case` scrutinee type printed one error per arm.** It is one
+  error, and the AEAD encrypt that became a Task gets a migration hint. A
+  constructor pattern with the wrong number of sub-patterns is `[E2007]` at
+  the pattern, naming the constructor and both counts.
+- **An unannotated top-level value that uses a later sibling exported an
+  over-general type.** It is re-inferred until stable.
+- **Go FFI**: a binding whose signature names an unexported type no longer
+  breaks `go build` for every program that imports the package (it is
+  skipped, noted in the `.skyi`); fallback wrappers return tuples and
+  `Maybe` in the shapes the surface states; field getters no longer crash on
+  a nil receiver; the generic identity-pointer binding returns a `Result`; a
+  callback whose result does not convert is an `Err`, never a zero value; a
+  callback of the wrong result type is a type error, not a compiler bug
+  report.
+- **`Bundle.withId` / `withName` inside a block comment or a string was read
+  as the app's identity.** The last real call wins, as at run time.
+- **`sky fmt` accepted a file that does not parse**, and `sky add` in a
+  sub-directory wrote a new `sky.toml` there.
+
 - **Sky.Spa logged a handled client Task error as an RPC failure.** A
   client-local `Cmd.perform` that failed, such as `Native.secureGet` in a
   browser (`Unavailable`) or a `Task.fail`, wrote `[sky.spa] RPC failed; kept
@@ -1786,7 +2195,8 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   the first value and ignored the rest, so `decodeString int "3 x"` was
   `Ok 3` and two concatenated documents decoded as the first. The string
   must now be one JSON document; trailing whitespace is accepted, other text
-  is an `Err`. (`runtime-go/rt/stdlib_extra.go` `jsonParseDocument`.)
+  is an `Err`. `Codec.fromJson` calls it, so it changes too: see Breaking
+  changes. (`runtime-go/rt/stdlib_extra.go` `jsonParseDocument`.)
 - **`Std.App` web: `[live] port` in `sky.toml` had no effect, and
   `WebOpts.csrf` did nothing.** `Std.App` passed `WebOpts.port` (default
   8080) to `Live.withPort` on every build, so the default counted as an
@@ -1801,8 +2211,9 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   narrowing is added. The audit of the other `WebOpts` fields found one more
   of the class: `csrf` was stored and never applied. `csrf = False` now turns
   the CSRF middleware off (as `Sky.Config.withCsrf False`); the default
-  `True` leaves `<PREFIX>_CSRF` / `sky.toml` to decide. Every other field is
-  a `Maybe` that is forwarded only when set. (`sky-stdlib/Std/App.sky`,
+  `True` leaves `<PREFIX>_CSRF` / `sky.toml` to decide. The other fields are
+  a `Maybe` forwarded only when set, except `embedded : Bool` and
+  `sessionTransport : SessionTransport`, which are always applied. (`sky-stdlib/Std/App.sky`,
   `rust/crates/sky/tests/std_app_flow.rs`
   `std_app_web_honours_sky_toml_port_and_explicit_web_config`,
   `runtime-go/rt/std_app_window_test.go`.)
@@ -1838,7 +2249,10 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
   error). Every CI job that runs `go test ./rt/...` now installs node; the
   jobs without PostgreSQL binaries skip only the PostgreSQL tests, which
   the `integration-postgres` job and the release race job run with real
-  binaries.
+  binaries. The tests that need a PostgreSQL DSN (`SKY_TEST_POSTGRES_DSN`)
+  go through the same helper (`requirePostgresDSN`), the Redis leg uses an
+  in-process server, and an xtask guard fails on any other `t.Skip` in
+  `runtime-go/rt`.
 
 - **A point-free alias of a function-returning kernel failed `go build`.**
   `logged : Handler -> Handler` / `logged = Mw.withLogging` type-checked,

@@ -29,7 +29,7 @@ page is the complete user-facing reference.
 - **Effects** return `Task Error a` — anything that touches the outside world (clock, env, stdout, disk, network, DB, entropy).
 - **Default-supplied helpers** stay bare even when the underlying op could fail — the default plugs the failure case at the call site.
 
-See the [Effect Boundary doctrine](../CLAUDE.md#effect-boundary-task-everywhere-v0100) for the full reasoning.
+See the [Effect Boundary doctrine](../AGENTS.md#language-essentials) for the full reasoning.
 
 ---
 
@@ -141,7 +141,7 @@ id =
 
 `Result.fromMaybe : e -> Maybe a -> Result e a` is the other direction: `Just a` becomes `Ok a`, `Nothing` becomes `Err err`. The error comes first, as in Elm, so a pipeline reads `String.toInt s |> Result.fromMaybe (Error.invalidInput "not a number")`. It is the same function as `Maybe.toResult`, and it works with or without the import.
 
-The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenResult`) — see [Result/Task bridges](../CLAUDE.md#resulttask-bridges).
+The `Result → Task` bridges live on `Task` (`Task.fromResult` / `Task.andThenResult`) — see [the effect boundary](../AGENTS.md#language-essentials).
 
 ### `Tuple` — pairs (`Sky.Core.Tuple`)
 
@@ -220,7 +220,8 @@ hmac   = Crypto.hmacSha256 "secret" "message"
 | `Crypto.chacha20Poly1305Open` | `Secret -> String -> String -> String -> Result Error String` | Inverse of `chacha20Poly1305Seal`: (key, nonce, associated data, `ct \|\| tag`) → plaintext |
 | `Crypto.xchacha20Poly1305Seal` | `Secret -> String -> String -> String -> Result Error String` | XChaCha20-Poly1305 with a **caller-supplied** 24-byte nonce; same shape as `chacha20Poly1305Seal` |
 | `Crypto.xchacha20Poly1305Open` | `Secret -> String -> String -> String -> Result Error String` | Inverse of `xchacha20Poly1305Seal` |
-| `Crypto.aesKeyFromPassword` | `Secret -> String -> Secret` | PBKDF2-HMAC-SHA256 100k iter → 32-byte key (a `Secret`) for any AEAD above |
+| `Crypto.keyFromPasswordStrong` | `{ iterations : Int, salt : String } -> Secret -> Task Error Secret` | PBKDF2-HMAC-SHA256 with at least 600 000 iterations and a salt of at least 16 bytes, enforced → 32-byte key. Prefer it for new code (v0.27) |
+| `Crypto.aesKeyFromPassword` | `Secret -> String -> Secret` | PBKDF2-HMAC-SHA256 100k iter → 32-byte key (a `Secret`) for any AEAD above; a salt under 16 bytes logs a warning once |
 | `Crypto.chachaKeyFromPassword` | `Secret -> String -> Secret` | Same derivation, named for ChaCha |
 
 #### Which AEAD, which key, which effect
@@ -267,6 +268,37 @@ valid      = Sign.verify publicKey "invoice #42" signature             -- Bool
 sessionKey =
     Kx.sharedSecret mySecret theirPublic
         |> Result.andThen (Kdf.derive salt "my-app v1 session" 32)
+```
+
+A whole program that signs a message and checks the signature:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Crypto.Sign as Sign
+import Std.Log as Log
+
+
+main : Task Error ()
+main =
+    Sign.generate
+        |> Task.andThen
+            (\key ->
+                let
+                    signature =
+                        Sign.sign key "invoice #42"
+
+                    valid =
+                        Sign.verify (Sign.publicKey key) "invoice #42" signature
+                in
+                if valid then
+                    Log.println "the signature verifies"
+
+                else
+                    Log.println "the signature does not verify"
+            )
 ```
 
 | Function | Type | Notes |
@@ -339,6 +371,28 @@ the renderers `Qr.view` (`Std.Ui` element), `Qr.toSvg` (SVG document string)
 and `Qr.toTerminal` (half-block characters in explicit black on white). Pure,
 no cgo; it also runs in the Sky.Spa wasm client.
 
+A whole program that prints a pairing code to the terminal:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Std.Log as Log
+import Std.Qr as Qr exposing (ErrorCorrection(..))
+
+
+main : Task Error ()
+main =
+    case Qr.encode Medium "https://example.test/pair?code=482916" of
+        Ok code ->
+            Log.println (Qr.toTerminal code)
+
+        Err e ->
+            Log.println ("no QR code: " ++ Error.toString e)
+```
+
 ### `Bytes` — byte-buffer helpers (Sky.Core.Bytes)
 
 `type alias Bytes = String` — Go strings ARE byte sequences;
@@ -386,8 +440,8 @@ with `Sky.Core.Json.Decode`.
 
 | Function | Type | Notes |
 |---|---|---|
-| `Jwt.hs256` | `String -> Algorithm` | HMAC-SHA256; the shared secret |
-| `Jwt.rs256` | `String -> Algorithm` | RSA; PEM private key to `encode`, public key to `decode` |
+| `Jwt.hs256` | `Secret -> Algorithm` | HMAC-SHA256; the shared secret |
+| `Jwt.rs256` | `Secret -> Algorithm` | RSA; the PEM private key, to `encode`. Verify with `Jwt.rs256Verify` (the public key, a `String`) |
 | `Jwt.claims` | `Claims` | An empty claim set |
 | `Jwt.issuer` / `subject` / `audience` / `jwtId` | `String -> Claims -> Claims` | Registered string claims (`iss`/`sub`/`aud`/`jti`) |
 | `Jwt.expiresAt` / `notBefore` / `issuedAt` | `Int -> Claims -> Claims` | Registered time claims (`exp`/`nbf`/`iat`), unix seconds |
@@ -1049,7 +1103,7 @@ main =
 
 > `System.exit` has a polymorphic return so it works in any case branch — no need to make every other branch Task-shaped.
 
-**Env-var namespace prefix (v0.11.5+).** Sky's internal runtime reads (Sky.Live, Std.Auth, Std.Log, Std.Db) use the `SKY_` prefix by default — `SKY_LIVE_PORT`, `SKY_AUTH_TOKEN_TTL`, etc. Set `[env] prefix = "FENCE"` in `sky.toml` to switch the binary's namespace to `FENCE_LIVE_PORT`, `FENCE_AUTH_TOKEN_TTL`, etc. Useful when running multiple Sky binaries on the same host. User-supplied env-var names (passed to `System.getenv`) are unaffected — only Sky's internal reads route through the prefix.
+**Env-var namespace prefix (v0.11.5+).** Sky's internal runtime reads (Sky.Live, Std.Auth, Std.Log, Std.Db) use the `SKY_` prefix by default — `SKY_LIVE_PORT`, `SKY_LOG_LEVEL`, etc. Set `[env] prefix = "FENCE"` in `sky.toml` to switch the binary's namespace to `FENCE_LIVE_PORT`, `FENCE_LOG_LEVEL`, etc. Useful when running multiple Sky binaries on the same host. User-supplied env-var names (passed to `System.getenv`) are unaffected — only Sky's internal reads route through the prefix.
 
 ### `Process` — subprocess execution
 
@@ -1063,6 +1117,23 @@ result =
 
 `Process.run` runs a program to completion and returns its stdout. (`exit`,
 `getEnv`, `getCwd`, `loadEnv` moved to `System` in v0.10.0.)
+
+As a whole program:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Process as Process
+import Sky.Core.Task as Task
+import Std.Log as Log
+
+
+main : Task Error ()
+main =
+    Process.run "echo" [ "hello from a child process" ]
+        |> Task.andThen Log.println
+```
 
 #### Streaming child processes (`Process.spawn`, v0.27.0)
 
@@ -1188,7 +1259,11 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
   / `fromJsonSafe`; explicit `object`/`field`/`taggedUnion`/`enum` for full control.
-  Pure Sky.
+  `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
+  `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
+  reads exactly one JSON document: text after it is an `Err` (v0.27). A type
+  that holds a function, a `Secret`, a key or a runtime handle has no codec and
+  is refused at compile time. Pure Sky.
 - **`Std.Db.Store`** — `fromCodec |> primaryKey`/`serial`/`unique`/`defaultNow`/
   `touchOnUpdate`/`defaultWith`/`generated` (schema), `insert`/`insertMany`/`update`/
   `updateWhere`/`upsert`/`delete`/`deleteWhere` (writes), **`setFields`/`updateFields`**
@@ -1289,7 +1364,7 @@ Log.infoWith "user logged in" [ "userId", "42", "ip", "1.2.3.4" ]
 | `Log.debug` / `info` / `warn` / `error` | `String -> Task Error ()` |
 | `Log.debugWith` / `infoWith` / `warnWith` / `errorWith` | `String -> List a -> Task Error ()` — key/value pairs `[ "k1", v1, "k2", v2, … ]` |
 
-`SKY_LOG_FORMAT` (`plain` | `json`) and `SKY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`) control output format and threshold. Configure defaults in `sky.toml` `[log] format = "json"`. See [Logging precedence](../CLAUDE.md#environment-variable-precedence).
+`SKY_LOG_FORMAT` (`plain` | `json`) and `SKY_LOG_LEVEL` (`debug` | `info` | `warn` | `error`) control output format and threshold. Configure defaults in `sky.toml` `[log] format = "json"`. See [Logging precedence](sky-toml.md#precedence).
 
 ### `Trace` — opt-in application tracing spans
 
@@ -1532,7 +1607,7 @@ stays available for code that prefers the explicit shape.
 
 ### `Std.Auth.signTokenWithClaims` / `verifyTokenWithAlgorithm`
 
-The arity-3 `Auth.signToken : String -> a -> Int -> Result Error String`
+The arity-3 `Auth.signToken : Secret -> a -> Int -> Result Error String`
 shape stays canonical for the simple secret + claims + expiry case.
 For richer JWT shapes, reach for the typed-builder companion:
 
@@ -1653,6 +1728,12 @@ main =
 
 Routing: `get`, `post`, `put`, `delete`, `any`, `static`, `group` (prefix), `use` (middleware), `listen`.
 
+Cookies: `Server.cookie : String -> String -> Cookie` builds one with
+`Path=/; HttpOnly; SameSite=Lax`, and `Server.addCookie : Cookie -> Response ->
+Response` adds it. `Server.withCookie : String -> String -> String -> Response
+-> Response` sets a cookie with your own attribute string (typed since v0.27;
+it was `any`).
+
 `static` serves a directory (path-traversal-safe, with MIME detection,
 `Last-Modified`, and `Range` support). Compressible assets — `.wasm`, JS, CSS,
 JSON, SVG, and any `text/*` — are **gzipped on the wire automatically** for a
@@ -1669,7 +1750,7 @@ Extractors (Layer 3 Sky source — `Sky.Http.Server.sky`): `param`
 extras: `formValue`, `body`, `path`, `method`.
 
 Responses: `text`, `json`, `html`, `withStatus`, `redirect`,
-`cookie`, `withCookie`, `withHeader`.
+`cookie` + `addCookie`, `withCookie name value attrs`, `withHeader`.
 
 ### `Live` — Sky.Live (server-driven UI)
 
@@ -1702,7 +1783,23 @@ handler, no process exit) and succeeds once it is listening;
 in-flight requests get 5 seconds, sessions end, the store closes, the port is
 free). `Live.serve` / `Live.address` / `Live.stop` are the `Std.Live` forms.
 Two apps in one process keep their own sessions and store; see
-[embedded Sky.Live](skylive/embedded.md#several-apps-in-one-process).
+[embedded Sky.Live](skylive/embedded.md#several-apps-in-one-process). Each
+served app has its own session namespace: `App.withName "admin"` names it
+(cookie `sky_sid_admin`, session ids `<hex>.admin`), else the port does
+(`sky_sid_port-8001`). A served app on port `0` with a durable session store
+needs a name, because its port changes each run.
+
+**More `Std.App` builders.**
+
+| Function | Type | Notes |
+|---|---|---|
+| `App.withName` | `String -> App … -> App …` | The session namespace of an app started with `App.serve` (v0.27) |
+| `App.withEmbedded` | `App … -> App …` | Run inside a Task program: no signal handler, no process exit; a failure to start is the Task's `Err` |
+| `App.withConsoleAuth` | `(Request -> model -> Task Error (Maybe Console.Identity)) -> App … -> App …` | `SKY_CONSOLE_AUTH=app`: the app's own signed-in admins open the Sky Console; everyone else gets 403 |
+| `App.withClientCrypto` | `App … -> App …` | A Sky.Spa client target holds its own end-to-end keys; the build refuses a flow that would send a key to the server |
+| `Live.endSession` | `() -> Task Error ()` | Sign-out / "start over": deletes the session's server state, durable snapshot and binding; its tabs reload into a fresh session |
+| `Spa.serverRoute` | `String -> Route` | A server path beside the client routes: a link to it is a full page load (v0.27) |
+| `Spa.reportRpcFailure` | `Error -> Cmd msg` | Log a real unhandled RPC failure; a handled client `Err` is never logged |
 
 **Sessions without cookies (v0.27).** `App.withSessionTransport HeaderToken`
 (`Live.withSessionTransport "header"`, or `SKY_LIVE_SESSION_TRANSPORT=header`)
@@ -1901,7 +1998,7 @@ compound properties (`transition`, `transform`, `gridTemplateColumns`,
 
 > Bare keyword constants (`Css.zero`, `Css.auto`, `Css.none`,
 > `Css.transparent`) take `()` to sidestep zero-arity memoisation —
-> write `Css.margin (Css.zero ())`. See [Limitation 13](../CLAUDE.md#active-limitations).
+> write `Css.margin (Css.zero ())`. See [the known limitations](KNOWN_LIMITATIONS.md).
 
 ### `Ui` — typed no-CSS layout DSL
 
@@ -2107,7 +2204,15 @@ analytics captures fully and `identify user.id traits` attaches the user. This
 is the DX-friendly default; a privacy-conscious app shows a consent banner and
 downgrades with `setConsent Anonymous` (random anon id, no identity) or
 `setConsent Denied` (drops all capture). Consent + identity are session-scoped,
-so one Sky.Live user's identity never bleeds into another's.
+so one Sky.Live user's identity never bleeds into another's. In a Sky.Spa
+backend, an `App.api` handler or a `Sky.Http.Server` handler (v0.27) they are
+per visitor, keyed by a hash of the browser's long-lived cookie (the CSRF
+cookie, else the session cookie); a request with neither gets a state of its
+own. There they live in process memory (at most 100 000 visitors, 30 days
+idle), so a restart resets a visitor's `setConsent Denied` to the default until
+the app sets it again. An app that must honour consent across restarts keeps the
+choice in its model and applies it again (in `App.withRequest`, or on the first
+RPC).
 
 **Auto page-views (opt-in).** This attaches on the low-level `Sky.Live` backend
 config (the mechanism `--target web` compiles to): `|> Live.withAnalytics {
@@ -2327,4 +2432,4 @@ You'll never need to write `import Sky.Core.Prelude` — it's already there.
 - [Std.Db overview](skydb/overview.md)
 - [Go FFI interop](ffi/go-interop.md)
 - [Error system](errors/error-system.md)
-- The dense AI-targeted reference lives in the project [`CLAUDE.md`](../CLAUDE.md#standard-library) — same surface, no narrative.
+- The dense AI-targeted reference lives in the project [`AGENTS.md`](../AGENTS.md) — same surface, no narrative.

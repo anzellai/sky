@@ -9,10 +9,10 @@ async function devLogin({ page, BASE, hydrated }) {
 }
 
 export default {
-  name: 'sky-lang.org',
-  base: 'https://sky-lang.localhost:9443',
+  name: 'app-a',
+  base: 'https://app-a.localhost:9443',
   evilOrigin: 'https://evil.localhost:9443',
-  pages: ['/', '/blog', '/blog/why-i-built-sky-lang', '/admin'],
+  pages: ['/', '/blog', '/blog/a-post', '/admin'],
   rpcGuardPath: '/_rpc/LoadPosts',
   rpcGuardBody: JSON.stringify({ page: ['BlogIndex'] }),
   consoleLogin: async ({ ctx, page, BASE, cookieView }) => {
@@ -31,7 +31,7 @@ export default {
     return { mode: 'app', signIn, consoleLinkStatus: link.status(), consoleLinkLocation: link.headers()['location'] || null, consoleStatusAfterAdminSignIn: direct?.status() ?? null, cookies: cookieView(await ctx.cookies(BASE)) };
   },
   scenarios: {
-    adminSignInAndRpc: async ({ ctx, page, BASE, hydrated, cookieView }) => {
+    adminSignInAndRpc: async ({ ctx, page, BASE, hydrated, cookieView, browser }) => {
       await page.goto(BASE + '/', { waitUntil: 'load' });
       await hydrated(page);
       const before = cookieView(await ctx.cookies(BASE));
@@ -46,7 +46,25 @@ export default {
       ]);
       await page.waitForTimeout(1500);
       const bodyText = await page.locator('body').innerText();
-      return { cookiesBefore: before, signIn, cookiesAfter: after, saveDraftRpc: { status: rpcResp.status(), contentType: rpcResp.headers()['content-type'] || null }, flashShown: /Draft saved|Saved|saved/i.test(bodyText) };
+      // Sign out, then replay the admin cookie from before sign-out.
+      const old = (await ctx.cookies(BASE)).find((c) => c.name === 'app_a_admin');
+      const probe = async (val) => {
+        const c2 = await browser.newContext({ ignoreHTTPSErrors: true });
+        await c2.addCookies([{ name: 'app_a_admin', value: val, url: BASE, secure: true, httpOnly: true, sameSite: 'Lax' }]);
+        const con = await c2.request.get(BASE + '/_sky/console/');
+        const html = await (await c2.request.get(BASE + '/admin')).text();
+        const r = { consoleStatus: con.status(), adminPageSignedIn: html.includes('localadmin') };
+        await c2.close();
+        return r;
+      };
+      const controlBeforeLogout = old ? await probe(old.value) : null;
+      const lo = await ctx.request.get(BASE + '/admin/logout', { maxRedirects: 0 });
+      const afterLogout = cookieView(await ctx.cookies(BASE));
+      let replay = null;
+      if (old) replay = await probe(old.value);
+      return {
+        adminCookie: old ? { name: old.name, secure: old.secure, httpOnly: old.httpOnly, sameSite: old.sameSite } : null,
+        controlSameCookieBeforeLogout: controlBeforeLogout, logoutStatus: lo.status(), cookiesAfterLogout: afterLogout, replayOfCookieFromBeforeLogout: replay, cookiesBefore: before, signIn, cookiesAfter: after, saveDraftRpc: { status: rpcResp.status(), contentType: rpcResp.headers()['content-type'] || null }, flashShown: /Draft saved|Saved|saved/i.test(bodyText) };
     },
   },
 };

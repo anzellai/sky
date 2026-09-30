@@ -1,9 +1,9 @@
 {
-  "app": "sky-lang.org",
+  "app": "app-a",
   "browser": "chrome",
   "browserVersion": "154.0.8037.58",
-  "base": "https://sky-lang.localhost:9443",
-  "startedAt": "2026-09-30T07:12:52.152Z",
+  "base": "https://app-a.localhost:9443",
+  "startedAt": "2026-09-30T07:10:55.085Z",
   "pages": [
     {
       "path": "/",
@@ -50,10 +50,10 @@
       "failedRequests": []
     },
     {
-      "path": "/blog/why-i-built-sky-lang",
+      "path": "/blog/a-post",
       "status": 200,
       "protocol": "https:",
-      "finalPath": "/blog/why-i-built-sky-lang",
+      "finalPath": "/blog/a-post",
       "wasmBooted": true,
       "wasm": [
         {
@@ -102,7 +102,7 @@
         "httpOnly": true,
         "sameSite": "Strict",
         "path": "/",
-        "domain": "sky-lang.localhost",
+        "domain": "app-a.localhost",
         "session": false
       }
     ],
@@ -178,14 +178,18 @@
       }
     },
     "console": {
-      "anonymousStatus": 401,
-      "anonymousApi": 401,
-      "mode": "token",
-      "wrongTokenStatus": 401,
-      "loginStatus": 303,
-      "loginLocation": "/_sky/console",
-      "consoleStatusAfterLogin": 200,
-      "consoleTitle": "",
+      "anonymousStatus": 403,
+      "anonymousApi": 403,
+      "mode": "app",
+      "signIn": {
+        "landedOn": "/admin",
+        "status": 200,
+        "booted": true,
+        "signedInText": 1
+      },
+      "consoleLinkStatus": 302,
+      "consoleLinkLocation": "/admin/login?err=session",
+      "consoleStatusAfterAdminSignIn": 403,
       "cookies": [
         {
           "name": "__sky_csrf_sky_console",
@@ -193,7 +197,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         },
         {
@@ -202,25 +206,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
-          "session": false
-        },
-        {
-          "name": "__Host-sky_console",
-          "secure": true,
-          "httpOnly": true,
-          "sameSite": "Strict",
-          "path": "/",
-          "domain": "sky-lang.localhost",
-          "session": false
-        },
-        {
-          "name": "__Host-sky_sky_console_sid",
-          "secure": true,
-          "httpOnly": true,
-          "sameSite": "Lax",
-          "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ]
@@ -233,7 +219,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -250,7 +236,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -272,5 +258,5 @@
       "cspViolations": 0
     }
   },
-  "finishedAt": "2026-09-30T07:13:12.417Z"
+  "finishedAt": "2026-09-30T07:11:14.183Z"
 }

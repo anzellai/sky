@@ -452,7 +452,7 @@ server runs the whole branch server-side (dodges interleaving) → returns
 `{ write-set fields }`; client applies them. Reuse `Spa.postJson` (client) +
 `Server.api` (server) + `Codec.auto` for the I/O records. **Trust boundary:** the
 server treats client-sent fields as effect *inputs* only — anything authoritative
-is re-read from the DB / derived from the signed `sky_sid`, never trusted from the
+is re-read from the DB / derived from the signed `sky_spa`, never trusted from the
 wire (§7). Hand-write the two projects for a counter-with-one-effect first, prove
 the round-trip, THEN generate.
 
@@ -948,7 +948,7 @@ Sky.Live in Chromium and WebKit. The contract is documented for app authors in
 
 **Retry without a second effect.** Each request carries `?rid=<id>`; a retry
 re-sends the same id. The backend answers a repeated id from the response it
-already produced (`spa_rpc_dedupe.go`: bounded cache, keyed by `sky_sid` + path
+already produced (`spa_rpc_dedupe.go`: bounded cache, keyed by the session cookie + path
 + id), so a request whose response was lost is never run twice. A network
 failure keeps the RPC in flight (a hold RPC keeps later Msgs waiting) and is
 reported to the app at once; the Retry overlay re-runs every failed perform in
@@ -1046,7 +1046,7 @@ naming the change (write `update msg model = case msg of …`).
 
 ## 21. RPC and push security
 
-The split backend authenticates the browser with the signed `sky_sid` cookie
+The split backend authenticates the browser with the signed `sky_spa` cookie
 (`HttpOnly; SameSite=Lax`, plus `Secure` on any request that arrived over
 TLS or through a proxy that sent `X-Forwarded-Proto: https`). The browser
 attaches that cookie by itself, so two endpoints need more than the cookie.
@@ -1087,7 +1087,7 @@ POST, so an app needs no change.
 string, so a per-user topic reached anyone who asked for it. The handler now
 rebuilds the model the visitor's app would hold: `init ()`, the `withRequest`
 seed when the app has one, and every session field from the verified
-`sky_sid` cookie (never from the query string). This is the same model the
+`sky_spa` cookie (never from the query string). This is the same model the
 RPC handlers and the console gate build (`verified_model_decl`). It runs the
 app's `subscriptions` on that model and streams `<t>` only when the resulting
 `Sub` names it (`Spa_subAllowsTopic`, `runtime-go/rt/spa_push.go`). Anything
@@ -1338,7 +1338,9 @@ Tests: the fixtures `spa-path-dep-record` (with its `lib/` package),
 
 The split backend keeps no session object. It signs the session projection
 (the model fields of type `Session` / `Maybe Session` that a server branch
-writes) into the httpOnly `sky_sid` cookie, and verifies that cookie on every
+writes) into the httpOnly `sky_spa` cookie (named `sky_sid` before v0.27.0,
+which it shared with Sky.Live; see "The cookie and old sessions" below), and
+verifies that cookie on every
 RPC, SSR render, console check and `/_sky/sub` request (§21). Before v0.27.0
 the check was the signature and the 30-day `exp` only. A sign-out removed the
 cookie from the browser, but a copy of the cookie taken before sign-out (a
@@ -1362,9 +1364,8 @@ still clears the cookie but answers 503, so the failure is visible.
 
 **Verification refuses an ended id.** `Spa_verifySession` is
 `Auth.verifyToken` plus two checks: the token has a `sid`, and the `sid` has
-not ended. A token without a `sid` (one signed before v0.27.0) cannot be
-signed out, so it is refused: each visitor signs in once more after the
-upgrade. When the store cannot answer, the cookie is refused and the failure
+not ended. A token without a `sid` (one signed before v0.27.0) is converted
+once (see below). When the store cannot answer, the cookie is refused and the failure
 is logged (`spa.session-check.failed`). The check never fails open.
 
 **Where the record lives.** The record is an alias in the session store that
@@ -1384,16 +1385,48 @@ set the store in `sky.toml` or in the environment.
 | `sqlite` at a shared path | every process that opens the same file |
 | `postgres` / `redis` | every replica |
 
+**The cookie and old sessions.** The cookie is `sky_spa`. A request that
+arrives with the old `sky_sid` is read only when that value is a Sky.Spa token
+(never a 32-hex Sky.Live id); the response sets `sky_spa` and expires the old
+one. A token signed before v0.27.0 has no `sid`. On its first request after the
+upgrade it is converted once and idempotently: the same claims and expiry, a
+fresh `sid`, and a record `spa-legacy:<sha256(token)>` in the sign-out store for
+the token's lifetime. A replay of the old token within 60 s gets the same new
+token; after that it is refused. A forged or expired token is never converted,
+and a store that is down converts nothing (fail closed). The conversion needs
+the same signing key as the old build: set `SKY_SPA_SESSION_SECRET` when the key
+file is not persisted.
+
+**The signing key.** A key minted in development is stored as
+`.skydata/spa-session-secret.dev` and is never read in production, so a
+development key copied into an image does not sign production sessions. A
+production process mints its own key; when it cannot persist it, it logs an
+ERROR and adds a line to the start-up report, because every restart would then
+sign everyone out. Set `SKY_SPA_SESSION_SECRET` (32 bytes or more) in
+production.
+
+**A deploy that changes the wire.** Each build hashes its wire schema (the
+shared records and the route list) into `<meta name="sky-wire">`, and every
+`/_rpc/` POST carries it in `X-Sky-Wire`. A backend that sees another hash
+answers 409 with `X-Sky-Status: reload`, before the handler runs. The client
+reloads once (guarded, so a mismatch cannot loop) and then says that the last
+action was not sent; a Msg is never replayed. A tab from before v0.27.0 sends no
+header, and the backend runs its server follow-ups inline, as v0.26.1 did.
+
 A deployment with several replicas already sets `SKY_SPA_SESSION_SECRET` (every
 replica must verify with the same key). When that variable is set and no shared
 store is configured, the backend logs a warning when it first opens the store:
 a sign-out would then be refused only on the replica that served it. A store the
 operator configured that cannot be opened in production refuses every signed
 session (and logs why), rather than fall back to a per-process memory store.
-The backend tries to open it again every 30 seconds.
+The backend tries to open it again every 30 seconds. In production with no store
+configured, a data dir where `spa-sessions.db` cannot be created is an error in
+the same way, and a backend with a session projection refuses to start
+(`see docs/migration/v0.27.md#spa-sign-out-store`); development keeps an
+in-memory fallback with a warning.
 
 **Cost.** One store read per verified request (a primary-key lookup on sqlite
-or postgres, a `GET` on redis). A request with no `sky_sid` cookie reads
+or postgres, a `GET` on redis). A request with no session cookie reads
 nothing.
 
 Tests: the Go unit tests in `runtime-go/rt/spa_session_revocation_test.go`

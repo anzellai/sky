@@ -1,9 +1,9 @@
 {
-  "app": "sky-lang.org",
-  "browser": "webkit",
-  "browserVersion": "26.4",
-  "base": "https://sky-lang.localhost:9443",
-  "startedAt": "2026-09-30T07:13:39.662Z",
+  "app": "app-a",
+  "browser": "chrome",
+  "browserVersion": "154.0.8037.58",
+  "base": "https://app-a.localhost:9443",
+  "startedAt": "2026-09-30T07:12:52.152Z",
   "pages": [
     {
       "path": "/",
@@ -50,10 +50,10 @@
       "failedRequests": []
     },
     {
-      "path": "/blog/why-i-built-sky-lang",
+      "path": "/blog/a-post",
       "status": 200,
       "protocol": "https:",
-      "finalPath": "/blog/why-i-built-sky-lang",
+      "finalPath": "/blog/a-post",
       "wasmBooted": true,
       "wasm": [
         {
@@ -102,7 +102,7 @@
         "httpOnly": true,
         "sameSite": "Strict",
         "path": "/",
-        "domain": "sky-lang.localhost",
+        "domain": "app-a.localhost",
         "session": false
       }
     ],
@@ -193,7 +193,16 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
+          "session": false
+        },
+        {
+          "name": "__sky_csrf",
+          "secure": true,
+          "httpOnly": true,
+          "sameSite": "Strict",
+          "path": "/",
+          "domain": "app-a.localhost",
           "session": false
         },
         {
@@ -202,7 +211,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         },
         {
@@ -211,7 +220,7 @@
           "httpOnly": true,
           "sameSite": "Lax",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ]
@@ -224,7 +233,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -241,7 +250,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -263,5 +272,5 @@
       "cspViolations": 0
     }
   },
-  "finishedAt": "2026-09-30T07:13:59.725Z"
+  "finishedAt": "2026-09-30T07:13:12.417Z"
 }

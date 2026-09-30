@@ -1,9 +1,9 @@
 {
-  "app": "sky-lang.org",
-  "browser": "chrome",
-  "browserVersion": "154.0.8037.58",
-  "base": "https://sky-lang.localhost:9443",
-  "startedAt": "2026-09-30T09:26:09.235Z",
+  "app": "app-a",
+  "browser": "webkit",
+  "browserVersion": "26.4",
+  "base": "https://app-a.localhost:9443",
+  "startedAt": "2026-09-30T07:13:39.662Z",
   "pages": [
     {
       "path": "/",
@@ -13,7 +13,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.a67dfbe4ec9b.wasm",
+          "path": "/main.8cd1fdffecca.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -35,7 +35,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.a67dfbe4ec9b.wasm",
+          "path": "/main.8cd1fdffecca.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -50,14 +50,14 @@
       "failedRequests": []
     },
     {
-      "path": "/blog/why-i-built-sky-lang",
+      "path": "/blog/a-post",
       "status": 200,
       "protocol": "https:",
-      "finalPath": "/blog/why-i-built-sky-lang",
+      "finalPath": "/blog/a-post",
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.a67dfbe4ec9b.wasm",
+          "path": "/main.8cd1fdffecca.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -79,7 +79,7 @@
       "wasmBooted": true,
       "wasm": [
         {
-          "path": "/main.a67dfbe4ec9b.wasm",
+          "path": "/main.8cd1fdffecca.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -102,7 +102,7 @@
         "httpOnly": true,
         "sameSite": "Strict",
         "path": "/",
-        "domain": "sky-lang.localhost",
+        "domain": "app-a.localhost",
         "session": false
       }
     ],
@@ -148,7 +148,7 @@
     "precompressed": {
       "browserWasm": [
         {
-          "path": "/main.a67dfbe4ec9b.wasm",
+          "path": "/main.8cd1fdffecca.wasm",
           "status": 200,
           "contentEncoding": "br",
           "cacheControl": "public, max-age=31536000, immutable"
@@ -157,19 +157,19 @@
       "br": {
         "status": 200,
         "contentEncoding": "br",
-        "contentLength": "2009740",
+        "contentLength": "2013334",
         "cacheControl": "public, max-age=31536000, immutable"
       },
       "gzip": {
         "status": 200,
         "contentEncoding": "gzip",
-        "contentLength": "2987356",
+        "contentLength": "2968809",
         "cacheControl": "public, max-age=31536000, immutable"
       },
       "identity": {
         "status": 200,
         "contentEncoding": null,
-        "contentLength": "11899119",
+        "contentLength": "11813665",
         "cacheControl": "public, max-age=31536000, immutable"
       },
       "wasmExecBr": {
@@ -178,18 +178,14 @@
       }
     },
     "console": {
-      "anonymousStatus": 403,
-      "anonymousApi": 403,
-      "mode": "app",
-      "signIn": {
-        "landedOn": "/admin",
-        "status": 200,
-        "booted": true,
-        "signedInText": 1
-      },
-      "consoleLinkStatus": 302,
-      "consoleLinkLocation": "/_sky/console/",
-      "consoleStatusAfterAdminSignIn": 200,
+      "anonymousStatus": 401,
+      "anonymousApi": 401,
+      "mode": "token",
+      "wrongTokenStatus": 401,
+      "loginStatus": 303,
+      "loginLocation": "/_sky/console",
+      "consoleStatusAfterLogin": 200,
+      "consoleTitle": "",
       "cookies": [
         {
           "name": "__sky_csrf_sky_console",
@@ -197,25 +193,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
-          "session": false
-        },
-        {
-          "name": "__sky_csrf",
-          "secure": true,
-          "httpOnly": true,
-          "sameSite": "Strict",
-          "path": "/",
-          "domain": "sky-lang.localhost",
-          "session": false
-        },
-        {
-          "name": "skylang_admin",
-          "secure": true,
-          "httpOnly": true,
-          "sameSite": "Lax",
-          "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         },
         {
@@ -224,7 +202,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         },
         {
@@ -233,38 +211,12 @@
           "httpOnly": true,
           "sameSite": "Lax",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ]
     },
     "adminSignInAndRpc": {
-      "adminCookie": {
-        "name": "skylang_admin",
-        "secure": true,
-        "httpOnly": true,
-        "sameSite": "Lax"
-      },
-      "controlSameCookieBeforeLogout": {
-        "consoleStatus": 200,
-        "adminPageSignedIn": true
-      },
-      "logoutStatus": 302,
-      "cookiesAfterLogout": [
-        {
-          "name": "__sky_csrf",
-          "secure": true,
-          "httpOnly": true,
-          "sameSite": "Strict",
-          "path": "/",
-          "domain": "sky-lang.localhost",
-          "session": false
-        }
-      ],
-      "replayOfCookieFromBeforeLogout": {
-        "consoleStatus": 403,
-        "adminPageSignedIn": false
-      },
       "cookiesBefore": [
         {
           "name": "__sky_csrf",
@@ -272,7 +224,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -289,16 +241,7 @@
           "httpOnly": true,
           "sameSite": "Strict",
           "path": "/",
-          "domain": "sky-lang.localhost",
-          "session": false
-        },
-        {
-          "name": "skylang_admin",
-          "secure": true,
-          "httpOnly": true,
-          "sameSite": "Lax",
-          "path": "/",
-          "domain": "sky-lang.localhost",
+          "domain": "app-a.localhost",
           "session": false
         }
       ],
@@ -320,5 +263,5 @@
       "cspViolations": 0
     }
   },
-  "finishedAt": "2026-09-30T09:26:31.079Z"
+  "finishedAt": "2026-09-30T07:13:59.725Z"
 }

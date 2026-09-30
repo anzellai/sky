@@ -96,7 +96,7 @@ error type — always `Result Error a` / `Task Error a`.
 -- pure          : String.length, List.map, Crypto.sha256
 -- fallible-pure : String.toInt : String -> Maybe Int
 --                 Encoding.base64Decode : String -> Result Error String
--- effect        : File.read, Http.get, Db.query, Time.now  → Task Error a
+-- effect        : File.readFile, Http.get, Db.query, Time.now → Task Error a
 -- Go FFI        : any `sky add` binding                   → Result Error a
 ```
 
@@ -112,8 +112,25 @@ call's result as the bare value is an `[E2001]` type error, and `Sky.Ffi`
 (`kernel` / `call` / `callPure` / `callTask`) is stdlib-only (`[E1011]`, under
 any qualifier: `Webview.kernel` is refused too): call the typed stdlib function
 or a `sky add` binding. A fetched `.skydeps` package is type-checked like your
-own code on every build and gets no `Sky.Ffi`. See
+own code on every build and gets no `Sky.Ffi`. The Go surface (format 3, from
+`sky install`) types every value by its Go type: a Go value with no Sky form is
+its own nominal type (`Pkg.Router`), never usable at another type; a Go pointer
+to a non-opaque type is a `Maybe` (nil is `Nothing`) in every position; a map
+keeps its `int` / `float` / `bool` key type; a callback is typed from the Go
+signature, result included; an integer out of range across the boundary is an
+`Err`; and a Sky value where Go wants an interface is `[E2013]`. See
 `docs/ffi/boundary-philosophy.md`.
+
+**Upgrading a v0.26 project?** `docs/migration/v0.27.md` lists every change
+that stops the build (the error links its entry) and every change that
+compiles but behaves differently, one bullet each. Among them: the value
+restriction (`[E2012]`: a top-level value with no parameters is not
+polymorphic inside a `Ref`, `Cache`, `Codec` or `Table`), `any` in your own
+annotation is a hole the body fills (not a cast), ordering needs a
+`comparable` type, `Codec.auto` / `App.withDurable` / `Auth.signToken` need an
+encodable type (no function, `Secret`, key or handle), `Crypto.aesGcmEncrypt`
+/ `chacha20Encrypt` return a `Task`, `Auth.verifyToken` returns `Result Error
+Json.Value`, and a `Cookie` value goes through `Server.addCookie`.
 
 `let _ = someTask` auto-forces the task (fires the effect). A top-level
 zero-arg binding is **memoised** (a CAF — evaluated once, cached): `db =
@@ -168,8 +185,9 @@ no signal handler and never exits the process, and a failure to start is its
 Task's `Err` (`docs/skylive/embedded.md`). To also STOP it, use `App.serve app`
 (succeeds once listening, returns an `App.Running`), `App.address running`
 (`host:port`; port `0` picks a free one) and `App.stop running` (graceful,
-bounded, idempotent); two served apps keep their own sessions and store, and the
-Sky Console is one per process. A server that needs the frame type uses
+bounded, idempotent); each served app has its own session namespace (cookie
+`sky_sid_<name>`, named by `App.withName "<name>"`, else by its port; port 0
+with a durable store needs the name), and the Sky Console is one per process. A server that needs the frame type uses
 `Ws.withOnFrame` (`Text` / `Binary`) instead of `withOnMessage`. A Sky.Spa
 client (`web:app` and the other client targets) holds its own socket over the
 browser WebSocket API: `WebSocket.connect "/ws"` runs in the client and is
@@ -436,8 +454,8 @@ for UX/DX/security/scalability, not by accident.
 | **Auth** | The internal **`Std.Auth`** module by default (bcrypt + HS256 JWT cookies — you own the users). OAuth (Google/GitHub) or external (Auth0/Clerk) only when the user needs them. Never `fmt.Sprintf("%v", secret)` — secrets are typed. |
 | **Serialization** | `Std.Codec` (`Codec.auto blank`) for record↔JSON+DB from one definition. Raw `Json.Encode/Decode` only for a shape a codec can't express (legacy/third-party wire formats). |
 | **Money / decimals** | `Std.Money` on `Std.Decimal`. **Never** raw `Float` for currency. |
-| **Encryption / signatures** | Encrypt with **`Crypto.xchachaSeal`** / `xchachaOpen` (XChaCha20-Poly1305, 24-byte random nonce; seal is a `Task`, open is pure). Only when a protocol fixes the nonce: `Crypto.chacha20Poly1305Seal` / `xchacha20Poly1305Seal` (caller nonce, pure; never reuse a nonce under one key). Keys are 32-byte `Secret`s: `Crypto.aesKeyFromPassword` from a password, `Kdf.derive` (`Std.Crypto.Kdf`, HKDF) from key material. Sign with `Std.Crypto.Sign` (Ed25519), agree keys with `Std.Crypto.Kx` (X25519; refuses a low-order peer key). An encrypted session with a pinned server key: `Std.Crypto.Noise` (IK). A short pairing code: `Std.Crypto.Cpace` (a PAKE, **awaiting external review**). A QR code for a pairing URL: `Std.Qr`. Never a `String` secret key. |
-| **Child processes / file watching** | Run a command to completion: `Process.run`. Talk to a long-running child: **`Process.spawn`** (`Process.command "x" \|> Process.withArgs [...]`, `withPty { cols, rows }` on Linux/macOS) with output in an offset-addressed ring (`readFrom` from a Task, or the `Process.events` Sub in a TEA app, never both), `write` / `closeStdin` / `resize` / `kill` (whole process group) / `wait` / `close`. Children are reaped, closed with their Sky.Live session, and killed on exit. Watch files with **`Std.Watch`** (`watch` / `next` / `changes` Sub / `close`; coalesced batches, `Overflow` means rescan). |
+| **Encryption / signatures** | Encrypt with **`Crypto.xchachaSeal`** / `xchachaOpen` (XChaCha20-Poly1305, 24-byte random nonce; seal is a `Task`, open is pure). Only when a protocol fixes the nonce: `Crypto.chacha20Poly1305Seal` / `xchacha20Poly1305Seal` (caller nonce, pure; never reuse a nonce under one key). Keys are 32-byte `Secret`s: `Crypto.keyFromPasswordStrong { iterations, salt }` from a password (PBKDF2, at least 600 000 iterations and a 16-byte salt; `aesKeyFromPassword` is the older fixed-cost form), `Kdf.derive` (`Std.Crypto.Kdf`, HKDF) from key material. Sign with `Std.Crypto.Sign` (Ed25519), agree keys with `Std.Crypto.Kx` (X25519; refuses a low-order peer key). An encrypted session with a pinned server key: `Std.Crypto.Noise` (IK). A short pairing code: `Std.Crypto.Cpace` (a PAKE, **awaiting external review**). A QR code for a pairing URL: `Std.Qr`. Never a `String` secret key. |
+| **Child processes / file watching** | Run a command to completion: `Process.run`. Talk to a long-running child: **`Process.spawn`** (`Process.command "x" \|> Process.withArgs [...]`, `withPty { cols, rows }` on Linux/macOS) with output in an offset-addressed ring (`readFrom` from a Task, or the `Process.events` Sub in a TEA app, never both), `write` / `closeStdin` / `resize` / `kill` (whole process group) / `wait` / `close`. Children are reaped, closed with their Sky.Live session, and killed on exit; `close` ends the child's whole tree (a descendant that clears its environment, leaves the session and double-forks is not found; on the BSDs close ends the process group only). A handle belongs to the Sky.Live session that opened it (another session gets `Err PermissionDenied`; open it in the session that uses it). PTY sizes are 1-500 columns by 1-200 rows. Watch files with **`Std.Watch`** (`watch` / `next` / `changes` Sub / `close`; coalesced batches, `Overflow` means rescan). |
 | **Errors** | `Result Error a` / `Task Error a`. **Never** `String` as an error type. |
 | **Concurrency** | `Cmd.batch` / `Task.parallel`; **`Task.parallelN limit tasks`** for bounded fan-out under load (`parallel` is unbounded — a goroutine/connection storm at scale); in-process pub/sub via `Cmd.publish` + `Sub.subscribeTopic`. Shared state between concurrent Tasks: **`Std.Sync`** (`Ref` with atomic `update` / `compareAndSwap`, `Mutex` + `withLock`, a bounded `Queue` with `push` / `pop` / `popWithin`); pure code needs none of it. A path a client sends is kept inside a directory with `File.resolveWithin root path` (follows symlinks and `..`). |
 | **Durable workflows** | **`Std.Durable`** for a multi-step process that must survive a restart (checkout / payment sagas, order fulfilment, onboarding, approvals). Mark side-effect boundaries with `Durable.step`; each step's result is journalled, so a resumed run replays completed steps instead of re-running them. `Durable.sleep` / `awaitSignal` suspend passively (a waiting run holds no process); a worker `Durable.poll` claims + advances due runs. **Worker versioning:** `registerVersioned` stamps a run's version at `start`, and `pollWith` reconciles a resumed run against the registered defs (`FailSafe` / `PinToStart`) for rolling deploys. **History compaction:** `Durable.compact db retentionMs` collapses terminal runs' journals while keeping their summary. **Zero-annotation durable TEA:** `App.withDurable db modelCodec` (or `App.withDurableId "<id>" db modelCodec`) makes any `Std.App` app durable with NO change to `model` / `msg` / `update` — the backend loop restores the Model on start and snapshots it after each update (Cli / Tui key by run id; Live keys by session id, covering a memory session store across a restart). The Model must be a `Codec`-serialisable data value (no function fields). The Model snapshot is at-most-once for an in-flight effect; use `Durable.step` when an effect needs exactly-once. (Substrate: `Durable.saveSnapshot`/`loadSnapshot`.) Postgres or SQLite; the code between steps must be deterministic. See `docs/design/durable-execution.md` + `docs/skyapp/overview.md`. |
@@ -446,7 +464,7 @@ for UX/DX/security/scalability, not by accident.
 | **Sky.Live navigation** | Every internal link is `sky-nav` (one persistent SSE per session). Bare `<a href>` only to deliberately leave the app. The URL fragment (`#…`) never reaches the server: read it with `Sub.onFragment toMsg` (at load and on every change; Sky.Live, Sky.Spa and the `Std.App` web targets). To move the address bar from `update`, return `Nav.pushUrl "/path"` / `Nav.replaceUrl "/path"` / `Nav.clearFragment` (`Std.Nav`, same-origin only): it routes like a `sky-nav` link, with no reload. |
 | **Password forms** | `Ui.form [Ui.onSubmit DoSignIn]` with a typed record; never per-keystroke `onInput` on a password field. The record's fields must be `String`/`Int`/`Float`/`Bool`/`Maybe` of those (`[E2010]`); each is decoded strictly from the control with the same `Ui.name`. |
 | **No raw HTML/JS** | `Std.Ui` HTML-escapes everything. `data-sky-eval` is gone (no runtime path evaluates a string); use `data-sky-path` for URL sync. |
-| **Third-party JS widgets** | A widget island: `Ui.island { name, id, props }` (or `Html.island`) is an element the widget owns; the server never patches inside it and the client keeps it across re-renders. The widget registers from a same-origin file loaded with `<script defer>` (`window.Sky.island name { mount, update, command, destroy }`; no inline script, strict CSP). Its events arrive as typed Msgs through `Ui.onIslandEvent type decoder toMsg` (a rejected payload is logged and dropped); `Cmd.toIsland id name payload` sends it commands. Its state lives in the browser, so report what matters and feed it back through `props`: a remount starts from `props`. See `docs/skyui/overview.md` (Widget islands). |
+| **Third-party JS widgets** | A widget island: `Ui.island { name, id, props } attrs` (or `Html.island`) is an element the widget owns; the server never patches inside it and the client keeps it across re-renders. The widget registers from a same-origin file loaded with `<script defer>` (`window.Sky.island name { mount, update, command, destroy }`; no inline script, strict CSP). Its events arrive as typed Msgs through `Ui.onIslandEvent type decoder toMsg` (a rejected payload is logged and dropped); `Cmd.toIsland id name payload` sends it commands. Its state lives in the browser, so report what matters and feed it back through `props`: a remount starts from `props`. See `docs/skyui/overview.md` (Widget islands). |
 
 The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
 `Std.Ui` layout, Sky.Tui, Sky.Webview) live in `docs/skylive/`, `docs/skyui/`,
@@ -483,16 +501,21 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
   VMs and proxies need it); dev binds `127.0.0.1`. `SKY_HOST` overrides either
   (`SKY_HOST=127.0.0.1` to keep a production process on loopback behind a local
   proxy). The line under `listening` states the real bind, e.g. `bind
-  0.0.0.0:8000  all interfaces (production default; SKY_HOST narrows)`.
+  0.0.0.0:8000  all interfaces (production default; SKY_HOST narrows)`. In
+  production a loopback bind is not access control: the Host guard is off
+  there, so put the proxy in front of it. A desktop window (`--target
+  desktop`) binds loopback in every mode and mounts no console unless
+  `SKY_CONSOLE_AUTH` names a mode.
 - WebSocket upgrades (`Sky.Http.Server.WebSocket`) need
   `Ws.withOriginPatterns [...]` in production, or they get 403. A deploy that
   leaves `ENV` unset no longer accepts every origin: outside production only
   same-host, loopback and `SKY_ALLOWED_HOSTS` origins pass.
-- Dev only: the loopback listener refuses a request whose `Host` is not
-  `localhost` / `*.localhost` / a loopback IP / `10.0.2.2` / the `SKY_APP_URL`
-  host (anti DNS rebinding). A dev proxy name, a Codespaces URL or a LAN name
-  needs `SKY_ALLOWED_HOSTS` (comma list, `*.app.github.dev` wildcards, `*`
-  turns the check off).
+- Outside production only: the loopback listener refuses a request whose
+  `Host` is not `localhost` / `*.localhost` / a loopback IP / `10.0.2.2` / the
+  `SKY_APP_URL` host / a `SKY_PUBLIC_URL` host (anti DNS rebinding). A dev
+  proxy name, a Codespaces URL or a LAN name needs `SKY_ALLOWED_HOSTS` (comma
+  list, `*.app.github.dev` wildcards, `*` turns the check off) or
+  `SKY_PUBLIC_URL`.
 - Content-Security-Policy: every page Sky serves (Sky.Live, the Sky Console,
   Sky.Spa) works under `script-src 'self' 'wasm-unsafe-eval'` with **no hashes
   and no `'unsafe-inline'`** — the scripts are same-origin files
@@ -553,12 +576,19 @@ Each `/_rpc/<Msg>` is a `Server.rpc` route: it takes only same-origin
 set `SKY_PUBLIC_URL`), and `GET /_sky/sub` streams a topic only when the app's
 own `subscriptions`, run on the verified session model, names it. A topic keyed
 on a non-session model field is refused: key per-user topics on the session.
-The split's `sky_sid` is a signed token with a session id: sign-out (the client
+The split's session cookie is `sky_spa` (it was `sky_sid`; an old cookie moves
+over on the next request, and a pre-v0.27.0 token is converted once), a signed
+token with a session id: sign-out (the client
 clearing its `Session` field, or a server branch that changes it) ends that id
 in the session store, so a copy of the cookie from before sign-out is refused.
 Several replicas need a shared store (`[live] store` / `SKY_LIVE_STORE` =
 `postgres` or `redis`) as well as a shared `SKY_SPA_SESSION_SECRET`
-(`docs/skyspa/auto-split.md` §25).
+(`docs/skyspa/auto-split.md` §25); production refuses to start with no store and
+an unwritable data dir, and a development key (`spa-session-secret.dev`) is
+never read in production. A link to a path with no client route (or a
+`Spa.serverRoute` path) is a full page load. A handled client `Err` is never
+logged as an RPC failure; call `Spa.reportRpcFailure` for a real unhandled one.
+A `Dict k v` field crosses the wire through `Codec.dict`.
 
 **Serving the wasm — precompressed.** A Go→wasm client is multi-MB raw (~2.5 MB
 brotli), so `sky build` precompresses the hashed `main.<hash>.wasm` + `wasm_exec.js`

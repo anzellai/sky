@@ -198,6 +198,14 @@ stopping one does not touch the other (v0.27, `runtime-go/rt/live_serve.go`).
 - the listener, HTTP server, routes, `api` handlers and handler chain;
 - the session store and every session in it (a session cookie of one app is
   an unknown session to the other), with their timers and subscriptions;
+- the session namespace. Each app started with `App.serve` has its own cookie,
+  `sky_sid_<name>` (`__Host-sky_sid_<name>` over HTTPS), and its session ids
+  end in `.<name>`, so two apps that share one durable store keep their rows
+  apart. Name it with `App.withName "admin"` (letters, digits, `-` and `_`, at
+  most 40); an unnamed app is `port-<N>`. An app on port `0` with a durable
+  store needs a name, and two served apps with one name refuse to start. An id
+  of another app's namespace is never looked up. The process-owning app
+  (`App.run`, also with `withEmbedded`) keeps the plain `sky_sid` cookie;
 - the pub/sub broker (`Cmd.publish` and `Sub.subscribeTopic` stay inside the
   app);
 - the revocation gate (`Live.withRevocation`) and its per-user verdict cache;

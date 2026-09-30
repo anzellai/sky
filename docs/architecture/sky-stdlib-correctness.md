@@ -580,7 +580,7 @@ exact runtime shape).
 | `parallelN`       | `Int -> List (Task e a) -> Task e (List a)`       |
 | `perform`         | `Task e a -> (Result e a -> msg) -> Cmd msg`      |
 | `run`             | `Task e a -> Result e a` (synchronous main-only)  |
-| `lazy`            | `(() -> Task e a) -> Task e a`                    |
+| `lazy`            | `(() -> a) -> Task e a`                           |
 | `retryWith`       | `RetryPolicy e -> Task e a -> Task e a`           |
 | `loop`            | `(state -> Task e (Step state a)) -> state -> Task e a` |
 | `forever`         | `Task e a -> Task e b`                            |
@@ -1361,8 +1361,8 @@ hashPasswordCost : String -> Int -> Result Error String   -- bcrypt cost N
 verifyPassword   : String -> String -> Result Error Bool
 passwordStrength : String -> Result Error Int
 
-signToken           : String -> a -> Int -> Result Error String
-verifyToken         : String -> String -> Result Error a
+signToken           : Secret -> a -> Int -> Result Error String   -- a is encodable
+verifyToken         : Secret -> String -> Result Error Value      -- the claims as Json.Value
 signTokenWithClaims     : Jwt.Algorithm -> Jwt.Claims -> Result Error String
 verifyTokenWithAlgorithm : Jwt.Algorithm -> Int -> String -> Result Error String
 ```

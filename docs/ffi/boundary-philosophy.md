@@ -4,7 +4,7 @@
 > is the primary Sky compiler; the Haskell compiler is preserved under
 > `legacy-haskell-compiler/`. Verified by the example sweep + compiler test
 > suite (`cargo test` + xtask gates). See
-> [`../compiler/versions.md`](../compiler/versions.md) for the changelog.
+> [`../history/compiler/versions.md`](../history/compiler/versions.md) for the changelog.
 
 
 ## The trust boundary
@@ -34,11 +34,28 @@ probe =
     Hex.encodedLen 3     -- [E2001] type mismatch: `Result Error Int` vs `Int`
 ```
 
-The wrapper, the arity and primitive argument and payload types are checked.
-Go-opaque types (`*mux.Router`, `context.Context`, …) are wildcards: they flow
-between FFI calls unchecked, and a later release will type them nominally. A
-partially applied FFI function (`Strings.repeat "ab"`) is a normal Sky function
-value.
+The wrapper, the arity and the argument and payload types are checked. Since
+surface format 3 (v0.27.0, written by `sky install`) every Go type has a Sky
+type, computed from the Go signature:
+
+| Go | Sky |
+|---|---|
+| `string`, `int*` / `uint*`, `float*`, `bool` | `String`, `Int`, `Float`, `Bool` (an integer out of range for the Go or the Sky side is an `Err`, never a wrapped or truncated number) |
+| `[]byte`, `[N]byte` | `Bytes` |
+| `[]T`, `map[K]V` with a `string` / `int` / `float` / `bool` key | `List T`, `Dict K V` (other keys: opaque) |
+| `*T` where `T` has a Sky form | `Maybe T` (nil is `Nothing`), in results, parameters, lists, fields and callbacks |
+| a struct, `*Struct` and any other type with no Sky form | its own nominal type, `Pkg.Name` (`Mux.Router`) |
+| `func(A) R` as a parameter | a typed callback `A -> R`; a zero-parameter one is `() -> R` |
+| `interface{}` / `any` as a parameter | any Sky value |
+| a non-empty interface as a parameter | a Go value that implements it; a Sky value there is `[E2013]` |
+
+A Go value with its own nominal type is not usable at another type, not even
+at the kernel `Value` type or an app type of the same name: annotate it with
+its Go type (`router : Mux.Router`) and pass it to the package's bindings. A
+Go value passed where Go wants an interface is checked at run time (an `Err`,
+never a crash). A binding of an older surface whose wrapper converted a value
+unsoundly is refused with the fix, `sky install`. A partially applied FFI
+function (`Strings.repeat "ab"`) is a normal Sky function value.
 
 `Sky.Ffi` is stdlib-only (`[E1011]`): `Ffi.kernel`, `Ffi.call`, `Ffi.callPure`
 and `Ffi.callTask`. `Ffi.call*` reach a Go binding by name with an unchecked
@@ -208,7 +225,7 @@ case SomeMap.get key of
         logBoundaryFailure e
 ```
 
-### Bare `*T` returns are NOT auto-wrapped in Maybe
+### A pointer to an opaque type is NOT wrapped in Maybe
 
 Many Go SDKs use builder patterns:
 
@@ -234,12 +251,14 @@ case Stripe.new params of
                     ...
 ```
 
-Sky's design: `*T` returns flow through as `Result Error T`. If
-the Go SDK genuinely returns nil and the user calls a method on
-it, the defer-recover catches the nil-deref panic and surfaces
-`Err(ErrFfi("nil pointer..."))`. Go authors who explicitly mean
-"this can be nothing" use `(T, error)` or `(T, bool)` — those map
-cleanly to `Result Error T` / `Result Error (Maybe T)`.
+Sky's design: a pointer to an opaque type (`*Builder`, `*sql.DB`) flows
+through as `Result Error Builder`. If the Go SDK genuinely returns nil and the
+user calls a method on it, the nil-receiver guard surfaces an `Err` instead of
+a crash. A pointer to a type that has a Sky form (`*string`, `*int`, `*[]T`) is
+different: nil is a normal value there (an optional field), so it is a
+`Maybe` (v0.27.0, surface format 3). Go authors who explicitly mean "this can
+be nothing" use `(T, error)` or `(T, bool)` — those map cleanly to
+`Result Error T` / `Result Error (Maybe T)`.
 
 ### Method calls have nil-receiver guards
 
