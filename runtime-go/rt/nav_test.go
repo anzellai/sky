@@ -148,9 +148,20 @@ func TestNavLive_AURLOffTheSiteIsRefusedAndLogged(t *testing.T) {
 }
 
 func TestNav_TerminalTargetAndSpaServerBranchIgnoreIt(t *testing.T) {
-	// A terminal has no address bar: a no-op, not a crash.
-	l := &teaLoop{}
+	// A terminal has no address bar: a no-op, not a crash. G-11: assert it,
+	// rather than only reaching the end: no Msg is queued and no effect is
+	// left in flight.
+	msgCh := make(chan any, 4)
+	l := newTeaLoop(msgCh, nil, nil, nil)
 	l.runCmd(Nav_pushUrl("/a"))
+	select {
+	case m := <-msgCh:
+		t.Fatalf("a navigation on a terminal queued a Msg: %#v", m)
+	default:
+	}
+	if n := l.inflight.Load(); n != 0 {
+		t.Fatalf("a navigation on a terminal left %d effects in flight", n)
+	}
 	// A Sky.Spa server branch: the client already ran it (the split's
 	// residual); the backend produces no follow-up Msg for it.
 	out := Spa_collectFollowUps(Cmd_batch([]any{Nav_pushUrl("/a")}))

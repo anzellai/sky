@@ -247,20 +247,32 @@ tests =
                       Test.fail (errorToString e))
     , Test.test
           "a different prologue fails the handshake"
-          (\_ -> Test.err (newPair "v1" "v2" |> Result.andThen handshake))
+          (\_ ->
+              -- The setup must succeed first: a broken setup must not pass as
+              -- "the handshake failed".
+              case newPair "v1" "v2" of
+
+                  Ok p ->
+                      Test.err (handshake p)
+
+                  Err e ->
+                      Test.fail (errorToString e))
     , Test.test
           "a tampered transport message is refused"
           (\_ ->
-              Test.err
-                  (session ()
-                      |> Result.andThen
-                             (\s ->
-                                 Noise.encrypt "secret" s.initiator
-                                     |> Result.andThen
-                                            (\( _, ct ) ->
-                                                Noise.decrypt
-                                                    ("x" ++ ct)
-                                                    s.responder))))
+              case session () of
+
+                  Ok s ->
+                      case Noise.encrypt "secret" s.initiator of
+
+                          Ok ( _, ct ) ->
+                              Test.err (Noise.decrypt ("x" ++ ct) s.responder)
+
+                          Err e ->
+                              Test.fail (errorToString e)
+
+                  Err e ->
+                      Test.fail (errorToString e))
     , Test.test
           "the responder cannot write first, and an early transport is refused"
           (\_ ->
@@ -307,9 +319,13 @@ tests =
     , Test.test
           "a BLAKE2s initiator and a SHA256 responder do not complete a handshake"
           (\_ ->
-              Test.err
-                  (newPairSuite Noise.Blake2s Noise.Sha256
-                      |> Result.andThen handshake))
+              case newPairSuite Noise.Blake2s Noise.Sha256 of
+
+                  Ok p ->
+                      Test.err (handshake p)
+
+                  Err e ->
+                      Test.fail (errorToString e))
     , Test.test
           "Sha256 is the suite of initiator / responder"
           (\_ ->

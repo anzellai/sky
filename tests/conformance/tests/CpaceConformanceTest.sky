@@ -95,9 +95,15 @@ tests =
     , Test.test
           "finish refuses a malformed reply"
           (\_ ->
-              Test.err
-                  (Task.run (Cpace.start code "" "" "")
-                      |> Result.andThen (\( p, _ ) -> Cpace.finish p "short")))
+              -- The start must succeed first, so a broken start cannot pass
+              -- as "finish refused the reply".
+              case Task.run (Cpace.start code "" "" "") of
+
+                  Ok ( p, _ ) ->
+                      Test.err (Cpace.finish p "short")
+
+                  Err e ->
+                      Test.fail (errorToString e))
     , Test.test
           "a Pending value finishes once"
           (\_ ->

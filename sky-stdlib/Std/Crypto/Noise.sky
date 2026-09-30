@@ -32,6 +32,15 @@
 -- reuse a ChaCha20-Poly1305 nonce, which breaks the encryption. A failed
 -- handshake step ends the session: start a new one.
 --
+-- **The payload of message 1 is weaker than transport data.** An attacker
+-- who captured message 1 can send it to the responder again (it is a
+-- replay, and the responder cannot tell), and it has no forward secrecy: if
+-- the responder's static key leaks later, recorded message-1 payloads can be
+-- read. The message-2 payload is not replayable but is still sent before the
+-- handshake completes. Put only data that is safe to repeat and to reveal
+-- later in handshake payloads (a protocol version, a name). Send commands
+-- ("unlock", "pay") only as transport messages, after `transport`.
+--
 -- **Effects.** `initiator` and `responder` draw the ephemeral key, so they
 -- are `Task`s. Every later step is a pure `Result`.
 --
@@ -148,7 +157,9 @@ responderSuite_ =
 
 -- | `writeMessage payload handshake` — the next handshake message to send
 -- (the payload travels encrypted inside it), and the next state. `Err` when
--- it is not this side's turn or the value was already used.
+-- it is not this side's turn or the value was already used. The payload of
+-- the first message can be replayed and is not forward-secret: send commands
+-- only after `transport` (see the module notes).
 writeMessage : String -> Handshake -> Result Error ( Handshake, String )
 writeMessage =
     Ffi.kernel "Noise_writeMessage"
