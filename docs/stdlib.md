@@ -2134,7 +2134,15 @@ analytics captures fully and `identify user.id traits` attaches the user. This
 is the DX-friendly default; a privacy-conscious app shows a consent banner and
 downgrades with `setConsent Anonymous` (random anon id, no identity) or
 `setConsent Denied` (drops all capture). Consent + identity are session-scoped,
-so one Sky.Live user's identity never bleeds into another's.
+so one Sky.Live user's identity never bleeds into another's. In a Sky.Spa
+backend, an `App.api` handler or a `Sky.Http.Server` handler (v0.27) they are
+per visitor, keyed by a hash of the browser's long-lived cookie (the CSRF
+cookie, else the session cookie); a request with neither gets a state of its
+own. There they live in process memory (at most 100 000 visitors, 30 days
+idle), so a restart resets a visitor's `setConsent Denied` to the default until
+the app sets it again. An app that must honour consent across restarts keeps the
+choice in its model and applies it again (in `App.withRequest`, or on the first
+RPC).
 
 **Auto page-views (opt-in).** This attaches on the low-level `Sky.Live` backend
 config (the mechanism `--target web` compiles to): `|> Live.withAnalytics {

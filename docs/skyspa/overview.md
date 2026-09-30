@@ -329,6 +329,15 @@ Internal `<a href>` clicks are intercepted (History `pushState`, no reload);
 Back/Forward (`popstate`) is honoured; an external host, `target="_blank"`, a
 `download`, a `sky-external` mark, or a modified click is left to the browser.
 
+A same-origin link to a path the server owns is a full browser navigation, not a
+client route: a path no client route matches, a path under `/_sky/` or
+`/_rpc/`, and a path registered with `Spa.serverRoute "GET /admin/logout"`
+(for a path that is both a client route and a server route). A sign-out link,
+the Sky Console and a static file then reach the server. `Nav.pushUrl` and
+`Nav.replaceUrl` follow the same rule. One click runs only the handlers of the
+view it was delivered to; a nested outer `onClick` carries the Msg of that
+view.
+
 The full surface (typed signatures + summaries) is `sky doc Std.App`.
 
 ## Client persistence and identity
@@ -341,7 +350,7 @@ every tab of the origin, and it holds ONE model: the last one any tab wrote.
 **A stored model restores only for the identity it was stored under.** The
 identity is the value of the session field(s): the model fields of type
 `Session` / `Maybe Session` that a server branch writes, which the backend signs
-into the `sky_sid` cookie and the SSR seed carries. On a full load the client
+into the `sky_spa` cookie and the SSR seed carries. On a full load the client
 compares the identity of the stored model with the identity of the seed:
 
 | Stored model → seed | Result |
@@ -394,13 +403,13 @@ on the user's machine → **untrusted**. Therefore, unavoidably:
   routes (CSRF-exempt for the method they name). Security rests on
   re-validation.
 - An endpoint that authenticates with a session COOKIE (the auto-split's
-  signed `sky_sid`) is a `Server.rpc` route. The browser attaches the cookie
+  signed `sky_spa`) is a `Server.rpc` route. The browser attaches the cookie
   by itself, so the route refuses any request that is not a same-origin
   `application/json` POST before the handler runs (403). The auto-split
   registers every `/_rpc/<Msg>` and `/_rpc/__spaSignOut` this way. See
   [the auto-split security notes](auto-split.md#21-rpc-and-push-security).
 - Sign-out ends the signed session on the server, not only in the browser.
-  The `sky_sid` token carries a session id; sign-out (and any change of the
+  The `sky_spa` token carries a session id; sign-out (and any change of the
   signed identity) records that id as ended in the session store, so a copy of
   the cookie taken before sign-out is refused afterwards. Give the replicas a
   shared store (`[live] store` / `SKY_LIVE_STORE` = `postgres` or `redis`). See
