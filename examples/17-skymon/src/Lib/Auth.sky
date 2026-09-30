@@ -17,17 +17,17 @@ import Sky.Core.Error as Error exposing (Error(..), ErrorKind(..))
 
 getGitHubClientId : String
 getGitHubClientId =
-    Result.withDefault "" (Task.run (System.loadEnv "GITHUB_CLIENT_ID"))
+    System.getenvOr "GITHUB_CLIENT_ID" ""
 
 
 getGitHubClientSecret : String
 getGitHubClientSecret =
-    Result.withDefault "" (Task.run (System.loadEnv "GITHUB_CLIENT_SECRET"))
+    System.getenvOr "GITHUB_CLIENT_SECRET" ""
 
 
 getAdmins : String
 getAdmins =
-    Result.withDefault "" (Task.run (System.loadEnv "SKYMON_ADMINS"))
+    System.getenvOr "SKYMON_ADMINS" ""
 
 
 getGitHubAuthUrl : String
