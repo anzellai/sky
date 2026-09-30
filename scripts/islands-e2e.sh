@@ -33,8 +33,10 @@ fi
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 source "$ROOT/scripts/lib/with-timeout.sh"
-command -v node >/dev/null 2>&1 || { echo "islands-e2e: 'node' is required." >&2; exit 1; }
-command -v go >/dev/null 2>&1 || { echo "islands-e2e: 'go' is required." >&2; exit 1; }
+source "$ROOT/scripts/lib/require-tool.sh"
+# SKY_LIVE_TESTS=skip is the one opt-out; it skips the whole gate, loudly.
+require_tool node "install Node.js 20+ (and 'npm ci' for playwright)" || exit 0
+require_tool go "install Go 1.25+ (https://go.dev/dl/)" || exit 0
 
 # A stable fixture directory per target, emptied first: the shared gate build
 # cache (scripts/lib/gate-build-cache.sh) keys on the project path.

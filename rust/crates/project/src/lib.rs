@@ -37,6 +37,8 @@ pub mod go_jobs;
 /// Available memory and the per-project peak records (`go_jobs`, the Sky.Spa
 /// leg plan).
 pub mod memory;
+/// Which module names a dependency or the project may define (F-1).
+mod module_ownership;
 /// `sky doc --api openapi` — a valid OpenAPI 3.1 spec generated statically from
 /// the app's typed source, reusing the `diagram::wire` analysis.
 pub mod openapi;
@@ -58,13 +60,24 @@ pub mod spa_partition;
 pub mod spa_split;
 /// `SKY_TIMINGS=1` / `sky build --timings` — the per-phase wall-clock report.
 pub mod timings;
+
+/// The v0.26 -> v0.27 migration guide, in the URL form Sky diagnostics
+/// already use for docs links.
+pub const MIGRATION_GUIDE: &str =
+    "https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md";
+
+/// `see <guide>#<anchor>`: the last line of a diagnostic for a change that
+/// makes an older project fail.
+pub fn migration_see(anchor: &str) -> String {
+    format!("see {MIGRATION_GUIDE}#{anchor}")
+}
 pub use build::{
     build_example, build_project, build_project_scoped, bundled_source_texts, configured_bin_name,
     configured_source_root, db_driver_conflict, driver_for_dsn, emit_example_source,
     emit_example_warnings, enumerate_dependency_files, enumerate_skydep_files, ffi_trust,
     ffi_type_surface, front_half_errors, go_diagnostics, is_spa_generated_project,
-    load_ffi_surface, migration_hint_for, offline_db_plan, sky_toml_flag, sky_toml_project_key,
-    sky_toml_section_key, AppScope, BuildOptions, BuildReport, OfflineDbPlan,
+    load_ffi_surface, migration_hint_for, offline_db_plan, parse_errors, sky_toml_flag,
+    sky_toml_project_key, sky_toml_section_key, AppScope, BuildOptions, BuildReport, OfflineDbPlan,
     EMBEDDED_BUNDLE_FILENAME, SPA_GENERATED_KERNEL_PREFIX,
 };
 /// The structured diagnostic types a [`BuildReport`] carries, re-exported so

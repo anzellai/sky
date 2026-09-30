@@ -1369,7 +1369,11 @@ fn on_disk_ref(dir: &Path) -> Option<String> {
 /// Whether an on-disk ref satisfies a declared exact-pin spec — equal, or one a
 /// prefix of the other (short-vs-full SHA).
 fn ref_satisfies(on_disk: &str, spec: &str) -> bool {
-    on_disk == spec || on_disk.starts_with(spec) || spec.starts_with(on_disk)
+    on_disk == spec
+        || on_disk.starts_with(spec)
+        || spec.starts_with(on_disk)
+        // A bare version is satisfied by its `v` tag (see `fetch_sky_dep_from`).
+        || (is_bare_semver(spec) && on_disk == format!("v{spec}"))
 }
 
 /// Fetch a Sky-source package dependency into `<skydeps_dir>/<slug>/` via `git`,
@@ -1384,10 +1388,35 @@ fn ref_satisfies(on_disk: &str, spec: &str) -> bool {
 /// checkout lands on one, else the HEAD SHA) for pin-by-default recording. Keeps
 /// `.git` so `sky update` can re-fetch; `.skydeps/` is gitignored.
 fn fetch_sky_dep(skydeps_dir: &Path, path: &str, spec: &str) -> Result<String, String> {
+    fetch_sky_dep_from(skydeps_dir, path, &format!("https://{path}"), spec)
+}
+
+/// True for a bare semantic version (`0.1.3`, `1.2.0-rc.1`): the form a Sky
+/// package's tag carries with a `v` prefix (`v0.1.3`).
+fn is_bare_semver(spec: &str) -> bool {
+    let core = spec.split(['-', '+']).next().unwrap_or("");
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// [`fetch_sky_dep`] from an explicit repository `url` (a `file://` or local
+/// path in the tests, which run with no network). A bare version such as
+/// `"0.1.3"` resolves to the tag `v0.1.3` when there is no tag `0.1.3`: the
+/// release tags are `v`-prefixed, and the raw git error that came back before
+/// named neither the tag nor the fix.
+fn fetch_sky_dep_from(
+    skydeps_dir: &Path,
+    path: &str,
+    url: &str,
+    spec: &str,
+) -> Result<String, String> {
     let spec = spec_or_latest(spec);
     let slug = path.replace('/', "_");
     let dest = skydeps_dir.join(&slug);
-    let url = format!("https://{path}");
+    let url = url.to_string();
     // Remove any stale tree first so a re-fetch is deterministic.
     if dest.exists() {
         std::fs::remove_dir_all(&dest).map_err(|e| format!("rm .skydeps/{slug}: {e}"))?;
@@ -1401,11 +1430,36 @@ fn fetch_sky_dep(skydeps_dir: &Path, path: &str, spec: &str) -> Result<String, S
     } else if spec == "latest" {
         run_git(skydeps_dir, &["clone", "--depth", "1", &url, &dest_s])?;
     } else {
-        // exact tag OR branch — both accepted by `--branch`.
-        run_git(
-            skydeps_dir,
-            &["clone", "--depth", "1", "--branch", spec, &url, &dest_s],
-        )?;
+        // exact tag OR branch — both accepted by `--branch`. A bare semver
+        // falls back to its `v`-prefixed tag.
+        let mut candidates = vec![spec.to_string()];
+        if is_bare_semver(spec) {
+            candidates.push(format!("v{spec}"));
+        }
+        let mut last_err = String::new();
+        let mut cloned = false;
+        for cand in &candidates {
+            let _ = std::fs::remove_dir_all(&dest);
+            match run_git(
+                skydeps_dir,
+                &["clone", "--depth", "1", "--branch", cand, &url, &dest_s],
+            ) {
+                Ok(()) => {
+                    cloned = true;
+                    break;
+                }
+                Err(e) => last_err = e,
+            }
+        }
+        if !cloned {
+            let _ = std::fs::remove_dir_all(&dest);
+            let tried = candidates.join(" or ");
+            return Err(format!(
+                "{path}: no tag or branch {tried} in {url}. Fix: set its version in sky.toml \
+                 [dependencies] to a tag the repository has (release tags are usually \
+                 `v`-prefixed, e.g. \"v0.1.3\").\n  ({last_err})"
+            ));
+        }
     }
 
     // Must be a Sky package: a top-level `src/` the build loads modules from.
@@ -1540,6 +1594,22 @@ fn upsert_path_dependency(
     key: &str,
     path: &str,
 ) -> Result<DepEdit, String> {
+    // `sky.toml` holds the key and the path in basic TOML strings that Sky's
+    // own line reader does not unescape, so a `"`, a `\` or a control
+    // character would write a line other TOML readers reject (and a package's
+    // `name` would control text on it). Refuse them instead (F-14).
+    for (what, text) in [("name", key), ("path", path)] {
+        if let Some(c) = text
+            .chars()
+            .find(|c| *c == '"' || *c == '\\' || c.is_control())
+        {
+            return Err(format!(
+                "the dependency {what} {text:?} contains {c:?}, which sky.toml cannot hold. \
+                 Fix: rename the directory or the package. {}",
+                crate::migration_see("dependency-names-and-paths")
+            ));
+        }
+    }
     let existing = std::fs::read_to_string(sky_toml).unwrap_or_default();
     let quoted = format!("\"{key}\"");
     let value = crate::path_deps::inline_value(path);
@@ -1771,6 +1841,99 @@ pub(crate) fn is_exact_pin(spec: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bare version (`"0.1.3"`) resolves to the `v0.1.3` tag, and a version
+    /// with no tag at all names the fix. Offline: a local git repository.
+    #[test]
+    fn a_bare_version_resolves_to_its_v_tag() {
+        let base = std::env::temp_dir().join(format!(
+            "sky-vtag-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo = base.join("repo");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(
+            repo.join("src/Pkg.sky"),
+            "module Pkg exposing (x)\n\n\nx : Int\nx =\n    1\n",
+        )
+        .unwrap();
+        let git = |args: &[&str]| {
+            let ok = Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+        git(&["tag", "v0.1.3"]);
+        let skydeps = base.join(".skydeps");
+        let url = format!("file://{}", repo.display());
+        let r = fetch_sky_dep_from(&skydeps, "example.com/pkg", &url, "0.1.3")
+            .expect("0.1.3 resolves to v0.1.3");
+        assert_eq!(r, "v0.1.3");
+        assert!(
+            ref_satisfies(&r, "0.1.3"),
+            "the v tag satisfies the bare pin"
+        );
+        assert!(skydeps.join("example.com_pkg/src/Pkg.sky").is_file());
+        let e = fetch_sky_dep_from(&skydeps, "example.com/pkg", &url, "0.9.9")
+            .expect_err("no such tag");
+        assert!(
+            e.contains("no tag or branch 0.9.9 or v0.9.9") && e.contains("Fix:"),
+            "{e}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// F-14: a quote or a backslash in a path dependency's name or path is
+    /// refused, and the manifest is left untouched, instead of writing a
+    /// `sky.toml` line other TOML readers reject.
+    #[test]
+    fn a_path_dependency_with_a_quote_is_refused() {
+        let dir = std::env::temp_dir().join(format!("sky-ffi-ops-quote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let toml = dir.join("sky.toml");
+        let before = "name = \"x\"\nversion = \"0.1.0\"\n";
+        std::fs::write(&toml, before).unwrap();
+        for (key, path) in [
+            ("q\"uote", "../q\"uote"),
+            ("ok", "../q\"uote"),
+            ("a\\b", "../ab"),
+            ("new\nline", "../nl"),
+        ] {
+            match upsert_path_dependency(&toml, "dependencies", key, path) {
+                Err(e) => assert!(
+                    e.contains("sky.toml cannot hold")
+                        && e.contains("docs/migration/v0.27.md#dependency-names-and-paths"),
+                    "{e}"
+                ),
+                Ok(_) => panic!("{key:?} / {path:?} must be refused"),
+            }
+        }
+        assert_eq!(std::fs::read_to_string(&toml).unwrap(), before);
+        assert!(matches!(
+            upsert_path_dependency(&toml, "dependencies", "lib", "../lib").unwrap(),
+            DepEdit::Added
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn go_dep_roundtrip_in_sky_toml() {

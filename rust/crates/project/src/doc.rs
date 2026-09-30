@@ -1078,10 +1078,31 @@ fn union_signature(
     let name = d.name().map(|n| n.text().to_string()).unwrap_or_default();
     let open = with_ctors.is_none_or(|s| s.contains(&name));
     let variants: Vec<String> = d.variants().iter().map(variant_text).collect();
-    if variants.is_empty() || !open {
-        format!("type {name}")
+    // The type parameters belong to the name, opaque or not: `type Ref a`,
+    // `type Step state a = Loop state | Done a`. They used to be dropped, so
+    // `sky doc` showed `type Ref` and a variant's `state` came from nowhere
+    // (G-15).
+    let params: Vec<String> = d
+        .syntax()
+        .children()
+        .find(|c| c.kind() == syntax::SyntaxKind::TypeVarList)
+        .map(|tvl| {
+            tvl.children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .filter(|t| t.kind() == syntax::SyntaxKind::LowerIdent)
+                .map(|t| t.text().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let head = if params.is_empty() {
+        name
     } else {
-        format!("type {name} = {}", variants.join(" | "))
+        format!("{name} {}", params.join(" "))
+    };
+    if variants.is_empty() || !open {
+        format!("type {head}")
+    } else {
+        format!("type {head} = {}", variants.join(" | "))
     }
 }
 
@@ -1091,6 +1112,81 @@ fn union_signature(
 /// documents the identifier that leads the first non-comment, non-blank line
 /// after it.
 fn doc_comments(src: &str) -> BTreeMap<String, String> {
+    let mut map = doc_marker_comments(src);
+    // A declaration with no `-- |` block keeps the summary of a `{-| … -}`
+    // block or a plain `--` block written directly above it (no blank line),
+    // which is how many stdlib values are documented. They used to render as
+    // a bare signature (G-7).
+    for (name, summary) in adjacent_comments(src) {
+        map.entry(name).or_insert(summary);
+    }
+    map
+}
+
+/// The `{-| … -}` and plain `--` comment blocks that sit directly above a
+/// declaration (no blank line between), as `name → first line`. A decoration
+/// line (`-- ──`, `-- ==`) or an empty block gives no summary.
+fn adjacent_comments(src: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let lines: Vec<&str> = src.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        let (block, next) = if let Some(rest) = t.strip_prefix("{-|") {
+            // A `{-| … -}` block, possibly on several lines.
+            let mut text: Vec<String> = Vec::new();
+            let mut j = i;
+            let mut first = rest.to_string();
+            loop {
+                let (body, closed) = match first.find("-}") {
+                    Some(k) => (first[..k].to_string(), true),
+                    None => (first.clone(), false),
+                };
+                text.push(body);
+                j += 1;
+                if closed || j >= lines.len() {
+                    break;
+                }
+                first = lines[j].to_string();
+            }
+            (text, j)
+        } else if t.starts_with("--") && !t.starts_with("-- |") && !t.starts_with("--|") {
+            let mut text: Vec<String> = Vec::new();
+            let mut j = i;
+            while j < lines.len() && lines[j].trim_start().starts_with("--") {
+                text.push(lines[j].trim_start().trim_start_matches('-').to_string());
+                j += 1;
+            }
+            (text, j)
+        } else {
+            i += 1;
+            continue;
+        };
+        if next < lines.len() {
+            if let Some(name) = leading_ident(lines[next].trim_start()) {
+                // The first line that is text, not a rule (`── Section ──`).
+                let summary = block
+                    .iter()
+                    .map(|l| l.trim())
+                    .find(|l| {
+                        !l.is_empty()
+                            && !l.starts_with('─')
+                            && !l.starts_with('=')
+                            && !l.starts_with('#')
+                    })
+                    .map(str::to_string);
+                if let Some(s) = summary {
+                    map.entry(name).or_insert(s);
+                }
+            }
+        }
+        i = next.max(i + 1);
+    }
+    map
+}
+
+/// The `-- |` doc blocks, as `name → first line` (see [`doc_comments`]).
+fn doc_marker_comments(src: &str) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     let lines: Vec<&str> = src.lines().collect();
     let mut i = 0;
@@ -1176,6 +1272,104 @@ fn collect_sky(dir: &Path, out: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// G-7: every value a stdlib module exposes has a summary in `sky doc`,
+    /// which AGENTS.md names as the live API. A new exposed value with no doc
+    /// comment turns this red.
+    #[test]
+    fn every_exposed_stdlib_value_has_a_summary() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("repo root")
+            .to_path_buf();
+        let mut files = Vec::new();
+        crate::build::collect_sky(&repo.join("sky-stdlib"), &mut files);
+        assert!(files.len() > 50, "found {} stdlib files", files.len());
+        let mut missing = Vec::new();
+        for f in files {
+            let src = std::fs::read_to_string(&f).unwrap();
+            let rel = f.strip_prefix(&repo).unwrap().display().to_string();
+            for sym in module_symbols(&src) {
+                let is_value = sym
+                    .name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_lowercase());
+                if is_value && sym.summary.trim().is_empty() {
+                    missing.push(format!("{rel}: {}", sym.name));
+                }
+            }
+        }
+        // The values that had no summary when this gate landed (v0.27.0),
+        // one `path: name` per line. The list may only shrink: a NEW exposed
+        // value with no summary fails, and so does a listed value that has
+        // gained one (delete its line).
+        let debt: std::collections::BTreeSet<&str> = include_str!("doc_summary_debt.txt")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        let missing_set: std::collections::BTreeSet<&str> =
+            missing.iter().map(String::as_str).collect();
+        let new: Vec<&&str> = missing_set.difference(&debt).collect();
+        let paid: Vec<&&str> = debt.difference(&missing_set).collect();
+        assert!(
+            new.is_empty(),
+            "{} exposed stdlib value(s) render with no summary in `sky doc`; add a \
+             `-- |` comment above each:\n  {}",
+            new.len(),
+            new.iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
+        assert!(
+            paid.is_empty(),
+            "these values now have a summary; delete their lines from \
+             project/src/doc_summary_debt.txt:\n  {}",
+            paid.iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
+    }
+
+    /// G-7 and G-15: a value documented with a plain `--` block or a `{-| -}`
+    /// block directly above it keeps its summary, and a union or opaque type
+    /// shows its type parameters.
+    #[test]
+    fn plain_and_block_comments_give_a_summary_and_types_keep_their_parameters() {
+        let src = "module M exposing (Ref, Step(..), island, onEvent, helper)\n\n\
+                   -- ── Section ─────\n\n\
+                   type Ref a\n    = Ref Int\n\n\
+                   type Step state a\n    = Loop state\n    | Done a\n\n\
+                   -- An island the widget owns.\n\
+                   -- More detail.\n\
+                   island : Int -> Int\nisland x =\n    x\n\n\
+                   {-| Decode an island event.\n    More. -}\n\
+                   onEvent : Int -> Int\nonEvent x =\n    x\n\n\
+                   -- | The marker wins.\n\
+                   helper : Int\nhelper =\n    1\n";
+        let syms = module_symbols(src);
+        let get = |n: &str| {
+            syms.iter()
+                .find(|s| s.name == n)
+                .unwrap_or_else(|| panic!("{n}"))
+        };
+        assert_eq!(get("island").summary, "An island the widget owns.");
+        assert_eq!(get("onEvent").summary, "Decode an island event.");
+        assert_eq!(get("helper").summary, "The marker wins.");
+        assert_eq!(get("Ref").signature, "type Ref a");
+        assert_eq!(
+            get("Step").signature,
+            "type Step state a = Loop state | Done a"
+        );
+        assert!(
+            get("Ref").summary.is_empty(),
+            "a section rule is not a summary"
+        );
+    }
 
     #[test]
     fn deprecated_front_doors_are_the_five_app_shape_modules() {

@@ -23,7 +23,8 @@ if [ ! -x "$SKY" ]; then
 fi
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
-command -v node >/dev/null 2>&1 || { echo "spa-vdom-identity-e2e: 'node' is required." >&2; exit 1; }
+source "$ROOT/scripts/lib/require-tool.sh"
+require_tool node "install Node.js 20+ (and 'npm ci' for playwright)" || exit 0
 
 # A stable fixture directory, emptied first: the shared gate build cache
 # (scripts/lib/gate-build-cache.sh) keys on the project path, so a fresh

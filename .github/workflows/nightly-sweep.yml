@@ -143,8 +143,8 @@ jobs:
     # holds and the console e2e). 1.5x = 15; 25 leaves room for a cold Go cache
     # and browser download, still far inside the 90-min T3 ceiling.
     # console-live-e2e adds ~11 min (a Sky.Spa wasm build, six 60 s browser
-    # runs): 40.
-    timeout-minutes: 40
+    # runs): 40. nav-e2e adds two fixture builds in two browsers: 50.
+    timeout-minutes: 50
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -240,6 +240,11 @@ jobs:
           npx playwright install --with-deps webkit
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
+      # Std.Nav: `update` moves the address bar without a reload (pushUrl,
+      # replaceUrl, clearFragment, a server arm's navigation, an off-site URL
+      # refused), on Sky.Live and the Sky.Spa client. Chromium + WebKit.
+      - name: Gate — Std.Nav e2e (Sky.Live + Sky.Spa, strict CSP)
+        run: scripts/nav-e2e.sh
       # Sky.Spa Msg order: each Msg runs once, in arrival order, with its Cmds,
       # as on Sky.Live (web:app compared with Live); RPCs overlap; the wasm
       # client holds its own WebSocket; a sky_sid cookie copied before sign-out

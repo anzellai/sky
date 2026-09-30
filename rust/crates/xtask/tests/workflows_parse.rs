@@ -1139,40 +1139,9 @@ fn the_release_workflow_is_the_full_suite() {
         ("scripts/verify-all-web.sh", "the browser tier"),
         ("scripts/doc-examples.sh", "the live-docs examples"),
         ("go test -race", "the Go runtime under the race detector"),
-        ("scripts/tui-e2e.sh", "e2e: terminal loops"),
-        ("scripts/spa-vdom-identity-e2e.sh", "e2e: DOM identity"),
-        ("scripts/live-client-e2e.sh", "e2e: Sky.Live client"),
-        ("scripts/spa-rpc-consistency-e2e.sh", "e2e: RPC consistency"),
-        ("scripts/ui-forms-e2e.sh", "e2e: Std.Ui forms"),
-        ("scripts/spa-stale-handler-e2e.sh", "e2e: stale handlers"),
-        ("scripts/spa-examples-e2e.sh", "e2e: Sky.Spa examples"),
-        (
-            "scripts/spa-client-crypto-e2e.sh",
-            "e2e: withClientCrypto Noise session through two relay steps",
-        ),
-        (
-            "scripts/spa-rpc-order-e2e.sh",
-            "e2e: each Msg once, in arrival order; RPCs overlap (web:app vs Sky.Live)",
-        ),
-        (
-            "scripts/spa-websocket-e2e.sh",
-            "e2e: the Sky.Spa client's own WebSocket",
-        ),
-        (
-            "scripts/session-revocation-e2e.sh",
-            "e2e: a Sky.Spa cookie copied before sign-out is refused",
-        ),
-        ("scripts/spa-restore-e2e.sh", "e2e: restore"),
-        ("scripts/csp-e2e.sh", "e2e: strict Content-Security-Policy"),
-        ("scripts/islands-e2e.sh", "e2e: widget islands"),
-        (
-            "scripts/ui-canvas-terminal-e2e.sh",
-            "e2e: Std.Ui canvas, text wrapping and terminal",
-        ),
-        (
-            "scripts/header-session-e2e.sh",
-            "e2e: Sky.Live without cookies",
-        ),
+        // Every `scripts/*-e2e.sh` is required by the rule in
+        // `e2e_scripts_are_gated.rs`, not by a hand list that cannot notice a
+        // new script (G-1: nav-e2e ran nowhere for a whole release).
         (
             "--test native_shell_flow -- --ignored",
             "the native shells on macOS: iOS simulator smoke + Android release",

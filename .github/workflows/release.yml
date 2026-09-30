@@ -541,7 +541,10 @@ jobs:
   # a T1 gate is in no shard. The harness prints each gate's verdict as it ends.
   gate-t1-1:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The harness runs this job's gates one after another: their summed budget
+    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
+    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -567,7 +570,10 @@ jobs:
 
   gate-t1-2:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The harness runs this job's gates one after another: their summed budget
+    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
+    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -593,7 +599,10 @@ jobs:
 
   gate-t1-3:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The harness runs this job's gates one after another: their summed budget
+    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
+    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
+    timeout-minutes: 125
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -619,7 +628,10 @@ jobs:
 
   gate-t1-4:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The harness runs this job's gates one after another: their summed budget
+    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
+    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
+    timeout-minutes: 155
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -690,7 +702,10 @@ jobs:
     runs-on: ubuntu-latest
     # The gate budget is 4000 s (registry.rs, 468 behavioural cases); the job
     # needs setup on top, so the job limit stays above the gate budget.
-    timeout-minutes: 80
+    # The harness runs this job's gates one after another: their summed budget
+    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
+    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
+    timeout-minutes: 85
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
@@ -714,7 +729,10 @@ jobs:
   # (sky-out/sky), which the composite installs. `--require-proofs` retained.
   gate-t2-rest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The harness runs this job's gates one after another: their summed budget
+    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
+    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
+    timeout-minutes: 70
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
@@ -1106,8 +1124,11 @@ jobs:
           node-version: '22'
       - name: rt tests under the race detector, with a live PostgreSQL
         working-directory: runtime-go
+        # The DSN-gated live tests fail, never skip, without it (G-8,
+        # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: CGO_ENABLED=1 go test -race ./rt/... -count=1
 
   # gate-web — the browser tier and the e2e scripts: every Sky.Live /
@@ -1120,8 +1141,9 @@ jobs:
     runs-on: ubuntu-latest
     # The nightly job budgets 25 min for the tier; the e2e scripts build their
     # fixtures on top. 45 keeps ~1.5x.
-    # console-live-e2e adds ~11 min: 60.
-    timeout-minutes: 60
+    # console-live-e2e adds ~11 min: 60. nav-e2e adds two fixture builds and
+    # two browsers: 70.
+    timeout-minutes: 70
     env:
       GO_CACHE_BUDGET_MB: '6144'
     steps:
@@ -1161,6 +1183,9 @@ jobs:
           npx playwright install --with-deps webkit
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
+      - name: Std.Nav e2e (pushUrl / replaceUrl / clearFragment, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
+        # WebKit was installed by the step above.
+        run: scripts/nav-e2e.sh
       - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
         # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
         # wasm client holds its own WebSocket; a sky_sid cookie copied before
@@ -1189,6 +1214,34 @@ jobs:
             .skycache/verify/**
           if-no-files-found: ignore
           retention-days: 14
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-example-e2e — the behavioural contracts in `examples/*/e2e.json`
+  # (`scripts/example-e2e.sh`): CLI steps, HTTP requests and Sky.Live event
+  # dispatches with expected output, for the 17 examples that declare one. It
+  # ran in no workflow before v0.27.0 (G-9); the script refuses to pass when
+  # fewer contracts ran than exist.
+  gate-example-e2e:
+    runs-on: ubuntu-latest
+    # 17 clean builds (13-skyshop's cold FFI install is the long pole) plus the
+    # contract steps. 60.
+    timeout-minutes: 60
+    env:
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: example-e2e
+      - name: Install jq, lsof, sqlite3
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq lsof sqlite3
+      - name: Example behavioural contracts
+        run: scripts/example-e2e.sh
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1408,10 +1461,19 @@ jobs:
       - gate-falsifiers-9
       - gate-race
       - gate-web
+      - gate-example-e2e
       - gate-sweep
       - gate-native
       - gate-native-android
     runs-on: ubuntu-latest
+    # `id-token` + `attestations` let the job sign a build-provenance
+    # attestation for every published asset (F-9): `gh attestation verify
+    # <file> -R anzellai/sky` then proves the file came from this workflow.
+    # `sky upgrade`, install.sh and the Dockerfile verify checksums.txt.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     # No compilation: download 4 artifacts, checksum, extract CHANGELOG notes,
     # create the Release (asset upload dominates) ≈ 3 min. 1.5x ≈ 5.
     timeout-minutes: 5
@@ -1475,6 +1537,11 @@ jobs:
           cd release
           sha256sum -- * > checksums.txt
           cat checksums.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'release/*'
 
       - name: Extract release notes from CHANGELOG
         run: |

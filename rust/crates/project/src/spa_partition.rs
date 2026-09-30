@@ -563,7 +563,22 @@ const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket", "Nav"];
 /// frontend. The `classification_is_exhaustive` test makes an unclassified
 /// *known* kernel a BUILD FAILURE; this branch is the runtime defense-in-depth
 /// for a family added ahead of the lists (or an unexpected FFI-symbol prefix).
+/// Members of an otherwise client-safe (`KNOWN_PURE_KERNELS`) family that
+/// read the server's session store, secret or request: the v0.27.0 Sky.Spa
+/// session and wire-handshake kernels the generated backend calls
+/// (runtime-go/rt/spa_session_legacy.go, spa_wire.go). Never client-side.
+const SERVER_ONLY_MEMBERS: &[(&str, &str)] = &[
+    ("Spa", "sessionToken"),
+    ("Spa", "sessionCookies"),
+    ("Spa", "sessionBoot"),
+    ("Spa", "setWireHash"),
+    ("Spa", "isLegacyRpc"),
+];
+
 fn classify_kernel(module: &str, func: &str) -> KernelClass {
+    if SERVER_ONLY_MEMBERS.contains(&(module, func)) {
+        return KernelClass::ServerOnly;
+    }
     if let Some(client_safe) = mixed_client_safe(module) {
         // Per-function: only a listed member stays on the client.
         return if client_safe.contains(&func) {
@@ -5556,8 +5571,10 @@ fn collect_write_leaves(
                 return Some(vec![BTreeSet::new()]);
             }
             // A field-preserving `{ model | … }` (directly or through a chain of
-            // preserving helpers) — the leaf assigns exactly those keys.
-            model_write_shape(db, body, m, model_local, let_locals, depth)
+            // preserving helpers) — the leaf assigns the keys EVERY path of it
+            // assigns (NEW-1: a helper that writes `page` on one path only must
+            // not count `page` as always written).
+            model_always_writes(db, body, m, model_local, let_locals, depth)
                 .map(|fields| vec![fields])
         }
         Expr::Let { defs, body: b } => {
@@ -5626,6 +5643,135 @@ fn collect_write_leaves(
         // give up so `always_written` is empty (send every field, sound).
         _ => None,
     }
+}
+
+/// The fields a field-preserving model-valued expression assigns on EVERY
+/// path: the counterpart of [`model_write_shape`], which answers the fields
+/// assigned on SOME path (the write-set, a union). `if`/`case` intersect their
+/// branches, a helper call contributes what the helper writes on every path of
+/// its own body. `None` when the shape is not modelled (the caller then treats
+/// nothing as always written, the sound over-approximation).
+fn model_always_writes(
+    db: &dyn SkyDb,
+    body: &Body,
+    e: ExprId,
+    model_local: Option<LocalId>,
+    let_locals: &HashMap<LocalId, ExprId>,
+    depth: usize,
+) -> Option<BTreeSet<String>> {
+    if depth > IO_DELEGATE_DEPTH {
+        return None;
+    }
+    let intersect = |sets: Vec<BTreeSet<String>>| -> Option<BTreeSet<String>> {
+        let mut it = sets.into_iter();
+        let mut acc = it.next()?;
+        for s in it {
+            acc = acc.intersection(&s).cloned().collect();
+        }
+        Some(acc)
+    };
+    match &body.exprs[e] {
+        Expr::Var(Res::Local(l)) if Some(*l) == model_local => Some(BTreeSet::new()),
+        Expr::Var(Res::Local(l)) => {
+            let bound = *let_locals.get(l)?;
+            model_always_writes(db, body, bound, model_local, let_locals, depth + 1)
+        }
+        Expr::Update { base, fields } => {
+            let mut s = model_always_writes(db, body, *base, model_local, let_locals, depth)?;
+            for (n, _) in fields {
+                s.insert(n.as_str().to_string());
+            }
+            Some(s)
+        }
+        Expr::Call(callee, args) => {
+            let Expr::Var(Res::Def(f)) = &body.exprs[*callee] else {
+                return None;
+            };
+            let derived: Vec<usize> = args
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| {
+                    model_write_shape(db, body, **a, model_local, let_locals, depth).is_some()
+                })
+                .map(|(i, _)| i)
+                .collect();
+            if derived.len() != 1 {
+                return None;
+            }
+            let i = derived[0];
+            let mut s = helper_always_writes_at(db, *f, i, depth + 1)?;
+            s.extend(model_always_writes(
+                db,
+                body,
+                args[i],
+                model_local,
+                let_locals,
+                depth,
+            )?);
+            Some(s)
+        }
+        Expr::Let { defs, body: b } => {
+            let mut ls = let_locals.clone();
+            add_let_locals(defs, &mut ls);
+            model_always_writes(db, body, *b, model_local, &ls, depth)
+        }
+        Expr::If { arms, els } => {
+            let mut sets = Vec::new();
+            for (_, t) in arms {
+                sets.push(model_always_writes(
+                    db,
+                    body,
+                    *t,
+                    model_local,
+                    let_locals,
+                    depth,
+                )?);
+            }
+            sets.push(model_always_writes(
+                db,
+                body,
+                *els,
+                model_local,
+                let_locals,
+                depth,
+            )?);
+            intersect(sets)
+        }
+        Expr::Case { branches, .. } => {
+            let mut sets = Vec::new();
+            for br in branches {
+                sets.push(model_always_writes(
+                    db,
+                    body,
+                    br.body,
+                    model_local,
+                    let_locals,
+                    depth,
+                )?);
+            }
+            intersect(sets)
+        }
+        _ => None,
+    }
+}
+
+/// What helper `f` assigns on every path to its parameter at index `i`.
+fn helper_always_writes_at(
+    db: &dyn SkyDb,
+    f: DefId,
+    i: usize,
+    depth: usize,
+) -> Option<BTreeSet<String>> {
+    if depth > IO_DELEGATE_DEPTH {
+        return None;
+    }
+    let loc = db.def_loc(f)?;
+    let resolved = db.resolve(loc.module);
+    let body = resolved.bodies.get(&f)?;
+    let root = body.root?;
+    let mlocal = param_local_at(body, i)?;
+    let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
+    model_always_writes(db, body, root, Some(mlocal), &let_locals, depth + 1)
 }
 
 /// The `always_written` intersection for an arm: the fields assigned fresh on
@@ -6806,6 +6952,27 @@ mod tests {
     /// `Decimal`, `Csv`, `Money`, …) were never checked, fell to the
     /// fail-closed default, and sent a pure branch (`Bytes.slice`) to the
     /// server.
+    #[test]
+    fn the_spa_session_and_wire_kernels_are_server_only() {
+        for sym in [
+            "Spa_sessionToken",
+            "Spa_sessionCookies",
+            "Spa_sessionBoot",
+            "Spa_setWireHash",
+            "Spa_isLegacyRpc",
+        ] {
+            let mut acc = Refs::default();
+            record_ffi_symbol(sym, &mut acc, false);
+            assert_eq!(acc.server_kernels.len(), 1, "`{sym}` is server-only");
+        }
+        let mut acc = Refs::default();
+        record_ffi_symbol("Spa_rpc", &mut acc, false);
+        assert!(
+            acc.server_kernels.is_empty(),
+            "the rest of Spa stays client-safe"
+        );
+    }
+
     #[test]
     fn ffi_symbol_families_are_all_decided() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sky-stdlib");

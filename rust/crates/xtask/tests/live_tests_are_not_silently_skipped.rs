@@ -711,3 +711,124 @@ fn go_runtime_live_probes_go_through_the_go_live_gate() {
         offenders.join("\n")
     );
 }
+
+/// Every `t.Skip` in a `runtime-go/rt` test that is NOT a live-environment
+/// probe, with the reason it may skip. A skip matches an entry when the entry's
+/// file is the test's file and its text occurs on the skip's line.
+const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
+    (
+        "console_boot_test.go",
+        "subprocess helper",
+        "a helper test that only runs when its parent re-executes the binary",
+    ),
+    (
+        "console_boot_test.go",
+        "inside subprocess",
+        "the parent half of a re-exec pair; the child half runs the assertion",
+    ),
+    (
+        "identity_key_test.go",
+        "no longer a %%v collision",
+        "a stale fixture pair; the message names the fix, not a missing tool",
+    ),
+    (
+        "live_embedded_test.go",
+        "re-execs the test binary",
+        "a helper body that runs only in the re-executed child process",
+    ),
+    (
+        "gob_register_test.go",
+        "gob.Register(nil) did not panic",
+        "a Go-version-dependent failure path; nothing to install fixes it",
+    ),
+    (
+        "register_sky_gob_types_test.go",
+        "this gob version encoded",
+        "a Go-version-dependent gap; nothing to install fixes it",
+    ),
+    (
+        "pg_embed_socket_test.go",
+        "cannot create a symlink here",
+        "the filesystem refuses symlinks; not a missing tool",
+    ),
+    (
+        "file_info_test.go",
+        "symlinks need a privilege on Windows",
+        "Windows without the symlink privilege",
+    ),
+    (
+        "json_value_session_gob_test.go",
+        "skipped under -short",
+        "an explicit -short run asked for the re-exec test to be left out",
+    ),
+    (
+        "live_store_restart_test.go",
+        "skipped under -short",
+        "an explicit -short run asked for the re-exec test to be left out",
+    ),
+    (
+        "pg_embed_live_test.go",
+        "no home directory",
+        "no durable home directory exists at all on this host",
+    ),
+];
+
+/// G-8: a Go runtime test may skip only through `live_gate_test.go` or for a
+/// declared, non-environmental reason. A DSN-gated `t.Skip("SKY_TEST_POSTGRES_DSN
+/// unset …")` printed `ok` everywhere the DSN was not set, outside the live
+/// gate and outside the older guard (which looked only for the node and
+/// pg_ctl probes). Such a test goes through a `requirePostgresDSN(t)` style
+/// helper in `live_gate_test.go`, which fails naming what to set unless
+/// `SKY_LIVE_TESTS=skip`.
+#[test]
+fn every_go_runtime_skip_is_declared() {
+    let rt = repo().join("runtime-go/rt");
+    let mut offenders = Vec::new();
+    let mut used = vec![false; GO_SKIPS_ALLOWED.len()];
+    for e in std::fs::read_dir(&rt)
+        .expect("read runtime-go/rt")
+        .flatten()
+    {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.ends_with("_test.go") || name == "live_gate_test.go" {
+            continue;
+        }
+        let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+        for (i, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            if !(t.contains(".Skip(") || t.contains(".Skipf(") || t.contains(".SkipNow(")) {
+                continue;
+            }
+            match GO_SKIPS_ALLOWED
+                .iter()
+                .position(|(f, needle, _)| *f == name && line.contains(needle))
+            {
+                Some(k) => used[k] = true,
+                None => offenders.push(format!("{name}:{}: {}", i + 1, t)),
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "runtime tests that skip outside live_gate_test.go with no declared reason \
+         (use a require… helper from live_gate_test.go, or add an entry with the \
+         reason):\n  {}",
+        offenders.join("\n  ")
+    );
+    let stale: Vec<String> = GO_SKIPS_ALLOWED
+        .iter()
+        .zip(&used)
+        .filter(|(_, u)| !**u)
+        .map(|((f, n, _), _)| format!("{f}: {n}"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "GO_SKIPS_ALLOWED entries that match no skip (remove them): {stale:?}"
+    );
+    for (f, _, why) in GO_SKIPS_ALLOWED {
+        assert!(why.len() >= 30, "{f}: say why the skip is allowed");
+    }
+}

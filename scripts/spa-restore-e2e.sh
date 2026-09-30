@@ -25,7 +25,8 @@ fi
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 for tool in node sqlite3; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "spa-restore-e2e: '$tool' is required." >&2; exit 1; }
+  source "$ROOT/scripts/lib/require-tool.sh"
+  require_tool "$tool" "install $tool" || exit 0
 done
 
 # A stable fixture directory, emptied first: the shared gate build cache

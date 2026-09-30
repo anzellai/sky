@@ -10,6 +10,10 @@
 #   SKY_INSTALL_DIR   - installation directory (default: /usr/local/bin)
 #   INSTALL_DIR       - same thing; SKY_INSTALL_DIR wins if both are set
 #
+# Every download is checked against the release's published checksums.txt
+# before anything is installed. A release asset the manifest does not list, or
+# whose SHA-256 does not match, is refused.
+#
 # The install directory is CREATED if it does not exist — a fresh macOS, a slim
 # container image and many CI runners have no /usr/local/bin — using sudo only
 # when the parent is not writable. With no writable target and no sudo, the
@@ -28,6 +32,9 @@ while [ $# -gt 0 ]; do
 done
 
 REPO="anzellai/sky"
+# Where release assets are fetched from: `<base>/v<version>/<asset>`. Tests
+# point it at a local file:// fixture; nothing else should need it.
+RELEASE_BASE="${SKY_INSTALL_BASE_URL:-https://github.com/$REPO/releases/download}"
 # SKY_INSTALL_DIR wins, then INSTALL_DIR, then the default.
 INSTALL_DIR="${SKY_INSTALL_DIR:-${INSTALL_DIR:-/usr/local/bin}}"
 
@@ -73,6 +80,30 @@ get_latest_version() {
     fi
 }
 
+# sha256 of a file, with whichever tool the host has (sha256sum on Linux,
+# shasum on macOS).
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        error "sha256sum or shasum is required to verify the download"
+    fi
+}
+
+# Refuse `$TMPDIR/$1` unless checksums.txt lists it with a matching SHA-256.
+verify_asset() {
+    WANT=$(awk -v n="$1" '{ f = $2; sub(/^\*/, "", f); if (f == n) { print $1; exit } }' "$TMPDIR/checksums.txt")
+    if [ -z "$WANT" ]; then
+        error "checksums.txt for v${VERSION} does not list $1; refusing to install it (see https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md#upgrades-and-installs-verify-checksums)"
+    fi
+    GOT=$(sha256_of "$TMPDIR/$1")
+    if [ "$WANT" != "$GOT" ]; then
+        error "$1 does not match its published checksum (expected $WANT, got $GOT); refusing to install it (see https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md#upgrades-and-installs-verify-checksums)"
+    fi
+}
+
 install_sky() {
     ARTIFACT="sky-${PLATFORM}-${ARCH}"
     EXT=""
@@ -92,10 +123,17 @@ install_sky() {
     else
         ARCHIVE="${ARTIFACT}.tar.gz"
     fi
-    ARCHIVE_URL="https://github.com/$REPO/releases/download/v${VERSION}/${ARCHIVE}"
-    RAW_URL="https://github.com/$REPO/releases/download/v${VERSION}/${ARTIFACT}${EXT}"
+    ARCHIVE_URL="${RELEASE_BASE}/v${VERSION}/${ARCHIVE}"
+    RAW_URL="${RELEASE_BASE}/v${VERSION}/${ARTIFACT}${EXT}"
+
+    # The checksum manifest first: nothing is installed without something to
+    # check it against.
+    if ! curl -fsSL "${RELEASE_BASE}/v${VERSION}/checksums.txt" -o "$TMPDIR/checksums.txt" 2>/dev/null; then
+        error "Could not download checksums.txt for v${VERSION}; refusing to install an unverified binary (see https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md#upgrades-and-installs-verify-checksums)"
+    fi
 
     if curl -fsSL "$ARCHIVE_URL" -o "$TMPDIR/$ARCHIVE" 2>/dev/null; then
+        verify_asset "$ARCHIVE"
         cd "$TMPDIR"
         if [ "$PLATFORM" = "windows" ]; then
             unzip -q "$ARCHIVE"
@@ -107,6 +145,7 @@ install_sky() {
         fi
         DOWNLOADED=1
     elif curl -fsSL "$RAW_URL" -o "$TMPDIR/${ARTIFACT}${EXT}" 2>/dev/null; then
+        verify_asset "${ARTIFACT}${EXT}"
         cd "$TMPDIR"
         DOWNLOADED=1
     fi

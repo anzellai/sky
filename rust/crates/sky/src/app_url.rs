@@ -109,6 +109,46 @@ impl AppUrl {
         )
     }
 
+    /// Why a store release may not load this host, or `None` when it may.
+    /// A release refuses every address a user's device resolves to itself or
+    /// cannot reach: loopback in any spelling (`127.0.0.2`, `127.1`,
+    /// `[0:0:0:0:0:0:0:1]`, `localhost.`, `app.localhost`), the unspecified
+    /// address, link-local, the Android emulator's host alias, and the
+    /// private ranges (RFC 1918, carrier-grade NAT, IPv6 unique-local). An
+    /// internal deployment names its backend by a host name instead (F-4).
+    pub fn release_unreachable_reason(&self) -> Option<&'static str> {
+        let host = self
+            .host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        if host == "localhost" || host.ends_with(".localhost") {
+            return Some("a loopback name");
+        }
+        if let Some(v4) = parse_inet_aton(&host) {
+            return v4_reason(v4);
+        }
+        if let Ok(v6) = host.parse::<std::net::Ipv6Addr>() {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4_reason(v4);
+            }
+            let seg = v6.segments();
+            return if v6.is_loopback() {
+                Some("a loopback address")
+            } else if v6.is_unspecified() {
+                Some("the unspecified address")
+            } else if seg[0] & 0xffc0 == 0xfe80 {
+                Some("a link-local address")
+            } else if seg[0] & 0xfe00 == 0xfc00 {
+                Some("a private (unique-local) address")
+            } else {
+                None
+            };
+        }
+        None
+    }
+
     /// The host that needs a cleartext exception: plain `http` to a host that
     /// is not local. `None` for `https` and for the local development hosts.
     pub fn cleartext_host(&self) -> Option<&str> {
@@ -130,6 +170,69 @@ impl AppUrl {
             self.source_label()
         ))
     }
+}
+
+/// Why a release may not load an IPv4 address (see
+/// [`AppUrl::release_unreachable_reason`]).
+fn v4_reason(ip: std::net::Ipv4Addr) -> Option<&'static str> {
+    let o = ip.octets();
+    if ip.is_loopback() {
+        Some("a loopback address")
+    } else if ip.is_unspecified() || o[0] == 0 {
+        Some("the unspecified address")
+    } else if ip.is_link_local() {
+        Some("a link-local address")
+    } else if o == [10, 0, 2, 2] {
+        Some("the Android emulator's alias for the development machine")
+    } else if ip.is_private() || (o[0] == 100 && (o[1] & 0xc0) == 64) {
+        Some("a private network address")
+    } else {
+        None
+    }
+}
+
+/// Parse an IPv4 address the way the platform resolvers do (`inet_aton`):
+/// one to four parts, each decimal, octal (`0` prefix) or hex (`0x`), the last
+/// part filling the remaining bytes. So `127.1` and `0x7f.1` are `127.0.0.1`.
+/// `None` for anything that is not such an address (a host name).
+fn parse_inet_aton(host: &str) -> Option<std::net::Ipv4Addr> {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.is_empty() || parts.len() > 4 {
+        return None;
+    }
+    let mut nums: Vec<u64> = Vec::with_capacity(parts.len());
+    for p in &parts {
+        let n = if let Some(h) = p.strip_prefix("0x").or_else(|| p.strip_prefix("0X")) {
+            if h.is_empty() {
+                0
+            } else {
+                u64::from_str_radix(h, 16).ok()?
+            }
+        } else if p.len() > 1 && p.starts_with('0') {
+            u64::from_str_radix(&p[1..], 8).ok()?
+        } else {
+            if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            p.parse::<u64>().ok()?
+        };
+        nums.push(n);
+    }
+    let last = *nums.last()?;
+    let head = &nums[..nums.len() - 1];
+    if head.iter().any(|n| *n > 255) {
+        return None;
+    }
+    let rest_bits = 8 * (4 - head.len() as u32);
+    if rest_bits < 64 && last >= (1u64 << rest_bits) {
+        return None;
+    }
+    let mut v: u32 = 0;
+    for (i, n) in head.iter().enumerate() {
+        v |= (*n as u32) << (24 - 8 * i as u32);
+    }
+    v |= last as u32;
+    Some(std::net::Ipv4Addr::from(v))
 }
 
 /// `PORT` as the generated backend reads it: a port number, else 8951.

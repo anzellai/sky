@@ -1,0 +1,90 @@
+module Main exposing (main)
+
+{-| M-1 (v0.27.0): an update arm hands the whole model to a helper that runs a
+server task (Cmd.perform) with a follow-up Msg. The split's response for such a
+branch carries the model's fields plus `spaFollow_`; the client used to apply
+the response as the whole model, so the frontend did not type-check. -}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.System as System
+import Std.Cmd as Cmd
+import Std.Sub as Sub exposing (Sub)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { draft : String
+    , notice : String
+    }
+
+type Msg
+    = Ask String
+    | Submitted (Result Error String)
+
+type Page
+    = HomePage
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { draft = "", notice = "" }, Cmd.none )
+
+
+{-| A server-only task. -}
+submitS : String -> Task Error String
+submitS text =
+    System.getenv "HOME" |> Task.map (\h -> h ++ text)
+
+
+submit : Model -> ( Model, Cmd Msg )
+submit model =
+    if String.trim model.draft == "" then
+        ( model, Cmd.none )
+
+    else
+        ( { model | draft = "", notice = "sending" }
+        , Cmd.perform (submitS model.draft) Submitted
+        )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Ask text ->
+            submit { model | draft = text }
+
+        Submitted (Ok s) ->
+            ( { model | notice = s }, Cmd.none )
+
+        Submitted (Err _) ->
+            ( { model | notice = "failed" }, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text model.notice
+        , Ui.button [] { onPress = Just (Ask "hi"), label = Ui.text "Ask" }
+        ]
+
+
+main : Task Error ()
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withRoutes [ App.route "/" HomePage ]
+        |> App.withNotFound HomePage
+        |> App.run

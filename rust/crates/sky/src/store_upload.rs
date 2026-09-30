@@ -345,6 +345,61 @@ pub fn check_signed_ipa(ipa: &Path) -> Result<String, String> {
     Ok(app)
 }
 
+/// The `CFBundleIdentifier` and `CFBundleVersion` of the app inside `ipa`,
+/// read from `Payload/<App>.app/Info.plist`. A binary plist (what Xcode
+/// writes) is converted with `plutil`, present on every Mac, where the upload
+/// runs. The upload compares them with the project, so it never uploads, or
+/// reports, an archive of another app or build (F-10).
+pub fn ipa_identity(ipa: &Path) -> Result<(String, String), String> {
+    let shown = ipa.display();
+    let bytes = std::fs::read(ipa).map_err(|e| format!("read {shown}: {e}"))?;
+    let entries = zip_entries(&bytes).map_err(|e| format!("{shown}: {e}"))?;
+    let plist = entries
+        .iter()
+        .find(|e| {
+            e.name
+                .strip_prefix("Payload/")
+                .and_then(|r| r.split_once(".app/"))
+                .is_some_and(|(dir, rest)| !dir.contains('/') && rest == "Info.plist")
+        })
+        .ok_or_else(|| format!("{shown} has no Payload/<App>.app/Info.plist"))?;
+    let raw = zip_read(ipa, &bytes, plist)?;
+    let xml = if raw.starts_with(b"bplist00") {
+        use std::io::Write;
+        let mut child = Command::new("plutil")
+            .args(["-convert", "xml1", "-o", "-", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("run plutil to read the Info.plist in {shown}: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(&raw);
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("plutil: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("plutil could not read the Info.plist in {shown}"));
+        }
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        String::from_utf8_lossy(&raw).into_owned()
+    };
+    let entries =
+        crate::plist::parse_entries(&xml).map_err(|e| format!("{shown}: Info.plist: {e}"))?;
+    let get = |k: &str| {
+        entries.iter().find_map(|(key, v)| match v {
+            crate::plist::Value::String(s) if key == k => Some(s.clone()),
+            _ => None,
+        })
+    };
+    let id = get("CFBundleIdentifier")
+        .ok_or_else(|| format!("{shown}: its Info.plist has no CFBundleIdentifier"))?;
+    let version = get("CFBundleVersion")
+        .ok_or_else(|| format!("{shown}: its Info.plist has no CFBundleVersion"))?;
+    Ok((id, version))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The tool
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,9 +469,10 @@ pub fn altool_args(step: Step, ipa: &Path, key: &AscKey) -> Vec<OsString> {
 }
 
 /// The directory altool finds `AuthKey_<KEY_ID>.p8` in. When the key file
-/// already has that name its own directory is used; otherwise the key is copied
-/// into a private temporary directory (0700, the file 0600) that is removed
-/// when this value is dropped.
+/// already has that name its own directory is used; otherwise a symlink with
+/// that name, pointing at the key, is made in a private temporary directory
+/// (0700 from creation) that is removed when this value is dropped. The key
+/// itself is never copied.
 pub struct KeyDir {
     pub dir: PathBuf,
     temporary: bool,
@@ -444,32 +500,29 @@ pub fn key_dir(key: &AscKey) -> Result<KeyDir, String> {
             temporary: false,
         });
     }
-    let dir = std::env::temp_dir().join(format!(
-        "sky-asc-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    // A private directory (0700 from creation, random name, refused if it
+    // exists) holding a SYMLINK named `AuthKey_<id>.p8` to the user's key. No
+    // copy of the secret is written, so an interrupted upload (Ctrl-C skips
+    // `Drop`) leaves at most a dangling link in `$TMPDIR`, never the key (F-11).
+    let dir = crate::private_fs::private_dir_in(&std::env::temp_dir(), "sky-asc-")?;
     let guard = KeyDir {
         dir,
         temporary: true,
     };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&guard.dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("restrict {}: {e}", guard.dir.display()))?;
-    }
     let to = guard.dir.join(&want);
-    std::fs::copy(&key.path, &to).map_err(|e| format!("copy the API key: {e}"))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("restrict the API key copy: {e}"))?;
+        let src = key
+            .path
+            .canonicalize()
+            .map_err(|e| format!("read the API key {}: {e}", key.path.display()))?;
+        std::os::unix::fs::symlink(&src, &to).map_err(|e| format!("link the API key: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let bytes = std::fs::read(&key.path).map_err(|e| format!("read the API key: {e}"))?;
+        crate::private_fs::write_private_file(&to, &bytes)
+            .map_err(|e| format!("copy the API key: {e}"))?;
     }
     Ok(guard)
 }
@@ -742,6 +795,42 @@ mod tests {
         for a in v.iter() {
             assert!(!a.contains(".p8"), "the key file is never an argument: {a}");
         }
+    }
+
+    /// F-11: a key file with another name is reached through a symlink in a
+    /// fresh private directory: the directory is 0700 from creation, and no
+    /// copy of the secret is ever written, so an interrupted upload leaves no
+    /// key behind. Dropping the guard removes the directory.
+    #[cfg(unix)]
+    #[test]
+    fn another_key_name_is_linked_never_copied() {
+        use std::os::unix::fs::PermissionsExt;
+        let src_dir = std::env::temp_dir().join(format!("sky-asc-src-{}", std::process::id()));
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let src = src_dir.join("my-key.p8");
+        std::fs::write(&src, "-----BEGIN PRIVATE KEY-----").unwrap();
+        let k = AscKey {
+            path: src.clone(),
+            ..key()
+        };
+        let d = key_dir(&k).unwrap();
+        assert!(d.temporary);
+        let mode = std::fs::metadata(&d.dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        let link = d.dir.join(format!("AuthKey_{}.p8", k.key_id));
+        let meta = std::fs::symlink_metadata(&link).unwrap();
+        assert!(
+            meta.file_type().is_symlink(),
+            "a link, not a copy of the key"
+        );
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            src.canonicalize().unwrap()
+        );
+        let dir = d.dir.clone();
+        drop(d);
+        assert!(!dir.exists(), "the guard removes the directory");
+        let _ = std::fs::remove_dir_all(&src_dir);
     }
 
     #[test]

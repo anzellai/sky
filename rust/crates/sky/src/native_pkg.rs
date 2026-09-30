@@ -203,10 +203,12 @@ fn is_word(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// Each word-bounded, uncommented occurrence of `func` in `src`, as the byte
+/// Each word-bounded occurrence of `func` in `src` that is code (not in a
+/// comment or a literal, [`crate::code_mask`]), as the byte
 /// offset just past the name.
 fn call_sites<'a>(src: &'a str, func: &'a str) -> impl Iterator<Item = usize> + 'a {
     let bytes = src.as_bytes();
+    let mask = crate::code_mask(src);
     let mut from = 0;
     std::iter::from_fn(move || loop {
         let rel = src[from..].find(func)?;
@@ -215,7 +217,7 @@ fn call_sites<'a>(src: &'a str, func: &'a str) -> impl Iterator<Item = usize> + 
         let after = at + func.len();
         let before_ok = at == 0 || !is_word(bytes[at - 1]);
         let after_ok = bytes.get(after).map(|b| !is_word(*b)).unwrap_or(true);
-        if before_ok && after_ok && !crate::in_line_comment(src, at) {
+        if before_ok && after_ok && crate::is_code(&mask, at) {
             return Some(after);
         }
     })
@@ -982,6 +984,44 @@ pub fn merge_android_fragments(
                 ));
             };
             let name_attr = el.attr("android:name").map(str::to_string);
+            // A dependency may add only permissions, features and package
+            // queries, and never a dangerous permission the app itself does
+            // not declare (F-7). Its other elements used to reach the
+            // manifest root unnamed.
+            if !f.own {
+                if !matches!(
+                    el.name.as_str(),
+                    "uses-permission" | "uses-permission-sdk-23" | "uses-feature" | "queries"
+                ) {
+                    errors.push(format!(
+                        "{origin}: a dependency may add only <uses-permission>, \
+                         <uses-feature> and <queries>, not <{}>. {}",
+                        el.name,
+                        project::migration_see("dependency-native-code")
+                    ));
+                    continue;
+                }
+                if el.name.starts_with("uses-permission") {
+                    let n = name_attr.as_deref().unwrap_or("");
+                    let app_declares = generated.contains(&n)
+                        || kept.iter().any(|(k, own, _)| {
+                            *own && k.name.starts_with("uses-permission")
+                                && k.attr("android:name") == Some(n)
+                        });
+                    if is_dangerous_android_permission(n) && !app_declares {
+                        errors.push(format!(
+                            "{origin}: a dependency asks for the dangerous permission {n}. \
+                             Fix: the app declares it itself (Std.Bundle, or its own \
+                             native/android/permissions.xml) to accept it. {}",
+                            project::migration_see("dependency-native-code")
+                        ));
+                        continue;
+                    }
+                    eprintln!(
+                        "  native/android: {origin} adds <uses-permission android:name=\"{n}\">"
+                    );
+                }
+            }
             let keyed = matches!(
                 el.name.as_str(),
                 "uses-permission" | "uses-permission-sdk-23" | "uses-feature"
@@ -1041,6 +1081,61 @@ pub fn merge_android_fragments(
         .iter()
         .map(|(e, _, _)| format!("\n    {}", xmlmini::render_element(e)))
         .collect())
+}
+
+/// Android permissions a user must grant at run time ("dangerous" protection
+/// level), plus the special ones Play reviews. A dependency may not add one
+/// the app does not declare itself.
+pub fn is_dangerous_android_permission(name: &str) -> bool {
+    const DANGEROUS: &[&str] = &[
+        "READ_CALENDAR",
+        "WRITE_CALENDAR",
+        "CAMERA",
+        "READ_CONTACTS",
+        "WRITE_CONTACTS",
+        "GET_ACCOUNTS",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "ACCESS_MEDIA_LOCATION",
+        "RECORD_AUDIO",
+        "READ_PHONE_STATE",
+        "READ_PHONE_NUMBERS",
+        "CALL_PHONE",
+        "ANSWER_PHONE_CALLS",
+        "READ_CALL_LOG",
+        "WRITE_CALL_LOG",
+        "ADD_VOICEMAIL",
+        "USE_SIP",
+        "PROCESS_OUTGOING_CALLS",
+        "BODY_SENSORS",
+        "BODY_SENSORS_BACKGROUND",
+        "SEND_SMS",
+        "RECEIVE_SMS",
+        "READ_SMS",
+        "RECEIVE_WAP_PUSH",
+        "RECEIVE_MMS",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "MANAGE_EXTERNAL_STORAGE",
+        "ACTIVITY_RECOGNITION",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "READ_MEDIA_AUDIO",
+        "READ_MEDIA_VISUAL_USER_SELECTED",
+        "POST_NOTIFICATIONS",
+        "NEARBY_WIFI_DEVICES",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_ADVERTISE",
+        "UWB_RANGING",
+        "ACCEPT_HANDOVER",
+        "SYSTEM_ALERT_WINDOW",
+        "REQUEST_INSTALL_PACKAGES",
+        "QUERY_ALL_PACKAGES",
+    ];
+    name.strip_prefix("android.permission.")
+        .is_some_and(|p| DANGEROUS.contains(&p))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1330,7 +1425,12 @@ pub fn read_declarations(project_dir: &Path) -> Result<Declarations, String> {
         bundle_line: bundle_binding_line(&entry),
         calls: BTreeMap::new(),
     };
-    for f in sky_sources(project_dir) {
+    // The app's own sources AND every dependency module (registry packages
+    // and path packages): a `Native.scanCode` in a dependency needs the same
+    // purpose string and the same scanner as one in the app (F-6).
+    let mut files = sky_sources(project_dir);
+    files.extend(project::enumerate_dependency_files(project_dir));
+    for f in files {
         if let Ok(src) = std::fs::read_to_string(&f) {
             let rel = f
                 .strip_prefix(project_dir)
@@ -1424,12 +1524,13 @@ pub fn check_release_url(url: &crate::app_url::AppUrl) -> Result<(), String> {
             url.url
         ));
     }
-    if url.is_local() {
+    if let Some(why) = url.release_unreachable_reason() {
         return Err(format!(
-            "a release build loads {} ({}), a local development address a user's device \
-             cannot reach. {fix}",
+            "a release build loads {} ({}), {why}: a local development address a user's \
+             device cannot reach. {fix} {}",
             url.url,
-            url.source_label()
+            url.source_label(),
+            project::migration_see("release-refuses-local-addresses")
         ));
     }
     if url.scheme != "https" {
@@ -2288,6 +2389,108 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// F-7: a dependency's manifest fragment may add only permissions,
+    /// features and queries, and a dangerous permission only when the app
+    /// declares it too.
+    #[test]
+    fn a_dependency_fragment_cannot_add_a_dangerous_permission_or_other_elements() {
+        let dir = std::env::temp_dir().join(format!("sky-frag-dep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let own = dir.join("native/android");
+        let dep = dir.join(".skydeps/evil/native/android");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::create_dir_all(&dep).unwrap();
+        let frags = || fragments(&[own.clone(), dep.clone()], &dir, "permissions.xml");
+        std::fs::write(
+            dep.join("permissions.xml"),
+            "<uses-permission android:name=\"android.permission.READ_SMS\" />",
+        )
+        .unwrap();
+        let e = merge_android_fragments(&frags(), &dir, &[]).expect_err("READ_SMS refused");
+        assert!(
+            e.contains("android.permission.READ_SMS")
+                && e.contains(".skydeps/evil")
+                && e.contains("docs/migration/v0.27.md#dependency-native-code"),
+            "{e}"
+        );
+        // The app declares it itself: accepted.
+        std::fs::write(
+            own.join("permissions.xml"),
+            "<uses-permission android:name=\"android.permission.READ_SMS\" />",
+        )
+        .unwrap();
+        let merged = merge_android_fragments(&frags(), &dir, &[]).expect("declared by the app");
+        assert_eq!(merged.matches("READ_SMS").count(), 1, "{merged}");
+        // Declared through Std.Bundle: accepted.
+        std::fs::remove_file(own.join("permissions.xml")).unwrap();
+        merge_android_fragments(&frags(), &dir, &["android.permission.READ_SMS"])
+            .expect("declared through Std.Bundle");
+        // Any other manifest element from a dependency: refused.
+        std::fs::write(
+            dep.join("permissions.xml"),
+            "<application android:debuggable=\"true\" />",
+        )
+        .unwrap();
+        let e = merge_android_fragments(&frags(), &dir, &[]).expect_err("<application> refused");
+        assert!(e.contains("<application>"), "{e}");
+        // A normal permission from a dependency is fine.
+        std::fs::write(
+            dep.join("permissions.xml"),
+            "<uses-permission android:name=\"android.permission.VIBRATE\" />",
+        )
+        .unwrap();
+        merge_android_fragments(&frags(), &dir, &[]).expect("a normal permission");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// F-6: a `Std.Native` call in a Sky path dependency counts: the app
+    /// needs the purpose string for it, as for its own call.
+    #[test]
+    fn a_native_call_in_a_dependency_needs_its_purpose_string() {
+        let base = std::env::temp_dir().join(format!("sky-native-dep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let app = base.join("app");
+        let lib = base.join("scanlib");
+        std::fs::create_dir_all(app.join("src")).unwrap();
+        std::fs::create_dir_all(lib.join("src")).unwrap();
+        std::fs::write(
+            app.join("sky.toml"),
+            "name = \"app\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[dependencies]\n\"scanlib\" = { path = \"../scanlib\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            app.join("src/Main.sky"),
+            "module Main exposing (main)\n\nimport Scanner\n\n\nmain =\n    Scanner.scan\n",
+        )
+        .unwrap();
+        std::fs::write(
+            lib.join("sky.toml"),
+            "name = \"scanlib\"\nversion = \"0.1.0\"\n\n[lib]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            lib.join("src/Scanner.sky"),
+            "module Scanner exposing (scan)\n\nimport Std.Native as Native\n\n\nscan =\n    Native.scanCode\n",
+        )
+        .unwrap();
+        let decl = read_declarations(&app).unwrap();
+        assert!(
+            decl.capabilities.contains("scanCode"),
+            "{:?}",
+            decl.capabilities
+        );
+        let e = check_usage(
+            &decl.capabilities,
+            &decl.permissions,
+            Platform::Android,
+            false,
+            &decl.sites,
+        )
+        .expect_err("scanCode needs the camera permission");
+        assert!(e.contains("scanCode"), "{e}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn release_url_refuses_local_default_and_plain_http() {
         use crate::app_url::{resolve, Shell};
@@ -2303,6 +2506,54 @@ mod tests {
         assert!(check_release_url(&local).unwrap_err().contains("local"));
         let http = resolve(Shell::Desktop, None, Some("http://app.example.com/"), None).unwrap();
         assert!(check_release_url(&http).unwrap_err().contains("plain http"));
+    }
+
+    /// F-4: the local-address refusal is not an exact-string list. Every
+    /// spelling of loopback, the unspecified address, link-local and the
+    /// private ranges is refused; public addresses and host names pass.
+    #[test]
+    fn release_url_refuses_every_local_spelling() {
+        use crate::app_url::{resolve, Shell};
+        for bad in [
+            "https://127.0.0.2/",
+            "https://0.0.0.0/",
+            "https://localhost./",
+            "https://app.localhost/",
+            "https://LOCALHOST/",
+            "https://[0:0:0:0:0:0:0:1]/",
+            "https://[::]/",
+            "https://[::ffff:127.0.0.1]/",
+            "https://[fe80::1]/",
+            "https://[fd00::1]/",
+            "https://127.1/",
+            "https://0x7f.1/",
+            "https://2130706433/",
+            "https://169.254.1.1/",
+            "https://10.0.2.2/",
+            "https://192.168.1.10/",
+            "https://10.1.2.3/",
+            "https://172.16.0.1/",
+            "https://100.64.0.1/",
+        ] {
+            let u = resolve(Shell::Android, Some(bad), None, None)
+                .unwrap_or_else(|e| panic!("{bad} should parse: {e}"));
+            let e = check_release_url(&u).expect_err(bad);
+            assert!(
+                e.contains("cannot reach")
+                    && e.contains("docs/migration/v0.27.md#release-refuses-local-addresses"),
+                "{bad}: {e}"
+            );
+        }
+        for good in [
+            "https://app.example.com/",
+            "https://93.184.216.34/",
+            "https://[2001:db8::1]/",
+            "https://localhost.example.com/",
+            "https://172.32.0.1/",
+        ] {
+            let u = resolve(Shell::Android, Some(good), None, None).unwrap();
+            assert!(check_release_url(&u).is_ok(), "{good}");
+        }
     }
 
     #[test]

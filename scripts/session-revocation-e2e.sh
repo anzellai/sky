@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # scripts/session-revocation-e2e.sh — browser e2e for the Sky.Spa sign-out:
-# a copy of the `sky_sid` cookie taken before sign-out must not sign the user
+# a copy of the `sky_spa` cookie taken before sign-out must not sign the user
 # in after sign-out (docs/skyspa/auto-split.md §25).
 #
 # Builds rust/crates/sky/tests/fixtures/spa-session-revocation with

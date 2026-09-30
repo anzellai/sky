@@ -88,7 +88,8 @@ const adminFile = () => {
   }
 };
 async function sidCookie(ctx) {
-  const c = (await ctx.cookies(URL)).find((k) => k.name === "sky_sid" || k.name === "__Host-sky_sid");
+  // v0.27.0: a Sky.Spa backend keeps its session in `sky_spa` (A-2b).
+  const c = (await ctx.cookies(URL)).find((k) => k.name === "sky_spa" || k.name === "__Host-sky_spa");
   return c ? c.value : "";
 }
 
@@ -103,7 +104,7 @@ const clearAdmin = () => rmSync(join(BACKEND_DIR, "admin.txt"), { force: true })
 async function replay(browser, value, content) {
   const ctx = await browser.newContext();
   try {
-    await ctx.addCookies([{ name: "sky_sid", value, url: URL }]);
+    await ctx.addCookies([{ name: "sky_spa", value, url: URL }]);
     const page = await ctx.newPage();
     await page.goto(URL, { waitUntil: "load" });
     await waitState(page, (v) => v.startsWith("signed"), 15000);
@@ -146,7 +147,7 @@ async function scenario(browserName) {
     const s1 = await waitState(page, (v) => v.startsWith("signed in as u1"), 15000);
     check(`${tag} sign in`, s1.startsWith("signed in as u1"), s1);
     const live = await sidCookie(ctx);
-    check(`${tag} sign in sets sky_sid`, live !== "", live ? "set" : "missing");
+    check(`${tag} sign in sets sky_spa`, live !== "", live ? "set" : "missing");
     const ctl = await replay(browser, live, `control-${browserName}`);
     check(`${tag} control: an RPC from the copy's page runs as the user`, ctl.pageStatus === 200 && ctl.pageRan, `${ctl.pageStatus} ${ctl.shown}`);
     check(`${tag} control: a direct RPC with the copy runs as the user`, ctl.status === 200 && ctl.rpcRan, `${ctl.status} ${ctl.body}`);

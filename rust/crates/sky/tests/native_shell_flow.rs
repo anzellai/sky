@@ -394,8 +394,18 @@ mod testflight {
 
     /// A packaged `.ipa`: signed (a code signature and an embedded profile) or not.
     fn fake_ipa(path: &Path, profile: Option<Vec<u8>>) {
+        fake_ipa_as(path, profile, "com.example.vault", "7");
+    }
+
+    /// A fake `.ipa` whose `Info.plist` names `id` and `build`.
+    fn fake_ipa_as(path: &Path, profile: Option<Vec<u8>>, id: &str, build: &str) {
+        let info = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
+             <key>CFBundleIdentifier</key><string>{id}</string>\
+             <key>CFBundleVersion</key><string>{build}</string></dict></plist>"
+        );
         let mut files = vec![
-            ("Payload/Vault.app/Info.plist", b"<plist/>".to_vec()),
+            ("Payload/Vault.app/Info.plist", info.into_bytes()),
             ("Payload/Vault.app/Vault", b"\xcf\xfa\xed\xfe".to_vec()),
         ];
         if let Some(p) = profile {
@@ -604,6 +614,33 @@ mod testflight {
             assert!(log.is_empty(), "refused before any xcrun call: {log}");
         }
         assert!(ipa.is_file(), "--ipa must not wipe the release directory");
+
+        // F-10: an archive of another app, or of another build, is refused
+        // before any upload; the success line never names values the archive
+        // does not hold.
+        for (name, id, build) in [
+            ("Other.ipa", "com.other.app", "7"),
+            ("Old.ipa", "com.example.vault", "99"),
+        ] {
+            let other = dir.join(name);
+            fake_ipa_as(&other, Some(fake_profile(APP_STORE)), id, build);
+            let (code, out, log) = upload_run(
+                &dir,
+                &other,
+                &[("FAKE_VALIDATE", "ok"), ("FAKE_UPLOAD", "ok")],
+            );
+            assert_eq!(code, 1, "{name}: {out}");
+            assert!(
+                out.contains(&format!("is the app {id}, build {build}"))
+                    && out
+                        .contains("docs/migration/v0.27.md#testflight-ipa-must-match-the-project"),
+                "{name}: {out}"
+            );
+            assert!(
+                !log.contains("altool --"),
+                "{name}: nothing validated or uploaded: {log}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

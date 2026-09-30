@@ -697,3 +697,32 @@ fn config_migrate_checks_and_previews_without_writing() {
     assert_eq!(code, 2, "{out}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// F-17: CLI misuse is refused, not silently accepted. `sky package
+/// --upload` with no value is a usage error (it used to run a plain release),
+/// `sky fuzz --help` prints usage and exits 0 (it exited 2), and `sky doc --api
+/// openapi` outside a project refuses (it printed an empty spec, exit 0).
+#[test]
+fn cli_misuse_is_refused_not_ignored() {
+    let dir = scratch("misuse");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (code, out) = run_sky(
+        &dir,
+        &[
+            "package",
+            "--release",
+            "--target",
+            "mobile:android",
+            "--upload",
+        ],
+    );
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("--upload needs a value"), "{out}");
+    let (code, out) = run_sky(&dir, &["fuzz", "--help"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("usage: sky fuzz"), "{out}");
+    let (code, out) = run_sky(&dir, &["doc", "--api", "openapi"]);
+    assert_ne!(code, 0, "{out}");
+    assert!(out.contains("no sky.toml"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
