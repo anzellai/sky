@@ -772,3 +772,17 @@ strength = "Asserted"
 reason   = "G-2: credited Falsified through the cli-verbs gate, which never runs its fixture; the flow test or e2e script that loads it runs in a release job with counted assertions and no registered falsifier"
 owner    = "v0.27.0 fix batch, stream S4"
 commit   = "fix/v027-s4-tooling G-2"
+
+[[config-surface-rise]]
+metric = "pre_binary_surfaces"
+from   = 16
+to     = 17
+reason = """surface, by design, and not a user setting: `[spa] wire` is written \
+by the Sky.Spa split into the GENERATED frontend project's sky.toml (the hash of \
+the generated wire schema, E-4) and read at build time to stamp \
+`<meta name="sky-wire">` into index.html (rust/crates/sky/src/main.rs, \
+sky_toml_section_key(p, "spa", "wire")). The runtime compares it with the hash \
+the backend booted with, so a tab from an older deploy reloads instead of \
+sending a request the backend cannot read. No user writes it."""
+owner  = "anzel"
+commit = "7611f8b0"

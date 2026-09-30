@@ -48,14 +48,14 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:2066 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:2129 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:12921 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:13418 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -89,14 +89,17 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:10138 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:10258 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:10606 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:10726 (sky_toml_project_key)"
     ],
     "root": [
-      "rust/crates/project/src/build.rs:2072 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:2135 (sky_toml_project_key)"
+    ],
+    "spa.wire": [
+      "rust/crates/sky/src/main.rs:5085 (sky_toml_section_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:10145 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:10613 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [
@@ -252,7 +255,7 @@
     "accepted_sky_toml_keys": 27,
     "documented_names": 141,
     "documented_without_reader": 13,
-    "pre_binary_surfaces": 16,
+    "pre_binary_surfaces": 17,
     "read_without_doc": 25,
     "runtime_read_literal_sky_names": 46,
     "runtime_read_suffixes": 49,
