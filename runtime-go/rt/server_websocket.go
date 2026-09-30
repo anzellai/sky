@@ -100,15 +100,11 @@ func (h *serverSocketHandle) IsClosed() bool { return h.closed.Load() }
 // ═════════════════════════════════════════════════════════════════════
 
 var serverSocketHandles sync.Map // map[int64]*serverSocketHandle
-var serverSocketIDCounter atomic.Int64
 
 func nextServerSocketID() int64 {
-	for {
-		id := serverSocketIDCounter.Add(1)
-		if id != 0 {
-			return id
-		}
-	}
+	// A random 62-bit id (process_handle_id.go): an id from an earlier
+	// boot, another replica or a guess names nothing.
+	return newHandleID()
 }
 
 func lookupServerSocket(id int64) *serverSocketHandle {
@@ -130,13 +126,14 @@ func lookupServerSocket(id int64) *serverSocketHandle {
 // the sentinel + routes through serveWebSocketUpgrade.
 
 var pendingWebSocketCfgs sync.Map // map[string]webSocketUpgradeCfg
-var pendingWebSocketTokenSeq atomic.Int64
 
 const pendingWebSocketSentinelPrefix = "__sky_ws:"
 
 func registerPendingWebSocketCfg(cfg webSocketUpgradeCfg) string {
-	id := pendingWebSocketTokenSeq.Add(1)
-	token := fmt.Sprintf("%d", id)
+	// Random, not a counter: the token travels in a response body, and a
+	// handler that echoes client input could otherwise name ANOTHER
+	// request's pending token and take over its handler.
+	token := fmt.Sprintf("%d", newHandleID())
 	pendingWebSocketCfgs.Store(token, cfg)
 	return token
 }

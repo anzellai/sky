@@ -43,7 +43,6 @@ type cacheHandle struct {
 var (
 	cacheRegistryMu sync.Mutex
 	cacheRegistry   = map[int64]*cacheHandle{}
-	cacheNextID     atomic.Int64
 )
 
 // Cache_new implements:
@@ -58,7 +57,7 @@ func Cache_new(cfgArg any) any {
 	}
 	return func() any {
 		h := &cacheHandle{
-			id:  cacheNextID.Add(1),
+			id:  newHandleID(), // random 62-bit: process_handle_id.go
 			ttl: time.Duration(ttlMs) * time.Millisecond,
 		}
 		// onEvict counts every eviction (capacity AND manual removal).
@@ -93,7 +92,7 @@ func Cache_get(idArg, keyArg any) any {
 	return func() any {
 		h := cacheLookup(idArg)
 		if h == nil {
-			return Err[any, any](ErrInvalidInput("cache.get: cache not found"))
+			return Err[any, any](handleNotLive("cache.get", int64(AsInt(idArg))))
 		}
 		k := identityKey(keyArg)
 		entry, ok := h.lru.Get(k)
@@ -119,7 +118,7 @@ func Cache_put(idArg, keyArg, valueArg any) any {
 	return func() any {
 		h := cacheLookup(idArg)
 		if h == nil {
-			return Err[any, any](ErrInvalidInput("cache.put: cache not found"))
+			return Err[any, any](handleNotLive("cache.put", int64(AsInt(idArg))))
 		}
 		k := identityKey(keyArg)
 		var exp time.Time
@@ -138,7 +137,7 @@ func Cache_remove(idArg, keyArg any) any {
 	return func() any {
 		h := cacheLookup(idArg)
 		if h == nil {
-			return Err[any, any](ErrInvalidInput("cache.remove: cache not found"))
+			return Err[any, any](handleNotLive("cache.remove", int64(AsInt(idArg))))
 		}
 		k := identityKey(keyArg)
 		// Decrement eviction count if remove fires the callback — the
@@ -158,7 +157,7 @@ func Cache_clear(idArg any) any {
 	return func() any {
 		h := cacheLookup(idArg)
 		if h == nil {
-			return Err[any, any](ErrInvalidInput("cache.clear: cache not found"))
+			return Err[any, any](handleNotLive("cache.clear", int64(AsInt(idArg))))
 		}
 		n := h.lru.Len()
 		h.lru.Purge()
@@ -176,7 +175,7 @@ func Cache_size(idArg any) any {
 	return func() any {
 		h := cacheLookup(idArg)
 		if h == nil {
-			return Err[any, any](ErrInvalidInput("cache.size: cache not found"))
+			return Err[any, any](handleNotLive("cache.size", int64(AsInt(idArg))))
 		}
 		return Ok[any, any](h.lru.Len())
 	}
@@ -189,7 +188,7 @@ func Cache_stats(idArg any) any {
 	return func() any {
 		h := cacheLookup(idArg)
 		if h == nil {
-			return Err[any, any](ErrInvalidInput("cache.stats: cache not found"))
+			return Err[any, any](handleNotLive("cache.stats", int64(AsInt(idArg))))
 		}
 		return Ok[any, any](map[string]any{
 			"hits":      int(h.hits.Load()),

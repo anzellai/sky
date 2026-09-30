@@ -83,3 +83,17 @@ func procSetWinsize(f *os.File, cols, rows int) error {
 }
 
 func ptyIsEOF(err error) bool { return false }
+
+// The process-tree sweep (process_tree.go) is Unix only. On this OS close
+// ends the child alone, as before; no cookie is added.
+const procTreeCookieEnv = "SKYPROC_TREE"
+
+type procTreeRoot struct {
+	pid    int
+	start  uint64
+	cookie string
+}
+
+func newProcTreeCookie() string    { return "" }
+func procStartTime(pid int) uint64 { return 0 }
+func procSweep(root procTreeRoot)  {}

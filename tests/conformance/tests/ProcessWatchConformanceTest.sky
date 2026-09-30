@@ -156,6 +156,31 @@ resizeWithoutPty =
                                           |> Task.andThen (\_ -> Task.fail e))))
 
 
+-- One PTY size bound (500 x 200) for the PTY and the screen: a larger resize
+-- or spawn is refused, never passed on (A-5 / D-4).
+resizePastBound : Result Error ()
+resizePastBound =
+    Task.run
+        (Process.spawn
+            (shell "sleep 5" |> Process.withPty { cols = 80, rows = 24 })
+            |> Task.andThen
+                   (\p ->
+                       Process.resize p { cols = 65535, rows = 65535 }
+                           |> Task.andThen (\_ -> Process.close p)
+                           |> Task.onError
+                                  (\e ->
+                                      Process.close p
+                                          |> Task.andThen (\_ -> Task.fail e))))
+
+
+spawnPastBound : Result Error ()
+spawnPastBound =
+    Task.run
+        (Process.spawn
+            (shell "true" |> Process.withPty { cols = 4000, rows = 24 })
+            |> Task.andThen Process.close)
+
+
 ptyResized : Result Error String
 ptyResized =
     Task.run
@@ -335,6 +360,12 @@ tests =
     , Test.test
           "process: resize without a PTY is Err InvalidInput"
           (\_ -> Test.expectErrorKind Error.InvalidInput resizeWithoutPty)
+    , Test.test
+          "process: a resize past 500 x 200 is Err InvalidInput"
+          (\_ -> Test.expectErrorKind Error.InvalidInput resizePastBound)
+    , Test.test
+          "process: a spawn with a PTY past 500 x 200 is Err InvalidInput"
+          (\_ -> Test.expectErrorKind Error.InvalidInput spawnPastBound)
     , Test.test
           "process: a PTY child sees a terminal of the given size"
           (\_ ->

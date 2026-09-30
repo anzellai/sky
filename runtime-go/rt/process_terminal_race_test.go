@@ -32,7 +32,7 @@ import (
 func ptyWinsizeOf(t *testing.T, f *os.File) (cols, rows int) {
 	t.Helper()
 	var ws ptyWinsize
-	if err := ptyIoctl(f.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws))); err != nil {
+	if err := ptyFileIoctl(f, syscall.TIOCGWINSZ, unsafe.Pointer(&ws)); err != nil {
 		t.Fatal(err)
 	}
 	return int(ws.Col), int(ws.Row)

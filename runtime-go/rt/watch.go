@@ -55,6 +55,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -130,15 +131,22 @@ type watcher struct {
 
 var (
 	watchRegistry sync.Map // map[int64]*watcher
-	watchIDs      atomic.Int64
 )
 
+// lookupWatcher resolves a Watcher handle for the calling goroutine: Err when
+// the id names nothing in this server, or when another Sky.Live session owns
+// the watcher (process_handle_id.go).
 func lookupWatcher(idArg any) (*watcher, any) {
 	id := int64(AsInt(idArg))
-	if v, ok := watchRegistry.Load(id); ok {
-		return v.(*watcher), nil
+	v, ok := watchRegistry.Load(id)
+	if !ok {
+		return nil, handleNotLive("Watch", id)
 	}
-	return nil, ErrInvalidInput(fmt.Sprintf("Watch: no watcher %d (it was closed, or its session ended)", id))
+	w := v.(*watcher)
+	if !handleCallerAllowed(w.sess) {
+		return nil, handleOwnerRefused("Watch")
+	}
+	return w, nil
 }
 
 // send hands one raw event to the coalescer without ever blocking the
@@ -454,11 +462,12 @@ func startWatcher(paths []string, opts watchOptions) (*watcher, any) {
 		return nil, ErrIo("Watch.watch: " + err.Error())
 	}
 	w.backend = be
-	w.id = watchIDs.Add(1)
+	w.id = newHandleID()
+	// The owner is recorded before the handle is published.
+	w.sess = currentLiveSession()
 	go w.coalesce()
 	watchRegistry.Store(w.id, w)
-	if sess := currentLiveSession(); sess != nil {
-		w.sess = sess
+	if sess := w.sess; sess != nil {
 		sess.addOwned(fmt.Sprintf("watch:%d", w.id), func() { w.shutdown() })
 	}
 	return w, nil
@@ -550,11 +559,16 @@ func Watch_next(idArg any) any {
 	}
 }
 
-// Watch_close : Int -> Task Error ()   (idempotent)
+// Watch_close : Int -> Task Error ()   (idempotent: an unknown id is Ok; a
+// watcher another session owns is refused, not closed)
 func Watch_close(idArg any) any {
 	return func() any {
 		if v, ok := watchRegistry.Load(int64(AsInt(idArg))); ok {
-			v.(*watcher).shutdown()
+			w := v.(*watcher)
+			if !handleCallerAllowed(w.sess) {
+				return Err[any, any](handleOwnerRefused("Watch"))
+			}
+			w.shutdown()
 		}
 		return Ok[any, any](struct{}{})
 	}
@@ -564,7 +578,7 @@ func Watch_close(idArg any) any {
 func Watch_changes(idArg, toMsg any) SkySub {
 	id := int64(AsInt(idArg))
 	key := fmt.Sprintf("watch:%d", id)
-	if v, ok := watchRegistry.Load(id); ok {
+	if v, ok := watchRegistry.Load(id); ok && handleCallerAllowed(v.(*watcher).sess) {
 		return subT{kind: "subscribeSource", toMsg: toMsg, sourceKey: key, source: v.(*watcher)}
 	}
 	return subT{kind: "subscribeSource", toMsg: toMsg, sourceKey: key, source: deadSource{}}
@@ -627,3 +641,16 @@ func (w *watcher) pumpCycle(stop <-chan struct{}, emit func(ev any) bool) bool {
 
 // injectOverflow simulates an OS queue overflow (tests).
 func (w *watcher) injectOverflow() { w.send(rawEvent{overflow: true}) }
+
+// errWatchLimit: the process's budget of watch descriptors is spent
+// (watch_kqueue.go).
+var errWatchLimit = errors.New("too many files and directories to watch (the watch limit is reached; add the large directories to `ignore`)")
+
+// isWatchLimit reports whether err means the OS or the runtime ran out of
+// watches: the runtime's descriptor budget (kqueue), inotify's
+// max_user_watches (ENOSPC) or the descriptor limit (EMFILE). Such an error
+// is never ignored: at start it fails the watch, later it becomes an
+// Overflow, so a change is never missed in silence (D-7).
+func isWatchLimit(err error) bool {
+	return err != nil && (errors.Is(err, errWatchLimit) || errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EMFILE))
+}

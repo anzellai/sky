@@ -89,7 +89,29 @@ type ptyWinsize struct {
 // SIGWINCH to the foreground process group of the terminal.
 func procSetWinsize(f *os.File, cols, rows int) error {
 	ws := ptyWinsize{Row: uint16(rows), Col: uint16(cols)}
-	return ptyIoctl(f.Fd(), syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(&ws)))
+	return ptyFileIoctl(f, syscall.TIOCSWINSZ, unsafe.Pointer(&ws))
+}
+
+// ptyFileIoctl runs an ioctl on f without f.Fd(): Fd() puts a descriptor
+// back into blocking mode, and on Linux the PTY master is non-blocking so
+// the Go poller can interrupt a read when close runs (D-5). arg is an
+// unsafe.Pointer, converted to uintptr only inside the Syscall call, so the
+// pointed-to value stays valid.
+func ptyFileIoctl(f *os.File, req uint, arg unsafe.Pointer) error {
+	rc, err := f.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var ierr error
+	if err := rc.Control(func(fd uintptr) {
+		_, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(req), uintptr(arg))
+		if e != 0 {
+			ierr = e
+		}
+	}); err != nil {
+		return err
+	}
+	return ierr
 }
 
 func ptyIoctl(fd uintptr, req uint, arg uintptr) error {
@@ -106,11 +128,12 @@ func ptyIsEOF(err error) bool {
 	return errors.Is(err, syscall.EIO)
 }
 
-// procOpenFD opens path as a BLOCKING descriptor wrapped in *os.File. A PTY is
-// deliberately kept out of the Go poller: macOS kqueue does not report
-// readiness on PTY devices, so a poller-registered master would never wake.
-// Blocking reads run on their own thread; a read returns when the child side
-// closes, which the kill in close() guarantees.
+// procOpenFD opens path wrapped in *os.File. Without O_NONBLOCK in flags the
+// descriptor is BLOCKING and stays out of the Go poller: that is the macOS PTY
+// master, because kqueue does not report readiness on PTY devices, so a
+// poller-registered master would never wake; its blocking reads run on their
+// own thread and return when the child side closes. The Linux master passes
+// O_NONBLOCK and is in the poller, so close interrupts its read (D-5).
 func procOpenFD(path string, flags int) (*os.File, error) {
 	fd, err := syscall.Open(path, flags|syscall.O_CLOEXEC, 0)
 	if err != nil {

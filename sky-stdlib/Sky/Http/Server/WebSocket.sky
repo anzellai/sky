@@ -46,7 +46,7 @@
 --
 -- See `examples/33-websocket-echo` for the canonical pattern.
 module Sky.Http.Server.WebSocket exposing
-    ( WebSocketServer(..)
+    ( WebSocketServer
     , WebSocketServerCfg
     , defaultCfg
     , withOnConnect

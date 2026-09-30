@@ -16,6 +16,8 @@ package rt
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 )
 
 // addOwned records a resource the session must release when it ends. A
@@ -41,7 +43,15 @@ func (s *liveSession) removeOwned(key string) {
 	s.ownedMu.Unlock()
 }
 
-// releaseOwned releases every owned resource. Called from markDone.
+// ownedReleaseBound is how long releaseOwned waits for the session's
+// resources. A release still running after it finishes in the background.
+const ownedReleaseBound = 3 * time.Second
+
+// releaseOwned releases every owned resource. Called from markDone, which
+// runs on the goroutine that ended the session: a store's cleanup loop, the
+// idle eviction, App.stop. So the releases run concurrently and the wait is
+// bounded (D-2): one release stuck behind a child that does not exit must
+// not stall the others, or stop every later session expiry in the app.
 func (s *liveSession) releaseOwned() {
 	s.ownedMu.Lock()
 	list := make([]func(), 0, len(s.owned))
@@ -50,15 +60,30 @@ func (s *liveSession) releaseOwned() {
 	}
 	s.owned = nil
 	s.ownedMu.Unlock()
+	if len(list) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
 	for _, fn := range list {
-		func() {
+		wg.Add(1)
+		go func(fn func()) {
+			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
 					LogRecoveredPanic("sky.live", "release of a session-owned resource", r)
 				}
 			}()
 			fn()
-		}()
+		}(fn)
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(ownedReleaseBound):
 	}
 }
 

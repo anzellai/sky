@@ -27,16 +27,18 @@ import (
 	"github.com/coder/websocket"
 )
 
-// ─── 1. nextWsID monotonicity ──────────────────────────────────────
+// ─── 1. nextWsID: non-zero, distinct, random ───────────────────────
 
-func TestNextWsID_NonZeroMonotonic(t *testing.T) {
+// Ids are random 62-bit values since v0.27.0 (A-1b), not a counter: an id
+// stored by an earlier run must not name a socket of this one.
+func TestNextWsID_NonZeroDistinct(t *testing.T) {
 	a := nextWsID()
 	b := nextWsID()
-	if a == 0 || b == 0 {
-		t.Fatalf("nextWsID returned zero: a=%d b=%d", a, b)
+	if a <= 0 || b <= 0 {
+		t.Fatalf("nextWsID returned a non-positive id: a=%d b=%d", a, b)
 	}
-	if b <= a {
-		t.Fatalf("nextWsID not monotonic: a=%d b=%d", a, b)
+	if a == b {
+		t.Fatalf("nextWsID returned the same id twice: %d", a)
 	}
 }
 

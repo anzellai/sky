@@ -35,12 +35,23 @@ import (
 	"unicode/utf8"
 )
 
+// procPtyMaxCols / procPtyMaxRows: the one terminal size bound (A-5 / D-4).
+// A PTY (Process.withPty, Process.resize) and the screen emulator never go
+// past it; it is the Terminal widget's own limit.
+const (
+	procPtyMaxCols = 500
+	procPtyMaxRows = 200
+)
+
 const (
 	vtScrollbackMax = 1000 // lines kept above the screen (and sent on a repaint)
-	vtMaxDim        = 1000 // largest cols / rows accepted
-	vtJournalMax    = 512  // journal entries kept before the oldest are dropped
-	vtJournalLines  = 4 * vtScrollbackMax
-	vtOSCMax        = 4096
+	// The largest screen: the same bound Process.resize and withPty enforce
+	// and the Terminal widget sends (A-5 / D-4). 500 x 200 cells.
+	vtMaxCols      = procPtyMaxCols
+	vtMaxRows      = procPtyMaxRows
+	vtJournalMax   = 512 // journal entries kept before the oldest are dropped
+	vtJournalLines = 4 * vtScrollbackMax
+	vtOSCMax       = 4096
 )
 
 // Cell flags. vtWide marks the left half of a wide character; vtTail the
@@ -156,7 +167,7 @@ type vtScreen struct {
 }
 
 func newVTScreen(cols, rows int) *vtScreen {
-	s := &vtScreen{cols: vtClamp(cols, 1, vtMaxDim), rows: vtClamp(rows, 1, vtMaxDim)}
+	s := &vtScreen{cols: vtClamp(cols, 1, vtMaxCols), rows: vtClamp(rows, 1, vtMaxRows)}
 	s.reset()
 	return s
 }
@@ -1164,8 +1175,8 @@ func (s *vtScreen) fitCols(lines [][]vtCell, cols int) {
 // resize changes the size like xterm: shrinking the rows keeps the cursor
 // row on screen and moves the rows above it to the scrollback.
 func (s *vtScreen) resize(cols, rows int) {
-	cols = vtClamp(cols, 1, vtMaxDim)
-	rows = vtClamp(rows, 1, vtMaxDim)
+	cols = vtClamp(cols, 1, vtMaxCols)
+	rows = vtClamp(rows, 1, vtMaxRows)
 	if cols == s.cols && rows == s.rows {
 		return
 	}

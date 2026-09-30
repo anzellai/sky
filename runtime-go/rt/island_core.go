@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Widget islands — a third-party JS widget (a code editor, a canvas painter)
@@ -84,7 +86,45 @@ func wrapIslandHandler(event string, handler any) any {
 
 // islandLogDrop reports a dropped island event (a var so a test can observe
 // it).
-var islandLogDrop = func(reason string) {
+var islandLogDrop = islandLogDropLimited
+
+// islandDropLogMax is how many dropped-event lines one window may log. A
+// client can send malformed island events in a loop, and each used to write
+// one warn line (D-8): the log volume was the client's to choose.
+const (
+	islandDropLogMax    = 20
+	islandDropLogWindow = time.Minute
+)
+
+var islandDropLog struct {
+	mu         sync.Mutex
+	windowFrom time.Time
+	logged     int
+	suppressed int
+}
+
+// islandLogDropLimited logs a dropped island event, at most islandDropLogMax
+// lines a minute. The first line of the next window says how many were not
+// logged, so the count is never lost.
+func islandLogDropLimited(reason string) {
+	now := time.Now()
+	islandDropLog.mu.Lock()
+	if now.Sub(islandDropLog.windowFrom) >= islandDropLogWindow {
+		if islandDropLog.suppressed > 0 {
+			n := islandDropLog.suppressed
+			defer logEmit(logLevelWarn, "warn",
+				fmt.Sprintf("sky.island: %d more widget events were dropped and not logged in the last minute", n),
+				map[string]any{"class": islandDecodeClass, "suppressed": n})
+		}
+		islandDropLog.windowFrom, islandDropLog.logged, islandDropLog.suppressed = now, 0, 0
+	}
+	if islandDropLog.logged >= islandDropLogMax {
+		islandDropLog.suppressed++
+		islandDropLog.mu.Unlock()
+		return
+	}
+	islandDropLog.logged++
+	islandDropLog.mu.Unlock()
 	logEmit(logLevelWarn, "warn",
 		"sky.island: a widget event was dropped: "+reason,
 		map[string]any{"class": islandDecodeClass})

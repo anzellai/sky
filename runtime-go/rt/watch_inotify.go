@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -50,6 +51,17 @@ type inotifyBackend struct {
 	names map[string]map[string]bool
 	done  chan struct{}
 }
+
+// inotifyAddWatch is syscall.InotifyAddWatch, with a hook a test sets to make
+// the kernel run out of watches (ENOSPC) without root.
+func inotifyAddWatch(fd int, path string, mask uint32) (int, error) {
+	if h := inotifyAddWatchHook.Load(); h != nil {
+		return (*h)(fd, path, mask)
+	}
+	return syscall.InotifyAddWatch(fd, path, mask)
+}
+
+var inotifyAddWatchHook atomic.Pointer[func(fd int, path string, mask uint32) (int, error)]
 
 func newWatchBackend(w *watcher) (watchBackend, error) {
 	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC | syscall.IN_NONBLOCK)
@@ -88,7 +100,7 @@ func newWatchBackend(w *watcher) (watchBackend, error) {
 }
 
 func (b *inotifyBackend) addDir(dir string) error {
-	wd, err := syscall.InotifyAddWatch(b.fd, dir, inotifyMask)
+	wd, err := inotifyAddWatch(b.fd, dir, inotifyMask)
 	if err != nil {
 		return fmt.Errorf("inotify_add_watch %s: %w", dir, err)
 	}
@@ -132,7 +144,12 @@ func (b *inotifyBackend) addTree(dir string, report bool) error {
 			if rel, ok := b.w.relTo(p); ok && b.w.ignored(rel) {
 				continue
 			}
-			_ = b.addTree(p, report)
+			// A sub-directory that vanished meanwhile is reported by its
+			// parent; running out of watches (ENOSPC: max_user_watches) is
+			// not ignored, or that sub-tree would go unwatched in silence.
+			if err := b.addTree(p, report); isWatchLimit(err) {
+				return err
+			}
 		}
 	}
 	return nil
@@ -384,7 +401,10 @@ func (b *inotifyBackend) handle(wd int32, mask, cookie uint32, name string) {
 		}
 		if isDir && b.w.opts.recursive {
 			if rel, ok := b.w.relTo(path); ok && !b.w.ignored(rel) {
-				_ = b.addTree(path, true)
+				if err := b.addTree(path, true); isWatchLimit(err) {
+					// Out of watches: the app must rescan (D-7).
+					b.w.send(rawEvent{overflow: true})
+				}
 			}
 		}
 	case mask&(syscall.IN_DELETE|syscall.IN_MOVED_FROM) != 0:
