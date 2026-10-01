@@ -1396,9 +1396,10 @@ pub fn check_usage(
         Ok(())
     } else {
         Err(format!(
-            "missing permission purpose string{}:\n  - {}",
+            "missing permission purpose string{}:\n  - {}\n{}",
             if problems.len() == 1 { "" } else { "s" },
-            problems.join("\n  - ")
+            problems.join("\n  - "),
+            project::migration_see("native-permissions")
         ))
     }
 }
@@ -2058,7 +2059,9 @@ mod tests {
         for p in [Platform::Ios, Platform::Android] {
             let e = check_usage(&used, &[], p, false, &Sites::default()).expect_err("must refuse");
             assert!(
-                e.contains("Native.authenticate") && e.contains("Bundle.withUsage Bundle.FaceId"),
+                e.contains("Native.authenticate")
+                    && e.contains("Bundle.withUsage Bundle.FaceId")
+                    && e.ends_with("docs/migration/v0.27.md#native-permissions"),
                 "{e}"
             );
         }

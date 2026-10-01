@@ -3740,7 +3740,7 @@ impl<'a> Resolver<'a> {
         diag.suggestion = Some(
             "call the typed stdlib function that wraps the kernel, or for Go code \
              `sky add <go/module>` and `import` the binding: its pinned signature \
-             returns `Result Error a`."
+             returns `Result Error a`. see docs/migration/v0.27.md#sky-ffi-is-stdlib-only"
                 .to_string(),
         );
         if let Some(sp) = span {

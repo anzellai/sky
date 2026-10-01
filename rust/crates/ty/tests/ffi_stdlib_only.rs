@@ -92,6 +92,11 @@ fn app_code_ffi_kernel_is_rejected_with_e1011() {
     );
     // The hint names the typed stdlib function that wraps this kernel.
     assert!(hint.contains("`Crypto.sha256`"), "{hint}");
+    // And ends with the migration guide's anchor.
+    assert!(
+        hint.ends_with("see docs/migration/v0.27.md#sky-ffi-is-stdlib-only"),
+        "{hint}"
+    );
 }
 
 #[test]
@@ -315,6 +320,12 @@ fn the_judges_case_webview_kernel_is_rejected_with_e1011() {
         d[0].1.contains("`Webview.kernel`") && d[0].1.contains("`Sky.Ffi`"),
         "{}",
         d[0].1
+    );
+    assert!(
+        d[0].2
+            .ends_with("see docs/migration/v0.27.md#sky-ffi-is-stdlib-only"),
+        "{}",
+        d[0].2
     );
 }
 

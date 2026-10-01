@@ -1,7 +1,7 @@
 //! The one-time "Sky upgraded X -> Y" notice (v0.27.0 migration addendum).
 //!
 //! The first run of a `sky` version on a machine prints the notice once, on
-//! stderr, with the migration guide's link, and records the version in the
+//! stderr when stderr is a terminal, with the migration guide's link, and records the version in the
 //! user cache dir; the next run prints nothing. A `--format json` run carries
 //! it as one NDJSON `notice` record instead, and `--version` never shows it.
 //! Each case uses its own `XDG_CACHE_HOME`, so the machine's real record is
@@ -52,29 +52,76 @@ fn run(dir: &Path, cache: &Path, args: &[&str]) -> (String, String) {
     )
 }
 
+/// `sky <args>` in `dir` under a pseudo-terminal (`script`), so stderr is a
+/// terminal. Returns the terminal's output (stdout and stderr together).
+fn run_tty(dir: &Path, cache: &Path, args: &[&str]) -> String {
+    let mut cmd = Command::new("script");
+    if cfg!(target_os = "macos") {
+        cmd.arg("-q").arg("/dev/null").arg(SKY).args(args);
+    } else {
+        let line = std::iter::once(SKY)
+            .chain(args.iter().copied())
+            .map(|a| format!("'{a}'"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        cmd.args(["-qec", &line, "/dev/null"]);
+    }
+    let out = cmd
+        .current_dir(dir)
+        .env("XDG_CACHE_HOME", cache)
+        .env("HOME", cache)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn script (util-linux or BSD) for a pseudo-terminal");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 #[test]
 fn the_first_run_of_a_version_prints_the_notice_once() {
     let dir = scratch("text");
     let cache = dir.join("cache");
     // `--version` never shows it and records nothing.
-    let (_, err) = run(&dir, &cache, &["--version"]);
-    assert!(!err.contains("Sky upgraded"), "{err}");
+    let out = run_tty(&dir, &cache, &["--version"]);
+    assert!(!out.contains("Sky upgraded"), "{out}");
     assert!(!cache.join("sky/last-version").exists());
-    // The first real command shows it once, on stderr.
-    let (out, err) = run(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
+    // The first real command on a terminal shows it once.
+    let out = run_tty(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
     assert!(
-        err.contains("Sky upgraded") && err.contains(GUIDE),
-        "the first run prints the notice with the guide link:\n{err}"
+        out.contains("Sky upgraded") && out.contains(GUIDE),
+        "the first run prints the notice with the guide link:\n{out}"
     );
-    assert!(!out.contains("Sky upgraded"), "never on stdout:\n{out}");
     assert!(cache.join("sky/last-version").is_file());
     // The second run prints nothing.
-    let (_, err) = run(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
-    assert!(!err.contains("Sky upgraded"), "only once:\n{err}");
+    let out = run_tty(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
+    assert!(!out.contains("Sky upgraded"), "only once:\n{out}");
     // A recorded older version names both ends.
     std::fs::write(cache.join("sky/last-version"), "sky v0.26.1\n").unwrap();
-    let (_, err) = run(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
-    assert!(err.contains("Sky upgraded sky v0.26.1 -> "), "{err}");
+    let out = run_tty(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
+    assert!(out.contains("Sky upgraded sky v0.26.1 -> "), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The TTY rule: with stderr not a terminal (a script, CI, a pipe) and no
+/// `--format json`, the notice is neither printed nor recorded, so the first
+/// run a person sees still shows it.
+#[test]
+fn a_run_with_no_terminal_neither_prints_nor_records_the_notice() {
+    let dir = scratch("notty");
+    let cache = dir.join("cache");
+    let (out, err) = run(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
+    assert!(
+        !err.contains("Sky upgraded") && !out.contains("Sky upgraded"),
+        "{err}"
+    );
+    assert!(
+        !cache.join("sky/last-version").exists(),
+        "a run that showed nothing must not use up the notice"
+    );
+    let out = run_tty(&dir, &cache, &["fmt", "--check", "src/Main.sky"]);
+    assert!(
+        out.contains("Sky upgraded"),
+        "the next terminal run shows it:\n{out}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

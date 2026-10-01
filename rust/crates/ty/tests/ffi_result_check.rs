@@ -321,7 +321,9 @@ fn the_type_error_carries_the_ffi_result_hint() {
         .expect("an E2001");
     let hint = d.suggestion.clone().unwrap_or_default();
     assert!(
-        hint.contains("Result Error a") && hint.contains("Result.withDefault"),
+        hint.contains("Result Error a")
+            && hint.contains("Result.withDefault")
+            && hint.ends_with("see docs/migration/v0.27.md#ffi-result-enforced"),
         "hint: {hint:?}; message: {}",
         d.message
     );

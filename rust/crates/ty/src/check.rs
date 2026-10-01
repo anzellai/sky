@@ -351,7 +351,8 @@ fn ffi_result_hint(message: &str, body: &Body) -> Option<String> {
         "every Go FFI call returns `Result Error a` (since v0.27.0 the checker \
          enforces it): handle the Result with `case … of Ok v -> … ; Err e -> …`, \
          `Result.withDefault fallback`, or chain with `Result.andThen` / \
-         `Result.map`. See docs/ffi/boundary-philosophy.md"
+         `Result.map`. Background: docs/ffi/boundary-philosophy.md; \
+         see docs/migration/v0.27.md#ffi-result-enforced"
             .to_string()
     })
 }
@@ -453,6 +454,50 @@ fn cast_migration_hint(message: &str, body: &Body, sky: &dyn hir::SkyDb) -> Opti
                  See docs/migration/v0.27.md#aead-encrypt-is-a-task"
             ));
         }
+    }
+    // `App.app` / `web` / `cli` / `tui` fix `init`'s seed to `()` since v0.27.0.
+    if message.contains("`init` field") && message.contains("Std.App.") && message.contains("()") {
+        return Some(
+            "since v0.27.0 `init` takes `()`: `init : Page -> ( Model, Cmd Msg )` -> \
+             `init : () -> ( Model, Cmd Msg )`; read the route with `App.withRoutes` / \
+             `App.withOnNavigate` and the request with `App.withRequest`. \
+             see docs/migration/v0.27.md#init-takes-unit"
+                .to_string(),
+        );
+    }
+    // `Spa.rpc` / `Spa.rpcWith` take the request body as a value since v0.27.0.
+    if message.contains("->")
+        && (body_calls(body, sky, "Std.Spa", "Spa", "rpc")
+            || body_calls(body, sky, "Std.Spa", "Spa", "rpcWith"))
+    {
+        return Some(
+            "since v0.27.0 `Spa.rpc` and `Spa.rpcWith` take the request body as a value: \
+             `Spa.rpc bodyCodec respCodec url (\\model -> body) toMsg` -> \
+             `Spa.rpc bodyCodec respCodec url body toMsg`. \
+             see docs/migration/v0.27.md#spa-rpc-body-value"
+                .to_string(),
+        );
+    }
+    // Records that gained fields in v0.27.0: a hand-written literal misses them.
+    if message.contains("missing field")
+        && [
+            "embedded",
+            "sessionTransport",
+            "onFrame",
+            "frameMode",
+            "discard",
+        ]
+        .iter()
+        .any(|f| message.contains(f))
+    {
+        return Some(
+            "since v0.27.0 `App.WebOpts` has `embedded` and `sessionTransport`, \
+             `WebSocketServerCfg` has `onFrame` and `frameMode`, and `App.DurableWiring` \
+             has `discard`: add the fields, or start from the defaults \
+             (`{ App.webDefaults | port = 8000 }`, `Ws.defaultCfg |> Ws.with...`, \
+             `App.withDurable`). see docs/migration/v0.27.md#webopts-record-literals"
+                .to_string(),
+        );
     }
     if message.contains("Value") && body_calls(body, sky, "Std.Auth", "Auth", "verifyToken") {
         return Some(
@@ -910,7 +955,9 @@ pub fn check_modules_with_world(
                                 }]
                             })
                             .unwrap_or_default(),
-                        suggestion: Some(suggestion),
+                        suggestion: Some(format!(
+                            "{suggestion} see docs/migration/v0.27.md#sky-ffi-is-stdlib-only"
+                        )),
                     });
                 }
             }

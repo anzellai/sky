@@ -68,19 +68,23 @@ fn main() -> ExitCode {
     }
     // Best-effort "newer version available" nudge — cached, non-blocking, TTY-only.
     maybe_notify_update(args.first().map(String::as_str));
-    // The one-time "Sky upgraded X -> Y" notice: stderr text, or one `notice`
-    // record in a `--format json` stream (json_out emits it there).
-    if let Some(n) = version_notice::check(
-        args.first().map(String::as_str),
-        &version_notice::this_version(),
-    ) {
-        let json = args
-            .get(1..)
-            .is_some_and(|rest| matches!(json_out::take_format(rest), Ok((_, true))));
-        if json {
-            version_notice::set_pending(n);
-        } else {
-            eprint!("{}", version_notice::text(&n));
+    // The one-time "Sky upgraded X -> Y" notice: one `notice` record in a
+    // `--format json` stream (json_out emits it there), else text on stderr
+    // when stderr is a terminal. A run that would show it nowhere (a script,
+    // CI, a pipe) neither prints nor records it, so a person still sees it once.
+    let json = args
+        .get(1..)
+        .is_some_and(|rest| matches!(json_out::take_format(rest), Ok((_, true))));
+    if json || std::io::stderr().is_terminal() {
+        if let Some(n) = version_notice::check(
+            args.first().map(String::as_str),
+            &version_notice::this_version(),
+        ) {
+            if json {
+                version_notice::set_pending(n);
+            } else {
+                eprint!("{}", version_notice::text(&n));
+            }
         }
     }
 
@@ -718,12 +722,8 @@ fn cmd_upgrade_install(
 
     println!("Downloading {artifact} @ {tag} …");
     match download_and_replace_binary(&tag, artifact) {
-        Ok(dest) => {
-            println!("Upgraded to {tag} — {}", dest.display());
-            println!(
-                "What changed and how to migrate: {}",
-                project::MIGRATION_GUIDE
-            );
+        Ok((dest, done)) => {
+            print!("{done}");
             // Warm the Go build cache for the NEW runtime, so the first build after
             // the upgrade is not a cold multi-minute compile. Runs the NEW binary
             // (it embeds the new `rt`); best-effort — a failure never fails the
@@ -1095,7 +1095,7 @@ fn run_update_check_refresh() {
 
 /// Download the release tarball for `artifact` @ `tag`, extract the binary, and
 /// atomically replace the running executable. Returns the replaced path.
-fn download_and_replace_binary(tag: &str, artifact: &str) -> Result<PathBuf, String> {
+fn download_and_replace_binary(tag: &str, artifact: &str) -> Result<(PathBuf, String), String> {
     let is_windows = artifact.contains("windows");
     if is_windows {
         return Err(
@@ -1106,8 +1106,25 @@ fn download_and_replace_binary(tag: &str, artifact: &str) -> Result<PathBuf, Str
     }
     let cur = std::env::current_exe().map_err(|e| format!("could not locate current exe: {e}"))?;
     let base = format!("https://github.com/anzellai/sky/releases/download/{tag}");
-    install_release_archive(&base, artifact, &cur)?;
-    Ok(cur)
+    let done = install_release_and_report(&base, tag, artifact, &cur)?;
+    Ok((cur, done))
+}
+
+/// Install a release archive (see [`install_release_archive`]) and return what
+/// `sky upgrade` prints once it is in place: the new version and the link to
+/// the migration guide.
+fn install_release_and_report(
+    base: &str,
+    tag: &str,
+    artifact: &str,
+    dest: &Path,
+) -> Result<String, String> {
+    install_release_archive(base, artifact, dest)?;
+    Ok(format!(
+        "Upgraded to {tag} — {}\nWhat changed and how to migrate: {}\n",
+        dest.display(),
+        project::MIGRATION_GUIDE
+    ))
 }
 
 /// The checksum manifest every release publishes next to its assets
@@ -15855,8 +15872,17 @@ mod tests {
             format!("{digest}  {artifact}.tar.gz\n"),
         )
         .unwrap();
-        install_release_archive(&url, artifact, &dest).unwrap();
+        let done = install_release_and_report(&url, "v9.9.9", artifact, &dest).unwrap();
         assert!(std::fs::read_to_string(&dest).unwrap().contains("echo new"));
+        // What `sky upgrade` prints once installed links the migration guide.
+        assert!(
+            done.contains("Upgraded to v9.9.9")
+                && done.contains(
+                    "What changed and how to migrate: \
+                     https://github.com/anzellai/sky/blob/main/docs/migration/v0.27.md"
+                ),
+            "{done}"
+        );
         assert_eq!(leftovers(&bin_dir), 0, "the work dir is removed");
         let _ = std::fs::remove_dir_all(&base);
     }

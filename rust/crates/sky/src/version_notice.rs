@@ -8,6 +8,8 @@
 //! `$XDG_CACHE_HOME/sky/`, `%LOCALAPPDATA%\sky\` on Windows), so the next run
 //! prints nothing. In `--format json` it is one NDJSON `notice` record on
 //! stdout instead of text on stderr, so the stream stays machine-readable.
+//! The text goes to stderr only when stderr is a terminal: a run in a script,
+//! CI or a pipe neither prints nor records it, so a person still sees it once.
 //!
 //! It never prints for `sky --version`, `--help`, `sky lsp` (an editor owns
 //! that process) or the hidden update-check worker, and nothing is recorded
