@@ -24,9 +24,9 @@ package rt
 //   - a request with NO `X-Sky-Wire` comes from a tab built before v0.27.0,
 //     which cannot be told to reload. Spa_isLegacyRpc tells the generated
 //     backend so, and the backend then runs the server-bound follow-ups of
-//     the branch inline, as v0.26.1 did, and leaves `spaFollow_` out of the
-//     response (so a v0.27 client whose header was stripped cannot run them a
-//     second time).
+//     the branch inline, as v0.26.1 did, and sends an empty `spaFollow_`
+//     (`"[]"`) in the response (so a v0.27 client whose header was stripped
+//     cannot run them a second time).
 
 import (
 	"strings"
@@ -86,7 +86,7 @@ func spaWireCheck(header string) spaWireVerdict {
 // Spa_isLegacyRpc — `Spa_isLegacyRpc : Request -> Bool`. True when the
 // backend has a wire hash and the request carries no X-Sky-Wire: a tab from
 // before v0.27.0. The generated handler then runs server-bound follow-ups
-// inline and strips `spaFollow_` from the response.
+// inline and sends an empty `spaFollow_` (`"[]"`) in the response.
 func Spa_isLegacyRpc(req any) any {
 	r, ok := asSkyRequest(req)
 	if !ok {
