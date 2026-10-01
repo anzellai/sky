@@ -16,6 +16,11 @@
 #          stalled with busy = True)
 #   pair   two server Msgs are in flight together (one delay, not two)
 #
+# A wire stage drives the same web:app backend (scripts/spa-wire-verify.mjs):
+# every /_rpc/ request from the client carries X-Sky-Wire; a header-less
+# replay takes the legacy path; a 409 + X-Sky-Status: reload reloads the tab
+# once, the 30 s guard stops a second reload, and the "not sent" notice shows.
+#
 # A second stage builds rust/crates/sky/tests/fixtures/spa-handled-err
 # (--target web:app) and checks the client's error reports
 # (scripts/spa-handled-err-verify.mjs): a client-local perform's Err the app
@@ -70,6 +75,10 @@ echo "==> driving both targets in a browser"
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 600 node "$ROOT/scripts/spa-rpc-order-verify.mjs" "$SPA" "$LIVE" --port "${RPC_ORDER_PORT:-9361}"
 
+echo "==> driving the wire handshake (X-Sky-Wire, legacy path, reload guard) in a browser"
+SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
+  with_timeout 300 node "$ROOT/scripts/spa-wire-verify.mjs" "$SPA" --port "${SPA_WIRE_PORT:-9367}"
+
 mkdir -p "$TMP/err"
 cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-handled-err/." "$TMP/err/"
 echo "==> building fixture spa-handled-err (--target web:app)"
@@ -93,6 +102,7 @@ SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 300 node "$ROOT/scripts/spa-click-routing-verify.mjs" "$CLICK" --port "${CLICK_ROUTING_PORT:-9365}"
 
 echo "spa-rpc-order-e2e: PASS — web:app runs each Msg once, in order, with its Cmds, as Sky.Live does;"
+echo "  every RPC names its wire schema, a mismatch reloads once and says the action was not sent;"
 echo "  a handled client Err logs nothing, an unhandled RPC failure logs once;"
 echo "  one click runs one Msg, server paths are full navigations, analytics are per visitor."
 rm -rf "$TMP"
