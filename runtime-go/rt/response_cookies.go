@@ -21,10 +21,27 @@
 // user-visible escape hatch — a Sky handler may still put a literal line
 // in the `headers` Dict — and is emitted too, de-duplicated against
 // `Cookies` so the common single-cookie case yields exactly one header.
+//
+// `Headers["Set-Cookie"]` is also how the cookies cross Sky code. A response
+// whose type is known there is narrowed into the emitted
+// `Sky_Http_Server_Response_R` record (status / body / headers /
+// contentType), which has no `Cookies` field. The mirror therefore holds
+// EVERY minted line, joined by "\n": a newline can never occur inside a
+// header value (net/http refuses one), so it is an unambiguous separator,
+// and `setCookieLines` splits it again. Before this, the mirror held only
+// the first line, and every later cookie was lost at the first narrowing
+// (a split Sky.Spa backend sent `sky_spa=…` but not `sky_sid=; Max-Age=0`).
 
 package rt
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
+
+// setCookieSep joins the Set-Cookie lines in the `Headers["Set-Cookie"]`
+// mirror. See the file comment.
+const setCookieSep = "\n"
 
 // setCookieLines returns every Set-Cookie line a response should emit,
 // in issue order, with the user-set `Headers["Set-Cookie"]` escape hatch
@@ -32,16 +49,24 @@ import "net/http"
 func setCookieLines(resp SkyResponse) []string {
 	lines := make([]string, 0, len(resp.Cookies)+1)
 	lines = append(lines, resp.Cookies...)
-	if raw, ok := canonicalHeaders(resp.Headers)["Set-Cookie"]; ok && raw != "" {
+	raw, ok := canonicalHeaders(resp.Headers)["Set-Cookie"]
+	if !ok || raw == "" {
+		return lines
+	}
+	for _, line := range strings.Split(raw, setCookieSep) {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
 		dup := false
 		for _, l := range lines {
-			if l == raw {
+			if l == line {
 				dup = true
 				break
 			}
 		}
 		if !dup {
-			lines = append(lines, raw)
+			lines = append(lines, line)
 		}
 	}
 	return lines
@@ -49,19 +74,20 @@ func setCookieLines(resp SkyResponse) []string {
 
 // addSetCookie appends a fully-formed Set-Cookie line to a response.
 //
-// The line is ALSO mirrored into `Headers["Set-Cookie"]` when that slot
-// is still empty, so `resp.headers` keeps showing the first cookie to
-// Sky code (and to the response-shape tests) exactly as before. Later
-// cookies live only in `Cookies`; `setCookieLines` de-duplicates, so the
-// mirror never doubles a header on the wire.
+// The line is ALSO appended to the `Headers["Set-Cookie"]` mirror (lines
+// joined by "\n"), so every cookie survives the narrowing into the typed
+// Sky record, which carries only the headers. `setCookieLines` splits the
+// mirror and de-duplicates it against `Cookies`, so the mirror never
+// doubles a header on the wire.
 func addSetCookie(resp SkyResponse, line string) SkyResponse {
 	resp.Cookies = append(append([]string(nil), resp.Cookies...), line)
 	// Copy-on-write, like Server.withHeader: the headers map may be shared
 	// with another response derived from the same base value.
-	if existing, ok := canonicalHeaders(resp.Headers)["Set-Cookie"]; !ok || existing == "" {
-		resp = withResponseHeader(resp, "Set-Cookie", line)
+	mirror := line
+	if existing, ok := canonicalHeaders(resp.Headers)["Set-Cookie"]; ok && existing != "" {
+		mirror = existing + setCookieSep + line
 	}
-	return resp
+	return withResponseHeader(resp, "Set-Cookie", mirror)
 }
 
 // canonicalHeaders folds a headers map onto canonical names

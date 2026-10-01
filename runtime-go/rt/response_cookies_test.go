@@ -21,6 +21,7 @@ package rt
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -180,5 +181,64 @@ func TestSetCookie_SingleCookieIsNotDuplicated(t *testing.T) {
 	applySkyResponseHeaders(rec.Header(), nil, out)
 	if lines := rec.Result().Header.Values("Set-Cookie"); len(lines) != 1 {
 		t.Fatalf("single cookie must emit exactly one header line, got %v", lines)
+	}
+}
+
+// ── Every cookie survives the typed Sky record shape ─────────────
+//
+// A response that passes through Sky code with its type known is narrowed
+// (rt.Coerce) into the emitted `Sky_Http_Server_Response_R` record, which
+// carries `status` / `body` / `headers` / `contentType` and no `Cookies`
+// field. Only the `Headers["Set-Cookie"]` mirror crossed that narrowing, and
+// it held the FIRST cookie only, so a response that set three cookies
+// reached the wire with one. That is how a split Sky.Spa backend converting
+// a pre-v0.27 `sky_sid` sent `sky_spa=…` but never `sky_sid=; Max-Age=0`, and
+// lost `__sky_csrf` with it.
+
+func threeCookieResponse() any {
+	var out any = Server_text("ok")
+	out = Server_withCookie("a", "1", out)
+	out = Server_withCookie("b", "2", out)
+	out = Server_withCookie("c", "3", out)
+	return out
+}
+
+func dispatchedSetCookies(t *testing.T, payload any) []string {
+	t.Helper()
+	handler := func(any) any {
+		return func() any { return Ok[any, any](payload) }
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	dispatchSkyHandler(w, req, handler, nil)
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	return w.Result().Header.Values("Set-Cookie")
+}
+
+func TestSetCookie_ThreeCookiesReachTheWire_RuntimeShape(t *testing.T) {
+	lines := dispatchedSetCookies(t, threeCookieResponse())
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 Set-Cookie lines, got %d: %q", len(lines), lines)
+	}
+}
+
+func TestSetCookie_ThreeCookiesReachTheWire_TypedRecordShape(t *testing.T) {
+	typed := Coerce[typedSkyResponseForTest](threeCookieResponse())
+	lines := dispatchedSetCookies(t, any(typed))
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 Set-Cookie lines after the typed narrowing, got %d: %q", len(lines), lines)
+	}
+	for i, name := range []string{"a=1", "b=2", "c=3"} {
+		if !strings.HasPrefix(lines[i], name+";") {
+			t.Fatalf("line %d: want %s first, got %q (all: %q)", i, name, lines[i], lines)
+		}
+	}
+	// A record update in Sky code copies the headers Dict, so the cookies
+	// survive it too; and a second narrowing round-trip changes nothing.
+	again := Coerce[typedSkyResponseForTest](any(typed))
+	if got := dispatchedSetCookies(t, any(again)); len(got) != 3 {
+		t.Fatalf("a second narrowing lost cookies: %q", got)
 	}
 }

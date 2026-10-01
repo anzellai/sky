@@ -308,6 +308,9 @@ cookie =
 -- to send the cookie back.  Write `Secure` into the attribute string to
 -- force it.
 --
+-- Every cookie a response carries reaches the wire, one `Set-Cookie` line
+-- each. `resp.headers` shows them under "Set-Cookie", joined by a newline.
+--
 -- Before v0.27.0 `withCookie` was typed `any` and took three shapes. It was
 -- an unchecked cast: any arguments type-checked, and a result used at any
 -- type failed at run time. The pre-built `Cookie` form is now `addCookie`;

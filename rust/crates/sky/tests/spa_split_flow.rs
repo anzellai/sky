@@ -5005,6 +5005,162 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     );
 }
 
+// Send one request with an optional `Cookie:` header and return (status, every
+// `Set-Cookie` line of the answer, in order). `-D -` dumps the response headers
+// ahead of the body; the body is discarded.
+fn curl_set_cookies(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    cookie: &str,
+) -> (u32, Vec<String>) {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let mut args: Vec<String> = vec![
+        "-s".into(),
+        "-D".into(),
+        "-".into(),
+        "-o".into(),
+        "/dev/null".into(),
+        "-X".into(),
+        method.into(),
+        "-H".into(),
+        format!("Cookie: {cookie}"),
+    ];
+    if let Some(b) = body {
+        args.push("-H".into());
+        args.push("Content-Type: application/json".into());
+        args.push("-d".into());
+        args.push(b.into());
+    }
+    args.push(url);
+    let out = Command::new("curl").args(&args).output().expect("run curl");
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    let mut status = 0u32;
+    let mut cookies = Vec::new();
+    for line in s.lines() {
+        if line.starts_with("HTTP/") {
+            status = line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|c| c.parse().ok())
+                .unwrap_or(0);
+        } else if line.to_ascii_lowercase().starts_with("set-cookie:") {
+            cookies.push(line[line.find(':').unwrap() + 1..].trim().to_string());
+        }
+    }
+    (status, cookies)
+}
+
+/// RC R-2 (v0.27.0 real-app run). A request that carries the Spa session only
+/// under the pre-v0.27 cookie name `sky_sid` is answered with TWO cookies: the
+/// session moved to `sky_spa=…` and `sky_sid=; Max-Age=0` to expire the old
+/// one (`Spa_sessionCookies`, runtime-go/rt/spa_session_legacy.go). The answer
+/// passes through `spaWithSession_` in Sky code, where the response is narrowed
+/// into the typed `Response` record (status / body / headers / contentType);
+/// only the first cookie crossed that narrowing, so the server-rendered page
+/// and every RPC answer sent `sky_spa=…` alone and the browser kept the stale
+/// `sky_sid` forever. Both lines must reach the wire, on the SSR page and on
+/// an RPC answer.
+#[test]
+fn spa_legacy_cookie_conversion_sends_every_cookie() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    // A routed Std.App app with a session field: its server-rendered page and
+    // its RPC answers both pass through `spaWithSession_`.
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-identity-slot");
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&fixture, &proj);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-identity-slot fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "the fixture must build:\n{log}");
+    let backend_dir = proj.join(".skyapp/web-app/.split/backend");
+    let backend = std::fs::read_to_string(backend_dir.join("src/Main.sky")).unwrap();
+    assert!(
+        backend.contains("ssrHandler req =\n    spaWithSession_ req (ssrInner_ req)"),
+        "the SSR page must pass through spaWithSession_:\n{backend}"
+    );
+
+    let port = 19651u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(backend_dir.join("sky-out/app"))
+        .current_dir(&proj)
+        .env("PORT", port.to_string())
+        .env(
+            "SKY_SPA_SESSION_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789",
+        )
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-identity-slot backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-identity-slot backend never reported listening on :{port}:\n{server_log}");
+    }
+
+    // A signed session token, then sent under the OLD cookie name only.
+    let sign_in = r#"{"session":null,"kind":"practitioner","uid":"u1"}"#;
+    let login = curl_post_full(port, "/_rpc/SignIn", sign_in, None);
+    let token = login
+        .as_ref()
+        .and_then(|(_, _, c)| c.clone())
+        .and_then(|c| c.strip_prefix("sky_spa=").map(str::to_string));
+    let legacy = token.as_ref().map(|t| format!("sky_sid={t}"));
+    let page = legacy
+        .as_deref()
+        .map(|c| curl_set_cookies(port, "GET", "/", None, c));
+    let rpc = legacy
+        .as_deref()
+        .map(|c| curl_set_cookies(port, "POST", "/_rpc/SignIn", Some(sign_in), c));
+    let _ = child.kill();
+    let _ = child.wait();
+    let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    let token = token.unwrap_or_else(|| {
+        panic!("SignIn must issue a signed sky_spa cookie: {login:?}\n{server_log}")
+    });
+    // The page converts the session: it moves the token itself to `sky_spa`.
+    // The RPC answer signs a fresh `sky_spa` of its own; either way the old
+    // `sky_sid` must be expired on the same answer.
+    for (what, answer, same_token) in [("the SSR page", page, true), ("an RPC answer", rpc, false)]
+    {
+        let (code, cookies) = answer.expect("the request must be sent");
+        assert_eq!(code, 200, "{what}: status {code}, cookies {cookies:?}");
+        let spa_prefix = if same_token {
+            format!("sky_spa={token};")
+        } else {
+            "sky_spa=".to_string()
+        };
+        assert!(
+            cookies.iter().any(|c| c.starts_with(&spa_prefix)),
+            "{what} must carry the session on sky_spa: {cookies:?}"
+        );
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.starts_with("sky_sid=;") && c.contains("Max-Age=0")),
+            "{what} must expire the legacy sky_sid (every cookie reaches the wire): {cookies:?}"
+        );
+    }
+}
+
 fn session_revocation_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-session-revocation")
 }

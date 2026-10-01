@@ -726,7 +726,7 @@ entries.
   Changed). To keep a label on one line, write `Ui.textNoWrap "label"`. To
   flow several texts as one line of prose, put them in a `Ui.paragraph`. A
   test or a CSS selector that matched the old bare text node directly under
-  its parent now finds it inside `<span style="overflow-wrap: anywhere;">`.
+  its parent now finds it inside `<span style="overflow-wrap: break-word;">`.
 
 ### Known limits in this release
 
@@ -881,9 +881,10 @@ entries.
   `[ Ui.text "first", Ui.text "second" ]` showed `firstsecond` on one line;
   and the terminal renderer cut a long text at the edge of its box. Now,
   outside a paragraph, a text renders as its own
-  `<span style="overflow-wrap: anywhere;">`: a column shows one text per
+  `<span style="overflow-wrap: break-word;">`: a column shows one text per
   line, and a text wraps at word boundaries within the width it is given (a
-  word longer than the line breaks instead of overflowing). Sky.Live,
+  word longer than the line breaks instead of overflowing, and a short word
+  such as a price in a fixed-width item of a crowded row is never broken). Sky.Live,
   Sky.Spa and the desktop window render the same markup. The terminal
   renderer (Sky.Tui) wraps the text at the cell width, and texts in a row
   share the width the other children leave. Inside a `Ui.paragraph` nothing
@@ -1670,6 +1671,16 @@ entries.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **A response that set more than one cookie sent only the first.** A
+  response that passed through a typed binding kept only its first
+  `Set-Cookie`. So a split Sky.Spa backend that moved a pre-v0.27 `sky_sid`
+  to `sky_spa` never expired the old cookie, and a handler with two
+  `Server.withCookie` calls lost the second. Every cookie now reaches the
+  wire; `resp.headers` shows them under "Set-Cookie", joined by a newline.
+- **`Ui.text` broke a short word in a fixed-width item of a crowded row.** At
+  phone width a price such as "£4.50" showed as "£4.5" / "0". The text span
+  now uses `overflow-wrap: break-word`, which still breaks a word longer than
+  the line.
 - **`Ok "s" |> Result.map k` passed `sky check` with `k : Int -> Int`.**
   Nine stdlib functions with no signature were checked as wildcards. Each
   now has its type, and a test fails on any exported stdlib value without
