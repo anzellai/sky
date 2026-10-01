@@ -1,9 +1,11 @@
 -- | Std.Crypto.Cpace — CPace, a password-authenticated key exchange (PAKE),
 -- cipher suite CPACE-X25519-SHA512 (draft-irtf-cfrg-cpace-21).
 --
--- **Status: awaiting external review.** This is an implementation of an
+-- **Status: EXPERIMENTAL, awaiting external review.** This is an implementation of an
 -- Internet-Draft, not yet an RFC, and it has not had an independent security
--- review. It passes the draft's published test vectors. Use it where a
+-- review. It passes the draft's published test vectors. Its API may change
+-- in a later release, and it must not protect production data until an
+-- independent review is done. Use it where a
 -- short shared code is the only thing two parties have in common (pairing a
 -- device by a code shown on a screen), and prefer a reviewed protocol
 -- (`Std.Crypto.Noise` with pinned keys) wherever keys can be exchanged.

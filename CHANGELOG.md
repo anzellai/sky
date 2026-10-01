@@ -744,8 +744,9 @@ entries.
 - **Documentation debt.** `rust/crates/project/src/doc_summary_debt.txt` lists
   767 older exported stdlib values whose doc comment has no summary line. It
   is a ratchet that only shrinks; every value new in v0.27.0 is documented.
-- **`Std.Crypto.Cpace` is awaiting external review** (stated in its module
-  docs). Do not rely on it in production before that review.
+- **`Std.Crypto.Cpace` is EXPERIMENTAL: awaiting external review** (stated in its module
+  docs, `sky doc` and `docs/stdlib.md`). Its API may change in a later release,
+  and it must not protect production data before that review.
 - **New features have checked doc examples, not new `examples/` projects.**
   Widget islands, `Std.Ui.Canvas`, `Std.Ui.Terminal` with `Process.withPty`,
   the header session transport, `App.serve` and client crypto each have a

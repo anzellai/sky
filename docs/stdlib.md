@@ -343,7 +343,11 @@ nonce. Tested against the cacophony IK vectors. See `sky doc Std.Crypto.Noise`.
 hash WireGuard-family peers use). `Noise.protocolName` gives the protocol name
 of a suite. Both sides must use the same suite.
 
-### `Std.Crypto.Cpace` — password-authenticated key exchange (awaiting external review)
+### `Std.Crypto.Cpace` — password-authenticated key exchange (EXPERIMENTAL, awaiting external review)
+
+**Experimental.** This module implements an Internet-Draft and has not had an
+independent security review. Its API may change in a later release. Do not use
+it to protect production data until that review is done.
 
 CPace (draft-irtf-cfrg-cpace-21, CPACE-X25519-SHA512) derives a strong 64-byte
 key from a short shared code — a pairing code on a screen — without exposing

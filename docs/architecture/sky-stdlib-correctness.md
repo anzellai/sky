@@ -1457,7 +1457,7 @@ Sky.Live).
 | `Sky.Core.Crypto`     | AEAD + constant-time-equal | n/a | rt/crypto_aead_test.go + crypto_sign_kx_test.go | SOLID-mostly (no Argon2id) |
 | `Std.Crypto.Sign`/`Kx`/`Kdf` | RFC 8032 / 7748 / 5869 vectors + low-order refusal | Redacting key types | rt/crypto_sign_kx_test.go + conformance | SOLID |
 | `Std.Crypto.Noise`    | Cacophony IK vectors | Single-use state values | rt/noise_test.go + conformance | SOLID |
-| `Std.Crypto.Cpace`    | Draft B.1 vectors | Single-use `Pending` | rt/cpace_test.go + conformance | Awaiting external review |
+| `Std.Crypto.Cpace`    | Draft B.1 vectors | Single-use `Pending` | rt/cpace_test.go + conformance | Experimental: awaiting external review |
 | `Std.Qr`              | Module-exact vs an independent encoder | Pure, TinyGo-clean | rt/qr_test.go + conformance | SOLID |
 | `Sky.Core.Jwt`        | Signature-then-claims + exp/nbf | `alg: none` rejected by ADT | rt/jwt_test.go | SOLID |
 | `Sky.Core.Task`       | Monad laws + effect tier discipline | Panic gate v0.15.43 | rt/task_test.go + retry_test.go | SOLID |
