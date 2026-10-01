@@ -246,7 +246,8 @@ try {
   });
   page.on("framenavigated", (f) => { if (f === page.mainFrame()) navigations++; });
 
-  // 1. sign in
+  // 1. sign in (signIn is reused by step 7)
+  let signIn = null;
   phase = "login";
   if (APP_AUTH) {
     // The app decides. Anyone it does not recognise as an admin is refused and
@@ -272,7 +273,7 @@ try {
     // A click that lands before the client (Live JS / Spa wasm) has attached
     // its handlers does nothing, so click until the app answers (SignIn is
     // idempotent), and name the page text when it never does.
-    const signIn = async (role) => {
+    signIn = async (role) => {
       await page.goto(ORIGIN + "/", { waitUntil: "domcontentloaded" });
       const done = () => page.evaluate((r) => document.body.innerText.includes(`Signed in as ${r}`), role);
       for (let attempt = 0; attempt < 3 && !(await done()); attempt++) {
@@ -419,6 +420,13 @@ try {
   if (!badBanner.length && !steadySse.length) info(`live channel held ${Math.round((Date.now() - steadyFrom) / 1000)} s with no banner`);
   const before = headerOf(await bodyText(page));
 
+  // The console follows the app's sign-in: it re-runs the app's check at most
+  // every 60 s. This fixture's Sky.Live sign-in lives in a memory-store
+  // session, which a restart ends, and the console then (correctly) ends with
+  // it. Give the admin the fixture's app cookie as well, the way an app whose
+  // sign-in outlives a restart has one, so step 5 still measures recovery.
+  if (APP_AUTH) await ctx.addCookies([{ name: "session", value: "admin-session", url: ORIGIN }]);
+
   // 5. restart the backend; the console must recover by itself
   phase = "restart";
   const navBefore = navigations;
@@ -448,6 +456,49 @@ try {
   if (cspViolations.length) fail(`CSP violations: ${cspViolations.join(" | ")}`);
   const allowed = consoleErrors.filter((e) => e.phase === "restart").length;
   if (allowed) info(`${allowed} console error(s) during the restart window (the old connection dropping)`);
+
+  // 7. under SKY_CONSOLE_AUTH=app a console cookie is not a 4-hour bearer
+  // token. (a) `_logout` revokes it on the server: a copy of it, replayed
+  // without the app's own session, is refused at once. (b) once the app stops
+  // admitting the browser (sign-out, demotion), the console refuses it within
+  // the 60 s re-check window.
+  if (APP_AUTH) {
+    phase = "revoke";
+    const consoleCookieOf = async () => (await ctx.cookies(ORIGIN)).find((c) => c.name === "__Host-sky_console");
+    await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
+    const held = await consoleCookieOf();
+    if (!held) fail("revoke: the signed-in admin holds no console cookie");
+    else {
+      const api = await pw.request.newContext({ ignoreHTTPSErrors: true });
+      const replay = async () =>
+        (await api.get(ORIGIN + "/_sky/console/", { headers: { cookie: `__Host-sky_console=${held.value}` }, maxRedirects: 0 })).status();
+      const before = await replay();
+      if (before !== 200) fail(`revoke: a copy of the admin's console cookie answered ${before} before _logout, want 200 (inside the re-check window)`);
+      await ctx.request.get(ORIGIN + "/_sky/console/_logout", { maxRedirects: 0 });
+      const after = await replay();
+      if (after !== 403) fail(`revoke: a copy of the console cookie answered ${after} right after _logout, want 403 (the server revokes it)`);
+      else info("_logout revokes the console cookie on the server: a copy of it gets 403 at once");
+      await api.dispose();
+    }
+    // (b) The admin opens the console again, then stops being one in the app.
+    const readmit = await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
+    if (readmit.status() !== 200) fail(`revoke: the admin could not reopen the console after _logout (${readmit.status()})`);
+    await ctx.addCookies([{ name: "session", value: "signed-out", url: ORIGIN }]);
+    await signIn("user");
+    const demotedAt = Date.now();
+    let refusedAfter = -1;
+    while (Date.now() < demotedAt + 68000) {
+      const r = await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
+      if (r.status() === 403) {
+        refusedAfter = Math.round((Date.now() - demotedAt) / 1000);
+        break;
+      }
+      await sleep(2000);
+    }
+    if (refusedAfter < 0) fail("revoke: 68 s after the app signed the admin out, the console still opens (the cookie outlives the sign-in)");
+    else info(`signed out of the app: the console refuses the browser after ${refusedAfter} s (re-check window 60 s)`);
+    if (refusedAfter >= 0 && (await consoleCookieOf())) fail("revoke: the refusal did not clear the browser's console cookie");
+  }
 } catch (e) {
   fail("run aborted: " + (e && e.stack ? e.stack.split("\n").slice(0, 3).join(" ") : e));
 } finally {

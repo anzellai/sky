@@ -89,6 +89,118 @@ const consoleAuthCookieV2Name = "__Host-sky_console"
 // enough to limit cookie-theft blast radius.
 const consoleAuthCookieV2MaxAge = 4 * time.Hour
 
+// consoleNow is the console-auth clock. A var so the revocation and
+// re-check gates can move time without sleeping.
+var consoleNow = time.Now
+
+// consoleAppRecheckInterval bounds how long a console cookie stands in
+// for the app's own `App.withConsoleAuth` check under
+// SKY_CONSOLE_AUTH=app. The check re-runs at most this often per cookie
+// id; when it answers Nothing (the admin signed out, or lost the role)
+// the cookie is refused, its id revoked and the browser copy cleared.
+// So console access ends within this interval of a sign-out or a
+// demotion, never the cookie's full 4-hour life.
+const consoleAppRecheckInterval = 60 * time.Second
+
+// consoleCookieRegistryCap bounds each per-id table below. Entries
+// expire with their cookie (at most consoleAuthCookieV2MaxAge), so the
+// cap is only reached by a flood of sign-ins inside one cookie life.
+const consoleCookieRegistryCap = 65536
+
+// consoleCookieRegistry is a bounded id -> unix-time table. It backs
+// two things:
+//
+//   - revoked: ids `_logout` (or a failed app re-check) ended, kept
+//     until the cookie would have expired anyway;
+//   - checked: when the app's console check last said yes for an id.
+//
+// It is in-process memory. With several replicas a `_logout` revokes the
+// id on the replica that served it; under sticky sessions that is the
+// replica the browser talks to. A copy of the cookie replayed against
+// ANOTHER replica is still bounded in app mode, because that replica has
+// no `checked` entry for the id and re-runs the app's check at once.
+type consoleCookieRegistry struct {
+	mu sync.Mutex
+	m  map[string]int64
+}
+
+func (g *consoleCookieRegistry) get(id string) (int64, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	v, ok := g.m[id]
+	return v, ok
+}
+
+// put stores v for id. expiresAt maps an entry to the unix time its
+// cookie expires; expired entries are pruned when the table is full.
+func (g *consoleCookieRegistry) put(id string, v int64, expiresAt func(int64) int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.m == nil {
+		g.m = make(map[string]int64)
+	}
+	if _, exists := g.m[id]; !exists && len(g.m) >= consoleCookieRegistryCap {
+		now := consoleNow().Unix()
+		for k, e := range g.m {
+			if expiresAt(e) <= now {
+				delete(g.m, k)
+			}
+		}
+		// Still full: drop the entry whose cookie expires soonest.
+		for len(g.m) >= consoleCookieRegistryCap {
+			var victim string
+			var soonest int64
+			for k, e := range g.m {
+				if victim == "" || expiresAt(e) < soonest {
+					victim, soonest = k, expiresAt(e)
+				}
+			}
+			delete(g.m, victim)
+		}
+	}
+	g.m[id] = v
+}
+
+func (g *consoleCookieRegistry) del(id string) {
+	g.mu.Lock()
+	delete(g.m, id)
+	g.mu.Unlock()
+}
+
+func (g *consoleCookieRegistry) reset() {
+	g.mu.Lock()
+	g.m = nil
+	g.mu.Unlock()
+}
+
+var (
+	// revoked: id -> the cookie's own expiry (unix seconds).
+	consoleRevokedIDs consoleCookieRegistry
+	// checked: id -> when the app's check last admitted it (unix seconds).
+	consoleCheckedIDs consoleCookieRegistry
+)
+
+func revokedExpiry(exp int64) int64 { return exp }
+
+func checkedExpiry(at int64) int64 { return at + int64(consoleAppRecheckInterval.Seconds()) }
+
+// consoleCookieRevoked reports whether a cookie value names a revoked id.
+func consoleCookieRevoked(value string) bool {
+	c, ok := parseConsoleCookie(value)
+	if !ok {
+		return false
+	}
+	_, revoked := consoleRevokedIDs.get(c.id)
+	return revoked
+}
+
+// revokeConsoleCookie ends a cookie on the server: every later request
+// that carries it is refused, whatever the browser does with its copy.
+func revokeConsoleCookie(c consoleCookieClaims) {
+	consoleRevokedIDs.put(c.id, c.exp, revokedExpiry)
+	consoleCheckedIDs.del(c.id)
+}
+
 // consoleAuthCallback is the global handle to the app's `consoleAuth`
 // field (set from Sky.Live's liveAppRun via SetConsoleAuthCallback).
 // Sky.Http.Server apps have no Live.app cfg so this stays nil —
@@ -254,6 +366,8 @@ func ResetConsoleAuthStateForTesting() {
 	consoleAuthStateMu.Lock()
 	consoleAuthStateCached = nil
 	consoleAuthStateMu.Unlock()
+	consoleRevokedIDs.reset()
+	consoleCheckedIDs.reset()
 }
 
 // deriveConsoleSigningKey derives a 32-byte HMAC-SHA256 signing key
@@ -335,46 +449,92 @@ func randomDevToken() string {
 
 // ──── Cookie signing ─────────────────────────────────────────────
 
-// signCookieValue formats a session cookie body: <subjectB64>.<expUnix>.<hmacB64>.
-// HMAC binds (subject, exp); a tampered subject or expiry fails
-// verifyCookieValue at the next request.
+// consoleCookieClaims is what a verified console cookie carries.
+type consoleCookieClaims struct {
+	id      string // random per issued cookie; the revocation key
+	subject string
+	exp     int64 // unix seconds
+}
+
+// newConsoleCookieID returns 16 random bytes, base64url. A failing
+// system RNG is a panic: an id that is not random would let one
+// revocation end someone else's cookie, or none at all.
+func newConsoleCookieID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("console cookie id: system RNG failed: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:])
+}
+
+// signCookieValue formats a session cookie body:
+// <idB64>.<subjectB64>.<expUnix>.<hmacB64>. The HMAC binds (id,
+// subject, exp); a tampered field fails verifyCookieValue at the next
+// request. The id is what `_logout` and the app re-check revoke.
 func signCookieValue(key []byte, subject string, ttl time.Duration) string {
-	expUnix := time.Now().Add(ttl).Unix()
-	payload := fmt.Sprintf("%s.%d", base64.RawURLEncoding.EncodeToString([]byte(subject)), expUnix)
+	return signConsoleCookie(key, consoleCookieClaims{
+		id:      newConsoleCookieID(),
+		subject: subject,
+		exp:     consoleNow().Add(ttl).Unix(),
+	})
+}
+
+func signConsoleCookie(key []byte, c consoleCookieClaims) string {
+	payload := fmt.Sprintf("%s.%s.%d", c.id, base64.RawURLEncoding.EncodeToString([]byte(c.subject)), c.exp)
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(payload))
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return payload + "." + sig
 }
 
-// verifyCookieValue parses + checks a v2 console cookie. Returns
-// (subject, ok=true) on success. ok=false on any failure (split,
-// b64, hmac mismatch, expired). The hmac compare is constant-time.
-func verifyCookieValue(key []byte, value string) (string, bool) {
+// parseConsoleCookie splits a cookie value WITHOUT checking its
+// signature. Only for looking an id up in the revocation table.
+func parseConsoleCookie(value string) (consoleCookieClaims, bool) {
 	parts := strings.Split(value, ".")
-	if len(parts) != 3 {
-		return "", false
+	if len(parts) != 4 || parts[0] == "" {
+		return consoleCookieClaims{}, false
 	}
-	subjectB64, expStr, sigStr := parts[0], parts[1], parts[2]
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(subjectB64 + "." + expStr))
-	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	if subtle.ConstantTimeCompare([]byte(want), []byte(sigStr)) != 1 {
-		return "", false
-	}
-	// Expired?
 	var exp int64
-	if _, err := fmt.Sscanf(expStr, "%d", &exp); err != nil {
-		return "", false
+	if _, err := fmt.Sscanf(parts[2], "%d", &exp); err != nil {
+		return consoleCookieClaims{}, false
 	}
-	if time.Now().Unix() >= exp {
-		return "", false
-	}
-	sub, err := base64.RawURLEncoding.DecodeString(subjectB64)
+	sub, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return "", false
+		return consoleCookieClaims{}, false
 	}
-	return string(sub), true
+	return consoleCookieClaims{id: parts[0], subject: string(sub), exp: exp}, true
+}
+
+// verifyConsoleCookie checks signature, expiry and revocation. The
+// hmac compare is constant-time. ok=false on any failure.
+func verifyConsoleCookie(key []byte, value string) (consoleCookieClaims, bool) {
+	parts := strings.Split(value, ".")
+	if len(parts) != 4 {
+		return consoleCookieClaims{}, false
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(parts[0] + "." + parts[1] + "." + parts[2]))
+	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if subtle.ConstantTimeCompare([]byte(want), []byte(parts[3])) != 1 {
+		return consoleCookieClaims{}, false
+	}
+	c, ok := parseConsoleCookie(value)
+	if !ok {
+		return consoleCookieClaims{}, false
+	}
+	if consoleNow().Unix() >= c.exp {
+		return consoleCookieClaims{}, false
+	}
+	if _, revoked := consoleRevokedIDs.get(c.id); revoked {
+		return consoleCookieClaims{}, false
+	}
+	return c, true
+}
+
+// verifyCookieValue is verifyConsoleCookie returning the subject only.
+func verifyCookieValue(key []byte, value string) (string, bool) {
+	c, ok := verifyConsoleCookie(key, value)
+	return c.subject, ok
 }
 
 // setConsoleV2Cookie writes the v2 cookie to w. The __Host- prefix
@@ -387,8 +547,13 @@ func verifyCookieValue(key []byte, value string) (string, bool) {
 // surface that reads consoleAuthCookieV2Name. So scope at Path=/
 // is safe; the cookie can't leak via cross-site nav or non-Secure
 // traffic.
-func setConsoleV2Cookie(w http.ResponseWriter, key []byte, subject string) {
-	value := signCookieValue(key, subject, consoleAuthCookieV2MaxAge)
+func setConsoleV2Cookie(w http.ResponseWriter, key []byte, subject string) consoleCookieClaims {
+	claims := consoleCookieClaims{
+		id:      newConsoleCookieID(),
+		subject: subject,
+		exp:     consoleNow().Add(consoleAuthCookieV2MaxAge).Unix(),
+	}
+	value := signConsoleCookie(key, claims)
 	// `__Host-` mandates Secure (RFC 6265bis §4.1.3.2) — a client
 	// rejects the cookie outright without it. The shared predicate
 	// returns true for the name prefix, in dev as well as production.
@@ -402,6 +567,7 @@ func setConsoleV2Cookie(w http.ResponseWriter, key []byte, subject string) {
 		SameSite: sameSite,
 		MaxAge:   int(consoleAuthCookieV2MaxAge.Seconds()),
 	})
+	return claims
 }
 
 // consoleCookieSameSite returns SameSite=None when SKY_CONSOLE_EMBED_ORIGIN
@@ -543,14 +709,13 @@ func evaluateTokenMode(w http.ResponseWriter, r *http.Request, st *consoleAuthSt
 }
 
 // evaluateAppMode — call the app's `consoleAuth` callback.
+//
+// A console cookie stands in for the callback for at most
+// consoleAppRecheckInterval per cookie id. Past that the callback runs
+// again with THIS request: yes keeps the cookie, Nothing refuses with
+// 403, revokes the id and clears the cookie. Without the re-check the
+// cookie was a 4-hour bearer token that outlived the app sign-out.
 func evaluateAppMode(w http.ResponseWriter, r *http.Request, st *consoleAuthState) bool {
-	// Cookie shortcut — once the callback approved, the post-callback
-	// cookie carries identity through the session window.
-	if c, err := r.Cookie(consoleAuthCookieV2Name); err == nil {
-		if _, ok := verifyCookieValue(st.signKey, c.Value); ok {
-			return true
-		}
-	}
 	cb := getConsoleAuthCallback()
 	if cb == nil {
 		// app-mode requested but no callback wired (e.g. Sky.Http.Server
@@ -558,6 +723,22 @@ func evaluateAppMode(w http.ResponseWriter, r *http.Request, st *consoleAuthStat
 		// closed.
 		writeConsoleAuthDenied(w, "no consoleAuth callback wired; use SKY_CONSOLE_AUTH=token or set the field on Live.app cfg")
 		return false
+	}
+	if c, err := r.Cookie(consoleAuthCookieV2Name); err == nil {
+		if claims, ok := verifyConsoleCookie(st.signKey, c.Value); ok {
+			now := consoleNow().Unix()
+			if at, seen := consoleCheckedIDs.get(claims.id); seen && now-at < int64(consoleAppRecheckInterval.Seconds()) {
+				return true
+			}
+			if _, still := invokeConsoleAuthCallback(cb, r); still {
+				consoleCheckedIDs.put(claims.id, now, checkedExpiry)
+				return true
+			}
+			revokeConsoleCookie(claims)
+			writeConsoleAuthDenied(w, "consoleAuth callback no longer admits this session; sign in to the app again")
+			recordConsoleAuthEvent(r, "revoked", claims.subject)
+			return false
+		}
 	}
 	// Invoke the Sky callback. It returns a `Task Error (Maybe
 	// Identity)` — we force the task here. Panics are caught by
@@ -568,8 +749,10 @@ func evaluateAppMode(w http.ResponseWriter, r *http.Request, st *consoleAuthStat
 		recordConsoleAuthEvent(r, "denied", "")
 		return false
 	}
-	// Mint cookie so subsequent requests skip the callback.
-	setConsoleV2Cookie(w, st.signKey, identity.Subject)
+	// Mint a cookie so the next requests inside the re-check window skip
+	// the callback.
+	claims := setConsoleV2Cookie(w, st.signKey, identity.Subject)
+	consoleCheckedIDs.put(claims.id, consoleNow().Unix(), checkedExpiry)
 	recordConsoleAuthEvent(r, "allowed", identity.Subject)
 	return true
 }
@@ -964,11 +1147,19 @@ func mountConsoleAuthRoutes(mux *http.ServeMux) {
 		st := loadConsoleAuthState()
 		handleConsoleLogin(w, r, st)
 	})
-	// Sign out: clear the __Host-sky_console cookie, then bounce to the console
-	// landing — which re-renders the login form now that the cookie is gone.
-	// Accepts GET (a "Sign out" link) or POST; clearing an auth cookie is
-	// idempotent and safe, and a CSRF-triggered logout is at worst a re-login.
+	// Sign out: revoke the cookie's id on the server (so a copy of it is
+	// refused too), clear the browser's __Host-sky_console cookie, then bounce
+	// to the console landing — which re-renders the login form now that the
+	// cookie is gone. Accepts GET (a "Sign out" link) or POST; revoking an
+	// auth cookie is idempotent and safe, and a CSRF-triggered logout is at
+	// worst a re-login. Only an HMAC-valid cookie is revoked, so the table
+	// cannot be filled with made-up ids.
 	safeMount(mux, "/_sky/console/_logout", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie(consoleAuthCookieV2Name); err == nil {
+			if claims, ok := verifyConsoleCookie(loadConsoleAuthState().signKey, c.Value); ok {
+				revokeConsoleCookie(claims)
+			}
+		}
 		clearConsoleV2Cookie(w)
 		http.Redirect(w, r, "/_sky/console/", http.StatusSeeOther)
 	})

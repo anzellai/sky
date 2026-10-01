@@ -110,6 +110,18 @@ Operations:
   console on its loopback port, which any local process can reach. A desktop
   window now binds loopback in every mode, keeps the Host guard in
   production, and mounts no console unless `SKY_CONSOLE_AUTH` names a mode.
+- **A Sky Console cookie under `SKY_CONSOLE_AUTH=app` outlived the app
+  sign-in.** The console accepted any validly signed `__Host-sky_console`
+  cookie for its 4-hour life without asking `App.withConsoleAuth` again, and
+  the console sign-out only cleared the browser's copy. An admin who signed
+  out of the app, or lost the role, kept the console for up to 4 hours, and
+  so did a copy of the cookie. Now each cookie carries a random id. The
+  console runs the app's check again at most every 60 seconds per cookie, and
+  a `Nothing` refuses with 403, revokes the id and clears the cookie. The
+  console sign-out revokes the id on the server (in process memory, bounded,
+  entries expire with the cookie), so a copy is refused at once. Under
+  `SKY_CONSOLE_AUTH=token` the sign-out now revokes the cookie on the server
+  too. Cookies issued by an earlier build are refused once.
 - **Two apps started with `App.serve` shared one session namespace.** A
   served app adopted any well-formed session id, so a cookie of one app was
   looked up in the other's store. Each served app now has its own namespace

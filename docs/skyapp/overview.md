@@ -274,8 +274,20 @@ The gate fails closed:
 
 - `Just identity` with a non-empty `subject` lets the request in and sets a
   signed console session cookie (`__Host-sky_console`, `Secure`, `HttpOnly`,
-  `SameSite=Strict`), so later console requests do not call the check again.
-  The login is logged as `console.auth.allowed` with the subject.
+  `SameSite=Strict`) that lives at most 4 hours. The login is logged as
+  `console.auth.allowed` with the subject.
+- The cookie does not replace the check for its whole life. The console runs
+  the check again at most every 60 seconds per cookie, with the request in
+  hand. When it now answers `Nothing` (the admin signed out of the app, or
+  lost the admin role), the console refuses with 403, revokes the cookie on
+  the server, clears it in the browser and logs `console.auth.revoked`. So
+  console access ends within 60 seconds of an app sign-out or a demotion.
+- The console's own sign-out (`/_sky/console/_logout`) revokes the cookie on
+  the server as well as in the browser: a copy of it is refused at once. The
+  revocation list is in process memory and bounded; each entry expires with
+  its cookie. With several replicas a sign-out revokes the cookie on the
+  replica that served it (the sticky one). Another replica has not checked
+  that cookie yet, so it runs the app's check on the first request it sees.
 - `Nothing`, `Err`, a panic, or an empty `subject` refuses with 403 and logs
   `console.auth.denied`. No console session is set.
 
