@@ -211,12 +211,17 @@ func Spa_sessionCookies(secret, req, resp any) any {
 		return resp
 	}
 	legacy := r.Cookies[spaLegacySessionCookieName]
-	if r.Cookies[spaSessionCookieName] != "" || legacy == "" || looksLikeLiveSID(legacy) {
+	if legacy == "" || looksLikeLiveSID(legacy) {
 		return resp
 	}
 	out, ok := asSkyResponse(resp)
 	if !ok {
 		return resp
+	}
+	if r.Cookies[spaSessionCookieName] != "" {
+		// sky_spa already carries the session; the Spa token left under the
+		// old name (set by a path that did not expire it) only goes.
+		return addSetCookie(out, spaLegacySessionCookieName+"=; "+securifyCookieAttrs(spaSessionCookieAttrs+"; Max-Age=0"))
 	}
 	tok, fromLegacy := spaEffectiveToken(secret, r.Cookies)
 	if !fromLegacy {

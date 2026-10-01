@@ -166,6 +166,15 @@ func TestSpaSessionCookieMovesFromSkySidToSkySpa(t *testing.T) {
 	if n := strings.Count(strings.Join(out.Cookies, "\n"), "sky_spa="); n != 1 {
 		t.Fatalf("sky_spa set %d times: %v", n, out.Cookies)
 	}
+	// A leftover Spa token in sky_sid next to sky_spa (the conversion answer
+	// set sky_spa on a path that did not expire sky_sid) is expired now, and
+	// sky_spa is not rewritten.
+	leftover := spaRequestWith(map[string]string{"sky_spa": current, "sky_sid": current})
+	out = Spa_sessionCookies(spaTestSecret, leftover, SkyResponse{Status: 200}).(SkyResponse)
+	joined = strings.Join(out.Cookies, "\n")
+	if !strings.Contains(joined, "sky_sid=;") || !strings.Contains(joined, "Max-Age=0") || strings.Contains(joined, "sky_spa=") {
+		t.Fatalf("a leftover sky_sid next to sky_spa was not expired alone: %v", out.Cookies)
+	}
 	// A Sky.Live id in sky_sid is never touched.
 	live := spaRequestWith(map[string]string{"sky_sid": newLiveSessionID()})
 	if out := Spa_sessionCookies(spaTestSecret, live, SkyResponse{Status: 200}).(SkyResponse); len(out.Cookies) != 0 {

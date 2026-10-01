@@ -2018,8 +2018,11 @@ func failDurableStore(kind string, err error, ttl time.Duration, fatal func(stri
 			"connection string and that the database accepts connections), or set "+
 			"SKY_LIVE_STORE=memory to opt in to the in-memory store deliberately.",
 			kind, storeConnectAttempts, err)
-		// storeFatalf is log.Fatalf in prod (never returns); a test override may
-		// return, so fall through to a memory store to keep a valid value.
+		// storeFatalf is log.Fatalf in prod (never returns). A caller whose
+		// fatal returns (the Sky.Spa sign-out store, a test) handles the
+		// refusal itself: hand back a memory store to keep a valid value, and
+		// never print the dev box, which would contradict that refusal.
+		return newMemoryStore(ttl)
 	}
 	log.Printf("┌─ [sky.live] WARNING ────────────────────────────────────────")
 	log.Printf("│ session store %q unreachable (%v)", kind, err)
