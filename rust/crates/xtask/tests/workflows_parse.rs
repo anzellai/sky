@@ -1460,3 +1460,65 @@ fn every_sky_nextest_split_runs_every_slice_once_in_a_gating_job() {
         );
     }
 }
+
+/// Every Go module under `tools/` that has a `_test.go` file is tested by a
+/// `go test` step in BOTH the release workflow (the merge/release gate) and
+/// `rust-ci.yml` (per commit). `tools/sky-ffi-inspect/sky3_test.go` ran in no
+/// workflow at all, and nothing noticed.
+#[test]
+fn every_go_test_package_under_tools_runs_in_ci() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    fn has_go_test(dir: &std::path::Path) -> bool {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|e| {
+                let p = e.path();
+                if p.is_dir() {
+                    !p.join("go.mod").exists() && has_go_test(&p)
+                } else {
+                    p.to_string_lossy().ends_with("_test.go")
+                }
+            })
+    }
+    let mut modules: Vec<String> = std::fs::read_dir(root.join("tools"))
+        .expect("read tools/")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("go.mod").exists() && has_go_test(p))
+        .map(|p| format!("tools/{}", p.file_name().unwrap().to_string_lossy()))
+        .collect();
+    modules.sort();
+    assert!(
+        modules.iter().any(|m| m == "tools/sky-ffi-inspect"),
+        "the scan finds no Go test module under tools/ ({modules:?}): the scan is wrong"
+    );
+    for wf in ["release.yml", "rust-ci.yml"] {
+        let text = std::fs::read_to_string(root.join(".github/workflows").join(wf))
+            .unwrap_or_else(|e| panic!("read {wf}: {e}"));
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let mut runs: Vec<String> = Vec::new();
+        for (_, job) in doc["jobs"].as_mapping().expect("jobs").iter() {
+            if job_is_disabled(job) {
+                continue;
+            }
+            for step in job["steps"].as_sequence().into_iter().flatten() {
+                let run = step["run"].as_str().unwrap_or_default();
+                if run.contains("go test") {
+                    let wd = step["working-directory"].as_str().unwrap_or_default();
+                    runs.push(format!("{wd}\n{run}"));
+                }
+            }
+        }
+        let missing: Vec<&String> = modules
+            .iter()
+            .filter(|m| !runs.iter().any(|r| r.contains(m.as_str())))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{wf}: no enabled job runs `go test` in {missing:?}. Add a step \
+             (`cd <module> && go test ./...`) to a gating job."
+        );
+    }
+}
