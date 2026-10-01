@@ -2604,6 +2604,62 @@ fn partition_routes(routes_arg: &str, src: &str, q: &str) -> (String, Option<Str
     (client_expr, api_expr)
 }
 
+/// The literal spec strings (`"GET /post/export"`, `"/health"`) of every
+/// `App.api` endpoint in the BACKEND api route source that [`partition_routes`]
+/// returned. The client cannot reference the api routes themselves (their
+/// handlers are server-tainted, so the split drops them from the wasm build),
+/// yet the client router must know these paths are the server's: a link to an
+/// api path that a page route also matches (`/post/export` against
+/// `/post/:slug`) must be a full navigation, not the client page. The synthesis
+/// carries each spec to the client as a `Spa.serverRoute`. A spec that is not a
+/// string literal is not statically visible and is left out.
+fn api_route_specs(api_expr: &str, src: &str) -> Vec<String> {
+    let list_bindings = route_list_bindings(src);
+    let mut out: Vec<String> = Vec::new();
+    for op in split_top_level(&strip_outer_parens(api_expr), "++") {
+        let o = strip_outer_parens(&op);
+        let elems = match split_list_elements(&o) {
+            Some(elems) => elems,
+            None => match list_bindings.get(o.trim()) {
+                Some(elems) => elems.clone(),
+                None => continue,
+            },
+        };
+        for e in elems {
+            let e = e.trim();
+            let head = route_element_head(e);
+            let rest = e[head.len().min(e.len())..]
+                .trim_start()
+                .trim_start_matches('(')
+                .trim_start();
+            if let Some(lit) = rest.strip_prefix('"') {
+                if let Some(end) = lit.find('"') {
+                    let spec = lit[..end].to_string();
+                    if !spec.is_empty() && !spec.contains('\\') && !out.contains(&spec) {
+                        out.push(spec);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The argument of the client's `Spa.withRoutes`: the page routes
+/// (`spaRoutes_`), followed by one `Spa.serverRoute` per literal api spec (see
+/// [`api_route_specs`]).
+fn client_routes_arg(api_specs: &[String]) -> String {
+    let pages = "spaRoutes_".to_string();
+    if api_specs.is_empty() {
+        return pages;
+    }
+    let server: Vec<String> = api_specs
+        .iter()
+        .map(|s| format!("Spa.serverRoute \"{s}\""))
+        .collect();
+    format!("({pages} ++ [ {} ])", server.join(", "))
+}
+
 /// Normalise a top-level cons chain into `++` of singleton lists, so the `++`
 /// partition in [`partition_routes`] handles a `withRoutes` argument written with
 /// `::`: `a :: b :: tail` → `[ a ] ++ [ b ] ++ tail`. `::` inside a nested list or
@@ -3033,6 +3089,15 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
                 partition_routes(r, src, &fields.import.qualifier_or_default());
             let mut binding =
                 format!("spaRoutes_ =\n    List.concatMap App.spaRoute ({client_expr})\n\n\n");
+            // The api specs reach the client router as `Spa.serverRoute`s, so a
+            // link to an api path is handed to the server even when a page route
+            // also matches it. They go into `main` (client-only: the backend
+            // drops `main` and the `Std.Spa` import), not into `spaRoutes_`,
+            // which the backend copies for SSR and which must not name `Spa`.
+            let api_specs = api_expr
+                .as_deref()
+                .map(|api| api_route_specs(api, src))
+                .unwrap_or_default();
             if let Some(api) = api_expr {
                 // `spaApiRoutes_` references the server-tainted api handlers, so
                 // the split's taint analysis drops it from the wasm frontend
@@ -3041,7 +3106,10 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
             }
             (
                 binding,
-                "\n            |> Spa.withRoutes spaRoutes_".to_string(),
+                format!(
+                    "\n            |> Spa.withRoutes {}",
+                    client_routes_arg(&api_specs)
+                ),
             )
         }
         None => (String::new(), String::new()),
@@ -14963,6 +15031,31 @@ mod tests {
             partition_routes("routes", src, "App"),
             ("routes".to_string(), None)
         );
+    }
+
+    // An `App.api` path that a client page route also matches (`/post/export`
+    // against `/post/:slug`) must reach the CLIENT router as a
+    // `Spa.serverRoute`, so a link to it is a full navigation. The api handler
+    // itself is server-tainted and stays off the client, so the synthesis
+    // carries the literal spec instead. Before the fix the client route list
+    // held no server entry at all, and the link rendered the client's post page.
+    #[test]
+    fn api_route_specs_carry_the_literal_api_paths_to_the_client() {
+        let src = "apiRoutes =\n    [ App.api \"/health\" h ]\n";
+        assert_eq!(
+            api_route_specs(
+                "[ App.api \"GET /post/export\" serverExport ] ++ apiRoutes",
+                src
+            ),
+            vec!["GET /post/export".to_string(), "/health".to_string()]
+        );
+        // A spec that is not a string literal is not statically visible.
+        assert!(api_route_specs("[ App.api spec h ]", "").is_empty());
+        assert_eq!(
+            client_routes_arg(&["GET /x".to_string()]),
+            "(spaRoutes_ ++ [ Spa.serverRoute \"GET /x\" ])"
+        );
+        assert_eq!(client_routes_arg(&[]), "spaRoutes_");
     }
 
     #[test]
