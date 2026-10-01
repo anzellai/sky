@@ -186,11 +186,39 @@ func FfiCommaOk(v any, ok bool) SkyMaybe[any] {
 func FfiArg[T any](v any) T {
 	var zero T
 	t := reflect.TypeOf(&zero).Elem()
+	ffiRefuseSkyOwned(v, t)
 	if tv, ok := v.(T); ok && !ffiNeedsDeepCheck(t) {
 		return tv
 	}
 	out := ffiToGo(v, t)
 	return out.Interface().(T)
+}
+
+// ffiRtPkgPath is the Go package path of this runtime.
+var ffiRtPkgPath = reflect.TypeOf(FfiConvError{}).PkgPath()
+
+// ffiSkyOwned: a value whose Go type the Sky runtime defines (a `Secret`, a
+// `Std.Sync` handle, a key type, a Noise or CPace state, a Maybe or Result,
+// ...). Such a value is Sky's own; Go code never receives it.
+func ffiSkyOwned(t reflect.Type) bool {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t.PkgPath() == ffiRtPkgPath
+}
+
+// ffiRefuseSkyOwned: a Sky runtime value given to a Go interface slot is an
+// Err. An annotated generic helper can reach such a slot past the checker
+// (doc 14 §9.7); without this the value would pass whenever it implements
+// the interface (`Secret` is a `fmt.Stringer` and a `json.Marshaler`). Plain
+// primitives (String, Int, Float, Bool) have no package and still pass.
+func ffiRefuseSkyOwned(v any, t reflect.Type) {
+	if v == nil || t.Kind() != reflect.Interface {
+		return
+	}
+	if dt := reflect.TypeOf(v); ffiSkyOwned(dt) {
+		ffiFail("a Sky runtime value (%s) cannot be passed to the Go type %s (see docs/migration/v0.27.md#ffi-go-interface-params)", dt, t)
+	}
 }
 
 // ffiNeedsDeepCheck: a value that already has the target Go type may still
@@ -311,6 +339,7 @@ func ffiToGo(v any, t reflect.Type) reflect.Value {
 		ffiFail("nil for %s", t)
 	}
 	rv := reflect.ValueOf(v)
+	ffiRefuseSkyOwned(v, t)
 	if ffiOpaque(t) {
 		return ffiOpaqueToGo(rv, t)
 	}

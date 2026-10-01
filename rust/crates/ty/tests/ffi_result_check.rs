@@ -58,6 +58,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.Result as Result
 import Sky.Core.String as String
+import Sky.Core.Secret as Secret
 import Std.Log exposing (println)
 import Pkg
 ";
@@ -559,6 +560,27 @@ fn a_sky_value_for_a_go_interface_through_a_bound_or_passed_binding_is_rejected(
         "a polymorphic helper that forwards to the binding",
         "send w =\n    Pkg.writeTo w \"x\"\n\n\nmain =\n    println (Pkg.newRouter () |> Result.andThen send |> Result.map (\\_ -> \"\") |> Result.withDefault \"\")\n",
     );
+}
+
+/// The reject twin of "a polymorphic helper that forwards to the binding": the
+/// same UNANNOTATED helper given a Sky value (a String, a `Secret`) is refused
+/// at compile time. (An ANNOTATED generic helper is the stated residual: its
+/// rigid variable reaches the Go slot unchecked, and the run-time boundary
+/// refuses a Sky value there with an `Err`, doc 14 §9.7.)
+#[test]
+fn an_unannotated_helper_given_a_sky_value_for_a_go_interface_is_rejected() {
+    for (label, body) in [
+        (
+            "a String through an unannotated helper",
+            "send w =\n    Pkg.writeTo w \"x\"\n\n\nmain =\n    println (send \"a Sky string\" |> Result.map (\\_ -> \"\") |> Result.withDefault \"\")\n",
+        ),
+        (
+            "a Secret through an unannotated helper",
+            "send w =\n    Pkg.writeTo w \"x\"\n\n\nmain =\n    println (send (Secret.fromString \"k\") |> Result.map (\\_ -> \"\") |> Result.withDefault \"\")\n",
+        ),
+    ] {
+        assert_rejects(label, body, "E2013");
+    }
 }
 
 /// A direct call reports ONE `[E2013]`, the scan's (it names the call and the

@@ -1,11 +1,16 @@
 package rt
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type ffiThing struct{ N int }
@@ -120,7 +125,7 @@ func TestFfiOpaque(t *testing.T) {
 	if !strings.Contains(msg, "expected *rt.ffiThing, got string") {
 		t.Fatalf("mismatch: %q", msg)
 	}
-	msg = ffiErrText(t, ffiGuarded(func() any { return FfiArg[error](th) }))
+	msg = ffiErrText(t, ffiGuarded(func() any { return FfiArg[error](&bytes.Buffer{}) }))
 	if !strings.Contains(msg, "does not implement error") {
 		t.Fatalf("interface mismatch: %q", msg)
 	}
@@ -302,5 +307,67 @@ func TestFfiNilAndPointerIdentity(t *testing.T) {
 	FfiArg[*ffiCounter](got.OkValue).Inc()
 	if h.C.n != 1 {
 		t.Fatalf("the field getter lost identity: n = %d", h.C.n)
+	}
+}
+
+// Gap 4 (doc 14 §9.7): an annotated generic helper can carry a Sky runtime
+// value to a Go interface slot past the checker. The boundary refuses it at
+// run time, even when the value implements the interface.
+func TestFfiSkyValueToGoInterfaceIsErr(t *testing.T) {
+	sec := Secret_fromString("hunter2")
+	for _, c := range []struct {
+		name string
+		f    func() any
+	}{
+		{"Secret as fmt.Stringer", func() any { return FfiArg[fmt.Stringer](sec) }},
+		{"Secret as json.Marshaler", func() any { return FfiArg[json.Marshaler](sec) }},
+		{"Secret as any", func() any { return FfiArg[any](sec) }},
+		{"Sync.Ref as any", func() any { return FfiArg[any](&syncRef{}) }},
+		{"Maybe as any", func() any { return FfiArg[any](Just[any](1)) }},
+		{"Secret in a list of fmt.Stringer", func() any { return FfiArg[[]fmt.Stringer]([]any{sec}) }},
+	} {
+		msg := ffiErrText(t, ffiGuarded(c.f))
+		if !strings.Contains(msg, "cannot be passed to the Go type") || strings.Contains(msg, "hunter2") ||
+			!strings.Contains(msg, "see docs/migration/v0.27.md#ffi-go-interface-params") {
+			t.Errorf("%s: %q", c.name, msg)
+		}
+	}
+	// A real Go value that implements the interface still passes.
+	var buf bytes.Buffer
+	if w := FfiArg[io.Writer](&buf); w != io.Writer(&buf) {
+		t.Fatalf("*bytes.Buffer as io.Writer: %#v", w)
+	}
+	if s := FfiArg[fmt.Stringer](time.Duration(5)); s.String() != "5ns" {
+		t.Fatalf("time.Duration as fmt.Stringer: %v", s)
+	}
+	// A plain primitive still converts.
+	if v := FfiArg[any]("x"); v != any("x") {
+		t.Fatalf("string as any: %#v", v)
+	}
+}
+
+// S3c row 9: the per-type classification caches (`ffiOpaqueCache`,
+// `ffiSameRepCache`) must return what the uncached classifier says, on the
+// first call and on every later one, for types that differ only in ways a
+// weaker cache key (kind, name, string form) would merge.
+func TestFfiClassificationCacheIsNeverStale(t *testing.T) {
+	type T struct{ N int }
+	types := []reflect.Type{
+		reflect.TypeOf(struct{}{}), reflect.TypeOf(struct{ N int }{}), reflect.TypeOf(T{}),
+		reflect.TypeOf(&T{}), reflect.TypeOf(ffiThing{}), reflect.TypeOf(ffiDur(0)),
+		reflect.TypeOf(int64(0)), reflect.TypeOf([]int{}), reflect.TypeOf([]byte{}),
+		reflect.TypeOf([]T{}), reflect.TypeOf(map[string]int{}), reflect.TypeOf(map[int]int{}),
+		reflect.TypeOf(map[string]T{}), reflect.TypeOf((*error)(nil)).Elem(),
+		reflect.TypeOf((*fmt.Stringer)(nil)).Elem(), reflect.TypeOf(Secret{}),
+	}
+	for round := 0; round < 2; round++ {
+		for _, ty := range types {
+			if got, want := ffiOpaque(ty), ffiOpaqueUncached(ty); got != want {
+				t.Errorf("round %d: ffiOpaque(%v) = %v, uncached %v", round, ty, got, want)
+			}
+			if got, want := ffiSameRep(ty), ffiSameRepUncached(ty); got != want {
+				t.Errorf("round %d: ffiSameRep(%v) = %v, uncached %v", round, ty, got, want)
+			}
+		}
 	}
 }
