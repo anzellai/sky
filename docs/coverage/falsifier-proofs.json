@@ -142,7 +142,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1790872539
+      "proven_at_unix": 1790875425
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -156,7 +156,7 @@
       "proven_at_unix": 1790829263
     },
     "config-matrix": {
-      "last_inconclusive_at_unix": 1790872539,
+      "last_inconclusive_at_unix": 1790875425,
       "mutation": "config-matrix.invert-operator-env-provenance",
       "observed": "PROVEN",
       "outcome": "as-declared",
@@ -186,14 +186,14 @@
     },
     "config-surface": {
       "inputs_files": 766,
-      "inputs_hash": "a401425e2703ae22164a46fe07cf5b42fa5056dc",
+      "inputs_hash": "04163470b3cb474af946da5e0670df3ac93c190a",
       "mutation": "config-surface.seed-a-suffix-nothing-reads",
       "mutations": [
         "config-surface.seed-a-suffix-nothing-reads"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790872539
+      "proven_at_unix": 1790875425
     },
     "conformance": {
       "inputs_files": 79,
@@ -290,14 +290,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4204,
-      "inputs_hash": "8fbfaf706e1083cc546a4a5d2d5e5fd8bcfe63fa",
+      "inputs_hash": "48ba993407a67fb9ab65a42057fbeeed28e0e008",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790872539
+      "proven_at_unix": 1790875425
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 759,
@@ -345,14 +345,14 @@
     },
     "lsp": {
       "inputs_files": 34,
-      "inputs_hash": "6eaa2e2b97c8c4388b1649fcc360160a9bb75172",
+      "inputs_hash": "573520f25bdcbd87ccf98a9f7fb457654b8d51e1",
       "mutation": "lsp.hover-echoes-the-token",
       "mutations": [
         "lsp.hover-echoes-the-token"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790829263
+      "proven_at_unix": 1790875371
     },
     "periodic-loops-recover-per-cycle": {
       "inputs_files": 759,
