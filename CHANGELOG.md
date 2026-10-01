@@ -728,6 +728,30 @@ entries.
   test or a CSS selector that matched the old bare text node directly under
   its parent now finds it inside `<span style="overflow-wrap: anywhere;">`.
 
+### Known limits in this release
+
+- **Process tree.** On every platform, a descendant that clears its
+  environment, leaves the session and double-forks is not ended by
+  `Process.close`, the end of a session, `App.stop` or program exit. On the
+  BSDs close ends the child's process group only. Nothing is gained by it: the
+  process runs as the same user, with no new privilege.
+- **Go interface parameters.** The checker refuses a Sky value for a Go
+  interface parameter (`[E2013]`) in a direct call, a binding bound to a name
+  or passed as a value, and an unannotated helper. An ANNOTATED generic helper
+  (`send : a -> Result Error ()`) hides the value's type behind its variable,
+  so the check happens at run time: the boundary returns an `Err` for a Sky
+  runtime value and for a non-Go shape (doc 14 §9.7).
+- **Documentation debt.** `rust/crates/project/src/doc_summary_debt.txt` lists
+  767 older exported stdlib values whose doc comment has no summary line. It
+  is a ratchet that only shrinks; every value new in v0.27.0 is documented.
+- **`Std.Crypto.Cpace` is awaiting external review** (stated in its module
+  docs). Do not rely on it in production before that review.
+- **New features have checked doc examples, not new `examples/` projects.**
+  Widget islands, `Std.Ui.Canvas`, `Std.Ui.Terminal` with `Process.withPty`,
+  the header session transport, `App.serve` and client crypto each have a
+  full `module Main` example in their docs, which `scripts/doc-examples.sh`
+  type-checks on every release.
+
 ### Changed
 
 - **`compare` is total on Float and orders custom types by declaration.**
@@ -749,10 +773,22 @@ entries.
 - **An out-of-range integer across the Go FFI is an `Err`**: a `uint64` above
   Int, an Int for a `uint8` or `int32` parameter, a callback argument. It was
   wrapped or truncated.
+- **A Sky runtime value given to a Go interface parameter is an `Err`.** A
+  `Secret`, a `Std.Sync` handle, a `Maybe`, a key type or a Noise / CPace
+  state that reaches a Go interface slot through an annotated generic helper
+  used to pass whenever it implemented the interface (`Secret` is a
+  `fmt.Stringer`). The boundary now refuses it; String, Int, Float and Bool
+  still convert.
+  [#ffi-sky-value-to-a-go-interface](docs/migration/v0.27.md#ffi-sky-value-to-a-go-interface)
 - **`Process.close`, the end of a session, `App.stop` and program exit end
-  the child's whole process tree**, including a shell's background jobs. A
-  process spawned without `withClearEnv` has `SKYPROC_TREE` in its
-  environment (a random value that close uses to find its descendants).
+  the child's process tree on Linux and macOS**, including a shell's
+  background jobs. A process spawned without `withClearEnv` has
+  `SKYPROC_TREE` in its environment (a random value that close uses to find
+  its descendants). Two limits remain on every platform: a descendant that
+  clears its environment, leaves the session (`setsid`) and double-forks (a
+  deliberate daemon) cannot be told apart from any other process of the same
+  user, so it is not ended; and on the BSDs, which this sweep cannot list,
+  close ends the child's process group only. See "Known limits" below.
 - **`aesKeyFromPassword` / `chachaKeyFromPassword`**: output unchanged, now
   pinned by an independent PBKDF2 vector; a salt under 16 bytes logs a
   warning once.
@@ -879,8 +915,14 @@ entries.
   `[E2013]` a Sky value passed where a Go interface is required.
 - **The first run of a new `sky` version prints, once, "Sky upgraded X ->
   Y"**, the silent changes and the link to `docs/migration/v0.27.md` (on
-  stderr; a `notice` record in `--format json`). `sky upgrade` prints the
-  guide link after it succeeds.
+  stderr when stderr is a terminal; a `notice` record in `--format json`). A
+  run in a script, CI or a pipe neither prints nor records it, so a person
+  still sees it once. `sky upgrade` prints the guide link after it succeeds.
+- **Every loud v0.27.0 break ends with its migration anchor**
+  (`see docs/migration/v0.27.md#<anchor>`): the Go FFI `Result`, `[E1011]`,
+  `init` taking `()`, the `Spa.rpc` body, the `WebOpts` / `WebSocketServerCfg`
+  / `DurableWiring` literals, native permissions, registry packages and the
+  Sky.Spa split refusals.
 - **`sky init` writes a `.dockerignore`.**
 
 - **`Std.Nav`: move the address bar from `update`.** `Nav.pushUrl` /

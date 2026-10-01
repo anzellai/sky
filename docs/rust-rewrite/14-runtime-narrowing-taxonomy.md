@@ -853,11 +853,25 @@ argument of the wrong Go type crashed the process.
   which Go itself accepts, or a non-empty one. `[E2013]` checks a non-empty
   one at every depth the signature puts it (a parameter, a `List`/`Maybe`
   element, a tuple component, a callback's result) for a direct, curried or
-  piped call; the run-time assertion in the guard covers every call form,
-  including a binding passed as a value. `xtask coerce-floor`: `narrow` is expected to
-  FALL on the FFI rows as the R3 slot narrowings leave the call site, and
-  `adapter` stays 0. The integration run records the measured row values
-  here when it blesses the decrease. The relocated sites, counted in the
+  piped call, and through a binding bound to a name or passed as a value
+  (each `goi@` slot carries a Go-value bound from the reference). The
+  run-time check in the guard covers the one form the checker cannot see:
+  an ANNOTATED generic helper (`send : a -> Result Error ()`), whose rigid
+  variable drops the Go-value bound (`ty/src/unify.rs`). There a non-Go
+  shape is an `Err` through `FfiArg[T]`, and since v0.27.0 a Sky
+  runtime value is an `Err` too (`ffiRefuseSkyOwned`,
+  `runtime-go/rt/ffi_convert.go`): before it, a value whose Go type the
+  runtime defines (`Secret`, a `Std.Sync` handle, a key type, Noise / CPace
+  state) passed whenever it implemented the interface. This is the stated
+  compile-time limit; it is checked at run time and never passes silently
+  (`TestFfiSkyValueToGoInterfaceIsErr`; the compile-time reject twin is
+  `an_unannotated_helper_given_a_sky_value_for_a_go_interface_is_rejected`).
+  `xtask coerce-floor` (`rust/crates/xtask/coerce_floor.golden`, v0.26.1 ->
+  the v0.27.0 release head; the figures include the phase-7 typed payload
+  patterns recorded in the golden): `narrow` 02-go-stdlib 11 -> 8,
+  03-tea-external 4 -> 3, 05-mux-server 10 -> 3, 07-todo-cli 177 -> 170,
+  08-notes-app 462 -> 403, 13-skyshop 1479 -> 1297; `adapter` 0 on every
+  row. The relocated sites, counted in the
   regenerated fixtures (`rust/crates/ffi/tests/fixtures/*_bindings.go`,
   `grep -o`): mux 90 `FfiArg[` / 52 `FfiRet(`, net/http 202 / 188, uuid
   50 / 51. For the Stripe SDK (example 13) the generated file carries 8853
