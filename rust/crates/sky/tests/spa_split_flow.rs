@@ -4100,9 +4100,15 @@ fn splits_mixed_page_and_api_routes() {
         std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
             .unwrap_or_else(|_| panic!("generated frontend Main.sky must exist:\n{log}"));
     let fe_code = strip_line_comments(&fe_main);
+    // The client router also learns every `App.api` path as a server route, so
+    // a link to one is a full navigation and never a client page match.
     assert!(
-        fe_code.contains("|> Spa.withRoutes spaRoutes_") && fe_code.contains("spaRoutes_ ="),
-        "GAP-1: the frontend must define + wire the page-only `spaRoutes_`:\n{fe_main}"
+        fe_code.contains("|> Spa.withRoutes (spaRoutes_ ++ [")
+            && fe_code.contains("Spa.serverRoute \"GET /items.json\"")
+            && fe_code.contains("Spa.serverRoute \"GET /healthz\"")
+            && fe_code.contains("spaRoutes_ ="),
+        "GAP-1: the frontend must define the page-only `spaRoutes_` and wire it with \
+         every App.api path as a server route:\n{fe_main}"
     );
     for needle in [
         "apiRoutes",
