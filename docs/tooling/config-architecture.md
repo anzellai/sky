@@ -510,7 +510,7 @@ absent from the map, never a typed nil** (`live_config.go:20-24`), and callbacks
 are stored verbatim, never asserted to a Go func type (`:25-27`).
 
 **There is precedent for exactly this migration.**
-`docs/v0.19/migration-builder-cfg.md` records the v0.19 move from record literals
+`docs/history/v0.19/migration-builder-cfg.md` records the v0.19 move from record literals
 to builders, including the full old-field → `withX` map (`:53-66`). This design
 extends a migration the project has already performed once.
 
@@ -973,7 +973,7 @@ replacing two stringly-typed knobs, which is also how `LIVE_TTL`'s three meaning
 **Std.Webview needs aligning first.** It is the only shape still on plain
 records with pure-Sky update builders (`Std/Webview.sky:30,45,51,66`). It should
 adopt the opaque `AppConfig` + kernel-`withX` shape the other three share
-(`docs/v0.19/migration-builder-cfg.md` is the precedent), or it will be the one
+(`docs/history/v0.19/migration-builder-cfg.md` is the precedent), or it will be the one
 shape where config composes differently — the exact inconsistency this design
 exists to remove.
 
@@ -1736,7 +1736,7 @@ grep including the suffix form); §1.13 (`live_store.go:1823-1825`,
 (`main.rs:1196-1235`); §1.16 (`docs/sky-toml.md` at the cited lines,
 `docs/skyauth/overview.md:198`, `docs/skylive/pubsub-design.md:1109`); §2 (every
 module surface cited, `live_config.go:16-69`, `rt.go:5922-5973`,
-`lower.rs:275-277,1426,1474,1540-1591`, `docs/v0.19/migration-builder-cfg.md`);
+`lower.rs:275-277,1426,1474,1540-1591`, `docs/history/v0.19/migration-builder-cfg.md`);
 §3.3 (`dotenv.go:106,162,187-224`, `db_pool_sizing.rs:203-224`); §4.1 (the
 fourteen `rt` `init()`s and the five that touch config; `lower.rs:795-827`;
 `lower.rs:2386-2440`); §4.3 (`build.rs:569-577,989,1622-1630`,

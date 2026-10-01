@@ -284,7 +284,7 @@ create conn (Store s) =
 
 -- | Safe additive migration: create the table if absent, and ADD any columns
 -- the record type has gained (nullable). Never drops, renames, or retypes a
--- column — those stay manual (see docs/v0.19/auto-migration-architecture.md).
+-- column — those stay manual (see docs/history/v0.19/auto-migration-architecture.md).
 -- Idempotent; returns the SQL statements it applied (empty when up to date).
 migrate : Db -> Store a -> Task Error (List String)
 migrate conn (Store s) =

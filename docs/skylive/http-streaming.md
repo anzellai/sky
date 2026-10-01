@@ -26,7 +26,7 @@ Other fits:
 
 ```elm
 module Sky.Core.Http.Stream exposing
-    ( StreamId(..)
+    ( StreamId
     , ChunkEvent(..)
     , open
     , chunks
@@ -34,7 +34,7 @@ module Sky.Core.Http.Stream exposing
     , forEachChunk
     )
 
-type StreamId = StreamId Int
+type StreamId    -- opaque: the runtime gives each stream a random id
 
 type ChunkEvent
     = Chunk String       -- raw UTF-8 bytes just arrived
@@ -221,7 +221,7 @@ incremental.
 
 | Name | Type |
 |---|---|
-| `StreamWriter(..)` | `type StreamWriter = StreamWriter Int` — opaque handle |
+| `StreamWriter` | opaque handle (constructor not exported; the runtime gives each writer a random id) |
 | `stream` | `String -> (StreamWriter -> Task Error ()) -> Task Error Response` |
 | `emit` | `String -> StreamWriter -> Task Error ()` |
 | `finish` | `StreamWriter -> Task Error ()` |

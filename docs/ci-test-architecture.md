@@ -529,7 +529,7 @@ target is a **coverage ledger** with a computable denominator:
 > **Correction to `AGENTS.md:255-258`, which this design must not build on:**
 > it documents `rust/crates/project/src/kernel_api.rs` and a
 > `kernel_api_covers_registered_kernel_functions` gate. **Both were deleted**
-> (`054f6d26`; recorded at `docs/v0.19/kernel-metadata-unification.md:279-285`)
+> (`054f6d26`; recorded at `docs/history/v0.19/kernel-metadata-unification.md:279-285`)
 > when `.sky` became the single source of truth. `AGENTS.md` is stale and is
 > fixed in Phase 1 (§8).
 

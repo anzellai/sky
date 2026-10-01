@@ -110,7 +110,7 @@ the type-checker. As a typed builder, `AppConfig` is a real opaque type: the
 entry points get precise `AppConfig model msg -> Task Error ()` signatures, and
 every binding is an `Ffi.kernel` alias declared in the module's `.sky` file — so
 `sky doc`, LSP hover, and the type-checker all read that one source. See
-`docs/v0.19/kernel-metadata-unification.md`.
+`docs/history/v0.19/kernel-metadata-unification.md`.
 
 ## Raw `api` endpoints (also breaking)
 

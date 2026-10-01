@@ -129,8 +129,8 @@ Go structs are opaque — you build them via generated constructors and pipeline
 ```elm
 params =
     Stripe.newCheckoutSessionParams ()
-        |> Result.andThen (Stripe.checkoutSessionParamsSetMode "payment")
-        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL "https://example.com/success")
+        |> Result.andThen (Stripe.checkoutSessionParamsSetMode (Just "payment"))
+        |> Result.andThen (Stripe.checkoutSessionParamsSetSuccessURL (Just "https://example.com/success"))
         |> Result.andThen (Stripe.checkoutSessionParamsSetLineItems [ lineItem ])
 ```
 
@@ -142,26 +142,44 @@ Naming rules:
 
 Setters take the value first and the struct second — so they pipe naturally via `|>` + `Result.andThen`. The Result wrap covers the boundary failure modes (nil receiver, panic, type mismatch); a successful chain returns `Ok params`.
 
-Pointer fields are auto-wrapped. For `Mode *string`, you pass a plain `String` and Sky wraps `&v` on the Go side.
+A Go pointer to a non-opaque type is a `Maybe` (v0.27.0). For `Mode *string` you pass `Just "payment"`, and `Nothing` sends `nil`. A getter returns `Ok Nothing` for a nil field.
 
 ## Callbacks (Go function values)
 
 ```elm
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.Log exposing (println)
 import Net.Http as Http
 import Github.Com.Gorilla.Mux as Mux
+import Io
 
 
-handler : Http.ResponseWriter -> Http.Request -> Task Error ()
-handler w req =
-    Http.writeString w "Hello!"
-
-
-main =
+handler w _ =
     let
-        router = Mux.newRouter ()
+        _ = Io.writeString w "Hello!"
+    in
+        ()
+
+
+startServer : Mux.Router -> Result Error ()
+startServer router =
+    let
         _ = Mux.routerHandleFunc router "/" handler
     in
         Http.listenAndServe ":8000" router
+
+
+main =
+    case Mux.newRouter () of
+        Ok router ->
+            let
+                _ = startServer router
+            in
+                ()
+
+        Err e ->
+            println ("Failed to create router: " ++ errorToString e)
 ```
 
 Sky handles the `func(ResponseWriter, *Request)` signature by wrapping the Sky closure in a Go adapter.

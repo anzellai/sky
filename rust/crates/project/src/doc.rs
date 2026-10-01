@@ -1947,8 +1947,8 @@ fn guide_section(rel: &str) -> Option<&'static str> {
     if excluded_exact.contains(&rel) {
         return None;
     }
-    // Excluded directories: the tour owns learn/; the rest are plans/roadmaps.
-    for dir in ["learn/", "v0.19/", "rfcs/", "testing/"] {
+    // Excluded directories: the tour owns learn/; the rest are plans and RFCs.
+    for dir in ["learn/", "rfcs/", "testing/"] {
         if rel.starts_with(dir) {
             return None;
         }

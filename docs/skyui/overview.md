@@ -87,7 +87,7 @@ Std.Ui takes a different cut: model layout in terms the user actually wants (`ro
 |---|---|---|
 | **Element** | `Element msg` | `Ui.text "hi"`, `Ui.row [...] [...]`, `Ui.button [...] cfg` |
 | **Attribute** | `Attribute msg` | `Ui.padding 16`, `Background.color (Ui.rgb 0 0 0)`, `Ui.onClick MyMsg` |
-| **Length** | `Length` | `Ui.px 200`, `Ui.fill`, `Ui.fillPortion 2`, `Ui.content`, `Ui.minimum 100 Ui.fill`, `Ui.maximum 600 Ui.fill` |
+| **Length** | `Length` | `Ui.px 200`, `Ui.fill`, `Ui.fillPortion 2`, `Ui.shrink`, `Ui.minimum 100 Ui.fill`, `Ui.maximum 600 Ui.fill` |
 | **Color** | `Color` | `Ui.rgb 255 102 0`, `Ui.rgba 0 0 0 0.5`, `Ui.white`, `Ui.black` |
 
 Every `Element msg` has a `msg` parameter — the same `msg` you've defined for your TEA app. Attributes that carry events (`onClick`, `onInput`, `onKeyDown`) tie into the same `msg` so the type checker catches mismatches at compile time. `onSubmit` is the exception: its signature is `a -> Attribute b`, because its argument is either a Msg or a function from the form's record to a Msg. The checker still inspects every `onSubmit` call and rejects an argument that can never receive a form submit with `[E2010]` (see [Forms](#forms--the-password-best-practice-pattern)).
@@ -285,7 +285,6 @@ honours it via the embedded WebKit/Chromium engine.
 Ui.px : Int -> Length                   -- absolute pixels
 Ui.fill : Length                        -- single growing slot (no arg)
 Ui.fillPortion : Int -> Length          -- proportional flex-grow weight
-Ui.content : Length                     -- shrink-to-fit
 Ui.shrink : Length                      -- shrink to content size
 Ui.minimum : Int -> Length -> Length    -- minimum constraint on a length
 Ui.maximum : Int -> Length -> Length    -- maximum constraint on a length
@@ -627,14 +626,22 @@ shown above a field) but not a reorder of look-alike rows — key those. See
 ## Responsive
 
 ```elm
-import Std.Ui.Responsive as Responsive
+import Std.Ui.Responsive as Responsive exposing (DeviceClass(..))
 
-Responsive.classifyDevice viewportWidth     -- Phone | Tablet | Desktop | BigDesktop
-Responsive.adapt viewport
-    { phone   = mobileLayout
-    , tablet  = tabletLayout
-    , desktop = desktopLayout
-    }
+layoutFor : { width : Int, height : Int } -> Element Msg
+layoutFor viewport =
+    case Responsive.classifyDevice viewport of
+        Phone ->
+            mobileLayout
+
+        Tablet ->
+            tabletLayout
+
+        Desktop ->
+            desktopLayout
+
+        BigDesktop ->
+            desktopLayout
 ```
 
 `Std.Ui.Responsive` is the **Model-driven** path: feed the viewport size in via `Sub.windowSize`, branch in your `view` function, dispatch a Msg when the layout changes. Useful when the layout transition needs to fire a typed event (e.g. close a tray, refit a canvas).
@@ -648,9 +655,10 @@ For **CSS-driven** viewport-conditional styling — instant, no JS, no Model fie
 ```elm
 import Std.Ui as Ui
 import Std.Ui.Background as Background
+import Std.Html as Html
 
 
-view : Model -> any
+view : Model -> Html.Html Msg
 view _ =
     Ui.layout []
         (Ui.row

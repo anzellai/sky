@@ -99,7 +99,7 @@ map + struct).
   LSP hover smoke: no `?` for any kernel fn. Commit.
 - **P5 — docs + migration + README breakage note:** CLAUDE.md +
   templates/CLAUDE.md + docs/skylive + docs/skytui + docs/skywebview + README;
-  `docs/v0.19/migration-builder-cfg.md`. Commit.
+  `docs/history/v0.19/migration-builder-cfg.md`. Commit.
 - **P6 — Judge verification:** fresh-context adversarial Judge vs the verbatim
   goal; full rt suite + xtask gates + sweep + verify scripts green.
 
@@ -246,7 +246,7 @@ precise sig already, so it's OUT of Path A by design.
   remove migrated modules from KERNEL_MODULES (close E1011 typo hole, guarded).
   Commit.
 - **P6 — docs + README breakage migration**: CLAUDE.md + templates + docs/skylive
-  + docs/skytui + README + `docs/v0.19/migration-builder-cfg.md`. Commit.
+  + docs/skytui + README + `docs/history/v0.19/migration-builder-cfg.md`. Commit.
 - **P7 — milestone verify + Judge**: cargo test --workspace + all xtask gates +
   full sweep + verify-cli + verify-all-web; fresh-context adversarial Judge.
 - **P8 — downstream (separate)**: skydeploy + sky-lang.org + sky-tailwind.

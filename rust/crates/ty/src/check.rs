@@ -336,7 +336,7 @@ fn builder_cfg_migration_hint(message: &str) -> Option<String> {
              `Live.app (Live.config { …required… } |> Live.withHead … )`. Optional \
              fields (head / guard / analytics / onKey / onLine / …) become `|> withX …`. \
              Same for Tui.app / Tui.program / Cli.program. \
-             See docs/v0.19/migration-builder-cfg.md"
+             See docs/history/v0.19/migration-builder-cfg.md"
                 .to_string(),
         )
     } else {

@@ -16,7 +16,7 @@
 // lowered Sky-record struct — `Live_app`/`liveAppRun` are UNCHANGED.
 //
 // FOUR INVARIANTS (each load-bearing for soundness — see
-// docs/v0.19/kernel-metadata-unification.md):
+// docs/history/v0.19/kernel-metadata-unification.md):
 //
 //  1. Keys are the exact PascalCase names `liveAppRun` reads; values are
 //     `any`. An UNSET optional is ABSENT from the map, so `rt.Field`

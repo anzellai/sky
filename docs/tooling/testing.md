@@ -159,9 +159,9 @@ Test.test "network errors carry retry hint" (\_ ->
 For `Result Error a` values, `expectErrorKind` is concise:
 
 ```elm
-Test.test "unauthorised returns PermissionDenied" (\_ ->
-    Test.expectErrorKind PermissionDenied
-        (Auth.authenticateUser "bad@email" "wrong-password"))
+Test.test "a short password returns InvalidInput" (\_ ->
+    Test.expectErrorKind InvalidInput
+        (Auth.passwordStrength "short"))
 ```
 
 ## Example-level verification

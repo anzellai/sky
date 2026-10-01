@@ -135,3 +135,88 @@ fn every_claim_site_actually_carries_a_version() {
          inspects fewer sites passes more easily, which is how it dies"
     );
 }
+
+/// Sample output that shows the CURRENT version, written in the live docs as if
+/// a reader had just run the command. The v0.27.0 docs sweep found
+/// `"skyVersion":"v0.25.21"` in the `/_sky/build` sample and `from sky v0.11.1`
+/// in the `sky upgrade-claude` sample: nothing tied them to a release, so they
+/// read as the version a user gets today. Every occurrence of each phrase in a
+/// live doc must name the current minor line.
+const SAMPLE_OUTPUT_PHRASES: &[&str] = &[
+    "\"skyVersion\":\"v",
+    "from sky v",
+    "the compiler's release version (`v",
+];
+
+/// Live docs: `docs/**` without the frozen `docs/history/` tree, plus the
+/// top-level and template guides.
+fn live_docs() -> Vec<PathBuf> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().and_then(|s| s.to_str()) != Some("history") {
+                    walk(&p, out);
+                }
+            } else if p.extension().and_then(|s| s.to_str()) == Some("md") {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&repo().join("docs"), &mut out);
+    walk(&repo().join("templates"), &mut out);
+    out.push(repo().join("README.md"));
+    out.push(repo().join("AGENTS.md"));
+    out
+}
+
+#[test]
+fn sample_output_in_live_docs_shows_the_current_version() {
+    let (maj, min) = current_minor_line();
+    let mut stale = Vec::new();
+    let mut seen = vec![0usize; SAMPLE_OUTPUT_PHRASES.len()];
+    for path in live_docs() {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (i, phrase) in SAMPLE_OUTPUT_PHRASES.iter().enumerate() {
+            for (idx, _) in text.match_indices(phrase) {
+                seen[i] += 1;
+                let ver: String = text[idx + phrase.len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
+                    .collect();
+                let mut it = ver.split('.');
+                let ok = matches!(
+                    (it.next().and_then(|s| s.parse::<u32>().ok()),
+                     it.next().and_then(|s| s.parse::<u32>().ok())),
+                    (Some(a), Some(b)) if a == maj && b == min
+                );
+                if !ok {
+                    let line = text[..idx].lines().count().max(1);
+                    stale.push(format!(
+                        "  {}:{line}: `{phrase}{ver}`, current line is v{maj}.{min}.x",
+                        path.strip_prefix(repo()).unwrap_or(&path).display()
+                    ));
+                }
+            }
+        }
+    }
+    for (i, phrase) in SAMPLE_OUTPUT_PHRASES.iter().enumerate() {
+        assert!(
+            seen[i] > 0,
+            "no live doc contains `{phrase}` any more. Delete its row from \
+             SAMPLE_OUTPUT_PHRASES, or update it if the sample was reworded."
+        );
+    }
+    assert!(
+        stale.is_empty(),
+        "live-doc sample output shows an old version as the current one:\n{}\n\n\
+         Update the sample to the current release (CHANGELOG.md's newest heading).",
+        stale.join("\n")
+    );
+}

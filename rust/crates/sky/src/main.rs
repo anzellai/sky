@@ -11592,7 +11592,7 @@ fn extract_between<'a>(s: &'a str, begin: &str, end: &str) -> Option<&'a str> {
 /// `sky db migrate --gen [name]` — derive the target schema from the project's
 /// `db` (via a temp, DB-free schema-dump entry), diff it against
 /// `db/schema.json`, and write a migration file + updated snapshot. Additive ops
-/// are active; destructive ops are quarantined (docs/v0.19/auto-migration-architecture.md).
+/// are active; destructive ops are quarantined (docs/history/v0.19/auto-migration-architecture.md).
 /// Print a prompt (no newline) and read one line from stdin. Empty on EOF.
 fn prompt_line(prompt: &str) -> String {
     use std::io::Write as _;

@@ -15,7 +15,7 @@ That gives you three tiers, and the type tells you which one you're looking at:
 -- pure          — bare value:   String.length, List.map, Crypto.sha256
 -- fallible-pure — Maybe:  String.toInt : String -> Maybe Int
 --                 Result: Encoding.base64Decode : String -> Result Error String
--- effect        — Task Error a: File.read, Http.get, Db.query, Time.now
+-- effect        — Task Error a: File.readFile, Http.get, Db.query, Time.now
 ```
 
 A `Task Error a` is a *description* of an effect that, when run, either produces an
@@ -31,7 +31,7 @@ exactly like `Result`:
 -- read a file, then upper-case its contents
 shout : Task Error String
 shout =
-    File.read "note.txt"
+    File.readFile "note.txt"
         |> Task.map String.toUpper
 
 -- andThen: feed one task's result into the next effect

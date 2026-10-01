@@ -42,7 +42,7 @@ returns `Task Error a`:
 -- pure:          List.map, String.length, Crypto.sha256
 -- can fail:      String.toInt : String -> Maybe Int
 --                Encoding.base64Decode : String -> Result Error String
--- side effect:   Http.get, Db.query, File.read : … -> Task Error a
+-- side effect:   Http.get, Db.query, File.readFile : … -> Task Error a
 ```
 
 **Loops become folds.** There is no `for`. Build and transform with list

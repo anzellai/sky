@@ -300,23 +300,22 @@ manager).
 
 ## Security-critical kernels require typed arguments
 
-Every public Auth kernel — `hashPassword` / `hashPasswordCost` / `passwordStrength` / `signToken` / `verifyToken` / `register` / `login` / `setRole` — gates at **compile time** on every `String`-typed parameter slot. Bridging an `any`-typed binding into any of those slots is a compile-time `Sky.Auth.UntypedBoundary` (`E4006`) error, not a runtime surprise.
+Every public Auth kernel (`hashPassword` / `hashPasswordCost` / `passwordStrength` / `signToken` / `verifyToken` / `register` / `login` / `setRole`) is typed, and the checker holds every `String` slot to `String` at compile time. Application code cannot bind an untyped kernel (`Ffi.kernel` is `[E1011]`), and since v0.27.0 an `any` in your own signature is filled from the body, so a non-String value is a type error, not a runtime surprise.
 
 ```elm
--- Compile-time error: bridge's static type carries `any`.
 bridge : any
-bridge = Ffi.kernel "Time_unixMillis"
+bridge = 42
 
 main =
-    case Auth.hashPassword bridge of           -- E4006
+    case Auth.hashPassword bridge of           -- E2001
         Ok h  -> println h
         Err _ -> println "bad"
 ```
 
 ```text
--- CODEGEN ERROR ───────────────────────────── src/Main.sky:9:28 [E4006]
-Sky.Auth.UntypedBoundary — argument 1 of `Auth.hashPassword` carries no
-typed-String contract at the Sky type level.
+-- TYPE ERROR ----------------------------------- src/Main.sky:13:10 [E2001]
+[main] type mismatch: `String` vs `Int`. `bridge`'s signature uses `any`. Since
+v0.27.0 each `any` in a signature is filled from the body, so `bridge : Int`.
 ```
 
 The fix is always to annotate the bridging binding with a concrete type (`String`, or a type alias whose body is `String`) before it reaches the kernel.
