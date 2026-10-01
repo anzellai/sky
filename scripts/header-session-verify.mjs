@@ -14,20 +14,32 @@
 //   * the page is served with a strict script-src and sets no cookie at all;
 //     the browser really refuses cookies (a document.cookie write is dropped);
 //   * the client holds a 32-hex session token and the live stream connects
-//     (fetch-stream SSE, hello received);
+//     (hello received) as a native EventSource on a one-time ticket: the
+//     ticket is asked for with POST /_sky/sse-ticket carrying X-Sky-Session,
+//     the token is never in any URL, and a used ticket cannot be replayed.
+//     (Header mode always takes the ticket path: WebKit's fetch stream held
+//     back a frame that followed another within ~1 ms, so a sign-in repaint
+//     came late; runtime-go/rt/live_client_asset.go __SkyHdrSource.)
 //   * a counter works over event POSTs; server pushes (a 150 ms ticker)
 //     arrive over the stream;
-//   * the stream is dropped (aborted) and reconnects: the state survives and
-//     the counter and ticker keep working;
+//   * the stream drops (its EventSource errors) and reconnects through a NEW
+//     ticket: the state survives and the counter and ticker keep working;
 //   * signing in rotates the session: the tab adopts a NEW token, keeps
 //     working, and Live.sessionKey is unchanged; the old token no longer
 //     drives the session (session-rotating inside the grace window);
 //   * with streaming fetch unavailable (ReadableStream removed), the client
-//     falls back to a one-time SSE ticket and still works;
+//     still connects (the ticket path needs no stream reader);
+//   * WebKit: sign-in repaints promptly over the ticket stream (5 fresh
+//     contexts, user=user-1 within 1.5 s with no further action), with no
+//     cookie set; this is the H-6 regression;
 //   * zero securitypolicyviolation events, zero console errors, and the
 //     browser context holds no cookie at the end.
 //
 // Usage: node scripts/header-session-verify.mjs <app-binary> --port N [--cwd DIR]
+// HEADER_SESSION_E2E_CHANNEL picks the Chromium build (default "chromium", the
+// full Chromium; "chrome" for installed Google Chrome), HEADER_SESSION_E2E_HEADED=1
+// runs it headed, HEADER_SESSION_E2E_WEBKIT=0 skips the WebKit leg (it fails
+// loudly when WebKit is not installed).
 import pw from "playwright";
 import { spawn } from "node:child_process";
 import { guardChild } from "./lib/child-guard.mjs";
@@ -35,7 +47,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-const { chromium } = pw;
+const { chromium, webkit } = pw;
+const CHANNEL = process.env.HEADER_SESSION_E2E_CHANNEL || "chromium";
+const HEADED = process.env.HEADER_SESSION_E2E_HEADED === "1";
+const RUN_WEBKIT = process.env.HEADER_SESSION_E2E_WEBKIT !== "0";
 const argv = process.argv.slice(2);
 const APP = argv[0];
 function arg(name, dflt) {
@@ -132,8 +147,8 @@ try {
   // the profile's content settings (the headless shell ignores them).
   // `npx playwright install chromium` installs it.
   context = await chromium.launchPersistentContext(profile, {
-    headless: true,
-    channel: "chromium",
+    headless: !HEADED,
+    channel: CHANNEL,
     viewport: { width: 1000, height: 800 },
   });
   const violations = [];
@@ -153,7 +168,19 @@ try {
   // A failed load is checked by URL (badResponses), not by its console line:
   // the full Chromium asks for /favicon.ico, which this app does not serve.
   const badResponses = [];
+  // Every request URL the browser sends, and the X-Sky-Session header each
+  // sse-ticket POST carried: the token travels in a header, never a URL.
+  const requestUrls = [];
+  const ticketPosts = [];
+  const sseUrls = [];
   const watch = (pg) => {
+    pg.on("request", async (r) => {
+      requestUrls.push(r.url());
+      if (r.url().includes("/_sky/sse-ticket")) {
+        const h = await r.allHeaders().catch(() => ({}));
+        ticketPosts.push({ method: r.method(), session: h["x-sky-session"] || "" });
+      } else if (r.url().includes("/_sky/sse?")) sseUrls.push(r.url());
+    });
     pg.on("console", (m) => {
       if (m.type() === "error" && !m.text().startsWith("Failed to load resource")) consoleErrors.push(m.text());
     });
@@ -176,7 +203,22 @@ try {
   const tok0 = await page.evaluate(() => typeof __skyTok === "string" ? __skyTok : "");
   check("the client holds a 32-hex session token", /^[0-9a-f]{32}$/.test(tok0), tok0);
   check("the live stream connects without cookies (hello)", await waitFor(page, () => __skyHelloOk === true, null, 15000));
-  check("the live stream is a fetch stream, not an EventSource", await page.evaluate(() => !!(__skySSE && __skySSE._ac && !__skySSE._es)));
+  check(
+    "the live stream is a native EventSource opened with a one-time ticket (?tk=)",
+    await page.evaluate(() => !!(__skySSE && __skySSE._es instanceof EventSource && /[?&]tk=/.test(__skySSE._es.url)))
+  );
+  check(
+    "the ticket is asked for with a POST that carries X-Sky-Session",
+    ticketPosts.length >= 1 && ticketPosts.every((t) => t.method === "POST" && t.session === tok0),
+    JSON.stringify(ticketPosts.map((t) => ({ method: t.method, hasToken: t.session === tok0 })))
+  );
+  const usedSse = await page.evaluate(() => __skySSE._es.url);
+  check("the session token is not in the stream URL", !usedSse.includes(tok0), usedSse);
+  // A used ticket is single-use: replaying the stream URL opens no stream.
+  const replay = await fetch(usedSse, { signal: AbortSignal.timeout(3000) }).catch((e) => ({ status: 0, err: String(e), headers: new Headers() }));
+  const replayStreams = replay.status === 200 && (replay.headers.get("content-type") || "").includes("text/event-stream") && !replay.headers.get("x-sky-status");
+  if (replay.body) replay.body.cancel().catch(() => {});
+  check("a used ticket cannot be replayed", !replayStreams, `${replay.status} ${replay.headers.get("x-sky-status") || ""} ${replay.err || ""}`);
 
   // ── counter over event POSTs ──
   for (let i = 0; i < 3; i++) await page.click("#inc");
@@ -189,11 +231,21 @@ try {
 
   // ── the stream drops and reconnects ──
   await page.waitForTimeout(400);
-  await page.evaluate(() => {
+  const ticketsBeforeDrop = ticketPosts.length;
+  const droppedUrl = await page.evaluate(() => {
     window.__skyHelloOk = false;
-    __skySSE._ac.abort();
+    const es = __skySSE._es;
+    // A network drop, as the wrapper sees it: the EventSource errors.
+    es.dispatchEvent(new Event("error"));
+    return es.url;
   });
   check("the stream reconnects after a drop", await waitFor(page, () => __skyHelloOk === true, null, 20000));
+  check(
+    "the reconnect asks for a NEW ticket (a ticket is never reused)",
+    ticketPosts.length > ticketsBeforeDrop &&
+      (await page.evaluate((u) => !!(__skySSE && __skySSE._es && __skySSE._es.url !== u), droppedUrl)),
+    `${ticketsBeforeDrop} -> ${ticketPosts.length}`
+  );
   check("the state survived the stream drop", (await field(page, "count")) === "3", await state(page));
   await page.click("#inc");
   check("the counter works after the reconnect", await shows(page, "count=4", 10000), await state(page));
@@ -257,15 +309,15 @@ try {
     window.ReadableStream = undefined;
   });
   await page2.goto(ORIGIN + "/", { waitUntil: "load" });
-  check("fallback: the stream connects through a one-time ticket", await waitFor(page2, () => __skyHelloOk === true, null, 15000));
+  check("without streaming fetch: the stream connects through a one-time ticket", await waitFor(page2, () => __skyHelloOk === true, null, 15000));
   check(
-    "fallback: the stream is an EventSource on ?tk=",
+    "without streaming fetch: the stream is an EventSource on ?tk=",
     await page2.evaluate(() => !!(__skySSE && __skySSE._es && /[?&]tk=/.test(__skySSE._es.url)))
   );
   await page2.click("#inc");
-  check("fallback: the counter works", await shows(page2, "count=1", 10000), await state(page2));
+  check("without streaming fetch: the counter works", await shows(page2, "count=1", 10000), await state(page2));
   await page2.click("#start");
-  check("fallback: server pushes arrive", await waitFor(page2, () => /ticks=([3-9]|\d\d+)/.test(document.getElementById("state").textContent), null, 10000), await state(page2));
+  check("without streaming fetch: server pushes arrive", await waitFor(page2, () => /ticks=([3-9]|\d\d+)/.test(document.getElementById("state").textContent), null, 10000), await state(page2));
   await page2.click("#stop");
 
   check("zero securitypolicyviolation events", violations.length === 0, violations.slice(0, 3).join(" | "));
@@ -273,7 +325,49 @@ try {
   check("no failed request (other than /favicon.ico)", badResponses.length === 0, badResponses.slice(0, 3).join(" | "));
   const jar = await context.cookies();
   check("the browser holds no cookie at the end", jar.length === 0, jar.map((c) => c.name).join(","));
+  const leaked = requestUrls.filter((u) => u.includes(tok0) || u.includes(tokAfter));
+  check("no request URL carries a session token", leaked.length === 0, leaked.slice(0, 3).join(" | "));
   check("the server never logged a session token", !serverLog.includes(tok0) && !serverLog.includes(tokAfter));
+  check("every stream URL is a ticket URL", sseUrls.length > 0 && sseUrls.every((u) => /[?&]tk=/.test(u)), sseUrls.slice(0, 3).join(" | "));
+
+  // ── WebKit: the sign-in repaint arrives promptly (H-6) ──
+  // WebKit's fetch stream held back a frame that followed another within
+  // ~1 ms, so the sign-in repaint came only with the next server frame. The
+  // ticket path's native EventSource delivers it at once.
+  if (RUN_WEBKIT) {
+    const wk = await webkit.launch({ headless: !HEADED });
+    try {
+      let late = 0;
+      const lateDetail = [];
+      for (let i = 0; i < 5; i++) {
+        const wctx = await wk.newContext({ viewport: { width: 1000, height: 800 } });
+        try {
+          const wp = await wctx.newPage();
+          const wErrors = [];
+          wp.on("pageerror", (e) => wErrors.push(e.message));
+          await wp.goto(ORIGIN + "/", { waitUntil: "load" });
+          const hello = await waitFor(wp, () => __skyHelloOk === true, null, 15000);
+          const isTicket = await wp.evaluate(() => !!(__skySSE && __skySSE._es instanceof EventSource && /[?&]tk=/.test(__skySSE._es.url)));
+          await wp.click("#signin");
+          const prompt = await shows(wp, "user=user-1", 1500);
+          if (!hello || !isTicket || !prompt || wErrors.length) {
+            late++;
+            lateDetail.push(`run ${i}: hello=${hello} ticket=${isTicket} prompt=${prompt} errors=${wErrors.slice(0, 2).join(";")} state=${await state(wp)}`);
+          }
+          const wjar = await wctx.cookies();
+          if (wjar.length) {
+            late++;
+            lateDetail.push(`run ${i}: cookies ${wjar.map((c) => c.name).join(",")}`);
+          }
+        } finally {
+          await wctx.close().catch(() => {});
+        }
+      }
+      check("WebKit: sign-in repaints within 1.5 s over the ticket stream, no cookie (5 of 5)", late === 0, lateDetail.join(" | "));
+    } finally {
+      await wk.close().catch(() => {});
+    }
+  }
 } catch (e) {
   failures.push(String(e && e.stack ? e.stack : e));
   console.log(`FAIL [${TAG}] ${e && e.stack ? e.stack : e}`);

@@ -7,11 +7,14 @@
 # Builds the header-session fixture (--target web) from a temp copy and drives
 # it in headless Chromium whose profile BLOCKS ALL COOKIES, with
 # SKY_CSP=strict. scripts/header-session-verify.mjs has the case list: the
-# counter works over event POSTs, server pushes arrive over the fetch-stream
-# SSE, a dropped stream reconnects with the state intact, sign-in rotates the
-# session and the tab adopts the new token (Live.sessionKey unchanged, the old
-# token refused), the one-time SSE ticket fallback works without streaming
-# fetch, and there are zero policy violations, console errors or cookies.
+# counter works over event POSTs, server pushes arrive over a native
+# EventSource opened with a one-time SSE ticket (the token travels in the
+# X-Sky-Session header, never in a URL; a used ticket cannot be replayed), a
+# dropped stream reconnects through a new ticket with the state intact,
+# sign-in rotates the session and the tab adopts the new token
+# (Live.sessionKey unchanged, the old token refused), WebKit repaints the
+# sign-in promptly (H-6), and there are zero policy violations, console errors
+# or cookies. WebKit must be installed (`npx playwright install webkit`).
 #
 # Proven to FAIL before the header transport existed (the fixture's builder
 # is unknown to the compiler; with SKY_LIVE_SESSION_TRANSPORT ignored the
@@ -19,7 +22,7 @@
 # the fixed runtime.
 #
 # Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright (the
-# full Chromium from `npx playwright install chromium`).
+# full Chromium from `npx playwright install chromium`, and WebKit).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKY="$ROOT/sky-out/sky"
