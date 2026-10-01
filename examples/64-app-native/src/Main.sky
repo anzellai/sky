@@ -159,9 +159,10 @@ update msg model =
             ( model, Cmd.perform (Native.geolocation ()) Located )
 
         Located (Ok c) ->
-            ( { model | where_ =
-                  String.fromFloat c.lat ++ ", " ++ String.fromFloat c.lng
-              , log = "located (±" ++ String.fromFloat c.accuracy ++ "m)"
+            ( { model
+                  | where_ =
+                      String.fromFloat c.lat ++ ", " ++ String.fromFloat c.lng
+                  , log = "located (±" ++ String.fromFloat c.accuracy ++ "m)"
               }
             , Cmd.none
             )
@@ -199,7 +200,8 @@ update msg model =
             )
 
         OnlineGot (Err e) ->
-            ( { model | log = "connectivity check failed: " ++ Error.toString e
+            ( { model
+                  | log = "connectivity check failed: " ++ Error.toString e
               }
             , Cmd.none
             )
@@ -240,14 +242,15 @@ update msg model =
             ( model, Cmd.perform (Native.batteryStatus ()) BatteryGot )
 
         BatteryGot (Ok b) ->
-            ( { model | battery =
-                  String.fromInt (Math.round (b.level * 100.0)) ++ "%"
-                      ++ (if b.charging then
-                             " (charging)"
+            ( { model
+                  | battery =
+                      String.fromInt (Math.round (b.level * 100.0)) ++ "%"
+                          ++ (if b.charging then
+                                 " (charging)"
 
-                         else
-                             "")
-              , log = "read battery"
+                             else
+                                 "")
+                  , log = "read battery"
               }
             , Cmd.none
             )
@@ -279,14 +282,15 @@ update msg model =
             ( model, Cmd.perform (Native.capturePhoto ()) Picked )
 
         Picked (Ok f) ->
-            ( { model | picked = f.name ++ " (" ++ f.mime ++ ")"
-              , preview =
-                  if String.startsWith "image/" f.mime then
-                      f.dataUrl
+            ( { model
+                  | picked = f.name ++ " (" ++ f.mime ++ ")"
+                  , preview =
+                      if String.startsWith "image/" f.mime then
+                          f.dataUrl
 
-                  else
-                      ""
-              , log = "picked a file"
+                      else
+                          ""
+                  , log = "picked a file"
               }
             , Cmd.none
             )

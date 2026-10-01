@@ -136,10 +136,11 @@ update msg model =
                             in
                                 Error.toString e
             in
-                ( { model | nameInput = s
-                  , savedGames = games
-                  , playerName = s
-                  , notification = notif
+                ( { model
+                      | nameInput = s
+                      , savedGames = games
+                      , playerName = s
+                      , notification = notif
                   }
                 , Cmd.none
                 )
@@ -268,20 +269,21 @@ handleLoadGame gameId model =
                 Nothing ->
                     "playing"
     in
-        ( { model | page = GamePage
-          , playerName = playerName
-          , gameId = gameId
-          , board = board
-          , turn = turn
-          , selectedSquare = -1
-          , legalMoves = []
-          , moveHistory = history
-          , gameStatus = status
-          , computerThinking = False
-          , lastMoveFrom = -1
-          , lastMoveTo = -1
-          , notification = loadErr
-          , errorMessage = ""
+        ( { model
+              | page = GamePage
+              , playerName = playerName
+              , gameId = gameId
+              , board = board
+              , turn = turn
+              , selectedSquare = -1
+              , legalMoves = []
+              , moveHistory = history
+              , gameStatus = status
+              , computerThinking = False
+              , lastMoveFrom = -1
+              , lastMoveTo = -1
+              , notification = loadErr
+              , errorMessage = ""
           }
         , Cmd.none
         )
@@ -320,8 +322,9 @@ startGameWithName name model =
                         println
                             ("[CHESS ERROR] createGame: " ++ Error.toString e)
                 in
-                    ( { model | errorMessage = Error.toString e
-                      , notification = Error.toString e
+                    ( { model
+                          | errorMessage = Error.toString e
+                          , notification = Error.toString e
                       }
                     , Cmd.none
                     )
@@ -332,31 +335,32 @@ startGameWithName name model =
 
 startGameWithNameOk : String -> String -> Model -> ( Model, Cmd Msg )
 startGameWithNameOk name gameId model =
-    ( { model | page = GamePage
-      , playerName = name
-      , gameId = gameId
-      , board = Board.initialBoard
-      , turn = White
-      , selectedSquare = -1
-      , legalMoves = []
-      , moveHistory = []
-      , gameStatus = "playing"
-      , computerThinking = False
-      , lastMoveFrom = -1
-      , lastMoveTo = -1
-      , capturedByWhite = []
-      , capturedByBlack = []
-      , whiteKingMoved = False
-      , blackKingMoved = False
-      , whiteRookAMoved = False
-      , whiteRookHMoved = False
-      , blackRookAMoved = False
-      , blackRookHMoved = False
-      , enPassantSquare = -1
-      , halfMoveClock = 0
-      , fullMoveNumber = 1
-      , notification = ""
-      , errorMessage = ""
+    ( { model
+          | page = GamePage
+          , playerName = name
+          , gameId = gameId
+          , board = Board.initialBoard
+          , turn = White
+          , selectedSquare = -1
+          , legalMoves = []
+          , moveHistory = []
+          , gameStatus = "playing"
+          , computerThinking = False
+          , lastMoveFrom = -1
+          , lastMoveTo = -1
+          , capturedByWhite = []
+          , capturedByBlack = []
+          , whiteKingMoved = False
+          , blackKingMoved = False
+          , whiteRookAMoved = False
+          , whiteRookHMoved = False
+          , blackRookAMoved = False
+          , blackRookHMoved = False
+          , enPassantSquare = -1
+          , halfMoveClock = 0
+          , fullMoveNumber = 1
+          , notification = ""
+          , errorMessage = ""
       }
     , Cmd.none
     )
@@ -429,8 +433,9 @@ handleResign model =
             let
                 _ = println ("[CHESS ERROR] resign: " ++ Error.toString e)
             in
-                ( { model | gameStatus = "resigned"
-                  , notification = Error.toString e
+                ( { model
+                      | gameStatus = "resigned"
+                      , notification = Error.toString e
                   }
                 , Cmd.none
                 )
@@ -455,11 +460,12 @@ handleBackToHome model =
                     in
                         Error.toString e
     in
-        ( { model | page = HomePage
-          , savedGames = games
-          , selectedSquare = -1
-          , legalMoves = []
-          , notification = notif
+        ( { model
+              | page = HomePage
+              , savedGames = games
+              , selectedSquare = -1
+              , legalMoves = []
+              , notification = notif
           }
         , Cmd.none
         )

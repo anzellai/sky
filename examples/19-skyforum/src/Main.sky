@@ -213,8 +213,9 @@ appDef =
         |> App.withNotFound ()
         |> App.withConfig
                (App.WebConfig
-                   { App.webDefaults | port = 8000
-                   , inputMode = Just "debounce"
+                   { App.webDefaults
+                       | port = 8000
+                       , inputMode = Just "debounce"
                    })
 
 

@@ -27,10 +27,11 @@ update msg model =
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | posts =
-                          List.map
-                              (togglePostUpvote sess.username postId)
-                              model.posts
+                    ( { model
+                          | posts =
+                              List.map
+                                  (togglePostUpvote sess.username postId)
+                                  model.posts
                       }
                     , Cmd.none
                     )
@@ -42,10 +43,11 @@ update msg model =
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | posts =
-                          List.map
-                              (togglePostDownvote sess.username postId)
-                              model.posts
+                    ( { model
+                          | posts =
+                              List.map
+                                  (togglePostDownvote sess.username postId)
+                                  model.posts
                       }
                     , Cmd.none
                     )
@@ -57,10 +59,11 @@ update msg model =
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | comments =
-                          List.map
-                              (toggleCommentUpvote sess.username commentId)
-                              model.comments
+                    ( { model
+                          | comments =
+                              List.map
+                                  (toggleCommentUpvote sess.username commentId)
+                                  model.comments
                       }
                     , Cmd.none
                     )
@@ -72,10 +75,11 @@ update msg model =
                     ( { model | currentPage = LoginPage }, Cmd.none )
 
                 Just sess ->
-                    ( { model | comments =
-                          List.map
-                              (toggleCommentDownvote sess.username commentId)
-                              model.comments
+                    ( { model
+                          | comments =
+                              List.map
+                                  (toggleCommentDownvote sess.username commentId)
+                                  model.comments
                       }
                     , Cmd.none
                     )
@@ -92,9 +96,10 @@ update msg model =
                 ( { model | loginError = "Username is required." }, Cmd.none )
 
             else
-                ( { model | session = Just { username = String.trim creds.username }
-                  , loginError = ""
-                  , currentPage = HomePage
+                ( { model
+                      | session = Just { username = String.trim creds.username }
+                      , loginError = ""
+                      , currentPage = HomePage
                   }
                 , Cmd.none
                 )
@@ -122,13 +127,15 @@ update msg model =
                         ( model, Cmd.none )
 
                     else
-                        ( { model | comments =
-                              model.comments ++ [ newComment model sess postId ]
-                          , posts =
-                              List.map (bumpPostComments postId) model.posts
-                          , composeBody = ""
-                          , replyTo = 0
-                          , nextCommentId = model.nextCommentId + 1
+                        ( { model
+                              | comments =
+                                  model.comments
+                                      ++ [ newComment model sess postId ]
+                              , posts =
+                                  List.map (bumpPostComments postId) model.posts
+                              , composeBody = ""
+                              , replyTo = 0
+                              , nextCommentId = model.nextCommentId + 1
                           }
                         , Cmd.none
                         )

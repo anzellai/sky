@@ -225,7 +225,8 @@ loadFeatures cfg =
                 |> Task.andThen
                        (\region ->
                            Task.succeed
-                               { cfg | features = withRegion cfg.features region
+                               { cfg
+                                   | features = withRegion cfg.features region
                                })
                 |> Task.onError (\_ -> Task.succeed cfg)
 

@@ -56,9 +56,10 @@ update msg model =
             ( { model | loading = False }, Cmd.none )
 
         GotItems (Ok s) ->
-            ( { model | items = String.trim s
-              , loading = False
-              , loads = model.loads + 1
+            ( { model
+                  | items = String.trim s
+                  , loading = False
+                  , loads = model.loads + 1
               }
             , Cmd.none
             )

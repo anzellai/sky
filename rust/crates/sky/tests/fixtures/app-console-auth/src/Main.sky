@@ -60,7 +60,9 @@ update msg model =
     case msg of
 
         SignIn role ->
-            ( { model | session = Just { userId = role ++ "@" ++ realm, role = role }
+            ( { model
+                  | session =
+                      Just { userId = role ++ "@" ++ realm, role = role }
               }
             , Cmd.none
             )

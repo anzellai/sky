@@ -27,17 +27,19 @@ update msg model =
             ( { model | status = searchStatus model.query model }, Cmd.none )
 
         SelectNote noteId ->
-            ( { model | selected = Just noteId
-              , editing = False
-              , status = "opened note " ++ String.fromInt noteId
+            ( { model
+                  | selected = Just noteId
+                  , editing = False
+                  , status = "opened note " ++ String.fromInt noteId
               }
             , Cmd.none
             )
 
         CloseNote ->
-            ( { model | selected = Nothing
-              , editing = False
-              , status = "closed note"
+            ( { model
+                  | selected = Nothing
+                  , editing = False
+                  , status = "closed note"
               }
             , Cmd.none
             )
@@ -49,10 +51,11 @@ update msg model =
                     ( { model | status = "nothing selected" }, Cmd.none )
 
                 Just note ->
-                    ( { model | editing = True
-                      , draftTitle = note.title
-                      , draftBody = note.body
-                      , status = "editing note " ++ String.fromInt note.id
+                    ( { model
+                          | editing = True
+                          , draftTitle = note.title
+                          , draftBody = note.body
+                          , status = "editing note " ++ String.fromInt note.id
                       }
                     , Cmd.none
                     )
@@ -70,18 +73,21 @@ update msg model =
                     ( { model | editing = False }, Cmd.none )
 
                 Just wanted ->
-                    ( { model | notes = List.map (applyEdit wanted model) model.notes
-                      , editing = False
-                      , status = "saved note " ++ String.fromInt wanted
+                    ( { model
+                          | notes =
+                              List.map (applyEdit wanted model) model.notes
+                          , editing = False
+                          , status = "saved note " ++ String.fromInt wanted
                       }
                     , Cmd.none
                     )
 
         CancelEdit ->
-            ( { model | editing = False
-              , draftTitle = ""
-              , draftBody = ""
-              , status = "edit cancelled"
+            ( { model
+                  | editing = False
+                  , draftTitle = ""
+                  , draftBody = ""
+                  , status = "edit cancelled"
               }
             , Cmd.none
             )
@@ -98,22 +104,24 @@ update msg model =
                     , day = model.nextId
                     }
             in
-                ( { model | notes = model.notes ++ [ fresh ]
-                  , nextId = model.nextId + 1
-                  , selected = Just fresh.id
-                  , editing = True
-                  , draftTitle = fresh.title
-                  , draftBody = fresh.body
-                  , status = "new note " ++ String.fromInt fresh.id
+                ( { model
+                      | notes = model.notes ++ [ fresh ]
+                      , nextId = model.nextId + 1
+                      , selected = Just fresh.id
+                      , editing = True
+                      , draftTitle = fresh.title
+                      , draftBody = fresh.body
+                      , status = "new note " ++ String.fromInt fresh.id
                   }
                 , Cmd.none
                 )
 
         DeleteNote noteId ->
-            ( { model | notes = List.filter (\n -> n.id /= noteId) model.notes
-              , selected = clearIfDeleted noteId model.selected
-              , editing = False
-              , status = "deleted note " ++ String.fromInt noteId
+            ( { model
+                  | notes = List.filter (\n -> n.id /= noteId) model.notes
+                  , selected = clearIfDeleted noteId model.selected
+                  , editing = False
+                  , status = "deleted note " ++ String.fromInt noteId
               }
             , Cmd.none
             )
@@ -130,8 +138,9 @@ update msg model =
 applyEdit : Int -> Model -> Note -> Note
 applyEdit wanted model note =
     if note.id == wanted then
-        { note | title = titleOrFallback model.draftTitle note.title
-        , body = model.draftBody
+        { note
+            | title = titleOrFallback model.draftTitle note.title
+            , body = model.draftBody
         }
 
     else

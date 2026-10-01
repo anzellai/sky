@@ -204,9 +204,10 @@ loadRecent _ =
 
 withDashboard : Model -> Model
 withDashboard model =
-    { model | total = loadTotal ()
-    , counts = loadCounts ()
-    , recent = loadRecent ()
+    { model
+        | total = loadTotal ()
+        , counts = loadCounts ()
+        , recent = loadRecent ()
     }
 
 
@@ -245,9 +246,10 @@ update msg model =
         DoSignIn creds ->
             if checkAdmin creds.password then
                 ( withDashboard
-                      { model | isAdmin = True
-                      , adminError = ""
-                      , page = AdminPage
+                      { model
+                          | isAdmin = True
+                          , adminError = ""
+                          , page = AdminPage
                       }
                 , Cmd.perform
                       (Analytics.track (Analytics.event "admin_login" []))
@@ -571,9 +573,10 @@ appDef =
         |> App.withNotFound Home
         |> App.withConfig
                (App.WebConfig
-                   { App.webDefaults | port = 8052
-                   , ttl = Just "30m"
-                   , analytics = Just { pageViews = True }
+                   { App.webDefaults
+                       | port = 8052
+                       , ttl = Just "30m"
+                       , analytics = Just { pageViews = True }
                    })
 
 

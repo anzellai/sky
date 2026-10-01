@@ -84,5 +84,6 @@ main =
             |> App.withNotFound Home
             |> App.withConfig
                    (App.WebConfig
-                       { App.webDefaults | analytics = Just { pageViews = True }
+                       { App.webDefaults
+                           | analytics = Just { pageViews = True }
                        }))

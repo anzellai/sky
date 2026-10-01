@@ -28,9 +28,10 @@ init _ =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update (Line l) model =
-    ( { model | log =
-          model.log ++ l
-              ++ Result.withDefault "" (Task.run (File.readFile "x.txt"))
+    ( { model
+          | log =
+              model.log ++ l
+                  ++ Result.withDefault "" (Task.run (File.readFile "x.txt"))
       }
     , Cmd.none
     )

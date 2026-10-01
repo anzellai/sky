@@ -612,15 +612,16 @@ no session). Two apps sharing a run id + database share durable state. -}
 withDurableId : String -> Db -> Codec model -> App fallback seed page model msg key -> App fallback seed page model msg key
 withDurableId rid dbHandle codec (App a) =
     App
-        { a | durable =
-            { enabled = True
-            , setup = Durable.setup dbHandle
-            , restore = \r -> Durable.loadSnapshot dbHandle r codec
-            , persist = \r m -> Durable.saveSnapshotAuto dbHandle r codec m
-            , discard = \r -> Durable.deleteSnapshot dbHandle r
-            , applyRestore = applyRestoreDefault
-            , runId = rid
-            }
+        { a
+            | durable =
+                { enabled = True
+                , setup = Durable.setup dbHandle
+                , restore = \r -> Durable.loadSnapshot dbHandle r codec
+                , persist = \r m -> Durable.saveSnapshotAuto dbHandle r codec m
+                , discard = \r -> Durable.deleteSnapshot dbHandle r
+                , applyRestore = applyRestoreDefault
+                , runId = rid
+                }
         }
 
 
@@ -693,9 +694,10 @@ applyRestoreDefault res initModel =
 withWindow : String -> Int -> Int -> App fallback seed page model msg key -> App fallback seed page model msg key
 withWindow title width height (App a) =
     App
-        { a | configs =
-            DesktopConfig { title = title, width = width, height = height }
-                :: a.configs
+        { a
+            | configs =
+                DesktopConfig { title = title, width = width, height = height }
+                    :: a.configs
         }
 
 
@@ -966,7 +968,9 @@ withEmbedded (App a) =
     -- and `runLive` reads it from ANY web config (embeddedIn_), so the order
     -- of `withEmbedded` and `withConfig` does not matter.
     App
-        { a | configs = a.configs ++ [ WebConfig { webDefaults | embedded = True } ]
+        { a
+            | configs =
+                a.configs ++ [ WebConfig { webDefaults | embedded = True } ]
         }
 
 
@@ -991,9 +995,12 @@ withSessionTransport transport (App a) =
     -- Appended to the config list like withEmbedded, and read from ANY web
     -- config (headerSessionIn_), so the order of builders does not matter.
     App
-        { a | configs =
-            a.configs
-                ++ [ WebConfig { webDefaults | sessionTransport = transport } ]
+        { a
+            | configs =
+                a.configs
+                    ++ [ WebConfig
+                             { webDefaults | sessionTransport = transport }
+                       ]
         }
 
 
@@ -1030,7 +1037,9 @@ headerSessionIn_ configs =
 withName : String -> App fallback seed page model msg key -> App fallback seed page model msg key
 withName n (App a) =
     App
-        { a | configs = a.configs ++ [ WebConfig { webDefaults | name = Just n } ]
+        { a
+            | configs =
+                a.configs ++ [ WebConfig { webDefaults | name = Just n } ]
         }
 
 

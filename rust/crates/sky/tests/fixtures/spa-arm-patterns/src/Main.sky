@@ -84,18 +84,20 @@ update msg model =
             ( { model | status = "pair " ++ String.fromInt n }, Cmd.none )
 
         Take { id, label } ->
-            ( { model | status = tag ("take " ++ String.fromInt id ++ " " ++ label)
+            ( { model
+                  | status = tag ("take " ++ String.fromInt id ++ " " ++ label)
               }
             , Cmd.none
             )
 
         Wrap ((Just n) as whole) ->
-            ( { model | status =
-                  tag
-                      ("wrap " ++ String.fromInt n ++ " "
-                          ++ Maybe.withDefault
-                                 ""
-                                 (Maybe.map String.fromInt whole))
+            ( { model
+                  | status =
+                      tag
+                          ("wrap " ++ String.fromInt n ++ " "
+                              ++ Maybe.withDefault
+                                     ""
+                                     (Maybe.map String.fromInt whole))
               }
             , Cmd.none
             )

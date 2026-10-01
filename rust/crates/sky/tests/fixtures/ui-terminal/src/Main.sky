@@ -66,9 +66,10 @@ update msg model =
                         Nothing ->
                             Cmd.none
             in
-                ( { model | term = term
-                  , status = "running " ++ String.fromInt shells
-                  , shells = shells
+                ( { model
+                      | term = term
+                      , status = "running " ++ String.fromInt shells
+                      , shells = shells
                   }
                 , Cmd.batch [ cmd, closeOld ]
                 )

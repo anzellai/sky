@@ -47,7 +47,9 @@ update msg model =
             -- helper), NARROW write-set [label], Msg arg [v]. The read of `count`
             -- MUST ride the request; drop it and the server reconstructs `count`
             -- from `init ()` (0) and returns a wrong, input-independent label.
-            ( { model | label = System.getenvOr "LBL" (String.fromInt (model.count + v))
+            ( { model
+                  | label =
+                      System.getenvOr "LBL" (String.fromInt (model.count + v))
               }
             , Cmd.none
             )

@@ -334,8 +334,9 @@ handleToggleVoteAuth ideaId user model =
                 let
                     _ = println ("[VOTE ERROR] " ++ Error.toString e)
                 in
-                    ( { model | notification =
-                          "Could not record your vote: " ++ Error.toString e
+                    ( { model
+                          | notification =
+                              "Could not record your vote: " ++ Error.toString e
                       }
                     , Cmd.none
                     )
@@ -349,8 +350,9 @@ handleToggleVote ideaId model =
             handleToggleVoteAuth ideaId user model
 
         Nothing ->
-            ( { model | page = SignInPage
-              , authError = "Please sign in to vote."
+            ( { model
+                  | page = SignInPage
+                  , authError = "Please sign in to vote."
               }
             , Cmd.none
             )
@@ -362,12 +364,13 @@ handleViewIdea ideaId model =
         idea = Result.withDefault Nothing (Ideas.getIdea ideaId)
         comments = Result.withDefault [] (Comments.getComments ideaId)
     in
-        ( { model | page = DetailPage
-          , selectedIdeaId = ideaId
-          , selectedIdea = idea
-          , ideaComments = comments
-          , newComment = ""
-          , notification = ""
+        ( { model
+              | page = DetailPage
+              , selectedIdeaId = ideaId
+              , selectedIdea = idea
+              , ideaComments = comments
+              , newComment = ""
+              , notification = ""
           }
         , Cmd.none
         )
@@ -391,8 +394,9 @@ doSubmitComment user model =
                 let
                     _ = println ("[COMMENT ERROR] " ++ Error.toString e)
                 in
-                    ( { model | notification =
-                          "Could not post comment: " ++ Error.toString e
+                    ( { model
+                          | notification =
+                              "Could not post comment: " ++ Error.toString e
                       }
                     , Cmd.none
                     )
@@ -409,9 +413,10 @@ doSubmitComment user model =
                             Nothing
                             (Ideas.getIdea model.selectedIdeaId)
                 in
-                    ( { model | ideaComments = comments
-                      , selectedIdea = idea
-                      , newComment = ""
+                    ( { model
+                          | ideaComments = comments
+                          , selectedIdea = idea
+                          , newComment = ""
                       }
                     , Cmd.none
                     )
@@ -443,11 +448,12 @@ handleBackToBoard model =
                     model.filterCategory
                     model.searchQuery)
     in
-        ( { model | page = BoardPage
-          , ideas = ideas
-          , selectedIdea = Nothing
-          , selectedIdeaId = ""
-          , notification = ""
+        ( { model
+              | page = BoardPage
+              , ideas = ideas
+              , selectedIdea = Nothing
+              , selectedIdeaId = ""
+              , notification = ""
           }
         , Cmd.none
         )
@@ -474,8 +480,9 @@ doCreateIdea user model =
                 let
                     _ = println ("[IDEA ERROR] " ++ Error.toString e)
                 in
-                    ( { model | notification =
-                          "Could not submit idea: " ++ Error.toString e
+                    ( { model
+                          | notification =
+                              "Could not submit idea: " ++ Error.toString e
                       }
                     , Cmd.none
                     )
@@ -491,12 +498,13 @@ doCreateIdea user model =
                                 model.filterCategory
                                 model.searchQuery)
                 in
-                    ( { model | page = BoardPage
-                      , ideas = ideas
-                      , submitTitle = ""
-                      , submitDescription = ""
-                      , submitCategory = "feature"
-                      , notification = "Your idea has been submitted!"
+                    ( { model
+                          | page = BoardPage
+                          , ideas = ideas
+                          , submitTitle = ""
+                          , submitDescription = ""
+                          , submitCategory = "feature"
+                          , notification = "Your idea has been submitted!"
                       }
                     , Cmd.none
                     )

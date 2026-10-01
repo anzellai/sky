@@ -50,9 +50,10 @@ update msg model =
     case msg of
 
         Moved p ->
-            ( { model | moved =
-                  String.fromInt (Math.round p.x) ++ ","
-                      ++ String.fromInt (Math.round p.y)
+            ( { model
+                  | moved =
+                      String.fromInt (Math.round p.x) ++ ","
+                          ++ String.fromInt (Math.round p.y)
               }
             , Cmd.none
             )

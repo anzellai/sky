@@ -130,8 +130,9 @@ recordCheck monId status responseTime =
                             (Store.update
                                 Db.conn
                                 Db.monitorStore
-                                { mon | status = status
-                                , responseTime = responseTime
+                                { mon
+                                    | status = status
+                                    , responseTime = responseTime
                                 }))
 
                 _ ->

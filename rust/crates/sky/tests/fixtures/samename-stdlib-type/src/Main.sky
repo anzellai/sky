@@ -48,9 +48,11 @@ update msg model =
     case msg of
 
         Send ->
-            ( { model | messages =
-                  model.messages ++ [ { author = "me", body = model.draft } ]
-              , draft = ""
+            ( { model
+                  | messages =
+                      model.messages
+                          ++ [ { author = "me", body = model.draft } ]
+                  , draft = ""
               }
             , Cmd.none
             )

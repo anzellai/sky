@@ -90,17 +90,19 @@ updateModel msg model =
                     { model | error = e }
 
                 Ok _ ->
-                    { model | page = DashboardPage
-                    , currentUser = Just model.email
-                    , password = ""
-                    , error = ""
-                    , notification = "Welcome!"
+                    { model
+                        | page = DashboardPage
+                        , currentUser = Just model.email
+                        , password = ""
+                        , error = ""
+                        , notification = "Welcome!"
                     }
 
         SignOut ->
-            { model | page = LoginPage
-            , currentUser = Nothing
-            , notification = ""
+            { model
+                | page = LoginPage
+                , currentUser = Nothing
+                , notification = ""
             }
 
         NavigateTo page ->

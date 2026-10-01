@@ -220,13 +220,14 @@ defaultText s c =
 -- | Boolean default: `bool "active" |> defaultBool True`.
 defaultBool : Bool -> Column -> Column
 defaultBool b c =
-    { c | defaultKind = "bool"
-    , defaultVal =
-        if b then
-            "true"
+    { c
+        | defaultKind = "bool"
+        , defaultVal =
+            if b then
+                "true"
 
-        else
-            "false"
+            else
+                "false"
     }
 
 
@@ -254,8 +255,10 @@ table n cols =
 -- `table "orders" [...] |> withIndex "idx_orders_user" [ "user_id" ]`.
 withIndex : String -> List String -> Table -> Table
 withIndex nm cols t =
-    { t | indexes =
-        t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = False } ]
+    { t
+        | indexes =
+            t.indexes
+                ++ [ { name = nm, columns = cols, isUniqueIndex = False } ]
     }
 
 
@@ -263,8 +266,9 @@ withIndex nm cols t =
 -- "idx_users_email" [ "email" ]`.
 withUniqueIndex : String -> List String -> Table -> Table
 withUniqueIndex nm cols t =
-    { t | indexes =
-        t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = True } ]
+    { t
+        | indexes =
+            t.indexes ++ [ { name = nm, columns = cols, isUniqueIndex = True } ]
     }
 
 

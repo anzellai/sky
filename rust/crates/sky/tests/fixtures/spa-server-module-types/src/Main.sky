@@ -37,13 +37,14 @@ update msg model =
             ( model, Cmd.none )
 
         Got (Ok batch) ->
-            ( { model | next = batch.next
-              , note =
-                  if batch.ready then
-                      "ready"
+            ( { model
+                  | next = batch.next
+                  , note =
+                      if batch.ready then
+                          "ready"
 
-                  else
-                      "not ready"
+                      else
+                          "not ready"
               }
             , Cmd.perform (Native.vibrate 10) Buzzed
             )

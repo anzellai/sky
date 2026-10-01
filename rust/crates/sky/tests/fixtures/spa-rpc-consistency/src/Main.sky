@@ -151,10 +151,11 @@ update msg model =
                 )
 
         Load ->
-            ( { model | loaded =
-                  Result.withDefault
-                      "err"
-                      (Task.run (File.readFile "follow.txt"))
+            ( { model
+                  | loaded =
+                      Result.withDefault
+                          "err"
+                          (Task.run (File.readFile "follow.txt"))
               }
             , Cmd.none
             )

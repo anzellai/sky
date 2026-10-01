@@ -86,11 +86,12 @@ update msg model =
             ( { model | page = p, notice = "", error = "" }, Cmd.none )
 
         LoadAdmin ->
-            ( { model | page = "admin"
-              , products = String.split "," (readData "products.txt")
-              , adminLoaded = True
-              , notice = ""
-              , error = ""
+            ( { model
+                  | page = "admin"
+                  , products = String.split "," (readData "products.txt")
+                  , adminLoaded = True
+                  , notice = ""
+                  , error = ""
               }
             , Cmd.none
             )
@@ -107,11 +108,12 @@ update msg model =
 
         SignIn password ->
             if password == readData "password.txt" then
-                ( { emptyModel | me = "ada"
-                  , notice = "Welcome back"
-                  , basket = model.basket
-                  , config = model.config
-                  , page = "home"
+                ( { emptyModel
+                      | me = "ada"
+                      , notice = "Welcome back"
+                      , basket = model.basket
+                      , config = model.config
+                      , page = "home"
                   }
                 , Cmd.none
                 )

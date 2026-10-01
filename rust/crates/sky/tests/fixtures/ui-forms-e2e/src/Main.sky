@@ -103,13 +103,15 @@ update msg model =
             ( { model | keys = model.keys + 1 }, Cmd.none )
 
         SubmitTyped r ->
-            ( { model | submitted =
-                  "title=" ++ r.title ++ " age=" ++ String.fromInt (r.age + 1)
-                      ++ " agree="
-                      ++ showBool r.agree
-                      ++ " note="
-                      ++ showNote r.note
-              , submits = model.submits + 1
+            ( { model
+                  | submitted =
+                      "title=" ++ r.title ++ " age="
+                          ++ String.fromInt (r.age + 1)
+                          ++ " agree="
+                          ++ showBool r.agree
+                          ++ " note="
+                          ++ showNote r.note
+                  , submits = model.submits + 1
               }
             , Cmd.none
             )

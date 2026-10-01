@@ -27,16 +27,19 @@ update msg model =
                         count = cartCount newCart
                         payload = mkCartPayload product.name count
                     in
-                        ( { model | cart = newCart
-                          , cartFlash = announcement
-                          , recentTopic = announcement
+                        ( { model
+                              | cart = newCart
+                              , cartFlash = announcement
+                              , recentTopic = announcement
                           }
                         , Cmd.batch [ Cmd.publish "cart" payload ]
                         )
 
         RemoveFromCart productId ->
-            ( { model | cart = List.filter (\it -> it.productId /= productId) model.cart
-              , cartFlash = ""
+            ( { model
+                  | cart =
+                      List.filter (\it -> it.productId /= productId) model.cart
+                  , cartFlash = ""
               }
             , Cmd.none
             )
@@ -62,15 +65,17 @@ update msg model =
                 ( { model | signInError = "Email is required." }, Cmd.none )
 
             else if String.length creds.password < 4 then
-                ( { model | signInError = "Password must be at least 4 characters."
+                ( { model
+                      | signInError = "Password must be at least 4 characters."
                   }
                 , Cmd.none
                 )
 
             else
-                ( { model | session = Just { email = String.trim creds.email }
-                  , signInError = ""
-                  , page = HomePage
+                ( { model
+                      | session = Just { email = String.trim creds.email }
+                      , signInError = ""
+                      , page = HomePage
                   }
                 , Cmd.none
                 )
@@ -93,8 +98,9 @@ update msg model =
                     ( { model | page = SignInPage }, Cmd.none )
 
                 Just _ ->
-                    ( { model | cart = []
-                      , cartFlash = "Order placed. Thank you!"
+                    ( { model
+                          | cart = []
+                          , cartFlash = "Order placed. Thank you!"
                       }
                     , Cmd.none
                     )

@@ -109,15 +109,17 @@ signIn creds s =
     case simulatedAuthenticate creds of
 
         Ok user ->
-            { s | currentUser = Just user
-            , sessionToken = simulatedMintToken user
-            , lastError = ""
-            , loginAttempts = 0
+            { s
+                | currentUser = Just user
+                , sessionToken = simulatedMintToken user
+                , lastError = ""
+                , loginAttempts = 0
             }
 
         Err e ->
-            { s | lastError = errorMessageOf e
-            , loginAttempts = s.loginAttempts + 1
+            { s
+                | lastError = errorMessageOf e
+                , loginAttempts = s.loginAttempts + 1
             }
 
 
@@ -131,15 +133,17 @@ resume token s =
     case simulatedResolveToken token of
 
         Ok user ->
-            { s | currentUser = Just user
-            , sessionToken = token
-            , lastError = ""
+            { s
+                | currentUser = Just user
+                , sessionToken = token
+                , lastError = ""
             }
 
         Err e ->
-            { s | currentUser = Nothing
-            , sessionToken = ""
-            , lastError = errorMessageOf e
+            { s
+                | currentUser = Nothing
+                , sessionToken = ""
+                , lastError = errorMessageOf e
             }
 
 

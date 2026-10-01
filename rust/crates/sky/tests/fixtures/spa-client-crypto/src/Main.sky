@@ -82,9 +82,10 @@ update msg model =
             case Noise.writeMessage "hello" hs of
 
                 Ok ( next, message ) ->
-                    ( { model | status = "sent"
-                      , outgoing = Encoding.hexEncode message
-                      , handshake = Just next
+                    ( { model
+                          | status = "sent"
+                          , outgoing = Encoding.hexEncode message
+                          , handshake = Just next
                       }
                     , Cmd.none
                     )

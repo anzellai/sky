@@ -72,8 +72,9 @@ update msg model =
                         (\r -> Maybe.withDefault "" (Dict.get "title" r))
                         rows
             in
-                ( { model | items = titles
-                  , status = Ready (List.length titles)
+                ( { model
+                      | items = titles
+                      , status = Ready (List.length titles)
                   }
                 , Cmd.none
                 )

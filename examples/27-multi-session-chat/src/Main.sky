@@ -267,11 +267,13 @@ update msg model =
             let
                 history = loadRoomHistory payload.room
             in
-                ( { model | page = RoomPage payload.room
-                  , me = payload.me
-                  , room = payload.room
-                  , history = history
-                  , notice = "Joined " ++ payload.room ++ " as " ++ payload.me
+                ( { model
+                      | page = RoomPage payload.room
+                      , me = payload.me
+                      , room = payload.room
+                      , history = history
+                      , notice =
+                          "Joined " ++ payload.room ++ " as " ++ payload.me
                   }
                 , Cmd.none
                 )

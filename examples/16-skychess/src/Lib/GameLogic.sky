@@ -66,20 +66,21 @@ executeWhitePart2 from to algebraic newBoard captured model =
 buildWhiteUpdate : Int -> Int -> Dict Int Piece -> Int -> List String -> List String -> Model -> ( Model, Cmd Msg )
 buildWhiteUpdate from to newBoard newEp newCaptured newHistory model =
     afterWhiteMove
-        { model | board = newBoard
-        , selectedSquare = -1
-        , legalMoves = []
-        , lastMoveFrom = from
-        , lastMoveTo = to
-        , moveHistory = newHistory
-        , capturedByWhite = newCaptured
-        , enPassantSquare = newEp
-        , whiteKingMoved = model.whiteKingMoved || from == 60
-        , blackKingMoved = model.blackKingMoved || from == 4
-        , whiteRookAMoved = model.whiteRookAMoved || from == 56
-        , whiteRookHMoved = model.whiteRookHMoved || from == 63
-        , blackRookAMoved = model.blackRookAMoved || from == 0
-        , blackRookHMoved = model.blackRookHMoved || from == 7
+        { model
+            | board = newBoard
+            , selectedSquare = -1
+            , legalMoves = []
+            , lastMoveFrom = from
+            , lastMoveTo = to
+            , moveHistory = newHistory
+            , capturedByWhite = newCaptured
+            , enPassantSquare = newEp
+            , whiteKingMoved = model.whiteKingMoved || from == 60
+            , blackKingMoved = model.blackKingMoved || from == 4
+            , whiteRookAMoved = model.whiteRookAMoved || from == 56
+            , whiteRookHMoved = model.whiteRookHMoved || from == 63
+            , blackRookAMoved = model.blackRookAMoved || from == 0
+            , blackRookHMoved = model.blackRookHMoved || from == 7
         }
 
 
@@ -172,19 +173,20 @@ doBlackPart2 from to algebraic newBoard captured model =
 buildBlackUpdate : Int -> Int -> Dict Int Piece -> Int -> List String -> List String -> Model -> ( Model, Cmd Msg )
 buildBlackUpdate from to newBoard newEp newCaptured newHistory model =
     afterBlackMove
-        { model | board = newBoard
-        , computerThinking = False
-        , lastMoveFrom = from
-        , lastMoveTo = to
-        , moveHistory = newHistory
-        , capturedByBlack = newCaptured
-        , enPassantSquare = newEp
-        , whiteKingMoved = model.whiteKingMoved || from == 60
-        , blackKingMoved = model.blackKingMoved || from == 4
-        , whiteRookAMoved = model.whiteRookAMoved || from == 56
-        , whiteRookHMoved = model.whiteRookHMoved || from == 63
-        , blackRookAMoved = model.blackRookAMoved || from == 0
-        , blackRookHMoved = model.blackRookHMoved || from == 7
+        { model
+            | board = newBoard
+            , computerThinking = False
+            , lastMoveFrom = from
+            , lastMoveTo = to
+            , moveHistory = newHistory
+            , capturedByBlack = newCaptured
+            , enPassantSquare = newEp
+            , whiteKingMoved = model.whiteKingMoved || from == 60
+            , blackKingMoved = model.blackKingMoved || from == 4
+            , whiteRookAMoved = model.whiteRookAMoved || from == 56
+            , whiteRookHMoved = model.whiteRookHMoved || from == 63
+            , blackRookAMoved = model.blackRookAMoved || from == 0
+            , blackRookHMoved = model.blackRookHMoved || from == 7
         }
 
 

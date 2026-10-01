@@ -140,101 +140,121 @@ update msg model =
             handleDeleteAlert alertId model
 
         InputMonitorName v ->
-            ( { model | configInput = Dict.insert "monitor_name" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "monitor_name" v model.configInput
               }
             , Cmd.none
             )
 
         InputMonitorUrl v ->
-            ( { model | configInput = Dict.insert "monitor_url" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "monitor_url" v model.configInput
               }
             , Cmd.none
             )
 
         InputMonitorVis v ->
-            ( { model | configInput =
-                  Dict.insert "monitor_visibility" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "monitor_visibility" v model.configInput
               }
             , Cmd.none
             )
 
         InputMetricName v ->
-            ( { model | configInput = Dict.insert "metric_name" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "metric_name" v model.configInput
               }
             , Cmd.none
             )
 
         InputMetricType v ->
-            ( { model | configInput = Dict.insert "metric_type" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "metric_type" v model.configInput
               }
             , Cmd.none
             )
 
         InputMetricUrl v ->
-            ( { model | configInput = Dict.insert "metric_url" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "metric_url" v model.configInput
               }
             , Cmd.none
             )
 
         InputMetricQuery v ->
-            ( { model | configInput = Dict.insert "metric_query" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "metric_query" v model.configInput
               }
             , Cmd.none
             )
 
         InputMetricField v ->
-            ( { model | configInput = Dict.insert "metric_field" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "metric_field" v model.configInput
               }
             , Cmd.none
             )
 
         InputMetricVis v ->
-            ( { model | configInput =
-                  Dict.insert "metric_visibility" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "metric_visibility" v model.configInput
               }
             , Cmd.none
             )
 
         InputAlertMetric v ->
-            ( { model | configInput = Dict.insert "alert_metric" v model.configInput
+            ( { model
+                  | configInput = Dict.insert "alert_metric" v model.configInput
               }
             , Cmd.none
             )
 
         InputAlertCondition v ->
-            ( { model | configInput = Dict.insert "alert_condition" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "alert_condition" v model.configInput
               }
             , Cmd.none
             )
 
         InputAlertThreshold v ->
-            ( { model | configInput = Dict.insert "alert_threshold" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "alert_threshold" v model.configInput
               }
             , Cmd.none
             )
 
         InputAlertNotifyType v ->
-            ( { model | configInput =
-                  Dict.insert "alert_notify_type" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "alert_notify_type" v model.configInput
               }
             , Cmd.none
             )
 
         InputAlertTarget v ->
-            ( { model | configInput =
-                  Dict.insert "alert_notify_target" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "alert_notify_target" v model.configInput
               }
             , Cmd.none
             )
 
         InputAuthUsername v ->
-            ( { model | configInput = Dict.insert "auth_username" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "auth_username" v model.configInput
               }
             , Cmd.none
             )
 
         InputAuthPassword v ->
-            ( { model | configInput = Dict.insert "auth_password" v model.configInput
+            ( { model
+                  | configInput =
+                      Dict.insert "auth_password" v model.configInput
               }
             , Cmd.none
             )
@@ -266,21 +286,23 @@ handleAuth model =
             )
 
         else if username == "admin" && password == "admin123" then
-            ( { model | session =
-                  Just { username = "admin", avatarUrl = "", role = Admin }
-              , configInput = Dict.empty
-              , notification = ""
-              , errorMessage = ""
+            ( { model
+                  | session =
+                      Just { username = "admin", avatarUrl = "", role = Admin }
+                  , configInput = Dict.empty
+                  , notification = ""
+                  , errorMessage = ""
               }
             , Cmd.none
             )
 
         else
-            ( { model | session =
-                  Just { username = username, avatarUrl = "", role = User }
-              , configInput = Dict.empty
-              , notification = ""
-              , errorMessage = ""
+            ( { model
+                  | session =
+                      Just { username = username, avatarUrl = "", role = User }
+                  , configInput = Dict.empty
+                  , notification = ""
+                  , errorMessage = ""
               }
             , Cmd.none
             )
@@ -293,9 +315,10 @@ handleTick model =
         _ = runAllMetricCollections ()
         _ = runAlertChecks ()
     in
-        ( { model | monitors = loadMonitors ()
-          , metrics = loadMetrics ()
-          , alerts = loadAlerts ()
+        ( { model
+              | monitors = loadMonitors ()
+              , metrics = loadMetrics ()
+              , alerts = loadAlerts ()
           }
         , Cmd.none
         )
@@ -373,10 +396,11 @@ handleAddMonitor model =
             let
                 _ = Monitors.createMonitor name url 30 vis
             in
-                ( { model | monitors = loadMonitors ()
-                  , configInput = Dict.empty
-                  , notification = "Monitor added: " ++ name
-                  , errorMessage = ""
+                ( { model
+                      | monitors = loadMonitors ()
+                      , configInput = Dict.empty
+                      , notification = "Monitor added: " ++ name
+                      , errorMessage = ""
                   }
                 , Cmd.none
                 )
@@ -387,8 +411,9 @@ handleDeleteMonitor monId model =
     let
         _ = Monitors.deleteMonitor monId
     in
-        ( { model | monitors = loadMonitors ()
-          , notification = "Monitor deleted"
+        ( { model
+              | monitors = loadMonitors ()
+              , notification = "Monitor deleted"
           }
         , Cmd.none
         )
@@ -415,10 +440,11 @@ handleAddMetric model =
         configJson = buildMetricConfig sourceType url query field
         _ = Metrics.createMetric name sourceType configJson vis
     in
-        ( { model | metrics = loadMetrics ()
-          , configInput = Dict.empty
-          , notification = "Metric added: " ++ name
-          , errorMessage = ""
+        ( { model
+              | metrics = loadMetrics ()
+              , configInput = Dict.empty
+              , notification = "Metric added: " ++ name
+              , errorMessage = ""
           }
         , Cmd.none
         )
@@ -540,10 +566,11 @@ handleAddAlert model =
                         notifyType
                         notifyTarget
             in
-                ( { model | alerts = loadAlerts ()
-                  , configInput = Dict.empty
-                  , notification = "Alert added for metric: " ++ metricName
-                  , errorMessage = ""
+                ( { model
+                      | alerts = loadAlerts ()
+                      , configInput = Dict.empty
+                      , notification = "Alert added for metric: " ++ metricName
+                      , errorMessage = ""
                   }
                 , Cmd.none
                 )

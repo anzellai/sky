@@ -43,7 +43,9 @@ update msg model =
             ( model, Cmd.none )
 
         Got r ->
-            ( { model | out = Result.map String.fromInt r |> Result.withDefault "failed"
+            ( { model
+                  | out =
+                      Result.map String.fromInt r |> Result.withDefault "failed"
               }
             , Cmd.none
             )

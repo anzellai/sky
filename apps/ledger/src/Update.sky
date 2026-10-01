@@ -122,10 +122,11 @@ refresh model =
                         Err _ ->
                             []
             in
-                { model | accounts = buildBalances accts rows
-                , journal = buildJournal accts ents ls
-                , trialBalanceMinor = Repo.trialBalance rows
-                , closes = cls
+                { model
+                    | accounts = buildBalances accts rows
+                    , journal = buildJournal accts ents ls
+                    , trialBalanceMinor = Repo.trialBalance rows
+                    , closes = cls
                 }
 
 
@@ -158,10 +159,11 @@ signInWith email password model =
 
                         Ok (Just org) ->
                             refresh
-                                { model | session = Just (sessionFor user org)
-                                , page = DashboardPage
-                                , fieldErrors = noErrors ()
-                                , flash = "Signed in as " ++ user.email
+                                { model
+                                    | session = Just (sessionFor user org)
+                                    , page = DashboardPage
+                                    , fieldErrors = noErrors ()
+                                    , flash = "Signed in as " ++ user.email
                                 }
 
                         _ ->
@@ -322,11 +324,13 @@ commitEntry sess day memo debitId creditId amountMinor model =
                         ]
             in
                 refresh
-                    { model | fieldErrors = noErrors ()
-                    , entryDraft = emptyEntryForm ()
-                    , flash =
-                        "Posted entry #" ++ String.fromInt entryId ++ " for "
-                            ++ Amounts.render amountMinor
+                    { model
+                        | fieldErrors = noErrors ()
+                        , entryDraft = emptyEntryForm ()
+                        , flash =
+                            "Posted entry #" ++ String.fromInt entryId
+                                ++ " for "
+                                ++ Amounts.render amountMinor
                     }
 
 
@@ -416,14 +420,15 @@ update msg model =
             ( signUpWith form model, Cmd.none )
 
         SignOut ->
-            ( { model | session = Nothing
-              , page = SignInPage
-              , accounts = []
-              , journal = []
-              , closes = []
-              , trialBalanceMinor = 0
-              , flash = "Signed out."
-              , fieldErrors = noErrors ()
+            ( { model
+                  | session = Nothing
+                  , page = SignInPage
+                  , accounts = []
+                  , journal = []
+                  , closes = []
+                  , trialBalanceMinor = 0
+                  , flash = "Signed out."
+                  , fieldErrors = noErrors ()
               }
             , Cmd.none
             )
@@ -451,9 +456,10 @@ update msg model =
         -- DoPostEntry instead and a row would be written — the regression
         -- this branch makes observable.
         CancelEntry ->
-            ( { model | entryDraft = emptyEntryForm ()
-              , fieldErrors = noErrors ()
-              , flash = "Entry cancelled — nothing was posted."
+            ( { model
+                  | entryDraft = emptyEntryForm ()
+                  , fieldErrors = noErrors ()
+                  , flash = "Entry cancelled — nothing was posted."
               }
             , Cmd.none
             )
@@ -474,15 +480,17 @@ update msg model =
 
                 Ok _ ->
                     ( refresh
-                          { model | lastClose = result
-                          , flash = "Closed " ++ model.period ++ "."
+                          { model
+                              | lastClose = result
+                              , flash = "Closed " ++ model.period ++ "."
                           }
                     , Cmd.none
                     )
 
                 Err e ->
-                    ( { model | lastClose = result
-                      , flash = "Close failed: " ++ Error.toString e
+                    ( { model
+                          | lastClose = result
+                          , flash = "Close failed: " ++ Error.toString e
                       }
                     , Cmd.none
                     )
@@ -518,8 +526,9 @@ addAccount form sess model =
 
                         Ok _ ->
                             ( refresh
-                                  { model | flash = "Added account " ++ code
-                                  , fieldErrors = noErrors ()
+                                  { model
+                                      | flash = "Added account " ++ code
+                                      , fieldErrors = noErrors ()
                                   }
                             , Cmd.none
                             )

@@ -256,9 +256,10 @@ handleDone jid result model =
                 Err _ ->
                     1
     in
-        ( { model | jobs = newJobs
-          , ok = model.ok + addOk
-          , fail = model.fail + addFail
+        ( { model
+              | jobs = newJobs
+              , ok = model.ok + addOk
+              , fail = model.fail + addFail
           }
         , Cmd.none
         )
@@ -315,8 +316,9 @@ update msg model =
                     )
 
                 Err e ->
-                    ( { model | history = []
-                      , historyError = "Load failed: " ++ Error.toString e
+                    ( { model
+                          | history = []
+                          , historyError = "Load failed: " ++ Error.toString e
                       }
                     , Cmd.none
                     )

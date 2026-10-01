@@ -133,8 +133,9 @@ update msg model =
             case model.watcher of
 
                 Just w ->
-                    ( { model | changes = model.changes ++ List.map changeText cs
-                      , watcher = Nothing
+                    ( { model
+                          | changes = model.changes ++ List.map changeText cs
+                          , watcher = Nothing
                       }
                     , Cmd.perform (Watch.close w) Closed
                     )

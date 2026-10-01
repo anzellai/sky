@@ -249,9 +249,10 @@ appDef =
         |> App.withNotFound NoOp
         |> App.withConfig
                (App.WebConfig
-                   { App.webDefaults | port = 8095
-                   , store = Just "memory"
-                   , ttl = Just "30m"
+                   { App.webDefaults
+                       | port = 8095
+                       , store = Just "memory"
+                       , ttl = Just "30m"
                    })
 
 

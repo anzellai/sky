@@ -218,8 +218,9 @@ withPermission perm (Bundle fields) =
 withUsage : Permission -> String -> Bundle -> Bundle
 withUsage perm text (Bundle fields) =
     Bundle
-        { fields | permissions = fields.permissions ++ [ perm ]
-        , usages = fields.usages ++ [ ( perm, text ) ]
+        { fields
+            | permissions = fields.permissions ++ [ perm ]
+            , usages = fields.usages ++ [ ( perm, text ) ]
         }
 
 -- | Which Apple Push Notification service environment a build registers with.

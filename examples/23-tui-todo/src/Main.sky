@@ -98,9 +98,10 @@ update msg model =
                         , done = False
                         }
                 in
-                    ( { model | todos = model.todos ++ [ newTodo ]
-                      , draft = ""
-                      , nextId = model.nextId + 1
+                    ( { model
+                          | todos = model.todos ++ [ newTodo ]
+                          , draft = ""
+                          , nextId = model.nextId + 1
                       }
                     , Cmd.none
                     )

@@ -556,16 +556,19 @@ styleStep a st =
             { st | anchor = Just s }
 
         Translate dx dy ->
-            { st | transform =
-                ("translate(" ++ num dx ++ " " ++ num dy ++ ")") :: st.transform
+            { st
+                | transform =
+                    ("translate(" ++ num dx ++ " " ++ num dy ++ ")")
+                        :: st.transform
             }
 
         Rotate deg ->
             { st | transform = ("rotate(" ++ num deg ++ ")") :: st.transform }
 
         Scale sx sy ->
-            { st | transform =
-                ("scale(" ++ num sx ++ " " ++ num sy ++ ")") :: st.transform
+            { st
+                | transform =
+                    ("scale(" ++ num sx ++ " " ++ num sy ++ ")") :: st.transform
             }
 
         OnClick _ ->

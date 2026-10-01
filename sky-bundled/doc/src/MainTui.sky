@@ -130,10 +130,11 @@ update msg model =
             let
                 ( lines, count ) = searchCatalog model.path q maxShown
             in
-                ( { model | query = q
-                  , filtered = lines
-                  , filteredCount = count
-                  , selected = 0
+                ( { model
+                      | query = q
+                      , filtered = lines
+                      , filteredCount = count
+                      , selected = 0
                   }
                 , Cmd.none
                 )
@@ -167,10 +168,11 @@ update msg model =
             let
                 ( lines, count ) = searchCatalog model.path "" maxShown
             in
-                ( { model | query = ""
-                  , filtered = lines
-                  , filteredCount = count
-                  , selected = 0
+                ( { model
+                      | query = ""
+                      , filtered = lines
+                      , filteredCount = count
+                      , selected = 0
                   }
                 , Cmd.none
                 )

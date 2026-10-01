@@ -44,9 +44,10 @@ update msg model =
                 ( { model | page = p }, Cmd.none )
 
         Got (Ok s) ->
-            ( { model | items = String.trim s
-              , loading = False
-              , loads = model.loads + 1
+            ( { model
+                  | items = String.trim s
+                  , loading = False
+                  , loads = model.loads + 1
               }
             , Cmd.none
             )

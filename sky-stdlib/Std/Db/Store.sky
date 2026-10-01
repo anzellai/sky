@@ -141,17 +141,18 @@ serial name (Store s) =
         col = resolveCol s.cols name
     in
         Store
-            { s | pk = col
-            , generated = col :: s.generated
-            , cols =
-                List.map
-                    (\( c, k ) ->
-                        if c == col then
-                            ( c, k ++ "!" )
+            { s
+                | pk = col
+                , generated = col :: s.generated
+                , cols =
+                    List.map
+                        (\( c, k ) ->
+                            if c == col then
+                                ( c, k ++ "!" )
 
-                        else
-                            ( c, k ))
-                    s.cols
+                            else
+                                ( c, k ))
+                        s.cols
             }
 
 
@@ -187,8 +188,9 @@ defaultNow name (Store s) =
         col = resolveCol s.cols name
     in
         Store
-            { s | cols = addColFlag col "dnow" s.cols
-            , generated = col :: s.generated
+            { s
+                | cols = addColFlag col "dnow" s.cols
+                , generated = col :: s.generated
             }
 
 
@@ -203,8 +205,9 @@ touchOnUpdate name (Store s) =
         col = resolveCol s.cols name
     in
         Store
-            { s | cols = addColFlag col "dnow" (addColFlag col "touch" s.cols)
-            , generated = col :: s.generated
+            { s
+                | cols = addColFlag col "dnow" (addColFlag col "touch" s.cols)
+                , generated = col :: s.generated
             }
 
 
@@ -215,7 +218,9 @@ touchOnUpdate name (Store s) =
 defaultText : String -> String -> Store a -> Store a
 defaultText name val (Store s) =
     Store
-        { s | cols = addColFlag (resolveCol s.cols name) ("dtext=" ++ val) s.cols
+        { s
+            | cols =
+                addColFlag (resolveCol s.cols name) ("dtext=" ++ val) s.cols
         }
 
 
@@ -224,11 +229,12 @@ defaultText name val (Store s) =
 defaultInt : String -> Int -> Store a -> Store a
 defaultInt name val (Store s) =
     Store
-        { s | cols =
-            addColFlag
-                (resolveCol s.cols name)
-                ("dint=" ++ String.fromInt val)
-                s.cols
+        { s
+            | cols =
+                addColFlag
+                    (resolveCol s.cols name)
+                    ("dint=" ++ String.fromInt val)
+                    s.cols
         }
 
 
@@ -237,16 +243,17 @@ defaultInt name val (Store s) =
 defaultBool : String -> Bool -> Store a -> Store a
 defaultBool name val (Store s) =
     Store
-        { s | cols =
-            addColFlag
-                (resolveCol s.cols name)
-                ("dbool="
-                    ++ (if val then
-                           "true"
+        { s
+            | cols =
+                addColFlag
+                    (resolveCol s.cols name)
+                    ("dbool="
+                        ++ (if val then
+                               "true"
 
-                       else
-                           "false"))
-                s.cols
+                           else
+                               "false"))
+                    s.cols
         }
 
 
@@ -263,8 +270,9 @@ defaultWith name gen (Store s) =
         col = resolveCol s.cols name
     in
         Store
-            { s | computed = ( col, gen ) :: s.computed
-            , generated = col :: s.generated
+            { s
+                | computed = ( col, gen ) :: s.computed
+                , generated = col :: s.generated
             }
 
 

@@ -48,8 +48,9 @@ update msg model =
     case msg of
 
         Bump ->
-            ( { model | count = model.count + 1
-              , note = String.left 4 (serverNote ())
+            ( { model
+                  | count = model.count + 1
+                  , note = String.left 4 (serverNote ())
               }
             , Cmd.perform (File.readFile "sky.toml") Tracked
             )

@@ -267,9 +267,10 @@ appDef =
         |> App.withNotFound DashboardPage
         |> App.withConfig
                (App.WebConfig
-                   { App.webDefaults | port = 8090
-                   , store = Just "memory"
-                   , ttl = Just "30m"
+                   { App.webDefaults
+                       | port = 8090
+                       , store = Just "memory"
+                       , ttl = Just "30m"
                    })
 
 

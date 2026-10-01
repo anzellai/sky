@@ -189,8 +189,9 @@ tests =
                                             (\( s2, b ) ->
                                                 Result.map2
                                                     (\it rt ->
-                                                        { s2 | initiator = it
-                                                        , responder = rt
+                                                        { s2
+                                                            | initiator = it
+                                                            , responder = rt
                                                         })
                                                     (Noise.rekeySend s2.initiator)
                                                     (Noise.rekeyReceive

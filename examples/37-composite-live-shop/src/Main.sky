@@ -114,8 +114,9 @@ appDef =
         |> App.withNotFound HomePage
         |> App.withConfig
                (App.WebConfig
-                   { App.webDefaults | port = 8005
-                   , inputMode = Just "debounce"
+                   { App.webDefaults
+                       | port = 8005
+                       , inputMode = Just "debounce"
                    })
         |> App.withHead Head.headFor
 
