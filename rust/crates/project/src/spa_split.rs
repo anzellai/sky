@@ -626,10 +626,11 @@ impl<'a> CodecResolver<'a> {
         match self.auto_records.get(&ident) {
             Some(existing) if existing.key != key => {
                 return Err(format!(
-                    "two record types named `{}` cross the Sky.Spa wire (`{}` and `{}`). The generated wire module names a project type by its bare name, so it cannot tell them apart. Rename one of them.",
+                    "two record types named `{}` cross the Sky.Spa wire (`{}` and `{}`). The generated wire module names a project type by its bare name, so it cannot tell them apart. Rename one of them. {}",
                     ProjectShapes::bare(&key),
                     existing.key,
-                    key
+                    key,
+                    crate::migration_see(SPLIT_REFUSALS)
                 ));
             }
             Some(_) => {}
@@ -2666,8 +2667,43 @@ fn sky_toml(name: &str, role: &str) -> String {
     )
 }
 
+/// The migration anchor of the v0.27.0 split refusals (two wire records with
+/// one name, one module under several aliases, a server arm the split cannot
+/// read).
+pub(crate) const SPLIT_REFUSALS: &str = "spa-split-refusals";
+
+/// A refusal is often reported inside a wider message (a follow-up Msg whose
+/// argument has no codec, ...). Its migration link still ends the message.
+fn refusal_link_last(e: String) -> String {
+    let link = crate::migration_see(SPLIT_REFUSALS);
+    if e.contains(&format!("#{SPLIT_REFUSALS}")) && !e.trim_end().ends_with(&link) {
+        format!("{}\n{link}", e.trim_end())
+    } else {
+        e
+    }
+}
+
 /// Generate the two projects. `out_dir` gets `shared/`, `backend/`, `frontend/`.
 pub fn generate(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    out_dir: &Path,
+    broker_url: Option<&str>,
+    static_mount_override: Option<(String, String)>,
+) -> Result<SpaSplitReport, String> {
+    generate_inner(
+        repo_root,
+        project_dir,
+        entry_module,
+        out_dir,
+        broker_url,
+        static_mount_override,
+    )
+    .map_err(refusal_link_last)
+}
+
+fn generate_inner(
     repo_root: &Path,
     project_dir: &Path,
     entry_module: Option<&str>,
@@ -3644,8 +3680,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             return Err(format!(
                 "sky.spa: the wire types copied into `Shared` name module `{name}` under \
                  several import aliases ({}). Use one alias for `{name}` in the modules \
-                 that declare the wire types.",
-                aliases.iter().cloned().collect::<Vec<_>>().join(", ")
+                 that declare the wire types.\n{}",
+                aliases.iter().cloned().collect::<Vec<_>>().join(", "),
+                crate::migration_see(SPLIT_REFUSALS)
             ));
         }
         if let Some(alias) = aliases.iter().next() {

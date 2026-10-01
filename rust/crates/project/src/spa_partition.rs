@@ -1475,8 +1475,10 @@ pub fn server_routes(
                     return Err(format!(
                         "the SERVER branch `{}` of `update`: the split sends each argument of \
                          `{ctor}` whole, and could not read the argument types or the pattern \
-                         of this branch",
-                        b.msg
+                         of this branch. Give the arguments concrete types, or move the \
+                         branch's work into a named function.\n{}",
+                        b.msg,
+                        crate::migration_see(crate::spa_split::SPLIT_REFUSALS)
                     ));
                 }
             }

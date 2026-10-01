@@ -315,6 +315,11 @@ fn assemble_and_emit_with(
     // ever provides the entry.
     let registry_files: Vec<(String, skydb::SourceFile)> =
         registry.iter().map(|(n, f, _)| (n.clone(), *f)).collect();
+    // The fetched packages' files: a diagnostic in one of them carries the
+    // migration link for "registry packages are checked" (v0.27.0).
+    let registry_paths: std::collections::HashSet<PathBuf> =
+        registry.iter().map(|(_, _, p)| p.clone()).collect();
+    let mut registry_mods: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let (path_locals, mut dep_files) = load_path_dependency_sources(&db, &mut next_id, example_dir);
     dep_files.extend(registry.iter().map(|(_, _, p)| p.clone()));
     let mut dep_locals = registry;
@@ -424,6 +429,9 @@ fn assemble_and_emit_with(
         // `path_map` is declared). Overwritten on a second registration, like
         // the db's file.
         path_map.insert(base::FileId(id.index()), display_path(example_dir, &p));
+        if registry_paths.contains(&p) {
+            registry_mods.insert(id.index());
+        }
         // Every module in this loop (the project's own `src/`, any `extra_dirs`
         // like `tests/`, the path dependencies and the fetched `.skydeps`
         // packages) is type-checked. Only the stdlib is trusted signatures,
@@ -516,8 +524,28 @@ fn assemble_and_emit_with(
     surface.set_trust(trust);
     db.set_ffi_surface(std::sync::Arc::new(surface));
     let t_check = crate::timings::phase("canonicalise + typecheck");
-    let checked = ty::check_modules(&db, &check_ids);
+    let mut checked = ty::check_modules(&db, &check_ids);
     t_check.end();
+    // Since v0.27.0 a fetched `.skydeps` package is checked like the project's
+    // own code (it was trusted before). A diagnostic in one says so and links
+    // the migration entry.
+    for d in &mut checked.diagnostics {
+        if d.labels
+            .iter()
+            .any(|l| registry_mods.contains(&l.span.file.index()))
+        {
+            let note = format!(
+                "this file is a fetched package (`.skydeps`): since v0.27.0 a package is \
+                 type-checked with your code and has no `Sky.Ffi`. Update the package, or ask \
+                 its author for a v0.27.0 release. {}",
+                crate::migration_see("registry-packages-are-checked")
+            );
+            d.suggestion = Some(match d.suggestion.take() {
+                Some(s) => format!("{s}\n{note}"),
+                None => note,
+            });
+        }
+    }
     // Ambiguity (`[E1012]`) is reported BEFORE the type gate, because it is the
     // CAUSE and any type error under it is the consequence. When a bare name is
     // bound by two imports, the resolver still has to hand lowering one of them

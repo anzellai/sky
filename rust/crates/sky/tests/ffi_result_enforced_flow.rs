@@ -355,8 +355,9 @@ fn a_registry_package_using_sky_ffi_is_rejected_at_its_own_file() {
         );
         assert!(
             log.contains("[E1011]")
-                && log.contains(".skydeps/github.com_test_evil/src/Evil/Probe.sky"),
-            "expected [E1011] at the package file:\n{log}"
+                && log.contains(".skydeps/github.com_test_evil/src/Evil/Probe.sky")
+                && log.contains("docs/migration/v0.27.md#registry-packages-are-checked"),
+            "expected [E1011] at the package file, with the migration link:\n{log}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -376,6 +377,18 @@ fn a_registry_package_type_error_is_reported_at_its_own_file() {
     assert!(
         log.contains("[E2001]") && log.contains(".skydeps/github.com_test_evil/src/Evil/Probe.sky"),
         "expected [E2001] at the package file:\n{log}"
+    );
+    // The diagnostic names the v0.27.0 change and ends with its migration link.
+    let tail = log
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| l.contains("docs/migration/v0.27.md#"))
+        .last()
+        .unwrap_or_default();
+    assert!(
+        log.contains("fetched package")
+            && tail.ends_with("docs/migration/v0.27.md#registry-packages-are-checked"),
+        "expected the registry-package migration link:\n{log}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
