@@ -182,7 +182,28 @@ try {
   await click(A, "bump", 2);
   await click(A, "note");
   check("A: anonymous scratch state", await view(A), "who=anon note=anon-note clicks=2");
-  await holdIdentity(cookieA);
+  // The practitioner signs in again. The in-page sign-out above ended cookieA's
+  // session id on the server (runtime-go/rt/spa_session_revocation.go), so that
+  // copy of the cookie no longer signs anyone in: the new sign-in happens in a
+  // separate browser context (its own localStorage, like a sign-in redirect from
+  // an identity provider), and tab A full-loads with the cookie it issued.
+  const signInCtx = await browser.newContext();
+  try {
+    await signInCtx.addCookies([cookieA]);
+    const S = await signInCtx.newPage();
+    S.on("pageerror", (e) => pageErrors.push(`[pageerror] ${e.message}`));
+    await load(S);
+    check("A: the cookie from before sign-out signs nobody in", await line(S, "who"), "who=anon");
+    await signInCtx.clearCookies();
+    await load(S);
+    await click(S, "signin-practitioner");
+    check("A: signed in again", await line(S, "who"), "who=practitioner:u1");
+    const cookieA2 = (await signInCtx.cookies()).find((c) => c.name === "sky_spa");
+    if (!cookieA2) throw new Error("the second sign-in set no sky_spa cookie");
+    await holdIdentity(cookieA2);
+  } finally {
+    await signInCtx.close();
+  }
   await reload(A);
   check("A: signing in does not restore the anonymous state", await view(A), "who=practitioner:u1 note= clicks=0");
   check(
