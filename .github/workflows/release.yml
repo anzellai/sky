@@ -1135,8 +1135,8 @@ jobs:
       - name: tools Go tests (sky-ffi-inspect, skyliveload)
         run: |
           set -euo pipefail
-          (cd tools/sky-ffi-inspect && CGO_ENABLED=0 go test ./... -count=1)
-          (cd tools/skyliveload && CGO_ENABLED=0 go test ./... -count=1)
+          (cd "$GITHUB_WORKSPACE/tools/sky-ffi-inspect" && CGO_ENABLED=0 go test ./... -count=1)
+          (cd "$GITHUB_WORKSPACE/tools/skyliveload" && CGO_ENABLED=0 go test ./... -count=1)
 
   # gate-web — the browser tier and the e2e scripts: every Sky.Live /
   # Http.Server example driven in real Chromium (verify-all-web.sh, incl. the

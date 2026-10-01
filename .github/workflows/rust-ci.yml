@@ -944,8 +944,8 @@ jobs:
       - name: tools Go tests (sky-ffi-inspect, skyliveload)
         run: |
           set -euo pipefail
-          (cd tools/sky-ffi-inspect && CGO_ENABLED=0 go test ./... -count=1)
-          (cd tools/skyliveload && CGO_ENABLED=0 go test ./... -count=1)
+          (cd "$GITHUB_WORKSPACE/tools/sky-ffi-inspect" && CGO_ENABLED=0 go test ./... -count=1)
+          (cd "$GITHUB_WORKSPACE/tools/skyliveload" && CGO_ENABLED=0 go test ./... -count=1)
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
