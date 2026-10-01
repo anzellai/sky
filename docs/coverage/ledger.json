@@ -17455,8 +17455,8 @@
       "id": "e2e:scripts/ui-canvas-terminal-e2e.sh",
       "modules_imported": 11,
       "path": "scripts/ui-canvas-terminal-e2e.sh",
-      "refs_generous": 53,
-      "refs_qualified": 47,
+      "refs_generous": 55,
+      "refs_qualified": 49,
       "role": "FlowTest",
       "sky_files": 2,
       "sky_toml_sections": []
@@ -18701,7 +18701,7 @@
       "refs_generous": 147,
       "refs_qualified": 141,
       "role": "FlowTest",
-      "sky_files": 116,
+      "sky_files": 117,
       "sky_toml_sections": []
     },
     {
