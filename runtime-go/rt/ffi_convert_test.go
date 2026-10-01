@@ -328,7 +328,7 @@ func TestFfiSkyValueToGoInterfaceIsErr(t *testing.T) {
 	} {
 		msg := ffiErrText(t, ffiGuarded(c.f))
 		if !strings.Contains(msg, "cannot be passed to the Go type") || strings.Contains(msg, "hunter2") ||
-			!strings.Contains(msg, "see docs/migration/v0.27.md#ffi-go-interface-params") {
+			!strings.Contains(msg, "see docs/migration/v0.27.md#ffi-sky-value-to-a-go-interface") {
 			t.Errorf("%s: %q", c.name, msg)
 		}
 	}

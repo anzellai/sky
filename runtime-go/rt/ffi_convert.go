@@ -217,7 +217,7 @@ func ffiRefuseSkyOwned(v any, t reflect.Type) {
 		return
 	}
 	if dt := reflect.TypeOf(v); ffiSkyOwned(dt) {
-		ffiFail("a Sky runtime value (%s) cannot be passed to the Go type %s (see docs/migration/v0.27.md#ffi-go-interface-params)", dt, t)
+		ffiFail("a Sky runtime value (%s) cannot be passed to the Go type %s (see docs/migration/v0.27.md#ffi-sky-value-to-a-go-interface)", dt, t)
 	}
 }
 
