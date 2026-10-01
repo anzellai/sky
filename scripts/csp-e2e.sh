@@ -138,6 +138,17 @@ with_timeout 300 node "$ROOT/scripts/csp-e2e-verify.mjs" notes "$NOTES" --port $
 source "$ROOT/scripts/lib/require-tool.sh"
 if require_tool caddy "Caddy 2 (https://caddyserver.com/docs/install) — the proxy topology matrix runs a real Caddy"; then
   export CADDY="$(command -v caddy)"
+  # Caddy before 2.11 answers a precompressed sidecar (file_server
+  # precompressed br gzip) with 206 Partial Content and no Range in the
+  # request (caddyserver/caddy#7250), so every Content-Type check of a
+  # Caddy-served script or wasm goes red for a reason that is not Sky's. CI
+  # pins 2.11.4 (.github/actions/install-caddy); refuse an older one by name.
+  caddy_ver="$("$CADDY" version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\..*/\1 \2/p')"
+  read -r caddy_major caddy_minor <<<"${caddy_ver:-0 0}"
+  if [ "$caddy_major" -lt 2 ] || { [ "$caddy_major" -eq 2 ] && [ "$caddy_minor" -lt 11 ]; }; then
+    echo "csp-e2e: $CADDY is $("$CADDY" version 2>/dev/null | cut -d' ' -f1); Caddy 2.11 or newer is required (older versions answer precompressed files with 206, caddyserver/caddy#7250). Put a newer caddy first on PATH." >&2
+    exit 1
+  fi
   NOTES_DIST="$TMP/62-app-notes/.skyapp/web-app/.split/frontend/dist"
   TODOS_DIST="$TMP/60-spa-todos/public"
   EMPTY_DIST="$TMP/empty-dist"
