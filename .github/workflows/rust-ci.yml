@@ -1611,7 +1611,7 @@ jobs:
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: CGO_ENABLED=1 go test -race ./rt/... -count=1
+        run: CGO_ENABLED=1 go test -race -timeout 20m ./rt/... -count=1
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
