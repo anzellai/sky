@@ -142,7 +142,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1790859111
+      "proven_at_unix": 1790864667
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -156,7 +156,7 @@
       "proven_at_unix": 1790829263
     },
     "config-matrix": {
-      "last_inconclusive_at_unix": 1790859111,
+      "last_inconclusive_at_unix": 1790864667,
       "mutation": "config-matrix.invert-operator-env-provenance",
       "observed": "PROVEN",
       "outcome": "as-declared",
@@ -290,14 +290,14 @@
     },
     "coverage-ledger": {
       "inputs_files": 4203,
-      "inputs_hash": "7b0b7abf0330e6ab34446036dcf916331606fa46",
+      "inputs_hash": "6e2c7047ec4798b4230f506b6b3c81f661163042",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790859111
+      "proven_at_unix": 1790864667
     },
     "erasure-path-uses-an-index": {
       "inputs_files": 758,
@@ -378,25 +378,25 @@
     },
     "roundtrip": {
       "inputs_files": 437,
-      "inputs_hash": "9c3d80df3b71bc1fc0f756341268dac26d7f797e",
+      "inputs_hash": "029612689a2ac8891ba520dc04dfdecc17e6526d",
       "mutation": "roundtrip.error-node",
       "mutations": [
         "roundtrip.error-node"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790829263
+      "proven_at_unix": 1790864667
     },
     "shared-world": {
       "inputs_files": 640,
-      "inputs_hash": "e38a2ee5d324c412dfbef3e1ff8d285255a3efbd",
+      "inputs_hash": "85484ecdc9dee27aba830c9aebf4aecf4bf4c458",
       "mutation": "shared-world.inject-divergence",
       "mutations": [
         "shared-world.inject-divergence"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790858323
+      "proven_at_unix": 1790864667
     },
     "sky-suites": {
       "inputs_files": 80,
@@ -411,14 +411,14 @@
     },
     "sky-verify": {
       "inputs_files": 511,
-      "inputs_hash": "8d046b894077da01e398dfe87e47c3829fcd0a57",
+      "inputs_hash": "7fe0d2b823327c9e0d38d661c14d346758155f48",
       "mutation": "sky-verify.break-a-suite",
       "mutations": [
         "sky-verify.break-a-suite"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790858323
+      "proven_at_unix": 1790864667
     },
     "spa-diff-fuzz": {
       "inputs_files": 12,
@@ -434,14 +434,14 @@
     },
     "verify-cli": {
       "inputs_files": 440,
-      "inputs_hash": "90d2597858352b8553aea2706a0014f42303667c",
+      "inputs_hash": "3ceb9c83068479f76abe06d8c0af28a6facb05cd",
       "mutation": "verify-cli.drop-expected-output",
       "mutations": [
         "verify-cli.drop-expected-output"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790829263
+      "proven_at_unix": 1790864667
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, older than the declared window, or whose `inputs_hash` no longer matches its proof inputs (`harness --explain-inputs <gate>`), renders UNPROVEN under `--require-proofs` and is re-proven by the next incremental run.",
