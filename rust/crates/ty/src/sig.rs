@@ -1348,12 +1348,19 @@ impl World {
             ),
         ];
 
+        // `Sky.Test.runMain` ends in `System.exit`, so its result is free
+        // (`main : Program` and `main : Task Error ()` both call it). A
+        // check-only seed, so the emitted Go is unchanged.
+        let test_specs: Vec<(&str, Ty)> =
+            vec![("runMain", fun(list(Ty::app("Sky.Test.Test", vec![])), a()))];
+
         crate::obligations::seed_bound_overrides(self, db);
         for (pseudo, path, specs) in [
             ("List", "Sky.Core.List", list_specs),
             ("Basics", "Sky.Core.Basics", basics_specs),
             ("Maybe", "Sky.Core.Maybe", maybe_specs),
             ("Result", "Sky.Core.Result", result_specs),
+            ("Test", "Sky.Test", test_specs),
         ] {
             let module = db.module_by_name(path);
             for (name, ty) in specs {

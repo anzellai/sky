@@ -96,6 +96,88 @@ fn the_other_unannotated_combinators_are_checked_too() {
     }
 }
 
+/// What a module header exposes.
+#[derive(Debug, PartialEq)]
+enum Exposing {
+    All,
+    Names(Vec<String>),
+}
+
+/// Parse `module X exposing ( ... )` with balanced parentheses, so an item
+/// after a `T(..)` line and a bare `exposing (..)` are both seen. (The first
+/// version cut the header at the first `")\n"`, which skipped every item after
+/// a `T(..)` line and never saw `exposing (..)`.)
+fn exposed_values(src: &str) -> Exposing {
+    let code: String = src
+        .lines()
+        .map(|l| l.find("--").map_or(l, |i| &l[..i]))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let none = Exposing::Names(Vec::new());
+    let Some(start) = code.find("module ") else {
+        return none;
+    };
+    let after = &code[start..];
+    let Some(ex) = after.find("exposing") else {
+        return none;
+    };
+    let Some(open) = after[ex..].find('(').map(|o| ex + o) else {
+        return none;
+    };
+    let mut depth = 0usize;
+    let mut items = Vec::new();
+    let mut cur = String::new();
+    for c in after[open..].chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                if depth > 1 {
+                    cur.push(c);
+                }
+            }
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    items.push(std::mem::take(&mut cur));
+                    break;
+                }
+                cur.push(c);
+            }
+            ',' if depth == 1 => items.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    if items.len() == 1 && items[0].trim() == ".." {
+        return Exposing::All;
+    }
+    Exposing::Names(
+        items
+            .iter()
+            .map(|i| {
+                i.trim()
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect::<String>()
+            })
+            .filter(|n| !n.is_empty())
+            .collect(),
+    )
+}
+
+#[test]
+fn the_header_parser_sees_every_exposed_item() {
+    assert_eq!(
+        exposed_values("module A exposing (..)\n\nx = 1\n"),
+        Exposing::All
+    );
+    assert_eq!(
+        exposed_values(
+            "module A exposing\n    ( T(..)\n    , run -- the runner\n    , U(..)\n    , after\n    )\n\nx = 1\n"
+        ),
+        Exposing::Names(vec!["T".into(), "run".into(), "U".into(), "after".into()])
+    );
+}
+
 /// The class: every exported stdlib VALUE has a scheme the checker uses, an
 /// annotation or a check-only seed. A value with neither is checked as a
 /// wildcard at every call site (how `Result.map` went unchecked).
@@ -123,29 +205,20 @@ fn every_exported_stdlib_value_has_a_checked_scheme() {
     for m in db.module_ids() {
         let mname = db.module_name(m).to_string();
         let src = srcs.get(&mname).cloned().unwrap_or_default();
-        let code: String = src
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("--"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let start = code.find("module ").unwrap_or(0);
-        let header_end = code[start..].find(")\n").map_or(code.len(), |e| start + e);
-        let header = &code[start..header_end];
-        let all = header.contains("exposing (..)");
+        let exports = exposed_values(&src);
         let r = db.resolve(m);
         for td in &r.top_defs {
             let n = td.name.as_str();
-            let exported = all
-                || header
-                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                    .any(|w| w == n);
+            let exported = match &exports {
+                Exposing::All => true,
+                Exposing::Names(ns) => ns.iter().any(|w| w == n),
+            };
             if !exported || !n.starts_with(|c: char| c.is_ascii_lowercase()) {
                 continue;
             }
-            if world.value_sigs.contains_key(&td.def)
-                || world.check_sigs.contains_key(&td.def)
-                || world.app_check_sigs.contains_key(&td.def)
-            {
+            // A body-inferred `app_check_sigs` scheme does not count: the
+            // stdlib states its types, so a reader and `sky doc` see them.
+            if world.value_sigs.contains_key(&td.def) || world.check_sigs.contains_key(&td.def) {
                 continue;
             }
             out.push(format!("{mname}.{n}"));
@@ -183,5 +256,25 @@ fn a_newly_checked_combinator_error_carries_the_migration_hint() {
             && hint.contains("Fix:")
             && hint.ends_with("docs/migration/v0.27.md#stdlib-combinators-are-checked"),
         "{hint:?}"
+    );
+}
+
+/// The seeded `Sky.Test.runMain` scheme checks its argument and leaves the
+/// result free, so both `main` shapes the test files use still compile.
+#[test]
+fn sky_test_run_main_is_checked() {
+    let imp = "import Sky.Test as Test";
+    let v = check(imp, "main =\n    Test.runMain 5");
+    assert!(
+        v.rejected() && v.observed_codes.iter().any(|c| c == "E2001"),
+        "{:?} {}",
+        v.observed_codes,
+        v.first_msg
+    );
+    assert_accepts(
+        "runMain over a test list",
+        imp,
+        "tests =\n    [ Test.test \"t\" (\\_ -> Test.pass) ]\n\n\
+         main : Task Error ()\nmain =\n    Test.runMain tests",
     );
 }
