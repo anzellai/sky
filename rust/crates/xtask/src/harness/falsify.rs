@@ -340,6 +340,8 @@ fn verify_one(
     generation: u64,
     budget: Duration,
 ) -> FalsifyReport {
+    // Artefacts written after this instant may hold the mutation.
+    let mutation_started = std::time::SystemTime::now();
     // The patch guard lives for exactly the mutated run.
     let _patch = match m.kind {
         MutationKind::ReplaceOnce { path, from, to } => {
@@ -469,7 +471,7 @@ fn verify_one(
         if let Some((p, _)) = &restore_target {
             set_mtime(p, std::time::SystemTime::now());
         }
-        if let Err(e) = rebuild_xtask(&opts.repo_root, &opts.exe, budget) {
+        if let Err(e) = rebuild_after_revert(&opts.repo_root, &opts.exe, mutation_started, budget) {
             eprintln!(
                 "harness: WARNING — could not rebuild after reverting {}: {e}\n\
                  The binary may still contain the mutation. Rebuild before trusting \
@@ -519,6 +521,58 @@ fn cargo_target_dir_of(exe: &Path) -> Option<PathBuf> {
 /// `exe`, so the mutation only exists once it has been compiled into that
 /// path.
 fn rebuild_xtask(root: &Path, exe: &Path, budget: Duration) -> Result<(), String> {
+    cargo_build_into(root, exe, &["build", "--release", "-p", "xtask"], budget)
+}
+
+/// The artefacts besides `xtask` that a gate builds for itself and may have
+/// built UNDER a mutation, as `cargo` argument lists, in `target_dir`. The
+/// `lsp` gate builds a debug `sky` (`cargo build -p sky`) from the tree it is
+/// judging. After the revert the source carries its OLD mtime again, so that
+/// build looks up to date and the next `lsp` run drives the MUTATED server:
+/// observed as a false red of exactly the two hover cases the
+/// `lsp.hover-echoes-the-token` mutation breaks, on a clean tree. Only an
+/// artefact written since `since` (the mutated run started) is rebuilt, so a
+/// mutation whose gate never built it pays nothing.
+fn post_revert_rebuilds(
+    target_dir: &Path,
+    since: std::time::SystemTime,
+) -> Vec<&'static [&'static str]> {
+    let mut out: Vec<&'static [&'static str]> = Vec::new();
+    let exe = if cfg!(windows) { "sky.exe" } else { "sky" };
+    let built_since = std::fs::metadata(target_dir.join("debug").join(exe))
+        .and_then(|m| m.modified())
+        .is_ok_and(|t| t >= since);
+    if built_since {
+        out.push(&["build", "-p", "sky"]);
+    }
+    out
+}
+
+/// Rebuild what a reverted Rust-source mutation may have compiled into: the
+/// running `xtask`, then every [`post_revert_rebuilds`] artefact.
+fn rebuild_after_revert(
+    root: &Path,
+    exe: &Path,
+    since: std::time::SystemTime,
+    budget: Duration,
+) -> Result<(), String> {
+    rebuild_xtask(root, exe, budget)?;
+    let Some(target_dir) = cargo_target_dir_of(exe) else {
+        return Ok(());
+    };
+    for args in post_revert_rebuilds(&target_dir, since) {
+        cargo_build_into(root, exe, args, budget)?;
+    }
+    Ok(())
+}
+
+/// Run `cargo <args>` into the target directory `exe` lives in, bounded.
+fn cargo_build_into(
+    root: &Path,
+    exe: &Path,
+    args: &[&str],
+    budget: Duration,
+) -> Result<(), String> {
     use std::process::{Command, Stdio};
 
     // Build into the target directory `exe` lives in, whatever it is called.
@@ -535,7 +589,7 @@ fn rebuild_xtask(root: &Path, exe: &Path, budget: Duration) -> Result<(), String
         ));
     };
     let mut cmd = Command::new("cargo");
-    cmd.args(["build", "--release", "-p", "xtask"])
+    cmd.args(args)
         .current_dir(root.join("rust"))
         .env("CARGO_TARGET_DIR", &target_dir)
         .stdin(Stdio::null())
@@ -584,6 +638,35 @@ fn rebuild_xtask(root: &Path, exe: &Path, budget: Duration) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A debug `sky` the `lsp` gate built under a mutation must be rebuilt
+    // after the revert: its source gets its old mtime back, so cargo would
+    // keep the mutated binary and the next `lsp` run false-reds. One built
+    // before the mutated run started is left alone.
+    #[test]
+    fn a_debug_sky_built_under_the_mutation_is_rebuilt_after_the_revert() {
+        let dir = std::env::temp_dir().join(format!("xtask-post-revert-{}", std::process::id()));
+        let debug = dir.join("debug");
+        std::fs::create_dir_all(&debug).unwrap();
+        let sky = debug.join(if cfg!(windows) { "sky.exe" } else { "sky" });
+        let before = std::time::SystemTime::now() - Duration::from_secs(60);
+        assert!(
+            post_revert_rebuilds(&dir, before).is_empty(),
+            "nothing built yet"
+        );
+        std::fs::write(&sky, b"mutated").unwrap();
+        assert_eq!(
+            post_revert_rebuilds(&dir, before),
+            vec![&["build", "-p", "sky"][..]],
+            "built during the mutated run: rebuild it from the clean source"
+        );
+        let later = std::time::SystemTime::now() + Duration::from_secs(60);
+        assert!(
+            post_revert_rebuilds(&dir, later).is_empty(),
+            "built before the mutated run: no rebuild"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // The rebuild targets the directory the RUNNING binary lives in. A harness
     // run from `rust/isolated-target` once rebuilt into `rust/target`, re-ran
