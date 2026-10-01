@@ -11,6 +11,10 @@ as a Sky.Spa app (--target web:app).
     create in the SVG namespace); a click on the red square counts.
   - Two texts in a column must be two lines (`#two-texts`), and a long text
     in a narrow box must wrap inside it (`#narrow`).
+  - At a 390 px viewport a short price in a fixed-width item of a crowded row
+    stays on one line (`#price`: `overflow-wrap: anywhere` broke "£4.50" into
+    "£4.5" / "0"), and a word longer than a narrow column still breaks inside
+    it (`#long-word`).
 
 -}
 
@@ -106,6 +110,24 @@ view model =
               [ Ui.htmlAttribute "id" "narrow", Ui.width (Ui.px 120) ]
               (Ui.text
                   "a long run of words that cannot fit on one line of this narrow box")
+        , Ui.row
+              [ Ui.htmlAttribute "id" "basket-row"
+              , Ui.width Ui.fill
+              , Ui.spacing 8
+              ]
+              [ Ui.el
+                    [ Ui.width Ui.fill ]
+                    (Ui.text
+                        (String.repeat
+                            4
+                            "Flat white with oat milk, extra hot, two sugars and a cinnamon dusting on top. "))
+              , Ui.el
+                    [ Ui.htmlAttribute "id" "price", Ui.width (Ui.px 76) ]
+                    (Ui.text "£4.50")
+              ]
+        , Ui.column
+              [ Ui.htmlAttribute "id" "long-word", Ui.width (Ui.px 120) ]
+              [ Ui.text "Pneumonoultramicroscopicsilicovolcanoconiosis" ]
         ]
 
 

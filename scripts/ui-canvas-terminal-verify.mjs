@@ -19,7 +19,9 @@
 //       as SVG elements (--browser webkit too: a Range per new child made it
 //       quadratic in WebKit);
 //     * two Ui.text in a column are two lines; a long Ui.text in a narrow box
-//       wraps inside it and does not overflow.
+//       wraps inside it and does not overflow; at 390 px a short price in a
+//       fixed-width item of a crowded row stays on one line, and a word
+//       longer than a narrow column still breaks inside it.
 //
 //   --mode canvas-spa  (the same fixture, Sky.Spa; --browser chromium |
 //   webkit; the page at devicePixelRatio 2)
@@ -371,6 +373,39 @@ async function textCases(page) {
     narrow.h >= 2 * narrow.lh - 1 && narrow.w <= 120 && narrow.sw <= narrow.box,
     JSON.stringify(narrow)
   );
+  // At a phone width a short word must not break inside a fixed-width item
+  // that a long sibling squeezes: `overflow-wrap: anywhere` lowered the
+  // span's min-content width to one character, so "£4.50" broke into
+  // "£4.5" / "0". `break-word` keeps the word whole and still breaks a word
+  // longer than the line.
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.waitForTimeout(100);
+  const price = await page.evaluate(() => {
+    const s = document.querySelector("#price span");
+    const cs = getComputedStyle(s);
+    const lh = parseFloat(cs.lineHeight) || 1.2 * parseFloat(cs.fontSize);
+    const r = s.getBoundingClientRect();
+    return { t: s.textContent, w: Math.round(r.width), h: Math.round(r.height), lh };
+  });
+  check(
+    "a short price in a fixed-width item of a crowded row stays on one line at 390 px",
+    price.t === "£4.50" && price.h < 1.5 * price.lh,
+    JSON.stringify(price)
+  );
+  const long = await page.evaluate(() => {
+    const el = document.querySelector("#long-word");
+    const s = el.querySelector("span");
+    const cs = getComputedStyle(s);
+    const lh = parseFloat(cs.lineHeight) || 1.2 * parseFloat(cs.fontSize);
+    const r = s.getBoundingClientRect();
+    return { w: Math.round(r.width), h: Math.round(r.height), right: Math.round(r.right), lh, box: el.clientWidth, sw: el.scrollWidth, vw: document.documentElement.clientWidth };
+  });
+  check(
+    "a word longer than a 120 px column breaks inside it and does not overflow the page at 390 px",
+    long.h >= 2 * long.lh - 1 && long.w <= 120 && long.sw <= long.box && long.right <= long.vw,
+    JSON.stringify(long)
+  );
+  await page.setViewportSize({ width: 1000, height: 900 });
 }
 
 // The terminal's text: the widget's text layer (what a screen reader reads

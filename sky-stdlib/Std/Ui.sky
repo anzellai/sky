@@ -2105,8 +2105,12 @@ renderElementIn nest ctx extraAttrs elem =
 -- `[ Ui.text "a", Ui.text "b" ]` showed "ab" on one line (the flex container
 -- wraps the joined run in a single anonymous item). A span is an element, so
 -- a flex container makes each text its own item, and the text wraps at word
--- boundaries within the width it gets; `overflow-wrap: anywhere` breaks a
--- word longer than the line instead of letting it overflow the box. The
+-- boundaries within the width it gets; `overflow-wrap: break-word` breaks a
+-- word longer than the line instead of letting it overflow the box. It is
+-- not `anywhere`: that also lowers the span's min-content width to one
+-- character, so a flex row squeezing a fixed-width item broke a short word
+-- in it ("£4.50" showed as "£4.5" / "0"). `break-word` breaks a word only
+-- when it cannot fit on a line of its own. The
 -- terminal renderer (tui_ui.go) wraps the same text at the cell width.
 --
 -- An empty text renders nothing: a bare empty text node is no layout item,
@@ -2117,7 +2121,7 @@ renderText nest ctx s =
         Html.text s
 
     else
-        Html.span [ Attr.style "overflow-wrap: anywhere;" ] [ Html.text s ]
+        Html.span [ Attr.style "overflow-wrap: break-word;" ] [ Html.text s ]
 
 
 isParagraphContext : LayoutContext -> Bool

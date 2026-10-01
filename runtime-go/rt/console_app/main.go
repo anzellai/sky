@@ -7131,7 +7131,7 @@ func Std_Ui_renderText(v_0 Std_Ui_Nesting_R, v_1 Std_Ui_LayoutContext, v_2 strin
 	if (v_2 == "") || (v_0.Phrasing || Std_Ui_isParagraphContext(v_1)) {
 		return Std_Html_text(v_2)
 	} else {
-		return Std_Html_span([]Std_Html_Attributes_Attribute{Std_Html_Attributes_style("overflow-wrap: anywhere;")}, []Std_Html_Html{Std_Html_text(v_2)})
+		return Std_Html_span([]Std_Html_Attributes_Attribute{Std_Html_Attributes_style("overflow-wrap: break-word;")}, []Std_Html_Html{Std_Html_text(v_2)})
 	}
 }
 

@@ -65,7 +65,7 @@ wrap inner =
 
 span : String -> String
 span s =
-    "<span style=\"overflow-wrap: anywhere;\">" ++ s ++ "</span>"
+    "<span style=\"overflow-wrap: break-word;\">" ++ s ++ "</span>"
 
 
 tests : List Test

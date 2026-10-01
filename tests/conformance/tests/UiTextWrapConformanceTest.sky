@@ -11,8 +11,9 @@ The column had two children in the source and one on screen.
 THE FIX. Outside a paragraph, `Ui.text` renders as its own `<span>`: a flex
 container makes each span a separate item (so a column stacks them), and the
 span wraps at word boundaries within the width it is given
-(`overflow-wrap: anywhere` also breaks a word that is longer than the line,
-rather than letting it overflow). Inside a paragraph nothing changes: the
+(`overflow-wrap: break-word` also breaks a word that is longer than the line,
+rather than letting it overflow, and unlike `anywhere` it never breaks a
+short word that fits on a line of its own). Inside a paragraph nothing changes: the
 text stays inline and flows with its siblings, which is what a paragraph is
 for. `Ui.textNoWrap` keeps a text on one line.
 
@@ -35,7 +36,7 @@ render elem =
 
 span : String -> String
 span s =
-    "<span style=\"overflow-wrap: anywhere;\">" ++ s ++ "</span>"
+    "<span style=\"overflow-wrap: break-word;\">" ++ s ++ "</span>"
 
 
 twoTextsInColumn : Ui.Element msg
