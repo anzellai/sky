@@ -6,12 +6,14 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::Analysis;
-use tokio::sync::Mutex;
-use tower_lsp::jsonrpc::Result;
+use tokio::sync::{Mutex, Notify};
+use tower_lsp::jsonrpc::{Request, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -314,12 +316,63 @@ impl LanguageServer for Backend {
     }
 }
 
-pub fn run() {
+/// The service the transport drives, with one addition: it notices the `exit`
+/// notification. tower-lsp's `serve` only ends when stdin closes or when the
+/// NEXT message after `exit` finds the service gone, so a client that sends
+/// `exit` and keeps the pipe open (the spec does not require it to close it)
+/// left the server running.
+struct ExitWatch<S> {
+    inner: S,
+    exited: Arc<Notify>,
+    /// Set when the `shutdown` request arrives. The exit code after `exit`
+    /// depends on it (LSP spec: 0 after a `shutdown`, 1 without one). It is
+    /// set here, in arrival order, not in the async handler, which may run
+    /// after an `exit` the client sent right behind it.
+    shut_down: Arc<AtomicBool>,
+}
+
+impl<S> tower_service::Service<Request> for ExitWatch<S>
+where
+    S: tower_service::Service<Request>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), S::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request) -> S::Future {
+        if req.method() == "shutdown" {
+            self.shut_down.store(true, Ordering::SeqCst);
+        }
+        let is_exit = req.method() == "exit";
+        let fut = self.inner.call(req);
+        if is_exit {
+            // A stored permit: `run` sees it even if it is not waiting yet.
+            self.exited.notify_one();
+        }
+        fut
+    }
+}
+
+/// Serve LSP over stdio and return the process exit code: 0 after `shutdown`
+/// then `exit`, 1 after an `exit` with no `shutdown` before it (LSP spec), and
+/// 0 when the client closes stdin.
+///
+/// The caller must end the process with that code rather than go on to more
+/// work: the tokio stdin reader is a blocking thread parked in `read(2)`, and
+/// dropping the runtime waits for it. The runtime is therefore shut down in
+/// the background, which does not wait for that thread.
+pub fn run() -> i32 {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("sky-lsp: failed to start tokio runtime");
-    rt.block_on(async {
+    let shut_down = Arc::new(AtomicBool::new(false));
+    let exited = Arc::new(Notify::new());
+    let got_exit = rt.block_on(async {
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
         let (service, socket) = LspService::new(|client| Backend {
@@ -327,6 +380,20 @@ pub fn run() {
             analysis: Arc::new(Mutex::new(Analysis::new())),
             gens: Arc::new(StdMutex::new(HashMap::new())),
         });
-        Server::new(stdin, stdout, socket).serve(service).await;
+        let service = ExitWatch {
+            inner: service,
+            exited: exited.clone(),
+            shut_down: shut_down.clone(),
+        };
+        tokio::select! {
+            _ = Server::new(stdin, stdout, socket).serve(service) => false,
+            _ = exited.notified() => true,
+        }
     });
+    rt.shutdown_background();
+    if got_exit && !shut_down.load(Ordering::SeqCst) {
+        1
+    } else {
+        0
+    }
 }

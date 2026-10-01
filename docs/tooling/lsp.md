@@ -86,7 +86,7 @@ The LSP discovers symbols from:
 
 - Project `src/` tree (recursive `.sky`).
 - Embedded Sky stdlib (`Sky.Core.*`, `Std.*`, `Sky.Live`, `Sky.Http.*`).
-- `.skycache/ffi/*.kernel.json` + `.skycache/ffi/*.skyi` for FFI signatures.
+- `sky-ffi/*.kernel.json` (the pinned FFI signatures; `.skycache/ffi/` is the fallback for an older project). Go to definition on a Go binding opens its line in `sky-ffi/<slug>.skyi`, or its entry in the `kernel.json` when the `.skyi` is absent.
 - `.skydeps/<pkg>/src/` for Sky source dependencies.
 
 The LSP **does NOT** index:
@@ -191,7 +191,7 @@ No official extension yet. The LSP is standards-compliant so any generic LSP cli
 | Feature | Top-level funcs | Local bindings | Imported names | ADT ctors | Record fields | FFI imports | Kernel funcs |
 |---------|-----------------|----------------|----------------|-----------|---------------|-------------|--------------|
 | Hover type | yes | yes | yes | yes | yes | yes | yes |
-| Goto definition | yes | yes | yes | yes | partial (record field hops to type decl) | yes (to generated `.skyi`) | yes (to kernel decl in stdlib or `.skyi`) |
+| Goto definition | yes | yes | yes | yes | partial (record field hops to type decl) | yes (to its line in the generated `sky-ffi/<slug>.skyi`) | yes (to kernel decl in stdlib or `.skyi`) |
 | References | yes | yes | yes | yes | partial | no — generated bindings are excluded from index | yes |
 | Rename | yes | yes | yes, but only inside the current project (doesn't rewrite dependency code) | yes | partial | no — FFI names are generated | no — kernel names are structural |
 | Completion | qualified-name after `.` | not surfaced | yes after module alias `.` | yes inside pattern | yes after `record.` | yes after FFI module alias `.` | yes after `String.`/`List.` etc. |

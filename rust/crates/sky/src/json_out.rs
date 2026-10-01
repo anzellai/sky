@@ -7,8 +7,10 @@
 //! * `diagnostic` — LSP-shaped: `file` (relative to the project root, `/`
 //!   separators, or `null`), `range` (0-based `line` / `character`, UTF-16, or
 //!   `null`), `severity` (`error` / `warning` / `info`), `code` (`E2001`, or
-//!   `null`), `message`, `source` (`sky` / `go`), and `relatedInformation`
-//!   when the diagnostic has secondary locations.
+//!   `null`), `message`, `source` (`sky` / `go`), `relatedInformation`
+//!   when the diagnostic has secondary locations, and `suggestion` when it
+//!   carries a fix hint (the text the human mode prints as `Try: …`; a
+//!   v0.27.0 hint ends with its `see docs/migration/v0.27.md#…` link).
 //! * `test` — one per `Sky.Test` case (`sky test`).
 //! * `summary` — exactly one, always the LAST line.
 //!
@@ -410,6 +412,9 @@ pub fn diagnostic_line(d: &Reported) -> String {
             .collect();
         f.push(("relatedInformation", format!("[{}]", rel.join(","))));
     }
+    if let Some(s) = &d.suggestion {
+        f.push(("suggestion", enc(s)));
+    }
     obj(&f)
 }
 
@@ -486,6 +491,9 @@ pub fn rewrite_diagnostic(v: &Value, file: Option<String>, extra: &[(&str, Strin
             })
             .collect();
         f.push(("relatedInformation", format!("[{}]", items.join(","))));
+    }
+    if v["suggestion"].is_string() {
+        f.push(("suggestion", v["suggestion"].to_string()));
     }
     f.extend(extra.iter().cloned());
     obj(&f)
@@ -574,6 +582,34 @@ mod tests {
         assert_eq!(
             line,
             r#"{"kind":"diagnostic","schema":1,"file":"src/Main.sky","range":{"start":{"line":6,"character":4},"end":{"line":6,"character":10}},"severity":"error","code":"E2001","message":"[main] type mismatch: `String` vs `Int`","source":"sky"}"#
+        );
+    }
+
+    /// A diagnostic's fix hint is on the wire as `suggestion` (the text the
+    /// human mode prints as `Try: …`), and a relayed line keeps it. Many
+    /// v0.27.0 migration links live only there.
+    #[test]
+    fn diagnostic_line_carries_the_fix_hint() {
+        let mut d = Reported::plain(
+            Severity::Error,
+            Origin::Sky,
+            "[n] type mismatch: `String` vs `Result Error String`",
+        );
+        d.code = Some("E2001".into());
+        d.suggestion =
+            Some("handle the Result; see docs/migration/v0.27.md#ffi-result-enforced".into());
+        let line = diagnostic_line(&d);
+        assert_eq!(
+            line,
+            r#"{"kind":"diagnostic","schema":1,"file":null,"range":null,"severity":"error","code":"E2001","message":"[n] type mismatch: `String` vs `Result Error String`","source":"sky","suggestion":"handle the Result; see docs/migration/v0.27.md#ffi-result-enforced"}"#
+        );
+        let v: Value = serde_json::from_str(&line).unwrap();
+        let relayed = rewrite_diagnostic(&v, Some("src/B.sky".into()), &[]);
+        assert!(
+            relayed.ends_with(
+                r#","suggestion":"handle the Result; see docs/migration/v0.27.md#ffi-result-enforced"}"#
+            ),
+            "{relayed}"
         );
     }
 }

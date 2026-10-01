@@ -3,5 +3,5 @@
 //! `sky` binary). This standalone binary just calls [`sky_lsp::run`].
 
 fn main() {
-    sky_lsp::run();
+    std::process::exit(sky_lsp::run());
 }

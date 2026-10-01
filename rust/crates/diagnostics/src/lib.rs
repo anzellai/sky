@@ -209,6 +209,10 @@ pub struct Reported {
     pub range: Option<TextRange>,
     pub origin: Origin,
     pub related: Vec<RelatedLocation>,
+    /// The fix hint (`Diagnostic::suggestion`), which the human rendering
+    /// prints as `Try: …`. Many v0.27.0 hints and their migration links live
+    /// only here, so a machine reader needs it as much as the message.
+    pub suggestion: Option<String>,
     /// The human rendering (the Elm-style block for a spanned Sky diagnostic,
     /// the bare message otherwise).
     pub rendered: String,
@@ -249,6 +253,7 @@ impl Reported {
             range,
             origin: Origin::Sky,
             related,
+            suggestion: d.suggestion.clone(),
             rendered: d.render_cli(sources),
         }
     }
@@ -266,6 +271,7 @@ impl Reported {
             range: None,
             origin,
             related: Vec::new(),
+            suggestion: None,
         }
     }
 }
@@ -655,6 +661,13 @@ mod tests {
         assert!(rendered.contains("Try: rename `b`"));
         assert!(rendered.contains("1 | a = 1"));
         assert!(rendered.contains("2 | b = 2"));
+
+        // `--format json` reads `Reported`, not the rendering: the hint must
+        // survive into it (it used to be dropped, so a JSON consumer never saw
+        // a v0.27.0 migration link carried in `suggestion`).
+        let r = Reported::from_diagnostic(&d, &(&map));
+        assert_eq!(r.suggestion.as_deref(), Some("rename `b`"));
+        assert_eq!(r.message, "primary message");
     }
 
     /// Every error code a compiler crate emits has its own header title. A

@@ -1,0 +1,35 @@
+{
+  "moduleName": "Encoding.Hex",
+  "kernelName": "Go_Hex",
+  "package": "encoding/hex",
+  "surfaceFormat": 3,
+  "functions": [
+    {"name": "appendDecode", "arity": 2, "skyType": "Bytes -> Bytes -> Result Error Bytes"},
+    {"name": "appendEncode", "arity": 2, "skyType": "Bytes -> Bytes -> Result Error Bytes"},
+    {"name": "decode", "arity": 2, "skyType": "Bytes -> Bytes -> Result Error Int"},
+    {"name": "decodeString", "arity": 1, "skyType": "String -> Result Error Bytes"},
+    {"name": "decodedLen", "arity": 1, "skyType": "Int -> Result Error Int"},
+    {"name": "dump", "arity": 1, "skyType": "Bytes -> Result Error String"},
+    {"name": "dumper", "arity": 1, "skyType": "goi@Io.Writer -> Result Error go@Io.WriteCloser"},
+    {"name": "encode", "arity": 2, "skyType": "Bytes -> Bytes -> Result Error Int"},
+    {"name": "encodeToString", "arity": 1, "skyType": "Bytes -> Result Error String"},
+    {"name": "encodedLen", "arity": 1, "skyType": "Int -> Result Error Int"},
+    {"name": "errLength", "arity": 1, "skyType": "() -> Result Error ()"},
+    {"name": "invalidByteErrorError", "arity": 1, "skyType": "Int -> Result Error String"},
+    {"name": "newDecoder", "arity": 1, "skyType": "goi@Io.Reader -> Result Error go@Io.Reader"},
+    {"name": "newEncoder", "arity": 1, "skyType": "goi@Io.Writer -> Result Error go@Io.Writer"}
+  ]
+  ,
+  "implements": {
+      "InvalidByteError@encoding/hex": ["Ordered@cmp"]
+  }
+  ,
+  "pkgAlias": {
+      "encoding/hex": "hex",
+      "errors": "errors",
+      "fmt": "fmt",
+      "io": "io",
+      "slices": "slices",
+      "strings": "strings"
+  }
+}

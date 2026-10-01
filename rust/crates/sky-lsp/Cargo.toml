@@ -25,7 +25,8 @@ project = { path = "../project" }
 ffi = { path = "../ffi" }
 diagnostics = { path = "../diagnostics" }
 tower-lsp.workspace = true
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time"] }
+tower-service = "0.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "sync", "time"] }
 
 [dev-dependencies]
 serde_json.workspace = true

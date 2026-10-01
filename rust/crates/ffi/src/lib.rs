@@ -88,6 +88,9 @@ pub struct FfiPackage {
     /// no alias and is passed to the wrapper directly. A call-site coercion to
     /// `rt.FfiT_<sym>_P<i>` is therefore valid only when that name is in this set.
     pub ffi_slots: BTreeSet<String>,
+    /// Path to the `<slug>.kernel.json` this package was parsed from. Its
+    /// `<slug>.skyi` catalogue sits beside it (tooling: go to definition).
+    pub kernel_json: PathBuf,
     /// Path to the `<slug>_bindings.go` wrapper (materialised into sky-out/rt/).
     pub binding_file: Option<PathBuf>,
     /// Per-wrapper-symbol ordered Go param types, parsed from each
@@ -201,6 +204,7 @@ pub fn load_surface(ffi_dir: &Path, go_dir: &Path) -> FfiRegistry {
                 go_symbols,
                 ffi_slots,
                 wrapper_params,
+                kernel_json: path.clone(),
                 binding_file,
                 format,
             },

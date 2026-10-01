@@ -1,0 +1,39 @@
+-- Auto-generated FFI binding catalogue for encoding/hex
+-- Surface format 3 (sky install regenerates a surface stamped otherwise).
+--
+-- Every binding returns `Result Error a`, not a Task. The Go call runs
+-- where the expression is evaluated (it is synchronous), and the Result
+-- carries its outcome: a Go error, a nil, or a recovered panic is Err.
+-- Handling it at every call site is deliberate: it marks the point where
+-- a program leaves Sky's guarantees. Prefer the Sky stdlib where it
+-- covers the job, and keep Go FFI for what it does not.
+--
+-- To run a call later, off `update` (for example with Cmd.perform),
+-- wrap it in a Task yourself:
+--     Task.lazy (\_ -> call args) |> Task.andThen Task.fromResult
+-- See docs/ffi/boundary-philosophy.md.
+--
+-- An opaque Go value (a struct, an interface, a func) has its own Sky
+-- type, named through this module (`Pkg.Client`); use the bindings to
+-- construct, read and update it.
+--
+-- Imports used in this package's wrapper:
+--   pkg "encoding/hex"
+--   io "io"
+
+package hex
+-- [fallible] AppendDecode : Bytes -> Bytes -> Result Error Bytes
+-- [pure] AppendEncode : Bytes -> Bytes -> Result Error Bytes
+-- [fallible] Decode : Bytes -> Bytes -> Result Error Int
+-- [fallible] DecodeString : String -> Result Error Bytes
+-- [pure] DecodedLen : Int -> Result Error Int
+-- [pure] Dump : Bytes -> Result Error String
+-- [pure] Dumper : goi@Io.Writer -> Result Error go@Io.WriteCloser
+-- [pure] Encode : Bytes -> Bytes -> Result Error Int
+-- [pure] EncodeToString : Bytes -> Result Error String
+-- [pure] EncodedLen : Int -> Result Error Int
+-- [pure] ErrLength : () -> Result Error ()
+-- [pure] InvalidByteErrorError : Int -> Result Error String
+-- [pure] NewDecoder : goi@Io.Reader -> Result Error go@Io.Reader
+-- [pure] NewEncoder : goi@Io.Writer -> Result Error go@Io.Writer
+-- [skipped] SetErrLength: its Go signature uses a generic, internal, unexported or `error`-parameter type that Sky cannot pass

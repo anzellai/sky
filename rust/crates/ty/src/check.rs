@@ -238,6 +238,38 @@ impl<'a> Typer<'a> {
     pub fn inferred_sig(&self, def: DefId) -> Option<&Scheme> {
         self.world.inferred_sigs.get(&def)
     }
+
+    /// The checker's scheme for an UNANNOTATED def, when it carries a
+    /// qualified bound (`comparable`, `number`, `appendable`, …). The tooling
+    /// views (`body_types*`) infer in the lowerer's mode, where a bounded
+    /// variable is a plain one so Go emission stays byte-identical; the bound
+    /// is then lost and `sortedNames xs = List.sort xs` hovers `List a ->
+    /// List a` although the checker rejects `sortedNames [ Op identity ]`.
+    /// This re-infers the body the way the checker does (check world, bounded
+    /// quantifiers, no `Number` defaulting) and returns the scheme only when a
+    /// bound survives, so every other hover is unchanged. Tooling only.
+    pub fn bounded_scheme(&self, def: DefId, body: &Body) -> Option<Scheme> {
+        let world = self.db.check_world();
+        let mut infer = Infer::new(&world, self.db.as_sky_db()).with_self_def(Some(def));
+        let s = infer.infer_def_scheme(body, false)?;
+        s.ty.free_vars()
+            .iter()
+            .any(|n| crate::unify::SuperType::minted_label(n.as_str()).is_some())
+            .then_some(s)
+    }
+
+    /// The type the checker filled in for a USER annotation with `any` holes
+    /// (D-ANY, v0.27.0: each `any` is inferred from the body, so
+    /// `toLabel : Int -> any` exports `Int -> String`). It lives in the
+    /// check world (pass 6), not in the declarations-only world this view
+    /// holds, so it is read from `check_world`. Tooling only (hover).
+    pub fn any_filled_sig(&self, def: DefId) -> Option<Scheme> {
+        self.db
+            .check_world()
+            .any_result_check_sigs
+            .get(&def)
+            .cloned()
+    }
 }
 
 /// `Sky.Ffi` members that bind a runtime kernel or a registered Go binding by

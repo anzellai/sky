@@ -10121,8 +10121,10 @@ fn cmd_lsp(_args: &[String]) -> ExitCode {
     // Run the LSP server inline — the transport + analysis engine are linked into
     // this binary, so `sky lsp` works from a single installed `sky` with no
     // separate `sky-lsp` process to locate or ship.
-    sky_lsp::run();
-    ExitCode::SUCCESS
+    // `run` returns the LSP exit code (0 after `shutdown` + `exit`, 1 for
+    // an `exit` without `shutdown`); returning from `main` ends the process
+    // even while the stdin reader thread is still parked in `read`.
+    ExitCode::from(sky_lsp::run() as u8)
 }
 
 // ---- clean ---------------------------------------------------------------

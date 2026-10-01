@@ -715,6 +715,18 @@ impl Analysis {
         // written order, matching the oracle. Unannotated defs fall through to the
         // inferred type below (unchanged).
         if let Some(anno) = declared_anno_text(db, d) {
+            // Since v0.27.0 each `any` in a user annotation is a hole the
+            // checker fills from the body, so the written text is not the type
+            // a caller sees: show the filled scheme (`toLabel : Int -> String`,
+            // not `Int -> any`).
+            let has_any = anno
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|w| w == "any");
+            if has_any {
+                if let Some(filled) = typer.any_filled_sig(d) {
+                    return Some(filled.ty.render_pretty());
+                }
+            }
             return Some(anno);
         }
         typer
@@ -731,6 +743,11 @@ impl Analysis {
                 let owner = db.def_loc(d)?.module;
                 let owner_resolved = db.resolve(owner);
                 let body = owner_resolved.bodies.get(&d)?;
+                // A bound the checker enforces (`comparable`, `number`, …) is
+                // part of the signature: show it (`List comparable -> …`).
+                if let Some(s) = typer.bounded_scheme(d, body) {
+                    return Some(s.ty.render_pretty());
+                }
                 let bt = typer.body_types_annotated(d, body);
                 bt.signature.or(bt.result).map(|t| t.render_pretty())
             })
@@ -939,7 +956,14 @@ impl Analysis {
                     let d = kernel_source_def(db, kmod.as_str(), func.as_str())?;
                     def_span(db, &resolved, module, d)
                 }
-                Res::Foreign { .. } | Res::Error => None,
+                // A Go binding has no Sky source: jump to its line in the
+                // generated catalogue (`sky-ffi/<slug>.skyi`), else to its
+                // pinned entry in `<slug>.kernel.json`.
+                Res::Foreign { package, name } => {
+                    let pkg = self.ffi_for_module(module)?.resolve(package.as_str())?;
+                    return ffi_binding_location(pkg, name.as_str());
+                }
+                Res::Error => None,
             },
             Cand::Type(o) => def_span(db, &resolved, module, o.con)
                 .or_else(|| builtin_type_source(db, o.name.as_str())),
@@ -1114,6 +1138,7 @@ impl Analysis {
                 seen.push(d);
             }
         }
+        cause_errors_only(&mut seen);
         seen.into_iter()
             .map(|d| to_lsp_diag(&self.docs, text, &d))
             .collect()
@@ -2870,6 +2895,103 @@ fn organize_imports_edit(db: &SkyDatabase, module: ModuleId, text: &str) -> Opti
     })
 }
 
+/// Where a Go binding is declared. The `.skyi` catalogue beside the
+/// `kernel.json` prints one `-- [<effect>] <GoName> : <skyType>` line per
+/// binding, and the Sky name is the Go name with its first letter lowered
+/// (`Getenv` → `getenv`, `TODO` → `tODO`). Without a `.skyi` (or no matching
+/// line), the binding's `"name": "<sky name>"` entry in the `kernel.json`.
+fn ffi_binding_location(pkg: &ffi::FfiPackage, name: &str) -> Option<Location> {
+    fn lower_first(s: &str) -> String {
+        let mut c = s.chars();
+        match c.next() {
+            Some(f) => f.to_lowercase().chain(c).collect(),
+            None => String::new(),
+        }
+    }
+    let line_loc = |path: &Path, line: usize, start: usize, len: usize| -> Option<Location> {
+        Some(Location {
+            uri: Url::from_file_path(path).ok()?,
+            range: Range {
+                start: Position {
+                    line: line as u32,
+                    character: start as u32,
+                },
+                end: Position {
+                    line: line as u32,
+                    character: (start + len) as u32,
+                },
+            },
+        })
+    };
+    let dir = pkg.kernel_json.parent()?;
+    let slug = pkg
+        .kernel_json
+        .file_name()?
+        .to_str()?
+        .strip_suffix(".kernel.json")?;
+    let skyi = dir.join(format!("{slug}.skyi"));
+    if let Ok(text) = std::fs::read_to_string(&skyi) {
+        for (i, l) in text.lines().enumerate() {
+            let Some(rest) = l.strip_prefix("-- [") else {
+                continue;
+            };
+            let Some((_, decl)) = rest.split_once("] ") else {
+                continue;
+            };
+            let Some((go_name, _)) = decl.split_once(" : ") else {
+                continue;
+            };
+            if lower_first(go_name) == name {
+                let col = l.len() - decl.len();
+                return line_loc(&skyi, i, col, go_name.len());
+            }
+        }
+    }
+    let text = std::fs::read_to_string(&pkg.kernel_json).ok()?;
+    let needle = format!("\"name\": \"{name}\"");
+    text.lines().enumerate().find_map(|(i, l)| {
+        let col = l.find(&needle)?;
+        line_loc(&pkg.kernel_json, i, col, needle.len())
+    })
+}
+
+/// Keep only the CAUSE when a naming error makes the other errors its
+/// consequence, exactly as `sky check` does (`project::build`, the cause gates
+/// before the type gate). Under an ambiguous name (`[E1012]`) or an opaque
+/// type's constructors asked for by `exposing (T(..))` (`[E1013]`) the resolver
+/// still hands the checker one candidate, so a type or arity error at the use
+/// (`[E2007]` "declared as 0-arg") is noise about a binding the user never
+/// chose; the CLI prints only the cause. Under a dangling export (`[E1015]`)
+/// the CLI prints the naming band only. Warnings and hints stay.
+fn cause_errors_only(ds: &mut Vec<diagnostics::Diagnostic>) {
+    let is_err = |d: &diagnostics::Diagnostic| d.severity == diagnostics::Severity::Error;
+    let has = |code: &str, ds: &[diagnostics::Diagnostic]| {
+        ds.iter().any(|d| is_err(d) && d.code.0 == code)
+    };
+    let keep: fn(&str) -> bool = if has("E1012", ds) || has("E1013", ds) {
+        |c| c == "E0001" || c == "E1012" || c == "E1013"
+    } else if has("E1015", ds) {
+        |c| c == "E0001" || c.starts_with("E1")
+    } else {
+        return;
+    };
+    ds.retain(|d| !is_err(d) || keep(&d.code.0));
+}
+
+/// The editor text of a diagnostic: its message, then the fix hint the CLI
+/// prints as `Try: …`. Many v0.27.0 hints (the FFI `Result`, a stale FFI
+/// surface, a builder config key, a secret, a cast, a checked combinator) live
+/// only in `suggestion`, and each ends with its `see docs/migration/v0.27.md#…`
+/// link. The hint goes in the message itself because every editor renders the
+/// message, while `relatedInformation` needs a location and `codeDescription`
+/// an absolute URL.
+fn lsp_message(d: &diagnostics::Diagnostic) -> String {
+    match d.suggestion.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => format!("{}\n\nTry: {s}", d.message),
+        _ => d.message.clone(),
+    }
+}
+
 fn to_lsp_diag(docs: &[Doc], text: &str, d: &diagnostics::Diagnostic) -> Diagnostic {
     let range = d
         .labels
@@ -2917,7 +3039,7 @@ fn to_lsp_diag(docs: &[Doc], text: &str, d: &diagnostics::Diagnostic) -> Diagnos
         code: Some(tower_lsp::lsp_types::NumberOrString::String(
             d.code.0.clone(),
         )),
-        message: d.message.clone(),
+        message: lsp_message(d),
         source: Some("sky".to_string()),
         related_information,
         ..Default::default()
