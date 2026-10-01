@@ -769,26 +769,41 @@ impl Printer {
     }
 
     fn fmt_record_update(&mut self, col: usize, r: &syntax::ast::RecordUpdate) -> String {
+        // Multi-line layout (the standard Elm form):
+        //
+        //     { base
+        //         | a = 1
+        //         , b = 2
+        //     }
+        //
+        // `{ base` stands alone; each field sits one step in, led by `|` then
+        // `,`. A value that breaks goes one further step in from its field.
         let base = record_update_base(r.syntax());
         let fields = record_fields(r.syntax());
-        let elem_col = col + 2;
+        let field_col = col + STEP;
+        let elem_col = field_col + 2; // after "| " / ", "
+        let start_line = line_of(
+            &self.line_starts,
+            usize::from(r.syntax().text_range().start()),
+        );
         let mut pairs: Vec<(String, String)> = Vec::new();
         for (name_node, value) in &fields {
             let line = line_of(
                 &self.line_starts,
                 usize::from(name_node.text_range().start()),
             );
-            let drained = self.drain_before(col, line);
+            // Own-line comments before a field render above it at the field
+            // column, whichever column the source had them at (the old layout
+            // put them at the outer indent).
+            let drained = self.drain_any_between(field_col, start_line, line);
             let name = name_node.text().to_string();
             let s = match value {
                 Some(v) => {
-                    // Format the value one step in from the field, then decide
-                    // placement: a value that stays single-line AND fits on the
+                    // A value that stays single-line AND fits on the
                     // `name = …` line stays inline; a multi-line value (a list /
-                    // nested record / case) — or one that would overflow inline —
-                    // breaks onto its own line at `value_col`, so its `[`/`,`/`]`
-                    // (or `{`/`,`/`}`) align under one another instead of drifting.
-                    let value_col = col + STEP;
+                    // nested record / case), or one that would overflow inline,
+                    // breaks onto its own line at `value_col`.
+                    let value_col = field_col + STEP;
                     let rendered = self.fmt_expr(value_col, v);
                     let inline_col = elem_col + width(&name) + 3; // "name = "
                     if !rendered.contains('\n') && inline_col + width(&rendered) <= MAX {
@@ -811,19 +826,16 @@ impl Printer {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        let fits = !any_drained && col + width(&one_line) <= MAX;
+        let fits = !any_drained
+            && col + width(&one_line) <= MAX
+            && !items.iter().any(|s| s.contains('\n'));
         if fits {
             return one_line;
         }
-        let open = format!("{{ {base} | ");
-        let (d0, i0) = &pairs[0];
-        let mut out = if d0.is_empty() {
-            format!("{open}{i0}")
-        } else {
-            format!("{}{}{open}{i0}", strip_leading_indent(col, d0), indent(col))
-        };
-        for (d, i) in &pairs[1..] {
-            out.push_str(&format!("\n{d}{}, {i}", indent(col)));
+        let mut out = format!("{{ {base}");
+        for (k, (d, i)) in pairs.iter().enumerate() {
+            let lead = if k == 0 { "| " } else { ", " };
+            out.push_str(&format!("\n{d}{}{lead}{i}", indent(field_col)));
         }
         out.push_str(&format!("\n{}}}", indent(col)));
         out

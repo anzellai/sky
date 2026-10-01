@@ -341,4 +341,37 @@ mod tests {
         );
         idempotent(src);
     }
+
+    #[test]
+    fn multiline_record_update_puts_base_alone_and_indents_fields() {
+        // A record update that does not fit on one line keeps `{ base` alone on
+        // the first line and every field one step in, led by `|` then `,`. The
+        // old layout put the first field on the `{ base |` line and the rest at
+        // the outer indent.
+        let src = "module M exposing (f)\n\n\nf row =\n    { emptyItem | id = dictInt \"id\" row, title = dictGet \"title\" row, body = dictGet \"body\" row }\n";
+        let out = format_source(src);
+        assert_eq!(
+            out,
+            "module M exposing (f)\n\n\nf row =\n    { emptyItem\n        | id = dictInt \"id\" row\n        , title = dictGet \"title\" row\n        , body = dictGet \"body\" row\n    }\n",
+            "got: {out:?}"
+        );
+        idempotent(src);
+        // The old layout reformats to the new one.
+        let old = "module M exposing (f)\n\n\nf row =\n    { emptyItem | id = dictInt \"id\" row\n    , title = dictGet \"title\" row\n    , body = dictGet \"body\" row\n    }\n";
+        let out = format_source(old);
+        assert_eq!(
+            out,
+            "module M exposing (f)\n\n\nf row =\n    { emptyItem\n        | id = dictInt \"id\" row\n        , title = dictGet \"title\" row\n        , body = dictGet \"body\" row\n    }\n",
+            "got: {out:?}"
+        );
+        idempotent(old);
+        // A multi-line value breaks one step in from its field, and a comment
+        // before a field stays above that field.
+        let nested = "module M exposing (f)\n\n\nf m =\n    { m\n        | a = 1\n        -- the list\n        , items =\n            [ \"one one one one one one\"\n            , \"two two two two two two two\"\n            , \"three\"\n            ]\n    }\n";
+        assert_eq!(format_source(nested), nested);
+        idempotent(nested);
+        // An update that fits stays on one line.
+        let short = "module M exposing (f)\n\n\nf m =\n    { m | a = 1, b = 2 }\n";
+        assert_eq!(format_source(short), short);
+    }
 }

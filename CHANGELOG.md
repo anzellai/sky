@@ -53,7 +53,7 @@ Ed25519 keys are refused; the loopback Host guard applies only outside
 production; each `App.serve` app has its own cookie; the Sky.Spa cookie is
 `sky_spa`; old Sky.Spa sessions are converted once; an open Sky.Spa tab
 reloads once after a deploy that changed the wire; `X-Sky-Sid` carries a tag
-of the id.
+of the id; `sky fmt` lays out a multi-line record update in the standard form.
 
 Operations:
 
@@ -1683,6 +1683,23 @@ entries.
   runs an embedded Live app next to a `Task.loop`.
 
 ### Fixed
+- **`sky fmt` split a multi-line record update badly.** It printed the first
+  field on the `{ model |` line and the other fields at the outer indent
+  (also in v0.26.1). It now prints `{ model` alone, then `| a = …` and
+  `, b = …` one step in, and `}` under the `{`. An update that fits on one
+  line stays on one line. Layout only; run `sky fmt` once to reformat.
+- **The editor did not show a diagnostic's fix hint.** The LSP now shows the
+  `Try: …` hint (with its `docs/migration/v0.27.md` link), and `sky check
+  --format json` carries it as `suggestion`.
+- **Hover hid what the checker fills in.** Hover shows the type the checker
+  fills in for `any`, and keeps the `comparable` / `number` / `appendable`
+  bounds of an inferred signature.
+- **The editor reported a cascade error under an ambiguous name**
+  (`[E1012]`). It reports only the ambiguity now.
+- **Go to definition on a Go FFI binding did nothing.** It opens the
+  binding's line in `sky-ffi/<slug>.skyi`.
+- **`sky lsp` did not exit on `exit` while the client kept stdin open.** It
+  exits with 0 after `shutdown` and 1 without.
 - **A response that set more than one cookie sent only the first.** A
   response that passed through a typed binding kept only its first
   `Set-Cookie`. So a split Sky.Spa backend that moved a pre-v0.27 `sky_sid`
@@ -5925,7 +5942,7 @@ fields).
           |> Live.withAnalytics { pageViews = True })
   ```
   Full field→builder table for every app shape:
-  [`docs/v0.19/migration-builder-cfg.md`](docs/v0.19/migration-builder-cfg.md).
+  [`docs/history/v0.19/migration-builder-cfg.md`](docs/history/v0.19/migration-builder-cfg.md).
 - **Raw `api` endpoints changed shape too.** The old separate `api` cfg field is
   gone; `api "METHOD /path" handler` now returns a `Route` and lives in the
   `routes` list next to `route`. The handler signature is
