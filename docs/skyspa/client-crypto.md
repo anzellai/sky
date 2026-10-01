@@ -42,6 +42,75 @@ name does not count, and a marker in dead code does not turn it on). On the
 `web` (Sky.Live) and terminal targets there is no client split and
 `App.withClientCrypto` does nothing.
 
+A complete program that makes a signing key on the device and shows its public key. The secret key field is a `Maybe`, as the build requires (`scripts/doc-examples.sh` checks it):
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Crypto.Sign as Sign
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { secret : Maybe Sign.SecretKey
+    , publicKey : String
+    }
+
+type Msg
+    = MakeKey
+    | KeyMade (Result Error Sign.SecretKey)
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { secret = Nothing, publicKey = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        MakeKey ->
+            ( model, Cmd.perform Sign.generate KeyMade )
+
+        KeyMade (Ok key) ->
+            ( { model | secret = Just key
+              , publicKey = Sign.publicKeyToBase64 (Sign.publicKey key)
+              }
+            , Cmd.none
+            )
+
+        KeyMade (Err _) ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ Ui.button
+              []
+              { onPress = Just MakeKey, label = Ui.text "Make a device key" }
+        , Ui.text ("Public key: " ++ model.publicKey)
+        ]
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.withClientCrypto
+        |> App.run
+```
+
 ## What changes
 
 With the opt-in, these members run in the **wasm client**:

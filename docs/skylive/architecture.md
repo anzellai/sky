@@ -621,6 +621,56 @@ operator variable `SKY_LIVE_SESSION_TRANSPORT` (`cookie` / `header`) wins over
 the builder. An unknown value keeps cookies and prints a warning. Nothing
 changes for an app that does not opt in.
 
+A complete program (`scripts/doc-examples.sh` checks it):
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.App as App exposing (SessionTransport(..))
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { count : Int }
+
+type Msg
+    = Increment
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { count = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update _ model =
+    ( { model | count = model.count + 1 }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.button
+        []
+        { onPress = Just Increment
+        , label = Ui.text ("Clicked " ++ String.fromInt model.count ++ " times")
+        }
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.withSessionTransport HeaderToken
+        |> App.run
+```
+
 **How the session travels.**
 
 - A page load mints a **session token** (16 random bytes, 32 hex characters).

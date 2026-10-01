@@ -1151,6 +1151,106 @@ to case (HTML attribute names are lower case).
   Sky client files, and the widget must be a same-origin file: no inline
   script, no `eval`, no `new Function`.
 
+**A complete program.** The editor island with a format button, which also re-sends the text when the island resyncs (`scripts/doc-examples.sh` checks it):
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Json.Decode as Decode
+import Sky.Core.Json.Encode as Encode
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Html as Html
+import Std.Html.Attributes as Attr
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+
+type alias Model =
+    { theme : String
+    , text : String
+    }
+
+type Msg
+    = TextChanged String
+    | FormatClicked
+    | EditorResynced String
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { theme = "light", text = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        TextChanged text ->
+            ( { model | text = text }, Cmd.none )
+
+        FormatClicked ->
+            ( model, Cmd.toIsland "main-editor" "format" (Encode.object []) )
+
+        EditorResynced _ ->
+            ( model
+            , Cmd.toIsland
+                  "main-editor"
+                  "load"
+                  (Encode.object [ ( "text", Encode.string model.text ) ])
+            )
+
+
+editor : Model -> Element Msg
+editor model =
+    Ui.island
+        { name = "editor"
+        , id = "main-editor"
+        , props = Encode.object [ ( "theme", Encode.string model.theme ) ]
+        }
+        [ Ui.width Ui.fill
+        , Ui.onIslandEvent
+              "changed"
+              (Decode.field "text" Decode.string)
+              TextChanged
+        , Ui.onIslandEvent
+              "resync"
+              (Decode.field "reason" Decode.string)
+              EditorResynced
+        ]
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.spacing 8 ]
+        [ editor model
+        , Ui.button
+              []
+              { onPress = Just FormatClicked, label = Ui.text "Format" }
+        ]
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.withHead
+               (\_ ->
+                   [ Html.node
+                         "script"
+                         [ Attr.src "/static/editor.js"
+                         , Attr.attribute "defer" ""
+                         ]
+                         []
+                   ])
+        |> App.run
+```
+
 The regression gates are `scripts/islands-e2e.sh` (Sky.Live and Sky.Spa,
 under `SKY_CSP=strict`, including a flood of 400 commands in one update),
 `live_island_delivery_test.go` (every server-side loss place is detected) and
@@ -1196,6 +1296,77 @@ board model =
 - **Accessibility.** `label` is required. It is the scene's accessible name (`role="img"`, `aria-label` and a `<title>`), so a screen reader says what the picture shows.
 
 **Backends.** Sky.Live (and `--target desktop`, Sky.Live in a native window) draws the scene as server-rendered inline SVG, diffed like any other element: moving a shape is one attribute patch, and the first paint needs no script. The Sky.Spa client (`--target web:app` and the `desktop:<os>`, `tablet:<os>` and `mobile:<os>` shells) draws it on a `<canvas>`: the scene becomes a draw list the page's painter decodes in one call and draws in one pass per animation frame; a frame where a few shapes changed redraws only the region their old and new positions cover; the backing store is the scene's size times `devicePixelRatio` (re-checked every paint), so it stays sharp on a high-density screen; a pointer event is hit-tested against the painter's scene index (each shape's box, then its path, fill and stroke) and reaches the shape's handlers and its groups', as the SVG's DOM bubbling does. The canvas has `role="img"`, the label as `aria-label`, and a text alternative (`aria-describedby`: the label and the scene's texts). A scene the server painted (Sky.Spa's server-side first paint) is SVG until the client swaps in the canvas. The choice is measured, on every size from 10 to 20,000 shapes in Chrome and WebKit (`docs/perf/runs/canvas-20260930/`): no size draws faster as SVG on Sky.Spa (10 and 100 shapes tie), and from 1,000 shapes the canvas renders a scene 2.1 to 2.6 times faster, moves every shape of it 1.6 to 5.9 times faster (at 20,000 shapes 896 ms against 3,714 ms in Chrome) and hit-tests 2.5 to 15 times faster, with 45 DOM elements whatever the size. On Sky.Spa a frame of a large scene is still `view` and the diff in wasm (190 ms at 5,000 shapes whichever backend draws), so a large animated scene with few changes per frame is faster on Sky.Live (35 ms at 5,000 shapes), whose server does that work natively. The painter composites a translucent group through a layer, so it looks as it does in SVG; a text is hit-tested by its box, not its glyphs. A terminal (Sky.Tui) rasterises the scene into Braille cells (2 × 4 dots per cell): shapes are filled and stroked on the dot grid, a cell takes the colour of the last shape that set a dot in it, and text is written on the cell grid at its anchor. Opacity below 0.2 hides a shape; other opacity, stroke width and pointer events do not apply in a terminal.
+
+**A complete program.** A ball that follows the pointer and counts clicks (`scripts/doc-examples.sh` checks it):
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Canvas as Canvas exposing (PathCommand(..), Point)
+
+type alias Model =
+    { ball : Point
+    , hits : Int
+    }
+
+type Msg
+    = Moved Point
+    | Hit
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { ball = { x = 200.0, y = 100.0 }, hits = 0 }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Moved p ->
+            ( { model | ball = p }, Cmd.none )
+
+        Hit ->
+            ( { model | hits = model.hits + 1 }, Cmd.none )
+
+
+board : Model -> Element Msg
+board model =
+    Canvas.sceneWith
+        [ Canvas.onPointerMove Moved ]
+        { width = 400, height = 200, label = "Game board" }
+        [ Canvas.rect
+              { x = 0.0, y = 0.0, width = 400.0, height = 200.0 }
+              [ Canvas.fill (Ui.rgb 240 240 250) ]
+        , Canvas.circle
+              { x = model.ball.x, y = model.ball.y, radius = 10.0 }
+              [ Canvas.fill (Ui.rgb 200 40 40), Canvas.onClick Hit ]
+        , Canvas.path
+              [ MoveTo 10.0 190.0, LineTo 390.0 190.0 ]
+              [ Canvas.stroke (Ui.rgb 0 0 0), Canvas.strokeWidth 2.0 ]
+        , Canvas.text
+              { x = 200.0, y = 30.0 }
+              ("Hits: " ++ String.fromInt model.hits)
+              [ Canvas.anchorMiddle, Canvas.fontSize 18 ]
+        ]
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = board
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.run
+```
 
 The regression gates are the conformance suite `UiCanvasConformanceTest` (the exact SVG), `tui_scene_test.go` (the cell golden), `scene_client_test.go` (the SVG pointer mapping), `scene_canvas_test.go` (the draw list, the patch routing, and the painter in node against a recording canvas: one pass per frame, partial repaints, hit tests, pointer mapping, the text alternative, the device pixel ratio) and `scripts/ui-canvas-terminal-e2e.sh` (Sky.Live in Chromium and WebKit, and the Sky.Spa canvas in Chromium and WebKit, under `SKY_CSP=strict`).
 
@@ -1255,6 +1426,74 @@ view model =
 **Targets.** Sky.Live (`--target web`) and the desktop window. A Sky.Spa build (`web:app` and the native client targets) refuses a program that uses `Std.Ui.Terminal`, naming the module and the target that works: the PTY lives on the server, and Sky.Spa cannot send a widget command from a server branch. A terminal target (Sky.Tui) renders the empty element. A child process spawned from a Sky.Live session is closed when the session ends.
 
 **Security.** The terminal gives whoever sees the page a shell with the server's rights. Put it behind `Std.Auth` (or an equivalent check in `update`), and spawn the least-privileged program that does the job.
+
+**A complete program.** A shell on a PTY in the page (`scripts/doc-examples.sh` checks it). Gate it behind sign-in before you deploy it, as the security note says:
+
+```elm
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Process as Process exposing (Process)
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Terminal as Terminal exposing (Terminal)
+
+type alias Model =
+    { term : Terminal }
+
+type Msg
+    = Spawned (Result Error Process)
+    | Term Terminal.Msg
+
+
+init : a -> ( Model, Cmd Msg )
+init _ =
+    ( { term = Terminal.init "shell" }
+    , Cmd.perform
+          (Process.command "sh" |> Process.withPty { cols = 80, rows = 24 }
+              |> Process.spawn)
+          Spawned
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Spawned (Ok p) ->
+            let
+                ( term, cmd ) = Terminal.attach Term p model.term
+            in
+                ( { model | term = term }, cmd )
+
+        Spawned (Err _) ->
+            ( model, Cmd.none )
+
+        Term m ->
+            let
+                ( term, cmd ) = Terminal.update Term m model.term
+            in
+                ( { model | term = term }, cmd )
+
+
+view : Model -> Element Msg
+view model =
+    Terminal.view Term model.term [ Ui.height (Ui.px 400) ]
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.run
+```
 
 The regression gates are `term_screen_test.go` (the server screen against known sequences, and every frame applied to a model of the widget must give the screen exactly, over random sequences, random resizes and floods), `island_terminal_test.go` (the widget in node: the op model, gap detection, keys, the text-layer fallback, draw batching against a recording canvas context, and frames made by the Go screen applied by the JS model), `process_terminal_test.go` (a real shell on a PTY: remount repaint, a ring overflow, the check frame, resize), `UiCanvasConformanceTest` (the element) and `scripts/ui-canvas-terminal-e2e.sh` (canvas drawing, `echo hi`, selection and copy, a full-screen redraw loop within its frame budget, resize with `stty size`, a dropped SSE connection and a reload, under `SKY_CSP=strict`).
 
