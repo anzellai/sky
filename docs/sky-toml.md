@@ -39,6 +39,7 @@ That's enough — every other field has a sensible default.
 | `[env]`              | Env-var namespace prefix (v0.11.5+)                  |
 | `[security]`         | CSRF opt-out                                         |
 | `[app]`              | Persisted build `target` for a `Std.App` entry (build-time, not runtime) |
+| `[tool.<name>]`      | Another tool's own settings. Sky never reads it and never warns (v0.27.2+) |
 
 > **Cross-platform packaging (app name, bundle id, icon) is NOT in `sky.toml`.**
 > It lives in code, as an optional `bundle` binding built with `Std.Bundle`'s
@@ -54,6 +55,25 @@ Every key seeded into the runtime is **only applied when the
 corresponding env var is unset**. So shell env / `.env` always wins
 over `sky.toml`. Production deployments override config without
 editing files.
+
+### Tool sections — `[tool.<name>]` *(v0.27.2+)*
+
+A tool that keeps its settings in the project's `sky.toml` (a code
+generator, a linter, a deploy script) puts them under `[tool.<name>]`.
+Sky never reads a `[tool.*]` section, its sub-tables (`[tool.sqlgen.queries]`)
+or arrays of tables (`[[tool.lint.rules]]`), and never warns about them:
+
+```toml
+[tool.sqlgen]
+schema = "db/schema.sql"
+out = "src/Db"
+```
+
+Any other section Sky does not read gets ONE build warning (not one per
+key). A near miss of a Sky section names the section it meant
+(`[liv]` → "Did you mean `[live]`?"). Any other unknown section is told to
+move under `[tool.<name>]`. An unknown key in a section Sky does read
+(`[live] prot`) still warns per key, with the accepted keys.
 
 ---
 

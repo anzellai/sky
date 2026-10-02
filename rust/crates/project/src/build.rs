@@ -1690,7 +1690,12 @@ pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
         // Section header — tolerate a trailing inline comment after `]`.
         if line.starts_with('[') {
             if let Some(end) = line.find(']') {
-                section = line[1..end].trim().trim_matches('"').to_string();
+                // `[[a.b]]` (an array of tables) names section `a.b` too.
+                section = line[1..end]
+                    .trim_start_matches('[')
+                    .trim()
+                    .trim_matches('"')
+                    .to_string();
                 continue;
             }
         }
@@ -1896,6 +1901,12 @@ pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
 /// section is known to be somebody else's. New runtime sections are covered the
 /// day they are added rather than the day someone remembers to list them.
 fn is_externally_consumed_section(section: &str) -> bool {
+    // `[tool.<name>]` (and its sub-tables) belongs to another tool: a code
+    // generator, a linter, a deploy script. Sky never reads it and never warns
+    // about it (docs/sky-toml.md, "Tool sections").
+    if section == "tool" || section.starts_with("tool.") {
+        return true;
+    }
     matches!(
         section,
         // Bare top-level keys (`port`, `bin`, `root`) — handled by the arms
@@ -1984,6 +1995,32 @@ fn inert_key_hint(section: &str, key: &str) -> Option<&'static str> {
     }
 }
 
+/// The runtime sections Sky reads, for the near-miss hint.
+const RUNTIME_SECTIONS: &[&str] = &[
+    "live",
+    "database",
+    "log",
+    "analytics",
+    "jobs",
+    "env",
+    "security",
+];
+
+/// Levenshtein distance, for the near-miss section hint (short ASCII names).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let sub = prev[j] + usize::from(ca != *cb);
+            cur.push(sub.min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
 /// A build warning per sky.toml key that sits in a runtime config section and is
 /// honoured by nothing.
 ///
@@ -2012,40 +2049,78 @@ fn inert_key_hint(section: &str, key: &str) -> Option<&'static str> {
 /// (downgrade), and failing the build over an inert key would be worse than the
 /// key being inert. The message names the accepted keys so the fix is mechanical.
 pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
-    keys.iter()
-        .map(|(section, key)| {
-            let mut msg = format!(
-                "sky.toml: `[{section}] {key}` is not a key Sky reads — it has no effect. "
-            );
-            let accepted = accepted_config_keys(section);
-            if accepted.is_empty() {
-                // Unknown SECTION, not merely an unknown key in a known one.
-                // Naming the real sections is the useful thing here: the
-                // likeliest cause is a typo or an invented section.
-                msg.push_str("`[");
-                msg.push_str(section);
-                msg.push_str(
-                    "]` is not a section Sky reads. Runtime sections are: \
-                     `[live]`, `[database]`, `[log]`, `[analytics]`, \
-                     `[jobs]`, `[env]`, `[security]`. ",
-                );
-            } else {
-                msg.push_str(&format!(
-                    "Accepted keys in `[{section}]`: {}. ",
-                    accepted.join(", ")
-                ));
+    const SEE: &str = "(See https://github.com/anzellai/sky/blob/main/docs/sky-toml.md; \
+                       keys are camelCase.)";
+    let mut out = Vec::new();
+    // Unknown SECTIONS, in first-seen order, each with its keys: ONE warning per
+    // section, not one per key (a tool's own section used to print a warning
+    // for every key on every build).
+    let mut unknown_sections: Vec<(&str, Vec<&str>)> = Vec::new();
+    for (section, key) in keys {
+        let accepted = accepted_config_keys(section);
+        if accepted.is_empty() {
+            match unknown_sections
+                .iter_mut()
+                .find(|(s, _)| *s == section.as_str())
+            {
+                Some((_, ks)) => ks.push(key),
+                None => unknown_sections.push((section, vec![key])),
             }
-            if let Some(hint) = inert_key_hint(section, key) {
-                msg.push_str(hint);
-                msg.push(' ');
-            }
-            msg.push_str(
-                "(See https://github.com/anzellai/sky/blob/main/docs/sky-toml.md; \
-                 keys are camelCase.)",
-            );
-            msg
-        })
-        .collect()
+            continue;
+        }
+        let mut msg = format!(
+            "sky.toml: `[{section}] {key}` is not a key Sky reads — it has no effect. \
+             Accepted keys in `[{section}]`: {}. ",
+            accepted.join(", ")
+        );
+        if let Some(hint) = inert_key_hint(section, key) {
+            msg.push_str(hint);
+            msg.push(' ');
+        }
+        msg.push_str(SEE);
+        out.push(msg);
+    }
+    for (section, ks) in unknown_sections {
+        // Unknown SECTION, not merely an unknown key in a known one. Naming the
+        // real sections is the useful thing here: the likeliest cause is a typo
+        // or an invented section, or a section another tool owns.
+        let listed: Vec<String> = ks.iter().map(|k| format!("`{k}`")).collect();
+        let mut msg = format!(
+            "sky.toml: `[{section}]` is not a section Sky reads, so its key{} ({}) {} no \
+             effect. Runtime sections are: `[live]`, `[database]`, `[log]`, `[analytics]`, \
+             `[jobs]`, `[env]`, `[security]`. ",
+            if ks.len() == 1 { "" } else { "s" },
+            listed.join(", "),
+            if ks.len() == 1 { "has" } else { "have" },
+        );
+        let hints: Vec<&str> = ks
+            .iter()
+            .filter_map(|k| inert_key_hint(section, k))
+            .collect();
+        for h in &hints {
+            msg.push_str(h);
+            msg.push(' ');
+        }
+        let migrated = crate::config_migration::MIGRATIONS
+            .iter()
+            .any(|e| e.from.is_some_and(|(s, _)| s == section));
+        // A near miss of a Sky section (`[liv]`, `[databse]`) is a typo: name
+        // the section it meant, not a `[tool.*]` home.
+        let near = RUNTIME_SECTIONS
+            .iter()
+            .find(|s| edit_distance(s, section) <= if s.len() <= 4 { 1 } else { 2 });
+        if let Some(s) = near {
+            msg.push_str(&format!("Did you mean `[{s}]`? "));
+        } else if hints.is_empty() && !migrated {
+            msg.push_str(&format!(
+                "If another tool reads this section, move it under `[tool.{section}]`: \
+                 Sky never reads `[tool.*]` sections and does not warn about them. "
+            ));
+        }
+        msg.push_str(SEE);
+        out.push(msg);
+    }
+    out
 }
 
 /// Read a `[project]`-scoped (or bare top-level, or `[source]`-table) string key
@@ -3792,6 +3867,65 @@ mod sky_toml_tests {
     /// EVERY key under it — including `cookieName`, once half-accepted — is
     /// reported as inert, and the message names `[auth]` as not a section Sky
     /// reads. A `[live]` typo (`prot`) is the other half of the class.
+    /// A section another tool owns goes under `[tool.<name>]`, which Sky never
+    /// reads and never warns about (also as an array of tables). A misspelt Sky
+    /// section (`[liv]`) still warns, and an unknown top-level section warns ONCE
+    /// (not once per key) and names the `[tool.<name>]` home. A project tool's
+    /// own `[sqlgen]` section used to print one warning per key on every build.
+    #[test]
+    fn tool_sections_are_silent_and_misspelt_sections_still_warn() {
+        let dir = std::env::temp_dir().join(format!("sky-tool-section-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sky.toml");
+        std::fs::write(
+            &path,
+            "name = \"x\"\n[tool.sqlgen]\nout = \"src/Db\"\nschema = \"db/schema.sql\"\n\
+             [tool.sqlgen.queries]\ndir = \"db/queries\"\n\
+             [[tool.lint.rules]]\nname = \"no-todo\"\n\
+             [sqlgen]\nout = \"src/Db\"\nschema = \"db/schema.sql\"\n\
+             [liv]\nport = 9000\n",
+        )
+        .unwrap();
+        let cfg = read_sky_toml_config(&path);
+        assert!(
+            !cfg.unknown_config_keys
+                .iter()
+                .any(|(s, _)| s == "tool" || s.starts_with("tool.")),
+            "[tool.*] is never reported: {:?}",
+            cfg.unknown_config_keys
+        );
+        let msgs = unknown_config_keys(&cfg.unknown_config_keys);
+        assert!(
+            !msgs.iter().any(|m| m.starts_with("sky.toml: `[tool")),
+            "{msgs:?}"
+        );
+        let liv: Vec<&String> = msgs.iter().filter(|m| m.contains("`[liv]`")).collect();
+        assert_eq!(liv.len(), 1, "a misspelt Sky section still warns: {msgs:?}");
+        assert!(liv[0].contains("port"), "{}", liv[0]);
+        assert!(
+            liv[0].contains("Did you mean `[live]`?") && !liv[0].contains("[tool.liv]"),
+            "a near miss names the Sky section, not a tool home: {}",
+            liv[0]
+        );
+        let sqlgen: Vec<&String> = msgs.iter().filter(|m| m.contains("`[sqlgen]`")).collect();
+        assert_eq!(
+            sqlgen.len(),
+            1,
+            "one warning per unknown section, not per key: {msgs:?}"
+        );
+        assert!(
+            sqlgen[0].contains("out") && sqlgen[0].contains("schema"),
+            "it names the keys: {}",
+            sqlgen[0]
+        );
+        assert!(
+            sqlgen[0].contains("[tool.sqlgen]"),
+            "it names the [tool.<name>] home: {}",
+            sqlgen[0]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn unknown_keys_in_config_sections_are_reported() {
         let dir = std::env::temp_dir().join("sky-unknown-key-test");

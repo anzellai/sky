@@ -689,6 +689,10 @@ path   = "app.db"
 [log]                    # structured logging
 format = "plain"         # plain (dev) | json (production)
 level  = "info"          # debug | info | warn | error
+
+# A tool's own settings (a code generator, a linter) go under [tool.<name>]:
+# Sky never reads a [tool.*] section and never warns about it. Any other
+# section Sky does not read gets one build warning.
 ```
 
 ### How to pick — and what to change as you grow
