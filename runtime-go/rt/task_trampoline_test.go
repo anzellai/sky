@@ -213,13 +213,43 @@ func assertNoHeapGrowth(t *testing.T, what string, samples []uint64, iterations 
 	// retaining even 8 bytes per iteration adds iterations*4 bytes between the
 	// half medians, over 100 MB at the tens of millions of iterations these
 	// loops run.
-	slack := math.Max(4<<20, first/5)
+	slack := heapGrowthSlack(first, iterations)
 	leakSignal := float64(iterations) * 4
 	t.Logf("%s: %d iterations, %d samples, heap first-half %.0f B, second-half %.0f B, min %d, max %d, slack %.0f B, 8-byte-leak signal %.0f B",
 		what, iterations, len(samples), first, second, minU(s), maxU(s), slack, leakSignal)
 	if second > first+slack {
 		t.Fatalf("%s: live heap grew from %.0f to %.0f bytes over %d iterations; samples %v",
 			what, first, second, iterations, samples)
+	}
+}
+
+// heapGrowthSlack is how far the second-half median may sit above the first
+// before the loop counts as leaking. The test exists to catch a retained frame
+// or value per iteration, so the bound is set from that signal: half of what
+// an 8-byte-per-iteration leak adds between the half medians (iterations*4),
+// so a leak of about 4 bytes per iteration or more still fails. Whole-process
+// noise from the package's other tests moved a run by 16.5 MB over 27.6 M
+// iterations (signal 110 MB) and must not. The fifth of the live heap and the
+// 4 MB floor keep a margin for runs with few iterations.
+func heapGrowthSlack(first float64, iterations int) float64 {
+	return math.Max(math.Max(4<<20, first/5), float64(iterations)*2)
+}
+
+// The slack still fails a real per-iteration leak and passes the observed
+// whole-process noise.
+func TestHeapGrowthSlackCatchesALeakNotNoise(t *testing.T) {
+	const iterations = 27627520
+	first := 78881744.0
+	if noisy := 95376888.0; noisy > first+heapGrowthSlack(first, iterations) {
+		t.Fatalf("the observed 16.5 MB noise reads as a leak (slack %.0f)", heapGrowthSlack(first, iterations))
+	}
+	leak8 := first + float64(iterations)*4 // 8 bytes retained per iteration
+	if leak8 <= first+heapGrowthSlack(first, iterations) {
+		t.Fatalf("an 8-byte-per-iteration leak passes (slack %.0f)", heapGrowthSlack(first, iterations))
+	}
+	leak4 := first + float64(iterations)*2.2 // a little over 4 bytes per iteration
+	if leak4 <= first+heapGrowthSlack(first, iterations) {
+		t.Fatalf("a 4-byte-per-iteration leak passes (slack %.0f)", heapGrowthSlack(first, iterations))
 	}
 }
 
