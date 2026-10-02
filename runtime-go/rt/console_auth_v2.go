@@ -199,6 +199,72 @@ func consoleCookieRevoked(value string) bool {
 func revokeConsoleCookie(c consoleCookieClaims) {
 	consoleRevokedIDs.put(c.id, c.exp, revokedExpiry)
 	consoleCheckedIDs.del(c.id)
+	wakeConsoleStreams(c.id)
+}
+
+// consoleOpenStreams registers every open console stream by its cookie id,
+// so a revocation reaches the streams already open, not only the next
+// request. An entry lives exactly as long as its stream (gateSSE).
+var consoleOpenStreams = struct {
+	mu sync.Mutex
+	m  map[string]map[chan struct{}]struct{}
+}{}
+
+// watchConsoleCookieRevocation registers the stream that r opened under its
+// console cookie id. The returned channel fires when that id is revoked, and
+// revoked reports whether it is. A revoked id ends the stream outright: the
+// credential it was admitted under is gone, and the client's reload lets the
+// gate decide afresh (in app mode the app's check may admit the browser
+// again with a new cookie). A request with no console cookie gets a nil
+// channel (it never fires) and a revoked that is always false.
+func watchConsoleCookieRevocation(r *http.Request) (wake <-chan struct{}, revoked func() bool, release func()) {
+	never := func() bool { return false }
+	c, err := r.Cookie(consoleAuthCookieV2Name)
+	if err != nil {
+		return nil, never, func() {}
+	}
+	claims, ok := parseConsoleCookie(c.Value)
+	if !ok {
+		return nil, never, func() {}
+	}
+	ch := make(chan struct{}, 1)
+	consoleOpenStreams.mu.Lock()
+	if consoleOpenStreams.m == nil {
+		consoleOpenStreams.m = make(map[string]map[chan struct{}]struct{})
+	}
+	set := consoleOpenStreams.m[claims.id]
+	if set == nil {
+		set = make(map[chan struct{}]struct{})
+		consoleOpenStreams.m[claims.id] = set
+	}
+	set[ch] = struct{}{}
+	consoleOpenStreams.mu.Unlock()
+	isRevoked := func() bool {
+		_, gone := consoleRevokedIDs.get(claims.id)
+		return gone
+	}
+	return ch, isRevoked, func() {
+		consoleOpenStreams.mu.Lock()
+		if set := consoleOpenStreams.m[claims.id]; set != nil {
+			delete(set, ch)
+			if len(set) == 0 {
+				delete(consoleOpenStreams.m, claims.id)
+			}
+		}
+		consoleOpenStreams.mu.Unlock()
+	}
+}
+
+// wakeConsoleStreams tells every open stream of a revoked cookie id to end.
+func wakeConsoleStreams(id string) {
+	consoleOpenStreams.mu.Lock()
+	defer consoleOpenStreams.mu.Unlock()
+	for ch := range consoleOpenStreams.m[id] {
+		select {
+		case ch <- struct{}{}:
+		default: // a wake is already pending
+		}
+	}
 }
 
 // consoleAuthCallback is the global handle to the app's `consoleAuth`

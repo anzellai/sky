@@ -36,8 +36,11 @@
 package rt
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
+	"time"
 )
 
 // Reasons carried by the session-lost event and the server log line.
@@ -125,29 +128,126 @@ func (g *gateProbeWriter) Write(b []byte) (int, error) { return len(b), nil }
 // request from a client that understands the session-lost event gets
 // `auth-required` when the gate denies it; any other request gets the gate's
 // own answer, as before.
+//
+// The gate does not stop at the open. An SSE stream lives as long as its tab,
+// and the sub-app keeps pushing data down it (the console's `Sub.every` tick
+// pushes metrics, logs and traces), so a gate that ran only once would let a
+// tab opened before a sign-out keep receiving data after it. The open stream
+// re-runs the same gate every subAppStreamRegateEvery, and ends at once when
+// its console cookie id is revoked (`_logout`, a failed app re-check). When
+// the gate denies, or the cookie is revoked, the stream ends with the session-lost `auth-required` event:
+// the client stops, reloads, and the reload shows the gate's refusal.
 func gateSSE(gate func(http.ResponseWriter, *http.Request) bool, h http.HandlerFunc) http.HandlerFunc {
 	if gate == nil {
 		return h
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !sseClientUnderstandsSessionLost(r) {
+		understands := sseClientUnderstandsSessionLost(r)
+		if !understands {
 			if !gate(w, r) {
 				return
 			}
-			h(w, r)
-			return
-		}
-		probe := &gateProbeWriter{h: http.Header{}}
-		if !gate(probe, r) {
-			logSSESessionLost(r, sseLostAuthRequired)
-			writeSSESessionLostStream(w, sseLostAuthRequired)
-			return
-		}
-		for k, vs := range probe.h {
-			for _, v := range vs {
-				w.Header().Add(k, v)
+		} else {
+			probe := &gateProbeWriter{h: http.Header{}}
+			if !gate(probe, r) {
+				logSSESessionLost(r, sseLostAuthRequired)
+				writeSSESessionLostStream(w, sseLostAuthRequired)
+				return
+			}
+			for k, vs := range probe.h {
+				for _, v := range vs {
+					w.Header().Add(k, v)
+				}
 			}
 		}
-		h(w, r)
+		serveGatedStream(w, r, gate, h, understands)
 	}
+}
+
+// subAppStreamRegateEvery is how often an open gated stream re-runs its gate.
+// The gate itself decides what a re-run costs: under SKY_CONSOLE_AUTH=app it
+// answers from its per-cookie record and calls the app's check only once the
+// 60 s re-check window has passed, so an open tab ends at most this long
+// after the window closes. A var so tests can run it fast.
+var subAppStreamRegateEvery = time.Second
+
+// serveGatedStream runs an admitted stream and ends it when its gate stops
+// admitting the request.
+func serveGatedStream(w http.ResponseWriter, r *http.Request, gate func(http.ResponseWriter, *http.Request) bool, h http.HandlerFunc, understands bool) {
+	// Re-run the gate with the request the browser would send now: the
+	// opening request plus any cookie the gate just issued (an app-mode
+	// console mints its cookie on the first admitted request).
+	recheck := requestWithIssuedCookies(r, w.Header())
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	wake, revoked, release := watchConsoleCookieRevocation(recheck)
+	defer release()
+
+	var lost atomic.Bool
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		t := time.NewTicker(subAppStreamRegateEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			case <-wake:
+			}
+			if revoked() || !gate(&gateProbeWriter{h: http.Header{}}, recheck) {
+				lost.Store(true)
+				cancel()
+				return
+			}
+		}
+	}()
+
+	h(w, r.WithContext(ctx))
+	cancel()
+	<-watcherDone
+	if !lost.Load() {
+		return
+	}
+	logSSESessionLost(r, sseLostAuthRequired)
+	if understands && r.Context().Err() == nil {
+		writeSSESessionLostFrame(w, sseLostAuthRequired)
+	}
+}
+
+// requestWithIssuedCookies returns r with the cookies set in hdr (the answer
+// about to go out) added to, or replacing, the ones r carries. A cleared
+// cookie is dropped.
+func requestWithIssuedCookies(r *http.Request, hdr http.Header) *http.Request {
+	issued := (&http.Response{Header: http.Header{"Set-Cookie": hdr.Values("Set-Cookie")}}).Cookies()
+	if len(issued) == 0 {
+		return r
+	}
+	byName := map[string]*http.Cookie{}
+	var order []string
+	for _, c := range r.Cookies() {
+		if _, seen := byName[c.Name]; !seen {
+			order = append(order, c.Name)
+		}
+		byName[c.Name] = c
+	}
+	for _, c := range issued {
+		if _, seen := byName[c.Name]; !seen {
+			order = append(order, c.Name)
+		}
+		if c.MaxAge < 0 || c.Value == "" {
+			byName[c.Name] = nil
+			continue
+		}
+		byName[c.Name] = &http.Cookie{Name: c.Name, Value: c.Value}
+	}
+	out := r.Clone(r.Context())
+	out.Header.Del("Cookie")
+	for _, name := range order {
+		if c := byName[name]; c != nil {
+			out.AddCookie(c)
+		}
+	}
+	return out
 }
