@@ -11,6 +11,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.2 — SQL NULL reads as "", fragment links keep the page, and clearer sky check and sky.toml messages (2026-10-02)
+
+### Fixed
+
+- **A SQL NULL column read as the text `"{1 <nil>}"`.** `Db.getField`, `Db.getString` and `Dict.get` on a row from `Db.query`, `Db.getById`, `Db.findOneByField`, `Db.findManyByField`, `Db.findByConditions` or `Db.unsafeFindWhere` rendered a NULL as the Go text of an internal `Maybe` (also in v0.26). Code that tested such a column for `""` saw a non-empty string, for example a `to_regclass(...)::text` probe on a fresh database. A NULL now reads as `""`, the documented "absent" value of these readers, on SQLite and PostgreSQL. Every column of a `Dict String String` row is now a `String` (an INTEGER column held a Go integer). `Std.Db.Decode`, `Db.queryDecode`, `Codec` and `Table` still see a NULL as `Nothing`. (`runtime-go/rt/db_auth.go`; tests `db_query_null_row_test.go`, `db_query_null_row_integration_test.go`, `StdDbLifecycleConformanceTest`.)
+- **A Sky.Live page opened at a URL with a `#fragment` was blank when the app had no `Sub.onFragment`.** The client reports the fragment at load. Without a subscriber the server answered with an empty body, and the client patched that empty body in as the view. The server now answers a no-op event with 204 No Content, and the client never patches a 204. In-page anchor links and `/docs#section` deep links show the page again. Sky.Spa and the `Std.App` web targets were not affected. (`runtime-go/rt/live.go`, `live_client_asset.go`; test: the `plain` scenario of `scripts/nav-e2e.sh`, Chrome and WebKit.)
+- **`sky check <module>` on a module with no `main` failed with "lowering found no entry `main`".** The path was taken as the program entry. A module that defines no `main` (and no `Std.App` `app`) is now checked the way a library check does: it and what it imports are type-checked, lowered and go-built, and `sky check` prints `Checked module <Name> …`. (`rust/crates/sky/src/main.rs`; test `library_check_flow.rs`.)
+- **`sky check` with a non-exhaustive `case` (`[E3001]`) printed it as a warning, then failed with an empty `sky check:` line.** The build rejects a non-exhaustive `case`, so it is now reported as an error with its message, in text and in `--format json` (the summary and the diagnostic agree). The same severity filter let an `[E3001]` in a path dependency pass the dependency check and the Sky.Spa partition report; both now reject it. (`rust/crates/project/src/build.rs`; test `json_format_flow.rs`.)
+- **`bin` or `root` in `sky.toml` with a path (`bin = "dist/fence"`) was ignored without a word, and the build wrote `sky-out/app`.** `sky check` and `sky build` now refuse such a value with an error that names the key and the fix: keep `bin` a name and use `sky build --out <dir>`. See `docs/sky-toml.md`. (Test `json_format_flow.rs`.)
+- **The `sky.toml` migration hint printed a fixed example value**, such as `Live.withMaxBodyBytes 1048576`, whatever the project had set, and `Live.withInput Debounce`, which does not compile. Every `withX` line in the hint now carries the project's configured value, from the same code `sky config migrate` writes with. (`rust/crates/project/src/config_migration.rs`.)
+
+### Changed
+
+- **`[tool.<name>]` sections in `sky.toml` are for other tools.** Sky never reads a `[tool.*]` section (or its sub-tables and arrays of tables) and never warns about it. Any other section Sky does not read now gets ONE build warning that names its keys (it was one per key, on every build). A near miss of a Sky section (`[liv]`) asks "Did you mean `[live]`?"; another unknown section is told to move under `[tool.<name>]`. See `docs/sky-toml.md`, "Tool sections".
+
+### Migration
+
+- No code change is needed for most apps. Rebuild to pick up the fixes.
+- Silent: a NULL column in a `Dict String String` row reads as `""`, not `"{1 <nil>}"`. Code that compared a column with `"{1 <nil>}"`, or treated any non-empty text as "present", now sees `""`. Every column of such a row is a `String`: read numbers with `Db.getInt` / `Db.getFloat` as before.
+- Loud: `bin` and `root` in `sky.toml` must be single names. Change `bin = "dist/fence"` to `bin = "fence"` and build with `sky build --out dist`.
+- A project tool's own `sky.toml` section: move `[sqlgen]` to `[tool.sqlgen]` (and teach the tool to read it there) to silence its warning.
+
 ## v0.27.1 — Sky.Spa RPCs keep their cookies, and a bounded console check (2026-10-02)
 
 ### Fixed
