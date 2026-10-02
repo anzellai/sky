@@ -1522,3 +1522,90 @@ fn every_go_test_package_under_tools_runs_in_ci() {
         );
     }
 }
+
+/// The browser-tier jobs whose steps each run long e2e scripts, as
+/// (workflow file, job id).
+const BROWSER_TIER_JOBS: [(&str, &str); 2] = [
+    ("release.yml", "gate-web"),
+    ("nightly-sweep.yml", "web-runtime"),
+];
+
+/// Does this `run:` block call a gate script (`scripts/<name>.sh`)?
+fn runs_a_gate_script(run: &str) -> bool {
+    run.split_whitespace().any(|w| {
+        w.starts_with("scripts/")
+            && w.ends_with(".sh")
+            && !w.starts_with("scripts/ci/")
+            && !w.starts_with("scripts/lib/")
+    })
+}
+
+/// The `timeout-minutes` integer of a job or a step, if it has one.
+fn timeout_minutes(v: &serde_yaml::Value) -> Option<u64> {
+    v.get("timeout-minutes").and_then(|t| t.as_u64())
+}
+
+/// Every step of a browser-tier job that runs a gate script has its OWN
+/// `timeout-minutes`, strictly below the job's.
+///
+/// Release run 36942837671 (head 7d6c883c): one script of `gate-web` step 7
+/// ("Sky.Spa wasm client e2e") hung. Nothing bounded the step, so it ran
+/// until the JOB limit cancelled everything at 70 min. A cancelled job keeps
+/// no step log and uploads no evidence, so the failure named neither the
+/// script nor the stage. With a step bound the same hang fails its own named
+/// step, keeps its log, and the `if: failure()` evidence upload still runs.
+#[test]
+fn every_browser_tier_gate_step_has_its_own_bound() {
+    let dir = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/workflows"
+    ));
+    let mut missing = Vec::new();
+    for (file, job_id) in BROWSER_TIER_JOBS {
+        let text = std::fs::read_to_string(dir.join(file))
+            .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let job = doc
+            .get("jobs")
+            .and_then(|j| j.get(job_id))
+            .unwrap_or_else(|| panic!("{file}: job `{job_id}` is gone; update BROWSER_TIER_JOBS"));
+        let job_bound = timeout_minutes(job)
+            .unwrap_or_else(|| panic!("{file}: job `{job_id}` has no timeout-minutes"));
+        let steps = job
+            .get("steps")
+            .and_then(|s| s.as_sequence())
+            .unwrap_or_else(|| panic!("{file}: job `{job_id}` has no steps"));
+        let mut gate_steps = 0;
+        for step in steps {
+            let Some(run) = step.get("run").and_then(|r| r.as_str()) else {
+                continue;
+            };
+            if !runs_a_gate_script(run) {
+                continue;
+            }
+            gate_steps += 1;
+            let name = step
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("<unnamed>");
+            match timeout_minutes(step) {
+                Some(m) if m < job_bound => {}
+                Some(m) => missing.push(format!(
+                    "{file} {job_id} `{name}`: timeout-minutes {m} is not below the job's {job_bound}"
+                )),
+                None => missing.push(format!("{file} {job_id} `{name}`: no timeout-minutes")),
+            }
+        }
+        assert!(
+            gate_steps >= 10,
+            "{file} {job_id}: only {gate_steps} gate-script steps found; the scanner is wrong"
+        );
+    }
+    assert!(
+        missing.is_empty(),
+        "a browser-tier step that runs a gate script needs its own timeout-minutes \
+         (about twice its slowest green run), below the job's, so a hang fails \
+         the named step with its log:\n  {}",
+        missing.join("\n  ")
+    );
+}

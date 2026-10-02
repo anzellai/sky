@@ -23,6 +23,9 @@ if [ ! -x "$SKY" ]; then
   echo "ui-forms-e2e: $SKY not found — run ./scripts/build.sh first." >&2
   exit 1
 fi
+# Every Node verifier runs under a bound: a verifier that never ends (a
+# launched browser keeps Node alive) must fail here, not hang the CI job.
+source "$ROOT/scripts/lib/with-timeout.sh"
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 source "$ROOT/scripts/lib/require-tool.sh"
@@ -48,9 +51,9 @@ SPA_APP="$FX/.skyapp/web-app/.split/backend/sky-out/app"
 [ -x "$SPA_APP" ] || { echo "ui-forms-e2e: Sky.Spa backend not built at $SPA_APP" >&2; exit 1; }
 
 echo "==> driving Sky.Live"
-node "$ROOT/scripts/ui-forms-e2e-verify.mjs" "$LIVE_APP" --mode live --port "${LIVE_PORT:-9262}"
+with_timeout 300 node "$ROOT/scripts/ui-forms-e2e-verify.mjs" "$LIVE_APP" --mode live --port "${LIVE_PORT:-9262}"
 echo "==> driving Sky.Spa"
-node "$ROOT/scripts/ui-forms-e2e-verify.mjs" "$SPA_APP" --mode spa --port "${SPA_PORT:-9263}"
+with_timeout 300 node "$ROOT/scripts/ui-forms-e2e-verify.mjs" "$SPA_APP" --mode spa --port "${SPA_PORT:-9263}"
 
 echo "ui-forms-e2e: PASS — onKeyDown renders + dispatches, typed forms decode strictly, literal-topic pub/sub delivers."
 rm -rf "$FX"

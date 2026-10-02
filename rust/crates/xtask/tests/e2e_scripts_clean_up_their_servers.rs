@@ -376,3 +376,168 @@ fn the_guard_kills_the_child_on_every_exit_path() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------------------
+// A verifier that hits an error ENDS, and an e2e script bounds every verifier.
+//
+// Release run 36942837671 (head 7d6c883c): `gate-web` step 7 ran from 00:14
+// until the job limit cancelled it at 01:07, against 6-9 min on green runs of
+// the same code. `scripts/spa-hydration-verify.mjs` (the first stage of
+// `spa-restore-e2e.sh`) launched Chromium inside a `try`, and its `catch` only
+// set `process.exitCode = 1`; its `finally` killed the app server but neither
+// closed the browser nor called `process.exit`. A launched browser keeps
+// Node's event loop alive, so ONE transient error after the launch (a
+// navigation or click over its 30 s budget on a loaded runner) left Node
+// running for ever, and `spa-restore-e2e.sh` called it with no bound. Measured:
+// a script of that shape that throws after `chromium.launch` is still alive
+// 40 s later, until `with_timeout` kills it (exit 124).
+// ---------------------------------------------------------------------------
+
+/// The body of the LAST `finally { … }` block in `text` (brace-matched), or
+/// `None` when there is no `finally`.
+fn last_finally_block(text: &str) -> Option<&str> {
+    let at = text.rfind("finally")?;
+    let open = at + text[at..].find('{')?;
+    let mut depth = 0usize;
+    for (i, c) in text[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[open + 1..open + i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A Node script that launches a browser and tears down in a `finally` must,
+/// in that `finally` or after it, either close the browser or end the process. `None`
+/// when the script complies (or does not apply); `Some(reason)` otherwise.
+fn browser_teardown_gap(text: &str) -> Option<&'static str> {
+    if !text.contains(".launch(") {
+        return None;
+    }
+    let block = last_finally_block(text)?;
+    // `process.exit` in the block, or in the top-level code after it (which
+    // runs whenever the `catch` swallowed the error).
+    let from = text.rfind("finally").unwrap_or(0);
+    let ends = text[from..].contains("process.exit(");
+    let closes = block.contains("browser.close(") || block.contains("browser?.close(");
+    if ends || closes {
+        None
+    } else {
+        Some("neither its last `finally` nor the code after it closes the browser or calls `process.exit`")
+    }
+}
+
+#[test]
+fn a_browser_verifier_ends_on_its_error_path() {
+    let scripts = files_with(&["mjs", "js"]);
+    let mut bad = Vec::new();
+    let mut seen = 0;
+    for (rel, text) in &scripts {
+        if !rel.starts_with("scripts/") {
+            continue;
+        }
+        if text.contains(".launch(") && last_finally_block(text).is_some() {
+            seen += 1;
+        }
+        if let Some(why) = browser_teardown_gap(text) {
+            bad.push(format!("{rel}: {why}"));
+        }
+    }
+    assert!(
+        seen >= 20,
+        "only {seen} browser verifiers with a `finally` under scripts/; the scan has gone blind"
+    );
+    assert!(
+        bad.is_empty(),
+        "a launched browser keeps Node alive, so a verifier whose error path does \
+         not close it hangs for ever instead of failing. End the last `finally` \
+         with `process.exit(process.exitCode ?? 1)` (or close the browser there):\n  {}",
+        bad.join("\n  ")
+    );
+    // The scanner sees the shape that hung release run 36942837671 ...
+    let hung = "const b = await chromium.launch();\ntry { await go(); } catch (e) { process.exitCode = 1; } finally {\n  proc.kill(\"SIGKILL\");\n}\n";
+    assert!(browser_teardown_gap(hung).is_some());
+    let after = format!("{hung}process.exit(process.exitCode ?? 1);\n");
+    assert!(browser_teardown_gap(&after).is_none());
+    // ... and passes both fixes.
+    let exits = hung.replace(
+        "proc.kill(\"SIGKILL\");",
+        "proc.kill(\"SIGKILL\");\n  process.exit(process.exitCode ?? 1);",
+    );
+    assert!(browser_teardown_gap(&exits).is_none());
+    let closes = hung.replace(
+        "proc.kill(\"SIGKILL\");",
+        "if (b) { await b.close(); }\n  try { await browser?.close(); } catch {}",
+    );
+    assert!(browser_teardown_gap(&closes).is_none());
+}
+
+/// Lines of an e2e shell script that run `node` with no `with_timeout` bound,
+/// as 1-based line numbers. A continuation line (after a `\`) is not a command.
+fn unbounded_node_calls(text: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut continued = false;
+    for (n, line) in text.lines().enumerate() {
+        let code = shell_code(line);
+        let was_continued = continued;
+        continued = code.trim_end().ends_with('\\');
+        if was_continued {
+            continue;
+        }
+        let words: Vec<&str> = code.split_whitespace().collect();
+        let Some(first) = words
+            .iter()
+            .position(|w| !matches!(*w, "if" | "!" | "then" | "do" | "&&" | "||"))
+        else {
+            continue;
+        };
+        if words[first] == "node" {
+            out.push(n + 1);
+        }
+    }
+    out
+}
+
+#[test]
+fn every_e2e_script_bounds_its_node_verifiers() {
+    let scripts = files_with(&["sh"]);
+    let mut bad = Vec::new();
+    let mut bounded = 0;
+    for (rel, text) in &scripts {
+        if !(rel.starts_with("scripts/") && rel.ends_with("-e2e.sh")) {
+            continue;
+        }
+        bounded += text.matches("with_timeout").count();
+        for line in unbounded_node_calls(text) {
+            bad.push(format!("{rel}:{line}"));
+        }
+    }
+    assert!(
+        bounded >= 20,
+        "only {bounded} with_timeout calls in scripts/*-e2e.sh; the scan has gone blind"
+    );
+    assert!(
+        bad.is_empty(),
+        "an e2e script runs a Node verifier with no bound, so a verifier that never \
+         ends hangs the CI job until its own limit cancels it, with no log. Run it \
+         as `with_timeout <secs> node …` (source scripts/lib/with-timeout.sh):\n  {}",
+        bad.join("\n  ")
+    );
+    assert_eq!(
+        unbounded_node_calls("node \"$ROOT/scripts/x.mjs\" \"$APP\"\n"),
+        vec![1]
+    );
+    assert_eq!(
+        unbounded_node_calls("if ! node x.mjs; then exit 1; fi\n"),
+        vec![1]
+    );
+    assert!(unbounded_node_calls("with_timeout 300 node x.mjs \\\n  node-arg\n").is_empty());
+    assert!(unbounded_node_calls("# node x.mjs\nrequire_tool node \"x\"\n").is_empty());
+}

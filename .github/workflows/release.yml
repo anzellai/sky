@@ -1150,6 +1150,10 @@ jobs:
     # fixtures on top. 45 keeps ~1.5x.
     # console-live-e2e adds ~11 min: 60. nav-e2e adds two fixture builds and
     # two browsers: 70.
+    # Each long step also carries its own timeout-minutes, about twice its
+    # slowest green run (bfc8a16c, 7292ef57, 218f4d21). A hung script then
+    # fails its own named step, with its log, instead of the whole job being
+    # cancelled at 70 min with no log at all (run 36942837671, step 7).
     timeout-minutes: 70
     env:
       GO_CACHE_BUDGET_MB: '6144'
@@ -1162,13 +1166,16 @@ jobs:
         with:
           node-version: '22'
       - name: Install Playwright + its browser, sqlite3, python3-venv
+        timeout-minutes: 10
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
           command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
       - name: Browser runtime verification (Sky.Live + Http.Server + resilience)
+        timeout-minutes: 15
         run: scripts/verify-all-web.sh
       - name: Sky.Spa wasm client e2e (restore, stale handlers, RPC consistency, examples)
+        timeout-minutes: 18
         run: |
           set -euo pipefail
           scripts/spa-restore-e2e.sh
@@ -1177,23 +1184,30 @@ jobs:
           scripts/spa-examples-e2e.sh
           scripts/spa-client-crypto-e2e.sh
       - name: Terminal loops pty e2e (terminal:tui + terminal:cli)
+        timeout-minutes: 5
         run: scripts/tui-e2e.sh
       - name: Sky.Spa + Sky.Live DOM identity e2e
+        timeout-minutes: 5
         run: scripts/spa-vdom-identity-e2e.sh
       - name: Sky.Live client e2e (handler addressing, input authority)
+        timeout-minutes: 6
         run: scripts/live-client-e2e.sh
       - name: Widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 5
         run: scripts/islands-e2e.sh
       - name: Std.Ui canvas, text wrapping + terminal e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 10
         # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
         run: |
           npx playwright install --with-deps webkit
           command -v vim >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq vim; }
           scripts/ui-canvas-terminal-e2e.sh
       - name: Std.Nav e2e (pushUrl / replaceUrl / clearFragment, Sky.Live + Sky.Spa, Chromium + WebKit, strict CSP)
+        timeout-minutes: 5
         # WebKit was installed by the step above.
         run: scripts/nav-e2e.sh
       - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
+        timeout-minutes: 12
         # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
         # wasm client holds its own WebSocket; a sky_sid cookie copied before
         # sign-out is refused after it. WebKit was installed above.
@@ -1203,13 +1217,17 @@ jobs:
           scripts/spa-websocket-e2e.sh
           scripts/session-revocation-e2e.sh
       - name: Sky.Live without cookies e2e (header session transport, strict CSP)
+        timeout-minutes: 5
         run: scripts/header-session-e2e.sh
       - name: Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
+        timeout-minutes: 5
         run: scripts/ui-forms-e2e.sh
       - uses: ./.github/actions/install-caddy
       - name: Strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
+        timeout-minutes: 8
         run: scripts/csp-e2e.sh
       - name: Sky Console live data + reconnect e2e (direct + behind Caddy)
+        timeout-minutes: 22
         run: scripts/console-live-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()

@@ -18,6 +18,9 @@ if [ ! -x "$SKY" ]; then
   echo "live-client-e2e: $SKY not found — run ./scripts/build.sh first." >&2
   exit 1
 fi
+# Every Node verifier runs under a bound: a verifier that never ends (a
+# launched browser keeps Node alive) must fail here, not hang the CI job.
+source "$ROOT/scripts/lib/with-timeout.sh"
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 source "$ROOT/scripts/lib/require-tool.sh"
@@ -39,7 +42,7 @@ APP="$FX/.skyapp/web/sky-out/app"
 [ -x "$APP" ] || { echo "live-client-e2e: app not built at $APP" >&2; exit 1; }
 
 echo "==> driving the Sky.Live client + webview applier"
-node "$ROOT/scripts/live-client-verify.mjs" "$APP" --port "${SKY_LIVE_PORT:-9240}"
+with_timeout 300 node "$ROOT/scripts/live-client-verify.mjs" "$APP" --port "${SKY_LIVE_PORT:-9240}"
 
 echo "live-client-e2e: PASS"
 rm -rf "$FX"

@@ -144,6 +144,8 @@ jobs:
     # and browser download, still far inside the 90-min T3 ceiling.
     # console-live-e2e adds ~11 min (a Sky.Spa wasm build, six 60 s browser
     # runs): 40. nav-e2e adds two fixture builds in two browsers: 50.
+    # Each long step also carries its own timeout-minutes (as in release.yml
+    # gate-web), so a hung script fails its own named step with its log.
     timeout-minutes: 50
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
@@ -173,6 +175,7 @@ jobs:
           shared-key: sky-gates-linux
           save-if: 'false'
       - name: Install Playwright + its browser
+        timeout-minutes: 10
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
@@ -183,6 +186,7 @@ jobs:
           install_binary "$(cargo_bin_path "$PWD/rust" sky --release)" sky-out/sky
           sky-out/sky --version
       - name: Gate — browser runtime verification (Sky.Live + Http.Server + resilience)
+        timeout-minutes: 15
         # verify-all-web.sh emits exactly ONE "VERIFY:" line, last, and exits
         # with its failure count. Take the EXIT STATUS as the verdict: an
         # earlier form of this check grepped for "0 fail" and matched the
@@ -200,6 +204,7 @@ jobs:
       #   * spa-rpc-consistency-e2e — web:app gives Sky.Live's answer: ordered,
       #     send-time RPCs, guard, follow-up Cmds, retry dedupe, reload state.
       - name: Gate — Sky.Spa wasm client e2e (restore, stale handlers, RPC consistency)
+        timeout-minutes: 18
         run: |
           command -v sqlite3 >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3; }
           scripts/spa-restore-e2e.sh
@@ -211,23 +216,27 @@ jobs:
       # key decoding across split reads, focus/queued keys, timers, pub/sub,
       # guard, durability and the exit rules of terminal:tui and terminal:cli.
       - name: Gate — terminal loops pty e2e (terminal:tui + terminal:cli)
+        timeout-minutes: 5
         run: scripts/tui-e2e.sh
       # spa-vdom-identity-e2e — node identity across the shared diff (keyed and
       # unkeyed sibling inserts, a re-keyed row), select value, key / checkbox
       # payloads, refused-input reconcile, IME, labels, injected styles,
       # hydration parity and route-param decoding; Spa and Sky.Live.
       - name: Gate — Sky.Spa + Sky.Live DOM identity e2e
+        timeout-minutes: 5
         run: scripts/spa-vdom-identity-e2e.sh
       # The Sky.Live browser client + desktop webview applier, in real Chromium:
       # per-event handler ids, clicks resolved against the render they were
       # made on, generic event binding, input authority, IME, gap buffering,
       # the panic banner and multi-tab reconnects.
       - name: Gate — Sky.Live client e2e (handler addressing, input authority)
+        timeout-minutes: 6
         run: scripts/live-client-e2e.sh
       # Widget islands: a third-party JS widget in a Std.Ui / Std.Html view keeps
       # its state across re-renders, exchanges typed events and Cmd.toIsland
       # commands, and remounts on a new id; Sky.Live and Sky.Spa, strict CSP.
       - name: Gate — widget islands e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 5
         run: scripts/islands-e2e.sh
       # Std.Ui.Canvas pointer events in scene units (Sky.Live and Sky.Spa; the
       # Sky.Spa client must build SVG in the SVG namespace), Ui.text wrapping,
@@ -235,6 +244,7 @@ jobs:
       # loop within its frame budget, resize, a dropped SSE connection and a
       # reload repainted from the server's screen. Strict CSP.
       - name: Gate — Std.Ui canvas, text wrapping + terminal e2e (strict CSP)
+        timeout-minutes: 10
         # The terminal-race case runs vim in the terminal, in Chromium and WebKit.
         run: |
           npx playwright install --with-deps webkit
@@ -244,12 +254,14 @@ jobs:
       # replaceUrl, clearFragment, a server arm's navigation, an off-site URL
       # refused), on Sky.Live and the Sky.Spa client. Chromium + WebKit.
       - name: Gate — Std.Nav e2e (Sky.Live + Sky.Spa, strict CSP)
+        timeout-minutes: 5
         run: scripts/nav-e2e.sh
       # Sky.Spa Msg order: each Msg runs once, in arrival order, with its Cmds,
       # as on Sky.Live (web:app compared with Live); RPCs overlap; the wasm
       # client holds its own WebSocket; a sky_sid cookie copied before sign-out
       # is refused after it. Chromium + WebKit, strict CSP.
       - name: Gate — Sky.Spa Msg order + client WebSocket + sign-out e2e (strict CSP)
+        timeout-minutes: 12
         run: |
           set -euo pipefail
           scripts/spa-rpc-order-e2e.sh
@@ -259,11 +271,13 @@ jobs:
       # that blocks every cookie — counter, pushes, a dropped stream, a
       # sign-in rotation and the SSE ticket fallback, strict CSP.
       - name: Gate — Sky.Live without cookies e2e (header session transport)
+        timeout-minutes: 5
         run: scripts/header-session-e2e.sh
       # Ui.onKeyDown renders + dispatches, typed Ui.onSubmit decodes strictly
       # (a bad field drops the submit with a FormDecode error), and a
       # literal-topic pub/sub delivers — on Sky.Live AND Sky.Spa.
       - name: Gate — Std.Ui forms + keydown + pub/sub e2e (Sky.Live + Sky.Spa)
+        timeout-minutes: 5
         run: scripts/ui-forms-e2e.sh
       # csp-e2e — every page Sky serves works under a strict
       # Content-Security-Policy (script-src 'self' 'wasm-unsafe-eval', no inline
@@ -271,6 +285,7 @@ jobs:
       # behind a proxy that sets the policy and with SKY_CSP=strict.
       - uses: ./.github/actions/install-caddy
       - name: Gate — strict Content-Security-Policy e2e (Console, Sky.Live, Sky.Spa)
+        timeout-minutes: 8
         run: scripts/csp-e2e.sh
       # console-live-e2e — the Sky Console shows LIVE data (uptime counts,
       # requests, a log line, a span), holds its SSE past 40 s and recovers from
@@ -278,6 +293,7 @@ jobs:
       # and behind a real Caddy (HTTP/2, encode zstd gzip, flush_interval -1,
       # two slots, strict CSP) — the production topology of the field report.
       - name: Gate — Sky Console live data + reconnect e2e (direct + behind Caddy)
+        timeout-minutes: 22
         run: scripts/console-live-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported

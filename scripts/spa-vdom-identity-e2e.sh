@@ -21,6 +21,9 @@ if [ ! -x "$SKY" ]; then
   echo "spa-vdom-identity-e2e: $SKY not found — run ./scripts/build.sh first." >&2
   exit 1
 fi
+# Every Node verifier runs under a bound: a verifier that never ends (a
+# launched browser keeps Node alive) must fail here, not hang the CI job.
+source "$ROOT/scripts/lib/with-timeout.sh"
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 source "$ROOT/scripts/lib/require-tool.sh"
@@ -42,7 +45,7 @@ APP="$FX/.skyapp/web-app/.split/backend/sky-out/app"
 [ -x "$APP" ] || { echo "spa-vdom-identity-e2e: backend app not built at $APP" >&2; exit 1; }
 
 echo "==> driving the wasm client"
-node "$ROOT/scripts/spa-vdom-identity-verify.mjs" "$APP" --port "${PORT:-9200}"
+with_timeout 300 node "$ROOT/scripts/spa-vdom-identity-verify.mjs" "$APP" --port "${PORT:-9200}"
 
 # The same source on Sky.Live: the diff and the Std.Ui controls are shared, so
 # node identity, select value, injected styles and labels must hold there too.
@@ -55,7 +58,7 @@ gate_cached_build "$SKY" "$LFX" --clean --artefact .skyapp/web -- build --target
 LAPP="$LFX/.skyapp/web/sky-out/app"
 [ -x "$LAPP" ] || { echo "spa-vdom-identity-e2e: Live app not built at $LAPP" >&2; exit 1; }
 echo "==> driving the Sky.Live client"
-node "$ROOT/scripts/spa-vdom-identity-verify.mjs" "$LAPP" --port "$(( ${PORT:-9200} + 1 ))" --live
+with_timeout 300 node "$ROOT/scripts/spa-vdom-identity-verify.mjs" "$LAPP" --port "$(( ${PORT:-9200} + 1 ))" --live
 
 echo "spa-vdom-identity-e2e: PASS"
 rm -rf "$FX" "$LFX"

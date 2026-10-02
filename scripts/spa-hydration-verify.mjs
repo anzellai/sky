@@ -182,4 +182,9 @@ try {
   process.exitCode = 1;
 } finally {
   proc.kill("SIGKILL");
+  // End here. On the error path the browser launched in the `try` is still
+  // open, and a launched browser keeps Node's event loop alive: without this
+  // exit one transient error left the verifier running for ever (release run
+  // 36942837671, gate-web step 7 cancelled at the job limit with no log).
+  process.exit(process.exitCode ?? 1);
 }

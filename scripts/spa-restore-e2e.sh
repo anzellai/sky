@@ -22,6 +22,9 @@ if [ ! -x "$SKY" ]; then
 fi
 # The installed compiler must have been built from THIS tree, or the e2e would
 # certify wasm the current source never produced (see scripts/lib/fresh-compiler.sh).
+# Every Node verifier runs under a bound: a verifier that never ends (a
+# launched browser keeps Node alive) must fail here, not hang the CI job.
+source "$ROOT/scripts/lib/with-timeout.sh"
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"
 for tool in node sqlite3; do
@@ -45,7 +48,7 @@ APP="$FX/.skyapp/web-app/.split/backend/sky-out/app"
 [ -x "$APP" ] || { echo "spa-restore-e2e: backend app not built at $APP" >&2; exit 1; }
 
 echo "==> driving the wasm client (seed 2 items, click increment 3x, reload)"
-node "$ROOT/scripts/spa-hydration-verify.mjs" "$APP" \
+with_timeout 300 node "$ROOT/scripts/spa-hydration-verify.mjs" "$APP" \
   --url / --port "${PORT:-9007}" \
   --db 'app.db:CREATE TABLE items(name TEXT);INSERT INTO items(name) VALUES ("alpha"),("beta");' \
   --click 'button:has-text("increment")' --clicks 3 \
@@ -65,7 +68,7 @@ RBE="$RX/.skyapp/web-app/.split/backend"
 mkdir -p "$RBE/data"
 cp -Rf "$RX/data/." "$RBE/data/"
 echo "==> driving the full-load rule (settled fields from the seed, the rest restored)"
-node "$ROOT/scripts/spa-reload-verify.mjs" "$RBE/sky-out/app" --port "${RELOAD_PORT:-9372}"
+with_timeout 300 node "$ROOT/scripts/spa-reload-verify.mjs" "$RBE/sky-out/app" --port "${RELOAD_PORT:-9372}"
 
 # The identity rule: a stored model restores only for the session identity it
 # was stored under. Two pages in one browser context (shared localStorage, as
@@ -81,7 +84,7 @@ IBE="$IX/.skyapp/web-app/.split/backend"
 mkdir -p "$IBE/data"
 cp -Rf "$IX/data/." "$IBE/data/"
 echo "==> driving the identity rule (two identities, one localStorage)"
-node "$ROOT/scripts/spa-identity-verify.mjs" "$IBE/sky-out/app" --port "${IDENTITY_PORT:-9373}"
+with_timeout 300 node "$ROOT/scripts/spa-identity-verify.mjs" "$IBE/sky-out/app" --port "${IDENTITY_PORT:-9373}"
 
 echo "spa-restore-e2e: PASS — restored model paints on the first SSR paint; a full load keeps what the page did not settle; a stored model restores only for its own identity."
 rm -rf "$FX" "$RX" "$IX"
