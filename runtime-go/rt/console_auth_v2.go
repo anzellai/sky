@@ -99,7 +99,9 @@ var consoleNow = time.Now
 // id; when it answers Nothing (the admin signed out, or lost the role)
 // the cookie is refused, its id revoked and the browser copy cleared.
 // So console access ends within this interval of a sign-out or a
-// demotion, never the cookie's full 4-hour life.
+// demotion, never the cookie's full 4-hour life. An open console stream
+// re-runs the gate every subAppStreamRegateEvery (gateSSE), so an open tab
+// ends at most that much later.
 const consoleAppRecheckInterval = 60 * time.Second
 
 // consoleCookieRegistryCap bounds each per-id table below. Entries

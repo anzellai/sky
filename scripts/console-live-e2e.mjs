@@ -461,7 +461,8 @@ try {
   // token. (a) `_logout` revokes it on the server: a copy of it, replayed
   // without the app's own session, is refused at once. (b) once the app stops
   // admitting the browser (sign-out, demotion), the console refuses it within
-  // the 60 s re-check window.
+  // the 60 s re-check window. (c) a console tab left open through that
+  // sign-out stops receiving data and shows it is signed out in that window.
   if (APP_AUTH) {
     phase = "revoke";
     const consoleCookieOf = async () => (await ctx.cookies(ORIGIN)).find((c) => c.name === "__Host-sky_console");
@@ -484,20 +485,65 @@ try {
     const readmit = await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
     if (readmit.status() !== 200) fail(`revoke: the admin could not reopen the console after _logout (${readmit.status()})`);
     await ctx.addCookies([{ name: "session", value: "signed-out", url: ORIGIN }]);
+    // (c) An open console tab: the admin (signed in through the app, the
+    // model) keeps a console tab open while the app signs them out. The
+    // tab's live data must stop and the tab must show it is signed out
+    // within the same window. The gate used to run only when the stream
+    // opened, so the open tab kept receiving telemetry after the 403.
+    await signIn("admin");
+    const tab = await ctx.newPage();
+    tab.on("console", (m) => {
+      if (m.type() === "error") consoleErrors.push({ phase, text: m.text().slice(0, 200) });
+    });
+    await tab.goto(ORIGIN + "/_sky/console/", { waitUntil: "domcontentloaded" });
+    const reqTotal = async () => {
+      const m = (await bodyText(tab)).match(/REQUESTS TOTAL\s*\n\s*(\d+)/i);
+      return m ? Number(m[1]) : null;
+    };
+    const tabSignedOut = async () => {
+      const t = await bodyText(tab);
+      return /Sky Console — 403|consoleAuth denied/.test(t) || (await bannerState(tab)) === "lost";
+    };
+    {
+      const first = await reqTotal();
+      for (let i = 0; i < 3; i++) await ctx.request.get(ORIGIN + "/").catch(() => {});
+      let moved = false;
+      const end = Date.now() + 12000;
+      while (Date.now() < end && !moved) {
+        const n = await reqTotal();
+        moved = first !== null && n !== null && n > first;
+        if (!moved) await sleep(500);
+      }
+      if (!moved) fail(`open tab: the admin's console tab shows no live data before the sign-out (requests total ${first})`);
+      else info("open tab: the admin's console tab receives live data");
+    }
     await signIn("user");
     const demotedAt = Date.now();
     let refusedAfter = -1;
-    while (Date.now() < demotedAt + 68000) {
-      const r = await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
-      if (r.status() === 403) {
-        refusedAfter = Math.round((Date.now() - demotedAt) / 1000);
-        break;
+    let tabOutAfter = -1;
+    while (Date.now() < demotedAt + 68000 && (refusedAfter < 0 || tabOutAfter < 0)) {
+      if (tabOutAfter < 0 && (await tabSignedOut())) tabOutAfter = Math.round((Date.now() - demotedAt) / 1000);
+      if (refusedAfter < 0) {
+        const r = await ctx.request.get(ORIGIN + "/_sky/console/", { maxRedirects: 0 });
+        if (r.status() === 403) refusedAfter = Math.round((Date.now() - demotedAt) / 1000);
       }
       await sleep(2000);
     }
     if (refusedAfter < 0) fail("revoke: 68 s after the app signed the admin out, the console still opens (the cookie outlives the sign-in)");
     else info(`signed out of the app: the console refuses the browser after ${refusedAfter} s (re-check window 60 s)`);
     if (refusedAfter >= 0 && (await consoleCookieOf())) fail("revoke: the refusal did not clear the browser's console cookie");
+    if (tabOutAfter < 0) {
+      fail(`open tab: 68 s after the app signed the admin out, the open console tab does not show it is signed out (requests total ${await reqTotal()}, banner ${await bannerState(tab)})`);
+    } else {
+      // Traffic keeps coming; the signed-out tab must not count it.
+      const a = await reqTotal();
+      for (let i = 0; i < 4; i++) await ctx.request.get(ORIGIN + "/").catch(() => {});
+      await sleep(4000);
+      const b = await reqTotal();
+      if (a !== null && b !== null && b > a) fail(`open tab: the signed-out console tab still receives live data (requests total ${a} -> ${b})`);
+      else info(`open tab: the console tab shows it is signed out after ${tabOutAfter} s and its live data stops (requests total ${a} -> ${b})`);
+    }
+    await tab.close();
   }
 } catch (e) {
   fail("run aborted: " + (e && e.stack ? e.stack.split("\n").slice(0, 3).join(" ") : e));

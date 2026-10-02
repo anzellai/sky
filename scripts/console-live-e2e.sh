@@ -133,6 +133,9 @@ fi
 # `App.withConsoleAuth`, on the Sky.Live target and on a Sky.Spa split backend.
 if want appauth-live-caddy; then
   build_target app-console-auth web .skyapp/web override
+  # A failed run keeps $TMP (it is removed only on PASS), so clear the
+  # previous copy first: `mv` into an existing directory fails.
+  rm -rf "$TMP/app-console-auth-web"
   mv "$TMP/app-console-auth" "$TMP/app-console-auth-web"
 fi
 if want appauth-spa-caddy; then
