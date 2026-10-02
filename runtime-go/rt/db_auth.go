@@ -1004,10 +1004,41 @@ func stmtAttr(query any) string {
 	return ""
 }
 
-// Db.query : Db -> String -> List any -> Task Error (List (Dict String any))
-// Returns each row as a Dict of column name → value. Wrapped in a Task
-// thunk so the SELECT defers to the Cmd.perform / Task.run boundary.
+// Db.query : Db -> String -> List any -> Task Error (List (Dict String String))
+// Returns each row as a Dict of column name → String. A SQL NULL reads as
+// "" (the documented "absent" value of the String readers), never as the
+// Go text of an internal Maybe. Typed consumers (Std.Db.Decode, Codec,
+// Table) read the raw rows from dbQueryRows instead.
 func Db_query(db any, query any, args any) any {
+	inner := dbQueryRows(db, query, args)
+	return func() any {
+		resp := AnyTaskRun(inner)
+		r, ok := resp.(SkyResult[any, any])
+		if !ok || r.Tag != 0 {
+			return resp
+		}
+		rows := AsList(r.OkValue)
+		out := make([]any, 0, len(rows))
+		for _, row := range rows {
+			m, isMap := row.(map[string]any)
+			if !isMap {
+				out = append(out, row)
+				continue
+			}
+			srow := make(map[string]any, len(m))
+			for k, v := range m {
+				srow[k] = sqlValueAsRowString(v)
+			}
+			out = append(out, srow)
+		}
+		return Ok[any, any](out)
+	}
+}
+
+// dbQueryRows runs a SELECT and returns each row as column name → typed
+// value (string, int, float64, bool, time.Time, ...; a SQL NULL is
+// Nothing). The typed decoders consume this shape.
+func dbQueryRows(db any, query any, args any) any {
 	return func() any {
 		return WithDbSpan(dbSystemOf(db), "query", stmtAttr(query), func() any {
 			d, ok := db.(*SkyDb)
@@ -1062,7 +1093,7 @@ func Db_query(db any, query any, args any) any {
 func Db_queryDecode(db any, query any, args any, decoder any) any {
 	capDb, capQ, capArgs, capDec := db, query, args, decoder
 	return func() any {
-		resp := AnyTaskRun(Db_query(capDb, capQ, capArgs))
+		resp := AnyTaskRun(dbQueryRows(capDb, capQ, capArgs))
 		r, ok := resp.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
 			return resp
@@ -1740,6 +1771,26 @@ func dbPrintMigrationStatus(applied map[string]appliedMigration, pairs []any) {
 	}
 }
 
+// sqlValueAsRowString renders one column of a `Dict String String` row.
+// A SQL NULL (nil, or the Nothing normaliseSqlValue makes of it) is "".
+func sqlValueAsRowString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	case SkyMaybe[any]:
+		if x.Tag != 0 {
+			return ""
+		}
+		return sqlValueAsRowString(x.JustValue)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // normaliseSqlValue unwraps driver values like []byte → string, etc.
 func normaliseSqlValue(v any) any {
 	switch x := v.(type) {
@@ -2272,10 +2323,7 @@ func Db_getField(fname any, row any) string {
 	}
 	if m, ok := row.(map[string]any); ok {
 		if v, exists := m[key]; exists {
-			if s, isStr := v.(string); isStr {
-				return s
-			}
-			return fmt.Sprintf("%v", v)
+			return sqlValueAsRowString(v)
 		}
 	}
 	return ""
@@ -2304,7 +2352,7 @@ func Db_getString(fname any, row any) string {
 	}
 	if m, ok := row.(map[string]any); ok {
 		if v, exists := m[key]; exists {
-			return fmt.Sprintf("%v", v)
+			return sqlValueAsRowString(v)
 		}
 	}
 	return ""

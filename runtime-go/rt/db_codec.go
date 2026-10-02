@@ -174,7 +174,7 @@ func codecTableColumns(d *SkyDb, table string) (map[string]bool, error) {
 		sql = "PRAGMA table_info(" + table + ")" // PRAGMA takes no bind params
 		params = []any{}
 	}
-	resp := AnyTaskRun(Db_query(d, sql, params))
+	resp := AnyTaskRun(dbQueryRows(d, sql, params))
 	r, ok := resp.(SkyResult[any, any])
 	if !ok || r.Tag != 0 {
 		return nil, fmt.Errorf("introspection failed")
@@ -564,7 +564,7 @@ func rowValToJsonRaw(raw any, present bool, kind string) any {
 // (per the colspec) for Sky-side decode via Codec.fromJson.
 func Db_queryObjects(connArg, sqlArg, paramsArg, colspecArg any) any {
 	return func() any {
-		resp := AnyTaskRun(Db_query(connArg, sqlArg, paramsArg))
+		resp := AnyTaskRun(dbQueryRows(connArg, sqlArg, paramsArg))
 		r, ok := resp.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
 			return resp

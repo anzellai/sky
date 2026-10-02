@@ -124,6 +124,24 @@ tests =
 
         Ok db ->
             [ Test.test
+                  "a SQL NULL column reads as \"\" through getField, getString and Dict.get"
+                  (\_ ->
+                      let
+                          row =
+                              Task.run
+                                  (Db.query db "SELECT NULL AS t, 'x' AS s" [])
+                                  |> Result.withDefault []
+                                  |> List.head
+                                  |> Maybe.withDefault Dict.empty
+                      in
+                          Test.equal
+                              [ "", "", "", "x" ]
+                              [ Db.getField "t" row
+                              , Db.getString "t" row
+                              , Maybe.withDefault "<missing>" (Dict.get "t" row)
+                              , Db.getField "s" row
+                              ])
+            , Test.test
                   "defaultMigration + withSql + migrate applies the named migration"
                   (\_ ->
                       Test.equal

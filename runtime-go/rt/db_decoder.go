@@ -575,7 +575,7 @@ func DbDec_run(decoder any, row any) any {
 func Db_queryDecodeRows(db any, query any, args any, decoder any) any {
 	capDb, capQ, capArgs, capDec := db, query, args, decoder
 	return func() any {
-		resp := AnyTaskRun(Db_query(capDb, capQ, capArgs))
+		resp := AnyTaskRun(dbQueryRows(capDb, capQ, capArgs))
 		r, ok := resp.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
 			return resp

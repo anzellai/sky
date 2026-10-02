@@ -361,7 +361,7 @@ func dbTableSelectTail(connArg, tableArg any, tail string, params []any) any {
 		if strings.TrimSpace(tail) != "" {
 			sql = sql + " " + tail
 		}
-		resp := AnyTaskRun(Db_query(connArg, sql, params))
+		resp := AnyTaskRun(dbQueryRows(connArg, sql, params))
 		r, ok := resp.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
 			return resp
@@ -379,7 +379,7 @@ func Table_findBy(connArg, tableArg, colArg, valArg any) any {
 	return func() any {
 		col := AsString(colArg)
 		sql := "SELECT * FROM " + dbTableName(tableArg) + " WHERE " + col + " = ? LIMIT 1"
-		resp := AnyTaskRun(Db_query(connArg, sql, []any{valArg}))
+		resp := AnyTaskRun(dbQueryRows(connArg, sql, []any{valArg}))
 		r, ok := resp.(SkyResult[any, any])
 		if !ok || r.Tag != 0 {
 			return resp

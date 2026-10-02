@@ -190,6 +190,8 @@ func TestDbQuery_BindsMaybeInWhereClause(t *testing.T) {
 // 76, 94) synthesise `row["middle_name"] = nil` directly and never
 // hit the wrapped form — these tests go end-to-end through Db_query
 // against in-memory SQLite + a literal `INSERT … VALUES (?, NULL)` so
+// (through dbQueryRows, the typed-row form queryDecode reads; the
+// `Dict String String` form of Db.query renders a NULL as "")
 // the SkyMaybe-wrap path is exercised.
 
 // TestDbDecNullable_E2E_NullColumnReturnsNothing — the actual
@@ -201,7 +203,7 @@ func TestDbDecNullable_E2E_NullColumnReturnsNothing(t *testing.T) {
 		"INSERT INTO people (id, name, age) VALUES (1, 'alice', NULL)"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	queryRes := AnyTaskRun(Db_query(
+	queryRes := AnyTaskRun(dbQueryRows(
 		db, "SELECT id, name, age FROM people WHERE id = 1", []any{}))
 	sr, ok := queryRes.(SkyResult[any, any])
 	if !ok || sr.Tag != 0 {
@@ -250,7 +252,7 @@ func TestDbDecNullable_E2E_NonNullColumnReturnsJust(t *testing.T) {
 		"INSERT INTO people (id, name, age) VALUES (1, 'alice', 42)"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	queryRes := AnyTaskRun(Db_query(
+	queryRes := AnyTaskRun(dbQueryRows(
 		db, "SELECT age FROM people WHERE id = 1", []any{}))
 	sr, _ := queryRes.(SkyResult[any, any])
 	rows, _ := sr.OkValue.([]any)
