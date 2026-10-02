@@ -689,7 +689,7 @@ fn assemble_and_emit_with(
         .diagnostics
         .iter()
         .filter(|d| d.code.0 == "E3001")
-        .cloned()
+        .map(as_build_error)
         .collect();
     if !exhaustive_diags.is_empty() {
         return Err(render_diags(&exhaustive_diags, &sources));
@@ -2878,13 +2878,8 @@ pub(crate) fn load_source_db(
         let errors: Vec<diagnostics::Diagnostic> = checked
             .diagnostics
             .iter()
-            .filter(|d| {
-                d.severity == diagnostics::Severity::Error
-                    && (d.code.0.starts_with("E1")
-                        || d.code.0.starts_with("E2")
-                        || d.code.0 == "E3001")
-            })
-            .cloned()
+            .filter(|d| is_build_rejection(d))
+            .map(as_build_error)
             .collect();
         if !errors.is_empty() {
             let text: std::collections::HashMap<base::FileId, String> = path_mods
@@ -3153,6 +3148,26 @@ impl diagnostics::SourceProvider for CliSources<'_> {
 /// source line for the caret excerpt + the module's display path for the header
 /// (`Diagnostic::render_cli`). The joined string becomes the `BuildReport.note`
 /// printed by `sky`.
+/// Whether a type-check diagnostic fails a build: an `[E1…]` name error or an
+/// `[E2…]` type error at error severity, or a non-exhaustive `case`
+/// (`[E3001]`). `ty::exhaustive` produces `[E3001]` at WARNING severity (the
+/// `infer` gate counts it on its own axis), yet every build gate rejects it, so
+/// a filter on `Severity::Error` alone silently dropped it.
+pub(crate) fn is_build_rejection(d: &diagnostics::Diagnostic) -> bool {
+    d.code.0 == "E3001"
+        || (d.severity == diagnostics::Severity::Error
+            && (d.code.0.starts_with("E1") || d.code.0.starts_with("E2")))
+}
+
+/// A diagnostic that fails the build, reported at ERROR severity. An `[E3001]`
+/// kept its warning severity and printed as `warning:`, followed by an EMPTY
+/// `sky check:` failure line, because the CLI prints only the errors there.
+pub(crate) fn as_build_error(d: &diagnostics::Diagnostic) -> diagnostics::Diagnostic {
+    let mut d = d.clone();
+    d.severity = diagnostics::Severity::Error;
+    d
+}
+
 fn render_diags(
     diags: &[diagnostics::Diagnostic],
     sources: &dyn diagnostics::SourceProvider,

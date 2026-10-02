@@ -1989,13 +1989,8 @@ pub fn analyze_loaded_keeping(
         let ds: Vec<String> = checked
             .diagnostics
             .iter()
-            .filter(|d| {
-                d.severity == diagnostics::Severity::Error
-                    && (d.code.0.starts_with("E1")
-                        || d.code.0.starts_with("E2")
-                        || d.code.0 == "E3001")
-            })
-            .map(|d| d.render_cli(&sources))
+            .filter(|d| crate::build::is_build_rejection(d))
+            .map(|d| crate::build::as_build_error(d).render_cli(&sources))
             .collect();
         let rendered = if ds.is_empty() {
             String::new()

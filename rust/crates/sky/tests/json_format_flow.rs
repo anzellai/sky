@@ -569,6 +569,70 @@ fn fmt_refuses_a_file_that_does_not_parse() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A non-exhaustive `case` (`[E3001]`) fails `sky check`, so it is reported as
+/// an ERROR with its message, in both modes. It used to print as `warning:`
+/// and then fail with an empty `sky check:` line, and the json summary counted
+/// one error while the only diagnostic said "warning".
+#[test]
+fn a_non_exhaustive_case_is_an_error_with_its_message() {
+    let dir = project("e3001", CLEAN, "\n[source]\nroot = \"src\"\n");
+    std::fs::create_dir_all(dir.join("src/Lib")).unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         import Lib.Shade as Shade\n\n\n\
+         main =\n    println (Shade.name Shade.Light)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Lib/Shade.sky"),
+        "module Lib.Shade exposing (Shade(..), name)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\n\n\
+         type Shade\n    = Light\n    | Dark\n    | Mid\n\n\n\
+         name : Shade -> String\n\
+         name s =\n    case s of\n        Light ->\n            \"light\"\n\n        \
+         Dark ->\n            \"dark\"\n",
+    )
+    .unwrap();
+    let text = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&text.stderr);
+    assert_eq!(text.status.code(), Some(1), "{err}");
+    assert!(
+        !err.contains("warning: -- MISSING PATTERNS"),
+        "a case that fails the build is not labelled a warning:\n{err}"
+    );
+    let tail = err
+        .split("sky check:")
+        .nth(1)
+        .unwrap_or_else(|| panic!("a `sky check:` failure line:\n{err}"));
+    assert!(
+        tail.contains("[E3001]") && tail.contains("missing: Mid"),
+        "the failure carries the E3001 message, not an empty line:\n{err}"
+    );
+    let o = sky(&dir, &["check", "--format", "json", "src/Main.sky"]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    let s = check_stream(&o);
+    assert_eq!(s["errors"], 1, "{:?}", o.lines);
+    assert_eq!(s["warnings"], 0, "{:?}", o.lines);
+    let d = diags(&o)
+        .into_iter()
+        .find(|d| d["code"] == "E3001")
+        .unwrap_or_else(|| panic!("an E3001 line: {:?}", o.lines));
+    assert_eq!(d["severity"], "error", "{d}");
+    assert!(
+        d["message"].as_str().unwrap().contains("missing: Mid"),
+        "{d}"
+    );
+    assert_eq!(d["file"], "src/Lib/Shade.sky", "{d}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// F-15: a failure the command reports only on stderr (a missing entry, an
 /// unknown target) reaches the json stream with its real message, and a
 /// source file that is not UTF-8 is named rather than reported as "no .sky".
