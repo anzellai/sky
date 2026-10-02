@@ -117,11 +117,20 @@ Operations:
   out of the app, or lost the role, kept the console for up to 4 hours, and
   so did a copy of the cookie. Now each cookie carries a random id. The
   console runs the app's check again at most every 60 seconds per cookie, and
-  a `Nothing` refuses with 403, revokes the id and clears the cookie. The
-  console sign-out revokes the id on the server (in process memory, bounded,
-  entries expire with the cookie), so a copy is refused at once. Under
-  `SKY_CONSOLE_AUTH=token` the sign-out now revokes the cookie on the server
-  too. Cookies issued by an earlier build are refused once.
+  a `Nothing` refuses with 403, revokes the id and clears the cookie. An
+  already-open console tab follows the same rule: its live stream re-runs the
+  check every second and ends (the tab stops receiving data and shows the
+  403) when the check fails or the cookie is revoked, so access ends within
+  61 seconds of an app sign-out or a demotion. The gate used to run only when
+  the stream opened, and an open tab kept receiving live telemetry after the
+  403. The console sign-out revokes the id on the server (in process memory,
+  bounded, entries expire with the cookie), so a copy is refused at once and
+  an open stream that uses it ends. Under `SKY_CONSOLE_AUTH=token` the
+  sign-out now revokes the cookie on the server too, on the replica that
+  served it: with several replicas, a copy stays valid on another replica
+  until it expires (at most 4 hours). Rotating `SKY_CONSOLE_TOKEN` ends every
+  console cookie on every replica at once. Cookies issued by an earlier build
+  are refused once.
 - **Two apps started with `App.serve` shared one session namespace.** A
   served app adopted any well-formed session id, so a cookie of one app was
   looked up in the other's store. Each served app now has its own namespace

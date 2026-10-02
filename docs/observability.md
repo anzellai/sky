@@ -137,6 +137,14 @@ The console login cookie is signed with a key derived from
 `SKY_CONSOLE_TOKEN` alone, so every process that shares the token accepts it:
 two upstream slots, the old and new process of a redeploy, replicas.
 
+The console sign-out (`/_sky/console/_logout`) revokes the cookie on the
+server, and an open console tab that uses it stops at once. The revocation
+list is in process memory, so with several replicas it covers only the
+replica that served the sign-out. A copy of the cookie stays valid on another
+replica until it expires (at most 4 hours). To end every console cookie on
+every replica at once, rotate `SKY_CONSOLE_TOKEN`: the cookie key is derived
+from it, so every cookie signed with the old key is refused.
+
 ### Watching the hub itself
 
 The console hub is a collector, so the usual question — "is anything being

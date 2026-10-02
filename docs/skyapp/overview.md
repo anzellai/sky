@@ -280,14 +280,27 @@ The gate fails closed:
   the check again at most every 60 seconds per cookie, with the request in
   hand. When it now answers `Nothing` (the admin signed out of the app, or
   lost the admin role), the console refuses with 403, revokes the cookie on
-  the server, clears it in the browser and logs `console.auth.revoked`. So
-  console access ends within 60 seconds of an app sign-out or a demotion.
+  the server, clears it in the browser and logs `console.auth.revoked`.
+- This holds for a console tab that is already open, too. Its live stream
+  runs the same check every second (the app's check itself still runs at most
+  every 60 seconds), and a revoked cookie ends it at once. When the check
+  fails, the stream ends, the tab stops receiving data and reloads into the
+  403. So console access, open tabs included, ends at most about one second
+  after the 60-second re-check comes due: within 61 seconds of an app
+  sign-out or a demotion.
 - The console's own sign-out (`/_sky/console/_logout`) revokes the cookie on
-  the server as well as in the browser: a copy of it is refused at once. The
-  revocation list is in process memory and bounded; each entry expires with
-  its cookie. With several replicas a sign-out revokes the cookie on the
-  replica that served it (the sticky one). Another replica has not checked
-  that cookie yet, so it runs the app's check on the first request it sees.
+  the server as well as in the browser: a copy of it is refused at once, and
+  an open console stream that uses it ends at once. The revocation list is in
+  process memory and bounded; each entry expires with its cookie. With
+  several replicas a sign-out revokes the cookie on the replica that served
+  it (the sticky one). Another replica has not checked that cookie yet, so it
+  runs the app's check on the first request it sees.
+- Under `SKY_CONSOLE_AUTH=token` there is no app check to fall back on. With
+  several replicas, a console sign-out revokes the cookie on the replica that
+  served it only. A copy of that cookie stays valid on another replica until
+  it expires (at most 4 hours). Rotating `SKY_CONSOLE_TOKEN` ends every
+  console cookie on every replica at once, because the cookie key is derived
+  from the token.
 - `Nothing`, `Err`, a panic, or an empty `subject` refuses with 403 and logs
   `console.auth.denied`. No console session is set.
 
