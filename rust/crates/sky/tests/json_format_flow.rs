@@ -675,6 +675,35 @@ fn json_failures_carry_the_real_message() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `bin` names the output FILE under the out dir. A path (`bin =
+/// "dist/fence"`) used to be ignored without a word, and the build wrote
+/// `sky-out/app`. It is refused with a message naming `--out`, in `sky check`
+/// and `sky build` alike, and nothing is written to `sky-out/app`.
+#[test]
+fn a_bin_path_in_sky_toml_is_refused_not_ignored() {
+    let dir = project("binpath", CLEAN, "bin = \"dist/fence\"\n");
+    for verb in ["check", "build"] {
+        let o = sky(&dir, &[verb, "--format", "json", "src/Main.sky"]);
+        assert_eq!(o.code, 1, "sky {verb} must refuse it:\n{}", o.stderr);
+        check_stream(&o);
+        let msg = diags(&o)
+            .into_iter()
+            .find(|d| d["severity"] == "error")
+            .map(|d| d["message"].as_str().unwrap_or("").to_string())
+            .unwrap_or_default();
+        assert!(
+            msg.contains("bin = \"dist/fence\"") && msg.contains("--out"),
+            "sky {verb}: the error names the key and the fix: {msg:?}\n{}",
+            o.stderr
+        );
+    }
+    assert!(
+        !dir.join("sky-out/app").exists(),
+        "the default binary is not built in its place"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn an_unknown_format_is_a_usage_error() {
     let dir = project("badfmt", CLEAN, "");

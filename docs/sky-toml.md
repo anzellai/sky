@@ -100,6 +100,12 @@ bin     = "app"           # output binary name → sky-out/app
 | `root`    | string | `"src"`          | Source-root prefix for module imports  |
 | `bin`     | string | `"app"`          | Output binary name in `sky-out/`       |
 
+`bin` and `root` are single names, not paths. A value with `/`, `\` or `..`
+(e.g. `bin = "dist/fence"`) fails `sky check` and `sky build` with an error
+naming the key *(v0.27.2+; it used to be replaced by the default without a
+word)*. To put the binary in another directory, keep `bin` a name and pass
+`sky build --out <dir>`: `bin = "fence"` with `--out dist` writes `dist/fence`.
+
 ---
 
 ## `[app]`

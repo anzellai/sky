@@ -285,6 +285,11 @@ fn assemble_and_emit_with(
     // module is a `SourceFile` input, `parse`/`module_exports` are tracked queries,
     // and `DefId`s are `#[salsa::interned]`. `load_dir` mints the inputs under a
     // shared `&db` borrow that closes before each `&mut db` registration.
+    // A `bin` / `root` value the build cannot honour is refused, never
+    // replaced by the default in silence.
+    if let Some(problem) = sky_toml_path_key_problem(example_dir) {
+        return Err(problem.into());
+    }
     let t_load = crate::timings::phase("load sources (stdlib + app)");
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
@@ -2123,19 +2128,44 @@ pub fn unknown_config_keys(keys: &[(String, String)]) -> Vec<String> {
     out
 }
 
-/// Read a `[project]`-scoped (or bare top-level, or `[source]`-table) string key
-/// from a project's `sky.toml`, returning `default` when absent. The build
-/// driver uses this for `bin` (output binary name) and `root` (source-root dir)
-/// — both documented in docs/sky-toml.md as `[project]` keys, also accepted at
-/// the top level. `root` additionally accepts the `[source]` table form.
-///
-/// The value is sanitised to a single path segment: a value containing a path
-/// separator or `..`, or an empty value, falls back to `default` — so a stray
-/// `bin = "../x"` can never redirect `go build -o` outside the out dir.
-pub fn sky_toml_project_key(project_dir: &Path, key: &str, default: &str) -> String {
-    let Ok(text) = std::fs::read_to_string(project_dir.join("sky.toml")) else {
-        return default.to_string();
-    };
+/// The `bin` / `root` value a project set that [`sky_toml_project_key`] cannot
+/// honour (a path, `..`, or empty), as a build error. The sanitiser falls back
+/// to the default for such a value; without this check the fallback was silent
+/// (`bin = "dist/fence"` built `sky-out/app` without a word). `sky check` and
+/// `sky build` both refuse it, before any work.
+pub fn sky_toml_path_key_problem(project_dir: &Path) -> Option<String> {
+    for (key, what, fix) in [
+        (
+            "bin",
+            "the output binary's FILE name: the build writes `<out dir>/<bin>` (default \
+             `sky-out/app`)",
+            "To put the binary in another directory, keep `bin` a name and pass \
+             `sky build --out <dir>` (e.g. `bin = \"fence\"` with `--out dist` writes \
+             `dist/fence`), or copy it after the build.",
+        ),
+        (
+            "root",
+            "the source root's directory NAME, under the project directory (default `src`)",
+            "Use a single directory name such as `root = \"src\"`.",
+        ),
+    ] {
+        let Some(val) = sky_toml_project_raw(project_dir, key) else {
+            continue;
+        };
+        if val.is_empty() || val.contains('/') || val.contains('\\') || val.contains("..") {
+            return Some(format!(
+                "sky.toml: `{key} = \"{val}\"` cannot be used: `{key}` is {what}, so it \
+                 must be one non-empty name with no `/`, `\\` or `..`. {fix}"
+            ));
+        }
+    }
+    None
+}
+
+/// The raw value of a `[project]`-scoped (or bare top-level, or `[source]`)
+/// string key, unsanitised; `None` when absent.
+fn sky_toml_project_raw(project_dir: &Path, key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(project_dir.join("sky.toml")).ok()?;
     let mut section = String::new();
     for raw in text.lines() {
         let line = raw.trim();
@@ -2165,13 +2195,34 @@ pub fn sky_toml_project_key(project_dir: &Path, key: &str, default: &str) -> Str
             } else {
                 raw_val.split('#').next().unwrap_or("").trim()
             };
-            if val.is_empty() || val.contains('/') || val.contains('\\') || val.contains("..") {
-                return default.to_string();
-            }
-            return val.to_string();
+            return Some(val.to_string());
         }
     }
-    default.to_string()
+    None
+}
+
+/// Read a `[project]`-scoped (or bare top-level, or `[source]`-table) string key
+/// from a project's `sky.toml`, returning `default` when absent. The build
+/// driver uses this for `bin` (output binary name) and `root` (source-root dir)
+/// — both documented in docs/sky-toml.md as `[project]` keys, also accepted at
+/// the top level. `root` additionally accepts the `[source]` table form.
+///
+/// The value is sanitised to a single path segment: a value containing a path
+/// separator or `..`, or an empty value, falls back to `default` — so a stray
+/// `bin = "../x"` can never redirect `go build -o` outside the out dir.
+pub fn sky_toml_project_key(project_dir: &Path, key: &str, default: &str) -> String {
+    match sky_toml_project_raw(project_dir, key) {
+        Some(val)
+            if !(val.is_empty()
+                || val.contains('/')
+                || val.contains('\\')
+                || val.contains("..")) =>
+        {
+            val
+        }
+        // Absent, or a value the build refuses (`sky_toml_path_key_problem`).
+        _ => default.to_string(),
+    }
 }
 
 /// Read a scalar key out of a named `sky.toml` section — `[database] embedded`,
