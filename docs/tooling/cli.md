@@ -347,6 +347,12 @@ it runs parsing, canonicalisation, HM inference, Go codegen, *and* invokes
 `sky build` would fail, `sky check` fails with the same error. This is the
 soundness gate — editor integrations should use it directly.
 
+`sky check <module.sky>` on a module that is not a program entry (it defines
+no `main` and no `Std.App` `app`) checks that module and what it imports the
+way a library check does: it type-checks, lowers and `go build`s them, and
+prints `Checked module <Name> …`. The program entry is checked by `sky check`
+with no path, or by naming the entry file.
+
 ### Machine-readable output: `--format json`
 
 `sky check`, `sky build`, `sky test` and `sky fmt --check` take

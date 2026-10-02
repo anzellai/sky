@@ -4598,6 +4598,13 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     if check_only && is_verify_library(&project_dir) {
         return check_library_verb(&project_dir);
     }
+    // `sky check <module>` on a module that is not a program entry (no `main`,
+    // no `Std.App` `app`) in an application: check that module and what it
+    // imports, as a library check does. It used to be taken as the program
+    // entry and fail with "lowering found no entry `main`".
+    if check_only && is_non_entry_module(file) {
+        return check_module_verb(file, &project_dir, &repo_root);
+    }
     // Resolve the build identity ONCE, here at the user's project root, and pin
     // it for every child build this command spawns (Std.App derived entry,
     // both Sky.Spa split legs, a desktop shell), so all of them embed the same
@@ -14281,6 +14288,57 @@ fn check_library_modules(repo_root: &Path, dir: &Path) -> Result<usize, String> 
     if modules.is_empty() {
         return Err(format!("no .sky modules under {root}/"));
     }
+    check_modules_via_entry(repo_root, dir, &modules)?;
+    Ok(modules.len())
+}
+
+/// A module that is not a program entry: no top-level `main`, and no
+/// top-level `app` (the `Std.App` dispatched form). `sky check <file>` on such
+/// a module checks it the way a library check does.
+fn is_non_entry_module(file: &Path) -> bool {
+    let Ok(src) = std::fs::read_to_string(file) else {
+        return false;
+    };
+    let defines = |name: &str| {
+        src.lines().any(|l| {
+            l.strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with([' ', ':', '=']))
+        })
+    };
+    project::declared_module_name(file).is_some() && !defines("main") && !defines("app")
+}
+
+/// `sky check <module>` for a module that is not the program entry:
+/// type-check, lower and `go build` that module and what it imports, through
+/// the same synthesised entry a library check uses.
+fn check_module_verb(file: &Path, dir: &Path, repo_root: &Path) -> ExitCode {
+    let Some(name) = project::declared_module_name(file) else {
+        eprintln!("sky check: {} has no `module` declaration", file.display());
+        return ExitCode::FAILURE;
+    };
+    match check_modules_via_entry(repo_root, dir, std::slice::from_ref(&name)) {
+        Ok(()) => {
+            println!(
+                "Checked module {name} (not a program entry, it has no `main`): it type-checks and builds."
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("sky check: {e}");
+            json_out::diagnostic(&project::diagnostics::Reported::plain(
+                project::diagnostics::Severity::Error,
+                project::diagnostics::Origin::Sky,
+                e,
+            ));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Build a synthesised entry that imports each of `modules` into a scratch
+/// output directory (the project tree is not written), so they are
+/// type-checked, lowered and `go build`t as an application's modules are.
+fn check_modules_via_entry(repo_root: &Path, dir: &Path, modules: &[String]) -> Result<(), String> {
     let scratch = std::env::temp_dir().join(format!(
         "sky-verify-lib-{}-{}",
         std::process::id(),
@@ -14292,7 +14350,7 @@ fn check_library_modules(repo_root: &Path, dir: &Path) -> Result<usize, String> 
     let entry_dir = scratch.join("entry");
     std::fs::create_dir_all(&entry_dir).map_err(|e| format!("scratch dir: {e}"))?;
     let mut body = format!("module {LIBRARY_CHECK_ENTRY} exposing (main)\n\n");
-    for m in &modules {
+    for m in modules {
         body.push_str(&format!("import {m}\n"));
     }
     body.push_str("import Std.Log as SkyLibraryCheckLog__\n\n\nmain =\n    SkyLibraryCheckLog__.println \"ok\"\n");
@@ -14324,7 +14382,7 @@ fn check_library_modules(repo_root: &Path, dir: &Path) -> Result<usize, String> 
             report.go_build_stderr.trim()
         ));
     }
-    Ok(modules.len())
+    Ok(())
 }
 
 /// Project `.sky` files under the configured source root + `tests/`, skipping
