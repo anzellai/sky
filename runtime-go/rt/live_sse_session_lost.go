@@ -41,6 +41,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"sky-app/rt/periodic"
 )
 
 // Reasons carried by the session-lost event and the server log line.
@@ -196,7 +198,14 @@ func serveGatedStream(w http.ResponseWriter, r *http.Request, gate func(http.Res
 			case <-t.C:
 			case <-wake:
 			}
-			if revoked() || !gate(&gateProbeWriter{h: http.Header{}}, recheck) {
+			// One re-check per cycle, recovered per cycle. A cycle that
+			// panics admits nothing: the stream ends (fail closed).
+			admitted := false
+			periodic.Guard("live.sse-gate-recheck", periodicReport, func() error {
+				admitted = !revoked() && gate(&gateProbeWriter{h: http.Header{}}, recheck)
+				return nil
+			})
+			if !admitted {
 				lost.Store(true)
 				cancel()
 				return
