@@ -104,6 +104,19 @@ var consoleNow = time.Now
 // ends at most that much later.
 const consoleAppRecheckInterval = 60 * time.Second
 
+// consoleAuthCallbackTimeout bounds one call into the app's
+// `App.withConsoleAuth` check. A check that has not answered by then
+// denies (fail closed) with a `console.auth.timeout` warning, so a check
+// stuck on a slow query cannot stall every console request or keep an
+// open console stream past its re-check. A var so tests can shorten it.
+var consoleAuthCallbackTimeout = 5 * time.Second
+
+// consoleAuthCallbackMaxInFlight caps the checks still running after
+// their caller gave up. A check that never returns keeps its goroutine
+// (Go cannot stop it); past this many, further console requests deny at
+// once instead of starting another one.
+const consoleAuthCallbackMaxInFlight = 32
+
 // consoleCookieRegistryCap bounds each per-id table below. Entries
 // expire with their cookie (at most consoleAuthCookieV2MaxAge), so the
 // cap is only reached by a flood of sign-ins inside one cookie life.
@@ -847,14 +860,66 @@ type ConsoleIdentity struct {
 // 1 = Err/Nothing), so none of those comparisons ever matched: Nothing and
 // Err both fell through to "allow" with an empty identity, and every
 // request to an app-mode console was let in.
-func invokeConsoleAuthCallback(cb any, r *http.Request) (id ConsoleIdentity, allowed bool) {
+//
+// BOUNDED. The check runs on its own goroutine and gets
+// consoleAuthCallbackTimeout to answer. Past that the request denies and
+// logs `console.auth.timeout`; the check's late answer goes into a
+// buffered channel nobody reads, so it is discarded and its goroutine
+// ends as soon as the check returns. Go cannot stop a running check, so
+// at most consoleAuthCallbackMaxInFlight may still be running: past
+// that, a new request denies at once instead of starting another.
+func invokeConsoleAuthCallback(cb any, r *http.Request) (ConsoleIdentity, bool) {
+	select {
+	case consoleAuthInFlight <- struct{}{}:
+	default:
+		logStructured("warn", "console.auth",
+			"event", "console.auth.timeout",
+			"class", "ConsoleAuthTimeout",
+			"reason", "too many consoleAuth checks still running",
+			"limit", consoleAuthCallbackMaxInFlight,
+			"path", r.URL.Path)
+		return ConsoleIdentity{}, false
+	}
+	req := buildConsoleAuthRequest(r)
+	type verdict struct {
+		id ConsoleIdentity
+		ok bool
+	}
+	done := make(chan verdict, 1) // buffered: a late answer never blocks
+	go func() {
+		defer func() { <-consoleAuthInFlight }()
+		id, ok := runConsoleAuthCallback(cb, r, req)
+		done <- verdict{id, ok}
+	}()
+	bound := consoleAuthCallbackTimeout
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case v := <-done:
+		return v.id, v.ok
+	case <-timer.C:
+		logStructured("warn", "console.auth",
+			"event", "console.auth.timeout",
+			"class", "ConsoleAuthTimeout",
+			"timeout", bound.String(),
+			"path", r.URL.Path,
+			"remote", r.RemoteAddr)
+		return ConsoleIdentity{}, false
+	}
+}
+
+// consoleAuthInFlight holds one token per check still running.
+var consoleAuthInFlight = make(chan struct{}, consoleAuthCallbackMaxInFlight)
+
+// runConsoleAuthCallback calls the check and reads its answer (see
+// invokeConsoleAuthCallback for the fail-closed rules).
+func runConsoleAuthCallback(cb any, r *http.Request, req SkyRequest) (id ConsoleIdentity, allowed bool) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			// Caller logs the deny via recordConsoleAuthEvent.
 			id, allowed = ConsoleIdentity{}, false
 		}
 	}()
-	req := buildConsoleAuthRequest(r)
 	var taskAny any
 	if modelOf := getConsoleAuthModelOf(); modelOf != nil {
 		taskAny = sky_call2(cb, req, modelOf(r))

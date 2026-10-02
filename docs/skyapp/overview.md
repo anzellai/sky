@@ -303,6 +303,13 @@ The gate fails closed:
   from the token.
 - `Nothing`, `Err`, a panic, or an empty `subject` refuses with 403 and logs
   `console.auth.denied`. No console session is set.
+- The check has 5 seconds to answer. A check that takes longer (a stuck
+  database query) refuses with 403, logs a `console.auth.timeout` warning and
+  `console.auth.denied`, and its late answer is discarded. On an open console
+  stream a re-check that times out ends the stream. Go cannot stop the check
+  itself, so it keeps running until it returns; while 32 such checks are
+  still running, further console requests are refused at once rather than
+  start another. Keep the check fast: read the session, not a slow report.
 
 It runs on the server on every web target: Sky.Live (`web`, `desktop`) and the
 backend of a `web:app` split, which registers it with `Server.setConsoleAuth`
