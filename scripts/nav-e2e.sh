@@ -15,6 +15,8 @@
 #   save   a server arm's navigation runs (the Sky.Spa client runs it when it
 #          sends the request) and the server result still arrives
 #   evil   a URL off the site is refused, and the refusal is logged
+#   plain  a page with no Sub.onFragment opened at `/plain#x` keeps its
+#          first paint (the load-time fragment report is a no-op)
 #
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
 # uses Google Chrome; SKY_E2E_HEADED=1 runs them headed.

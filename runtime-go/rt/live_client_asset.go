@@ -1295,6 +1295,14 @@ function __skyPostEventNow(body) {
     if (skyMark !== "1" && !isJson) {
       throw new Error("non-sky response " + r.status);
     }
+    // 204 No Content: the event was a no-op (a fragment report with no
+    // Sub.onFragment, an internal sentinel). Nothing to patch: an empty
+    // body patched in as the view would blank the page.
+    if (r.status === 204) {
+      __skyLoaderEnd();
+      __skyOnPostSuccess();
+      return;
+    }
     if (isJson) {
       return r.json().then(function(data) {
         // Even JSON is rejected if it lacks the protocol shape (no

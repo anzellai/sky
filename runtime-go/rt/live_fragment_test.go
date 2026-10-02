@@ -66,11 +66,13 @@ func TestLiveFragmentEventReachesTheOnFragmentSub(t *testing.T) {
 	}
 }
 
-// Without a Sub.onFragment leaf the report is a no-op: 200, model unchanged.
+// Without a Sub.onFragment leaf the report is a no-op: 204 No Content (the
+// client patches nothing), model unchanged. It used to answer 200 with an
+// empty body, which the client patched in: a page opened at `/#x` went blank.
 func TestLiveFragmentEventWithoutASubIsANoOp(t *testing.T) {
 	app := fragmentTestApp(func(model any) any { return Sub_none() })
 	rr := postFragment(t, app, "sid-nofrag", "x")
-	if rr.Code != 200 {
+	if rr.Code != 204 || rr.Body.Len() != 0 {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}
 	sess, _ := app.store.Get("sid-nofrag")
@@ -144,5 +146,16 @@ vm.runInContext(src, sandbox);
 	got := string(out)
 	if !strings.Contains(got, `"frags":["intro","part-2",""]`) || !strings.Contains(got, `"handlerIds":["","",""]`) {
 		t.Fatalf("the client must report the fragment at load and on each hashchange: %s", got)
+	}
+}
+
+// The client half of the no-op: a 204 answer to /_sky/event is never patched
+// into the page (an empty patch would blank it).
+func TestLiveJS_A204EventAnswerIsNotPatched(t *testing.T) {
+	js := liveClientJS
+	i := strings.Index(js, "if (r.status === 204)")
+	j := strings.Index(js, "return r.text().then(function(t) {\n      __skyLoaderEnd();")
+	if i < 0 || j < 0 || i > j {
+		t.Fatalf("__skySend must return on a 204 before the text patch path (204 at %d, patch at %d)", i, j)
 	}
 }

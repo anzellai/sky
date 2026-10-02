@@ -177,6 +177,30 @@ async function scenario(browserName, target, url, app) {
   }
 }
 
+// ---- plain: a page with no Sub.onFragment, opened at a URL with a fragment --
+// The client reports the fragment at load. With no subscriber the report is a
+// no-op: the page keeps its first paint (it used to be patched with an empty
+// body, which blanked the page).
+async function plainScenario(browserName, target, port) {
+  const browser = await launch(browserName);
+  const tag = `${target}/${browserName}`;
+  const page = await browser.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  try {
+    await page.goto(`http://127.0.0.1:${port}/plain#x`, { waitUntil: "load" });
+    await page.waitForTimeout(2000);
+    const n = await page.locator("#state").count();
+    const s = n > 0 ? await state(page) : "";
+    const btns = await page.locator("#go").count();
+    check(`${tag} plain#x: the page is not blanked`, n === 1 && btns === 1, `#state=${n} #go=${btns}`);
+    check(`${tag} plain#x: the route ran, no fragment delivered`, field(s, "PAGE") === "plain" && /FRAG= /.test(s), s || "(empty)");
+    check(`${tag} plain#x: no page errors`, errors.length === 0, errors.join(" | ") || "none");
+  } finally {
+    await browser.close();
+  }
+}
+
 let apps = [];
 try {
   const results = {};
@@ -188,6 +212,7 @@ try {
     apps.push(app);
     for (const b of BROWSERS) {
       results[`${target}/${b}`] = await scenario(b, target, `http://127.0.0.1:${port}/`, app);
+      await plainScenario(b, target, port);
     }
     app.proc.kill("SIGKILL");
   }

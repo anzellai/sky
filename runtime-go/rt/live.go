@@ -2950,10 +2950,12 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		if len(req.Args) > 0 {
 			_ = json.Unmarshal(req.Args[0], &frag)
 		}
+		// 204: a no-op the client never patches. An empty 200 was
+		// patched in as the new view and blanked the page.
 		if toMsg == nil {
 			sess.mu.Unlock()
 			w.Header().Set("X-Sky-Live", "1")
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		msg, ok = sky_call(toMsg, fragmentOf(frag)), true
@@ -2992,7 +2994,7 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 			sess.mu.Unlock()
 			w.Header().Set("X-Sky-Live", "1")
 			if strings.HasPrefix(req.Msg, "__sky") {
-				w.WriteHeader(200)
+				w.WriteHeader(http.StatusNoContent) // a no-op: nothing to patch
 				return
 			}
 			fmt.Fprintf(os.Stderr, "[sky.live] unknown Msg constructor %q (direct-send); dropping event\n", req.Msg)

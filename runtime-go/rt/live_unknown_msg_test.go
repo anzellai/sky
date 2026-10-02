@@ -66,7 +66,7 @@ func TestUnknownMsg_DirectSend_Returns400(t *testing.T) {
 // existence (404 → reload, anything else → keep going). Our unknown-
 // Msg defence must NOT log a panic / return 400 for these sentinels;
 // they should silently no-op with 200.
-func TestUnknownMsg_SkySentinel_Returns200(t *testing.T) {
+func TestUnknownMsg_SkySentinel_Returns204(t *testing.T) {
 	app := &liveApp{
 		store:  newMemoryStore(30 * time.Minute),
 		locker: newSessionLocker(),
@@ -97,8 +97,8 @@ func TestUnknownMsg_SkySentinel_Returns200(t *testing.T) {
 
 	app.handleEvent(rr, req)
 
-	if rr.Code != 200 {
-		t.Errorf("expected 200 for __sky sentinel, got %d", rr.Code)
+	if rr.Code != 204 {
+		t.Errorf("expected 204 (a no-op the client never patches) for __sky sentinel, got %d", rr.Code)
 	}
 	if got := rr.Header().Get("X-Sky-Live"); got != "1" {
 		t.Errorf("expected X-Sky-Live: 1, got %q", got)

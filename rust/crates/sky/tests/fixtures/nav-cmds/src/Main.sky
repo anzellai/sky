@@ -10,6 +10,8 @@ module Main exposing (main)
 --   save     a SERVER arm (a timer read) returns a navigation too: the client
 --            runs it when it sends the request, as Sky.Live runs it
 --   evil     a URL off the site is refused; the address bar does not move
+--   plain    `/plain` has no Sub.onFragment: a page opened at `/plain#x`
+--            keeps its first paint (the load-time fragment report is a no-op)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
@@ -111,8 +113,12 @@ view model =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.onFragment GotFragment
+subscriptions model =
+    if model.page == "plain" then
+        Sub.none
+
+    else
+        Sub.onFragment GotFragment
 
 
 app =
@@ -122,7 +128,11 @@ app =
         , view = view
         , subscriptions = subscriptions
         }
-        |> App.withRoutes [ App.route "/" "home", App.route "/about" "about" ]
+        |> App.withRoutes
+               [ App.route "/" "home"
+               , App.route "/about" "about"
+               , App.route "/plain" "plain"
+               ]
         |> App.withNotFound "home"
         |> App.withOnNavigate Navigated
 
