@@ -1,0 +1,113 @@
+module Main exposing (main)
+
+-- v0.27.1 regression: a user record alias whose field set is exactly
+-- `{ body : String }` (the only field the generated RPC handler reads off its
+-- request before the session check) must NOT capture the handler's `Request`
+-- parameter. In v0.27.0 the request was typed as `Note`, converted to that
+-- record and back, and lost its cookies, so every RPC after sign-in ran
+-- signed out.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Core.File as File
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Note =
+    { body : String }
+
+
+emptyNote : Note
+emptyNote =
+    { body = "" }
+
+
+type alias Session =
+    { userId : String
+    , role : String
+    }
+
+
+type alias Model =
+    { session : Maybe Session
+    , note : String
+    }
+
+
+type Msg
+    = LogIn
+    | SaveAdmin String
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { session = Nothing, note = "" }, Cmd.none )
+
+
+-- A SERVER effect (File) — forcing it makes a branch a server branch.
+persist : String -> String -> Task Error String
+persist name s =
+    File.writeFile name s
+        |> Task.map (\_ -> "ok")
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        LogIn ->
+            -- SERVER branch that ESTABLISHES the session. The response must
+            -- Set-Cookie the signed session.
+            let
+                _ =
+                    Task.run (persist "login.txt" "in")
+            in
+            ( { model | session = Just { userId = "u1", role = "admin" } }, Cmd.none )
+
+        SaveAdmin content ->
+            -- ADMIN branch: gates on the session role read off the model. A forged
+            -- wire `session` must NOT reach this read — the backend overrides
+            -- `session` from the verified cookie BEFORE this runs.
+            case model.session of
+                Just s ->
+                    if s.role == "admin" then
+                        let
+                            _ =
+                                Task.run (persist "admin.txt" content)
+                        in
+                        ( { model | note = content }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            [ Ui.spacing 8 ]
+            [ Ui.text model.note, Ui.text emptyNote.body ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

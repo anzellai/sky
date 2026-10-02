@@ -248,7 +248,21 @@ fn go_ty_uncached(
             let mut names: Vec<String> =
                 fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
             names.sort();
-            if let Some(candidates) = env.record_fieldsets.get(&names) {
+            // An OPEN row (`ext = Some(ρ)`) names only the fields the code read;
+            // the value at run time may be a WIDER record. Resolving it to an
+            // alias whose field set is exactly these names is sound only when
+            // no other nominal record could carry it: if one could (a user
+            // `Note { body }` against the stdlib `Request { body, cookies, … }`),
+            // the wider value would cross the Go boundary as the alias and lose
+            // every other field. Then the row is ambiguous and takes the
+            // reflective (`any`) path below, which keeps the whole value.
+            let exact = env.record_fieldsets.get(&names).filter(|cands| {
+                ext.is_none()
+                    || !cands
+                        .iter()
+                        .any(|c| wider_nominal_could_carry(fields, &names, c, env, cur_mod, params))
+            });
+            if let Some(candidates) = exact {
                 // Among aliases sharing this field-NAME set, pick the one whose
                 // field TYPES match this record (a user `EnvForm {…value:String}`
                 // must not resolve to `Std.Analytics.EventProp {…value:PropValue}`).
@@ -301,6 +315,10 @@ fn go_ty_uncached(
                     // a mismatch means the row is a subset of some OTHER nominal, and
                     // it falls through to the safe reflective (`any`) path below.
                     && model_subset_resolves(fields, &names, model_go, env, cur_mod, params)
+                    // The same field-loss hazard as the exact-match path above:
+                    // a wider record that is not the Model must not cross the Go
+                    // boundary as the Model.
+                    && !wider_nominal_could_carry(fields, &names, model_go, env, cur_mod, params)
                 {
                     return GoTy::Named(model_go.clone(), vec![]);
                 }
@@ -565,6 +583,53 @@ fn model_subset_resolves(
         }
     }
     true
+}
+
+/// Could a nominal record OTHER than `target_go` flow into an open row with
+/// field names `names` and carry fields `target_go` does not have? True when
+/// some other record alias collects every name in the row, holds at least one
+/// field outside `target_go`, and types no shared field differently from the
+/// row (a field whose type contradicts the row could not have flowed in).
+/// Converting such a value to `target_go` at the Go boundary drops the extra
+/// fields, so resolving the row to `target_go` would be a silent wrong answer.
+fn wider_nominal_could_carry(
+    fields: &[(Name, Ty)],
+    names: &[String],
+    target_go: &str,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> bool {
+    let target: Vec<&str> = env
+        .record_templates
+        .get(target_go)
+        .map(|t| t.iter().map(|(n, _)| n.as_str()).collect())
+        .unwrap_or_else(|| names.iter().map(|n| n.as_str()).collect());
+    let row: HashMap<&str, &Ty> = fields.iter().map(|(n, t)| (n.as_str(), t)).collect();
+    env.record_templates.iter().any(|(go_name, templates)| {
+        if go_name == target_go {
+            return false;
+        }
+        let other: HashMap<&str, &Ty> = templates.iter().map(|(n, t)| (n.as_str(), t)).collect();
+        if !names.iter().all(|n| other.contains_key(n.as_str())) {
+            return false;
+        }
+        if templates.iter().all(|(n, _)| target.contains(&n.as_str())) {
+            return false; // nothing outside the target to lose
+        }
+        // A field typed differently in the other record refutes it.
+        !names.iter().any(|n| {
+            let (Some(ot), Some(rt)) = (other.get(n.as_str()), row.get(n.as_str())) else {
+                return false;
+            };
+            if matches!(ot, Ty::Var(_)) || has_unresolved(rt, params) {
+                return false;
+            }
+            let og = go_ty(ot, env, cur_mod, params);
+            let rg = go_ty(rt, env, cur_mod, params);
+            og != GoTy::Any && rg != GoTy::Any && og != rg
+        })
+    })
 }
 
 fn select_record_candidate<'a>(

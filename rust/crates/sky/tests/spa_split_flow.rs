@@ -5005,6 +5005,102 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     );
 }
 
+/// v0.27.1 regression (found in a real app). The app declares
+/// `type alias Note = { body : String }`. In v0.27.0 each generated
+/// `<handler>Inner_` was unannotated and read its request only through
+/// `req.body` before the session check, so the lowering typed `req` as `Note`
+/// (the one alias with exactly that field set). The generated Go converted the
+/// `Request` to `Note` and back, the cookie was lost, and every RPC after
+/// sign-in ran signed out. The handler parameter must be `Request`, and an RPC
+/// that carries the signed cookie must see the session.
+#[test]
+fn spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-body-alias"),
+        &proj,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app on the spa-body-alias fixture");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let backend = std::fs::read_to_string(proj.join(".split/backend/src/Main.sky"))
+        .expect("generated backend entry must exist");
+    assert!(
+        backend.contains("saveAdminHandlerInner_ : Handler\n")
+            && backend.contains("logInHandlerInner_ : Handler\n")
+            && backend.contains("spaSignOutInner_ : Handler\n"),
+        "every generated inner handler must be annotated `Handler`:\n{backend}"
+    );
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+    assert!(output.status.success(), "the split must build:\n{log}");
+    let backend_dir = proj.join(".split/backend");
+    let main_go = std::fs::read_to_string(backend_dir.join("sky-out/main.go"))
+        .expect("generated backend Go must exist");
+    assert!(
+        !main_go.contains("Main_Note_R](v_0)") && !main_go.contains("Inner_(v_0 Main_Note_R)"),
+        "the request must never cross the Go boundary as the user's `Note`"
+    );
+
+    let port = 8989u16;
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = Command::new(backend_dir.join("sky-out/app"))
+        .current_dir(&backend_dir)
+        .env("PORT", port.to_string())
+        .env(
+            "SKY_SPA_SESSION_SECRET",
+            "0123456789abcdef0123456789abcdef0123456789",
+        )
+        .stdout(log_file.try_clone().unwrap())
+        .stderr(log_file)
+        .spawn()
+        .expect("spawn the compiled spa-body-alias backend");
+    if !wait_for_spa_backend(&log_path, 80) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("spa-body-alias backend never reported listening on :{port}");
+    }
+    let login = curl_post_full(port, "/_rpc/LogIn", "{}", None);
+    let cookie = login.as_ref().and_then(|(_, _, c)| c.clone());
+    let admin = cookie.as_deref().and_then(|c| {
+        curl_post_full(
+            port,
+            "/_rpc/SaveAdmin",
+            r#"{"session":null,"content":"signed-in","note":"keep"}"#,
+            Some(c),
+        )
+    });
+    let admin_txt = std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&proj);
+
+    assert!(
+        cookie.is_some(),
+        "login must issue the signed sky_spa cookie"
+    );
+    let (code, _, _) = admin.expect("the signed-in SaveAdmin should answer");
+    assert_eq!(code, 200, "the signed-in SaveAdmin should answer 200");
+    assert_eq!(
+        admin_txt, "signed-in",
+        "an RPC after sign-in must see the session from its cookie (v0.27.0 lost the \
+         cookie through `Note` and ran the RPC signed out); admin.txt was {admin_txt:?}"
+    );
+}
+
 // Send one request with an optional `Cookie:` header and return (status, every
 // `Set-Cookie` line of the answer, in order). `-D -` dumps the response headers
 // ahead of the body; the body is discarded.

@@ -892,6 +892,31 @@ argument of the wrong Go type crashed the process.
   - `tools/sky-ffi-inspect/sky3_test.go`.
   - The byte-golden fixtures in `rust/crates/ffi/tests/fixtures/`.
 
+### 9.8 An open row captured by an alias with the same field set (closed, v0.27.1)
+
+On the lowering path an unannotated callee is a fresh type variable, so a
+parameter read only through `req.body` and passed to such a callee keeps the
+open row `{ body : String | r }`. `goty.rs` resolved that row to any record
+alias whose field-name set was exactly `{ body }`. When a WIDER record flowed
+in (the stdlib `Request`), the emitted Go converted it to the alias and back,
+and every other field was lost: a silent wrong answer, not a panic. Found in a
+Sky.Spa split whose app declared `type alias MessageForm = { body : String }`;
+every RPC after sign-in ran signed out. The same capture was in the corpus: a
+user `Game` row resolved to the stdlib `Std.Durable.ResultRow { result }`.
+
+- **Origin:** R10/R11 (§4.6): the open-row path of `go_ty`'s `Ty::Record` arm.
+- **Lever:** none; this is a soundness fix that WIDENS. An open row resolves to
+  a nominal (by exact field set, or as a Model subset) only when no other
+  nominal record collects the row's fields with fields of its own
+  (`wider_nominal_could_carry`). Otherwise it takes the §4.6 policy-floor path
+  (`any` + `rt.Field`), which keeps the whole value.
+- **Floor check (§1):** the row variable is unresolved at emit time, so the
+  value's shape is not known: policy floor, as §4.6.
+- **Verification:** `rust/crates/sky/tests/codegen_open_row_alias_flow.rs`
+  (the value keeps its cookie and path at run time) and
+  `spa_split_flow.rs::spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body`.
+  `coerce-floor` recorded the widening: narrow +8 over three rows, adapter 0.
+
 ## 10. How to cite this document
 
 A claim that a tactic closes a runtime-narrowing goal must name:

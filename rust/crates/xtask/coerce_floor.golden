@@ -195,6 +195,19 @@
 #   the old golden (13063) exactly, and every one of the 892 removed tokens sits
 #   in a diff hunk that reads a container payload field, with no hunk adding a
 #   token. This also returns the +32 the FFI-typing transition above recorded.
+# ── Recorded transition, 2026-10-02 — v0.27.1: open rows no longer captured
+#    by an alias with the same field set ──
+#   narrow +8 over 3 rows (16-skychess 563 -> 565, 66-slack-agent 140 -> 142,
+#   apps/ledger 502 -> 506), adapter 0, no other row moved (71 of 75 measured;
+#   the 4 FFI rows are UNMEASURED under SKY_LIVE_TESTS=skip, as in CI).
+#   A soundness fix that WIDENS (doc 14 §9.8, origin R10/R11, policy floor):
+#   an open row resolved by field set to an alias a wider record could not
+#   survive (a `Request` crossing the Go boundary as a user `{ body }` alias
+#   lost its cookies). Each delta was checked in the emitted Go against v0.27.0:
+#   skychess and slack-agent read a user/stdlib record through `rt.Field`
+#   instead of `rt.Coerce` to an unrelated stdlib alias (`Std.Durable.ResultRow`,
+#   `Std.Ai.Provider.RawChoice`); ledger's `addAccount` form parameter is now
+#   `any` because another nominal collects the same three fields and more.
 00-standard-libs	adapter=0	dispatch=0	narrow=170
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
@@ -210,7 +223,7 @@
 13-skyshop	adapter=0	dispatch=0	narrow=1297
 14-task-demo	adapter=0	dispatch=0	narrow=8
 15-http-server	adapter=0	dispatch=0	narrow=9
-16-skychess	adapter=0	dispatch=0	narrow=563
+16-skychess	adapter=0	dispatch=0	narrow=565
 17-skymon	adapter=0	dispatch=0	narrow=517
 18-job-queue	adapter=0	dispatch=0	narrow=227
 19-skyforum	adapter=0	dispatch=0	narrow=119
@@ -254,12 +267,12 @@
 63-app-chat	adapter=0	dispatch=0	narrow=430
 64-app-native	adapter=0	dispatch=0	narrow=316
 65-metadata-service	adapter=0	dispatch=0	narrow=26
-66-slack-agent	adapter=0	dispatch=0	narrow=140
+66-slack-agent	adapter=0	dispatch=0	narrow=142
 67-durable-counter	adapter=0	dispatch=0	narrow=80
 apps/dispatch	adapter=0	dispatch=0	narrow=402
 apps/fieldbook	adapter=0	dispatch=0	narrow=670
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=502
+apps/ledger	adapter=0	dispatch=0	narrow=506
 apps/relay	adapter=0	dispatch=0	narrow=176
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=73
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=73

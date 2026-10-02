@@ -1,0 +1,52 @@
+module Main exposing (main)
+
+-- v0.27.1 regression. `Note` has exactly the field set `{ body : String }`.
+-- `handle` reads only `req.body` and passes `req` on to an UNANNOTATED
+-- helper, so the lowering sees `req` as the open row `{ body : String | r }`.
+-- That row must not be lowered as `Note`: a `Request` flows in, and a
+-- `Request -> Note -> Request` round trip at the Go boundary drops every
+-- field except `body` (the cookie, the path, the headers).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Http.Server as Server exposing (Request)
+import Std.Log exposing (println)
+
+
+type alias Note =
+    { body : String }
+
+
+emptyNote : Note
+emptyNote =
+    { body = "note" }
+
+
+cookieOf : Request -> String
+cookieOf r =
+    Maybe.withDefault "NO-COOKIE" (Dict.get "sid" r.cookies) ++ " " ++ r.path
+
+
+describe req =
+    cookieOf req
+
+
+handle req =
+    req.body ++ " " ++ describe req
+
+
+request : Request
+request =
+    { method = "POST"
+    , path = "/rpc/save"
+    , body = "payload"
+    , headers = Dict.empty
+    , params = Dict.empty
+    , query = Dict.empty
+    , cookies = Dict.fromList [ ( "sid", "abc123" ) ]
+    , remoteAddr = "127.0.0.1"
+    }
+
+
+main =
+    println (emptyNote.body ++ " | " ++ handle request)

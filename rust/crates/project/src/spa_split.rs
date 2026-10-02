@@ -7403,6 +7403,7 @@ fn gen_backend(
              \x20   spaSessionToken_ sessionSecret_ req\n\n\n\
              -- Every RPC, SSR and sign-out answer passes through here, so a\n\
              -- request that came in on the legacy cookie leaves on `sky_spa`.\n\
+             spaWithSession_ : Request -> Task Error Response -> Task Error Response\n\
              spaWithSession_ req answer_ =\n\
              \x20   Task.map (spaSessionCookies_ sessionSecret_ req) answer_\n\n\n",
         );
@@ -7479,6 +7480,7 @@ fn gen_backend(
              \x20   spaWithSession_ req (spaSignOutInner_ req)\n\n\n\
              -- Clears `sky_spa` only: `sky_sid` may be a Sky.Live app's cookie on the\n\
              -- same host (A-2b).\n\
+             spaSignOutInner_ : Handler\n\
              spaSignOutInner_ req =\n\
              \x20   let\n\
              \x20       cleared_ =\n\
@@ -7699,11 +7701,11 @@ fn gen_backend(
             ));
             format!("{handler}Inner_")
         };
-        let handler_sig = if session_proj.is_empty() {
-            format!("{handler} : Handler\n")
-        } else {
-            String::new()
-        };
+        // The inner handler is annotated too: unannotated, its `req` is only
+        // read through `req.body` before it reaches `spaWithSession_`, and the
+        // lowering would type it from that one field (v0.27.1: a user alias
+        // `{ body : String }` captured it and the request lost its cookies).
+        let handler_sig = format!("{handler_body_name} : Handler\n");
         handlers.push_str(&format!(
             "-- Generated endpoint for the SERVER branch `{name}`: decode the read-set,\n\
              -- reuse the app's own init + update to run the REAL effect, encode the write-set.\n\
@@ -7995,7 +7997,7 @@ fn gen_backend(
         let (ssr_head_decl, ssr_name) = if session_proj.is_empty() {
             ("ssrHandler : Handler\n".to_string(), "ssrHandler")
         } else {
-            (String::new(), "ssrInner_")
+            ("ssrInner_ : Handler\n".to_string(), "ssrInner_")
         };
         if !session_proj.is_empty() {
             handlers.push_str(
