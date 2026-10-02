@@ -40,10 +40,10 @@
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 1488,
-      "assertions": 1481,
+      "assertion_calls_incl_pass": 1489,
+      "assertions": 1482,
       "by_assertion_fn": {
-        "equal": 1086,
+        "equal": 1087,
         "err": 119,
         "expectErrorKind": 34,
         "fail": 48,
@@ -52,7 +52,7 @@
         "notEqual": 24,
         "ok": 15
       },
-      "cases": 1481,
+      "cases": 1482,
       "vacuous_pass": 7
     },
     "examples": {
