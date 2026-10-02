@@ -25,7 +25,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `stronger` | 164 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 128 |
+| corpus units | 129 |
 | stdlib modules (denominator) | 113 |
 | stdlib entries (denominator) | 2220 |
 

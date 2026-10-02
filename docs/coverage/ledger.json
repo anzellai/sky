@@ -683,12 +683,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 64,
-      "FlowTest": 45,
+      "FlowTest": 46,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 128
+    "units_total": 129
   },
   "surfaces": [
     {
@@ -3064,6 +3064,11 @@
           },
           {
             "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_open_row_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -7716,6 +7721,11 @@
             "strength": 2
           },
           {
+            "by": "flow:codegen_open_row_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:doc_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -11877,6 +11887,11 @@
           },
           {
             "by": "flow:codegen_ctor_destructure_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "flow:codegen_open_row_alias_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -18515,6 +18530,18 @@
     {
       "db_drivers": [],
       "gate": null,
+      "id": "flow:codegen_open_row_alias_flow",
+      "modules_imported": 3,
+      "path": "rust/crates/sky/tests/codegen_open_row_alias_flow.rs",
+      "refs_generous": 5,
+      "refs_qualified": 3,
+      "role": "FlowTest",
+      "sky_files": 1,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
       "id": "flow:codegen_rowpoly_lambda_caf_flow",
       "modules_imported": 2,
       "path": "rust/crates/sky/tests/codegen_rowpoly_lambda_caf_flow.rs",
@@ -18701,7 +18728,7 @@
       "refs_generous": 147,
       "refs_qualified": 141,
       "role": "FlowTest",
-      "sky_files": 117,
+      "sky_files": 118,
       "sky_toml_sections": []
     },
     {
