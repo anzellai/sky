@@ -11,6 +11,19 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.1 — Sky.Spa RPCs keep their cookies, and a bounded console check (2026-10-02)
+
+### Fixed
+
+- **A Sky.Spa RPC lost the request's cookies when the app had a record alias that was exactly `{ body : String }`.** The v0.27.0 split left each generated handler body without a signature. It read the request only through `req.body`, so the compiler typed the request as that alias, converted it to the alias and back, and dropped every field except `body`. The session check then saw no cookie, and every RPC after sign-in ran signed out. The generated handlers are annotated `Handler` again, and the cause is fixed for all code: a record that the code reads only in part is never converted to an alias with exactly those fields when a wider record, such as `Request`, could be the value. Such a value now keeps every field. (`rust/crates/lower/src/goty.rs`; tests `codegen_open_row_alias_flow.rs` and `spa_split_flow.rs::spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body`.)
+- **The Sky Console's call into `App.withConsoleAuth` has a time limit.** A check that hung (a stuck database query) stalled every console request and kept an open console stream running past its re-check. The check now has 5 seconds to answer. A check that takes longer refuses with 403 and logs a `console.auth.timeout` warning, its late answer is discarded, and an open console stream whose re-check times out ends. At most 32 timed-out checks may still be running; past that, console requests are refused at once. See `docs/skyapp/overview.md`.
+
+### Migration
+
+- No code change is needed. Rebuild a Sky.Spa app (`sky build`) so its split handlers are generated again.
+- If you renamed a `{ body : String }` alias to work around the lost cookies, you can rename it back.
+- A `withConsoleAuth` check must answer within 5 seconds, or the console request is refused. Keep the check to a session read.
+
 ## v0.27.0 — widget islands, `App.serve`, cookieless sessions, new crypto, process and UI modules, `--format json`, native packaging, and a stack-safe Task (2026-09-28)
 
 ### ⚠ Breaking changes and upgrading from v0.26
