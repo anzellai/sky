@@ -7393,11 +7393,6 @@ fn gen_backend(
              spaSessionCookies_ : Secret -> Request -> Response -> Response\n\
              spaSessionCookies_ =\n\
              \x20   Ffi.kernel \"Spa_sessionCookies\"\n\n\n\
-             -- A-6: open the sign-out store at boot; an Err (production, no store,\n\
-             -- an unwritable data dir) stops start-up with the message.\n\
-             spaSessionBoot_ : () -> Task Error ()\n\
-             spaSessionBoot_ =\n\
-             \x20   Ffi.kernel \"Spa_sessionBoot\"\n\n\n\
              spaSessionCookie_ : Request -> String\n\
              spaSessionCookie_ req =\n\
              \x20   spaSessionToken_ sessionSecret_ req\n\n\n\
@@ -8166,11 +8161,29 @@ fn gen_backend(
         startup.push("Server.setConsoleAuth spaConsoleGate_");
     }
     // Boot tasks that run, in order, before the server listens; an Err stops
-    // start-up. E-4: record the wire hash. A-6: open the sign-out store.
+    // start-up. E-4: record the wire hash.
+    // A-6: with a session projection, open the sign-out store; without one,
+    // report that the backend keeps no server-side session (so a configured
+    // `[live] store` is not used, and the log says so rather than leaving the
+    // inline console's own memory store as the only store line).
     let mut boot: Vec<String> = vec![format!("spaSetWireHash_ \"{wire_hash}\"")];
-    if !session_proj.is_empty() {
-        boot.push("spaSessionBoot_ ()".to_string());
-    }
+    boot.push(format!(
+        "spaSessionBoot_ {}",
+        if session_proj.is_empty() {
+            "False"
+        } else {
+            "True"
+        }
+    ));
+    handlers.push_str(
+        "-- A-6: `True` (the app has a signed session) opens the sign-out store at\n\
+         -- boot; an Err (production, no store, an unwritable data dir) stops start-up\n\
+         -- with the message. `False` reports that this backend keeps no server-side\n\
+         -- session (runtime-go/rt/spa_session_revocation.go).\n\
+         spaSessionBoot_ : Bool -> Task Error ()\n\
+         spaSessionBoot_ =\n\
+         \x20   Ffi.kernel \"Spa_sessionBoot\"\n\n\n",
+    );
     handlers.push_str(
         "-- E-4: the wire-schema hash this backend answers for; a request from a\n\
          -- page built for another hash gets 409 + `X-Sky-Status: reload`\n\

@@ -4900,7 +4900,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     );
     let main_at = backend.find("\nmain =").expect("a main");
     assert!(
-        backend[main_at..].contains("spaSessionBoot_ ()"),
+        backend[main_at..].contains("spaSessionBoot_ True"),
         "main opens the sign-out store before it listens:\n{backend}"
     );
     // a SaveAdmin (write-set {note}, no session) must NOT sign a cookie.
@@ -9236,5 +9236,93 @@ fn a_follow_up_also_reached_by_a_server_chain_crosses_and_the_write_applies() {
     assert!(
         body.contains("Tracked") && !body.contains("[\\\"\\\",\\\"\\\"]"),
         "the follow-up must carry its own tag, never an empty one:\n{body}"
+    );
+}
+
+/// A Sky.Spa backend with no signed session keeps no server-side session, and
+/// its boot log says so. Found in production: a Std.App `web:app` with
+/// `App.withConfig (WebConfig { App.webDefaults | … })`, `[live] store =
+/// "postgres"` and `[database] embedded = true` logged only
+/// `[sky.live] session store: memory (ttl=30m0s)`, and the operator read it as
+/// the app ignoring both `[live] store` and `SKY_LIVE_STORE`. That line was the
+/// inline console's own in-process memory store (`subapp_inprocess.go`), printed
+/// with the app's banner; the backend itself never opens a session store, so it
+/// printed nothing. Now the console names itself, and the backend reports that
+/// the configured store is not used.
+#[test]
+fn a_spa_backend_without_a_session_says_its_store_is_unused() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build(
+        "spa-deeplink",
+        &[
+            (
+                "sky.toml",
+                "target = \"web:app\"\n",
+                "target = \"web:app\"\n\n[live]\nstore = \"postgres\"\n",
+            ),
+            (
+                "src/Main.sky",
+                "|> App.withNotFound NotFoundPage",
+                "|> App.withNotFound NotFoundPage\n        \
+                 |> App.withConfig (App.WebConfig { App.webDefaults | inputMode = Just \"debounce\" })",
+            ),
+        ],
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let back = split_file(&proj, "backend/src/Main.sky");
+    assert!(
+        back.contains("spaSessionBoot_ False"),
+        "a backend with no session reports its store at boot:\n{back}"
+    );
+
+    let port = free_port();
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    let stdout = dir.join("server.log");
+    let stderr = dir.join("server.err");
+    let _child = Killed(
+        Command::new(dir.join("sky-out/app"))
+            .current_dir(&dir)
+            .env("PORT", port.to_string())
+            .env("ENV", "production")
+            .env("SKY_CONSOLE_AUTH", "token")
+            .env("SKY_CONSOLE_TOKEN", "0123456789abcdef0123456789abcdef")
+            .env("SKY_ADMIN_TOKEN", "0123456789abcdef0123456789abcdef")
+            .env("SKY_LIVE_STORE", "postgres")
+            .env(
+                "DATABASE_URL",
+                "postgres://nobody@127.0.0.1:1/none?sslmode=disable",
+            )
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap())
+            .spawn()
+            .expect("start the split backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&stdout, 120),
+        "the split backend did not start:\n{}\n{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    let both = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    assert!(
+        !both.contains("[sky.live] session store: "),
+        "a store line reads as the app's own store, but this backend has none:\n{both}"
+    );
+    assert!(
+        both.contains("[sky.live] sub-app /_sky/console session store: memory"),
+        "the console's store line names the console:\n{both}"
+    );
+    assert!(
+        both.contains("[sky.spa] session store: none.")
+            && both.contains("SKY_LIVE_STORE (\"postgres\") is not used"),
+        "the backend says it keeps no session and names the unused store:\n{both}"
     );
 }

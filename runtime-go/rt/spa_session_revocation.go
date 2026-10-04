@@ -144,7 +144,7 @@ func openSpaRevocationStore() (SessionStore, error) {
 		}
 	}
 	var refusal error
-	st := selectStore(kind, path, resolveSessionTTL(), 0, func(format string, args ...any) {
+	st := selectStoreAs(spaSignOutStoreBanner, kind, path, resolveSessionTTL(), 0, func(format string, args ...any) {
 		if refusal == nil {
 			refusal = fmt.Errorf(format, args...)
 		}
@@ -181,17 +181,45 @@ func openSpaRevocationStore() (SessionStore, error) {
 	return st, nil
 }
 
-// Spa_sessionBoot — `Spa_sessionBoot : () -> Task Error ()`. The generated
-// `main` of a Sky.Spa backend WITH a session projection runs it before the
-// server starts (A-6). It resolves the signing key (A-7: a production key
+// spaSignOutStoreBanner opens the store line of the sign-out record store, the
+// one session store a Sky.Spa backend keeps (see appStoreBanner).
+const spaSignOutStoreBanner = "[sky.spa] session store (sign-out records): "
+
+// spaNoSessionStoreBanner opens the boot line of a backend with no session store.
+const spaNoSessionStoreBanner = "[sky.spa] session store: none. "
+
+// reportNoSpaSessionStore says, at boot, that a Sky.Spa backend with no session
+// projection keeps no server-side session, and that a configured store is not
+// used. Such a backend never opens a session store, so without this line the
+// log said nothing about one, and the inline console's own memory store was the
+// only store line an operator saw.
+func reportNoSpaSessionStore() {
+	msg := spaNoSessionStoreBanner + "This backend keeps no server-side session: " +
+		"the model lives in the browser, and no server branch writes a `Session` / " +
+		"`Maybe Session` model field, so there is no signed session to sign out."
+	if kind := resolveStoreKind(""); kind != "" {
+		msg += fmt.Sprintf(" [live] store / %s (%q) is not used.", skyEnvName("LIVE_STORE"), kind)
+	}
+	log.Print(msg)
+}
+
+// Spa_sessionBoot — `Spa_sessionBoot : Bool -> Task Error ()`. The generated
+// `main` of every Sky.Spa backend runs it before the server starts; the Bool
+// says whether the app has a session projection. Without one it only reports
+// that the backend keeps no server-side session (reportNoSpaSessionStore).
+// With one (A-6) it resolves the signing key (A-7: a production key
 // that cannot be persisted is reported in the start-up report) and opens
 // the sign-out record store eagerly. In production with no store configured
 // and no writable data dir it is an Err, so the backend refuses to start
 // instead of recording sign-outs nowhere. A store the operator configured
 // that is down at boot is NOT an Err: every signed session is refused until
 // it answers, and the open is retried (spaRevRetryAfter).
-func Spa_sessionBoot(_ any) any {
+func Spa_sessionBoot(withSession any) any {
 	return func() any {
+		if b, ok := withSession.(bool); ok && !b {
+			reportNoSpaSessionStore()
+			return Ok[any, any](struct{}{})
+		}
 		_ = Spa_sessionSecret(nil)
 		_, err := spaRevocationStore()
 		if err != nil && productionFromEnv() && resolveStoreKind("") == "" {

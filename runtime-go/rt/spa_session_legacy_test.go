@@ -287,3 +287,63 @@ func TestSpaSessionSecretUnpersistableInProductionIsLoud(t *testing.T) {
 		t.Fatalf("no start-up report line for an unpersistable production key: %v", startupWarningLines())
 	}
 }
+
+// A Sky.Spa backend with no signed-session field keeps no server-side session:
+// the model lives in the browser. Its boot hook says so, names the configured
+// store it does not use, and opens no store. Before this, such a backend said
+// nothing about a store at all, and the only store line in its log was the
+// inline console's, which read as the app's store falling back to memory.
+func TestSpaSessionBootWithoutASessionSaysTheStoreIsUnused(t *testing.T) {
+	restore := setSpaRevocationStoreForTest(nil, nil)
+	t.Cleanup(restore)
+	spaRevMu.Lock()
+	spaRev = spaRevState{}
+	spaRevMu.Unlock()
+	t.Setenv("ENV", "production")
+	t.Setenv("SKY_LIVE_STORE", "postgres")
+	t.Setenv("DATABASE_URL", "postgres://u:p@127.0.0.1:1/x?connect_timeout=1")
+	buf := captureLog(t)
+
+	res := Spa_sessionBoot(false).(func() any)().(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("a backend with no session refused to start: %s", errorMessage(res.ErrValue))
+	}
+	spaRevMu.Lock()
+	opened := spaRev.opened
+	spaRevMu.Unlock()
+	if opened {
+		t.Fatal("a backend with no session opened a sign-out store it never uses")
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"[sky.spa] session store: none",
+		"no server-side session",
+		`SKY_LIVE_STORE ("postgres") is not used`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the boot report does not say %q:\n%s", want, out)
+		}
+	}
+}
+
+// With a signed session the boot hook opens the sign-out record store, and its
+// banner says what the store holds.
+func TestSpaSessionBootWithASessionNamesTheSignOutStore(t *testing.T) {
+	restore := setSpaRevocationStoreForTest(nil, nil)
+	t.Cleanup(restore)
+	spaRevMu.Lock()
+	spaRev = spaRevState{}
+	spaRevMu.Unlock()
+	t.Setenv("ENV", "")
+	t.Setenv("SKY_LIVE_STORE", "memory")
+	t.Setenv(spaSessionSecretEnv, string(spaTestSecret.v))
+	buf := captureLog(t)
+
+	res := Spa_sessionBoot(true).(func() any)().(SkyResult[any, any])
+	if res.Tag != 0 {
+		t.Fatalf("boot failed: %s", errorMessage(res.ErrValue))
+	}
+	if out := buf.String(); !strings.Contains(out, "[sky.spa] session store (sign-out records): memory (ttl=") {
+		t.Fatalf("the sign-out store banner does not say what it holds:\n%s", out)
+	}
+}

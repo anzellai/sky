@@ -2,6 +2,7 @@ package rt
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,5 +49,38 @@ func TestSubAppDoesNotInheritHostDurableStore(t *testing.T) {
 	}
 	if _, ok := app.store.(*memoryStore); !ok {
 		t.Fatalf("L9: sub-app with empty store should use *memoryStore, got %T", app.store)
+	}
+}
+
+// A sub-app's store banner names the sub-app. The inline console keeps its
+// sessions in its own in-process memory store (L9 above), and it used to print
+// the host app's banner, `[sky.live] session store: memory (ttl=…)`, word for
+// word. On a backend with no session store of its own (a Sky.Spa split backend
+// is a Sky.Http.Server app) that was the ONLY store line in the log, so an
+// operator who set `[live] store = "postgres"` read it as the app ignoring the
+// setting and falling back to memory in production.
+func TestSubAppStoreBannerNamesTheSubApp(t *testing.T) {
+	t.Setenv("SKY_LIVE_STORE", "postgres")
+	buf := captureLog(t)
+
+	noopUpd := func(msg, model any) any { return SkyTuple2{V0: model, V1: cmdT{kind: "none"}} }
+	cfg := map[string]any{
+		"Init":          func(req any) any { return SkyTuple2{V0: "m", V1: cmdT{kind: "none"}} },
+		"Update":        noopUpd,
+		"View":          func(model any) any { return velement("div", nil, nil) },
+		"Subscriptions": func(model any) any { return cmdT{kind: "none"} },
+		"Routes":        []any{},
+		"NotFound":      "home",
+	}
+	app := MountLiveSubAppInProcess(http.NewServeMux(), "/_sky/console", cfg)
+	t.Cleanup(func() { unmountInProcessSubApp("/_sky/console", app) })
+
+	out := buf.String()
+	if strings.Contains(out, "[sky.live] session store: ") {
+		t.Fatalf("the console sub-app printed the host app's store banner, so it reads as the "+
+			"app's own store:\n%s", out)
+	}
+	if !strings.Contains(out, "[sky.live] sub-app /_sky/console session store: memory (ttl=") {
+		t.Fatalf("the console sub-app's store banner does not name the sub-app:\n%s", out)
 	}
 }

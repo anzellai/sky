@@ -2102,7 +2102,13 @@ func registerStoreCloserScoped(store SessionStore) (unregister func()) {
 
 // chooseStoreScoped is chooseStore with a scoped release entry.
 func chooseStoreScoped(kind, path string, ttl, idleEvict time.Duration) (SessionStore, func()) {
-	store := selectStore(kind, path, ttl, idleEvict, func(format string, args ...any) {
+	return chooseStoreScopedAs(appStoreBanner, kind, path, ttl, idleEvict)
+}
+
+// chooseStoreScopedAs is chooseStoreScoped with the banner of the store's owner
+// (a sub-app names itself; see appStoreBanner).
+func chooseStoreScopedAs(banner, kind, path string, ttl, idleEvict time.Duration) (SessionStore, func()) {
+	store := selectStoreAs(banner, kind, path, ttl, idleEvict, func(format string, args ...any) {
 		storeFatalf(format, args...)
 	})
 	return store, registerStoreCloserScoped(store)
@@ -2178,6 +2184,26 @@ func snapshotMemCache(mu *sync.RWMutex, m map[string]*liveSession) []*liveSessio
 // fatal is the fail-loud action for a refusal to start (chooseStore passes
 // storeFatalf; chooseStoreOrErr collects it as an error).
 func selectStore(kind, path string, ttl, idleEvict time.Duration, fatal func(string, ...any)) SessionStore {
+	return selectStoreAs(appStoreBanner, kind, path, ttl, idleEvict, fatal)
+}
+
+// appStoreBanner opens the line that names the APP's session store. Every other
+// owner of a store names itself in its own banner (subAppStoreBanner,
+// spaSignOutStoreBanner): an operator reads the log to learn which store the
+// app runs on, and a second store that printed this same line read as the app's.
+// The inline console's in-process memory store did exactly that, and on a
+// backend with no session store of its own (a Sky.Spa split backend) it was the
+// only store line, so `[live] store = "postgres"` looked ignored in production.
+const appStoreBanner = "[sky.live] session store: "
+
+// subAppStoreBanner opens the store line of a sub-app mounted in-process at
+// prefix (the inline console at /_sky/console).
+func subAppStoreBanner(prefix string) string {
+	return "[sky.live] sub-app " + prefix + " session store: "
+}
+
+// selectStoreAs is selectStore with the banner of the store's owner.
+func selectStoreAs(banner, kind, path string, ttl, idleEvict time.Duration, fatal func(string, ...any)) SessionStore {
 	if ttl == 0 {
 		ttl = 30 * time.Minute
 	}
@@ -2202,7 +2228,7 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration, fatal func(str
 		if err != nil {
 			return failDurableStore("sqlite", err, ttl, fatal)
 		}
-		log.Printf("[sky.live] session store: sqlite @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog)
+		log.Print(banner + fmt.Sprintf("sqlite @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog))
 		return store
 	case "postgres", "postgresql":
 		if path == "" {
@@ -2224,7 +2250,7 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration, fatal func(str
 		if err != nil {
 			return failDurableStore("postgres", err, ttl, fatal)
 		}
-		log.Printf("[sky.live] session store: postgres (ttl=%s, idleEvict=%s)", ttl, tieredLog)
+		log.Print(banner + fmt.Sprintf("postgres (ttl=%s, idleEvict=%s)", ttl, tieredLog))
 		return store
 	case "redis", "valkey":
 		if path == "" {
@@ -2243,10 +2269,10 @@ func selectStore(kind, path string, ttl, idleEvict time.Duration, fatal func(str
 		if err != nil {
 			return failDurableStore("redis", err, ttl, fatal)
 		}
-		log.Printf("[sky.live] session store: redis @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog)
+		log.Print(banner + fmt.Sprintf("redis @ %s (ttl=%s, idleEvict=%s)", path, ttl, tieredLog))
 		return store
 	case "", "memory":
-		log.Printf("[sky.live] session store: memory (ttl=%s)", ttl)
+		log.Print(banner + fmt.Sprintf("memory (ttl=%s)", ttl))
 		return newMemoryStore(ttl)
 	default:
 		// An explicitly-configured store kind we don't recognise: a typo

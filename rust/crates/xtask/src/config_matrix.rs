@@ -177,11 +177,16 @@ const LISTENING_OCCURRENCES: usize = 1;
 ///
 /// TWO per process, and the second is not noise: the inline dev console mounts
 /// as a Sky.Live sub-app with a session store of its own
-/// (`subapp_inprocess.go:400`), which is §1.7's third `LIVE_TTL` reader made
-/// visible. Lines are keyed by store kind — the app's is `sqlite` (pinned by
-/// the harness constant), the console's `memory` — so the two are never
-/// confused by print order.
+/// (`subapp_inprocess.go`), which is §1.7's third `LIVE_TTL` reader made
+/// visible. The console names itself in its banner
+/// ([`PROBE_SUBAPP_STORE_BANNER`]), so the two are never confused by print
+/// order or by store kind. App lines are keyed by store kind (the app's is
+/// `sqlite`, pinned by the harness constant).
 const PROBE_STORE_BANNER: &str = "[sky.live] session store: ";
+/// The inline console sub-app's store banner (`subAppStoreBanner` in
+/// `live_store.go`). It used to print the app's banner word for word, and on a
+/// backend with no store of its own it read as the app ignoring `[live] store`.
+const PROBE_SUBAPP_STORE_BANNER: &str = "[sky.live] sub-app /_sky/console session store: ";
 const STORE_BANNER_OCCURRENCES: usize = 2;
 
 /// How long an app may take to print its readiness line.
@@ -1024,18 +1029,29 @@ fn tail(s: &str, n: usize) -> String {
 struct Observed {
     listening: Vec<String>,
     store_banner: BTreeMap<String, String>,
+    /// The inline console sub-app's store line, after its banner.
+    subapp_banner: Option<String>,
+    /// App lines plus the sub-app line.
     store_banner_count: usize,
 }
 
 fn observe(log: &str) -> Observed {
     let mut listening = Vec::new();
     let mut store_banner = BTreeMap::new();
+    let mut subapp_banner = None;
     let mut count = 0usize;
     for line in log.lines() {
         if let Some(i) = line.find(PROBE_LISTENING) {
             listening.push(line[i + PROBE_LISTENING.len()..].trim().to_string());
         }
-        if let Some(i) = line.find(PROBE_STORE_BANNER) {
+        if let Some(i) = line.find(PROBE_SUBAPP_STORE_BANNER) {
+            count += 1;
+            subapp_banner = Some(
+                line[i + PROBE_SUBAPP_STORE_BANNER.len()..]
+                    .trim()
+                    .to_string(),
+            );
+        } else if let Some(i) = line.find(PROBE_STORE_BANNER) {
             count += 1;
             let rest = line[i + PROBE_STORE_BANNER.len()..].trim().to_string();
             let kind = rest.split_whitespace().next().unwrap_or("").to_string();
@@ -1045,6 +1061,7 @@ fn observe(log: &str) -> Observed {
     Observed {
         listening,
         store_banner,
+        subapp_banner,
         store_banner_count: count,
     }
 }
@@ -1440,7 +1457,7 @@ fn compute(root: &Path) -> Result<Measured, String> {
             // §1.7's other reader, recorded rather than asserted: the inline
             // console sub-app resolves the same LIVE_TTL through
             // subapp_inprocess.go:400 and gets its own answer.
-            if let Some(line) = o.store_banner.get("memory") {
+            if let Some(line) = &o.subapp_banner {
                 subapp.insert(
                     format!("{}/{}", b.name(), if env_on { "env" } else { "noenv" }),
                     Value::String(line.clone()),
@@ -2279,10 +2296,15 @@ mod tests {
     fn fields_are_extracted_from_the_consumers_own_line() {
         let o = observe(
             "2026/01/01 [sky.live] session store: sqlite @ cfgmx_env.db (ttl=37m0s, idleEvict=6m0s)\n\
-             2026/01/01 [sky.live] session store: memory (ttl=30m0s)\n\
+             2026/01/01 [sky.live] sub-app /_sky/console session store: memory (ttl=30m0s)\n\
              Sky.Live listening on :19811\n",
         );
         assert_eq!(o.store_banner_count, 2);
+        // The console names itself, so its line is never the app's, whatever
+        // its store kind (an operator once read the console's memory store as
+        // the app's `[live] store` being ignored in production).
+        assert_eq!(o.store_banner.keys().collect::<Vec<_>>(), vec!["sqlite"]);
+        assert_eq!(o.subapp_banner.as_deref(), Some("memory (ttl=30m0s)"));
         assert_eq!(o.listening, vec!["19811".to_string()]);
         let mk = |after: &str, until: &str, key: &str| Setting {
             id: "x".into(),
@@ -2311,9 +2333,9 @@ mod tests {
             extract(&mk("idleEvict=", ",)", "sqlite"), &o).unwrap(),
             "6m0s"
         );
-        // The console sub-app's own store is keyed separately, so print order
+        // The console sub-app's own store is a separate line, so print order
         // can never make one reader's answer stand in for the other's (§1.7).
-        assert_eq!(extract(&mk("ttl=", ",)", "memory"), &o).unwrap(), "30m0s");
+        assert!(extract(&mk("ttl=", ",)", "memory"), &o).is_err());
     }
 
     /// The verdict path, which through stage 2 could fail but never pass: the

@@ -439,7 +439,9 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 	// sub-app that sets its own builder win.
 	app.maxBodyBytes = resolveMaxBodyBytes(stringField(cfg, "MaxBodyBytes"), 5<<20)
 	app.inputMode = resolveInputMode(stringField(cfg, "Input"))
-	app.store, app.storeRelease = chooseStoreScoped(storeKind, storePath, ttl, idleEvict)
+	// The banner names the sub-app: the console's memory store is not the host
+	// app's store, and must not read as it (appStoreBanner).
+	app.store, app.storeRelease = chooseStoreScopedAs(subAppStoreBanner(opts.basePath), storeKind, storePath, ttl, idleEvict)
 	app.sessionTTL = ttl
 	app.topics = app.store.Broker()
 
