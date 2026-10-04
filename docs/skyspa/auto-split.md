@@ -1378,6 +1378,19 @@ removes it. The store is resolved as for Sky.Live: `SKY_LIVE_STORE` /
 `App.withConfig { store = … }` in the source is not read by the split backend:
 set the store in `sky.toml` or in the environment.
 
+**The boot log names the store, or says there is none.** A backend with a
+signed session opens the store at boot and logs
+`[sky.spa] session store (sign-out records): postgres (…)`. A backend with no
+signed session (no server branch writes a `Session` / `Maybe Session` model
+field) keeps no server-side session at all: the model lives in the browser. It
+opens no store and logs `[sky.spa] session store: none.`, and names a configured
+`[live] store` / `SKY_LIVE_STORE` that it does not use. The inline console keeps
+its own in-process memory store and logs it as
+`[sky.live] sub-app /_sky/console session store: memory (…)`. That line is the
+console's, never the app's. (Before v0.27.4 the console printed the app's
+banner, `[sky.live] session store: memory`, and on a backend with no store it
+read as `[live] store` being ignored.)
+
 | Store | Sign-out is refused on |
 |---|---|
 | none configured | this host, across restarts (a sqlite file `spa-sessions.db` in the data dir, `SKY_DATA_DIR` else `.skydata`, beside the auto-minted signing secret) |

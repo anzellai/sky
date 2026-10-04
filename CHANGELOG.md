@@ -11,6 +11,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.4 — The session store line in the boot log is the app's own (2026-10-04)
+
+### Fixed
+
+- **The inline console's session store read as the app's store.** The console at `/_sky/console` keeps its sessions in its own in-process memory store, by design. It logged that store with the app's banner, `[sky.live] session store: memory (ttl=30m0s)`. A Sky.Spa backend (`--target web:app`) with no signed session never opens a session store, so this was the only store line in its log. With `[live] store = "postgres"` in `sky.toml` (or `SKY_LIVE_STORE=postgres`) and `ENV=production`, it read as the app ignoring the setting and falling back to memory. The console now logs `[sky.live] sub-app /_sky/console session store: memory (…)`. (`runtime-go/rt/live_store.go`, `subapp_inprocess.go`; test `TestSubAppStoreBannerNamesTheSubApp`.)
+- **A Sky.Spa backend said nothing about its session store.** Every split backend now reports its store at boot. With a signed session it opens the sign-out record store and logs `[sky.spa] session store (sign-out records): postgres (…)`. With no signed session (no server branch writes a `Session` / `Maybe Session` model field) the model lives in the browser and there is no server-side session to keep: the backend logs `[sky.spa] session store: none.` and names a configured `[live] store` / `SKY_LIVE_STORE` that it does not use. Nothing else changes: such a backend never used a store. (`runtime-go/rt/spa_session_revocation.go`, `rust/crates/project/src/spa_split.rs`; tests `TestSpaSessionBootWithoutASessionSaysTheStoreIsUnused`, `TestSpaSessionBootWithASessionNamesTheSignOutStore`, `a_spa_backend_without_a_session_says_its_store_is_unused`.)
+
 ## v0.27.3 — Sky.Spa rides out offline, sleep and overload by itself (2026-10-04)
 
 ### Fixed
