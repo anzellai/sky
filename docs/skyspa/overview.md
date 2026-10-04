@@ -265,7 +265,54 @@ gave it, like an `Ok`; the client logs nothing. A server call that fails (a
 app declares it. Without that handler the client keeps the model and writes
 `[sky.spa] RPC failed; kept last good model (no app-level handler …)` once (the
 generated `Applied<Msg> (Err e)` arm returns `Spa.reportRpcFailure e`). A
-network error arms the Retry overlay instead.
+network error is re-sent by the runtime (see Network resilience below) and
+shows the Retry bar only once its retry budget is spent.
+
+## Network resilience — offline, sleep and overload are the runtime's job
+
+A phone that switches apps, a laptop that sleeps, a radio that wakes up late,
+a proxy that answers 503 for a second during a deploy: each fails one request
+at the network level. The client handles this by itself; the app writes no
+retry code and no network banner (v0.27.3, `runtime-go/rt/spa_retry.go`).
+
+- **Transient or final.** No answer, a timeout (a request that does not settle
+  in 30 s is aborted) and the statuses 408, 425, 429, 502, 503 and 504 are
+  TRANSIENT. Every other answer is FINAL and reaches the app as before.
+- **Re-sent by the runtime.** Every server call is safe to re-send: it carries
+  a request id, and the backend answers a repeated id from its dedupe cache
+  without running the effect again. A client `Http.get` is re-sent too; a
+  client `Http.post` is not.
+- **Schedule.** Full jitter: the wait before retry *n* is random in
+  `[0, min(30 s, 1 s × 2^(n-1))]`. A `Retry-After` header (seconds or a date)
+  wins. One request is re-sent at a time, in the order they failed, so a
+  click made while offline runs once, in order, when the connection returns.
+  A request gives up after 8 attempts or 60 s.
+- **Recovery signals.** `online`, the page becoming visible again, `pageshow`
+  and `focus` re-send the head of the queue at once, with a fresh budget.
+- **Protecting a recovering server.** A retry token bucket per origin (10
+  tokens; a failure costs 1, a success refunds 0.1; below 5 no automatic
+  retry starts) and, after a 429 or 503, client-side adaptive throttling of
+  new requests (the Google SRE formula over a 2-minute window).
+- **What the user sees.** Nothing while an outage is shorter than 3 s. After
+  that, a small non-blocking "Reconnecting…" indicator (taps still work). The
+  red "Can't reach the server [Retry]" bar shows only once a request's budget
+  is spent, and the indicator goes when the connection is back.
+- **`App.withRpcError` receives FINAL errors only.** A blip or a short outage
+  never reaches it, so remove any app-level "network error, try again"
+  banner.
+- **Your own indicator (optional).** `Sub.connection ConnectionChanged`
+  delivers `Online | Reconnecting | Offline { pending : Int }` on every change
+  (`import Std.Sub as Sub exposing (ConnectionState(..))`). On Sky.Live and
+  terminal targets it never fires.
+
+**`Sub.every` is a wake-up, not a clock: read the time the tick carries.** A
+browser or a webview throttles timers in a background tab, so a counter of
+ticks drifts. Use `Sub.everyWithTime 100 Tick` (`Tick : Int -> Msg` receives
+the epoch milliseconds) and derive elapsed time from it. A tick whose update
+calls the server is treated as a poll: it is skipped while its previous call is
+unsettled, and while the page is hidden only its first call goes out; when the
+page is visible again one fresh tick runs at once. A tick that only changes
+the client model (a clock, a stopwatch) is never held back.
 
 ## WebSocket from the client
 

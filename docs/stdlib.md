@@ -733,8 +733,10 @@ update msg model =
 | `Cmd.toIsland` | `String -> String -> Json.Encode.Value -> Cmd msg` | Send a command (island id, name, JSON payload) to a widget island's `command` handler, after the update — see [Widget islands](skyui/overview.md#widget-islands--third-party-js-widgets) |
 | `Sub.none` | `Sub msg` | No subscription |
 | `Sub.every` | `Int -> msg -> Sub msg` | Dispatch `msg` every N ms |
+| `Sub.everyWithTime` | `Int -> (Int -> msg) -> Sub msg` | `Sub.every` whose Msg carries the tick's time (epoch ms): a tick is a wake-up, not a clock |
 | `Sub.subscribeTopic` | `String -> (any -> msg) -> Sub msg` | Receive pub/sub broadcasts on topic; decoder turns payload into a Msg |
 | `Sub.onFragment` | `(String -> msg) -> Sub msg` | Receive the URL fragment (after `#`) at load and on every change, on Sky.Live, Sky.Spa and the `Std.App` web targets |
+| `Sub.connection` | `(ConnectionState -> msg) -> Sub msg` | The Sky.Spa client's connection state on every change: `Online \| Reconnecting \| Offline { pending : Int }` (never fires on Sky.Live or a terminal) — see [Network resilience](skyspa/overview.md#network-resilience--offline-sleep-and-overload-are-the-runtimes-job) |
 | `Sub.batch` | `List (Sub msg) -> Sub msg` | Combine timer + topic + others |
 
 #### `Std.Nav` — move the address bar from `update` (v0.27.0)

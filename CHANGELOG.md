@@ -11,6 +11,28 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.3 — Sky.Spa rides out offline, sleep and overload by itself (2026-10-04)
+
+### Fixed
+
+- **One failed request froze a Sky.Spa client until Retry was pressed.** An installed web app switched away on a phone, or a laptop after sleep, often fails one request at the network level (typically a `Sub.every` poll). The client showed the red "Can't reach the server. [Retry]" bar at once, delivered the failure to `App.withRpcError` at once (so the app painted its own banner on top), and a hold RPC kept every later Msg waiting: taps did nothing until Retry or a reload, although the network was back. A request that hung (a radio asleep mid-request) never settled at all. The client now handles this by itself, on every `web:app`, desktop and mobile target, with no app code (`runtime-go/rt/spa_retry.go`, `http_wasm.go`, `spa_neterror_wasm.go`; tests `spa_retry_test.go`, `scripts/spa-resilience-e2e.sh`, Chromium and WebKit):
+  - No answer, a timeout and the statuses 408, 425, 429, 502, 503 and 504 are transient. A request that does not settle in 30 s is aborted as a `Timeout`.
+  - A server call (it carries a request id the backend deduplicates) and a client `Http.get` are re-sent with full-jitter backoff (1 s base, 30 s cap); a `Retry-After` header wins. One retry is in flight; failed requests are re-sent in the order they failed, so a click made while offline runs once, in order, on recovery. A request gives up after 8 attempts or 60 s.
+  - `online`, the page becoming visible, `pageshow` and `focus` re-send at once with a fresh budget.
+  - A retry token bucket per origin and, after a 429 or 503, client-side adaptive throttling of new requests protect a recovering server.
+  - Nothing is shown while an outage is shorter than 3 s; then a small, non-blocking "Reconnecting…" indicator; the red bar only once the retry budget is spent.
+- **`Sub.every` in a Sky.Spa client piled up and polled from hidden tabs.** A tick whose update calls the server is now skipped while its previous call is unsettled. While the page is hidden (or frozen) only the first such call goes out, and on return one fresh tick runs at once. A tick that only changes the client model (a clock, a stopwatch) is never held back. (`runtime-go/rt/spa_tick.go`; tests `spa_tick_test.go`, the `hidden` scenario of `scripts/spa-resilience-e2e.sh`.)
+- **The stopwatch examples drifted.** `examples/21-tui-stopwatch`, `22-tui-stopwatch-ui` and `31-webview-stopwatch-ui` added 100 ms per tick, which runs slow whenever a window or webview throttles timers. They now derive the elapsed time from the time the tick carries.
+
+### Added
+
+- **`Sub.connection : (ConnectionState -> msg) -> Sub msg`** with `type ConnectionState = Online | Reconnecting | Offline { pending : Int }` (`import Std.Sub as Sub exposing (ConnectionState(..))`), for an app that wants its own connection indicator. A change of state reaches `update` even while a server call holds the queue. On Sky.Live and terminal targets it never fires.
+- **`Sub.everyWithTime : Int -> (Int -> msg) -> Sub msg`**: `Sub.every` whose Msg carries the time of the tick (epoch milliseconds). `Sub.every` is a wake-up, not a clock: read the time the tick carries.
+
+### Changed
+
+- **`App.withRpcError` receives FINAL errors only.** A transient failure is re-sent by the runtime and reaches the handler only once the retry budget is spent. Apps no longer see blips: remove any app-level "network error, try again" banner.
+
 ## v0.27.2 — SQL NULL reads as "", fragment links keep the page, and clearer sky check and sky.toml messages (2026-10-02)
 
 ### Fixed

@@ -575,7 +575,13 @@ native shell (`mobile:ios|android`, `desktop:<os>`) loads the backend at
 `App.withAppUrl "https://app.example.test/"` (read at build time; a literal or
 a top-level `String` constant), or `SKY_APP_URL` at build time, which wins; with
 neither it loads the dev default on `PORT` (8951). If the device must hold its
-own end-to-end keys (Noise, CPace, Kx, Sign, Kdf), add `App.withClientCrypto`:
+A client
+re-sends a transiently failing request by itself (backoff, `Retry-After`,
+in failure order) and shows "Reconnecting…" after 3 s, so `App.withRpcError`
+receives FINAL errors only (write no network banner); `Sub.connection` reports
+`Online | Reconnecting | Offline { pending }` for your own indicator, and
+`Sub.everyWithTime` gives a tick that carries its time (a tick is a wake-up,
+not a clock). own end-to-end keys (Noise, CPace, Kx, Sign, Kdf), add `App.withClientCrypto`:
 those run in the client, a key field must be a `Maybe`, and the build refuses
 any flow that sends a key to the server (docs/skyspa/client-crypto.md). Declare each native
 permission with the text its prompt shows (`Bundle.withUsage Bundle.Camera

@@ -196,6 +196,16 @@ and `Ws.upgrade`. A Sky.Spa client runs every Msg once, in arrival order, and
 several server RPCs can be in flight together; an arm whose model write needs
 server data holds later Msgs until it answers (`docs/skyspa/overview.md`, "Msg
 order and server calls").
+The client re-sends a transiently failing request by itself (no answer, a
+30 s timeout, 408 / 425 / 429 / 502 / 503 / 504; full-jitter backoff, `Retry-After`
+wins, in failure order, 8 attempts or 60 s), shows a quiet "Reconnecting…" only
+after 3 s and the red Retry bar only once the budget is spent, so
+`App.withRpcError` receives FINAL errors only: write no app-level network
+banner. `Sub.connection` (`Online | Reconnecting | Offline { pending }`) is for
+an app that wants its own indicator. `Sub.every` is a wake-up, not a clock:
+use `Sub.everyWithTime` and read the time the tick carries; a tick whose
+update calls the server is coalesced and held back while the page is hidden
+(`docs/skyspa/overview.md`, "Network resilience").
 
 **A host that cannot keep cookies** (a native shell whose custom scheme drops
 `Set-Cookie`, some embedded web views) uses `App.withSessionTransport

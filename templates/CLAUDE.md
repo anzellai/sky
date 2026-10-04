@@ -82,3 +82,11 @@ resolved by precedence: preferring the cluster would have the app writing to a
 throwaway local directory while the user believes it is talking to the server
 they named. If you are handed a DSN, do not add `--embed` "to be safe" — pick
 the tier the user asked for.
+
+### A Sky.Spa client handles network blips itself
+
+Do not write retry loops, "network error, try again" banners or reconnect
+logic for a `web:app` (or desktop / mobile) client. The runtime re-sends a
+transiently failing request, shows "Reconnecting…" after 3 s and the Retry
+bar only once its budget is spent; `App.withRpcError` sees FINAL errors only.
+For an app-owned indicator use `Sub.connection` (see AGENTS.md).
