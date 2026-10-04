@@ -449,3 +449,96 @@ func TestSpaRetry_ThrottleSparesResends(t *testing.T) {
 		t.Fatal("a new request is refused while 503s outnumber accepts")
 	}
 }
+
+// v0.27.4 regression (CI, gate-web: the offline e2e saw no "Reconnecting…"
+// in 10 s offline): the indicator showed only when a re-send that the jittered
+// schedule placed 3 s or more into the outage failed. Re-sends drawn close
+// together spend the retry bucket (six quick failures take it from 10 to 4),
+// and below spaBucketMin no automatic re-send
+// starts until the 60 s budget ends. The outage was real, the user saw
+// nothing, then the red bar. The grace probe re-sends the head at
+// spaReconnectGrace, so the indicator shows at 3 s whatever the schedule.
+func TestSpaRetry_IndicatorShowsAtTheGraceWhateverTheSchedule(t *testing.T) {
+	clk := newSpaFakeClock()
+	c := newSpaTestCoord(t, clk, 0) // every jittered wait is 0: the re-sends bunch at the start
+	t0 := clk.now()
+	var shownAt time.Duration = -1
+	in := &spaIndicator{show: func() { shownAt = clk.now().Sub(t0) }, hide: func() {}}
+	c.change = func() {
+		code, _ := spaConnState(c.queued(), 0)
+		in.update(code, c.outage())
+	}
+	attempts := 0
+	spaRetryLoop(c, "self", func() (int, spaOutcome) {
+		attempts++
+		if shownAt >= 0 && clk.now().Sub(t0) > spaReconnectGrace {
+			return 200, spaOutcome{kind: spaOutcomeOK, status: 200}
+		}
+		return 0, spaNetworkOutcome()
+	}, func() int { return -1 })
+	if shownAt != spaReconnectGrace {
+		t.Fatalf("a real outage shows the indicator at the %v grace, shown at %v (-1: never) after %d attempts",
+			spaReconnectGrace, shownAt, attempts)
+	}
+}
+
+// The probe does not turn a blip into an indicator: an outage that is over
+// before the grace point shows nothing, and the probe's success drains the
+// queue at once instead of after a long jittered wait.
+func TestSpaRetry_GraceProbeShowsNothingForABlip(t *testing.T) {
+	clk := newSpaFakeClock()
+	c := newSpaTestCoord(t, clk, 0.9) // re-sends at 0.9 s, 2.7 s, then 6.3 s
+	t0 := clk.now()
+	shown := false
+	in := &spaIndicator{show: func() { shown = true }, hide: func() {}}
+	c.change = func() {
+		code, _ := spaConnState(c.queued(), 0)
+		in.update(code, c.outage())
+	}
+	var okAt time.Duration
+	spaRetryLoop(c, "self", func() (int, spaOutcome) {
+		if clk.now().Sub(t0) < 2800*time.Millisecond {
+			return 0, spaNetworkOutcome()
+		}
+		okAt = clk.now().Sub(t0)
+		return 200, spaOutcome{kind: spaOutcomeOK, status: 200}
+	}, func() int { return -1 })
+	if shown {
+		t.Fatal("a 2.8 s blip shows nothing")
+	}
+	if okAt != spaReconnectGrace {
+		t.Fatalf("the grace probe re-sends at %v (the schedule said 6.3 s), got %v", spaReconnectGrace, okAt)
+	}
+	if c.queued() != 0 || c.outage() != 0 {
+		t.Fatal("the queue drained and the outage ended")
+	}
+}
+
+// A server that paced the client with Retry-After is obeyed: the grace probe
+// does not re-send early. Its "come back later" already proves the outage,
+// so the indicator shows at the grace point all the same.
+func TestSpaRetry_GraceObeysRetryAfterAndStillShows(t *testing.T) {
+	clk := newSpaFakeClock()
+	c := newSpaTestCoord(t, clk, 0.5)
+	t0 := clk.now()
+	var shownAt time.Duration = -1
+	in := &spaIndicator{show: func() { shownAt = clk.now().Sub(t0) }, hide: func() {}}
+	c.change = func() {
+		code, _ := spaConnState(c.queued(), 0)
+		in.update(code, c.outage())
+	}
+	var sentAt []time.Duration
+	spaRetryLoop(c, "self", func() (int, spaOutcome) {
+		sentAt = append(sentAt, clk.now().Sub(t0))
+		if len(sentAt) == 1 {
+			return 503, spaClassifyResponse(503, "10", clk.now())
+		}
+		return 200, spaClassifyResponse(200, "", clk.now())
+	}, func() int { return -1 })
+	if len(sentAt) != 2 || sentAt[1] != 10*time.Second {
+		t.Fatalf("the re-send waits for the server's Retry-After: sent at %v", sentAt)
+	}
+	if shownAt != spaReconnectGrace {
+		t.Fatalf("a paced outage shows the indicator at the grace, shown at %v", shownAt)
+	}
+}

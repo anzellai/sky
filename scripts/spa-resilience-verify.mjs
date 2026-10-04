@@ -9,8 +9,8 @@
 // Stage "fast" (every browser in SKY_E2E_BROWSERS):
 //   blip      RPCs refused for 2 s (a server restart): nothing is shown (no
 //             "Reconnecting…", no red bar) and the click runs once.
-//   offline   the browser is offline for 10 s: two clicks queue; after 3 s a
-//             quiet "Reconnecting…" shows (never the red bar);
+//   offline   the browser goes offline: two clicks queue; after 3 s (and
+//             within 10 s) a quiet "Reconnecting…" shows (never the red bar);
 //             Sub.connection reports it; back online, both clicks run once
 //             each, in order, the indicator clears, App.withRpcError is never
 //             called.
@@ -129,6 +129,16 @@ function watchOverlays(page) {
   };
 }
 
+// waitForPill polls the "Reconnecting…" indicator until it shows or ms pass.
+async function waitForPill(page, ms) {
+  const deadline = Date.now() + Math.max(0, ms);
+  while (Date.now() < deadline) {
+    if (await shown(page, "#sky-spa-reconnecting")) return true;
+    await page.waitForTimeout(50);
+  }
+  return shown(page, "#sky-spa-reconnecting");
+}
+
 async function setHidden(page, hidden) {
   await page.evaluate((h) => {
     Object.defineProperty(document, "hidden", { configurable: true, get: () => h });
@@ -190,7 +200,12 @@ async function fast(browserName) {
       await page.click("#hit");
       await page.click("#hit");
       const conn = await waitFor(page, "conn", (v) => v === "conn=reconnecting", 5000);
-      await page.waitForTimeout(Math.max(0, 10000 - (Date.now() - t0)));
+      // Wait for the indicator itself, bounded, rather than a fixed 10 s: the
+      // runtime re-sends the head at the 3 s grace (spa_retry.go,
+      // armGraceLocked), so it shows just after 3 s. Stay offline at least 5 s
+      // so the red bar has room to (wrongly) appear.
+      await waitForPill(page, 10000 - (Date.now() - t0));
+      await page.waitForTimeout(Math.max(0, 5000 - (Date.now() - t0)));
       const mid = { ...stop() };
       await context.setOffline(false);
       const stop2 = watchOverlays(page);
