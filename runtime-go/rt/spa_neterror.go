@@ -12,11 +12,9 @@ package rt
 // js.Value) so it is unit-tested on the host; the overlay it gates lives in
 // spa_neterror_wasm.go.
 func spaIsNetworkErr(result SkyResult[SkyADT, any]) bool {
-	if result.Tag != 1 { // 0 = Ok, 1 = Err
-		return false
-	}
-	kind := AdtField(result.ErrValue, 0) // Fields[0] of Sky.Core.Error = the ErrorKind
-	return EnumTagIs(kind, 1)            // 1 = Network
+	// Network (1) or Timeout (4): an aborted request that never settled is the
+	// same "could not reach the server" class (v0.27.3, spa_retry.go).
+	return spaIsTransientErr(result)
 }
 
 // spaAppendRetry adds a failed perform's retry action to the pending list, in

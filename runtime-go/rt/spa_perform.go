@@ -60,9 +60,12 @@ func spaPerform(task, toMsg any, dispatch func(any)) {
 	dispatch(spaApplyToMsg(toMsg, result))
 }
 
-// spaRpcDeliver delivers a finished RPC's result through the scheduler. A
-// network failure keeps the RPC in flight (the overlay's retry re-sends it) and
-// reports the Err to the app at once; any other result settles the RPC.
+// spaRpcDeliver delivers a finished RPC's result through the scheduler. The
+// transport has already re-sent a transiently failing RPC until it succeeded or
+// its retry budget ran out (spa_retry.go), so a Network or Timeout Err here is
+// FINAL: it keeps the RPC in flight (the red bar's Retry, or a recovery signal,
+// re-sends it with the same request id) and reports the Err to the app once.
+// Any other result settles the RPC.
 func spaRpcDeliver(s *spaSched, j *spaRpcJob, result SkyResult[SkyADT, any], run func(any), retry func()) {
 	if spaIsNetworkErr(result) {
 		spaRetryHook(retry)
@@ -123,7 +126,7 @@ func spaRunTask(task any) SkyResult[SkyADT, any] {
 // model was kept, no handler exists). A network Err is not logged: the retry
 // overlay is its signal, and each failed retry reaches this arm again.
 func spaReportRpcFailure(err any) {
-	if EnumTagIs(AdtField(err, 0), 1) { // ErrorKind 1 = Network
+	if k := AdtField(err, 0); EnumTagIs(k, 1) || EnumTagIs(k, 4) { // ErrorKind 1 = Network, 4 = Timeout
 		return
 	}
 	spaConsoleError(spaRpcFailedPrefix, Basics_errorToStringT(err))

@@ -1149,12 +1149,13 @@ jobs:
     # The nightly job budgets 25 min for the tier; the e2e scripts build their
     # fixtures on top. 45 keeps ~1.5x.
     # console-live-e2e adds ~11 min: 60. nav-e2e adds two fixture builds and
-    # two browsers: 70.
+    # two browsers: 70. spa-resilience-e2e adds ~5 min (it waits out the real
+    # 30 s timeout and 60 s retry budget): 80.
     # Each long step also carries its own timeout-minutes, about twice its
     # slowest green run (bfc8a16c, 7292ef57, 218f4d21). A hung script then
     # fails its own named step, with its log, instead of the whole job being
-    # cancelled at 70 min with no log at all (run 36942837671, step 7).
-    timeout-minutes: 70
+    # cancelled at the job limit with no log at all (run 36942837671, step 7).
+    timeout-minutes: 80
     env:
       GO_CACHE_BUDGET_MB: '6144'
     steps:
@@ -1207,15 +1208,18 @@ jobs:
         # WebKit was installed by the step above.
         run: scripts/nav-e2e.sh
       - name: Sky.Spa Msg order + client WebSocket + sign-out e2e (Chromium + WebKit, strict CSP)
-        timeout-minutes: 12
+        timeout-minutes: 18
         # Each Msg runs once, in arrival order, as on Sky.Live; RPCs overlap; the
         # wasm client holds its own WebSocket; a sky_sid cookie copied before
-        # sign-out is refused after it. WebKit was installed above.
+        # sign-out is refused after it; a transiently failing request is re-sent
+        # by the runtime (offline, 503 + Retry-After, a hung request, a hidden
+        # page). WebKit was installed above.
         run: |
           set -euo pipefail
           scripts/spa-rpc-order-e2e.sh
           scripts/spa-websocket-e2e.sh
           scripts/session-revocation-e2e.sh
+          scripts/spa-resilience-e2e.sh
       - name: Sky.Live without cookies e2e (header session transport, strict CSP)
         timeout-minutes: 5
         run: scripts/header-session-e2e.sh

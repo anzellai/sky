@@ -1,0 +1,156 @@
+module Main exposing (main)
+
+-- Sky.Spa transport resilience fixture (scripts/spa-resilience-e2e.sh,
+-- scripts/spa-resilience-verify.mjs). The app writes no network code: the
+-- runtime re-sends a transiently failing request by itself.
+--
+--   Hit    a non-idempotent server branch (it appends a line and answers with
+--          the count); a hold RPC. Clicked while offline, it runs once after
+--          the connection returns.
+--   Poll   a server branch on `Sub.every 1000` (only while `pollOn`); the
+--          runtime sends no poll while the page is hidden after the first.
+--   Tick   a client-only `Sub.every 300` clock: it keeps ticking while hidden.
+--   Conn   `Sub.connection` shows the runtime's connection state.
+--   Failed `App.withRpcError`: only a FINAL error reaches it.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.File as File
+import Sky.Core.Result as Result
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub exposing (ConnectionState(..))
+import Std.Ui as Ui
+
+type alias Model =
+    { hits : Int
+    , polls : Int
+    , ticks : Int
+    , lastTick : Int
+    , conn : String
+    , rpcErrs : Int
+    , pollOn : Bool
+    }
+
+type Msg
+    = Hit
+    | Poll
+    | Tick Int
+    | Conn ConnectionState
+    | Failed Error
+    | TogglePoll
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { hits = 0
+      , polls = 0
+      , ticks = 0
+      , lastTick = 0
+      , conn = "online"
+      , rpcErrs = 0
+      , pollOn = False
+      }
+    , Cmd.none
+    )
+
+
+-- Non-idempotent: every run appends one line to `file` and answers with the
+-- number of runs so far. A request that ran twice shows it.
+countRun : String -> Int
+countRun file =
+    case Task.run (File.append file "x") of
+
+        Ok _ ->
+            String.length
+                (Result.withDefault "" (Task.run (File.readFile file)))
+
+        Err _ ->
+            -1
+
+
+connText : ConnectionState -> String
+connText state =
+    case state of
+
+        Online ->
+            "online"
+
+        Reconnecting ->
+            "reconnecting"
+
+        Offline r ->
+            "offline:" ++ String.fromInt r.pending
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Hit ->
+            ( { model | hits = countRun "hits.txt" }, Cmd.none )
+
+        Poll ->
+            ( { model | polls = countRun "polls.txt" }, Cmd.none )
+
+        Tick now ->
+            ( { model | ticks = model.ticks + 1, lastTick = now }, Cmd.none )
+
+        Conn state ->
+            ( { model | conn = connText state }, Cmd.none )
+
+        Failed _ ->
+            ( { model | rpcErrs = model.rpcErrs + 1 }, Cmd.none )
+
+        TogglePoll ->
+            ( { model | pollOn = not model.pollOn }, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.batch
+        [ Sub.everyWithTime 300 Tick
+        , if model.pollOn then
+              Sub.every 1000 Poll
+
+          else
+              Sub.none
+        , Sub.connection Conn
+        ]
+
+
+row : String -> String -> Ui.Element Msg
+row id txt =
+    Ui.el [ Ui.htmlAttribute "id" id ] (Ui.text txt)
+
+
+view : Model -> Ui.Element Msg
+view m =
+    Ui.column
+        []
+        [ row "hits" ("hits=" ++ String.fromInt m.hits)
+        , row "polls" ("polls=" ++ String.fromInt m.polls)
+        , row "ticks" ("ticks=" ++ String.fromInt m.ticks)
+        , row "conn" ("conn=" ++ m.conn)
+        , row "rpcerrs" ("rpcerrs=" ++ String.fromInt m.rpcErrs)
+        , Ui.button
+              [ Ui.htmlAttribute "id" "hit" ]
+              { onPress = Just Hit, label = Ui.text "hit" }
+        , Ui.button
+              [ Ui.htmlAttribute "id" "poll" ]
+              { onPress = Just TogglePoll, label = Ui.text "poll" }
+        ]
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+            |> App.withRpcError Failed
+            |> App.withNotFound ())

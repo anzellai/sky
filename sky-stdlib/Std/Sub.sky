@@ -4,7 +4,16 @@
 -- delivered to `update`.  Use `Sub.every` for periodic ticks
 -- (animation, polling, …) and `Sub.none` when there's nothing
 -- to subscribe to.
-module Std.Sub exposing (none, every, batch, subscribeTopic, onFragment)
+module Std.Sub exposing
+    ( none
+    , every
+    , everyWithTime
+    , batch
+    , subscribeTopic
+    , onFragment
+    , ConnectionState(..)
+    , connection
+    )
 
 import Sky.Ffi as Ffi
 
@@ -15,9 +24,26 @@ none =
 
 
 -- | `every intervalMillis msg` — dispatch `msg` every
--- `intervalMillis` milliseconds.
+-- `intervalMillis` milliseconds. A tick is a wake-up, not a clock: a browser
+-- or webview throttles timers in a background tab, so read the time the tick
+-- carries (`everyWithTime`) instead of counting ticks. In a Sky.Spa client a
+-- tick whose update calls the server is coalesced while its previous call is unsettled,
+-- and while the page is hidden only the first such call goes out; on return
+-- one fresh tick runs at once.
 every : Int -> msg -> Sub msg
 every =
+    Ffi.kernel "Sub_every"
+
+
+-- | `everyWithTime intervalMillis toMsg` — like `every`, but each tick's Msg
+-- carries the time of the tick, in epoch milliseconds. The form for a clock,
+-- a stopwatch or a countdown: derive the elapsed time from the time the tick
+-- carries, so a throttled background tab cannot make it drift.
+--
+--     subscriptions _ =
+--         Sub.everyWithTime 100 Tick -- Tick : Int -> Msg
+everyWithTime : Int -> (Int -> msg) -> Sub msg
+everyWithTime =
     Ffi.kernel "Sub_every"
 
 
@@ -69,3 +95,47 @@ subscribeTopic =
 onFragment : (String -> msg) -> Sub msg
 onFragment =
     Ffi.kernel "Sub_onFragment"
+
+-- | The client's connection to its server, as `connection` reports it.
+-- `Online`: requests reach the server. `Reconnecting`: a request failed for a
+-- moment (no network, a timeout, a 502 / 503 / 504 during a deploy) and the
+-- runtime is re-sending it by itself. `Offline { pending }`: the runtime gave
+-- up after its retry budget; `pending` requests wait for the connection to
+-- return (or for the Retry button).
+type ConnectionState
+    = Online
+    | Reconnecting
+    | Offline { pending : Int }
+
+
+-- | `connection toMsg` — receive the client's `ConnectionState` on every
+-- change, for an app that wants its own indicator. Optional: a Sky.Spa client
+-- already re-sends a transiently failing request by itself and shows a quiet
+-- "Reconnecting…" indicator after 3 seconds, then the "Can't reach the
+-- server" bar once its retry budget is spent. A change of state reaches
+-- `update` even while a server call holds the queue. Sky.Live and terminal
+-- apps keep their own connection handling: there it never fires, so keep
+-- `Online` as the model's default.
+--
+--     subscriptions _ =
+--         Sub.connection ConnectionChanged
+connection : (ConnectionState -> msg) -> Sub msg
+connection toMsg =
+    connectionCodes (\code pending -> toMsg (connectionStateOf code pending))
+
+
+connectionStateOf : Int -> Int -> ConnectionState
+connectionStateOf code pending =
+    if code == 1 then
+        Reconnecting
+
+    else if code == 2 then
+        Offline { pending = pending }
+
+    else
+        Online
+
+
+connectionCodes : (Int -> Int -> msg) -> Sub msg
+connectionCodes =
+    Ffi.kernel "Sub_connectionCodes"

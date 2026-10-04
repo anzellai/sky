@@ -28,6 +28,7 @@ var (
 // actions the Retry button runs.
 func spaShowRetryOverlay(retry func()) {
 	spaRetryQueue = spaAppendRetry(spaRetryQueue, retry)
+	defer spaConnNotify()
 	doc := js.Global().Get("document")
 	if !doc.Truthy() {
 		return
@@ -76,6 +77,7 @@ func spaShowRetryOverlay(retry func()) {
 
 // spaHideRetryOverlay hides the banner and clears the pending retries.
 func spaHideRetryOverlay() {
+	defer spaConnNotify()
 	if spaNetErrEl.Truthy() {
 		spaNetErrEl.Get("style").Set("display", "none")
 	}
@@ -88,5 +90,124 @@ func spaHideRetryOverlay() {
 func spaHideRetryOverlayIfIdle() {
 	if len(spaRetryQueue) == 0 {
 		spaHideRetryOverlay()
+	}
+}
+
+// ---- v0.27.3: quiet reconnecting indicator, connection state, recovery ----
+//
+// A transient failure is retried by the transport (spa_retry.go) and stays
+// invisible until the outage is proven longer than spaReconnectGrace (a
+// re-send that late failed too). Then a small "Reconnecting…" pill shows; it does not block taps (pointer-events: none). The red bar above is
+// shown only once a request's retry budget is spent. Every change of state is
+// also delivered to an app's `Sub.connection` leaf.
+
+var (
+	spaReconnEl     js.Value // the "Reconnecting…" pill, created lazily
+	spaConnToMsg    any      // the app's Sub.connection toMsg (reconcileSubs)
+	spaConnLastCode = spaConnOnline
+	spaConnLastPend = 0
+	spaReconnInd    = &spaIndicator{
+		show: func() { spaReconnShow(true) },
+		hide: func() { spaReconnShow(false) },
+	}
+)
+
+func spaReconnShow(on bool) {
+	doc := js.Global().Get("document")
+	if !doc.Truthy() || !doc.Get("body").Truthy() {
+		return
+	}
+	if !spaReconnEl.Truthy() {
+		if !on {
+			return
+		}
+		el := doc.Call("createElement", "div")
+		el.Set("id", "sky-spa-reconnecting")
+		el.Call("setAttribute", "role", "status")
+		el.Call("setAttribute", "aria-live", "polite")
+		el.Set("textContent", "Reconnecting…")
+		el.Get("style").Set("cssText",
+			"position:fixed;left:50%;transform:translateX(-50%);"+
+				"bottom:calc(16px + env(safe-area-inset-bottom));z-index:2147483646;"+
+				"pointer-events:none;padding:6px 14px;border-radius:999px;"+
+				"background:rgba(17,24,39,.85);color:#fff;"+
+				"font:500 13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"+
+				"box-shadow:0 2px 8px rgba(0,0,0,.2)")
+		doc.Get("body").Call("appendChild", el)
+		spaReconnEl = el
+		return
+	}
+	if on {
+		spaReconnEl.Get("style").Set("display", "block")
+	} else {
+		spaReconnEl.Get("style").Set("display", "none")
+	}
+}
+
+// spaConnNotify recomputes the connection state after any change of the retry
+// queue or the red bar's queue: it drives the indicator and the app's
+// Sub.connection leaf (only on a change).
+func spaConnNotify() {
+	code, pending := spaConnState(spaCoord.queued(), len(spaRetryQueue))
+	spaReconnInd.update(code, spaCoord.outage())
+	if code == spaConnLastCode && pending == spaConnLastPend {
+		return
+	}
+	spaConnLastCode, spaConnLastPend = code, pending
+	if tm := spaConnToMsg; tm != nil {
+		// Synchronously, so state changes reach update in the order they
+		// happened (drain is not re-entrant: inside a step it only queues).
+		spaSch.dispatchUrgent(spaConnMsg(tm, code, pending), step)
+	}
+}
+
+// spaRecoverNow is a recovery signal: re-send the head of the retry queue now
+// (fresh budget), re-run the red bar's failed requests in order, and give each
+// Sub.every interval that owes a tick its one fresh tick.
+func spaRecoverNow() {
+	spaCoord.recover()
+	if len(spaRetryQueue) > 0 {
+		rs := spaRetryQueue
+		spaHideRetryOverlay()
+		go spaRunRetries(rs)
+	}
+}
+
+// spaInstallRecovery listens for the signals that mean "the network may be
+// back": online, focus, pageshow, and visibilitychange to visible (also
+// Page Lifecycle resume). Hidden and freeze stop network-bearing ticks
+// (spa_tick.go).
+func spaInstallRecovery() {
+	win := js.Global()
+	doc := win.Get("document")
+	if !doc.Truthy() {
+		return
+	}
+	visible := func() {
+		spaRecoverNow()
+		for _, ms := range spaTicks.setHidden(false) {
+			spaFreshTick(ms)
+		}
+	}
+	on := func(target js.Value, name string, f func()) {
+		target.Call("addEventListener", name, js.FuncOf(func(this js.Value, args []js.Value) any {
+			f()
+			return nil
+		}))
+	}
+	on(win, "online", spaRecoverNow)
+	on(win, "focus", spaRecoverNow)
+	on(win, "pageshow", visible)
+	on(doc, "resume", visible)
+	on(doc, "freeze", func() { spaTicks.setHidden(true) })
+	on(doc, "visibilitychange", func() {
+		if doc.Get("hidden").Truthy() {
+			spaTicks.setHidden(true)
+			return
+		}
+		visible()
+	})
+	if doc.Get("hidden").Truthy() {
+		spaTicks.setHidden(true)
 	}
 }

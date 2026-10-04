@@ -12,9 +12,10 @@
 //   guard     a guarded client Msg is rejected; the server guard sees the
 //             field it reads (SPA-4)
 //   follow-up a server branch's `Cmd.perform … (\_ -> Load)` runs Load (SPA-3)
-//   dedupe    a request the server ran but whose response was lost is retried
-//             with the same id and does NOT run twice (SPA-6)
-//   retry     every failed/queued RPC runs, in order, on Retry (SPA-7)
+//   dedupe    a request the server ran but whose response was lost is re-sent
+//             by the client with the same id and does NOT run twice (SPA-6)
+//   retry     every failed/queued RPC runs, in order, once the server is back,
+//             with no click (SPA-7, v0.27.3)
 //   native    a server branch's Std.Native leaf runs in the client (SPA-3)
 //   reload    client scratch state is restored (SPA-8); a field the withRequest
 //             hook writes (it runs on every request) comes from the SSR seed (R2)
@@ -138,17 +139,27 @@ try {
   check("follow-up: pure perform into a client arm", await text(page, "bumped"), "bumped=7");
 
   // ---- dedupe (SPA-6) ------------------------------------------------------
+  // The response is lost after the server ran the request. Since v0.27.3 the
+  // client re-sends it by itself (spa_retry.go), with the SAME request id, so
+  // the backend answers from its dedupe cache and the effect runs once.
+  const overlay = page.locator("#sky-spa-neterror");
+  const num = async (id) => Number((await text(page, id)).split("=")[1]);
+  const waitNum = async (id, want, ms) => {
+    const end = Date.now() + ms;
+    while ((await num(id)) !== want && Date.now() < end) await page.waitForTimeout(100);
+    return num(id);
+  };
+  const seen0 = rpcSeen.length;
   mode = "dropResponse";
   await page.click("#hit");
-  await page.waitForTimeout(800);
-  const overlay = page.locator("#sky-spa-neterror button");
-  check("dedupe: retry overlay shown", await overlay.isVisible(), true);
-  await overlay.click();
-  await page.waitForTimeout(1000);
-  check("dedupe: retried Hit ran its effect once", await text(page, "hits"), "hits=1");
+  check("dedupe: retried Hit ran its effect once", await waitNum("hits", 1, 8000), 1);
+  const hitRids = rpcSeen.slice(seen0).filter((u) => u.includes("/_rpc/Hit")).map((u) => new URL(u).searchParams.get("rid"));
+  check("dedupe: re-sent with the same request id", hitRids.length === 2 && hitRids[0] === hitRids[1], true);
+  check("dedupe: no red bar for a lost response", await overlay.isVisible(), false);
 
   // ---- retry keeps every failed/queued RPC in order (SPA-7) ----------------
-  const num = async (id) => Number((await text(page, id)).split("=")[1]);
+  // An outage: the failed Hit and the Inc clicked after it run once each, in
+  // order, when the server is back, with no click on Retry.
   const hits0 = await num("hits");
   const count0 = await num("count");
   mode = "offline";
@@ -157,10 +168,9 @@ try {
   await page.click("#inc");
   await page.waitForTimeout(600);
   mode = "pass";
-  await overlay.click();
-  await page.waitForTimeout(1500);
-  check("retry: failed Hit re-ran", await num("hits"), hits0 + 1);
-  check("retry: Inc queued/failed behind it also ran", await num("count"), count0 + 1);
+  check("retry: failed Hit re-ran", await waitNum("hits", hits0 + 1, 10000), hits0 + 1);
+  check("retry: Inc queued/failed behind it also ran", await waitNum("count", count0 + 1, 10000), count0 + 1);
+  check("retry: no red bar for a short outage", await overlay.isVisible(), false);
 
   // ---- reload: persistence (SPA-8) + SSR seed for the request-hook field (R2)
   await page.click("#touch");

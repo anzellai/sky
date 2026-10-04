@@ -101,6 +101,10 @@ fn internal_runtime_bases(module: &str) -> &'static [&'static str] {
         // `rt.Process_loadEnv` is the backing for `System.loadEnv`; `Process`'s
         // only member is `run`. A bare `Process.loadEnv` is not intended.
         "Process" => &["loadEnv"],
+        // `rt.Sub_connectionCodes` backs the pure-Sky `Sub.connection`, which
+        // builds the `ConnectionState` from the two Ints it delivers. A bare
+        // `Sub.connectionCodes` is not a user surface.
+        "Sub" => &["connectionCodes"],
         _ => &[],
     }
 }

@@ -79,6 +79,8 @@ var (
 	// spaSch orders every Msg and server-branch RPC result through `update`
 	// (spa_rpcqueue.go): each runs once, in arrival order.
 	spaSch = newSpaSched("boot")
+	// spaTicks gates Sub.every network work by the page lifecycle (spa_tick.go).
+	spaTicks = newSpaTickGate()
 )
 
 type spaTimer struct {
@@ -122,6 +124,7 @@ func spaRun(cfg any) any {
 	// case persistence is simply off. Read once here (spa_persist_wasm.go).
 	spaGuard = fieldOrNil(cfg, "Guard")
 	spaSch = newSpaSched(spaRpcNonce())
+	spaSch.onTickNet = spaTicks.network
 	spaModelEncoder = fieldOrNil(cfg, "ModelEncoder")
 	spaPersistProt = spaStringList(fieldOrNil(cfg, "PersistProtectedFields"))
 	spaPersistSeed = spaStringList(fieldOrNil(cfg, "PersistSeedFields"))
@@ -277,6 +280,8 @@ func spaRun(cfg any) any {
 	if navCmd != nil {
 		interpretCmd(asCmdT(navCmd), spaDispatch)
 	}
+	// Recovery signals and the page lifecycle (spa_neterror_wasm.go, v0.27.3).
+	spaInstallRecovery()
 	reconcileSubs()
 	// Sub.onFragment: the page loaded with a fragment the server never saw.
 	spaDeliverFragment(true)
@@ -714,6 +719,7 @@ func init() {
 // the backend's dedupe cache answers a request it already ran); the failure is
 // reported to the app at once.
 func spaRpcSend(j *spaRpcJob) {
+	spaFetchTick = 0 // an RPC is attributed by its job (spaSched.issue), not here
 	spaRpcDeliver(spaSch, j, spaRunRpcTask(j), step, func() { spaRpcSend(j) })
 }
 
@@ -963,7 +969,13 @@ func interpretCmd(cmd cmdT, dispatch func(any)) {
 		// yields to that loop instead. A synchronous task (Time.now / Random)
 		// simply returns immediately on its goroutine and dispatches. This
 		// mirrors the server's `go runPerform` (live.go), minus the SSE/lock.
-		go performTask(cmd.task, cmd.toMsg, dispatch)
+		// A perform started by a Sub.every tick carries the interval, so the
+		// fetch it makes counts as tick-origin network work (spa_tick.go).
+		tick := spaSch.curTick
+		go func() {
+			spaFetchTick = tick
+			performTask(cmd.task, cmd.toMsg, dispatch)
+		}()
 	case "rpc":
 		// An auto-split server-branch RPC (Spa.rpc / Spa.rpcHold): the request
 		// was built from the model the Msg ran on, so it is sent now, and
@@ -1054,11 +1066,13 @@ func reconcileSubs() {
 	desiredTopics := map[string]any{} // topic -> toMsg (last-write-wins per topic)
 	root := subT{kind: "none"}
 	spaFragmentToMsg = nil
+	spaConnToMsg = nil
 	if spaSubs != nil {
 		root = asSubT(spaSubs(spaModel))
 		collectEvery(root, desired)
 		collectTopics(root, desiredTopics)
 		spaFragmentToMsg = fragmentToMsg(root)
+		spaConnToMsg = connectionToMsg(root)
 	}
 	if spaFragmentToMsg != nil && !spaFragmentListens {
 		spaFragmentListens = true
@@ -1302,11 +1316,13 @@ func startTimer(ms int, msg any) {
 					})
 			}
 		}()
-		m := t.msg
-		if isFunc(m) {
-			m = sky_call(m, nowMillis())
+		// A client-only tick always runs (Elm semantics). A network-bearing
+		// interval is coalesced while its last call is unsettled and gated
+		// while the page is hidden (spa_tick.go).
+		if !spaTicks.tick(ms, spaSch.tickBusy(ms)) {
+			return nil
 		}
-		spaDispatch(m)
+		spaSch.dispatchTick(spaTickMsg(t.msg, nowMillis()), ms, step)
 		return nil
 	})
 	t.id = js.Global().Call("setInterval", t.fn, ms)
@@ -1318,6 +1334,7 @@ func stopTimer(ms int, t *spaTimer) {
 	js.Global().Call("clearInterval", t.id)
 	t.fn.Release()
 	delete(spaTimers, ms)
+	spaTicks.forget(ms)
 }
 
 // nowMillis returns the current epoch time in milliseconds via Date.now(),
@@ -1367,4 +1384,16 @@ func spaApplyShellHead(doc js.Value, head any) {
 		el.Call("setAttribute", "data-sky-head", "")
 		h.Call("appendChild", el)
 	}
+}
+
+// spaFreshTick runs ONE fresh tick of interval ms on return to a visible page
+// (the interval owed a tick while hidden): its Msg is rebuilt with the current
+// time, never the stale one, and it is skipped while the interval's last call
+// is still unsettled.
+func spaFreshTick(ms int) {
+	t, ok := spaTimers[ms]
+	if !ok || spaSch.tickBusy(ms) {
+		return
+	}
+	spaSch.dispatchTick(spaTickMsg(t.msg, nowMillis()), ms, step)
 }

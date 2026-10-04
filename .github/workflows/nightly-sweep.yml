@@ -261,12 +261,13 @@ jobs:
       # client holds its own WebSocket; a sky_sid cookie copied before sign-out
       # is refused after it. Chromium + WebKit, strict CSP.
       - name: Gate — Sky.Spa Msg order + client WebSocket + sign-out e2e (strict CSP)
-        timeout-minutes: 12
+        timeout-minutes: 18
         run: |
           set -euo pipefail
           scripts/spa-rpc-order-e2e.sh
           scripts/spa-websocket-e2e.sh
           scripts/session-revocation-e2e.sh
+          scripts/spa-resilience-e2e.sh
       # Sky.Live without cookies: the header session transport in a browser
       # that blocks every cookie — counter, pushes, a dropped stream, a
       # sign-in rotation and the SSE ticket fallback, strict CSP.

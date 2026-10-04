@@ -53,6 +53,9 @@ type spaRpcJob struct {
 	hold bool
 	// rid is the stable request id, reused verbatim by every retry.
 	rid string
+	// tick is the Sub.every interval (ms) whose tick issued this RPC; 0 for
+	// any other Msg (spa_tick.go).
+	tick int
 }
 
 // spaQueued is one Msg waiting to run. urgent marks a runtime-internal Msg
@@ -61,6 +64,7 @@ type spaRpcJob struct {
 type spaQueued struct {
 	msg    any
 	urgent bool
+	tick   int // the Sub.every interval this Msg is a tick of; 0 otherwise
 }
 
 // spaSched is the per-client Msg scheduler.
@@ -71,13 +75,20 @@ type spaSched struct {
 	inflight map[string]*spaRpcJob
 	nonce    string
 	seq      int
+	// curTick is the Sub.every interval whose tick Msg is running now (0 when
+	// the running Msg is not a tick). tickNet counts each interval's
+	// tick-origin network work still unsettled; onTickNet is told when a tick
+	// starts network work (spaTickGate.network).
+	curTick   int
+	tickNet   map[int]int
+	onTickNet func(ms int)
 }
 
 // newSpaSched builds a scheduler whose request ids are `<nonce>-<seq>`. The
 // nonce is a per-page-load random value (the js driver supplies it), so ids
 // from two tabs or two reloads never collide.
 func newSpaSched(nonce string) *spaSched {
-	return &spaSched{nonce: nonce, inflight: map[string]*spaRpcJob{}}
+	return &spaSched{nonce: nonce, inflight: map[string]*spaRpcJob{}, tickNet: map[int]int{}}
 }
 
 // dispatch queues msg behind every Msg that arrived before it and runs the
@@ -118,7 +129,9 @@ func (s *spaSched) drain(run func(any)) {
 		}
 		q := s.queue[0]
 		s.queue = s.queue[1:]
+		s.curTick = q.tick
 		run(q.msg)
+		s.curTick = 0
 	}
 }
 
@@ -127,6 +140,10 @@ func (s *spaSched) drain(run func(any)) {
 func (s *spaSched) issue(mk, toMsg any, hold bool) *spaRpcJob {
 	s.seq++
 	j := &spaRpcJob{mk: mk, toMsg: toMsg, hold: hold, rid: s.nonce + "-" + strconv.Itoa(s.seq)}
+	if s.curTick > 0 {
+		j.tick = s.curTick
+		s.tickNetBegin(j.tick)
+	}
 	s.inflight[j.rid] = j
 	if hold && s.hold == nil {
 		s.hold = j
@@ -138,6 +155,9 @@ func (s *spaSched) issue(mk, toMsg any, hold bool) *spaRpcJob {
 // arrival order. A hold result runs first and releases the hold, and the Msgs
 // that waited behind it then run in order.
 func (s *spaSched) settle(j *spaRpcJob, resultMsg any, run func(any)) {
+	if _, live := s.inflight[j.rid]; live && j.tick > 0 {
+		s.tickNetEnd(j.tick)
+	}
 	delete(s.inflight, j.rid)
 	if s.hold == j {
 		s.hold = nil
@@ -188,4 +208,51 @@ func spaGuardedUpdate(
 		}
 	}
 	return update(msg, model), false, nil
+}
+
+// dispatchTick queues a Sub.every tick Msg of interval ms. While it runs, the
+// RPCs its Cmds issue are counted as that interval's tick-origin network work
+// (spa_tick.go: coalescing and the hidden-page gate key on it).
+func (s *spaSched) dispatchTick(msg any, ms int, run func(any)) {
+	s.queue = append(s.queue, spaQueued{msg: msg, tick: ms})
+	s.drain(run)
+}
+
+// dispatchUrgent runs a runtime-internal Msg ahead of a hold (a
+// Sub.connection state change: the app must see "Reconnecting" while the hold
+// RPC it reports on is still being re-sent).
+func (s *spaSched) dispatchUrgent(msg any, run func(any)) {
+	// After the urgent Msgs already queued (their order is kept), before the
+	// first Msg a hold is holding back.
+	i := 0
+	for i < len(s.queue) && s.queue[i].urgent {
+		i++
+	}
+	q := append([]spaQueued{}, s.queue[:i]...)
+	q = append(q, spaQueued{msg: msg, urgent: true})
+	s.queue = append(q, s.queue[i:]...)
+	s.drain(run)
+}
+
+// tickNetBegin / tickNetEnd bracket one piece of tick-origin network work of
+// interval ms (an RPC from issue to settle, or a client fetch).
+func (s *spaSched) tickNetBegin(ms int) {
+	s.tickNet[ms]++
+	if s.onTickNet != nil {
+		s.onTickNet(ms)
+	}
+}
+
+func (s *spaSched) tickNetEnd(ms int) {
+	if s.tickNet[ms] <= 1 {
+		delete(s.tickNet, ms)
+		return
+	}
+	s.tickNet[ms]--
+}
+
+// tickBusy reports whether interval ms still has tick-origin network work
+// unsettled.
+func (s *spaSched) tickBusy(ms int) bool {
+	return s.tickNet[ms] > 0
 }

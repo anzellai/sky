@@ -930,8 +930,9 @@ withConsoleAuth check (App a) =
 
 -- | Route a FAILED RPC into your own `update`. On the `web:app` (Sky.Spa)
 -- target every server branch runs as a `POST /_rpc/<Msg>` round-trip; when one
--- fails (a 5xx the backend answered, a response the shared codec cannot decode,
--- or a network drop that never reaches the retry overlay), the client folds
+-- fails FINALLY (a 5xx the backend answered, a response the shared codec cannot
+-- decode, or a transient failure such as a network drop, a timeout or a 503 that
+-- the runtime re-sent until its retry budget ran out), the client folds
 -- nothing back and — without this hook — keeps the model and logs the failure
 -- to the console. `withRpcError (\err -> SomeMsg err)` instead dispatches
 -- `SomeMsg err` into your `update`, so your own view can show the error, mirror

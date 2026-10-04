@@ -1,0 +1,616 @@
+package rt
+
+import (
+	"math"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// spa_retry.go — transport resilience for the Sky.Spa client (portable, no
+// build tag, so every rule here is unit-tested on the host with an injected
+// clock and timer; the js adapter is fetchBlocking in http_wasm.go).
+//
+// A phone that switches apps, a laptop that sleeps, a radio that wakes up
+// late, a proxy that answers 503 for a second during a deploy: each of these
+// fails ONE request at the network level. Before v0.27.3 that one failure
+// stopped the client: the red "Can't reach the server" bar appeared at once,
+// a hold RPC kept every later Msg waiting, and only the Retry button moved it
+// on. The runtime now treats such a failure as TRANSIENT and retries the
+// request itself, so the app and its user never see a blip.
+//
+//   - Classes. A network failure (fetch rejected), a Timeout (the request did
+//     not settle in spaFetchTimeout and was aborted) and the statuses 408,
+//     425, 429, 502, 503 and 504 are TRANSIENT. Every other answer is FINAL
+//     and goes to the app as before.
+//   - Which requests. An auto-split RPC (`POST /_rpc/<Msg>?rid=<id>`) is
+//     always safe to re-send: the backend answers a repeated request id from
+//     its dedupe cache (spa_rpc_dedupe.go). A client `Http.get` is re-sent; a
+//     client `Http.post` is not (it may not be idempotent).
+//   - Schedule. Full jitter: the wait before retry n is a uniform value in
+//     [0, min(cap, base * 2^(n-1))], base 1 s, cap 30 s. A `Retry-After`
+//     header (seconds or an HTTP date) wins when present.
+//   - Budget. One retry is in flight per client: failed requests wait in a
+//     FIFO queue and are re-sent in the order they failed (a mutation queued
+//     during an outage runs once, in order, on recovery). A request gives up
+//     after spaRetryMaxAttempts failures or spaRetryBudget of trying, and its
+//     last result is then delivered as FINAL (the red bar, App.withRpcError).
+//   - Recovery signals (`online`, `visibilitychange` to visible, `pageshow`,
+//     `focus`) re-send the head of the queue at once and reset every queued
+//     request's attempt count and budget.
+//   - Retry throttle (the gRPC A6 shape): a token bucket per origin, 10
+//     tokens, a failure costs 1, a success refunds 0.1. Below 5 tokens no
+//     automatic retry starts; a recovery signal still runs one.
+//   - Adaptive throttle (the Google SRE shape), for overload answers only:
+//     over a 2-minute window of requests and accepts, once the server has
+//     answered 429 or 503, a new attempt is refused locally with probability
+//     max(0, (requests - 2*accepts) / (requests + 1)) and counts as a
+//     transient failure, so a recovering server sees a trickle, not a wall.
+
+const (
+	spaRetryBase        = time.Second
+	spaRetryCap         = 30 * time.Second
+	spaRetryMaxAttempts = 8
+	spaRetryBudget      = 60 * time.Second
+	// spaFetchTimeout aborts a request that has not settled: a radio that
+	// sleeps mid-request otherwise leaves the fetch (and a hold) pending.
+	spaFetchTimeout   = 30 * time.Second
+	spaBucketMax      = 10.0
+	spaBucketMin      = 5.0
+	spaBucketRefund   = 0.1
+	spaThrottleWindow = 2 * time.Minute
+	spaThrottleK      = 2.0
+	// spaThrottleMaxEvents bounds the throttle's window memory.
+	spaThrottleMaxEvents = 4096
+	// spaReconnectGrace is how long a transient outage stays invisible.
+	spaReconnectGrace = 3 * time.Second
+)
+
+// spaOutcomeKind classifies one attempt of a request.
+type spaOutcomeKind int
+
+const (
+	spaOutcomeOK spaOutcomeKind = iota
+	spaOutcomeTransient
+	spaOutcomeFinal
+)
+
+// spaOutcome is the transport-level result of one attempt.
+type spaOutcome struct {
+	kind          spaOutcomeKind
+	status        int // the HTTP status; 0 when no response arrived
+	retryAfter    time.Duration
+	hasRetryAfter bool
+	local         bool // refused locally by the adaptive throttle
+}
+
+// spaTransientStatus reports whether an HTTP status asks the client to try
+// again later: 408 Request Timeout, 425 Too Early, 429 Too Many Requests,
+// 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout.
+func spaTransientStatus(status int) bool {
+	switch status {
+	case 408, 425, 429, 502, 503, 504:
+		return true
+	}
+	return false
+}
+
+// spaOverloadStatus reports an overload answer, the only statuses that feed
+// the adaptive throttle.
+func spaOverloadStatus(status int) bool {
+	return status == 429 || status == 503
+}
+
+// spaClassifyResponse classifies an attempt that got an HTTP answer.
+func spaClassifyResponse(status int, retryAfter string, now time.Time) spaOutcome {
+	if !spaTransientStatus(status) {
+		if status >= 200 && status < 400 {
+			return spaOutcome{kind: spaOutcomeOK, status: status}
+		}
+		return spaOutcome{kind: spaOutcomeFinal, status: status}
+	}
+	o := spaOutcome{kind: spaOutcomeTransient, status: status}
+	if d, ok := spaParseRetryAfter(retryAfter, now); ok {
+		o.retryAfter, o.hasRetryAfter = d, true
+	}
+	return o
+}
+
+// spaNetworkOutcome is an attempt that got no answer (a rejected fetch or a
+// timeout).
+func spaNetworkOutcome() spaOutcome {
+	return spaOutcome{kind: spaOutcomeTransient}
+}
+
+// spaParseRetryAfter reads a Retry-After header: delta seconds or an HTTP
+// date. A date in the past is a zero wait.
+func spaParseRetryAfter(v string, now time.Time) (time.Duration, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		if n < 0 {
+			return 0, false
+		}
+		return time.Duration(n) * time.Second, true
+	}
+	for _, layout := range []string{time.RFC1123, "Monday, 02-Jan-06 15:04:05 MST", time.ANSIC} {
+		if t, err := time.Parse(layout, v); err == nil {
+			d := t.Sub(now)
+			if d < 0 {
+				d = 0
+			}
+			return d, true
+		}
+	}
+	return 0, false
+}
+
+// spaFullJitter is the wait before retry number `attempt` (1 for the first
+// retry): rnd (in [0,1)) of min(cap, base * 2^(attempt-1)).
+func spaFullJitter(attempt int, rnd float64) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	ceil := spaRetryCap
+	if attempt-1 < 30 {
+		if c := spaRetryBase << uint(attempt-1); c < ceil {
+			ceil = c
+		}
+	}
+	if rnd < 0 {
+		rnd = 0
+	}
+	if rnd >= 1 {
+		rnd = math.Nextafter(1, 0)
+	}
+	return time.Duration(float64(ceil) * rnd)
+}
+
+// spaRetryable reports whether a client request may be re-sent by the
+// runtime: an auto-split RPC (its request id makes a re-send safe) or a GET
+// or HEAD. Any other client request is not retried.
+func spaRetryable(method, url string) bool {
+	switch strings.ToUpper(method) {
+	case "GET", "HEAD":
+		return true
+	case "POST":
+		return strings.HasPrefix(url, "/_rpc/") && strings.Contains(url, "rid=")
+	}
+	return false
+}
+
+// spaOriginOf is the token-bucket key of a URL: its scheme and host, or
+// "self" for a relative URL (the app's own origin).
+func spaOriginOf(url string) string {
+	i := strings.Index(url, "://")
+	if i < 0 {
+		return "self"
+	}
+	rest := url[i+3:]
+	if j := strings.IndexAny(rest, "/?#"); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.ToLower(url[:i] + "://" + rest)
+}
+
+// spaThrottleP is the SRE client-side throttling probability.
+func spaThrottleP(requests, accepts int) float64 {
+	p := (float64(requests) - spaThrottleK*float64(accepts)) / (float64(requests) + 1)
+	if p < 0 {
+		return 0
+	}
+	return p
+}
+
+// spaIsTransientErr reports whether a delivered Result is an Err of kind
+// Network or Timeout: the request could not reach the server. Such an Err only
+// reaches the app once the retry budget is spent (or for a client request the
+// runtime does not re-send).
+func spaIsTransientErr(result SkyResult[SkyADT, any]) bool {
+	if result.Tag != 1 {
+		return false
+	}
+	kind := AdtField(result.ErrValue, 0)
+	return EnumTagIs(kind, 1) || EnumTagIs(kind, 4) // 1 = Network, 4 = Timeout
+}
+
+// spaThrottleEvent is one request in the adaptive throttle's window.
+type spaThrottleEvent struct {
+	at       time.Time
+	accepted bool
+	answered bool // a response arrived (accepted or overload)
+	overload bool
+}
+
+// spaRetryReq is one request the coordinator tracks while it is retried.
+type spaRetryReq struct {
+	origin  string
+	start   time.Time
+	attempt int // failed attempts so far
+	queued  bool
+	forced  bool // a recovery signal: the next try ignores the bucket
+	sent    bool // an attempt has been made: only a NEW request is throttled
+	giveUp  bool // the budget ran out while it waited
+	wake    chan struct{}
+}
+
+// spaRetryCoord is the per-client retry coordinator.
+type spaRetryCoord struct {
+	mu     sync.Mutex
+	now    func() time.Time
+	rnd    func() float64
+	arm    func(time.Duration, func()) func() // a one-shot timer; returns cancel
+	wait   func(*spaRetryReq)                 // blocks until the request is woken
+	change func()                             // called (unlocked) when the queue changes
+
+	queue []*spaRetryReq
+	// outageStart / lastFail: the first and the latest transient failure of the
+	// current outage (zero while the queue is empty).
+	outageStart time.Time
+	lastFail    time.Time
+	cancel      func()
+	buckets     map[string]float64
+	events      []spaThrottleEvent
+}
+
+func newSpaRetryCoord(now func() time.Time, rnd func() float64, arm func(time.Duration, func()) func()) *spaRetryCoord {
+	return &spaRetryCoord{
+		now:     now,
+		rnd:     rnd,
+		arm:     arm,
+		wait:    func(r *spaRetryReq) { <-r.wake },
+		change:  func() {},
+		buckets: map[string]float64{},
+	}
+}
+
+// queued is the number of requests waiting to be re-sent.
+func (c *spaRetryCoord) queued() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.queue)
+}
+
+// outage is how long the current outage has been observed: from its first
+// transient failure to its latest one (0 when nothing is being re-sent).
+func (c *spaRetryCoord) outage() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.queue) == 0 || c.outageStart.IsZero() {
+		return 0
+	}
+	return c.lastFail.Sub(c.outageStart)
+}
+
+// tokens is the retry-bucket level of an origin.
+func (c *spaRetryCoord) tokens(origin string) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tokensLocked(origin)
+}
+
+func (c *spaRetryCoord) tokensLocked(origin string) float64 {
+	t, ok := c.buckets[origin]
+	if !ok {
+		return spaBucketMax
+	}
+	return t
+}
+
+func (c *spaRetryCoord) begin(origin string) *spaRetryReq {
+	return &spaRetryReq{origin: origin, start: c.now(), wake: make(chan struct{}, 1)}
+}
+
+// throttleP is the current local-refusal probability: 0 unless an overload
+// answer is in the window.
+func (c *spaRetryCoord) throttlePLocked(now time.Time) float64 {
+	cut := now.Add(-spaThrottleWindow)
+	i := 0
+	for i < len(c.events) && c.events[i].at.Before(cut) {
+		i++
+	}
+	c.events = c.events[i:]
+	req, acc, overloaded := 0, 0, false
+	for _, e := range c.events {
+		req++
+		if e.accepted {
+			acc++
+		}
+		if e.overload {
+			overloaded = true
+		}
+	}
+	if !overloaded {
+		return 0
+	}
+	return spaThrottleP(req, acc)
+}
+
+func (c *spaRetryCoord) recordLocked(e spaThrottleEvent) {
+	c.events = append(c.events, e)
+	if len(c.events) > spaThrottleMaxEvents {
+		c.events = c.events[len(c.events)-spaThrottleMaxEvents:]
+	}
+}
+
+// admit decides whether the next attempt goes to the network. false means the
+// adaptive throttle refused it locally (the attempt counts as transient).
+func (c *spaRetryCoord) admit(r *spaRetryReq) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	// The adaptive throttle refuses NEW requests (SRE): a re-send is already
+	// bounded by the retry bucket and by the server's Retry-After.
+	first := !r.sent
+	r.sent = true
+	if !first {
+		return true
+	}
+	p := c.throttlePLocked(now)
+	if p > 0 && c.rnd() < p {
+		c.recordLocked(spaThrottleEvent{at: now})
+		return false
+	}
+	return true
+}
+
+// done records an attempt's outcome. It returns true when the request must be
+// retried: the caller then waits (c.wait) and asks c.proceed before the next
+// attempt. false means deliver this attempt's result now.
+func (c *spaRetryCoord) done(r *spaRetryReq, o spaOutcome) bool {
+	c.mu.Lock()
+	now := c.now()
+	// A wake that arrived while this attempt was on the wire (a recovery
+	// signal) is spent: the attempt itself was the "try now".
+	select {
+	case <-r.wake:
+	default:
+	}
+	if !o.local {
+		if o.status > 0 {
+			c.recordLocked(spaThrottleEvent{at: now, answered: true,
+				accepted: !spaOverloadStatus(o.status), overload: spaOverloadStatus(o.status)})
+		}
+	}
+	retry := false
+	switch o.kind {
+	case spaOutcomeOK, spaOutcomeFinal:
+		// The server answered: the bucket gets its refund.
+		t := c.tokensLocked(r.origin) + spaBucketRefund
+		if t > spaBucketMax {
+			t = spaBucketMax
+		}
+		c.buckets[r.origin] = t
+		c.removeLocked(r, true)
+	default:
+		if !o.local {
+			t := c.tokensLocked(r.origin) - 1
+			if t < 0 {
+				t = 0
+			}
+			c.buckets[r.origin] = t
+		}
+		r.attempt++
+		if !o.local {
+			if c.outageStart.IsZero() {
+				c.outageStart = now
+			}
+			c.lastFail = now
+		}
+		if r.attempt >= spaRetryMaxAttempts || now.Sub(r.start) >= spaRetryBudget {
+			c.removeLocked(r, false)
+		} else {
+			if !r.queued {
+				r.queued = true
+				c.queue = append(c.queue, r)
+			}
+			if c.queue[0] == r {
+				c.scheduleLocked(r, o)
+			}
+			retry = true
+		}
+	}
+	c.mu.Unlock()
+	c.change()
+	return retry
+}
+
+// proceed is called after a woken request's wait: false means the budget ran
+// out while it waited, and its last result is delivered as FINAL.
+func (c *spaRetryCoord) proceed(r *spaRetryReq) bool {
+	c.mu.Lock()
+	if !r.giveUp {
+		c.mu.Unlock()
+		return true
+	}
+	c.removeLocked(r, false)
+	c.mu.Unlock()
+	c.change()
+	return false
+}
+
+// removeLocked takes r out of the queue. When r was the head the next request
+// becomes the head: at once after a success (the server is back, so the queue
+// drains in order), on its own schedule otherwise.
+func (c *spaRetryCoord) removeLocked(r *spaRetryReq, succeeded bool) {
+	if !r.queued {
+		return
+	}
+	r.queued = false
+	defer func() {
+		if len(c.queue) == 0 {
+			c.outageStart, c.lastFail = time.Time{}, time.Time{}
+		}
+	}()
+	wasHead := len(c.queue) > 0 && c.queue[0] == r
+	for i, q := range c.queue {
+		if q == r {
+			c.queue = append(c.queue[:i], c.queue[i+1:]...)
+			break
+		}
+	}
+	if !wasHead {
+		return
+	}
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
+	if len(c.queue) == 0 {
+		return
+	}
+	next := c.queue[0]
+	if succeeded {
+		next.forced = true
+	}
+	c.scheduleLocked(next, spaOutcome{kind: spaOutcomeTransient})
+}
+
+// scheduleLocked arms the head's next try.
+func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
+	now := c.now()
+	if h.forced {
+		h.forced = false
+		c.wakeLocked(h)
+		return
+	}
+	remaining := h.start.Add(spaRetryBudget).Sub(now)
+	if remaining <= 0 {
+		h.giveUp = true
+		c.wakeLocked(h)
+		return
+	}
+	var delay time.Duration
+	switch {
+	case c.tokensLocked(h.origin) < spaBucketMin:
+		// Retries are suspended: only a recovery signal (or the end of the
+		// budget) moves this request on.
+		delay = remaining
+	case last.hasRetryAfter:
+		delay = last.retryAfter
+	default:
+		delay = spaFullJitter(h.attempt, c.rnd())
+	}
+	giveUp := false
+	if delay >= remaining {
+		delay, giveUp = remaining, true
+	}
+	c.cancel = c.arm(delay, func() {
+		c.mu.Lock()
+		if len(c.queue) > 0 && c.queue[0] == h {
+			h.giveUp = h.giveUp || giveUp
+			c.cancel = nil
+			c.wakeLocked(h)
+		}
+		c.mu.Unlock()
+	})
+}
+
+func (c *spaRetryCoord) wakeLocked(r *spaRetryReq) {
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+// recover is a recovery signal (online, visible, pageshow, focus): every
+// queued request starts a fresh budget and the head is re-sent now, whatever
+// the bucket holds. It reports whether anything was waiting.
+func (c *spaRetryCoord) recover() bool {
+	c.mu.Lock()
+	if len(c.queue) == 0 {
+		c.mu.Unlock()
+		return false
+	}
+	now := c.now()
+	for _, q := range c.queue {
+		q.attempt = 0
+		q.start = now
+		q.giveUp = false
+	}
+	h := c.queue[0]
+	h.forced = true
+	c.scheduleLocked(h, spaOutcome{kind: spaOutcomeTransient})
+	c.mu.Unlock()
+	c.change()
+	return true
+}
+
+// spaRetryLoop runs one request through the coordinator: attempt, classify,
+// wait, re-send, until it succeeds, fails FINAL, or spends its budget. It
+// returns the result of the last attempt. `refused` is the result delivered
+// for an attempt the adaptive throttle refused locally.
+func spaRetryLoop[R any](c *spaRetryCoord, origin string, attempt func() (R, spaOutcome), refused func() R) R {
+	r := c.begin(origin)
+	for {
+		var res R
+		var o spaOutcome
+		if c.admit(r) {
+			res, o = attempt()
+		} else {
+			res, o = refused(), spaOutcome{kind: spaOutcomeTransient, local: true}
+		}
+		if !c.done(r, o) {
+			return res
+		}
+		c.wait(r)
+		if !c.proceed(r) {
+			return res
+		}
+	}
+}
+
+// Connection states, as Sub.connection reports them (sub_connection.go).
+const (
+	spaConnOnline       = 0
+	spaConnReconnecting = 1
+	spaConnOffline      = 2
+)
+
+// spaConnState is the client's connection state from the retry queue (requests
+// the runtime is still re-sending) and the red bar's queue (requests whose
+// budget is spent, waiting for Retry or a recovery signal).
+func spaConnState(retrying, exhausted int) (code, pending int) {
+	switch {
+	case exhausted > 0:
+		return spaConnOffline, exhausted + retrying
+	case retrying > 0:
+		return spaConnReconnecting, 0
+	}
+	return spaConnOnline, 0
+}
+
+// spaIndicator is the quiet "Reconnecting…" indicator. It shows only once an
+// outage is PROVEN longer than spaReconnectGrace: a request failed, and a
+// re-send at least spaReconnectGrace later failed too. A blip that is over
+// before the next re-send never shows, however long the jittered wait was.
+// It hides as soon as the client is not Reconnecting (Online, or Offline,
+// where the red bar replaces it). It does not block taps.
+type spaIndicator struct {
+	show  func()
+	hide  func()
+	shown bool
+}
+
+// update takes the connection state and how long the current outage has been
+// observed (its first failure to its latest failure).
+func (in *spaIndicator) update(code int, outage time.Duration) {
+	if code == spaConnReconnecting {
+		if !in.shown && outage >= spaReconnectGrace {
+			in.shown = true
+			in.show()
+		}
+		return
+	}
+	if in.shown {
+		in.shown = false
+		in.hide()
+	}
+}
