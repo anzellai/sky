@@ -234,6 +234,7 @@ type spaRetryReq struct {
 	forced  bool // a recovery signal: the next try ignores the bucket
 	sent    bool // an attempt has been made: only a NEW request is throttled
 	giveUp  bool // the budget ran out while it waited
+	paced   bool // its current wait is the server's Retry-After
 	wake    chan struct{}
 }
 
@@ -251,6 +252,15 @@ type spaRetryCoord struct {
 	// current outage (zero while the queue is empty).
 	outageStart time.Time
 	lastFail    time.Time
+	// graceCancel stops the grace timer of the current outage (nil when none
+	// is armed). At spaReconnectGrace into an outage the head is re-sent at
+	// once (a probe): its failure proves the outage and shows the indicator,
+	// whatever the jittered schedule or the retry bucket would have done.
+	graceCancel func()
+	// graceProven: at the grace point the head was waiting for the server's
+	// Retry-After. The server's "come back later" proves the outage, so the
+	// probe does not re-send early and outage() counts up from outageStart.
+	graceProven bool
 	cancel      func()
 	buckets     map[string]float64
 	events      []spaThrottleEvent
@@ -281,6 +291,9 @@ func (c *spaRetryCoord) outage() time.Duration {
 	defer c.mu.Unlock()
 	if len(c.queue) == 0 || c.outageStart.IsZero() {
 		return 0
+	}
+	if c.graceProven {
+		return c.now().Sub(c.outageStart)
 	}
 	return c.lastFail.Sub(c.outageStart)
 }
@@ -397,6 +410,7 @@ func (c *spaRetryCoord) done(r *spaRetryReq, o spaOutcome) bool {
 		if !o.local {
 			if c.outageStart.IsZero() {
 				c.outageStart = now
+				c.armGraceLocked(now)
 			}
 			c.lastFail = now
 		}
@@ -442,7 +456,7 @@ func (c *spaRetryCoord) removeLocked(r *spaRetryReq, succeeded bool) {
 	r.queued = false
 	defer func() {
 		if len(c.queue) == 0 {
-			c.outageStart, c.lastFail = time.Time{}, time.Time{}
+			c.endOutageLocked()
 		}
 	}()
 	wasHead := len(c.queue) > 0 && c.queue[0] == r
@@ -469,6 +483,56 @@ func (c *spaRetryCoord) removeLocked(r *spaRetryReq, succeeded bool) {
 	c.scheduleLocked(next, spaOutcome{kind: spaOutcomeTransient})
 }
 
+// armGraceLocked arms the grace probe of the outage that started at start.
+//
+// Before v0.27.4 the indicator showed only when a re-send that the schedule
+// happened to place 3 s or more into the outage failed. Full jitter can place
+// the first re-sends close together (waits drawn from [0, 1 s], [0, 2 s], ...),
+// and each failure costs a retry token: once the bucket fell below
+// spaBucketMin no automatic re-send started until the 60 s budget ran out. A
+// real outage of 10 s then never showed "Reconnecting…". The probe ties the
+// indicator to the outage's age instead: at spaReconnectGrace the head is
+// re-sent now. If it fails the outage is proven and the indicator shows; if it
+// succeeds the blip is over, nothing shows, and the queue drains at once.
+func (c *spaRetryCoord) armGraceLocked(start time.Time) {
+	if c.graceCancel != nil {
+		c.graceCancel()
+	}
+	c.graceCancel = c.arm(spaReconnectGrace, func() {
+		c.mu.Lock()
+		if !c.outageStart.Equal(start) || len(c.queue) == 0 {
+			c.mu.Unlock()
+			return // that outage is over
+		}
+		c.graceCancel = nil
+		h := c.queue[0]
+		switch {
+		case h.giveUp:
+			c.mu.Unlock()
+			return
+		case h.paced:
+			// The server asked for this wait: obey it, and show the indicator.
+			c.graceProven = true
+			c.mu.Unlock()
+			c.change()
+			return
+		}
+		h.forced = true
+		c.scheduleLocked(h, spaOutcome{kind: spaOutcomeTransient})
+		c.mu.Unlock()
+	})
+}
+
+// endOutageLocked forgets the current outage (the queue drained).
+func (c *spaRetryCoord) endOutageLocked() {
+	c.outageStart, c.lastFail = time.Time{}, time.Time{}
+	c.graceProven = false
+	if c.graceCancel != nil {
+		c.graceCancel()
+		c.graceCancel = nil
+	}
+}
+
 // scheduleLocked arms the head's next try.
 func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
 	if c.cancel != nil {
@@ -476,6 +540,7 @@ func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
 		c.cancel = nil
 	}
 	now := c.now()
+	h.paced = false
 	if h.forced {
 		h.forced = false
 		c.wakeLocked(h)
@@ -495,6 +560,7 @@ func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
 		delay = remaining
 	case last.hasRetryAfter:
 		delay = last.retryAfter
+		h.paced = true
 	default:
 		delay = spaFullJitter(h.attempt, c.rnd())
 	}
@@ -506,6 +572,7 @@ func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
 		c.mu.Lock()
 		if len(c.queue) > 0 && c.queue[0] == h {
 			h.giveUp = h.giveUp || giveUp
+			h.paced = false
 			c.cancel = nil
 			c.wakeLocked(h)
 		}
@@ -589,8 +656,9 @@ func spaConnState(retrying, exhausted int) (code, pending int) {
 
 // spaIndicator is the quiet "Reconnecting…" indicator. It shows only once an
 // outage is PROVEN longer than spaReconnectGrace: a request failed, and a
-// re-send at least spaReconnectGrace later failed too. A blip that is over
-// before the next re-send never shows, however long the jittered wait was.
+// re-send at least spaReconnectGrace later failed too. The coordinator makes
+// that re-send at spaReconnectGrace (armGraceLocked), so a real outage shows
+// at once at the grace point, and a blip that is over by then shows nothing.
 // It hides as soon as the client is not Reconnecting (Online, or Offline,
 // where the red bar replaces it). It does not block taps.
 type spaIndicator struct {

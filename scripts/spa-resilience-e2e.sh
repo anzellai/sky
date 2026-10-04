@@ -9,7 +9,7 @@
 #
 #   fast stage (Chromium + WebKit)
 #     blip       a 2 s server outage shows nothing; the click runs once
-#     offline    10 s offline: "Reconnecting…" after 3 s, never the red bar;
+#     offline    offline: "Reconnecting…" after 3 s (within 10 s), never the red bar;
 #                queued clicks run once each, in order, when back online
 #     pushback   a 503 with Retry-After: 2 is re-sent 2 s later
 #     hidden     a client-only Sub.every keeps ticking while hidden; a poll
