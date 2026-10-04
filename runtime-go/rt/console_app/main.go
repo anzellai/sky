@@ -9338,7 +9338,7 @@ func Sky_Config_telemetryEndpoint(v_0 Sky_Config_Telemetry) string {
 	{
 		_subj := v_0
 		if _v0, _ok1 := _subj.(Sky_Config_Telemetry_Otlp_V); _ok1 {
-			v_1 := /* generic erase */ rt.AsString(_v0.V0)
+			v_1 := _v0.V0
 			_ = v_1
 			return v_1
 		}
@@ -9354,12 +9354,12 @@ func Sky_Config_databaseValue(v_0 Sky_Config_Database) string {
 	{
 		_subj := v_0
 		if _v0, _ok1 := _subj.(Sky_Config_Database_Sqlite_V); _ok1 {
-			v_1 := /* generic erase */ rt.AsString(_v0.V0)
+			v_1 := _v0.V0
 			_ = v_1
 			return v_1
 		}
 		if _v2, _ok3 := _subj.(Sky_Config_Database_Postgres_V); _ok3 {
-			v_2 := /* generic erase */ rt.AsString(_v2.V0)
+			v_2 := _v2.V0
 			_ = v_2
 			return v_2
 		}
