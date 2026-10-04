@@ -8642,7 +8642,16 @@ impl<'a> Ctx<'a> {
             } else {
                 fty.clone()
             };
-            let field = if sub_ty == GoTy::Any {
+            // When the field's declared Go type is known (not `any`), the
+            // selector already HAS that type: the variant struct is typed
+            // (`type Main_Msg_Tick_V struct { V0 int }`) and `struct_val` is the
+            // asserted variant. Read it directly. Wrapping it in an `any -> T`
+            // Coerce boxed a typed field and asserted it straight back
+            // (`rt.AsInt(_v0.V0)`): doc 14 R6 on a sealed app ADT, closed by
+            // §5.2, as both shapes are known here and equal (§1). Same rule as
+            // `bind_field_pat` (R8). Only an `any` field narrows, to the
+            // sub-pattern's nominal.
+            let field = if sub_ty == GoTy::Any || fty != GoTy::Any {
                 GoExpr::new(
                     GoExprKind::Selector(Box::new(struct_val.clone()), format!("V{i}")),
                     fty.clone(),
