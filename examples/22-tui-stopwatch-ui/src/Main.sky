@@ -38,6 +38,8 @@ import Std.Html.Events as Event
 type alias Model =
     { running : Bool
     , elapsedMs : Int
+    , accumulatedMs : Int -- elapsed before the current run
+    , startedAt : Int -- the time of the current run's first tick (0: none yet)
     }
 
 type alias KeyEvent =
@@ -46,7 +48,7 @@ type alias KeyEvent =
     }
 
 type Msg
-    = Tick
+    = Tick Int
     | Toggle
     | Reset
     | Quit
@@ -55,25 +57,37 @@ type Msg
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { running = False, elapsedMs = 0 }, Cmd.none )
+    ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }, Cmd.none )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
 
-        Tick ->
-            if model.running then
-                ( { model | elapsedMs = model.elapsedMs + 100 }, Cmd.none )
-
-            else
+        Tick now ->
+            -- A tick is a wake-up, not a clock: a throttled window or a busy
+            -- machine delivers fewer ticks than asked for. The elapsed time
+            -- is derived from the time the tick carries, so it never drifts.
+            -- `running` is checked because one tick may still arrive after
+            -- pause tears the subscription down.
+            if not model.running then
                 ( model, Cmd.none )
 
+            else if model.startedAt == 0 then
+                ( { model | startedAt = now }, Cmd.none )
+
+            else
+                ( { model | elapsedMs = model.accumulatedMs + (now - model.startedAt) }, Cmd.none )
+
         Toggle ->
-            ( { model | running = not model.running }, Cmd.none )
+            if model.running then
+                ( { model | running = False, accumulatedMs = model.elapsedMs, startedAt = 0 }, Cmd.none )
+
+            else
+                ( { model | running = True, startedAt = 0 }, Cmd.none )
 
         Reset ->
-            ( { running = False, elapsedMs = 0 }, Cmd.none )
+            ( { running = False, elapsedMs = 0, accumulatedMs = 0, startedAt = 0 }, Cmd.none )
 
         Quit ->
             ( model, Cmd.perform (System.exit 0) (\_ -> NoOp) )
@@ -85,7 +99,7 @@ update msg model =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     if model.running then
-        Sub.every 100 Tick
+        Sub.everyWithTime 100 Tick
 
     else
         Sub.none
