@@ -336,23 +336,7 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 		pumps.Add(1)
 		go func(src *os.File, ring *outRing, stdout bool) {
 			defer pumps.Done()
-			buf := make([]byte, 32<<10)
-			for {
-				n, err := src.Read(buf)
-				if n > 0 {
-					ring.write(buf[:n])
-					if stdout {
-						h.feedScreen()
-					}
-				}
-				if err != nil {
-					ring.closeEOF()
-					if stdout {
-						h.feedScreen()
-					}
-					return
-				}
-			}
+			h.pumpStream(src, ring, stdout)
 		}(src, ring, i == procStreamStdout)
 	}
 	pumpsDone := make(chan struct{})
@@ -934,4 +918,37 @@ func (h *procHandle) releaseWhenConsumed() {
 		}
 	}
 	h.shutdown()
+}
+
+// pumpStream drains one output stream of the process into its ring until
+// EOF; for stdout it feeds the screen after every write.
+//
+// The screen reads the ring by offset, so it sees a byte only while the ring
+// still holds it. One read can return more than the ring holds (a 32 KiB
+// read against a 4 KiB ring: Linux n_tty keeps copying while the child
+// writes, so a pump slowed by load reads 4096 + k bytes at once). Written
+// whole, the ring would keep only its last `limit` bytes and the screen
+// would lose the first k for good (the v0.27.4 CI failure: 18 lines missing
+// from the middle of the scrollback). So a read goes into the ring in pieces
+// no larger than the ring, and the screen catches up after each piece.
+func (h *procHandle) pumpStream(src io.Reader, ring *outRing, stdout bool) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := src.Read(buf)
+		for p := buf[:n]; len(p) > 0; {
+			k := min(len(p), ring.limit)
+			ring.write(p[:k])
+			p = p[k:]
+			if stdout {
+				h.feedScreen()
+			}
+		}
+		if err != nil {
+			ring.closeEOF()
+			if stdout {
+				h.feedScreen()
+			}
+			return
+		}
+	}
 }
