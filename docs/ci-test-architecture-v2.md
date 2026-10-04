@@ -928,9 +928,12 @@ How the two paths fit (v0.27.0, `rust-ci.yml`):
   so ~17 s of it primed dependencies and the rest built workspace test targets
   that rust-cache prunes before saving.
 - The Go runtime tests (`runtime-rt`, split out of `codegen-build`) and the
-  seven `test-sky` shards (`nextest --partition slice:k/7`) do not wait for
+  `test-sky` shards (`nextest --partition slice:k/N`) do not wait for
   `setup`. A test-sky shard's time is set by its share of the
-  `serial-servers` group, so the shard count is the lever.
+  `serial-servers` group, so the shard count is the lever. Seven shards at
+  v0.27.0; nine since seven reached 955-1003 s on main against the 990 s
+  ceiling (run 37225178103: test-sky-3 1003 s, test-sky-6 987 s, test-sky
+  961 s). The ceiling was not raised.
 
 | Run | Cache | `setup` | slowest setup-dependent | slowest setup-independent | Tier |
 |---|---|---|---|---|---|

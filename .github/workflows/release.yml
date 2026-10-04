@@ -351,8 +351,8 @@ jobs:
   # tests/workflows_parse.rs checks the five slices are all present. The
   # `serial-servers` group in rust/.config/nextest.toml still runs the
   # fixed-port server tests one at a time within each job. The same split the
-  # per-commit `test-sky` jobs use (7 slices there, ~10-14 min each); here each
-  # job carries 7/5 of that plus setup, ~20 min. Timeout = 1.5x = 30.
+  # per-commit `test-sky` jobs use (9 slices there; seven had reached ~16 min
+  # each); here five slices plus setup, ~20 min each. Timeout = 1.5x = 30.
   # The heavy `#[ignore]`d legs run in gate-app (`-- --ignored`), unchanged.
   gate-core-sky-1:
     runs-on: ubuntu-latest
