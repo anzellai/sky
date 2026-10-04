@@ -299,6 +299,7 @@ func TestSpaSessionBootWithoutASessionSaysTheStoreIsUnused(t *testing.T) {
 	spaRevMu.Lock()
 	spaRev = spaRevState{}
 	spaRevMu.Unlock()
+	t.Setenv("SKY_DATA_DIR", t.TempDir())
 	t.Setenv("ENV", "production")
 	t.Setenv("SKY_LIVE_STORE", "postgres")
 	t.Setenv("DATABASE_URL", "postgres://u:p@127.0.0.1:1/x?connect_timeout=1")
@@ -334,6 +335,7 @@ func TestSpaSessionBootWithASessionNamesTheSignOutStore(t *testing.T) {
 	spaRevMu.Lock()
 	spaRev = spaRevState{}
 	spaRevMu.Unlock()
+	t.Setenv("SKY_DATA_DIR", t.TempDir())
 	t.Setenv("ENV", "")
 	t.Setenv("SKY_LIVE_STORE", "memory")
 	t.Setenv(spaSessionSecretEnv, string(spaTestSecret.v))
