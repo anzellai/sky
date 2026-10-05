@@ -11,6 +11,12 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.27.5 — The unused-store line names who set the store (2026-10-05)
+
+### Fixed
+
+- **A Sky.Spa backend's "session store: none" line named the wrong source for the store.** v0.27.4 logged `[live] store / SKY_LIVE_STORE ("postgres") is not used.` whatever set the value. On a production web:app with no `[live]` section in sky.toml and no `SKY_LIVE_STORE` in the environment, the value came from the app's own top-level `config` binding (`Config.withSessions SharedWithDatabase`), which the generated `rt.ApplyConfig(Main_config())` writes into the process environment at boot. The line sent the operator to sky.toml and `/proc/<pid>/environ`, where the value was not. The line now names the one source that set the store: `set by Sky.Config.withSessions in the app's config`, ``set by `[live] store` in sky.toml``, or `set by SKY_LIVE_STORE in the environment`. No runtime path sets a session store for `--embed` or `[database] embedded = true`. Nothing else changes. (`runtime-go/rt/live_config_precedence.go` `resolveStoreKindSource`, `runtime-go/rt/spa_session_revocation.go`; tests `TestSpaSessionBootNamesWhereTheUnusedStoreCameFrom`, `a_spa_backend_names_the_config_binding_that_set_an_unused_store`.)
+
 ## v0.27.4 — Terminal output survives a large burst; "Reconnecting…" shows on time; honest store lines (2026-10-05)
 
 ### Fixed

@@ -9322,7 +9322,95 @@ fn a_spa_backend_without_a_session_says_its_store_is_unused() {
     );
     assert!(
         both.contains("[sky.spa] session store: none.")
-            && both.contains("SKY_LIVE_STORE (\"postgres\") is not used"),
-        "the backend says it keeps no session and names the unused store:\n{both}"
+            && both.contains(
+                "The session store \"postgres\", set by SKY_LIVE_STORE in the environment, is not used."
+            ),
+        "the backend says it keeps no session and names the unused store and its source:\n{both}"
+    );
+}
+
+/// v0.27.5: the unused-store line names WHO set the store. A production
+/// Std.App web:app (no `[live]` section in sky.toml, no SKY_LIVE_STORE in the
+/// environment, run under ENV=production) logged
+/// `[live] store / SKY_LIVE_STORE ("postgres") is not used.` The value came
+/// from the app's own top-level `config` binding,
+/// `Config.withSessions SharedWithDatabase`, which the split backend carries
+/// and applies through the generated `rt.ApplyConfig(Main_config())`. The line
+/// named sky.toml and the environment, so the operator searched both and found
+/// nothing. This builds that exact shape and asserts the line names the
+/// builder.
+#[test]
+fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build(
+        "spa-deeplink",
+        &[
+            (
+                "src/Main.sky",
+                "import Std.App as App\n",
+                "import Std.App as App\nimport Sky.Config as Config exposing (Sessions(..))\n",
+            ),
+            (
+                "src/Main.sky",
+                "\n\nmain =\n",
+                "\n\nconfig : Config.Config\nconfig =\n    Config.default |> Config.withSessions SharedWithDatabase\n\n\nmain =\n",
+            ),
+        ],
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let main_go =
+        std::fs::read_to_string(proj.join(".skyapp/web-app/.split/backend/sky-out/main.go"))
+            .unwrap_or_default();
+    assert!(
+        main_go.contains("rt.ApplyConfig(Main_config())"),
+        "the split backend applies the app's `config` binding:\n{main_go}"
+    );
+
+    let port = free_port();
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    let stdout = dir.join("server.log");
+    let stderr = dir.join("server.err");
+    let _child = Killed(
+        Command::new(dir.join("sky-out/app"))
+            .current_dir(&dir)
+            .env("PORT", port.to_string())
+            .env("ENV", "production")
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("SKY_LIVE_STORE")
+            .env_remove("SKY_LIVE_STORE_PATH")
+            .env(
+                "DATABASE_URL",
+                "postgres://nobody@127.0.0.1:1/none?sslmode=disable",
+            )
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap())
+            .spawn()
+            .expect("start the split backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&stdout, 120),
+        "the split backend did not start:\n{}\n{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    let both = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    assert!(
+        both.contains("[sky.spa] session store: none.")
+            && both.contains(
+                "The session store \"postgres\", set by Sky.Config.withSessions in the app's `config`, is not used."
+            ),
+        "the line names the app's `config` binding as the source of the store:\n{both}"
+    );
+    assert!(
+        !both.contains("[live] store / SKY_LIVE_STORE"),
+        "the line names sky.toml and the environment, which did not set the store:\n{both}"
     );
 }

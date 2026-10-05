@@ -319,12 +319,99 @@ func TestSpaSessionBootWithoutASessionSaysTheStoreIsUnused(t *testing.T) {
 	for _, want := range []string{
 		"[sky.spa] session store: none",
 		"no server-side session",
-		`SKY_LIVE_STORE ("postgres") is not used`,
+		`The session store "postgres", set by SKY_LIVE_STORE in the environment, is not used.`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("the boot report does not say %q:\n%s", want, out)
 		}
 	}
+}
+
+// The boot line names WHERE the unused store came from. In v0.27.4 it always
+// read `[live] store / SKY_LIVE_STORE ("postgres") is not used`, whatever set
+// the value. A production backend whose sky.toml has no `[live]` section and
+// whose environment has no SKY_LIVE_STORE printed that line, because the app's
+// own top-level `config` binding ran `Config.withSessions SharedWithDatabase`,
+// and the generated `rt.ApplyConfig(Main_config())` wrote SKY_LIVE_STORE into
+// the process environment (sky_config.go applyConfigValue). The operator
+// searched sky.toml, the unit's EnvironmentFile and /proc/<pid>/environ and
+// found nothing, because the line named two places the value did not come
+// from. Each layer of the shared precedence (configLayers) now names itself.
+func TestSpaSessionBootNamesWhereTheUnusedStoreCameFrom(t *testing.T) {
+	name := skyEnvName("LIVE_STORE")
+	reset := func(t *testing.T) {
+		restore := setSpaRevocationStoreForTest(nil, nil)
+		t.Cleanup(restore)
+		spaRevMu.Lock()
+		spaRev = spaRevState{}
+		spaRevMu.Unlock()
+		t.Setenv("SKY_DATA_DIR", t.TempDir())
+		t.Setenv("ENV", "production")
+		// t.Setenv restores the value at the end; unset it for the test and
+		// clear the provenance marks, before and after.
+		t.Setenv(name, "")
+		_ = os.Unsetenv(name)
+		clearSeededDefault(name)
+		clearConfigApplied(name)
+		t.Cleanup(func() {
+			clearSeededDefault(name)
+			clearConfigApplied(name)
+		})
+	}
+	for _, tc := range []struct {
+		layer string
+		set   func()
+		want  string
+	}{
+		{
+			layer: "Sky.Config.withSessions",
+			set:   func() { ApplyConfig(map[string]any{"LiveStore": "postgres"}) },
+			want:  "set by Sky.Config.withSessions in the app's `config`",
+		},
+		{
+			layer: "sky.toml",
+			set:   func() { SetSkyDefault("LIVE_STORE", "postgres") },
+			want:  "set by `[live] store` in sky.toml",
+		},
+		{
+			layer: "operator env",
+			set:   func() { setEnvRaw(name, "postgres") },
+			want:  "set by " + name + " in the environment",
+		},
+	} {
+		t.Run(tc.layer, func(t *testing.T) {
+			reset(t)
+			tc.set()
+			buf := captureLog(t)
+
+			res := Spa_sessionBoot(false).(func() any)().(SkyResult[any, any])
+			if res.Tag != 0 {
+				t.Fatalf("a backend with no session refused to start: %s", errorMessage(res.ErrValue))
+			}
+			out := buf.String()
+			for _, want := range []string{
+				"[sky.spa] session store: none",
+				`The session store "postgres", ` + tc.want + `, is not used.`,
+			} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("the boot report does not say %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "[live] store / ") {
+				t.Fatalf("the boot report names every source instead of the one that set the store:\n%s", out)
+			}
+		})
+	}
+
+	// Nothing configured: the line names no store at all.
+	t.Run("nothing configured", func(t *testing.T) {
+		reset(t)
+		buf := captureLog(t)
+		_ = Spa_sessionBoot(false).(func() any)()
+		if out := buf.String(); strings.Contains(out, "is not used") {
+			t.Fatalf("the boot report names a store nobody configured:\n%s", out)
+		}
+	})
 }
 
 // With a signed session the boot hook opens the sign-out record store, and its

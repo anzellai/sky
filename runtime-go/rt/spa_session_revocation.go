@@ -197,8 +197,10 @@ func reportNoSpaSessionStore() {
 	msg := spaNoSessionStoreBanner + "This backend keeps no server-side session: " +
 		"the model lives in the browser, and no server branch writes a `Session` / " +
 		"`Maybe Session` model field, so there is no signed session to sign out."
-	if kind := resolveStoreKind(""); kind != "" {
-		msg += fmt.Sprintf(" [live] store / %s (%q) is not used.", skyEnvName("LIVE_STORE"), kind)
+	// Name the store AND who set it (resolveStoreKindSource): the app's own
+	// `config` binding, sky.toml, or the operator's environment.
+	if kind, source := resolveStoreKindSource(); kind != "" {
+		msg += fmt.Sprintf(" The session store %q, set by %s, is not used.", kind, source)
 	}
 	log.Print(msg)
 }

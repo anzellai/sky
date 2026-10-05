@@ -1383,8 +1383,19 @@ signed session opens the store at boot and logs
 `[sky.spa] session store (sign-out records): postgres (…)`. A backend with no
 signed session (no server branch writes a `Session` / `Maybe Session` model
 field) keeps no server-side session at all: the model lives in the browser. It
-opens no store and logs `[sky.spa] session store: none.`, and names a configured
-`[live] store` / `SKY_LIVE_STORE` that it does not use. The inline console keeps
+opens no store and logs `[sky.spa] session store: none.` When a store is
+configured, the line names it and says which of three places set it:
+
+- `set by Sky.Config.withSessions in the app's ...`: a top-level `config`
+  binding in the app's own code, applied at boot.
+- ``set by `[live] store` in sky.toml``: the project manifest.
+- `set by SKY_LIVE_STORE in the environment`: the shell, the service manager,
+  or a `.env` file in the working directory.
+
+A
+`config` binding writes `SKY_LIVE_STORE` inside the process, so the variable
+is not in `/proc/<pid>/environ`. `--embed` and `[database] embedded = true`
+never set a session store. The inline console keeps
 its own in-process memory store and logs it as
 `[sky.live] sub-app /_sky/console session store: memory (…)`. That line is the
 console's, never the app's. (Before v0.27.4 the console printed the app's

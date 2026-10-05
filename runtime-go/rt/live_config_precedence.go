@@ -138,6 +138,38 @@ func resolveStoreKind(builderVal string) string {
 	return firstNonEmpty(configLayers("LIVE_STORE", builderVal))
 }
 
+// resolveStoreKindSource is resolveStoreKind("") plus WHERE the value came
+// from, in words an operator can search for. With no builder argument
+// configLayers yields at most one value: the env variable, which one of three
+// writers put there. Each is told apart by the same provenance configLayers
+// ranks on:
+//
+//   - `rt.ApplyConfig` (a `Sky.Config.withSessions` in the app's own top-level
+//     `config` binding) marks it config-applied;
+//   - the generated prologue (`[live] store` in sky.toml) marks it seeded;
+//   - anything else is the operator's (the shell, the service manager, or a
+//     `.env` file in the working directory).
+//
+// A boot line that names a store must name its source. One that printed
+// "[live] store / SKY_LIVE_STORE" for all three sent an operator to search
+// sky.toml and the process environment for a value the app's own code set.
+// Returns ("", "") when nothing configured a store.
+func resolveStoreKindSource() (kind, source string) {
+	name := skyEnvName("LIVE_STORE")
+	v, set := lookupEnvRaw(name)
+	if !set || v == "" {
+		return "", ""
+	}
+	switch {
+	case isConfigApplied(name):
+		return v, configKeyToBuilder["LiveStore"] + " in the app's `config`"
+	case isSeededDefault(name):
+		return v, "`[live] store` in sky.toml"
+	default:
+		return v, name + " in the environment"
+	}
+}
+
 // resolveStorePath — the session store path or DSN. `builderVal` is
 // `Live.withStorePath`'s value.
 func resolveStorePath(builderVal string) string {
