@@ -112,6 +112,20 @@ expect_class "/usr/local/go/pkg/tool/linux_amd64/vet" none
 expect_class "/Applications/Ghostty.app/Contents/MacOS/ghostty" panic
 expect_class "node" panic
 expect_class "/usr/sbin/mDNSResponder" none
+# Python (v0.27.7). Xcode's bundled Python 3.9 (process name `Python`, behind
+# the bare `python3` xcrun shim) grew to 6.4 GB unnoticed: Python was in no
+# tier. Every spelling is in the always-kill tier now.
+expect_class "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python" always
+expect_class "Python" always
+expect_class "python" always
+expect_class "/opt/homebrew/bin/python3" always
+expect_class "/opt/homebrew/Cellar/python@3.12/3.12.4/bin/python3.12" always
+expect_class "python3.9" always
+# Near names are not Python, and the session host stays in the panic tier.
+expect_class "/usr/local/bin/python-config" none
+expect_class "/usr/local/bin/pythonw" none
+expect_class "claude" panic
+expect_class "/opt/homebrew/bin/node" panic
 
 # Shadow sysctl with a failing stub rather than blanking PATH — blanking it
 # removes awk as well, which tests nothing about the guard. The guard runs
@@ -123,7 +137,12 @@ guard_pid=""
 # Remove the stub and stop the watchdog this script starts below, on every
 # exit path, by its PID.
 cleanup() {
-    [[ -n "$guard_pid" ]] && kill -TERM "$guard_pid" 2>/dev/null
+    # `|| true`: this runs on EXIT under `set -e`, after the watchdog is already
+    # reaped on the normal path. A failing `kill` used to become the script's
+    # exit status, so the gate exited 1 after printing GATE PASS.
+    if [[ -n "$guard_pid" ]]; then
+        kill -TERM "$guard_pid" 2>/dev/null || true
+    fi
     rm -rf "$stub"
 }
 trap cleanup EXIT
@@ -163,6 +182,7 @@ else
 fi
 kill -TERM "$guard_pid" 2>/dev/null || true
 wait "$guard_pid" 2>/dev/null || true
+guard_pid=""
 
 if grep -q 'DEGRADED' "$guard_log" 2>/dev/null; then
     pass=$(( pass + 1 )); printf '  ok    %-38s logged\n' "the degradation is visible"

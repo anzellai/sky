@@ -32,6 +32,11 @@
 #                            `compile` of a large generated Sky `main` package
 #                            measured 5.6 GB, and `go build` runs several
 #                            compiles at once — the parent `go` stays small.
+#                            Python: `Python` (Xcode's bundled Python, the
+#                            bare `python3` xcrun shim, whose comm is
+#                            `…/Python.app/Contents/MacOS/Python`), `python`,
+#                            `python3` and `python3.N`. A Python helper with
+#                            no limit grew to 6.4 GB unnoticed (v0.27.7).
 #   Last-resort at PANIC_MB: claude, node, ghostty
 #                            (these are the host of *this* session — only kill
 #                             when they themselves are the runaway, not their
@@ -50,7 +55,7 @@ LOG="${MEM_GUARD_LOG:-/tmp/mem-guard.log}"
 DRY="${MEM_GUARD_DRY:-}"
 
 # basename(comm) regexes
-ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls|go)$'
+ALWAYS_KILL_RE='^(sky|sky-ffi-inspect|cargo|rustc|rust-analyzer|cabal|ghc|ghc-iserv|cc1|ld64|ld|haskell-language-server|hls-wrapper|gopls|go|Python|python|python3|python3\.[0-9]+)$'
 # The Go toolchain's children, by their full path: `<GOROOT>/pkg/tool/<os_arch>/<tool>`.
 GO_TOOL_RE='/pkg/tool/[^/]+/(compile|link|asm|cgo)$'
 PANIC_KILL_RE='^(claude|node|ghostty)$'
