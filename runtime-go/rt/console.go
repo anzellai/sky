@@ -50,6 +50,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sky-app/rt/procenv"
 	"sort"
 	"strconv"
 	"strings"
@@ -410,7 +411,9 @@ func mountEmbeddedConsoleFor(mux *http.ServeMux, owner any, onClaim func()) *liv
 	// at init and renders a "Sign out" link ONLY when it's set — a
 	// standalone hub / aggregator console (which has no login cookie)
 	// never sees it, so it shows no sign-out.
-	os.Setenv("SKY_CONSOLE_LOGOUT_URL", "/_sky/console/_logout")
+	// The program's own table (procenv), read by the console's System.getenvOr:
+	// a child process must not inherit it.
+	procenv.Set("SKY_CONSOLE_LOGOUT_URL", "/_sky/console/_logout", procenv.Runtime)
 
 	// F1 — mint + publish the per-boot internal token BEFORE the sub-app inits,
 	// so its loopback fetches to /_sky/console/api/* authenticate by that token,

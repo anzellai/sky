@@ -715,7 +715,15 @@ fn runtime_reads(root: &Path) -> Result<RuntimeReads, String> {
             }
         }
 
-        for helper in ["os.Getenv(\"", "os.LookupEnv(\""] {
+        // `procenv.Getenv` / `procenv.Lookup` are the in-process reads that also
+        // see the program's own seeded and applied values (v0.27.7); a literal
+        // read through them is a read like any other.
+        for helper in [
+            "os.Getenv(\"",
+            "os.LookupEnv(\"",
+            "procenv.Getenv(\"",
+            "procenv.Lookup(\"",
+        ] {
             for (idx, _) in src.match_indices(helper) {
                 let rest = &src[idx + helper.len()..];
                 if let Some(end) = rest.find('"') {

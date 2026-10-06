@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sky-app/rt/procenv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -276,7 +277,7 @@ func maybeSlideAuthToken(w http.ResponseWriter, r *http.Request, cfg *authSlidin
 	// 2. Secret readable? Empty ⇒ fail-OPEN on the read (never mint), warn once.
 	//    secretEnv is the operator-chosen env-var NAME, read verbatim (no prefix
 	//    mangling) — it is not a Sky-config surface.
-	secret := os.Getenv(cfg.secretEnv)
+	secret := procenv.Getenv(cfg.secretEnv)
 	if secret == "" {
 		slidingSecretWarnOnce.Do(func() {
 			fmt.Fprintf(os.Stderr,

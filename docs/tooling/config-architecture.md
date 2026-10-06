@@ -259,6 +259,23 @@ Hidden precedence produced all of this. §3 removes the hiding.
 > `config-matrix.toml`. Two are NOT §7.3's "a builder that was ignored starts
 > working" class: `live.storePath/env+builder` is a builder that WAS winning and
 > stops. See §7.3's addendum.
+>
+> **CLOSED 2026-10-06 (v0.27.7) — the provenance did not cross a process
+> boundary.** The marks (`seededDefaults`, `configApplied`) lived in one
+> process, but the VALUES were `os.Setenv`'d, and every child process inherits
+> the environment. A Sky program started by another Sky program saw the
+> parent's seeded `SKY_LIVE_PORT=8000` with no mark, ranked it as layer 1
+> (operator), and bound the parent's port over its own `[live] port` and its
+> own `withPort`. The fix moves the values, not just the marks: seeds,
+> `withX`-applied values and the runtime's own derived values (the `--embed`
+> DSN, the embedded console's parent URL, logout route, hub database path and
+> per-boot internal token) live in `runtime-go/rt/procenv`, an in-process
+> table carrying the source of each entry. The process environment holds only
+> the operator's layer, and that is what a child inherits. `lookupEnvRaw`,
+> `skyGetenv` and `skyLookupEnv` read `procenv.Lookup` (operator first, else
+> the table; an EMPTY operator value does not hide the table), and
+> `isSeededDefault` / `isConfigApplied` read `procenv.SourceOf`, so
+> `configLayers` and the `config-matrix` cells are unchanged.
 
 ### 1.9 Three files hand-register a repair for one ordering problem
 

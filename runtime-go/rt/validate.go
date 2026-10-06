@@ -10,7 +10,7 @@ import (
 	"html"
 	"net/mail"
 	"net/url"
-	"os"
+	"sky-app/rt/procenv"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,7 +22,7 @@ import (
 )
 
 // Indirection wrappers for env + atoi so nothing other than rt imports them.
-func osLookupEnv(k string) (string, bool) { return os.LookupEnv(k) }
+func osLookupEnv(k string) (string, bool) { return procenv.Lookup(k) }
 func atoi(s string) (int, error)          { return strconv.Atoi(s) }
 
 // ═══════════════════════════════════════════════════════════

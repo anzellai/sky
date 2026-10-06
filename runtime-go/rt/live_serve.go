@@ -58,6 +58,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"sky-app/rt/procenv"
 	"strings"
 	"sync"
 	"syscall"
@@ -354,8 +355,10 @@ func buildLiveServerFor(cfg any, embedded, served bool) (ls *liveServer, err err
 	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's init_
 	// reads OUR OWN listener's loopback when it builds the initial Model.
 	// Only seed when UNSET — never overwrite a user-supplied value.
-	if os.Getenv("SKY_PARENT_URL") == "" {
-		os.Setenv("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", port))
+	// Into the program's own table (procenv): a child process must not
+	// inherit this process's loopback as its parent URL (v0.27.7).
+	if procenv.Getenv("SKY_PARENT_URL") == "" {
+		procenv.Set("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", port), procenv.Runtime)
 	}
 	// v0.16.0: in-process inline Sky Console mount. The function internally
 	// gates on production-mode + sub-app context. Must run BEFORE

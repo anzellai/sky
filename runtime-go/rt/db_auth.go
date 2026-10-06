@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sky-app/rt/procenv"
 	"strconv"
 	"strings"
 	"sync"
@@ -246,7 +247,7 @@ func Db_connect(path any) any {
 			// sessions + analytics use) so a single Postgres connection string
 			// configures the whole app. DB_PATH still wins when set explicitly.
 			if env == "" {
-				env = os.Getenv("DATABASE_URL")
+				env = procenv.Getenv("DATABASE_URL")
 			}
 			if env == "" {
 				return Err[any, any](ErrInvalidInput(

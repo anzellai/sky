@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sky-app/rt/procenv"
 	"strconv"
 	"strings"
 	"sync"
@@ -322,7 +323,7 @@ func metricAggregationWindow() time.Duration {
 	if d := metricAggregationWindowOverride.Load(); d > 0 {
 		return time.Duration(d)
 	}
-	v := strings.TrimSpace(os.Getenv("SKY_TELEMETRY_AGGREGATION_WINDOW"))
+	v := strings.TrimSpace(procenv.Getenv("SKY_TELEMETRY_AGGREGATION_WINDOW"))
 	if v == "" {
 		return 0
 	}
@@ -385,7 +386,7 @@ func parseHumanBytes(v string) (int64, bool) {
 // → 0 AND a one-shot WARN (a typo like "100 gigs" must not silently drop the
 // danger flag the operator believes protects them).
 func (p *persistence) capacityBytes(s *Store) int64 {
-	raw := os.Getenv("SKY_TELEMETRY_DB_CAPACITY")
+	raw := procenv.Getenv("SKY_TELEMETRY_DB_CAPACITY")
 	if strings.TrimSpace(raw) == "" {
 		return 0
 	}
@@ -420,7 +421,7 @@ func histogramAggregationWindow() time.Duration {
 	if d := metricHistogramWindowOverride.Load(); d > 0 {
 		return time.Duration(d)
 	}
-	v := strings.TrimSpace(os.Getenv("SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW"))
+	v := strings.TrimSpace(procenv.Getenv("SKY_TELEMETRY_HISTOGRAM_AGGREGATION_WINDOW"))
 	if v == "" {
 		return 0
 	}
@@ -584,7 +585,7 @@ func (s *Store) EnablePersistenceFromEnvWithLocalDir(localDataDir string) error 
 	// the app DB, sessions, and analytics use) so console telemetry lands in the
 	// shared database too. SKY_CONSOLE_DB_PATH still wins when set.
 	if path == "" {
-		if p := os.Getenv("DATABASE_URL"); strings.HasPrefix(p, "postgres") {
+		if p := procenv.Getenv("DATABASE_URL"); strings.HasPrefix(p, "postgres") {
 			path = p
 		}
 	}
@@ -1395,7 +1396,7 @@ func (s *Store) FlushPersistence() {
 // spelling deliberately matches PostgreSQL's own vocabulary and the analytics
 // knob, so the two cannot mean different things.
 func SynchronousCommitOff() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("SKY_TELEMETRY_SYNCHRONOUS_COMMIT"))) {
+	switch strings.ToLower(strings.TrimSpace(procenv.Getenv("SKY_TELEMETRY_SYNCHRONOUS_COMMIT"))) {
 	case "on", "true", "1", "remote_write", "remote_apply":
 		return false
 	default:

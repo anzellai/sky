@@ -16,7 +16,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
+
+	"sky-app/rt/procenv"
 )
 
 // `debugStack` moved to panic_log.go, which owns the dev/production
@@ -32,77 +33,58 @@ func SetPortDefault(port string) {
 	SetSkyDefault("LIVE_PORT", port)
 }
 
-// seededDefaults records the env vars this process SEEDED itself, as opposed
-// to ones the operator set in the shell or a .env file.
+// The program's own defaults live in the procenv table, NEVER in the process
+// environment (v0.27.7).
 //
-// Both look identical in os.Environ(), and that ambiguity was a live defect:
-// generated init() always seeds <PREFIX>_LIVE_PORT from sky.toml (which always
-// has a value), so a consumer that treated "env is set" as "the operator chose
-// this" let a compiler-injected default beat an explicit `Live.withPort`.
-// Recording the seeding lets a consumer apply the real three-way precedence —
-// operator env > explicit builder call > seeded default — instead of guessing.
+// An operator-set value and a seeded one used to share os.Environ(), and that
+// ambiguity was a live defect twice over. Inside the process, generated init()
+// always seeds <PREFIX>_LIVE_PORT from sky.toml, so a consumer that treated
+// "env is set" as "the operator chose this" let a compiler-injected default
+// beat an explicit `Live.withPort` (closed by recording the seeding). Across
+// processes nothing could record it: every child inherited the seeded
+// `SKY_LIVE_PORT=8000` and read it as the OPERATOR's choice, so a Sky program
+// spawned by another Sky program ignored its own sky.toml and builder port.
 //
-// Written only from SetEnvDefault, which runs in generated init() before main,
-// so the map is fully populated before any handler goroutine exists. The mutex
-// guards the test path, which sets and clears entries directly.
-var (
-	seededDefaultsMu sync.Mutex
-	seededDefaults   = map[string]struct{}{}
-)
+// So a seed is written into procenv (rt/procenv), which children cannot see,
+// and every in-process read goes through procenv.Lookup: the operator's value
+// when the environment has one, else the program's own. The three-way
+// precedence — operator env > explicit builder call > seeded default — is read
+// off procenv.SourceOf instead of being guessed.
 
-// SetEnvDefault: set an environment variable only when it isn't already
-// set. Generated init() functions call this for each sky.toml-derived
-// default (session store, TTL, static dir, etc.), so shell + .env always
-// take precedence.
-//
-// Records the name when it actually seeds, so consumers can tell a
-// sky.toml-derived default from an operator-set value. See seededDefaults.
+// SetEnvDefault: record a default for an environment variable name, only when
+// neither the operator nor an earlier default set it. Generated init()
+// functions call this for each sky.toml-derived default (session store, TTL,
+// static dir, etc.), so shell + .env always take precedence. The value is the
+// program's own: it is visible to in-process reads and to no child process.
 func SetEnvDefault(name, value string) {
-	if _, ok := os.LookupEnv(name); ok {
-		return
-	}
-	if os.Setenv(name, value) == nil {
-		markSeededDefault(name)
-	}
+	procenv.SetDefault(name, value, procenv.Seeded)
 }
 
-// isSeededDefault reports whether name's current value was seeded by
-// SetEnvDefault rather than set by the operator.
+// isSeededDefault reports whether name's current value is a default seeded by
+// SetEnvDefault rather than set by the operator or a `withX` builder.
 func isSeededDefault(name string) bool {
-	seededDefaultsMu.Lock()
-	defer seededDefaultsMu.Unlock()
-	_, ok := seededDefaults[name]
-	return ok
+	src, ok := procenv.SourceOf(name)
+	return ok && src == procenv.Seeded
 }
 
-func markSeededDefault(name string) {
-	seededDefaultsMu.Lock()
-	defer seededDefaultsMu.Unlock()
-	seededDefaults[name] = struct{}{}
-}
-
-// clearSeededDefault drops a recorded seeding. Used when the variable is
-// overwritten by something that is not a default, and by tests.
+// clearSeededDefault drops a recorded seeding. Used by tests.
 func clearSeededDefault(name string) {
-	seededDefaultsMu.Lock()
-	defer seededDefaultsMu.Unlock()
-	delete(seededDefaults, name)
+	procenv.Clear(name, procenv.Seeded)
 }
 
-// lookupEnvRaw / setEnvRaw / unsetEnvRaw are thin os wrappers that keep the
-// seeded-default bookkeeping consistent: an explicit write is by definition
-// not a seeded default.
-func lookupEnvRaw(name string) (string, bool) { return os.LookupEnv(name) }
+// lookupEnvRaw is the in-process read of an env name: the operator's value,
+// else the program's own (procenv). setEnvRaw / unsetEnvRaw write the PROCESS
+// environment, which is the operator layer by definition, and drop any value
+// the program set for itself under the same name.
+func lookupEnvRaw(name string) (string, bool) { return procenv.Lookup(name) }
 
 func setEnvRaw(name, value string) {
-	clearSeededDefault(name)
-	clearConfigApplied(name)
+	procenv.Delete(name)
 	_ = os.Setenv(name, value)
 }
 
 func unsetEnvRaw(name string) {
-	clearSeededDefault(name)
-	clearConfigApplied(name)
+	procenv.Delete(name)
 	_ = os.Unsetenv(name)
 }
 

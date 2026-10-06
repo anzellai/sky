@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sky-app/rt/procenv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -101,7 +102,7 @@ func StartPushExporter() *PushExporter {
 	if existing := activeExporter.Load(); existing != nil {
 		return existing
 	}
-	parent := os.Getenv("SKY_PARENT_URL")
+	parent := procenv.Getenv("SKY_PARENT_URL")
 	ns := skyGetenv("LIVE_NAMESPACE")
 	if parent == "" || ns == "" {
 		return nil // standalone — no parent to push to

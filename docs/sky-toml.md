@@ -1067,10 +1067,14 @@ Standard godotenv / Docker convention: production deployments
 always win over `.env` and `sky.toml` so you can override
 settings without editing files.
 
-Layers 1, 2 and 4 meet in the *same* environment variable —
-`sky.toml` keys are seeded into their env vars at startup — but
-the runtime records which values it seeded itself, so a
-`sky.toml`-derived default never counts as "the operator set
+Layers 1, 2 and 4 share an environment-variable NAME, but only
+layer 1 lives in the process environment. The `sky.toml` defaults
+the generated `init()` seeds, the `withX` values of a `config`
+binding and the values the runtime derives for itself (the
+`--embed` DSN, the embedded console's settings) go into an
+in-process table (`runtime-go/rt/procenv`). Every read inside the
+program sees the operator's value first, else the program's own,
+so a `sky.toml`-derived default never counts as "the operator set
 this". The one rule, spelled out:
 
 > **operator env (shell or `.env`) → `withX` builder call →
@@ -1079,6 +1083,19 @@ this". The one rule, spelled out:
 So an operator can always override the binary without a rebuild,
 and an explicit `withX` call in code always beats the `sky.toml`
 seed while still losing to the operator.
+
+**Child processes inherit only the operator's layer.** A process
+started with `Process.spawn` / `Process.run` (or by any Go
+library) inherits the process environment, which holds only what
+the operator set (and what the program set with `System.setenv`).
+So a Sky program started by another Sky program uses its OWN
+`sky.toml` and builder settings, and an operator's
+`SKY_LIVE_PORT` still reaches it as an operator override. Before
+v0.27.7 the parent's seeded `SKY_LIVE_PORT=8000` leaked into the
+child, ranked there as the operator's choice, and the child bound
+the parent's port. A Go FFI dependency that reads `os.Getenv`
+itself sees only the operator's layer too; pass it a value from
+Sky (`System.getenvOr "DATABASE_URL" ""`) when it needs one.
 
 ---
 

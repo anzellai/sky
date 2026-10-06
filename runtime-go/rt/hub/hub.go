@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sky-app/rt/procenv"
 	"strconv"
 	"syscall"
 	"time"
@@ -265,8 +266,10 @@ func Run(cfg HubConfig) error {
 	// to see live telemetry") even though OTLP ingest works and the
 	// SQLite store is populated.
 	storePath := filepath.Join(cfg.DataDir, "console-hot.db")
-	if existing := os.Getenv("SKY_CONSOLE_HUB_DB"); existing == "" {
-		_ = os.Setenv("SKY_CONSOLE_HUB_DB", storePath)
+	// Into the program's own table (procenv), which the in-process console
+	// reads; a child process must not inherit it (v0.27.7).
+	if existing := procenv.Getenv("SKY_CONSOLE_HUB_DB"); existing == "" {
+		procenv.Set("SKY_CONSOLE_HUB_DB", storePath, procenv.Runtime)
 	}
 
 	mux := buildMux(cfg, store)

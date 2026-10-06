@@ -33,6 +33,7 @@ import (
 	"reflect"
 	"sky-app/rt/dbshare"
 	"sky-app/rt/periodic"
+	"sky-app/rt/procenv"
 	"sky-app/rt/telemetry"
 	"strconv"
 	"strings"
@@ -2232,7 +2233,7 @@ func selectStoreAs(banner, kind, path string, ttl, idleEvict time.Duration, fata
 		return store
 	case "postgres", "postgresql":
 		if path == "" {
-			path = os.Getenv("DATABASE_URL")
+			path = procenv.Getenv("DATABASE_URL")
 		}
 		if path == "" {
 			// An explicit postgres store with no connection string is a config

@@ -41,7 +41,7 @@ func TestEmbeddedDSNHandoff_ReenablesTelemetryPersistence(t *testing.T) {
 	if end := strings.Index(body[1:], "\nfunc "); end >= 0 {
 		body = body[:end+1]
 	}
-	setenvIdx := strings.Index(body, `os.Setenv("DATABASE_URL"`)
+	setenvIdx := strings.Index(body, `procenv.Set("DATABASE_URL"`)
 	if setenvIdx < 0 {
 		t.Fatal("the DATABASE_URL handoff is no longer in startEmbeddedPostgres — the embed boot path moved; update this gate to follow it")
 	}

@@ -43,6 +43,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sky-app/rt/procenv"
 	"sort"
 	"strconv"
 	"strings"
@@ -6921,7 +6922,7 @@ func System_getenv(name any) any {
 	captured := name
 	return func() any {
 		k := fmt.Sprintf("%v", captured)
-		v, ok := os.LookupEnv(k)
+		v, ok := procenv.Lookup(k)
 		if !ok {
 			return Err[any, any](ErrNotFound())
 		}
@@ -6971,13 +6972,14 @@ func System_setenv(name, value any) any {
 			return Err[any, any](ErrInvalidInput(
 				fmt.Sprintf("setenv: value must be a String, got %T", capturedV)))
 		}
+		// An explicit write is the program choosing a value for the process
+		// environment, which its children inherit: it replaces any value the
+		// program seeded or applied for itself (procenv), so precedence
+		// consumers (resolveLivePort) treat it as deliberately chosen.
+		procenv.Delete(k)
 		if err := os.Setenv(k, v); err != nil {
 			return Err[any, any](ErrFfi("setenv " + k + ": " + err.Error()))
 		}
-		// An explicit write is by definition not a compiler-seeded default;
-		// drop any recorded seeding so precedence consumers (resolveLivePort)
-		// treat this value as deliberately chosen.
-		clearSeededDefault(k)
 		return Ok[any, any](nil)
 	}
 }
@@ -6993,11 +6995,11 @@ func System_unsetenv(name any) any {
 			return Err[any, any](ErrInvalidInput(
 				fmt.Sprintf("unsetenv: name must be a String, got %T", captured)))
 		}
+		// The value is gone, including one the program seeded for itself.
+		procenv.Delete(k)
 		if err := os.Unsetenv(k); err != nil {
 			return Err[any, any](ErrFfi("unsetenv " + k + ": " + err.Error()))
 		}
-		// The value is gone; so is any record that it was seeded.
-		clearSeededDefault(k)
 		return Ok[any, any](nil)
 	}
 }
@@ -7027,7 +7029,7 @@ func System_getArg(n any) any {
 // — stay Task. Same argument order as the dropped Env.getOrDefault.
 func System_getenvOr(name, def any) any {
 	k := fmt.Sprintf("%v", name)
-	if v, ok := os.LookupEnv(k); ok {
+	if v, ok := procenv.Lookup(k); ok {
 		return v
 	}
 	return fmt.Sprintf("%v", def)
@@ -7040,7 +7042,7 @@ func System_getenvInt(name any) any {
 	captured := name
 	return func() any {
 		k := fmt.Sprintf("%v", captured)
-		v, ok := os.LookupEnv(k)
+		v, ok := procenv.Lookup(k)
 		if !ok {
 			return Err[any, any](ErrNotFound())
 		}
@@ -7060,7 +7062,7 @@ func System_getenvBool(name any) any {
 	captured := name
 	return func() any {
 		k := fmt.Sprintf("%v", captured)
-		v, ok := os.LookupEnv(k)
+		v, ok := procenv.Lookup(k)
 		if !ok {
 			return Err[any, any](ErrNotFound())
 		}
@@ -9139,7 +9141,7 @@ const (
 // Unset or unparseable → `def`. Shared by the HTTP server timeouts
 // and the HTTP client timeout so timeout config is uniform.
 func httpEnvTimeout(key string, def time.Duration) time.Duration {
-	if v := os.Getenv(key); v != "" {
+	if v := procenv.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}

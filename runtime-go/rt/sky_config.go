@@ -32,9 +32,8 @@ package rt
 
 import (
 	"fmt"
-	"os"
+	"sky-app/rt/procenv"
 	"sort"
-	"sync"
 )
 
 // ── The opaque Sky.Config value ────────────────────────────────────────────
@@ -313,33 +312,17 @@ func legacyMigrationNotices() []string {
 	return lines
 }
 
-// configApplied records the env vars a `withX` config value wrote — distinct
-// from `seededDefaults` (a legacy sky.toml seed). It ranks the value as the
-// BUILDER layer in `configLayers`: below an operator override, above a seed.
-var (
-	configAppliedMu sync.Mutex
-	configApplied   = map[string]struct{}{}
-)
-
-func markConfigApplied(name string) {
-	configAppliedMu.Lock()
-	defer configAppliedMu.Unlock()
-	configApplied[name] = struct{}{}
-}
-
 // isConfigApplied reports whether name's current value was written by
-// ApplyConfig (a `withX` value) rather than seeded or operator-set.
+// ApplyConfig (a `withX` value) rather than seeded or operator-set. Such a value
+// ranks as the BUILDER layer in `configLayers`: below an operator override,
+// above a seed.
 func isConfigApplied(name string) bool {
-	configAppliedMu.Lock()
-	defer configAppliedMu.Unlock()
-	_, ok := configApplied[name]
-	return ok
+	src, ok := procenv.SourceOf(name)
+	return ok && src == procenv.Applied
 }
 
 func clearConfigApplied(name string) {
-	configAppliedMu.Lock()
-	defer configAppliedMu.Unlock()
-	delete(configApplied, name)
+	procenv.Clear(name, procenv.Applied)
 }
 
 // ApplyConfig applies the app's `Sky.Config` value into the runtime's env
@@ -415,13 +398,17 @@ func applyConfigKey(m map[string]any, key, name string) bool {
 	return applyConfigValue(name, s)
 }
 
-// applyConfigValue writes a single `withX` value into the env under the shared
-// precedence, returning true when it actually wrote.
+// applyConfigValue records a single `withX` value under the shared precedence,
+// returning true when it actually wrote.
 //
-//   - operator-set (env set, not a seeded default): DEFER — the operator wins.
-//   - unset OR a seeded default (legacy sky.toml): OVERRIDE — clear the seeded
-//     mark and write the withX value, recording it as config-applied so
-//     `configLayers` ranks it as the builder layer.
+//   - operator-set, or already applied (env or procenv has a value that is not
+//     a seeded default): DEFER — the operator, or the first applied config, wins.
+//   - unset OR a seeded default (legacy sky.toml): OVERRIDE — record the withX
+//     value as config-applied so `configLayers` ranks it as the builder layer.
+//
+// The value goes into the program's own table (procenv), not the process
+// environment: a `withX` value configures THIS program, and a child process
+// (which inherits the environment) must not read it as its operator's choice.
 //
 // This is deliberately NOT `SetEnvDefault` (set-if-unset): a seeded default is
 // already set by the time this runs, and set-if-unset would let it win — the
@@ -430,10 +417,6 @@ func applyConfigValue(name, value string) bool {
 	if cur, ok := lookupEnvRaw(name); ok && cur != "" && !isSeededDefault(name) {
 		return false // operator-set — defer
 	}
-	if os.Setenv(name, value) != nil {
-		return false
-	}
-	clearSeededDefault(name)
-	markConfigApplied(name)
+	procenv.Set(name, value, procenv.Applied)
 	return true
 }

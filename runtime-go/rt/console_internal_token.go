@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sky-app/rt/procenv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,14 +34,15 @@ import (
 
 var consoleInternalTokenVal atomic.Value // string
 
-// ConsoleInternalTokenInit mints (once) the per-boot token and publishes it to
-// the process env so the in-process console sub-app reads it at its init. Idempotent.
+// ConsoleInternalTokenInit mints (once) the per-boot token and records it in
+// procenv (never the process env) so the in-process console sub-app reads it at
+// its init and no child process inherits it. Idempotent.
 func ConsoleInternalTokenInit() string {
 	if existing, ok := consoleInternalTokenVal.Load().(string); ok && existing != "" {
 		return existing
 	}
 	// Honour an externally-provided token (operator override / test), else mint one.
-	if v := strings.TrimSpace(os.Getenv("SKY_CONSOLE_INTERNAL_TOKEN")); v != "" {
+	if v := strings.TrimSpace(procenv.Getenv("SKY_CONSOLE_INTERNAL_TOKEN")); v != "" {
 		consoleInternalTokenVal.Store(v)
 		return v
 	}
@@ -54,7 +56,10 @@ func ConsoleInternalTokenInit() string {
 		tok = hex.EncodeToString(buf)
 	}
 	consoleInternalTokenVal.Store(tok)
-	_ = os.Setenv("SKY_CONSOLE_INTERNAL_TOKEN", tok)
+	// The program's own table (procenv), never the process environment: the
+	// token authenticates /_sky/console/api/*, and every child process inherits
+	// the environment (v0.27.7).
+	procenv.Set("SKY_CONSOLE_INTERNAL_TOKEN", tok, procenv.Runtime)
 	return tok
 }
 

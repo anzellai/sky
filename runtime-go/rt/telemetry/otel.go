@@ -37,6 +37,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sky-app/rt/procenv"
 	"strings"
 	"sync"
 	"time"
@@ -449,7 +450,7 @@ func orDefault(v, def string) string {
 // callers raise to 100% locally with OTEL_TRACES_SAMPLER_ARG=1.0
 // for debugging.
 func LoadTracerConfigFromEnv(isServerless bool) TracerConfig {
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	endpoint := procenv.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	cfg := TracerConfig{
 		ServiceName:    coalesce(os.Getenv("SKY_SERVICE_NAME"), os.Getenv("OTEL_SERVICE_NAME"), "sky-app"),
 		ServiceVersion: coalesce(os.Getenv("OTEL_SERVICE_VERSION"), "dev"),

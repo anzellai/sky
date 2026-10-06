@@ -18,6 +18,7 @@ package rt
 
 import (
 	"os"
+	"sky-app/rt/procenv"
 	"testing"
 )
 
@@ -266,8 +267,9 @@ func TestConfigKernels(t *testing.T) {
 // settings are LITERAL env vars (not [env]-prefixed), given withX builders so
 // the config front door is complete. This proves the full chain: the Sky kernel
 // normalises (Int→"10s", Capacity-bytes→decimal, Bool→on/off), ApplyConfig
-// writes it deferring to an operator, and os.Getenv (what telemetry reads) sees
-// the right value.
+// writes it deferring to an operator, and procenv.Getenv (what telemetry reads)
+// sees the right value. The applied value is the program's own: it never reaches
+// the process environment, which every child process inherits (v0.27.7).
 func resetLiteralEnvFor(t *testing.T, name string) {
 	t.Helper()
 	orig, had := os.LookupEnv(name)
@@ -291,8 +293,11 @@ func TestTelemetryWithXPrecedence(t *testing.T) {
 	t.Run("withx_sets_when_unset", func(t *testing.T) {
 		resetLiteralEnvFor(t, name)
 		ApplyConfig(Config_withTelemetryAggregationWindow(10, Config_default()))
-		if got := os.Getenv(name); got != "10s" {
+		if got := procenv.Getenv(name); got != "10s" {
 			t.Fatalf("withX should set %s=10s, got %q", name, got)
+		}
+		if got, has := os.LookupEnv(name); has {
+			t.Fatalf("withX value %s=%q is in the process environment: every child inherits it", name, got)
 		}
 	})
 
@@ -302,7 +307,7 @@ func TestTelemetryWithXPrecedence(t *testing.T) {
 		resetLiteralEnvFor(t, name)
 		_ = os.Setenv(name, "30s") // operator
 		ApplyConfig(Config_withTelemetryAggregationWindow(10, Config_default()))
-		if got := os.Getenv(name); got != "30s" {
+		if got := procenv.Getenv(name); got != "30s" {
 			t.Fatalf("operator env MUST override withX: got %q want 30s", got)
 		}
 	})
@@ -310,7 +315,7 @@ func TestTelemetryWithXPrecedence(t *testing.T) {
 	t.Run("neither_leaves_env_unset_for_go_default", func(t *testing.T) {
 		resetLiteralEnvFor(t, name)
 		ApplyConfig(Config_default())
-		if got, has := os.LookupEnv(name); has {
+		if got, has := procenv.Lookup(name); has {
 			t.Fatalf("no withX + no operator → env unset (Go default applies), got %q", got)
 		}
 	})
@@ -333,7 +338,7 @@ func TestTelemetryWithXNormalisation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resetLiteralEnvFor(t, tc.env)
 			ApplyConfig(tc.cfg)
-			if got := os.Getenv(tc.env); got != tc.want {
+			if got := procenv.Getenv(tc.env); got != tc.want {
 				t.Fatalf("%s: got %q want %q", tc.env, got, tc.want)
 			}
 		})

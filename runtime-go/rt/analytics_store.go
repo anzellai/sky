@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sky-app/rt/procenv"
 	"strconv"
 	"strings"
 	"sync"
@@ -150,7 +151,7 @@ func analyticsStorePath() string {
 	// One-DB-for-everything: if the app is on a Postgres DATABASE_URL, analytics
 	// lands in the SAME database (one connection string for app data, sessions,
 	// and analytics). Falls through to the local SQLite default otherwise.
-	if p := os.Getenv("DATABASE_URL"); strings.HasPrefix(p, "postgres") {
+	if p := procenv.Getenv("DATABASE_URL"); strings.HasPrefix(p, "postgres") {
 		return p
 	}
 	return analyticsDefaultStorePath

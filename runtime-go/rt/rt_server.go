@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"sky-app/rt/procenv"
 	"sort"
 	"strings"
 	"syscall"
@@ -538,8 +539,10 @@ func serverListenRun(port any, routes any) any {
 	// comment for the full rationale. Same safety: StartPushExporter
 	// needs BOTH SKY_PARENT_URL + SKY_LIVE_NAMESPACE — we only seed
 	// the URL, so push-export stays inactive for standalone apps.
-	if os.Getenv("SKY_PARENT_URL") == "" {
-		os.Setenv("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", p))
+	// Into the program's own table (procenv): a child process must not
+	// inherit this process's loopback as its parent URL (v0.27.7).
+	if procenv.Getenv("SKY_PARENT_URL") == "" {
+		procenv.Set("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", p), procenv.Runtime)
 	}
 	MountEmbeddedConsole(mux)
 	MountObservabilityEndpoints(mux)

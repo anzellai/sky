@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sky-app/rt/procenv"
 	"strconv"
 	"strings"
 	"sync"
@@ -454,10 +455,15 @@ func TestLiveEmbeddedStartHandsTheDSNToBothNamesTheRuntimeReads(t *testing.T) {
 	root := durableTestDir(t, "dsn-handoff")
 	t.Setenv("SKY_DATA_DIR", root)
 	// startEmbeddedPostgres refuses to run alongside either name, so both are
-	// cleared here — through t.Setenv, which also puts the caller's values back
-	// after the os.Setenv the function under test performs.
+	// cleared here — through t.Setenv, which also puts the caller's values back.
+	// The function under test records the DSN in procenv (the program's own
+	// table), so that is cleared after the test too.
 	t.Setenv(skyEnvName("DB_PATH"), "")
 	t.Setenv("DATABASE_URL", "")
+	t.Cleanup(func() {
+		procenv.Delete(skyEnvName("DB_PATH"))
+		procenv.Delete("DATABASE_URL")
+	})
 
 	prev := activeSupervisor()
 	t.Cleanup(func() { setActiveSupervisor(prev) })
@@ -483,7 +489,13 @@ func TestLiveEmbeddedStartHandsTheDSNToBothNamesTheRuntimeReads(t *testing.T) {
 		t.Fatalf("the supervisor's own DSN does not name its socket directory: %s", want)
 	}
 	for _, name := range []string{skyEnvName("DB_PATH"), "DATABASE_URL"} {
-		if got := os.Getenv(name); got != want {
+		// The DSN names THIS process's cluster: a child process must not
+		// inherit it as an operator-chosen database (v0.27.7).
+		if got := os.Getenv(name); got == want {
+			t.Errorf("%s is in the process environment, so every child process inherits "+
+				"this process's embedded DSN as its operator's choice", name)
+		}
+		if got := procenv.Getenv(name); got != want {
 			t.Errorf("%s = %q, want the embedded cluster's DSN %q.\n"+
 				"Everything that reads this name — Db.connect for the first, and the "+
 				"Sky.Live session store, Std.Analytics and Std.Jobs for the second — "+
@@ -493,7 +505,7 @@ func TestLiveEmbeddedStartHandsTheDSNToBothNamesTheRuntimeReads(t *testing.T) {
 	}
 
 	// …and the value is a working DSN, not merely a matching string.
-	db, err := sql.Open("pgx", os.Getenv("DATABASE_URL"))
+	db, err := sql.Open("pgx", procenv.Getenv("DATABASE_URL"))
 	if err != nil {
 		t.Fatalf("the exported DSN does not open: %v", err)
 	}

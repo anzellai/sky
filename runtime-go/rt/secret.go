@@ -3,8 +3,8 @@ package rt
 import (
 	"fmt"
 	"io"
-	"os"
 	"regexp"
+	"sky-app/rt/procenv"
 )
 
 // Secret is the Go representation of a Sky `Sky.Core.Secret.Secret` — an opaque,
@@ -49,7 +49,7 @@ func (s Secret) MarshalJSON() ([]byte, error) {
 // variable yields an empty Secret (the boundary check at the consumer — e.g.
 // coerceAuthSecret's minimum-length gate — is what rejects an unset secret, with
 // an actionable message).
-func Secret_fromEnv(name any) any { return Secret{v: os.Getenv(AsString(name))} }
+func Secret_fromEnv(name any) any { return Secret{v: procenv.Getenv(AsString(name))} }
 
 // Secret_fromString promotes a runtime string into a Secret (backs both
 // Secret.fromString and Secret.unsafeFromString).

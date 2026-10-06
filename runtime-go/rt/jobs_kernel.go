@@ -40,7 +40,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
+	"sky-app/rt/procenv"
 	"strconv"
 	"sync"
 	"time"
@@ -333,7 +333,7 @@ func chooseJobsStore() jobs.Store {
 	case "postgres":
 		url := skyGetenv("JOBS_STORE_PATH")
 		if url == "" {
-			url = os.Getenv("DATABASE_URL")
+			url = procenv.Getenv("DATABASE_URL")
 		}
 		if url == "" {
 			// Asked for a durable shared queue and named no server: a config

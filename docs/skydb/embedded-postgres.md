@@ -1015,6 +1015,13 @@ The remaining two are genuinely `--embed`-only:
   disk instead must fail loudly at startup. The names checked are the ones the
   runtime actually reads — `<PREFIX>_DB_PATH` and `DATABASE_URL`, per the note
   above; `SKY_DB_URL` is not one of them.
+- **The DSN is the app's own, not its children's.** `--embed` hands the
+  cluster's DSN to the app as `<PREFIX>_DB_PATH` and `DATABASE_URL` in the
+  runtime's in-process table (`runtime-go/rt/procenv`), not in the process
+  environment. Everything inside the app (`Db.connect`, the session store,
+  `Std.Analytics`, `Std.Jobs`, telemetry, `System.getenv`) reads it; a
+  process the app starts does not inherit it as an operator-chosen database
+  (v0.27.7).
 - **A dead child.** If PostgreSQL exits, the app exits non-zero and lets the
   supervisor restart the tree. Restarting in place hides a failing disk until
   it is an outage.

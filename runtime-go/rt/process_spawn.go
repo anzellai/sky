@@ -190,6 +190,10 @@ func parseProcSpec(cfg any) procSpec {
 
 // procEnviron builds the child's environment: the parent's (unless cleared),
 // with each added pair replacing an existing entry of the same name.
+//
+// The parent's environment holds only what its operator set. The defaults
+// this program seeded for itself and its `withX` config live in procenv, so
+// a child Sky program never reads them as its operator's choice (v0.27.7).
 func procEnviron(s procSpec) []string {
 	var base []string
 	if !s.clearEnv {

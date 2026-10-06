@@ -41,6 +41,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sky-app/rt/procenv"
 
 	"sky-app/rt/periodic"
 
@@ -219,7 +220,7 @@ func (e envFunc) get(name string) string {
 }
 
 // osEnv is the production environment seam.
-func osEnv(name string) (string, bool) { return os.LookupEnv(name) }
+func osEnv(name string) (string, bool) { return procenv.Lookup(name) }
 
 // embedConfig is everything the supervisor needs, resolved before anything is
 // spawned so a bad configuration fails at startup rather than half-way through
@@ -524,8 +525,13 @@ func startEmbeddedPostgres() error {
 	// what the session store, the analytics store and Std.Jobs fall back to, so
 	// one embedded cluster serves the whole app. Neither can have been set
 	// already — embeddedDSNConflict refused that above.
-	_ = os.Setenv(skyEnvName("DB_PATH"), s.dsn)
-	_ = os.Setenv("DATABASE_URL", s.dsn)
+	//
+	// Both go into the program's own table (procenv), not the process
+	// environment: the DSN names THIS process's embedded cluster, and a child
+	// process (which inherits the environment) must not read it as an
+	// operator-chosen database (v0.27.7).
+	procenv.Set(skyEnvName("DB_PATH"), s.dsn, procenv.Runtime)
+	procenv.Set("DATABASE_URL", s.dsn, procenv.Runtime)
 
 	// Re-invoke telemetry persistence now that DATABASE_URL exists.
 	// The boot-time call runs from rt's init() (observability.go) —

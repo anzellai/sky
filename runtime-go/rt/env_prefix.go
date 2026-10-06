@@ -26,8 +26,9 @@
 package rt
 
 import (
-	"os"
 	"strings"
+
+	"sky-app/rt/procenv"
 )
 
 // envPrefix is the prefix prepended to every runtime SKY_* env-var
@@ -82,9 +83,11 @@ func skyEnvName(suffix string) string {
 }
 
 // skyLookupEnv reads an env var in Sky's internal namespace. Pass the
-// suffix only ("LIVE_PORT", not "SKY_LIVE_PORT").
+// suffix only ("LIVE_PORT", not "SKY_LIVE_PORT"). It is the in-process view:
+// the operator's value, else the program's own seeded / applied value
+// (procenv), which no child process inherits.
 func skyLookupEnv(suffix string) (string, bool) {
-	return os.LookupEnv(skyEnvName(suffix))
+	return procenv.Lookup(skyEnvName(suffix))
 }
 
 // skyGetenv: convenience wrapper matching os.Getenv's "missing →
@@ -92,11 +95,12 @@ func skyLookupEnv(suffix string) (string, bool) {
 // "unset" case naturally falls through (`if v := skyGetenv(...); v
 // != "" { ... }`).
 func skyGetenv(suffix string) string {
-	return os.Getenv(skyEnvName(suffix))
+	return procenv.Getenv(skyEnvName(suffix))
 }
 
-// SetSkyDefault: set a Sky-namespaced env-var default if not already
-// set. Pass the suffix only ("LIVE_TTL", not "SKY_LIVE_TTL"); the
+// SetSkyDefault: record a Sky-namespaced default if not already set. It goes
+// into the program's own table (procenv), never the process environment, so a
+// child process does not inherit it. Pass the suffix only ("LIVE_TTL", not "SKY_LIVE_TTL"); the
 // configured prefix is prepended.
 //
 // Generated init() functions call this for each sky.toml-derived

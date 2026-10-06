@@ -168,10 +168,18 @@ fn is_comment(line: &str) -> bool {
     t.starts_with("//") || t.starts_with('*') || t.starts_with("/*")
 }
 
-/// Every `SKY_…` name read through os.Getenv / os.LookupEnv on this line.
+/// Every `SKY_…` name read through os.Getenv / os.LookupEnv on this line, or
+/// through `procenv.Getenv` / `procenv.Lookup` — the in-process read that also
+/// sees the program's own seeded / applied values (runtime-go/rt/procenv,
+/// v0.27.7). A literal read through either is the same read for this gate.
 fn env_names(line: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for call in ["os.Getenv(\"", "os.LookupEnv(\""] {
+    for call in [
+        "os.Getenv(\"",
+        "os.LookupEnv(\"",
+        "procenv.Getenv(\"",
+        "procenv.Lookup(\"",
+    ] {
         let mut rest = line;
         while let Some(i) = rest.find(call) {
             let after = &rest[i + call.len()..];

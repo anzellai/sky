@@ -48,6 +48,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sky-app/rt/procenv"
 	"strconv"
 	"strings"
 	"sync"
@@ -258,14 +259,14 @@ func ActiveHubExporter() *HubExporter {
 // ─── configuration helpers ───────────────────────────────────────
 
 func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
+	if v := procenv.Getenv(key); v != "" {
 		return v
 	}
 	return def
 }
 
 func envIntOrDefault(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
+	if v := procenv.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
@@ -274,7 +275,7 @@ func envIntOrDefault(key string, def int) int {
 }
 
 func envInt64OrDefault(key string, def int64) int64 {
-	if v := os.Getenv(key); v != "" {
+	if v := procenv.Getenv(key); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			return n
 		}
