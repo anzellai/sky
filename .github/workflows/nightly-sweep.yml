@@ -25,7 +25,7 @@ on:
         # Every job's `if:` names itself here. `behaviour-corpus` gated on a
         # value this list did not offer, so it could never be dispatched alone —
         # the dropdown had no way to say it, and any other value skipped it.
-        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence]
+        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -729,3 +729,24 @@ jobs:
           name: nightly-sbom-linux-amd64
           path: ${{ runner.temp }}/bundles/*/sbom.json
           if-no-files-found: warn
+
+  # The Nix package, through both entry points: the stable `nix-build`
+  # (default.nix, no flakes) and the flake (`nix build .#sky`), plus both dev
+  # shells. Each `sky --version` must print the version Nix computed, and the
+  # `sky-ffi-inspect` installed beside it must inspect a real Go package. Not
+  # per commit: a cold Nix build of the compiler is ~20 min. The release
+  # workflow runs the same script as `gate-nix`, which also checks the tag.
+  nix:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "nix"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    # A cold `cargo build --release -p sky` in the sandbox (~20 min on a
+    # 4-core runner) plus the inspector and the store downloads. About 2x.
+    timeout-minutes: 60
+    steps:
+      # Full history: the flake reads the commit for its `+g<rev>` version.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Build both Nix entry points and check sky --version + sky-ffi-inspect
+        run: bash scripts/ci/nix-build-check.sh

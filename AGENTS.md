@@ -834,12 +834,18 @@ These apply to any Sky code you write or any compiler change you make:
   (each `Ffi.kernel` alias names a real `rt` function),
   `kernel_signature_coverage.rs` (an advertised member has a signature) and
   `kernel_signature_runtime_arity.rs` (the signature arity matches the runtime).
-- **Release = write the notes, then the version claims follow.** `CHANGELOG.md`'s
-  newest `## vX.Y.Z` heading is the single source of truth for "what version is
-  this". Files that state the CURRENT line — `README.md`'s status banner and this
-  file's "Current line" — are checked against it by
-  `rust/crates/xtask/tests/docs_state_the_current_version.rs`, so a release that
-  forgets them goes red. (`README.md` sat on "v0.19.x release candidate" through
+- **Release = bump the version and write the notes in one commit, then the
+  version claims follow.** The ONE version source is `[workspace.package]
+  version` in `rust/Cargo.toml`: every crate inherits it, `sky --version` prints
+  it (`sky v0.27.5`, plus ` (<commit>)` for a build from a source checkout), and
+  `default.nix` / `flake.nix` read it. A release bumps it in the SAME commit as
+  `CHANGELOG.md`'s new `## vX.Y.Z` heading;
+  `rust/crates/xtask/tests/docs_state_the_current_version.rs` fails any commit
+  where the two differ (or a crate or Nix file states its own version), and
+  `release.yml` refuses a tag that differs from either before it builds. Files
+  that state the CURRENT line — `README.md`'s status banner and this file's
+  "Current line" — are checked by the same test, so a release that forgets them
+  goes red. (`README.md` sat on "v0.19.x release candidate" through
   the whole v0.20 line before that gate existed: the first thing a reader or an
   agent learns about the project, a full minor out of date.) Historical mentions
   ("v0.17 closed …", "shipped in v0.16.6") are facts about the past and are

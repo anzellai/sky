@@ -102,43 +102,73 @@ echo "self-tests: $pass passed, $fail failed"
 
 ## Nix
 
-A `flake.nix` at the repo root provides a Rust dev shell (rustc,
-cargo, rustfmt, rust-analyzer) plus Go and pkg-config. A separate
-`legacy` shell pins GHC 9.4.8 + the system libraries the retired
-Haskell compiler links against (gmp, libffi, ncurses, zlib).
+Two files at the repo root hold the Nix support, and stable Nix needs
+no flakes:
+
+- `default.nix` holds every piece: `package` (a `callPackage`-able
+  function that builds Sky), `devShell` (a `callPackage`-able function
+  for the dev shell) and `overlay` (`final: prev: { sky =
+  final.callPackage package { }; }`). Called with no arguments it builds
+  against the nixpkgs pins in `flake.lock`, so there is one pin source.
+- `flake.nix` is a thin wrapper that exports the same pieces:
+  `overlays.default`, `packages.<system>.{sky,default}`,
+  `devShells.<system>.default` and `apps`.
+
+### Build the compiler
+
+```bash
+nix-build                  # stable Nix
+nix build .#sky            # flakes
+./result/bin/sky --version
+./result/bin/sky-ffi-inspect strings   # the FFI inspector, beside sky
+```
+
+This runs `cargo build -p sky` (through `rustPlatform.buildRustPackage`)
+in the Nix sandbox. The binary embeds the stdlib, the Go runtime, the
+templates, the bundled apps and the inspector source, so it is
+self-contained. `sky` builds programs with `go`: a Go on your `PATH`
+wins, and the package puts its own Go 1.26 after it as a fallback.
+
+The version is `[workspace.package] version` in `rust/Cargo.toml`,
+the one version source, and `sky --version` prints it. A flake build
+adds the commit (`sky v0.27.5 (1a2b3c4)`); `nix-build` has no git
+information and prints the plain version.
 
 ### Reproducible shell
 
 ```bash
-nix develop            # primary — Rust + Go toolchain
-# Inside the shell you now have cargo, rustc, go, pkg-config on PATH.
+nix-shell -A shell     # stable Nix
+nix develop            # flakes
+# Either gives cargo, rustc, rustfmt, clippy, rust-analyzer, go 1.26,
+# pkg-config, make, curl, jq and git.
 ./scripts/build.sh --clean
-
-nix develop .#legacy   # only for building legacy-haskell-compiler/
 ```
 
-Each shell's `shellHook` sets `SKY_RUNTIME_DIR` to the repo's
-`runtime-go/` so in-tree builds resolve the runtime without the
-embedded fallback.
+The shell sets `SKY_RUNTIME_DIR` to the repo's `runtime-go/` so
+in-tree builds resolve the runtime without the embedded fallback.
 
-### Build the compiler via Nix
+### Use the overlay
 
-```bash
-nix build .#sky
-./result/bin/sky --version
+```nix
+let
+  sky = import (fetchTarball "https://github.com/anzellai/sky/archive/main.tar.gz") { };
+  pkgs = import <nixpkgs> { overlays = [ sky.overlay ]; };
+in
+pkgs.sky
 ```
 
-This runs the `cargo build -p sky` pipeline (via
-`rustPlatform.buildRustPackage`) inside the Nix sandbox and puts the
-result in `./result/bin/sky`. The embedded-runtime and
-embedded-inspector splices still bundle the Go source trees into the
-binary, so the result is a fully self-contained executable.
+`package` takes a `go_1_26` argument. A nixpkgs without `go_1_26`
+must supply one: `pkgs.callPackage sky.package { go_1_26 = <a Go 1.26>; }`.
 
 ### Ad-hoc run
 
 ```bash
 nix run .#sky -- build src/Main.sky
 ```
+
+CI builds both entry points nightly (`nightly-sweep.yml`, job `nix`)
+and in the release gate (`release.yml`, job `gate-nix`), through
+`scripts/ci/nix-build-check.sh`.
 
 ## Artefact layout
 

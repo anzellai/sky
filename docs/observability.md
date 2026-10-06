@@ -126,8 +126,9 @@ Std.App target) embeds the same values.
   every file the commit time, so an archive build reports its commit time.
   It is never the wall clock, so a rebuild of unchanged sources writes the same
   file and Go links nothing again.
-- **Sky version**: the compiler's release version (`v0.27.0`), or `dev` for a
-  compiler built from source.
+- **Sky version**: the compiler's release version (`v0.27.0`): the
+  `[workspace.package] version` in `rust/Cargo.toml` it was built from, also
+  for a compiler built from source.
 - **Source**: where the commit came from, as above. `ldflags` means a user's own
   `-ldflags "-X sky-app/rt.buildCommit=..."` set it. Such an `-X` value
   (`buildCommit`, `buildAt`, `skyVersion`) still wins over the generated stamp,

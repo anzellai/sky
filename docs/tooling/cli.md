@@ -1310,7 +1310,8 @@ upgrade`" note to stderr. The check is **cached** (`~/.cache/sky/update-check.js
 background process**, so it never slows a command or blocks on the network. The
 nudge itself prints at most once a day. It stays out of your way entirely when
 output isn't interactive: it's suppressed unless stderr is a TTY (so scripts / CI
-/ pipes never see it), for dev builds, and for `lsp` / `fmt` / `--version`. Set
+/ pipes never see it), for builds from a source checkout (their `sky --version`
+names a commit: `sky v0.27.5 (1a2b3c4)`), and for `lsp` / `fmt` / `--version`. Set
 `SKY_NO_UPDATE_CHECK=1` to disable it completely.
 
 ### `sky upgrade-claude`

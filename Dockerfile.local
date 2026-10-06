@@ -32,13 +32,13 @@ WORKDIR /build
 # under rust/.
 COPY . ./
 
-# Stamp the version so `sky --version` reports something identifiable
-# inside this image. The release CI passes the git tag; for a local build
-# we take the branch + short SHA as --build-args (git is excluded from the
-# build context via .dockerignore, so we can't read it in-container).
+# Name the commit so `sky --version` reports something identifiable inside
+# this image: `sky v<rust/Cargo.toml version> (local-<branch>-<sha>)`. The
+# branch + short SHA come in as --build-args (git is excluded from the build
+# context via .dockerignore, so we can't read it in-container).
 ARG SKY_GIT_BRANCH=unknown
 ARG SKY_GIT_SHA=unknown
-RUN SKY_BUILD_VERSION="local-${SKY_GIT_BRANCH}-${SKY_GIT_SHA}" \
+RUN SKY_GIT_REV="local-${SKY_GIT_BRANCH}-${SKY_GIT_SHA}" \
         cargo build --release --locked --manifest-path rust/Cargo.toml -p sky \
  && mkdir -p /build/bin \
  && cp rust/target/release/sky /build/bin/sky \

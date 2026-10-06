@@ -18,6 +18,15 @@ members = [
     "crates/xtask",
 ]
 
+# The ONE version source for Sky. Every crate takes it (`version.workspace =
+# true`), `sky --version` prints it (`env!("CARGO_PKG_VERSION")`), default.nix
+# reads it, and a release bumps it in the same commit as the CHANGELOG.md
+# `## vX.Y.Z` heading: rust/crates/xtask/tests/docs_state_the_current_version.rs
+# fails the build when the two disagree, and release.yml refuses a tag that
+# differs from either.
+[workspace.package]
+version = "0.27.5"
+
 # Shared external dependency pins. Individual crates opt in via
 # `<dep>.workspace = true`. Versions chosen from crates.io HEAD at M0
 # (2026-07) and de-risked by the salsa 0.28 probe (see M0 report).

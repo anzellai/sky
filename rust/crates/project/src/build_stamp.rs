@@ -99,14 +99,10 @@ pub struct AppBuildStamp {
     pub source: String,
 }
 
-/// The compiler's own version, baked at release (`SKY_BUILD_VERSION`, set by
-/// release.yml), else `dev`.
+/// The compiler's own version, `v<workspace version>` (`[workspace.package]
+/// version` in rust/Cargo.toml, the one version source).
 pub fn compiler_version() -> String {
-    option_env!("SKY_BUILD_VERSION")
-        .map(|v| v.trim().trim_start_matches('v').to_string())
-        .filter(|v| !v.is_empty() && v != "dev")
-        .map(|v| format!("v{}", clean(&v)))
-        .unwrap_or_else(|| "dev".to_string())
+    format!("v{}", clean(env!("CARGO_PKG_VERSION")))
 }
 
 /// The stamp for a build of `project_root`: the one a parent `sky` pinned, else

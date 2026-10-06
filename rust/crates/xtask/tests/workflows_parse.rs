@@ -1609,3 +1609,58 @@ fn every_browser_tier_gate_step_has_its_own_bound() {
         missing.join("\n  ")
     );
 }
+
+/// The Nix package is built through both entry points (the stable `nix-build`
+/// of `default.nix` and the flake's `nix build .#sky`) by the nightly and by a
+/// release gate job (GitHub issue #216).
+///
+/// `scripts/ci/nix-build-check.sh` holds the checks: both builds, both dev
+/// shells, `sky --version` against the version Nix computed (and the tag, on a
+/// tag), and `sky-ffi-inspect` on a real Go package. This test pins that the
+/// script exists, still builds BOTH entry points, and is invoked by an enabled
+/// job in each workflow; in `release.yml` that job is a `gate-*` job, so
+/// `the_release_workflow_is_the_full_suite` holds it in `release: needs:`.
+#[test]
+fn the_nix_entry_points_are_built_by_the_nightly_and_the_release_gate() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let script = std::fs::read_to_string(root.join("scripts/ci/nix-build-check.sh"))
+        .expect("read scripts/ci/nix-build-check.sh");
+    for needle in [
+        "nix-build --out-link",
+        "build .#sky",
+        "--version",
+        "sky-ffi-inspect",
+    ] {
+        assert!(
+            script.contains(needle),
+            "scripts/ci/nix-build-check.sh no longer contains `{needle}`: it must build \
+             both Nix entry points and check each binary's version and inspector"
+        );
+    }
+
+    for (file, prefix) in [("nightly-sweep.yml", ""), ("release.yml", "gate-")] {
+        let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
+            .unwrap_or_else(|e| panic!("read {file}: {e}"));
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let runners: Vec<&str> = doc["jobs"]
+            .as_mapping()
+            .expect("jobs")
+            .iter()
+            .filter(|(_, job)| !job_is_disabled(job))
+            .filter(|(_, job)| {
+                job["steps"].as_sequence().into_iter().flatten().any(|s| {
+                    s["run"]
+                        .as_str()
+                        .is_some_and(|r| r.contains("scripts/ci/nix-build-check.sh"))
+                })
+            })
+            .filter_map(|(name, _)| name.as_str())
+            .filter(|name| name.starts_with(prefix))
+            .collect();
+        assert!(
+            !runners.is_empty(),
+            "{file}: no enabled {prefix}* job runs scripts/ci/nix-build-check.sh, so \
+             the Nix package can break unseen (GitHub issue #216)"
+        );
+    }
+}

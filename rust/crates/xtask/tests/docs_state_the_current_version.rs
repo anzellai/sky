@@ -220,3 +220,123 @@ fn sample_output_in_live_docs_shows_the_current_version() {
         stale.join("\n")
     );
 }
+
+/// The full `X.Y.Z` of the newest `## vX.Y.Z` heading in CHANGELOG.md: the
+/// first line matching `^## v([0-9]+\.[0-9]+\.[0-9]+)( |$)`.
+fn newest_changelog_version() -> String {
+    let ch = read("CHANGELOG.md");
+    for line in ch.lines() {
+        let Some(rest) = line.strip_prefix("## v") else {
+            continue;
+        };
+        let ver: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        let after = &rest[ver.len()..];
+        let parts: Vec<&str> = ver.split('.').collect();
+        if parts.len() == 3
+            && parts.iter().all(|p| !p.is_empty())
+            && (after.is_empty() || after.starts_with(' '))
+        {
+            return ver;
+        }
+    }
+    panic!("no `## vX.Y.Z` heading in CHANGELOG.md — the parse is wrong, not the repo");
+}
+
+/// `version` under `[workspace.package]` in rust/Cargo.toml.
+fn workspace_version() -> String {
+    let toml = read("rust/Cargo.toml");
+    let mut in_section = false;
+    for line in toml.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_section = t == "[workspace.package]";
+            continue;
+        }
+        if in_section {
+            if let Some(v) = t
+                .strip_prefix("version")
+                .map(str::trim_start)
+                .and_then(|r| r.strip_prefix('='))
+            {
+                return v.trim().trim_matches('"').to_string();
+            }
+        }
+    }
+    panic!("rust/Cargo.toml has no `[workspace.package] version`, the one version source");
+}
+
+/// The version has ONE source, `[workspace.package] version` in rust/Cargo.toml
+/// (`sky --version`, every crate, default.nix and flake.nix take it from
+/// there), and the release notes name the version they describe. A release
+/// bumps both in the same commit; this fails on any commit where they differ,
+/// so a binary can never report a version whose notes are missing, or the
+/// reverse. release.yml also refuses a tag that differs from either.
+#[test]
+fn the_workspace_version_is_the_newest_changelog_heading() {
+    let cargo = workspace_version();
+    let changelog = newest_changelog_version();
+    assert_eq!(
+        cargo, changelog,
+        "rust/Cargo.toml `[workspace.package] version` is `{cargo}`, but CHANGELOG.md's \
+         newest heading is `## v{changelog}`. A release bumps the version and writes \
+         the heading in the same commit."
+    );
+    // Every crate takes the workspace version: none states its own.
+    let crates = repo().join("rust/crates");
+    let mut own = Vec::new();
+    for e in std::fs::read_dir(&crates)
+        .expect("read rust/crates")
+        .flatten()
+    {
+        let manifest = e.path().join("Cargo.toml");
+        let Ok(text) = std::fs::read_to_string(&manifest) else {
+            continue;
+        };
+        let pkg = text.split("\n[").next().unwrap_or("");
+        if !pkg.lines().any(|l| l.trim() == "version.workspace = true") {
+            own.push(manifest.display().to_string());
+        }
+    }
+    assert!(
+        own.is_empty(),
+        "crate(s) without `version.workspace = true` in [package]: {own:?}"
+    );
+}
+
+/// No Nix file states a version of its own: default.nix reads the workspace
+/// version with `lib.importTOML`, and flake.nix takes it from default.nix. A
+/// literal here is how the package said `0.18.0` through v0.27 (issue #216).
+#[test]
+fn no_nix_file_states_a_literal_version() {
+    let mut found = Vec::new();
+    for file in ["default.nix", "flake.nix"] {
+        let text = read(file);
+        for (n, line) in text.lines().enumerate() {
+            let t = line.trim();
+            if t.starts_with('#') {
+                continue;
+            }
+            if let Some(rest) = t.strip_prefix("version") {
+                let rest = rest.trim_start();
+                if let Some(v) = rest.strip_prefix('=') {
+                    let v = v.trim().trim_start_matches('"');
+                    if v.starts_with(|c: char| c.is_ascii_digit()) {
+                        found.push(format!("{file}:{}: {t}", n + 1));
+                    }
+                }
+            }
+        }
+        assert!(
+            text.contains("workspace.package.version") || file == "flake.nix",
+            "{file} no longer reads `workspace.package.version` from rust/Cargo.toml"
+        );
+    }
+    assert!(
+        found.is_empty(),
+        "a Nix file states a literal version; take it from rust/Cargo.toml:\n  {}",
+        found.join("\n  ")
+    );
+}

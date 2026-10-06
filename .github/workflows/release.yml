@@ -64,6 +64,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Before any build: the tag, the one version source
+      # (`[workspace.package] version` in rust/Cargo.toml, which `sky
+      # --version` prints) and the newest CHANGELOG.md heading must all name
+      # the same version. Every commit already holds the last two equal
+      # (rust/crates/xtask/tests/docs_state_the_current_version.rs); this adds
+      # the tag.
+      - name: Tag, workspace version and CHANGELOG agree
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION=$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version *= *"\(.*\)"/\1/p' rust/Cargo.toml)
+          CHANGELOG_VERSION=$(sed -nE 's/^## v([0-9]+\.[0-9]+\.[0-9]+)( .*)?$/\1/p' CHANGELOG.md | head -1)
+          echo "tag $TAG_VERSION, rust/Cargo.toml $CARGO_VERSION, CHANGELOG.md $CHANGELOG_VERSION"
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ] || [ "$TAG_VERSION" != "$CHANGELOG_VERSION" ]; then
+            echo "::error::the tag (v$TAG_VERSION), rust/Cargo.toml [workspace.package] version ($CARGO_VERSION) and the newest CHANGELOG.md heading (v$CHANGELOG_VERSION) must name the same version" >&2
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: actions/setup-go@v5
@@ -85,11 +105,12 @@ jobs:
         shell: bash
         working-directory: rust
         run: |
-          # Bake the tag into the binary at compile time (sky build.rs +
-          # option_env!("SKY_BUILD_VERSION")). A standalone released binary
-          # carries no repo tree, so this is its only version source; the smoke
-          # test below fails loudly if it still reports "sky dev".
-          export SKY_BUILD_VERSION="${GITHUB_REF_NAME#v}"
+          # The binary prints the workspace version (rust/Cargo.toml), which
+          # the first step held equal to the tag. An empty SKY_GIT_REV tells
+          # rust/crates/sky/build.rs this is a release: no commit after the
+          # version, so the binary prints exactly `sky v<tag>` (the smoke test
+          # below checks it).
+          export SKY_GIT_REV=""
           cargo build --release --locked -p sky
           mkdir -p ../dist
           # Ask CARGO which file it produced. This is the artefact users
@@ -143,12 +164,12 @@ jobs:
           # substring. Demonstrated failures it let through:
           #   tag v0.19.1  + binary "sky v0.19.10"    -> passed (wrong release!)
           #   tag v0.19.1  + binary "sky v0.19.1-rc1" -> passed (prerelease!)
-          # Both are rejected below. It still catches the case the step was
-          # written for: SKY_BUILD_VERSION unset bakes in the "sky dev" fallback,
-          # which yields no version token at all.
+          # Both are rejected below. So is a binary that names a commit after
+          # the version (`sky v0.27.5 (1a2b3c4)`, a source build): a release
+          # sets SKY_GIT_REV="" and prints the version alone.
           REPORTED=$(printf '%s\n' "$ACTUAL" | head -1 | sed -n 's/^sky v\([^ ]*\)$/\1/p')
           if [ -z "$REPORTED" ]; then
-            echo "::error::binary did not report a version (got '$ACTUAL'); SKY_BUILD_VERSION was not baked in" >&2
+            echo "::error::binary did not print exactly 'sky v<version>' (got '$ACTUAL'); a release build must set SKY_GIT_REV=\"\"" >&2
             exit 1
           fi
           if [ "$REPORTED" != "$TAG_VERSION" ]; then
@@ -1447,6 +1468,27 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   # Assemble release assets, generate checksums, publish GitHub Release.
   # ────────────────────────────────────────────────────────────────
+  # gate-nix — the Nix package, through both entry points: the stable
+  # `nix-build` (default.nix, no flakes) and the flake (`nix build .#sky`), plus
+  # both dev shells. Each `sky --version` must print the version Nix computed;
+  # on a tag the stable build must print exactly the tag, so a version source
+  # that disagrees with the tag blocks the release. The `sky-ffi-inspect`
+  # installed beside `sky` must inspect a real Go package. The nightly runs the
+  # same script (nightly-sweep.yml `nix`).
+  gate-nix:
+    runs-on: ubuntu-latest
+    # A cold `cargo build --release -p sky` in the sandbox (~20 min on a
+    # 4-core runner) plus the inspector and the store downloads. About 2x.
+    timeout-minutes: 60
+    steps:
+      # Full history: the flake reads the commit for its `+g<rev>` version.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Build both Nix entry points and check sky --version + sky-ffi-inspect
+        run: bash scripts/ci/nix-build-check.sh
+
   release:
     # Only a tag publishes; a dispatched full-suite run stops before this job.
     if: startsWith(github.ref, 'refs/tags/v')
@@ -1494,6 +1536,7 @@ jobs:
       - gate-sweep
       - gate-native
       - gate-native-android
+      - gate-nix
     runs-on: ubuntu-latest
     # `id-token` + `attestations` let the job sign a build-provenance
     # attestation for every published asset (F-9): `gh attestation verify

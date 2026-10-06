@@ -32,17 +32,12 @@ pub struct Notice {
 
 static PENDING: Mutex<Option<Notice>> = Mutex::new(None);
 
-/// This binary's version, as the release baked it (`SKY_BUILD_VERSION`), else
-/// `sky dev`. Unlike `sky --version` it never depends on the working
-/// directory, so moving between directories does not look like an upgrade.
+/// This binary's version, `sky v<workspace version>`, without the commit a
+/// source build carries, so a rebuild at a new commit of the same version
+/// does not look like an upgrade. Unlike `sky --version` it never depends on
+/// the working directory.
 pub fn this_version() -> String {
-    match option_env!("SKY_BUILD_VERSION")
-        .map(|v| v.trim().trim_start_matches('v'))
-        .filter(|v| !v.is_empty() && *v != "dev")
-    {
-        Some(v) => format!("sky v{v}"),
-        None => "sky dev".to_string(),
-    }
+    format!("sky v{}", env!("CARGO_PKG_VERSION"))
 }
 
 /// The file that records the last version run on this machine.

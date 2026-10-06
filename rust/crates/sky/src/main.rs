@@ -631,8 +631,8 @@ fn cmd_upgrade(args: &[String]) -> ExitCode {
     // `--notes` previews the release notes for (current, latest] WITHOUT upgrading.
     let notes_only = args.iter().any(|a| a == "--notes");
     let ver = version_string();
-    let is_dev = ver == "sky dev" || ver.contains("dev");
-    let current_tuple = parse_semver(ver.trim_start_matches("sky v"));
+    let is_dev = is_source_build();
+    let current_tuple = parse_semver(SKY_VERSION);
 
     println!("sky upgrade — current version: {ver}");
 
@@ -690,7 +690,7 @@ fn cmd_upgrade_install(
 
     if is_dev && !force {
         println!(
-            "This is a rewrite/dev build of the Rust `sky`, not a published release.\n\
+            "This `sky` ({ver}) was built from a source checkout, not a published release.\n\
              Rebuild from source (in the sky repo):  cargo build -p sky --release --bin sky\n\
              Or run `sky upgrade --force` to install the latest published release anyway."
         );
@@ -1035,11 +1035,11 @@ fn maybe_notify_update(cmd: Option<&str>) {
         | None => return,
         _ => {}
     }
-    let ver = version_string();
-    if ver == "sky dev" || ver.contains("dev") {
-        return; // a dev build has no meaningful published version to compare
+    if is_source_build() {
+        return; // a source build is not a published release to compare
     }
-    let Some(current) = parse_semver(ver.trim_start_matches("sky v")) else {
+    let ver = format!("v{SKY_VERSION}");
+    let Some(current) = parse_semver(SKY_VERSION) else {
         return;
     };
 
@@ -1048,7 +1048,7 @@ fn maybe_notify_update(cmd: Option<&str>) {
 
     // Nudge from the cached latest (rate-limited).
     if let Some(c) = cache.as_ref() {
-        if let Some(msg) = nudge_line(current, ver.trim_start_matches("sky "), c, now) {
+        if let Some(msg) = nudge_line(current, &ver, c, now) {
             eprint!("{msg}");
             let mut updated = c.clone();
             updated.last_nudge = now;
@@ -11526,7 +11526,7 @@ fn bundled_missing(name: &str) -> ExitCode {
 }
 
 /// A filesystem-safe slug of the version string for cache-dir naming
-/// (`sky v0.17.10` → `v0.17.10`, `sky dev` → `dev`).
+/// (`sky v0.17.10` → `v0.17.10`, `sky v0.27.5 (1a2b3c4)` → `v0.27.5__1a2b3c4_`).
 fn version_slug() -> String {
     version_string()
         .trim_start_matches("sky ")
@@ -14923,34 +14923,31 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
     (positional, out)
 }
 
-/// Version string: `sky v<version>` for a release, else `sky dev`.
+/// Version string: `sky v<version>`, plus ` (<commit>)` for a source build.
 ///
-/// Release builds bake the tag in at compile time (the release workflow sets
-/// `SKY_BUILD_VERSION`); this is the only source a standalone published binary
-/// has, since it carries no repo tree. Dev builds fall back to the legacy
-/// `app/VERSION` file if present (content is `dev`), otherwise report `sky dev`.
+/// The version is the workspace version (`[workspace.package] version` in
+/// rust/Cargo.toml), the one version source. The commit is what `build.rs`
+/// baked as `SKY_BUILD_GIT_REV`: the short revision of a git checkout (or the
+/// one Nix passed in `SKY_GIT_REV`), empty for a release build, so a released
+/// binary prints exactly `sky v<tag>`.
 fn version_string() -> String {
-    if let Some(v) = option_env!("SKY_BUILD_VERSION") {
-        let v = v.trim().trim_start_matches('v');
-        if !v.is_empty() && v != "dev" {
-            return format!("sky v{v}");
-        }
+    match BUILD_GIT_REV {
+        "" => format!("sky v{SKY_VERSION}"),
+        rev => format!("sky v{SKY_VERSION} ({rev})"),
     }
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let ver = repo_root_for(&cwd)
-        .and_then(|root| {
-            std::fs::read_to_string(
-                root.join("legacy-haskell-compiler")
-                    .join("app")
-                    .join("VERSION"),
-            )
-            .ok()
-        })
-        .map(|s| s.trim().to_string());
-    match ver.as_deref() {
-        Some("dev") | Some("") | None => "sky dev".to_string(),
-        Some(v) => format!("sky v{v}"),
-    }
+}
+
+/// The workspace version, `0.27.5`.
+const SKY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The commit a source build was made from; empty for a release build.
+const BUILD_GIT_REV: &str = env!("SKY_BUILD_GIT_REV");
+
+/// A build from a source checkout (it carries a commit), not a published
+/// release: `sky upgrade` asks for `--force` before replacing it, and the
+/// update nudge stays quiet.
+fn is_source_build() -> bool {
+    !BUILD_GIT_REV.is_empty()
 }
 
 fn print_help() {
@@ -15744,6 +15741,29 @@ mod tests {
         assert!(!is_generated_split_project(&base.join("nope")));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `sky --version` prints `sky v<workspace version>`, then ` (<commit>)`
+    /// only for a source build: its first version token is exactly
+    /// CARGO_PKG_VERSION, the one version source, and a release build (no
+    /// commit) prints nothing after it.
+    #[test]
+    fn version_string_is_the_workspace_version() {
+        let v = version_string();
+        let rest = v
+            .strip_prefix(&format!("sky v{}", env!("CARGO_PKG_VERSION")))
+            .unwrap_or_else(|| panic!("`{v}` does not start with sky v<CARGO_PKG_VERSION>"));
+        if BUILD_GIT_REV.is_empty() {
+            assert_eq!(rest, "", "a release build prints only the version: `{v}`");
+            assert!(!is_source_build());
+        } else {
+            assert_eq!(rest, format!(" ({BUILD_GIT_REV})"), "`{v}`");
+            assert!(is_source_build());
+        }
+        assert!(
+            parse_semver(SKY_VERSION).is_some(),
+            "{SKY_VERSION} is not X.Y.Z"
+        );
     }
 
     #[test]
