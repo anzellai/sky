@@ -20,7 +20,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-source scripts/lib/require-tool.sh
+source "$ROOT/scripts/lib/require-tool.sh"
 require_tool nix-build "install Nix (https://nixos.org/download)"
 require_tool nix "install Nix (https://nixos.org/download)"
 
