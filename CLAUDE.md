@@ -360,6 +360,17 @@ hold the tag until it is green — never rely on the next nightly to find a
 regression after the tag is public. "The per-commit gate was green" is **not**
 a release verdict; the full suite is.
 
+**The version has one source: `[workspace.package] version` in
+`rust/Cargo.toml`.** A release bumps it in the SAME commit as the new
+`CHANGELOG.md` `## vX.Y.Z` heading. Every crate inherits it
+(`version.workspace = true`), `sky --version` reads it at compile time, and
+`default.nix` / `flake.nix` read it with `importTOML` (no `.nix` file states a
+version). The xtask version gate fails a commit whose newest CHANGELOG heading
+differs from it, and `release.yml` refuses a tag unless tag == workspace
+version == newest CHANGELOG heading, before anything builds. Never set a
+version anywhere else, and never pass one in through an environment variable
+(`SKY_BUILD_VERSION` is gone).
+
 ### 0.2.2 A bug found during the work ships IN this release, never rolled to the next — INVIOLABLE
 
 The user's standing preference (2026-09-22): a bug I discover WHILE doing the
