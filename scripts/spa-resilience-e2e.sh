@@ -14,6 +14,10 @@
 #     pushback   a 503 with Retry-After: 2 is re-sent 2 s later
 #     hidden     a client-only Sub.every keeps ticking while hidden; a poll
 #                sends at most its first call while hidden, one on return
+#     resume     an RPC on the wire while the page is frozen / hidden / in the
+#                back/forward cache for minutes (page.clock) is re-sent at once
+#                on resume and runs once; App.withRpcError is never called; an
+#                outage while hidden gives nothing up (v0.27.6)
 #   slow stage (Chromium; waits out the real budgets)
 #     timeout    a hung request is aborted at 30 s and re-sent (same id)
 #     exhausted  the red bar and App.withRpcError (once) only after 60 s
@@ -53,12 +57,12 @@ SPA="$TMP/app/.skyapp/web-app/.split/backend/sky-out/app"
 STAGES="${SPA_RESILIENCE_STAGES:-fast slow}"
 for stage in $STAGES; do
   case "$stage" in
-    fast) echo "==> fast stage: blip, offline, pushback, hidden page" ;;
+    fast) echo "==> fast stage: blip, offline, pushback, hidden page, resume after a freeze" ;;
     slow) echo "==> slow stage: 30 s timeout, 60 s budget (Chromium)" ;;
     *) echo "spa-resilience-e2e: unknown stage $stage (fast | slow)" >&2; exit 1 ;;
   esac
   SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
-    with_timeout 300 node "$ROOT/scripts/spa-resilience-verify.mjs" "$SPA" --stage "$stage" --port "${SPA_RESILIENCE_PORT:-9369}"
+    with_timeout 480 node "$ROOT/scripts/spa-resilience-verify.mjs" "$SPA" --stage "$stage" --port "${SPA_RESILIENCE_PORT:-9369}"
 done
 
 echo "spa-resilience-e2e: PASS — transient failures are retried by the runtime, a blip shows nothing,"

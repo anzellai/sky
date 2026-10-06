@@ -287,6 +287,12 @@ retry code and no network banner (v0.27.3, `runtime-go/rt/spa_retry.go`).
   wins. One request is re-sent at a time, in the order they failed, so a
   click made while offline runs once, in order, when the connection returns.
   A request gives up after 8 attempts or 60 s.
+- **Running time, not wall time.** The 60 s budget and the 30 s timeout count
+  only time the page could run. While the page is hidden no request is given
+  up. A request that was on the wire when the page froze (a phone app switch,
+  a laptop lid, a tab restored from the back/forward cache) is re-sent at once
+  on resume with a fresh budget: it does not reach `App.withRpcError` because
+  the time the page was away made it look old (v0.27.6).
 - **Recovery signals.** `online`, the page becoming visible again, `pageshow`
   and `focus` re-send the head of the queue at once, with a fresh budget.
 - **Protecting a recovering server.** A retry token bucket per origin (10

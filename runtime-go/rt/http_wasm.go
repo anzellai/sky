@@ -88,21 +88,29 @@ func fetchBlocking(method, url, body string) SkyResult[any, any] {
 		defer spaSch.tickNetEnd(tick)
 	}
 	if !spaRetryable(method, url) {
-		r, _ := fetchOnce(method, url, body)
+		r, _ := fetchOnce(method, url, body, false)
 		return r
 	}
 	lower := strings.ToLower(method)
 	return spaRetryLoop(spaCoord, spaOriginOf(url),
-		func() (SkyResult[any, any], spaOutcome) { return fetchOnce(method, url, body) },
+		func() (SkyResult[any, any], spaOutcome) { return fetchOnce(method, url, body, true) },
 		func() SkyResult[any, any] {
 			return Err[any, any](ErrNetwork("http." + lower + ": held back: the server is overloaded"))
 		})
 }
 
 // fetchOnce is one attempt: fetch with an AbortController that aborts after
-// spaFetchTimeout (a hang becomes Err Timeout), classified for the retry
-// coordinator.
-func fetchOnce(method, url, body string) (SkyResult[any, any], spaOutcome) {
+// spaFetchTimeout of running time (a hang becomes Err Timeout), classified for
+// the retry coordinator. `resend` says the coordinator re-sends this request.
+//
+// The timeout counts running time, not wall time (v0.27.6). A timer that fires
+// long after it was due was held by a suspension (a frozen or hidden page, a
+// sleeping device): the attempt has not had its 30 s. A request the runtime
+// does not re-send gets a fresh timeout then, instead of an Err Timeout the
+// app never earned. A re-sent request is aborted, and the coordinator finds the
+// attempt outlived its timeout, takes that as a resume and re-sends it at once
+// with a fresh budget (spaRetryCoord.done).
+func fetchOnce(method, url, body string, resend bool) (SkyResult[any, any], spaOutcome) {
 	lower := strings.ToLower(method)
 	global := js.Global()
 	fetch := global.Get("fetch")
@@ -148,6 +156,8 @@ func fetchOnce(method, url, body string) (SkyResult[any, any], spaOutcome) {
 	}
 
 	var onResp, onErr, onText, onTextErr, onTimeout js.Func
+	var timer js.Value
+	armedAt := time.Now()
 	status := 0
 	retryAfter := ""
 
@@ -204,6 +214,11 @@ func fetchOnce(method, url, body string) (SkyResult[any, any], spaOutcome) {
 		if done {
 			return nil
 		}
+		if now := time.Now(); !resend && spaFetchTimerSuspended(armedAt, now) {
+			armedAt = now
+			timer = global.Call("setTimeout", onTimeout, int(spaFetchTimeout/time.Millisecond))
+			return nil
+		}
 		timedOut = true
 		if ctrl.Truthy() {
 			ctrl.Call("abort") // rejects the fetch (or the body read): failed() maps it to Timeout
@@ -212,7 +227,7 @@ func fetchOnce(method, url, body string) (SkyResult[any, any], spaOutcome) {
 		}
 		return nil
 	})
-	timer := global.Call("setTimeout", onTimeout, int(spaFetchTimeout/time.Millisecond))
+	timer = global.Call("setTimeout", onTimeout, int(spaFetchTimeout/time.Millisecond))
 
 	fetch.Invoke(url, opts).Call("then", onResp).Call("catch", onErr)
 

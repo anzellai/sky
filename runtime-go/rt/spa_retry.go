@@ -37,8 +37,21 @@ import (
 //     after spaRetryMaxAttempts failures or spaRetryBudget of trying, and its
 //     last result is then delivered as FINAL (the red bar, App.withRpcError).
 //   - Recovery signals (`online`, `visibilitychange` to visible, `pageshow`,
-//     `focus`) re-send the head of the queue at once and reset every queued
+//     `focus`) re-send the head of the queue at once and reset every tracked
 //     request's attempt count and budget.
+//   - Running time, not wall time (v0.27.6). The budget and the fetch timeout
+//     count only time the page could run. While the page is hidden no request
+//     is given up (setHidden): it waits, and the return to a visible page gives
+//     it a fresh budget and re-sends it at once. A freeze that no event
+//     announced (a laptop lid, a frozen tab, the back/forward cache) is found
+//     by its effect: a timer that fires spaSuspendGap or more after it was due,
+//     or an attempt that outlived its own spaFetchTimeout abort by
+//     spaSuspendGap. Either is a resume (resumeLocked): every request the
+//     coordinator tracks, on the wire or waiting, starts a fresh budget, and a
+//     request whose attempt spanned the gap is re-sent at once. Before this a
+//     request in flight when the page froze was judged at resume against the
+//     wall clock: its overdue abort fired, the budget read as spent, and the
+//     failure went to App.withRpcError without one re-send.
 //   - Retry throttle (the gRPC A6 shape): a token bucket per origin, 10
 //     tokens, a failure costs 1, a success refunds 0.1. Below 5 tokens no
 //     automatic retry starts; a recovery signal still runs one.
@@ -65,7 +78,21 @@ const (
 	spaThrottleMaxEvents = 4096
 	// spaReconnectGrace is how long a transient outage stays invisible.
 	spaReconnectGrace = 3 * time.Second
+	// spaSuspendGap: a timer that fires this much later than it was due, or an
+	// attempt that outlives its spaFetchTimeout abort by this much, means the
+	// page could not run in between (frozen, suspended, asleep).
+	spaSuspendGap = 5 * time.Second
 )
+
+// spaFetchTimerSuspended reports whether an attempt's abort timer, armed at
+// `armed` for spaFetchTimeout, fired at `now` late enough to show that the page
+// was suspended while it waited. The attempt has then not had its running time:
+// a request the runtime does not re-send gets a fresh spaFetchTimeout instead of
+// a Timeout it did not earn (a re-sent one is aborted and re-sent at once,
+// spaRetryCoord.done).
+func spaFetchTimerSuspended(armed, now time.Time) bool {
+	return now.Sub(armed) >= spaFetchTimeout+spaSuspendGap
+}
 
 // spaOutcomeKind classifies one attempt of a request.
 type spaOutcomeKind int
@@ -235,6 +262,11 @@ type spaRetryReq struct {
 	sent    bool // an attempt has been made: only a NEW request is throttled
 	giveUp  bool // the budget ran out while it waited
 	paced   bool // its current wait is the server's Retry-After
+	// attemptAt is when the current attempt started (admit).
+	attemptAt time.Time
+	// resumed: the page resumed while this request's attempt was on the wire.
+	// If that attempt fails, the request is re-sent at once.
+	resumed bool
 	wake    chan struct{}
 }
 
@@ -264,6 +296,12 @@ type spaRetryCoord struct {
 	cancel      func()
 	buckets     map[string]float64
 	events      []spaThrottleEvent
+	// live is every request between begin and end: on the wire or queued. A
+	// resume gives each a fresh budget.
+	live map[*spaRetryReq]struct{}
+	// hidden: the page is hidden (setHidden). No request is given up while it
+	// is: the budget counts only time the user could see the page.
+	hidden bool
 }
 
 func newSpaRetryCoord(now func() time.Time, rnd func() float64, arm func(time.Duration, func()) func()) *spaRetryCoord {
@@ -274,6 +312,7 @@ func newSpaRetryCoord(now func() time.Time, rnd func() float64, arm func(time.Du
 		wait:    func(r *spaRetryReq) { <-r.wake },
 		change:  func() {},
 		buckets: map[string]float64{},
+		live:    map[*spaRetryReq]struct{}{},
 	}
 }
 
@@ -314,7 +353,74 @@ func (c *spaRetryCoord) tokensLocked(origin string) float64 {
 }
 
 func (c *spaRetryCoord) begin(origin string) *spaRetryReq {
-	return &spaRetryReq{origin: origin, start: c.now(), wake: make(chan struct{}, 1)}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r := &spaRetryReq{origin: origin, start: c.now(), wake: make(chan struct{}, 1)}
+	c.live[r] = struct{}{}
+	return r
+}
+
+// end forgets a request whose result has been delivered.
+func (c *spaRetryCoord) end(r *spaRetryReq) {
+	c.mu.Lock()
+	delete(c.live, r)
+	c.mu.Unlock()
+}
+
+// spentLocked reports whether r has used its budget. Never while the page is
+// hidden: a request waits for the user's return instead of failing unseen.
+func (c *spaRetryCoord) spentLocked(r *spaRetryReq, now time.Time) bool {
+	if c.hidden {
+		return false
+	}
+	return r.attempt >= spaRetryMaxAttempts || now.Sub(r.start) >= spaRetryBudget
+}
+
+// resumeLocked is a resume: the page runs again after a time it could not (a
+// return to a visible page, or a gap found by a late timer). Every tracked
+// request starts a fresh budget and attempt count; one whose attempt is on the
+// wire is re-sent at once if that attempt fails. The current outage is
+// re-timed from now, so the indicator's grace starts again: the time the page
+// was away is not outage the user watched.
+func (c *spaRetryCoord) resumeLocked(now time.Time) {
+	for q := range c.live {
+		q.attempt = 0
+		q.start = now
+		q.giveUp = false
+		if !q.queued {
+			q.resumed = true
+		}
+	}
+	if !c.outageStart.IsZero() {
+		c.outageStart, c.lastFail = now, now
+		c.graceProven = false
+		c.armGraceLocked(now)
+	}
+}
+
+// setHidden records whether the page is hidden (visibilitychange, freeze,
+// pagehide). The return to a visible page is a resume: every tracked request
+// starts a fresh budget and the head of the queue is re-sent now. It reports
+// whether anything was waiting.
+func (c *spaRetryCoord) setHidden(hidden bool) bool {
+	c.mu.Lock()
+	was := c.hidden
+	c.hidden = hidden
+	if hidden || !was {
+		c.mu.Unlock()
+		return false
+	}
+	c.resumeLocked(c.now())
+	if len(c.queue) == 0 {
+		c.mu.Unlock()
+		return false
+	}
+	h := c.queue[0]
+	h.forced = true
+	c.scheduleLocked(h, spaOutcome{kind: spaOutcomeTransient})
+	c.mu.Unlock()
+	c.change()
+	return true
 }
 
 // throttleP is the current local-refusal probability: 0 unless an overload
@@ -355,6 +461,7 @@ func (c *spaRetryCoord) admit(r *spaRetryReq) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
+	r.attemptAt = now
 	// The adaptive throttle refuses NEW requests (SRE): a re-send is already
 	// bounded by the retry bucket and by the server's Retry-After.
 	first := !r.sent
@@ -382,6 +489,16 @@ func (c *spaRetryCoord) done(r *spaRetryReq, o spaOutcome) bool {
 	case <-r.wake:
 	default:
 	}
+	// An attempt cannot outlive its own abort timer while the page runs: if
+	// it did, the page was suspended during it (frozen, asleep, a hidden tab
+	// whose timers were held back). That is a resume, found by its effect.
+	// (While the page is hidden its timers are throttled, so lateness proves
+	// nothing then; the return to a visible page is the resume.)
+	if !c.hidden && !r.attemptAt.IsZero() && now.Sub(r.attemptAt) >= spaFetchTimeout+spaSuspendGap {
+		c.resumeLocked(now)
+	}
+	resumed := r.resumed
+	r.resumed = false
 	if !o.local {
 		if o.status > 0 {
 			c.recordLocked(spaThrottleEvent{at: now, answered: true,
@@ -414,7 +531,7 @@ func (c *spaRetryCoord) done(r *spaRetryReq, o spaOutcome) bool {
 			}
 			c.lastFail = now
 		}
-		if r.attempt >= spaRetryMaxAttempts || now.Sub(r.start) >= spaRetryBudget {
+		if c.spentLocked(r, now) {
 			c.removeLocked(r, false)
 		} else {
 			if !r.queued {
@@ -422,6 +539,9 @@ func (c *spaRetryCoord) done(r *spaRetryReq, o spaOutcome) bool {
 				c.queue = append(c.queue, r)
 			}
 			if c.queue[0] == r {
+				// The page came back while this attempt was on the wire:
+				// the user is waiting, so the re-send goes now.
+				r.forced = r.forced || resumed
 				c.scheduleLocked(r, o)
 			}
 			retry = true
@@ -498,6 +618,7 @@ func (c *spaRetryCoord) armGraceLocked(start time.Time) {
 	if c.graceCancel != nil {
 		c.graceCancel()
 	}
+	due := c.now().Add(spaReconnectGrace)
 	c.graceCancel = c.arm(spaReconnectGrace, func() {
 		c.mu.Lock()
 		if !c.outageStart.Equal(start) || len(c.queue) == 0 {
@@ -505,6 +626,18 @@ func (c *spaRetryCoord) armGraceLocked(start time.Time) {
 			return // that outage is over
 		}
 		c.graceCancel = nil
+		if now := c.now(); !c.hidden && now.Sub(due) >= spaSuspendGap {
+			// The page was suspended past the grace point: a resume. The
+			// outage is re-timed (and its grace re-armed) and the head is
+			// re-sent now.
+			c.resumeLocked(now)
+			h := c.queue[0]
+			h.forced = true
+			c.scheduleLocked(h, spaOutcome{kind: spaOutcomeTransient})
+			c.mu.Unlock()
+			c.change()
+			return
+		}
 		h := c.queue[0]
 		switch {
 		case h.giveUp:
@@ -547,7 +680,7 @@ func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
 		return
 	}
 	remaining := h.start.Add(spaRetryBudget).Sub(now)
-	if remaining <= 0 {
+	if remaining <= 0 && !c.hidden {
 		h.giveUp = true
 		c.wakeLocked(h)
 		return
@@ -557,6 +690,9 @@ func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
 	case c.tokensLocked(h.origin) < spaBucketMin:
 		// Retries are suspended: only a recovery signal (or the end of the
 		// budget) moves this request on.
+		if c.hidden {
+			return // no budget runs out while hidden: the return re-sends it
+		}
 		delay = remaining
 	case last.hasRetryAfter:
 		delay = last.retryAfter
@@ -565,13 +701,21 @@ func (c *spaRetryCoord) scheduleLocked(h *spaRetryReq, last spaOutcome) {
 		delay = spaFullJitter(h.attempt, c.rnd())
 	}
 	giveUp := false
-	if delay >= remaining {
+	if delay >= remaining && !c.hidden {
 		delay, giveUp = remaining, true
 	}
+	due := now.Add(delay)
 	c.cancel = c.arm(delay, func() {
 		c.mu.Lock()
 		if len(c.queue) > 0 && c.queue[0] == h {
-			h.giveUp = h.giveUp || giveUp
+			if now := c.now(); !c.hidden && now.Sub(due) >= spaSuspendGap {
+				// The timer fired long after it was due: the page was
+				// suspended. A resume, not the end of the budget. (A hidden
+				// page's timers are throttled; its resume is setHidden.)
+				c.resumeLocked(now)
+				giveUp = false
+			}
+			h.giveUp = h.giveUp || (giveUp && !c.hidden)
 			h.paced = false
 			c.cancel = nil
 			c.wakeLocked(h)
@@ -588,8 +732,8 @@ func (c *spaRetryCoord) wakeLocked(r *spaRetryReq) {
 }
 
 // recover is a recovery signal (online, visible, pageshow, focus): every
-// queued request starts a fresh budget and the head is re-sent now, whatever
-// the bucket holds. It reports whether anything was waiting.
+// tracked request (queued, or on the wire) starts a fresh budget and the head
+// is re-sent now, whatever the bucket holds. It reports whether anything was waiting.
 func (c *spaRetryCoord) recover() bool {
 	c.mu.Lock()
 	if len(c.queue) == 0 {
@@ -597,7 +741,7 @@ func (c *spaRetryCoord) recover() bool {
 		return false
 	}
 	now := c.now()
-	for _, q := range c.queue {
+	for q := range c.live {
 		q.attempt = 0
 		q.start = now
 		q.giveUp = false
@@ -616,6 +760,7 @@ func (c *spaRetryCoord) recover() bool {
 // for an attempt the adaptive throttle refused locally.
 func spaRetryLoop[R any](c *spaRetryCoord, origin string, attempt func() (R, spaOutcome), refused func() R) R {
 	r := c.begin(origin)
+	defer c.end(r)
 	for {
 		var res R
 		var o spaOutcome

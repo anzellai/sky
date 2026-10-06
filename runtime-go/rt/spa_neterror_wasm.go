@@ -176,7 +176,9 @@ func spaRecoverNow() {
 // spaInstallRecovery listens for the signals that mean "the network may be
 // back": online, focus, pageshow, and visibilitychange to visible (also
 // Page Lifecycle resume). Hidden and freeze stop network-bearing ticks
-// (spa_tick.go).
+// (spa_tick.go). Hidden, freeze and pagehide also stop the retry budgets
+// (spaCoord.setHidden): no request is given up while the user cannot see the
+// page, and the return gives each a fresh budget and re-sends the head now.
 func spaInstallRecovery() {
 	win := js.Global()
 	doc := win.Get("document")
@@ -184,6 +186,7 @@ func spaInstallRecovery() {
 		return
 	}
 	visible := func() {
+		spaCoord.setHidden(false)
 		spaRecoverNow()
 		for _, ms := range spaTicks.setHidden(false) {
 			spaFreshTick(ms)
@@ -199,15 +202,20 @@ func spaInstallRecovery() {
 	on(win, "focus", spaRecoverNow)
 	on(win, "pageshow", visible)
 	on(doc, "resume", visible)
-	on(doc, "freeze", func() { spaTicks.setHidden(true) })
+	hidden := func() {
+		spaTicks.setHidden(true)
+		spaCoord.setHidden(true)
+	}
+	on(doc, "freeze", hidden)
+	on(win, "pagehide", hidden)
 	on(doc, "visibilitychange", func() {
 		if doc.Get("hidden").Truthy() {
-			spaTicks.setHidden(true)
+			hidden()
 			return
 		}
 		visible()
 	})
 	if doc.Get("hidden").Truthy() {
-		spaTicks.setHidden(true)
+		hidden()
 	}
 }

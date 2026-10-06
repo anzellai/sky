@@ -18,6 +18,12 @@
 //   hidden    a client-only Sub.every keeps ticking while the page is hidden;
 //             a polling Sub.every sends at most its first call while hidden;
 //             on return one fresh poll goes out at once.
+//   resume    (v0.27.6) the page clock jumps minutes ahead with an RPC on the
+//             wire, the way a frozen page, a phone app switch or a tab
+//             restored from the back/forward cache sees time: the request is
+//             re-sent at once on resume (same request id) and runs once,
+//             App.withRpcError is never called, no red bar. Also: an outage
+//             that lasts minutes while the page is hidden gives nothing up.
 // Stage "slow" (Chromium only; they wait out the real 30 s and 60 s budgets):
 //   timeout   a request that hangs is aborted after 30 s as a Timeout and
 //             re-sent with the same request id.
@@ -147,9 +153,13 @@ async function setHidden(page, hidden) {
   }, hidden);
 }
 
-async function openPage(browser, rpcs) {
+async function openPage(browser, rpcs, { clock = false } = {}) {
   const context = await browser.newContext();
   const page = await context.newPage();
+  // The resume cases jump the page's clock (Date, performance.now, timers)
+  // ahead with page.clock.fastForward: due timers fire once, at the jump, as
+  // they do when a frozen page resumes. Installed before the wasm boots.
+  if (clock) await page.clock.install();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("request", (r) => {
@@ -273,8 +283,119 @@ async function fast(browserName) {
       check(`${tag} hidden: no page error`, errors.length === 0, errors.join(" | ") || "none");
       await page.context().close();
     }
+
+    await resume(tag, browser);
   } finally {
     await browser.close();
+  }
+}
+
+// v0.27.6: the retry budget (60 s) and the fetch timeout (30 s) count time the
+// page could run, not wall time. Before, a request on the wire when the page
+// froze was judged at resume against the wall clock: its abort fired at once,
+// its budget read as spent, and App.withRpcError got the failure.
+async function resume(tag, browser) {
+  const GAP = "02:00";
+  const cases = [
+    {
+      name: "frozen 2 min, the abort timer is overdue on resume",
+      run: async (page) => {
+        await page.clock.fastForward(GAP);
+      },
+    },
+    {
+      name: "hidden 2 min, the connection is lost on resume",
+      run: async (page, held) => {
+        await setHidden(page, true);
+        await page.clock.fastForward(GAP);
+        await setHidden(page, false);
+        await held().abort("failed");
+      },
+    },
+    {
+      name: "back/forward cache 2 min (pagehide, pageshow persisted)",
+      run: async (page, held) => {
+        await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
+        await page.clock.fastForward(GAP);
+        await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+        await held().abort("connectionreset");
+      },
+    },
+    {
+      name: "frozen 2 min with no event, the connection is lost on resume",
+      run: async (page, held) => {
+        await page.clock.fastForward(GAP);
+        // the overdue abort already settled this attempt; a second jump with
+        // the re-send refused models a radio that is still waking up
+      },
+      refuseAfter: 1,
+    },
+  ];
+  for (const c of cases) {
+    const rpcs = [];
+    const { page, errors } = await openPage(browser, rpcs, { clock: true });
+    let held = null;
+    let sent = 0;
+    await page.route("**/_rpc/Hit**", (route) => {
+      sent++;
+      if (sent === 1) {
+        held = route; // the first attempt is on the wire when the page stops
+        return;
+      }
+      if (c.refuseAfter && sent <= 1 + c.refuseAfter) return route.abort("internetdisconnected");
+      return route.continue();
+    });
+    const before = fileRuns("hits.txt");
+    const stop = watchOverlays(page);
+    await page.click("#hit");
+    const t0 = Date.now();
+    while (!held && Date.now() - t0 < 5000) await page.waitForTimeout(20);
+    const resumedAt = Date.now();
+    await c.run(page, () => held);
+    const hits = await waitFor(page, "hits", (v) => v === `hits=${before + 1}`, 15000);
+    await page.waitForTimeout(500);
+    const seen = stop();
+    const sends = rpcs.filter((r) => r.url.includes("/_rpc/Hit"));
+    const resent = sends.find((r) => r.at >= resumedAt);
+    check(`${tag} resume (${c.name}): withRpcError not called`, (await text(page, "rpcerrs")) === "rpcerrs=0", await text(page, "rpcerrs"));
+    check(`${tag} resume (${c.name}): no red bar`, !seen.bar, JSON.stringify(seen));
+    check(`${tag} resume (${c.name}): the click ran once`, hits === `hits=${before + 1}` && fileRuns("hits.txt") === before + 1, `${hits} file=${fileRuns("hits.txt")}`);
+    check(`${tag} resume (${c.name}): re-sent at once with the same request id`,
+      !!resent && resent.at - resumedAt < 3000 && new Set(sends.map((s) => ridOf(s.url))).size === 1,
+      `sends=${sends.length} first re-send ${resent ? resent.at - resumedAt + "ms" : "none"} after resume`);
+    check(`${tag} resume (${c.name}): Sub.connection back to online`, (await waitFor(page, "conn", (v) => v === "conn=online", 5000)) === "conn=online", await text(page, "conn"));
+    check(`${tag} resume (${c.name}): no page error`, errors.length === 0, errors.join(" | ") || "none");
+    await page.context().close();
+  }
+
+  // A long outage while the page is hidden: the attempts fail on the wire
+  // (timers run, throttled, as on a desktop) for longer than the budget. No
+  // request is given up while the user cannot see the page; the return to it
+  // re-sends the click, which runs once.
+  {
+    const rpcs = [];
+    const { page, errors } = await openPage(browser, rpcs, { clock: true });
+    let refuse = true;
+    await page.route("**/_rpc/**", (route) => (refuse ? route.abort("connectionrefused") : route.continue()));
+    const before = fileRuns("hits.txt");
+    await page.click("#hit");
+    await page.waitForTimeout(300);
+    await setHidden(page, true);
+    for (let i = 0; i < 18; i++) {
+      await page.clock.fastForward("00:10"); // 3 min hidden, in steps: every due timer fires
+      await page.waitForTimeout(30);
+    }
+    const hiddenErrs = await text(page, "rpcerrs");
+    const hiddenBar = await shown(page, "#sky-spa-neterror");
+    refuse = false;
+    const visAt = Date.now();
+    await setHidden(page, false);
+    const hits = await waitFor(page, "hits", (v) => v === `hits=${before + 1}`, 10000);
+    check(`${tag} resume (outage while hidden 3 min): nothing given up while hidden`, hiddenErrs === "rpcerrs=0" && !hiddenBar, `${hiddenErrs} bar=${hiddenBar}`);
+    check(`${tag} resume (outage while hidden 3 min): the click ran once on return`, hits === `hits=${before + 1}` && fileRuns("hits.txt") === before + 1, `${hits} file=${fileRuns("hits.txt")} in ${Date.now() - visAt}ms`);
+    check(`${tag} resume (outage while hidden 3 min): withRpcError not called`, (await text(page, "rpcerrs")) === "rpcerrs=0", await text(page, "rpcerrs"));
+    check(`${tag} resume (outage while hidden 3 min): no page error`, errors.length === 0, errors.join(" | ") || "none");
+    await page.context().close();
   }
 }
 
