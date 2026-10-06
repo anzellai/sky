@@ -431,9 +431,10 @@ pub static GATES: &[Gate] = &[
                 // and the v0.27.0 round-3 language strata as_pattern_nesting,
                 // task_slot, let_polymorphism and qualified_field (+95 cases,
                 // 519 → 614), and the v0.27.0 Std.Sync surface (+2 cases,
-                // 614 → 616).
-                from: "n_min = 616",
-                to: "n_min = 617",
+                // 614 → 616), and the v0.27.7 adt_equality stratum (+60 cases,
+                // 616 → 676).
+                from: "n_min = 676",
+                to: "n_min = 677",
             },
         }]),
         body: bodies::corpus_manifest,

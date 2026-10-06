@@ -11,8 +11,8 @@
 //! (and `42!` where a second type is involved).
 
 use super::axes::{
-    Assignment, AS_BINDER, LET_BINDING, LET_SITE, LET_USES, NESTED_PAYLOAD, QUAL_PATH, QUAL_USE,
-    TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
+    Assignment, AS_BINDER, EQ_CARRIER, EQ_PAIR, LET_BINDING, LET_SITE, LET_USES, NESTED_PAYLOAD,
+    QUAL_PATH, QUAL_USE, TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
 };
 use super::gen::Body;
 
@@ -284,6 +284,62 @@ pub fn qualified_field(a: &Assignment) -> (Body, String) {
         Body {
             imports: imports.to_string(),
             decls: "add43 : Int -> Int\nadd43 n =\n    n + 43\n".to_string(),
+            check,
+        },
+        out.to_string(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// adt_equality (v0.27.7)
+// ---------------------------------------------------------------------------
+
+/// `==` and `/=` on two values of `type T = A | B | C Int | D Int`, bare or
+/// nested in a record, a list, a `Maybe` or a tuple, with `T` sealed (one Go
+/// struct per constructor) or on the `rt.SkyADT` bag (an extra constructor
+/// whose payload has no static Go shape). Two values are equal exactly when
+/// they have the same constructor and equal fields; the generator knows which
+/// pairs those are, so the case prints `True/False` or `False/True`.
+pub fn adt_equality(a: &Assignment) -> (Body, String) {
+    let (l, r, equal) = match a.get(EQ_PAIR) {
+        "nullary_diff" => ("A", "B", false),
+        "nullary_same" => ("A", "A", true),
+        "fields_same" => ("(C 1)", "(C 1)", true),
+        "fields_diff_payload" => ("(C 1)", "(C 2)", false),
+        "fields_diff_ctor" => ("(C 1)", "(D 1)", false),
+        "nullary_vs_fields" => ("A", "(C 0)", false),
+        other => panic!("adt_equality: unknown pair {other:?}"),
+    };
+    let wrap = |v: &str| -> String {
+        match a.get(EQ_CARRIER) {
+            "bare" => v.to_string(),
+            "in_record" => format!("{{ v = {v}, n = 1 }}"),
+            "in_list" => format!("[ {v}, C 9 ]"),
+            "in_maybe" => format!("Just {v}"),
+            "in_tuple" => format!("( {v}, 1 )"),
+            other => panic!("adt_equality: unknown carrier {other:?}"),
+        }
+    };
+    let (lw, rw) = (wrap(l), wrap(r));
+    let bag = a.get(UNION_REP) == "bag";
+    let (keyed_ctor, imports) = if bag {
+        (
+            "\n    | Keyed (Result Error Kx.SecretKey)",
+            "import Std.Crypto.Kx as Kx\n".to_string(),
+        )
+    } else {
+        ("", String::new())
+    };
+    let decls = format!(
+        "type T\n    = A\n    | B\n    | C Int\n    | D Int{keyed_ctor}\n\n\n\
+         boolText : Bool -> String\nboolText b =\n    if b then\n        \"True\"\n\n    else\n        \"False\"\n"
+    );
+    let check = format!("boolText ({lw} == {rw}) ++ \"/\" ++ boolText ({lw} /= {rw})");
+    let out = if equal { "True/False" } else { "False/True" };
+    (
+        Body {
+            imports,
+            decls,
             check,
         },
         out.to_string(),

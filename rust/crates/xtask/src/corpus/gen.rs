@@ -802,11 +802,13 @@ pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
             )
         }
         // ---- v0.27.0 round 3: bodies that carry their own imports ---------
-        "as_pattern_nesting" | "task_slot" | "let_polymorphism" | "qualified_field" => {
+        "as_pattern_nesting" | "task_slot" | "let_polymorphism" | "qualified_field"
+        | "adt_equality" => {
             let (body, out) = match stratum.name {
                 "as_pattern_nesting" => super::lang_shapes::as_pattern_nesting(assignment),
                 "task_slot" => super::lang_shapes::task_slot(assignment),
                 "let_polymorphism" => super::lang_shapes::let_polymorphism(assignment),
+                "adt_equality" => super::lang_shapes::adt_equality(assignment),
                 _ => super::lang_shapes::qualified_field(assignment),
             };
             (

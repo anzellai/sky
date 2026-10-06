@@ -2853,52 +2853,6 @@ func NotEq(a, b any) any {
 	return !deepEq(a, b)
 }
 
-// isSkyADT reports whether v is a Sky-canonical ADT struct
-// (SkyMaybe[T], SkyResult[E, A], SkyTuple2/3[…]). Detected by the
-// presence of an int Tag field plus at least one of the named
-// payload fields. Used by deepEq to short-circuit equality on the
-// active tag rather than comparing zero-valued payload fields of
-// different generic instantiations.
-func isSkyADT(v reflect.Value) bool {
-	if v.Kind() != reflect.Struct {
-		return false
-	}
-	tag := v.FieldByName("Tag")
-	if !tag.IsValid() || tag.Kind() != reflect.Int {
-		return false
-	}
-	for _, name := range []string{"JustValue", "OkValue", "ErrValue"} {
-		if v.FieldByName(name).IsValid() {
-			return true
-		}
-	}
-	return false
-}
-
-// skyADTActiveFields returns the list of payload field names that
-// matter for the given tag in a Sky ADT struct. For SkyMaybe Tag=0
-// → ["JustValue"], Tag=1 → []. For SkyResult Tag=0 → ["OkValue"],
-// Tag=1 → ["ErrValue"]. The struct layout determines which family.
-func skyADTActiveFields(v reflect.Value, tag int) []string {
-	hasJust := v.FieldByName("JustValue").IsValid()
-	hasOk := v.FieldByName("OkValue").IsValid()
-	if hasJust && !hasOk {
-		// SkyMaybe-shaped.
-		if tag == 0 {
-			return []string{"JustValue"}
-		}
-		return nil
-	}
-	if hasOk {
-		// SkyResult-shaped.
-		if tag == 0 {
-			return []string{"OkValue"}
-		}
-		return []string{"ErrValue"}
-	}
-	return nil
-}
-
 // structHasUnexportedField reports whether a struct type has any unexported
 // field — the signal that it is a Go-native value (a kernel/FFI type such as a
 // shopspring decimal, time.Time, or big.Int) rather than a Sky ADT/record
@@ -2985,40 +2939,22 @@ func deepEq(a, b any) bool {
 		if structHasUnexportedField(ra.Type()) || structHasUnexportedField(rb.Type()) {
 			return reflect.DeepEqual(a, b)
 		}
-		// Audit P0-7: Sky's canonical ADT structs (SkyMaybe[T],
-		// SkyResult[E, A], SkyTuple2/3) carry the active discriminator
-		// in `Tag` plus payloads in named fields. Comparing
-		// `SkyMaybe[any]{Tag:1}` (Nothing) to `SkyMaybe[string]{Tag:1}`
-		// (Nothing) used to fall through the fields-by-name path and
-		// compare zero-value JustValue payloads of different Go types
-		// (`nil` any vs `""` string), returning false. The fix is to
-		// short-circuit on Tag for Sky ADTs: only the active payload
-		// matters.
-		if isSkyADT(ra) && isSkyADT(rb) {
-			tA := ra.FieldByName("Tag").Int()
-			tB := rb.FieldByName("Tag").Int()
-			if tA != tB {
-				return false
-			}
-			// Compare only the field corresponding to the active tag.
-			// For SkyMaybe: Tag=0 → JustValue, Tag=1 → no payload.
-			// For SkyResult: Tag=0 → OkValue, Tag=1 → ErrValue.
-			activeFields := skyADTActiveFields(ra, int(tA))
-			for _, f := range activeFields {
-				fa := ra.FieldByName(f)
-				fb := rb.FieldByName(f)
-				if !fa.IsValid() || !fb.IsValid() {
-					continue
-				}
-				if !deepEq(fa.Interface(), fb.Interface()) {
-					return false
-				}
-			}
-			return true
+		// A union value (a sealed variant, `rt.SkyADT`, Maybe, Result) is equal
+		// to another only with the SAME CONSTRUCTOR and equal payloads
+		// (union_value.go). This arm must come before the record logic below:
+		// the fields-by-name fallback compared `A{}` and `B{}` of
+		// `type T = A | B | C Int` as two empty structs and answered True
+		// (v0.27.7). It also covers Audit P0-7: `SkyMaybe[any]{Tag:1}` and
+		// `SkyMaybe[string]{Tag:1}` are both Nothing, whatever their zero-valued
+		// JustValue fields hold.
+		if eq, isUnion := unionEq(ra, rb); isUnion {
+			return eq
 		}
 		if ra.Type() != rb.Type() {
-			// Fields-by-name fallback for aliased Sky ADTs that
-			// share layout but not type identity.
+			// Fields-by-name fallback for two RECORD structs that share
+			// field names but not type identity (an alias record and the
+			// structural record the same value was built as). Union values
+			// never reach here: unionEq above decided them.
 			if ra.NumField() != rb.NumField() {
 				return false
 			}
@@ -10632,66 +10568,31 @@ func cmpFloatTotal(fa, fb float64) int {
 	return 0
 }
 
-// unionTag returns the constructor tag of a union value: a sealed variant
-// (SkyVariantTag, typed codegen), or a struct with an int `Tag` field (the
-// legacy SkyADT, Maybe, Result). ok is false for anything else.
+// unionTag returns the constructor tag of a union value, recognised by Go
+// type (union_value.go): a sealed variant, `rt.SkyADT`, Maybe or Result. A
+// user record with fields named `tag` and `fields` is NOT a union value. ok is
+// false for anything else.
 func unionTag(v any, rv reflect.Value) (int, bool) {
-	if sv, ok := v.(SkyVariant); ok {
-		return sv.SkyVariantTag(), true
-	}
-	if rv.Kind() != reflect.Struct {
+	shape := unionShapeOf(rv.Type())
+	if shape == unionNone {
 		return 0, false
 	}
-	f := rv.FieldByName("Tag")
-	if !f.IsValid() || (f.Kind() != reflect.Int && f.Kind() != reflect.Int64) {
-		return 0, false
-	}
-	// A user record may have a field named `tag`: only the union shapes
-	// (a payload field beside the tag) count.
-	if !rv.FieldByName("Fields").IsValid() && !rv.FieldByName("JustValue").IsValid() &&
-		!rv.FieldByName("OkValue").IsValid() {
-		return 0, false
-	}
-	return int(f.Int()), true
+	tag, _, _ := unionCtor(rv, shape)
+	return tag, true
 }
 
 // unionPayload lists the constructor arguments a union value carries, in
-// order: a sealed variant's exported fields (V0, V1, …); a SkyADT's Fields;
-// the JustValue of a Just; the OkValue of an Ok or the ErrValue of an Err.
-// Never a zero-valued field of another constructor.
+// order (unionPayloadValues). ok is false when one cannot be read.
 func unionPayload(v any, rv reflect.Value, tag int) ([]any, bool) {
-	if _, ok := v.(SkyVariant); ok {
-		out := make([]any, 0, rv.NumField())
-		for i := 0; i < rv.NumField(); i++ {
-			f := rv.Field(i)
-			if !f.CanInterface() {
-				return nil, false
-			}
-			out = append(out, f.Interface())
+	vals := unionPayloadValues(rv, unionShapeOf(rv.Type()), tag)
+	out := make([]any, len(vals))
+	for i, f := range vals {
+		if !f.CanInterface() {
+			return nil, false
 		}
-		return out, true
+		out[i] = f.Interface()
 	}
-	if f := rv.FieldByName("Fields"); f.IsValid() && (f.Kind() == reflect.Slice || f.Kind() == reflect.Array) {
-		out := make([]any, f.Len())
-		for i := range out {
-			out[i] = f.Index(i).Interface()
-		}
-		return out, true
-	}
-	if f := rv.FieldByName("JustValue"); f.IsValid() {
-		if tag == 0 {
-			return []any{f.Interface()}, true
-		}
-		return nil, true
-	}
-	if ok, er := rv.FieldByName("OkValue"), rv.FieldByName("ErrValue"); ok.IsValid() && er.IsValid() {
-		if tag == 0 {
-			return []any{ok.Interface()}, true
-		}
-		return []any{er.Interface()}, true
-	}
-	// A tagged struct with no payload field: a nullary constructor.
-	return nil, true
+	return out, true
 }
 
 // cmpUnion orders two union values by constructor declaration order, then

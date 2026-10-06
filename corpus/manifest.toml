@@ -17,15 +17,15 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 616
+n_min = 676
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 615
+class_v = 675
 class_d = 1
 family_S = 170
-family_L = 301
+family_L = 361
 family_E = 10
 family_R = 135
 family_F = 0
@@ -6153,6 +6153,786 @@ axes       = { qual_path = "short_alias", qual_use = "bool_field" }
 coordinate = "v0.27.0 downstream: `Module.value.field`"
 expect     = "accept"
 stdout     = "42"
+
+[[case]]
+id         = "adt_equality/bare-nullary_diff-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "nullary_diff", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/bare-nullary_diff-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "nullary_diff", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-nullary_diff-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "nullary_diff", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-nullary_diff-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "nullary_diff", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-nullary_diff-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "nullary_diff", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-nullary_diff-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "nullary_diff", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-nullary_diff-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_diff", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-nullary_diff-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_diff", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-nullary_diff-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_diff", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-nullary_diff-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_diff", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/bare-nullary_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "nullary_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/bare-nullary_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "nullary_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_record-nullary_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "nullary_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_record-nullary_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "nullary_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_list-nullary_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "nullary_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_list-nullary_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "nullary_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_maybe-nullary_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_maybe-nullary_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_tuple-nullary_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_tuple-nullary_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/bare-fields_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "fields_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/bare-fields_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "fields_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_record-fields_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "fields_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_record-fields_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "fields_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_list-fields_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "fields_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_list-fields_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "fields_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_maybe-fields_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "fields_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_maybe-fields_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "fields_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_tuple-fields_same-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "fields_same", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/in_tuple-fields_same-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "fields_same", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "True/False"
+
+[[case]]
+id         = "adt_equality/bare-fields_diff_payload-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "fields_diff_payload", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/bare-fields_diff_payload-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "fields_diff_payload", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-fields_diff_payload-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_payload", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-fields_diff_payload-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_payload", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-fields_diff_payload-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_payload", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-fields_diff_payload-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_payload", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-fields_diff_payload-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_payload", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-fields_diff_payload-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_payload", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-fields_diff_payload-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_payload", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-fields_diff_payload-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_payload", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/bare-fields_diff_ctor-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "fields_diff_ctor", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/bare-fields_diff_ctor-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-fields_diff_ctor-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_ctor", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-fields_diff_ctor-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-fields_diff_ctor-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_ctor", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-fields_diff_ctor-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-fields_diff_ctor-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_ctor", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-fields_diff_ctor-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-fields_diff_ctor-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_ctor", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-fields_diff_ctor-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/bare-nullary_vs_fields-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "nullary_vs_fields", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/bare-nullary_vs_fields-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "bare", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-nullary_vs_fields-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "nullary_vs_fields", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_record-nullary_vs_fields-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_record", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-nullary_vs_fields-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "nullary_vs_fields", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_list-nullary_vs_fields-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_list", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-nullary_vs_fields-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_vs_fields", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_maybe-nullary_vs_fields-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-nullary_vs_fields-bag"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_vs_fields", union_rep = "bag" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
+
+[[case]]
+id         = "adt_equality/in_tuple-nullary_vs_fields-sealed"
+family     = "L"
+stratum    = "adt_equality"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
+coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
+expect     = "accept"
+stdout     = "False/True"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

@@ -64,7 +64,10 @@
 //	Z                a nil slice
 //	L<n>;<elem>…     slice / array
 //	M<n>;<k><v>…     map, pairs sorted by encoded key (Go randomises map order)
-//	R<n>;<field>…    struct, fields in declaration order
+//	U<tag>;<name><n>;<arg>…  union value (union_value.go): constructor tag,
+//	                 its name (a string item, or N for Maybe/Result), then
+//	                 the ACTIVE payload only
+//	R<n>;<field>…    any other struct, fields in declaration order
 //	S<n>;<key>…      SkySet, its element keys sorted
 //	P<elem>          non-nil pointer
 //	p<hex>;          func / chan / unsafe pointer — reference identity
@@ -176,6 +179,13 @@ func writeIdentityKey(b *strings.Builder, rv reflect.Value, depth int) {
 			writeSkySetKey(b, s)
 			return
 		}
+		// A union value keys on its CONSTRUCTOR first. As a plain struct, every
+		// nullary variant of `type T = A | B | C Int` wrote `R0;`, so
+		// `Set.fromList [ A, B ]` held one element (v0.27.7).
+		if shape := unionShapeOf(rv.Type()); shape != unionNone {
+			writeUnionKey(b, rv, shape, depth)
+			return
+		}
 		n := rv.NumField()
 		b.WriteByte('R')
 		b.WriteString(strconv.Itoa(n))
@@ -205,6 +215,28 @@ func writeIdentityKey(b *strings.Builder, rv reflect.Value, depth int) {
 		b.WriteByte(';')
 	default:
 		b.WriteByte('?')
+	}
+}
+
+// writeUnionKey writes `U<tag>;<name><n>;<payload>…`. The name is the
+// constructor name for a shape that carries one (written as a string item) and
+// `N` for Maybe / Result. Only the ACTIVE payload is written, so a Nothing keys
+// alike at every instantiation of `SkyMaybe`.
+func writeUnionKey(b *strings.Builder, rv reflect.Value, shape unionShape, depth int) {
+	tag, name, hasName := unionCtor(rv, shape)
+	payload := unionPayloadValues(rv, shape, tag)
+	b.WriteByte('U')
+	b.WriteString(strconv.Itoa(tag))
+	b.WriteByte(';')
+	if hasName {
+		writeIdentityKey(b, reflect.ValueOf(name), depth+1)
+	} else {
+		b.WriteByte('N')
+	}
+	b.WriteString(strconv.Itoa(len(payload)))
+	b.WriteByte(';')
+	for _, p := range payload {
+		writeIdentityKey(b, p, depth+1)
 	}
 }
 

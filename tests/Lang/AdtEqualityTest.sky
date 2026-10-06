@@ -1,0 +1,118 @@
+module Lang.AdtEqualityTest exposing (tests)
+
+-- `==` on custom types compares the CONSTRUCTOR, then the fields (v0.27.7).
+--
+-- Before v0.27.7, two NULLARY constructors of a type that also has a
+-- constructor with fields compared equal: `type T = A | B | C Int` gave
+-- `A == B` True, because the runtime compared the two empty variant structs
+-- field by field and never looked at which constructor each was. `Test.equal`
+-- and `Test.notEqual` go through the same `==`.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Set as Set
+import Sky.Test as Test exposing (Test)
+import Lang.AdtEqualityShapes as Shapes exposing (Box(..), Shape(..))
+
+type T
+    = A
+    | B
+    | C Int
+    | D Int
+
+type alias Holder =
+    { kind : T
+    , count : Int
+    }
+
+
+pick : Int -> T
+pick n =
+    if n == 0 then
+        A
+
+    else
+        B
+
+
+emptyInt : Box Int
+emptyInt =
+    Empty
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "nullary constructors of a mixed type"
+          [ Test.test "A /= B" (\_ -> Test.notEqual A B)
+          , Test.test "A == A" (\_ -> Test.equal A A)
+          , Test.test "A == B is False" (\_ -> Test.equal False (A == B))
+          , Test.test "A /= B is True" (\_ -> Test.equal True (A /= B))
+          , Test.test
+                "pick 0 /= B (runtime value)"
+                (\_ -> Test.notEqual B (pick 0))
+          , Test.test
+                "pick 1 == B (runtime value)"
+                (\_ -> Test.equal B (pick 1))
+          ]
+    , Test.suite
+          "constructors with fields"
+          [ Test.test "C 1 == C 1" (\_ -> Test.equal (C 1) (C 1))
+          , Test.test "C 1 /= C 2" (\_ -> Test.notEqual (C 1) (C 2))
+          , Test.test "C 1 /= D 1" (\_ -> Test.notEqual (C 1) (D 1))
+          , Test.test "A /= C 0" (\_ -> Test.notEqual A (C 0))
+          ]
+    , Test.suite
+          "nested"
+          [ Test.test
+                "records holding A and B differ"
+                (\_ ->
+                    Test.notEqual
+                        { kind = A, count = 1 }
+                        { kind = B, count = 1 })
+          , Test.test
+                "records holding A are equal"
+                (\_ -> Test.equal (Holder A 1) (Holder A 1))
+          , Test.test
+                "[ A, C 1 ] /= [ B, C 1 ]"
+                (\_ -> Test.notEqual [ A, C 1 ] [ B, C 1 ])
+          , Test.test "Just A /= Just B" (\_ -> Test.notEqual (Just A) (Just B))
+          , Test.test "Ok A /= Ok B" (\_ -> Test.notEqual (Ok A) (Ok B))
+          , Test.test
+                "( A, 1 ) /= ( B, 1 )"
+                (\_ -> Test.notEqual ( A, 1 ) ( B, 1 ))
+          , Test.test
+                "List.member B [ A ] is False"
+                (\_ -> Test.isFalse (List.member B [ A ]))
+          , Test.test
+                "Set.fromList [ A, B, A ] has two elements"
+                (\_ -> Test.equal 2 (Set.size (Set.fromList [ A, B, A ])))
+          ]
+    , Test.suite
+          "custom types from another module"
+          [ Test.test "Dot /= Blank" (\_ -> Test.notEqual Dot Blank)
+          , Test.test "unit == Dot" (\_ -> Test.equal Dot Shapes.unit)
+          , Test.test
+                "circle 2 == Circle 2"
+                (\_ -> Test.equal (Circle 2) (Shapes.circle 2))
+          , Test.test
+                "Circle 2 /= Rect 2 2"
+                (\_ -> Test.notEqual (Circle 2) (Rect 2 2))
+          ]
+    , Test.suite
+          "a generic custom type"
+          [ Test.test "Empty /= Full 0" (\_ -> Test.notEqual Empty (Full 0))
+          , Test.test "Full A /= Full B" (\_ -> Test.notEqual (Full A) (Full B))
+          , Test.test
+                "Full (C 3) == Full (C 3)"
+                (\_ -> Test.equal (Full (C 3)) (Full (C 3)))
+          , Test.test "Empty == Empty" (\_ -> Test.equal emptyInt Empty)
+          ]
+    , Test.suite
+          "ordering stays by declaration"
+          [ Test.test
+                "List.sort orders by constructor"
+                (\_ ->
+                    Test.equal [ A, B, C 1, C 2 ] (List.sort [ C 2, B, C 1, A ]))
+          ]
+    ]

@@ -297,6 +297,14 @@ type Set a     -- opaque; sorted slice or hashset depending on a
   true iff `Dict.get k d` returns `Just _`.
 * `Set` is a finite set: `Set.union a b` is commutative + idempotent
   + associative.
+* **`==` and `Set` agree on custom types.** Two values of a custom type
+  are equal iff they have the same constructor and equal fields
+  (`runtime-go/rt/union_value.go`, shared by `deepEq`, the `Set` /
+  `Cache` / `Std.Ui.Lazy` identity key and `compare`). So
+  `Set.member x (Set.fromList xs)` iff `List.member x xs`, and
+  `Set.size (Set.fromList [ A, B ]) == 2` for two distinct nullary
+  constructors (v0.27.7; before it, every nullary constructor of a
+  sealed type compared and keyed alike).
 * **Persistence**: every operation returns a new value; the runtime
   has copy-on-write semantics so reads are O(log n) and writes are
   O(log n) (UNVERIFIED claim — runtime detail; the contract is

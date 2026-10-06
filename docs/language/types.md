@@ -163,7 +163,7 @@ Per-instance construction takes the type args: `Cfg_R[Msg]`, `Cfg_R[Int]`. Callb
 
 Intentionally unsupported. Sky's HM is unconstrained; typeclass-style operations are provided implicitly via runtime helpers:
 
-- **Equality** — the `==` and `/=` operators dispatch through `rt.sky_equal`, which type-switches on the runtime tag and recurses into ADTs / records / lists / dicts. Works for any value without a constraint.
+- **Equality** — `==` and `/=` are structural. Two primitives of the same type compare natively; anything else goes through the runtime (`rt.Eq` / `rt.NotEq`), which recurses into records, lists, tuples, `Dict`s and custom types. Two values of a custom type are equal only when they have the **same constructor** and equal fields, at any depth: with `type T = A | B | C Int`, `A == B` is `False`, `C 1 == C 1` is `True` and `C 1 == C 2` is `False`. Works for any value without a constraint. `Set`, `List.member` and `Test.equal` use the same equality. (Before v0.27.7, two different constructors without fields of a type that also had a constructor with fields compared equal.)
 - **Ordering** — `<`, `>`, `<=`, `>=`, and `Basics.compare` dispatch through `rt.sky_compare` for primitives and lexicographic ordering on collections.
 - **Display / debug** — `Basics.toString` (alias `Debug.toString`) renders any value to a readable string for debugging. For production formatting use the typed helpers (`String.fromInt`, `String.fromFloat`).
 

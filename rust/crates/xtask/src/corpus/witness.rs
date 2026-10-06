@@ -28,7 +28,7 @@
 //! always the latter.
 
 use super::axes::{
-    Assignment, Axis, Stratum, AS_BINDER, COLLIDER, COLLISION, DICT_KEY, EDGE, ERASURE,
+    Assignment, Axis, Stratum, AS_BINDER, COLLIDER, COLLISION, DICT_KEY, EDGE, EQ_PAIR, ERASURE,
     IMPORT_SHAPE, INNER, LET_USES, POSITION, QUAL_USE, SHADOW, TASK_CALLEE,
 };
 use super::gen;
@@ -85,6 +85,10 @@ fn axis_under_test(s: &Stratum) -> (Axis, &'static str) {
         "task_slot" => (TASK_CALLEE, "let_fn"),
         "let_polymorphism" => (LET_USES, "one_type"),
         "qualified_field" => (QUAL_USE, "operand"),
+        // v0.27.7. `A == A` always answered True; moving to two DIFFERENT
+        // constructors is what answered wrong, and each pair emits different Go
+        // (different constructor values), so the pair axis is witnessed.
+        "adt_equality" => (EQ_PAIR, "nullary_same"),
         other => panic!("no axis-under-test declared for stratum {other:?}"),
     }
 }

@@ -295,6 +295,29 @@ pub const NESTED_PAYLOAD: Axis = Axis::new("nested_payload", &["result", "maybe"
 /// the bag.
 pub const UNION_REP: Axis = Axis::new("union_rep", &["bag", "sealed"]);
 
+/// **Which two constructor values `==` compares** (v0.27.7). With
+/// `type T = A | B | C Int | D Int` sealed, `A == B` was True: the runtime
+/// compared the two field-less variant structs field by field and never looked
+/// at the constructor, and `C 1 == D 1` was True for the same reason.
+pub const EQ_PAIR: Axis = Axis::new(
+    "eq_pair",
+    &[
+        "nullary_diff",
+        "nullary_same",
+        "fields_same",
+        "fields_diff_payload",
+        "fields_diff_ctor",
+        "nullary_vs_fields",
+    ],
+);
+
+/// **Where the two compared values sit** (v0.27.7): the constructor must be
+/// compared at any depth, not only at the top.
+pub const EQ_CARRIER: Axis = Axis::new(
+    "eq_carrier",
+    &["bare", "in_record", "in_list", "in_maybe", "in_tuple"],
+);
+
 /// **How a Task-returning function reaches a `Task.andThen` chain.** A
 /// parameter `f : Int -> Task Error ()` called in a middle link whose result
 /// the next link ignores (`\_ -> …`) was typed `SkyTask[E, any]` by inference
@@ -535,6 +558,13 @@ pub const STRATA: &[Stratum] = &[
         coordinate: Some("v0.27.0 downstream: `Module.value.field`"),
         isolated: false,
     },
+    // ---- v0.27.7 ------------------------------------------------------------
+    Stratum {
+        name: "adt_equality",
+        axes: &[EQ_PAIR, EQ_CARRIER, UNION_REP],
+        coordinate: Some("v0.27.7: `A == B` True for two nullary ctors of a sealed type"),
+        isolated: false,
+    },
 ];
 
 /// Whether a point in a stratum's cross is a real case.
@@ -663,6 +693,13 @@ pub fn pinned_coordinate(stratum: &str) -> Option<Assignment> {
             Assignment::new()
                 .with(QUAL_PATH, "alias")
                 .with(QUAL_USE, "arg"),
+        ),
+        // v0.27.7: the reported reproduction, `A == B` on a sealed type.
+        "adt_equality" => Some(
+            Assignment::new()
+                .with(EQ_PAIR, "nullary_diff")
+                .with(EQ_CARRIER, "bare")
+                .with(UNION_REP, "sealed"),
         ),
         _ => None,
     }

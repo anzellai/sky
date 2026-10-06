@@ -1,0 +1,23 @@
+module Lang.AdtEqualityShapes exposing (Shape(..), Box(..), unit, circle)
+
+-- Custom types defined in ANOTHER module, for AdtEqualityTest: the equality
+-- of a constructor must not depend on where its type was declared.
+type Shape
+    = Dot
+    | Blank
+    | Circle Int
+    | Rect Int Int
+
+type Box a
+    = Empty
+    | Full a
+
+
+unit : Shape
+unit =
+    Dot
+
+
+circle : Int -> Shape
+circle r =
+    Circle r
