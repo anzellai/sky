@@ -147,6 +147,12 @@ nix develop            # flakes
 The shell sets `SKY_RUNTIME_DIR` to the repo's `runtime-go/` so
 in-tree builds resolve the runtime without the embedded fallback.
 
+Entering the shell writes nothing to disk: it sets stdenv's
+`noDumpEnvVars`, which stops `dumpVars` copying the whole environment
+to `$TMPDIR/env-vars` (before v0.27.7 it did, and on macOS the file
+landed in `/tmp/env-vars`). `scripts/ci/nix-dev-shell-env-check.sh`
+checks both shells.
+
 ### Use the overlay
 
 ```nix

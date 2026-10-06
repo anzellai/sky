@@ -8,7 +8,9 @@
 # For each build: `sky --version` prints exactly what Nix computed for that
 # entry, `sky v<rust/Cargo.toml workspace version>`, plus ` (<rev>)` for the
 # flake (its short git revision); and the `sky-ffi-inspect` installed beside
-# it inspects a real Go package. Each dev shell must give cargo and go. On a
+# it inspects a real Go package. Each dev shell must give cargo and go, and
+# entering it must not write the environment to disk
+# (scripts/ci/nix-dev-shell-env-check.sh). On a
 # tag (GITHUB_REF_TYPE=tag) the stable build must print exactly `sky v<tag>`
 # and the flake build must start with it, so a version source that disagrees
 # with the tag fails the release.
@@ -25,6 +27,16 @@ require_tool nix-build "install Nix (https://nixos.org/download)"
 require_tool nix "install Nix (https://nixos.org/download)"
 
 NIX=(nix --extra-experimental-features 'nix-command flakes')
+
+# Every nix-build / nix-shell / nix build / nix develop below runs with a
+# private TMPDIR (mode 700) that is removed on exit. stdenv can write the
+# whole environment to `$TMPDIR/env-vars` when a shell is entered (the dev
+# shell now sets `noDumpEnvVars`; see default.nix), so a future dump, or any
+# other temp file Nix leaves, never lands in a shared /tmp.
+PRIVATE_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/sky-nix-build-check.XXXXXX")"
+chmod 700 "$PRIVATE_TMPDIR"
+trap 'rm -rf "$PRIVATE_TMPDIR"' EXIT
+export TMPDIR="$PRIVATE_TMPDIR"
 
 fail() {
   echo "::error::nix-build-check: $*" >&2
@@ -68,6 +80,9 @@ check_build flake result-flake "$flake_want"
 flake_got=$GOT
 "${NIX[@]}" develop -c sh -c 'cargo --version && go version'
 check_inspector flake result-flake "${NIX[@]}" develop -c sh -c
+
+# ---- entering a dev shell writes no environment to disk ---------------------
+"$ROOT/scripts/ci/nix-dev-shell-env-check.sh"
 
 # ---- a tag: the version is the tag ------------------------------------------
 if [ "${GITHUB_REF_TYPE:-}" = tag ]; then

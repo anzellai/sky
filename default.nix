@@ -197,6 +197,15 @@ let
       git,
     }:
     mkShell {
+      # stdenv's setup.sh runs `dumpVars` when the shell is entered, which
+      # writes EVERY exported variable as `declare -x NAME=value` to
+      # `$NIX_BUILD_TOP/env-vars`. For `nix-shell` that directory is the
+      # caller's TMPDIR, so entering the dev shell copied the developer's whole
+      # environment, secrets included, into a plain file in (often shared)
+      # /tmp. `noDumpEnvVars` is the stdenv switch that turns the dump off;
+      # `nix develop` reads the same derivation. Test:
+      # scripts/ci/nix-dev-shell-env-check.sh.
+      noDumpEnvVars = true;
       packages = [
         rustc
         cargo

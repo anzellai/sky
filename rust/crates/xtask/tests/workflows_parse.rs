@@ -1610,6 +1610,71 @@ fn every_browser_tier_gate_step_has_its_own_bound() {
     );
 }
 
+/// Entering the Nix dev shell must not write the environment to disk
+/// (v0.27.7). stdenv's `dumpVars` writes every exported variable to
+/// `$NIX_BUILD_TOP/env-vars` when a shell is entered; for `nix-shell -A shell`
+/// that was the caller's TMPDIR (or `/tmp` on macOS), so a developer's secrets
+/// landed in a plain file in a shared directory. This pins the three parts of
+/// the fix without needing Nix: the dev shell sets `noDumpEnvVars`, the CI
+/// check runs Nix in a private TMPDIR it removes on exit, and it runs
+/// `scripts/ci/nix-dev-shell-env-check.sh`, which enters both dev shells and
+/// fails if the environment reaches a file (that one needs Nix, and runs in
+/// the jobs the test below pins).
+#[test]
+fn the_nix_dev_shell_writes_no_environment_to_disk() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let nix = std::fs::read_to_string(root.join("default.nix")).expect("read default.nix");
+    let shell_at = nix
+        .find("mkShell {")
+        .expect("default.nix: the dev shell is a `mkShell { ... }`");
+    let shell = &nix[shell_at..];
+    let shell = &shell[..shell.find("shellHook").unwrap_or(shell.len())];
+    assert!(
+        shell.contains("noDumpEnvVars = true;"),
+        "default.nix: the dev shell must set `noDumpEnvVars = true;`, or entering it \
+         writes the whole environment to $TMPDIR/env-vars"
+    );
+
+    let check = std::fs::read_to_string(root.join("scripts/ci/nix-build-check.sh"))
+        .expect("read scripts/ci/nix-build-check.sh");
+    for needle in [
+        "PRIVATE_TMPDIR=\"$(mktemp -d",
+        "chmod 700 \"$PRIVATE_TMPDIR\"",
+        "trap 'rm -rf \"$PRIVATE_TMPDIR\"' EXIT",
+        "export TMPDIR=\"$PRIVATE_TMPDIR\"",
+        "scripts/ci/nix-dev-shell-env-check.sh",
+    ] {
+        assert!(
+            check.contains(needle),
+            "scripts/ci/nix-build-check.sh no longer contains `{needle}`: every Nix call \
+             must run in a private TMPDIR removed on exit, and the dev-shell dump check \
+             must run"
+        );
+    }
+    let first_nix_call = check
+        .find("nix-build --out-link")
+        .expect("nix-build-check.sh builds with nix-build");
+    let private_at = check.find("export TMPDIR=").unwrap();
+    assert!(
+        private_at < first_nix_call,
+        "scripts/ci/nix-build-check.sh must switch to its private TMPDIR before its first Nix call"
+    );
+
+    let env_check = std::fs::read_to_string(root.join("scripts/ci/nix-dev-shell-env-check.sh"))
+        .expect("read scripts/ci/nix-dev-shell-env-check.sh");
+    for needle in [
+        "nix-shell -A shell",
+        "develop -c true",
+        "env-vars",
+        "SKY_DUMMY_SECRET=",
+    ] {
+        assert!(
+            env_check.contains(needle),
+            "scripts/ci/nix-dev-shell-env-check.sh no longer contains `{needle}`"
+        );
+    }
+}
+
 /// The Nix package is built through both entry points (the stable `nix-build`
 /// of `default.nix` and the flake's `nix build .#sky`) by the nightly and by a
 /// release gate job (GitHub issue #216).
