@@ -288,7 +288,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 470,
+      "expected_assertions": 530,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -348,7 +348,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 616,
+      "expected_assertions": 676,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -485,7 +485,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 669,
+      "expected_assertions": 695,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -4664,6 +4664,11 @@
             "strength": 4
           },
           {
+            "by": "tests/Lang (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
             "by": "tests/Server (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -4826,6 +4831,11 @@
           },
           {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          },
+          {
+            "by": "tests/Lang — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
           },
@@ -18882,12 +18892,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Lang",
-      "modules_imported": 1,
+      "modules_imported": 2,
       "path": "tests/Lang",
-      "refs_generous": 4,
-      "refs_qualified": 3,
+      "refs_generous": 8,
+      "refs_qualified": 7,
       "role": "SkySuite",
-      "sky_files": 1,
+      "sky_files": 2,
       "sky_toml_sections": []
     },
     {

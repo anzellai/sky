@@ -2823,16 +2823,17 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///
 /// 399 + 270 = 669.
 ///
-/// 669 -> 696:
+/// 669 -> 695:
 ///
-/// * `Lang/AdtEqualityTest` (+27) — `==` / `/=` / `Test.equal` /
+/// * `Lang/AdtEqualityTest` (+26) — `==` / `/=` / `Test.equal` /
 ///   `Test.notEqual` on custom types compare the constructor, then the fields:
 ///   nullary vs nullary, fields, nested in a record / list / Maybe / Result /
-///   tuple, `List.member`, `Set`, a type from another module, a generic type
-///   (v0.27.7).
+///   tuple, `List.member`, a type from another module, a generic type
+///   (v0.27.7). No `Set` case: `coverage-ledger`'s falsifier needs
+///   `tests/conformance` to stay the sole Sky importer of `Sky.Core.Set`.
 ///
-/// 669 + 27 = 696.
-pub const SKY_SUITES_EXPECTED: u64 = 696;
+/// 669 + 26 = 695.
+pub const SKY_SUITES_EXPECTED: u64 = 695;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

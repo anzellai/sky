@@ -7,10 +7,14 @@ module Lang.AdtEqualityTest exposing (tests)
 -- `A == B` True, because the runtime compared the two empty variant structs
 -- field by field and never looked at which constructor each was. `Test.equal`
 -- and `Test.notEqual` go through the same `==`.
+--
+-- `Set` over custom types is covered by runtime-go/rt/union_eq_test.go and
+-- rust/crates/sky/tests/adt_equality_flow.rs, not here: the coverage-ledger
+-- gate's falsifier depends on tests/conformance being the only Sky source
+-- that imports `Sky.Core.Set`.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
-import Sky.Core.Set as Set
 import Sky.Test as Test exposing (Test)
 import Lang.AdtEqualityShapes as Shapes exposing (Box(..), Shape(..))
 
@@ -84,9 +88,6 @@ tests =
           , Test.test
                 "List.member B [ A ] is False"
                 (\_ -> Test.isFalse (List.member B [ A ]))
-          , Test.test
-                "Set.fromList [ A, B, A ] has two elements"
-                (\_ -> Test.equal 2 (Set.size (Set.fromList [ A, B, A ])))
           ]
     , Test.suite
           "custom types from another module"
