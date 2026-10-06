@@ -64,7 +64,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "base"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "indexmap",
  "la-arena",
@@ -119,7 +119,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "codegen"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "lower",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "diagnostics"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "annotate-snippets",
  "base",
@@ -244,7 +244,7 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "ffi"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "include_dir",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "fmt"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "syntax",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "hir"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "diagnostics",
@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "lower"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "hir",
@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "project"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "diagnostics",
@@ -1152,7 +1152,7 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "sky"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "fmt",
  "nix",
@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "sky-lsp"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "diagnostics",
@@ -1185,7 +1185,7 @@ dependencies = [
 
 [[package]]
 name = "skydb"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "codegen",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "syntax"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "diagnostics",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "testrunner"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "project",
 ]
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "ty"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "diagnostics",
@@ -1609,7 +1609,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.27.6"
+version = "0.27.7"
 dependencies = [
  "base",
  "diagnostics",
