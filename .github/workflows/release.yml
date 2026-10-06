@@ -153,7 +153,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          # On a tag the binary must print the tag. A dispatched run (the
+          # merge gate) runs on a branch, where GITHUB_REF_NAME is the branch
+          # name: there the binary must print the workspace version, the one
+          # version source (the tag step above already ties tag == workspace
+          # version on a tag).
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+          else
+            TAG_VERSION=$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version *= *"\(.*\)"/\1/p' rust/Cargo.toml)
+          fi
+          if [ -z "$TAG_VERSION" ]; then
+            echo "::error::no expected version: not a tag, and rust/Cargo.toml has no [workspace.package] version" >&2
+            exit 1
+          fi
           ACTUAL=$("./dist/${{ matrix.artifact }}${{ matrix.ext }}" --version)
           echo "$ACTUAL"
           # ANCHORED comparison, not a substring match. `sky --version` prints
