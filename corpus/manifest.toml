@@ -6165,7 +6165,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "nullary_diff", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/bare-nullary_diff-sealed"
@@ -6178,7 +6178,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "nullary_diff", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-nullary_diff-bag"
@@ -6191,7 +6191,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "nullary_diff", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-nullary_diff-sealed"
@@ -6204,7 +6204,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "nullary_diff", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-nullary_diff-bag"
@@ -6217,7 +6217,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "nullary_diff", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-nullary_diff-sealed"
@@ -6230,7 +6230,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "nullary_diff", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-nullary_diff-bag"
@@ -6243,7 +6243,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_diff", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-nullary_diff-sealed"
@@ -6256,7 +6256,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_diff", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-nullary_diff-bag"
@@ -6269,7 +6269,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_diff", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-nullary_diff-sealed"
@@ -6282,7 +6282,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_diff", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/bare-nullary_same-bag"
@@ -6295,7 +6295,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "nullary_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/bare-nullary_same-sealed"
@@ -6308,7 +6308,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "nullary_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_record-nullary_same-bag"
@@ -6321,7 +6321,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "nullary_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_record-nullary_same-sealed"
@@ -6334,7 +6334,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "nullary_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_list-nullary_same-bag"
@@ -6347,7 +6347,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "nullary_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_list-nullary_same-sealed"
@@ -6360,7 +6360,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "nullary_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_maybe-nullary_same-bag"
@@ -6373,7 +6373,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_maybe-nullary_same-sealed"
@@ -6386,7 +6386,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_tuple-nullary_same-bag"
@@ -6399,7 +6399,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_tuple-nullary_same-sealed"
@@ -6412,7 +6412,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/bare-fields_same-bag"
@@ -6425,7 +6425,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "fields_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/bare-fields_same-sealed"
@@ -6438,7 +6438,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "fields_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_record-fields_same-bag"
@@ -6451,7 +6451,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "fields_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_record-fields_same-sealed"
@@ -6464,7 +6464,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "fields_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_list-fields_same-bag"
@@ -6477,7 +6477,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "fields_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_list-fields_same-sealed"
@@ -6490,7 +6490,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "fields_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_maybe-fields_same-bag"
@@ -6503,7 +6503,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "fields_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_maybe-fields_same-sealed"
@@ -6516,7 +6516,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "fields_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_tuple-fields_same-bag"
@@ -6529,7 +6529,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "fields_same", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/in_tuple-fields_same-sealed"
@@ -6542,7 +6542,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "fields_same", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "True/False"
+stdout     = "42/7"
 
 [[case]]
 id         = "adt_equality/bare-fields_diff_payload-bag"
@@ -6555,7 +6555,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "fields_diff_payload", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/bare-fields_diff_payload-sealed"
@@ -6568,7 +6568,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "fields_diff_payload", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-fields_diff_payload-bag"
@@ -6581,7 +6581,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_payload", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-fields_diff_payload-sealed"
@@ -6594,7 +6594,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_payload", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-fields_diff_payload-bag"
@@ -6607,7 +6607,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_payload", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-fields_diff_payload-sealed"
@@ -6620,7 +6620,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_payload", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-fields_diff_payload-bag"
@@ -6633,7 +6633,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_payload", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-fields_diff_payload-sealed"
@@ -6646,7 +6646,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_payload", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-fields_diff_payload-bag"
@@ -6659,7 +6659,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_payload", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-fields_diff_payload-sealed"
@@ -6672,7 +6672,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_payload", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/bare-fields_diff_ctor-bag"
@@ -6685,7 +6685,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "fields_diff_ctor", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/bare-fields_diff_ctor-sealed"
@@ -6698,7 +6698,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-fields_diff_ctor-bag"
@@ -6711,7 +6711,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_ctor", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-fields_diff_ctor-sealed"
@@ -6724,7 +6724,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-fields_diff_ctor-bag"
@@ -6737,7 +6737,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_ctor", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-fields_diff_ctor-sealed"
@@ -6750,7 +6750,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-fields_diff_ctor-bag"
@@ -6763,7 +6763,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_ctor", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-fields_diff_ctor-sealed"
@@ -6776,7 +6776,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-fields_diff_ctor-bag"
@@ -6789,7 +6789,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_ctor", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-fields_diff_ctor-sealed"
@@ -6802,7 +6802,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "fields_diff_ctor", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/bare-nullary_vs_fields-bag"
@@ -6815,7 +6815,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "nullary_vs_fields", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/bare-nullary_vs_fields-sealed"
@@ -6828,7 +6828,7 @@ witness    = "value"
 axes       = { eq_carrier = "bare", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-nullary_vs_fields-bag"
@@ -6841,7 +6841,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "nullary_vs_fields", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_record-nullary_vs_fields-sealed"
@@ -6854,7 +6854,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_record", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-nullary_vs_fields-bag"
@@ -6867,7 +6867,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "nullary_vs_fields", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_list-nullary_vs_fields-sealed"
@@ -6880,7 +6880,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_list", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-nullary_vs_fields-bag"
@@ -6893,7 +6893,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_vs_fields", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_maybe-nullary_vs_fields-sealed"
@@ -6906,7 +6906,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_maybe", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-nullary_vs_fields-bag"
@@ -6919,7 +6919,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_vs_fields", union_rep = "bag" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "adt_equality/in_tuple-nullary_vs_fields-sealed"
@@ -6932,7 +6932,7 @@ witness    = "value"
 axes       = { eq_carrier = "in_tuple", eq_pair = "nullary_vs_fields", union_rep = "sealed" }
 coordinate = "v0.27.7: `A == B` True for two nullary ctors of a sealed type"
 expect     = "accept"
-stdout     = "False/True"
+stdout     = "7/42"
 
 [[case]]
 id         = "reject_matrix/arity_over-plain-bare"

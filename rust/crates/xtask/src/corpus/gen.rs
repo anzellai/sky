@@ -269,12 +269,12 @@ impl GenCase {
 // ---------------------------------------------------------------------------
 
 /// The value written into the field under update.
-const UPDATED: i64 = 7;
+pub(super) const UPDATED: i64 = 7;
 /// The value written into a field the case NEVER touches. If a record update
 /// drops un-updated fields (#166), or a field read resolves against the wrong
 /// struct (`goty.rs` fieldset collision), this comes back as `0` or the program
 /// fails to build. Either way the assertion goes red.
-const SURVIVOR: i64 = 42;
+pub(super) const SURVIVOR: i64 = 42;
 
 const PRELUDE: &str = "module Main exposing (main)\n\n\
                        import Sky.Core.Prelude exposing (..)\n\

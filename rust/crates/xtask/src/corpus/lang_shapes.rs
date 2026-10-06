@@ -14,7 +14,7 @@ use super::axes::{
     Assignment, AS_BINDER, EQ_CARRIER, EQ_PAIR, LET_BINDING, LET_SITE, LET_USES, NESTED_PAYLOAD,
     QUAL_PATH, QUAL_USE, TASK_CALLEE, TASK_LINK, TASK_RESULT, UNION_REP,
 };
-use super::gen::Body;
+use super::gen::{Body, SURVIVOR, UPDATED};
 
 // ---------------------------------------------------------------------------
 // as_pattern_nesting
@@ -299,7 +299,9 @@ pub fn qualified_field(a: &Assignment) -> (Body, String) {
 /// struct per constructor) or on the `rt.SkyADT` bag (an extra constructor
 /// whose payload has no static Go shape). Two values are equal exactly when
 /// they have the same constructor and equal fields; the generator knows which
-/// pairs those are, so the case prints `True/False` or `False/True`.
+/// pairs those are. Each operator's answer prints as the generator literal 42
+/// (True) or 7 (False), so the case prints `42/7` (`==` True, `/=` False) or
+/// `7/42`.
 pub fn adt_equality(a: &Assignment) -> (Body, String) {
     let (l, r, equal) = match a.get(EQ_PAIR) {
         "nullary_diff" => ("A", "B", false),
@@ -332,16 +334,20 @@ pub fn adt_equality(a: &Assignment) -> (Body, String) {
     };
     let decls = format!(
         "type T\n    = A\n    | B\n    | C Int\n    | D Int{keyed_ctor}\n\n\n\
-         boolText : Bool -> String\nboolText b =\n    if b then\n        \"True\"\n\n    else\n        \"False\"\n"
+         answer : Bool -> String\nanswer b =\n    if b then\n        \"{SURVIVOR}\"\n\n    else\n        \"{UPDATED}\"\n"
     );
-    let check = format!("boolText ({lw} == {rw}) ++ \"/\" ++ boolText ({lw} /= {rw})");
-    let out = if equal { "True/False" } else { "False/True" };
+    let check = format!("answer ({lw} == {rw}) ++ \"/\" ++ answer ({lw} /= {rw})");
+    let out = if equal {
+        format!("{SURVIVOR}/{UPDATED}")
+    } else {
+        format!("{UPDATED}/{SURVIVOR}")
+    };
     (
         Body {
             imports,
             decls,
             check,
         },
-        out.to_string(),
+        out,
     )
 }
