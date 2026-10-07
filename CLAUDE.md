@@ -791,8 +791,9 @@ disown                                # survives shell exit
 ```
 
 Defaults (16 GB Mac): per-process kill at 6 GB RSS for compiler
-tooling (`sky` / `cargo` / `rustc` / `rust-analyzer` / `cc1` /
-`ld` / `go` / `gopls` / `sky-ffi-inspect`; legacy `cabal` / `ghc`
+tooling and Python (`sky` / `cargo` / `rustc` / `rust-analyzer` / `cc1` /
+`ld` / `go` / `gopls` / `sky-ffi-inspect` / `python` / `python3` /
+`python3.N` / Xcode's `Python`; legacy `cabal` / `ghc`
 / `ghc-iserv` / `haskell-language-server` still covered); 10 GB
 panic tier for the dev-session host
 (`claude` / `node` / `ghostty`); system-pressure floor kicks in
