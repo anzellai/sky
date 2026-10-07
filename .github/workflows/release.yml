@@ -1184,12 +1184,13 @@ jobs:
     # fixtures on top. 45 keeps ~1.5x.
     # console-live-e2e adds ~11 min: 60. nav-e2e adds two fixture builds and
     # two browsers: 70. spa-resilience-e2e adds ~5 min (it waits out the real
-    # 30 s timeout and 60 s retry budget): 80.
+    # 30 s timeout and 60 s retry budget): 80. console-controls-e2e adds
+    # ~8 min (a fixture build, the hub daemon build, six browser runs): 95.
     # Each long step also carries its own timeout-minutes, about twice its
     # slowest green run (bfc8a16c, 7292ef57, 218f4d21). A hung script then
     # fails its own named step, with its log, instead of the whole job being
     # cancelled at the job limit with no log at all (run 36942837671, step 7).
-    timeout-minutes: 80
+    timeout-minutes: 95
     env:
       GO_CACHE_BUDGET_MB: '6144'
     steps:
@@ -1267,6 +1268,13 @@ jobs:
       - name: Sky Console live data + reconnect e2e (direct + behind Caddy)
         timeout-minutes: 22
         run: scripts/console-live-e2e.sh
+      - name: Sky Console controls e2e (every control; embedded, dev, hub; Chromium + WebKit)
+        timeout-minutes: 25
+        # Every tab, range chip, level toggle, search, pivot, console link,
+        # auto-refresh and sign-in/out, with the rows, the URL, the read's
+        # parameters and the server's answer asserted. WebKit was installed
+        # above; sqlite3 by the Playwright step; openssl ships on the runner.
+        run: scripts/console-controls-e2e.sh
       - name: Upload failure evidence (diffs, server logs, build logs)
         if: failure()
         uses: actions/upload-artifact@v4

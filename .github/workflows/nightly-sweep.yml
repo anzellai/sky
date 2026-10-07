@@ -144,9 +144,10 @@ jobs:
     # and browser download, still far inside the 90-min T3 ceiling.
     # console-live-e2e adds ~11 min (a Sky.Spa wasm build, six 60 s browser
     # runs): 40. nav-e2e adds two fixture builds in two browsers: 50.
+    # console-controls-e2e adds ~8 min: 65.
     # Each long step also carries its own timeout-minutes (as in release.yml
     # gate-web), so a hung script fails its own named step with its log.
-    timeout-minutes: 50
+    timeout-minutes: 65
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -296,6 +297,13 @@ jobs:
       - name: Gate — Sky Console live data + reconnect e2e (direct + behind Caddy)
         timeout-minutes: 22
         run: scripts/console-live-e2e.sh
+      # console-controls-e2e — every Sky Console control (tabs, range chips,
+      # level toggles, searches, session + trace pivots, console links,
+      # auto-refresh, sign-in/out, hub service selection) operated in Chromium
+      # and WebKit, with the rows, URL, read parameters and answer asserted.
+      - name: Gate — Sky Console controls e2e (embedded, dev, hub; Chromium + WebKit)
+        timeout-minutes: 25
+        run: scripts/console-controls-e2e.sh
       # A failed browser gate is a picture, a server log or a build log — none
       # of which survive in the step output. The first nightly run reported
       # "binary missing" for two examples and "N% pixels exceed" for nine

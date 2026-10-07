@@ -146,6 +146,57 @@ replica until it expires (at most 4 hours). To end every console cookie on
 every replica at once, rotate `SKY_CONSOLE_TOKEN`: the cookie key is derived
 from it, so every cookie signed with the old key is refused.
 
+### Sky Console controls
+
+Every control of the console, what it does and what it reads. The embedded
+console (`/_sky/console`) and the hub console (`sky console-serve`, at
+`/console/`) share one source (`sky-bundled/console`). In the embedded console
+every read is a `GET /_sky/console/api/*` to the host app; in the hub it is a
+direct SQLite read. Either way **the server applies the range, the searches,
+the level toggles and the session pivot over its whole store, before its row
+limit** (v0.27.8). The console used to filter the newest 200 log lines (100
+spans) in the view, so the wider ranges showed the same rows and a search
+missed everything older.
+
+| Control | Where | What it does | Msg | Read / parameters |
+|---|---|---|---|---|
+| Tab buttons (Overview, Metrics, Logs, Traces, Errors, Analytics) | every page | shows the tab, reads its data at once, puts `tab=` in the URL | `SelectTab` | the tab's endpoint |
+| Range chips (15m, 1h, 24h, 7d, All) | Logs, Traces, Errors, Analytics | narrows the tab to the range, reads it again at once, puts `range=` in the URL (24h is the default and is left out) | `SelectRange` | `range=15m\|1h\|24h\|7d\|all` |
+| Search box (global) | Logs, Traces, Errors | case-insensitive search: logs by message, route, request id, session, subapp, error; traces by span name or trace id (whole traces kept); errors by message | `GlobalQuery` | `q=` |
+| Level toggles (DEBUG, INFO, WARN, ERROR) | Logs | shows only the levels left on; debug is off by default; all off shows nothing | `LogFilterToggleLevel` | `level=info,warn,error` (absent when all four are on, `none` when all are off) |
+| Logs search box | Logs | a second search term, ANDed with the global one | `LogFilterQuery` | a second `q=` |
+| Session badge (first 8 characters of a session id) | Logs row | shows only that session's lines | `LogFilterPickSession` | `session=` |
+| Trace badge (`trace <id>`) | Logs row | opens Traces searched for that trace id, found however old it is | `PivotToTrace` | `q=<trace id>` on `/traces` |
+| clear | Logs | resets the levels, the Logs search and the session pivot | `LogFilterClear` | as above |
+| Traces search box, clear | Traces | searches span names and trace ids; clear empties it | `TraceFilterQuery` | a second `q=` on `/traces` |
+| Service chips, service cards, "All services" | hub: every tab | scopes every read to one service, puts `service=` in the URL | `SelectService` | the reader's service filter |
+| Auto-refresh | every tab | reads the active tab again every 3 s (Logs 1.5 s, Errors 5 s) | `Tick` | the tab's endpoint |
+| Sign out | header, token mode only | ends the console session (`/_sky/console/_logout`) and shows the sign-in form | link | |
+
+A failed read shows a red "Telemetry read failed: …" bar under the header; the
+next good answer from the same read clears it. Every list has an empty state
+("No log entries match the current filter.", "No traces match the filter.",
+"No errors recorded — nice work.", "No events captured yet.").
+
+Overview and Metrics are process snapshots, so they show no range chips; the
+Analytics tab has no text search. The URL carries `tab`, `range`, `q` and
+`service`: a console link opens on the state it names, through the sign-in form
+when there is one (the form returns to the link). "Sign out" shows only under
+`SKY_CONSOLE_AUTH=token`: in dev mode there is no sign-in, and under `app` the
+app's own sign-in admits the user again, so they sign out of the app.
+
+The console does not record itself. Its own Msg dispatches, `Cmd.perform`
+tasks and the spans they open (its loopback reads included) are not written to
+the telemetry it shows. Before v0.27.8 an open console tab added about one
+`msg_dispatch GotLogs` line a second to the host app's 10k-line log ring, and
+its own spans and `sky_live_msg_*` series to the Traces and Metrics tabs.
+
+`scripts/console-controls-e2e.sh` operates every control above in Chromium and
+WebKit, against the embedded console in production shape (token sign-in,
+strict CSP, the app and the browser in a non-UTC time zone), in dev mode, and
+against the hub, and asserts the rows, the URL, the read's parameters and the
+server's answer. It runs in the release gate (`gate-web`) and the nightly.
+
 ### Watching the hub itself
 
 The console hub is a collector, so the usual question — "is anything being
@@ -359,10 +410,11 @@ would re-materialise them a moment later.
 
 ### The Analytics tab shows a window, and says so
 
-**Every figure on the console's Analytics tab covers the last 30 days and at
-most the newest 20,000 events in it** — total events, identified users, events
+**Every figure on the console's Analytics tab covers the selected range (at
+most the last 30 days; "All" is the 30 days) and at most the newest 20,000
+events in it** — total events, identified users, events
 by name, the recent stream, and the per-currency revenue rollup. The tab labels
-each panel with its window (`· last 30 days`), carries a scope note above the
+each panel with its window (`· last 30 days`, `· last 15 minutes`), carries a scope note above the
 stat cards, and renders revenue as `≥` when the row cap was reached, because a
 windowed number under an all-time label is a wrong number rather than a fast
 one. The bounds are `consoleAnalyticsWindow` and `consoleAnalyticsRowCap` in
