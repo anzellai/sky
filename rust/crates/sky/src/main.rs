@@ -11478,12 +11478,27 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
     if let (Some(c), Some(k)) = (tls_cert, tls_key) {
         child_args.extend(["--tls-cert".to_string(), c, "--tls-key".to_string(), k]);
     }
-    let status = Command::new(&hub_bin).args(&child_args).status();
-    match status {
-        Ok(s) => propagate(s.code()),
-        Err(e) => {
-            eprintln!("sky console-serve: could not launch hub: {e}");
-            ExitCode::FAILURE
+    // On Unix the hub REPLACES this process (exec), so it is the process a
+    // supervisor starts and signals. As a child, a SIGTERM to
+    // `sky console-serve` (systemd with KillMode=process, a test harness, a
+    // `kill <pid>`) ended `sky` and left the hub running, holding its port and
+    // its SQLite store, with no parent.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = Command::new(&hub_bin).args(&child_args).exec();
+        eprintln!("sky console-serve: could not launch hub: {err}");
+        ExitCode::FAILURE
+    }
+    #[cfg(not(unix))]
+    {
+        let status = Command::new(&hub_bin).args(&child_args).status();
+        match status {
+            Ok(s) => propagate(s.code()),
+            Err(e) => {
+                eprintln!("sky console-serve: could not launch hub: {e}");
+                ExitCode::FAILURE
+            }
         }
     }
 }
