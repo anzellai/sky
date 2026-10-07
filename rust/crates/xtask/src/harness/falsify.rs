@@ -447,10 +447,20 @@ fn verify_one(
     // Restore the tree NOW, then rebuild, so the next gate does not run a
     // binary built from mutated source. Reverting the FILE is not enough once a
     // mutation can reach the compiled image: the artefact outlives the patch.
-    let rebuilt_source = matches!(
+    let rust_source = matches!(
         m.kind,
         MutationKind::ReplaceOnce { path, .. } if path.ends_with(".rs")
     );
+    // A mutation of any compiler input (a Go runtime file, a stdlib module)
+    // reaches a `sky` that the gate built under it: config-matrix builds the
+    // release `sky` from the tree it judges. The revert puts the input's old
+    // mtime back, so that binary looked fresh and the NEXT gate measured the
+    // mutated compiler: config-matrix's own baseline came back red on a clean
+    // tree (`live.port` builder "ignored", the inverted-provenance mutation).
+    let built_under_mutation = cargo_target_dir_of(&opts.exe)
+        .map(|t| !post_revert_rebuilds(&t, mutation_started).is_empty())
+        .unwrap_or(false);
+    let rebuilt_source = rust_source || built_under_mutation;
     // Capture the reverted file + its ORIGINAL mtime before the patch drops. The
     // revert restores byte-identical content AND puts the old mtime back (so a
     // sibling gate's fresh-compiler guard is unperturbed — see Patch::revert). But
@@ -471,7 +481,13 @@ fn verify_one(
         if let Some((p, _)) = &restore_target {
             set_mtime(p, std::time::SystemTime::now());
         }
-        if let Err(e) = rebuild_after_revert(&opts.repo_root, &opts.exe, mutation_started, budget) {
+        if let Err(e) = rebuild_after_revert(
+            &opts.repo_root,
+            &opts.exe,
+            rust_source,
+            mutation_started,
+            budget,
+        ) {
             eprintln!(
                 "harness: WARNING — could not rebuild after reverting {}: {e}\n\
                  The binary may still contain the mutation. Rebuild before trusting \
@@ -539,11 +555,17 @@ fn post_revert_rebuilds(
 ) -> Vec<&'static [&'static str]> {
     let mut out: Vec<&'static [&'static str]> = Vec::new();
     let exe = if cfg!(windows) { "sky.exe" } else { "sky" };
-    let built_since = std::fs::metadata(target_dir.join("debug").join(exe))
-        .and_then(|m| m.modified())
-        .is_ok_and(|t| t >= since);
-    if built_since {
+    let built_since = |profile: &str| {
+        std::fs::metadata(target_dir.join(profile).join(exe))
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t >= since)
+    };
+    if built_since("debug") {
         out.push(&["build", "-p", "sky"]);
+    }
+    // config-matrix builds the release `sky` it measures.
+    if built_since("release") {
+        out.push(&["build", "--release", "-p", "sky"]);
     }
     out
 }
@@ -553,10 +575,13 @@ fn post_revert_rebuilds(
 fn rebuild_after_revert(
     root: &Path,
     exe: &Path,
+    rust_source: bool,
     since: std::time::SystemTime,
     budget: Duration,
 ) -> Result<(), String> {
-    rebuild_xtask(root, exe, budget)?;
+    if rust_source {
+        rebuild_xtask(root, exe, budget)?;
+    }
     let Some(target_dir) = cargo_target_dir_of(exe) else {
         return Ok(());
     };
@@ -664,6 +689,22 @@ mod tests {
         assert!(
             post_revert_rebuilds(&dir, later).is_empty(),
             "built before the mutated run: no rebuild"
+        );
+        // A release `sky` (config-matrix builds one) built under the mutation.
+        let release = dir.join("release");
+        std::fs::create_dir_all(&release).unwrap();
+        std::fs::write(
+            release.join(if cfg!(windows) { "sky.exe" } else { "sky" }),
+            b"mutated",
+        )
+        .unwrap();
+        assert_eq!(
+            post_revert_rebuilds(&dir, before),
+            vec![
+                &["build", "-p", "sky"][..],
+                &["build", "--release", "-p", "sky"][..]
+            ],
+            "a release sky built during the mutated run is rebuilt too"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
