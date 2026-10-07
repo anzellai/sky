@@ -683,12 +683,12 @@
     "units_by_role": {
       "Conformance": 1,
       "Example": 64,
-      "FlowTest": 47,
+      "FlowTest": 48,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 130
+    "units_total": 131
   },
   "surfaces": [
     {
@@ -6747,6 +6747,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -7284,11 +7289,6 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
-          {
-            "by": "apps:bundled (gate `apps-bundled`)",
-            "class": "Falsified",
-            "strength": 4
-          },
           {
             "by": "apps:fleet (gate `apps-fleet`)",
             "class": "Falsified",
@@ -8388,6 +8388,11 @@
         "class": "Asserted",
         "evidence": [
           {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8464,6 +8469,11 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -9112,6 +9122,11 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -11686,6 +11701,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "examples/01-hello-world (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -12572,6 +12592,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -13152,6 +13177,11 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "e2e:scripts/console-live-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -14988,9 +15018,8 @@
           ]
         },
         "Sky.Core.Http": {
-          "count": 3,
+          "count": 2,
           "symbols": [
-            "parseQuery",
             "withMaxRedirects",
             "withUrl"
           ]
@@ -15688,11 +15717,9 @@
           ]
         },
         "Std.Log": {
-          "count": 3,
+          "count": 1,
           "symbols": [
-            "debug",
-            "debugWith",
-            "warn"
+            "debugWith"
           ]
         },
         "Std.Markdown": {
@@ -16001,8 +16028,8 @@
           ]
         }
       },
-      "count": 671,
-      "pct_of_denominator": 30.2
+      "count": 668,
+      "pct_of_denominator": 30.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -16085,9 +16112,8 @@
           ]
         },
         "Sky.Core.Http": {
-          "count": 3,
+          "count": 2,
           "symbols": [
-            "parseQuery",
             "withMaxRedirects",
             "withUrl"
           ]
@@ -16875,11 +16901,9 @@
           ]
         },
         "Std.Log": {
-          "count": 3,
+          "count": 1,
           "symbols": [
-            "debug",
-            "debugWith",
-            "warn"
+            "debugWith"
           ]
         },
         "Std.Markdown": {
@@ -17209,8 +17233,8 @@
           ]
         }
       },
-      "count": 762,
-      "pct_of_denominator": 34.3
+      "count": 759,
+      "pct_of_denominator": 34.1
     }
   },
   "units": [
@@ -17218,10 +17242,10 @@
       "db_drivers": [],
       "gate": "apps-bundled",
       "id": "apps:bundled",
-      "modules_imported": 25,
+      "modules_imported": 24,
       "path": "sky-bundled",
-      "refs_generous": 136,
-      "refs_qualified": 130,
+      "refs_generous": 133,
+      "refs_qualified": 127,
       "role": "Layer2",
       "sky_files": 14,
       "sky_toml_sections": []
@@ -17343,6 +17367,18 @@
       "refs_qualified": 21,
       "role": "Layer1",
       "sky_files": 12,
+      "sky_toml_sections": []
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
+      "id": "e2e:scripts/console-controls-e2e.sh",
+      "modules_imported": 7,
+      "path": "scripts/console-controls-e2e.sh",
+      "refs_generous": 26,
+      "refs_qualified": 25,
+      "role": "FlowTest",
+      "sky_files": 1,
       "sky_toml_sections": []
     },
     {
