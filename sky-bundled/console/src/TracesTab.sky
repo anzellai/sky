@@ -187,31 +187,20 @@ tracesFilterPanel query =
         ]
 
 
+-- The hub reader has already applied the range, the global search and
+-- this tab's search (whole traces kept), so the rows render as they are.
 tracesPanel : String -> List TraceRow -> Element Msg
 tracesPanel query rows =
-    let
-        lq = String.toLower (String.trim query)
-        matches r =
-            String.contains lq (String.toLower r.name)
-                || String.contains lq (String.toLower r.traceId)
-        keepTrace tid = List.any (\r -> r.traceId == tid && matches r) rows
-        visibleIds =
-            if lq == "" then
-                distinctTraceIds rows
+    panel
+        "Recent traces"
+        (if List.isEmpty rows && String.trim query /= "" then
+            [ emptyState "No traces match the filter." ]
 
-            else
-                List.filter keepTrace (distinctTraceIds rows)
-    in
-        panel
-            "Recent traces"
-            (if List.isEmpty rows then
-                [ emptyState "No traces captured for this service yet." ]
+        else if List.isEmpty rows then
+            [ emptyState "No traces for this service in this range." ]
 
-            else if List.isEmpty visibleIds then
-                [ emptyState "No traces match the filter." ]
-
-            else
-                List.map (traceGroupView rows) visibleIds)
+        else
+            List.map (traceGroupView rows) (distinctTraceIds rows))
 
 
 distinctTraceIds : List TraceRow -> List String

@@ -21,6 +21,7 @@ package rt
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -182,6 +183,22 @@ func WithSpan(name string, kind trace.SpanKind, attrs []attribute.KeyValue, fn f
 		span.SetStatus(codes.Error, err.Error())
 	}
 	return out
+}
+
+// quiet stamps the calling goroutine with a trace context whose span is
+// valid but NOT sampled, and returns the function that restores the previous
+// one. Every span opened under it (WithSpan's parent is the goroutine's
+// context; the sampler is ParentBased, telemetry/otel.go skySampler) is
+// dropped, so the work runs unrecorded: liveApp.quietTelemetry.
+func (app *liveApp) quiet() func() {
+	prev := CurrentTraceContext()
+	var tid trace.TraceID
+	var sid trace.SpanID
+	_, _ = rand.Read(tid[:])
+	_, _ = rand.Read(sid[:])
+	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid})
+	SetGoroutineTraceContext(trace.ContextWithSpanContext(context.Background(), sc))
+	return func() { SetGoroutineTraceContext(prev) }
 }
 
 // WithCmdSpan wraps a Cmd.perform task execution in an internal

@@ -28,16 +28,11 @@ import View exposing (view)
 tuiStore : Store
 tuiStore =
     { readOverview = \_ -> Task.succeed mockOverview
-    , readLogs = \_ -> Task.succeed mockLogs
+    , readLogs = \_ _ -> Task.succeed mockLogs
     , readMetrics = \_ -> Task.succeed mockMetrics
-    , readTraces = \_ -> Task.succeed mockTraces
+    , readTraces = \_ _ -> Task.succeed mockTraces
     , readErrors = \_ -> Task.succeed mockErrors
-    , listServices = \_ -> Task.succeed []
     , readServiceStats = \_ -> Task.succeed []
-    , readFilteredLogs = \_ _ -> Task.succeed mockLogs
-    , readFilteredMetrics = \_ -> Task.succeed mockMetrics
-    , readFilteredTraces = \_ -> Task.succeed mockTraces
-    , readFilteredErrors = \_ -> Task.succeed mockErrors
     , readAnalytics = \_ -> Task.succeed emptyAnalytics
     }
 
@@ -54,6 +49,7 @@ init _ =
       , traces = mockTraces
       , errors = mockErrors
       , lastError = ""
+      , errorFrom = ""
       , logFilter = emptyLogFilter
       , traceQuery = ""
       , selectedService = ""
@@ -61,7 +57,7 @@ init _ =
       , identity = Nothing
       , tenantPrefix = ""
       , range = Last24h
-      , nowMs = 0
+      , gen = 0
       , globalQuery = ""
       , analytics = emptyAnalytics
       -- The TUI console is always standalone: a terminal UI has no
@@ -93,7 +89,7 @@ update msg model =
         -- Tui variant has no HTTP wire + no filter UI — every other
         -- Msg (GotMetrics/Traces/Errors, LogFilter*, TraceFilterQuery)
         -- is a no-op here.
-        GotLogs _ ->
+        GotLogs _ _ ->
             ( model, Cmd.none )
 
         _ ->

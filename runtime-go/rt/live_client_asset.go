@@ -1535,7 +1535,12 @@ function __skyApplyPatches(patches) {
           if (k === "value") __skyRebase(el, v);
           continue;
         }
-        if (v === "") {
+        // An empty data-sky-query is a value, not a removal: it says
+        // "this page has no query", and __skyRunPaths strips the address
+        // bar's query only when it still finds the element. Removing the
+        // attribute left a stale ?tab=…&range=… in the URL after the
+        // page returned to its defaults.
+        if (v === "" && k !== "data-sky-query") {
           el.removeAttribute(k);
           // F2/F3: value / checked / selected / disabled are DOM
           // PROPERTIES once the user has touched the control; removing the

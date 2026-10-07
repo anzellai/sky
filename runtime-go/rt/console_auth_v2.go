@@ -785,8 +785,39 @@ func evaluateTokenMode(w http.ResponseWriter, r *http.Request, st *consoleAuthSt
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(renderConsoleLoginPage(st.mode)))
+	_, _ = w.Write([]byte(renderConsoleLoginPage(st.mode, consoleReturnTo(r))))
 	return false
+}
+
+// consoleReturnTo is where the login form sends the browser after sign-in:
+// the console URL it was asked for, query included, so a shared console link
+// (?tab=logs&range=7d&q=…) opens on the state it names. Before v0.27.8 the
+// form carried no destination and every sign-in landed on the defaults. Only
+// a GET of a console page is a destination; anything else (the login POST
+// itself, an API read) returns to the console's landing page.
+func consoleReturnTo(r *http.Request) string {
+	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/_sky/console") ||
+		strings.HasPrefix(r.URL.Path, "/_sky/console/api/") ||
+		strings.HasPrefix(r.URL.Path, "/_sky/console/_") {
+		return ""
+	}
+	return r.URL.RequestURI()
+}
+
+// consoleLoginDest validates the login form's `redirect` field: a path on
+// this origin under /_sky/console. Anything else (another origin, a scheme,
+// a protocol-relative or backslash URL) is the landing page, so the form
+// cannot be turned into an open redirector.
+func consoleLoginDest(raw string) string {
+	const landing = "/_sky/console"
+	if !strings.HasPrefix(raw, landing) || strings.ContainsAny(raw, "\\\r\n") {
+		return landing
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" || !strings.HasPrefix(u.Path, landing) {
+		return landing
+	}
+	return raw
 }
 
 // evaluateAppMode — call the app's `consoleAuth` callback.
@@ -1099,20 +1130,17 @@ func handleConsoleLogin(w http.ResponseWriter, r *http.Request, st *consoleAuthS
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(renderConsoleLoginPage(st.mode)))
+		_, _ = w.Write([]byte(renderConsoleLoginPage(st.mode, consoleLoginDest(r.PostForm.Get("redirect")))))
 		return
 	}
 	setConsoleV2Cookie(w, st.signKey, "token-auth")
 	recordConsoleAuthEvent(r, "allowed", "token-auth")
-	// Optional `redirect` form field for post-login destination;
+	// The `redirect` form field (the console URL the form was shown
+	// for, see consoleReturnTo) is the post-login destination;
 	// defaults to /_sky/console. Validated to stay under the
 	// console path so the form can't be turned into an open
 	// redirector.
-	dest := r.PostForm.Get("redirect")
-	if dest == "" || !strings.HasPrefix(dest, "/_sky/console") {
-		dest = "/_sky/console"
-	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, consoleLoginDest(r.PostForm.Get("redirect")), http.StatusSeeOther)
 }
 
 // renderConsoleLoginPage emits the token form. POST → /_sky/console/_login.
@@ -1121,7 +1149,7 @@ func handleConsoleLogin(w http.ResponseWriter, r *http.Request, st *consoleAuthS
 // The form has autocomplete="off" + name fields the major password
 // managers ignore (so the token doesn't end up saved as a website
 // password under your console host).
-func renderConsoleLoginPage(mode consoleAuthMode) string {
+func renderConsoleLoginPage(mode consoleAuthMode, returnTo string) string {
 	hint := ""
 	switch mode {
 	case consoleAuthModeDevOpen:
@@ -1167,13 +1195,14 @@ func renderConsoleLoginPage(mode consoleAuthMode) string {
             <input id="t" name="token" type="password" required autofocus
                    spellcheck="false" autocapitalize="off" autocorrect="off"
                    autocomplete="one-time-code" data-1p-ignore data-lpignore="true">
+            <input type="hidden" name="redirect" value="%s">
             <button type="submit">Sign in</button>
         </form>
         <p class="ref">Sky Console v0.16.0 — token mode</p>
     </div>
 </main>
 </body>
-</html>`, hint)
+</html>`, hint, htmlEscape(returnTo))
 }
 
 // htmlEscape is the bare-minimum escaper for the deny page hint.

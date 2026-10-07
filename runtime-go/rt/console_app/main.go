@@ -294,14 +294,15 @@ type State_Analytics_R struct {
 	Recent      []State_AnalyticsEvent_R `sky:"recent,[]State_AnalyticsEvent_R"`
 	Revenue     []State_CurrencyTotal_R  `sky:"revenue,[]State_CurrencyTotal_R"`
 	WindowDays  int                      `sky:"windowDays,int"`
+	WindowLabel string                   `sky:"windowLabel,string"`
 	RowCapHit   bool                     `sky:"rowCapHit,bool"`
 	RowCap      int                      `sky:"rowCap,int"`
 }
 
 func init() { rt.RegisterGobType(State_Analytics_R{}) }
 
-func State_Analytics(p0 int, p1 int, p2 []State_EventCount_R, p3 []State_AnalyticsEvent_R, p4 []State_CurrencyTotal_R, p5 int, p6 bool, p7 int) State_Analytics_R {
-	return State_Analytics_R{Total: p0, UniqueUsers: p1, Counts: p2, Recent: p3, Revenue: p4, WindowDays: p5, RowCapHit: p6, RowCap: p7}
+func State_Analytics(p0 int, p1 int, p2 []State_EventCount_R, p3 []State_AnalyticsEvent_R, p4 []State_CurrencyTotal_R, p5 int, p6 string, p7 bool, p8 int) State_Analytics_R {
+	return State_Analytics_R{Total: p0, UniqueUsers: p1, Counts: p2, Recent: p3, Revenue: p4, WindowDays: p5, WindowLabel: p6, RowCapHit: p7, RowCap: p8}
 }
 
 type State_CurrencyTotal_R struct {
@@ -410,6 +411,7 @@ type State_Model_R struct {
 	Traces          []State_TraceRow_R                       `sky:"traces,[]State_TraceRow_R"`
 	Errors          []State_ErrorRow_R                       `sky:"errors,[]State_ErrorRow_R"`
 	LastError       string                                   `sky:"lastError,string"`
+	ErrorFrom       string                                   `sky:"errorFrom,string"`
 	LogFilter       State_LogFilter_R                        `sky:"logFilter,State_LogFilter_R"`
 	TraceQuery      string                                   `sky:"traceQuery,string"`
 	SelectedService string                                   `sky:"selectedService,string"`
@@ -417,7 +419,7 @@ type State_Model_R struct {
 	Identity        rt.SkyMaybe[Std_Live_Console_Identity_R] `sky:"identity,rt.SkyMaybe[Std_Live_Console_Identity_R]"`
 	TenantPrefix    string                                   `sky:"tenantPrefix,string"`
 	Range           State_Range                              `sky:"range,State_Range"`
-	NowMs           int                                      `sky:"nowMs,int"`
+	Gen             int                                      `sky:"gen,int"`
 	GlobalQuery     string                                   `sky:"globalQuery,string"`
 	Analytics       State_Analytics_R                        `sky:"analytics,State_Analytics_R"`
 	LogoutUrl       string                                   `sky:"logoutUrl,string"`
@@ -425,8 +427,8 @@ type State_Model_R struct {
 
 func init() { rt.RegisterGobType(State_Model_R{}) }
 
-func State_Model(p0 State_Tab, p1 string, p2 string, p3 State_Store_R, p4 State_Overview_R, p5 []State_LogEntry_R, p6 []State_MetricRow_R, p7 []State_TraceRow_R, p8 []State_ErrorRow_R, p9 string, p10 State_LogFilter_R, p11 string, p12 string, p13 []State_ServiceStat_R, p14 rt.SkyMaybe[Std_Live_Console_Identity_R], p15 string, p16 State_Range, p17 int, p18 string, p19 State_Analytics_R, p20 string) State_Model_R {
-	return State_Model_R{Tab: p0, ParentUrl: p1, HubDbPath: p2, Store: p3, Overview: p4, Logs: p5, Metrics: p6, Traces: p7, Errors: p8, LastError: p9, LogFilter: p10, TraceQuery: p11, SelectedService: p12, ServiceStats: p13, Identity: p14, TenantPrefix: p15, Range: p16, NowMs: p17, GlobalQuery: p18, Analytics: p19, LogoutUrl: p20}
+func State_Model(p0 State_Tab, p1 string, p2 string, p3 State_Store_R, p4 State_Overview_R, p5 []State_LogEntry_R, p6 []State_MetricRow_R, p7 []State_TraceRow_R, p8 []State_ErrorRow_R, p9 string, p10 string, p11 State_LogFilter_R, p12 string, p13 string, p14 []State_ServiceStat_R, p15 rt.SkyMaybe[Std_Live_Console_Identity_R], p16 string, p17 State_Range, p18 int, p19 string, p20 State_Analytics_R, p21 string) State_Model_R {
+	return State_Model_R{Tab: p0, ParentUrl: p1, HubDbPath: p2, Store: p3, Overview: p4, Logs: p5, Metrics: p6, Traces: p7, Errors: p8, LastError: p9, ErrorFrom: p10, LogFilter: p11, TraceQuery: p12, SelectedService: p13, ServiceStats: p14, Identity: p15, TenantPrefix: p16, Range: p17, Gen: p18, GlobalQuery: p19, Analytics: p20, LogoutUrl: p21}
 }
 
 type State_Msg = rt.SkyADT
@@ -441,24 +443,24 @@ func State_Msg_GotOverview(v0 any) State_Msg {
 	return State_Msg{Tag: 2, SkyName: "GotOverview", Fields: []any{v0}}
 }
 
-func State_Msg_GotLogs(v0 any) State_Msg {
-	return State_Msg{Tag: 3, SkyName: "GotLogs", Fields: []any{v0}}
+func State_Msg_GotLogs(v0 any, v1 any) State_Msg {
+	return State_Msg{Tag: 3, SkyName: "GotLogs", Fields: []any{v0, v1}}
 }
 
-func State_Msg_GotMetrics(v0 any) State_Msg {
-	return State_Msg{Tag: 4, SkyName: "GotMetrics", Fields: []any{v0}}
+func State_Msg_GotMetrics(v0 any, v1 any) State_Msg {
+	return State_Msg{Tag: 4, SkyName: "GotMetrics", Fields: []any{v0, v1}}
 }
 
-func State_Msg_GotTraces(v0 any) State_Msg {
-	return State_Msg{Tag: 5, SkyName: "GotTraces", Fields: []any{v0}}
+func State_Msg_GotTraces(v0 any, v1 any) State_Msg {
+	return State_Msg{Tag: 5, SkyName: "GotTraces", Fields: []any{v0, v1}}
 }
 
-func State_Msg_GotErrors(v0 any) State_Msg {
-	return State_Msg{Tag: 6, SkyName: "GotErrors", Fields: []any{v0}}
+func State_Msg_GotErrors(v0 any, v1 any) State_Msg {
+	return State_Msg{Tag: 6, SkyName: "GotErrors", Fields: []any{v0, v1}}
 }
 
-func State_Msg_GotAnalytics(v0 any) State_Msg {
-	return State_Msg{Tag: 7, SkyName: "GotAnalytics", Fields: []any{v0}}
+func State_Msg_GotAnalytics(v0 any, v1 any) State_Msg {
+	return State_Msg{Tag: 7, SkyName: "GotAnalytics", Fields: []any{v0, v1}}
 }
 
 func State_Msg_LogFilterQuery(v0 any) State_Msg {
@@ -501,12 +503,8 @@ func State_Msg_SelectRange(v0 any) State_Msg {
 	return State_Msg{Tag: 17, SkyName: "SelectRange", Fields: []any{v0}}
 }
 
-func State_Msg_GotNowMs(v0 any) State_Msg {
-	return State_Msg{Tag: 18, SkyName: "GotNowMs", Fields: []any{v0}}
-}
-
 func State_Msg_GlobalQuery(v0 any) State_Msg {
-	return State_Msg{Tag: 19, SkyName: "GlobalQuery", Fields: []any{v0}}
+	return State_Msg{Tag: 18, SkyName: "GlobalQuery", Fields: []any{v0}}
 }
 
 func init() {
@@ -517,15 +515,15 @@ func init() {
 	rt.RegisterAdtTag("console_app.State_Msg", "GotOverview", 2)
 	rt.RegisterMsgVariant("State_Msg", "GotOverview", 2, 1)
 	rt.RegisterAdtTag("console_app.State_Msg", "GotLogs", 3)
-	rt.RegisterMsgVariant("State_Msg", "GotLogs", 3, 1)
+	rt.RegisterMsgVariant("State_Msg", "GotLogs", 3, 2)
 	rt.RegisterAdtTag("console_app.State_Msg", "GotMetrics", 4)
-	rt.RegisterMsgVariant("State_Msg", "GotMetrics", 4, 1)
+	rt.RegisterMsgVariant("State_Msg", "GotMetrics", 4, 2)
 	rt.RegisterAdtTag("console_app.State_Msg", "GotTraces", 5)
-	rt.RegisterMsgVariant("State_Msg", "GotTraces", 5, 1)
+	rt.RegisterMsgVariant("State_Msg", "GotTraces", 5, 2)
 	rt.RegisterAdtTag("console_app.State_Msg", "GotErrors", 6)
-	rt.RegisterMsgVariant("State_Msg", "GotErrors", 6, 1)
+	rt.RegisterMsgVariant("State_Msg", "GotErrors", 6, 2)
 	rt.RegisterAdtTag("console_app.State_Msg", "GotAnalytics", 7)
-	rt.RegisterMsgVariant("State_Msg", "GotAnalytics", 7, 1)
+	rt.RegisterMsgVariant("State_Msg", "GotAnalytics", 7, 2)
 	rt.RegisterAdtTag("console_app.State_Msg", "LogFilterQuery", 8)
 	rt.RegisterMsgVariant("State_Msg", "LogFilterQuery", 8, 1)
 	rt.RegisterAdtTag("console_app.State_Msg", "LogFilterToggleLevel", 9)
@@ -546,10 +544,8 @@ func init() {
 	rt.RegisterMsgVariant("State_Msg", "GotIdentity", 16, 1)
 	rt.RegisterAdtTag("console_app.State_Msg", "SelectRange", 17)
 	rt.RegisterMsgVariant("State_Msg", "SelectRange", 17, 1)
-	rt.RegisterAdtTag("console_app.State_Msg", "GotNowMs", 18)
-	rt.RegisterMsgVariant("State_Msg", "GotNowMs", 18, 1)
-	rt.RegisterAdtTag("console_app.State_Msg", "GlobalQuery", 19)
-	rt.RegisterMsgVariant("State_Msg", "GlobalQuery", 19, 1)
+	rt.RegisterAdtTag("console_app.State_Msg", "GlobalQuery", 18)
+	rt.RegisterMsgVariant("State_Msg", "GlobalQuery", 18, 1)
 }
 
 type State_Overview_R struct {
@@ -586,6 +582,18 @@ func init() {
 }
 func (v State_Range) SkyEnumName() string { return rt.EnumName("State_Range", int(v)) }
 
+type State_Scope_R struct {
+	Service string `sky:"service,string"`
+	Range   string `sky:"range,string"`
+	Search  string `sky:"search,string"`
+}
+
+func init() { rt.RegisterGobType(State_Scope_R{}) }
+
+func State_Scope(p0 string, p1 string, p2 string) State_Scope_R {
+	return State_Scope_R{Service: p0, Range: p1, Search: p2}
+}
+
 type State_ServiceStat_R struct {
 	Name       string    `sky:"name,string"`
 	Status     string    `sky:"status,string"`
@@ -603,24 +611,19 @@ func State_ServiceStat(p0 string, p1 string, p2 float64, p3 float64, p4 float64,
 }
 
 type State_Store_R struct {
-	ReadOverview        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]                    `sky:"readOverview,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]"`
-	ReadLogs            func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]         `sky:"readLogs,func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
-	ReadMetrics         func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                 `sky:"readMetrics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
-	ReadTraces          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                  `sky:"readTraces,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
-	ReadErrors          func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                  `sky:"readErrors,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
-	ListServices        func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]                            `sky:"listServices,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string]"`
-	ReadServiceStats    func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]               `sky:"readServiceStats,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]"`
-	ReadFilteredLogs    func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] `sky:"readFilteredLogs,func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
-	ReadFilteredMetrics func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                   `sky:"readFilteredMetrics,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
-	ReadFilteredTraces  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]                    `sky:"readFilteredTraces,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
-	ReadFilteredErrors  func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                    `sky:"readFilteredErrors,func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
-	ReadAnalytics       func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]                   `sky:"readAnalytics,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]"`
+	ReadOverview     func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]                           `sky:"readOverview,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R]"`
+	ReadLogs         func(State_Scope_R, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] `sky:"readLogs,func(State_Scope_R, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R]"`
+	ReadMetrics      func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]                   `sky:"readMetrics,func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R]"`
+	ReadTraces       func(State_Scope_R, string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]            `sky:"readTraces,func(State_Scope_R, string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R]"`
+	ReadErrors       func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]                    `sky:"readErrors,func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R]"`
+	ReadServiceStats func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]                      `sky:"readServiceStats,func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R]"`
+	ReadAnalytics    func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]                     `sky:"readAnalytics,func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]"`
 }
 
 func init() { rt.RegisterGobType(State_Store_R{}) }
 
-func State_Store(p0 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R], p1 func(State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p2 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p3 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p4 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p5 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []string], p6 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R], p7 func(string, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p8 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p9 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p10 func(string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p11 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]) State_Store_R {
-	return State_Store_R{ReadOverview: p0, ReadLogs: p1, ReadMetrics: p2, ReadTraces: p3, ReadErrors: p4, ListServices: p5, ReadServiceStats: p6, ReadFilteredLogs: p7, ReadFilteredMetrics: p8, ReadFilteredTraces: p9, ReadFilteredErrors: p10, ReadAnalytics: p11}
+func State_Store(p0 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R], p1 func(State_Scope_R, State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R], p2 func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R], p3 func(State_Scope_R, string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R], p4 func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R], p5 func(struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R], p6 func(State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R]) State_Store_R {
+	return State_Store_R{ReadOverview: p0, ReadLogs: p1, ReadMetrics: p2, ReadTraces: p3, ReadErrors: p4, ReadServiceStats: p5, ReadAnalytics: p6}
 }
 
 type State_Tab int
@@ -1640,31 +1643,39 @@ func Std_Ui_width(v_0 Std_Ui_Length) Std_Ui_Attribute {
 
 func View_encodeFilters(v_0 State_Model_R) string {
 	{
-		rangePart_1 := func() string {
+		tabPart_1 := func() string {
+			if /* FFI return */ rt.AsBool(rt.Eq(any(v_0.Tab), any(State_Tab_OverviewTab))) {
+				return ""
+			} else {
+				return ("tab=" + State_tabKey(v_0.Tab))
+			}
+		}()
+		_ = tabPart_1
+		rangePart_2 := func() string {
 			if /* FFI return */ rt.AsBool(rt.Eq(any(v_0.Range), any(State_Range_Last24h))) {
 				return ""
 			} else {
 				return ("range=" + State_rangeKey(v_0.Range))
 			}
 		}()
-		_ = rangePart_1
-		qPart_2 := func() string {
+		_ = rangePart_2
+		qPart_3 := func() string {
 			if v_0.GlobalQuery == "" {
 				return ""
 			} else {
 				return ("q=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_0.GlobalQuery))))
 			}
 		}()
-		_ = qPart_2
-		svcPart_3 := func() string {
+		_ = qPart_3
+		svcPart_4 := func() string {
 			if v_0.SelectedService == "" {
 				return ""
 			} else {
 				return ("service=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_0.SelectedService))))
 			}
 		}()
-		_ = svcPart_3
-		return View_joinQueryParts(rt.List_filterT[string](func(v_4 string) bool { return (v_4 != "") }, []string{rangePart_1, qPart_2, svcPart_3}))
+		_ = svcPart_4
+		return View_joinQueryParts(rt.List_filterT[string](func(v_5 string) bool { return (v_5 != "") }, []string{tabPart_1, rangePart_2, qPart_3, svcPart_4}))
 	}
 }
 
@@ -1712,6 +1723,31 @@ func State_rangeKey(v_0 State_Range) string {
 	}
 }
 
+func State_tabKey(v_0 State_Tab) string {
+	{
+		_subj := v_0
+		if _subj == State_Tab_OverviewTab {
+			return "overview"
+		}
+		if _subj == State_Tab_MetricsTab {
+			return "metrics"
+		}
+		if _subj == State_Tab_LogsTab {
+			return "logs"
+		}
+		if _subj == State_Tab_TracesTab {
+			return "traces"
+		}
+		if _subj == State_Tab_ErrorsTab {
+			return "errors"
+		}
+		if _subj == State_Tab_AnalyticsTab {
+			return "analytics"
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Std_Ui_htmlAttribute(v_0 string, v_1 string) Std_Ui_Attribute {
 	return Std_Ui_Attribute_AttrAttribute(v_0, v_1)
 }
@@ -1721,94 +1757,48 @@ func Std_Ui_el(v_0 []Std_Ui_Attribute, v_1 Std_Ui_Element) Std_Ui_Element {
 }
 
 func View_content(v_0 State_Model_R) Std_Ui_Element {
-	{
-		threshold_1 := View_rangeThresholdIso(v_0.Range, v_0.NowMs)
-		_ = threshold_1
-		q_2 := /* FFI return */ rt.AsString(rt.String_toLower(rt.String_trim(any(v_0.GlobalQuery))))
-		_ = q_2
-		logsAfterRange_3 := func() []State_LogEntry_R {
-			if threshold_1 == "" {
-				return v_0.Logs
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_padding(20), Std_Ui_spacing(16)}, func() []Std_Ui_Element {
+		_subj := v_0.Tab
+		if _subj == State_Tab_OverviewTab {
+			if v_0.HubDbPath != "" {
+				return Overview_viewOverview(v_0)
 			} else {
-				return rt.List_filterT[State_LogEntry_R](func(v_7 State_LogEntry_R) bool { return (v_7.Time >= threshold_1) }, v_0.Logs)
+				return View_overviewView(v_0.Overview)
 			}
-		}()
-		_ = logsAfterRange_3
-		tracesAfterRange_4 := func() []State_TraceRow_R {
-			if threshold_1 == "" {
-				return v_0.Traces
+		}
+		if _subj == State_Tab_MetricsTab {
+			if v_0.HubDbPath != "" {
+				return MetricsTab_viewMetricsTab(v_0)
 			} else {
-				return rt.List_filterT[State_TraceRow_R](func(v_8 State_TraceRow_R) bool { return (v_8.StartTime >= threshold_1) }, v_0.Traces)
+				return View_metricsView(v_0.Metrics)
 			}
-		}()
-		_ = tracesAfterRange_4
-		logsFinal_5 := func() []State_LogEntry_R {
-			if q_2 == "" {
-				return logsAfterRange_3
+		}
+		if _subj == State_Tab_LogsTab {
+			if v_0.HubDbPath != "" {
+				return LogsTab_viewLogsTab(v_0, v_0.Logs)
 			} else {
-				return rt.List_filterT[State_LogEntry_R](func(_e1 State_LogEntry_R) bool {
-					_p0 := _e1
-					_ = _p0
-					return View_matchLogText(q_2 /* FFI return */, rt.Coerce[State_LogEntry_R](_p0))
-				}, logsAfterRange_3)
+				return View_logsView(v_0, v_0.Logs)
 			}
-		}()
-		_ = logsFinal_5
-		tracesFinal_6 := func() []State_TraceRow_R {
-			if q_2 == "" {
-				return tracesAfterRange_4
+		}
+		if _subj == State_Tab_TracesTab {
+			if v_0.HubDbPath != "" {
+				return TracesTab_viewTracesTab(v_0, v_0.Traces)
 			} else {
-				return rt.List_filterT[State_TraceRow_R](func(_e3 State_TraceRow_R) bool {
-					_p2 := _e3
-					_ = _p2
-					return View_matchTraceText(q_2 /* FFI return */, rt.Coerce[State_TraceRow_R](_p2))
-				}, tracesAfterRange_4)
+				return View_tracesView(v_0.TraceQuery, ((v_0.TraceQuery != "") || (v_0.GlobalQuery != "")), v_0.Traces)
 			}
-		}()
-		_ = tracesFinal_6
-		return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_padding(20), Std_Ui_spacing(16)}, func() []Std_Ui_Element {
-			_subj := v_0.Tab
-			if _subj == State_Tab_OverviewTab {
-				if v_0.HubDbPath != "" {
-					return Overview_viewOverview(v_0)
-				} else {
-					return View_overviewView(v_0.Overview)
-				}
+		}
+		if _subj == State_Tab_ErrorsTab {
+			if v_0.HubDbPath != "" {
+				return ErrorsTab_viewErrorsTab(v_0)
+			} else {
+				return View_errorsView(v_0.Errors)
 			}
-			if _subj == State_Tab_MetricsTab {
-				if v_0.HubDbPath != "" {
-					return MetricsTab_viewMetricsTab(v_0)
-				} else {
-					return View_metricsView(v_0.Metrics)
-				}
-			}
-			if _subj == State_Tab_LogsTab {
-				if v_0.HubDbPath != "" {
-					return LogsTab_viewLogsTab(v_0, logsFinal_5)
-				} else {
-					return View_logsView(v_0, logsFinal_5)
-				}
-			}
-			if _subj == State_Tab_TracesTab {
-				if v_0.HubDbPath != "" {
-					return TracesTab_viewTracesTab(v_0, tracesFinal_6)
-				} else {
-					return View_tracesView(v_0.TraceQuery, tracesFinal_6)
-				}
-			}
-			if _subj == State_Tab_ErrorsTab {
-				if v_0.HubDbPath != "" {
-					return ErrorsTab_viewErrorsTab(v_0)
-				} else {
-					return View_errorsView(v_0.Errors)
-				}
-			}
-			if _subj == State_Tab_AnalyticsTab {
-				return AnalyticsTab_analyticsView(v_0.Analytics)
-			}
-			panic(rt.Unreachable("case"))
-		}())
-	}
+		}
+		if _subj == State_Tab_AnalyticsTab {
+			return AnalyticsTab_analyticsView(v_0.Analytics)
+		}
+		panic(rt.Unreachable("case"))
+	}())
 }
 
 func AnalyticsTab_analyticsView(v_0 State_Analytics_R) []Std_Ui_Element {
@@ -1978,10 +1968,14 @@ func Std_Ui_padding(v_0 int) Std_Ui_Attribute {
 }
 
 func AnalyticsTab_windowLabel(v_0 State_Analytics_R) string {
-	if v_0.WindowDays == 1 {
-		return "day"
+	if v_0.WindowLabel != "" {
+		return v_0.WindowLabel
 	} else {
-		return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.WindowDays))) + " days")
+		if v_0.WindowDays == 1 {
+			return "day"
+		} else {
+			return ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_0.WindowDays))) + " days")
+		}
 	}
 }
 
@@ -2341,41 +2335,88 @@ func ErrorsTab_accent() Std_Ui_Color {
 	return ErrorsTab_accent__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(126, 182, 255) })
 }
 
-func View_tracesView(v_0 string, v_1 []State_TraceRow_R) []Std_Ui_Element {
-	{
-		lq_2 := /* FFI return */ rt.AsString(rt.String_toLower(rt.String_trim(any(v_0))))
-		_ = lq_2
-		matches_3 := func(v_6 State_TraceRow_R) bool {
-			return ( /* FFI return */ rt.AsBool(rt.String_contains(any(lq_2), rt.String_toLower(any(v_6.Name)))) || /* FFI return */ rt.AsBool(rt.String_contains(any(lq_2), rt.String_toLower(any(v_6.TraceId)))))
-		}
-		_ = matches_3
-		keepTrace_4 := func(v_7 string) bool {
-			return rt.List_anyT[State_TraceRow_R](func(v_8 State_TraceRow_R) bool { return ((v_8.TraceId == v_7) && matches_3(v_8)) }, v_1)
-		}
-		_ = keepTrace_4
-		visibleIds_5 := func() []string {
-			if lq_2 == "" {
-				return View_distinctTraceIds(v_1)
+func View_tracesView(v_0 string, v_1 bool, v_2 []State_TraceRow_R) []Std_Ui_Element {
+	return []Std_Ui_Element{View_tracesFilterPanel(v_0), View_panel("Recent traces", func() []Std_Ui_Element {
+		if rt.List_isEmptyT[State_TraceRow_R](v_2) && v_1 {
+			return []Std_Ui_Element{View_emptyState("No traces match the filter.")}
+		} else {
+			if rt.List_isEmptyT[State_TraceRow_R](v_2) {
+				return []Std_Ui_Element{View_emptyState("No traces in this range.")}
 			} else {
-				return rt.List_filterT[string](keepTrace_4, View_distinctTraceIds(v_1))
+				return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
+					_p0 := _e1
+					_ = _p0
+					return View_traceGroupView(v_2 /* FFI return */, rt.AsString(_p0))
+				}, View_distinctTraceIds(v_2))
 			}
-		}()
-		_ = visibleIds_5
-		return []Std_Ui_Element{View_tracesFilterPanel(v_0), View_panel("Recent traces", func() []Std_Ui_Element {
-			if rt.List_isEmptyT[State_TraceRow_R](v_1) {
-				return []Std_Ui_Element{View_emptyState("No traces captured yet.")}
+		}
+	}())}
+}
+
+func View_distinctTraceIds(v_0 []State_TraceRow_R) []string {
+	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ func() func(any, any) any {
+		_s := any(func(v_1 any, v_2 []string) []string {
+			if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
+				return v_2
 			} else {
-				if rt.List_isEmptyT[string](visibleIds_5) {
-					return []Std_Ui_Element{View_emptyState("No traces match the filter.")}
-				} else {
-					return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
-						_p0 := _e1
-						_ = _p0
-						return View_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
-					}, visibleIds_5)
-				}
+				return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
 			}
-		}())}
+		})
+		if _f, _ok := _s.(func(any, any) any); _ok {
+			return _f
+		}
+		if _c, _ok := _s.(func(any) any); _ok {
+			return func(_a0 any, _a1 any) any { return rt.Coerce[any]((_c(any(_a0))).(func(any) any)(any(_a1))) }
+		}
+		return rt.CoerceFuncSlot[func(any, any) any](_s)
+	}(), []string{} /* primitive join */, rt.AsListT[any](v_0)))
+}
+
+func Sky_Core_List_member(v_0 any, v_1 []any) bool {
+	for {
+		_subj0 := v_1
+		if rt.SkyLenT(_subj0) == 0 {
+			return false
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_2 := rt.SkyElemT(_subj0, 0)
+			v_3 := rt.SkyTailSliceT(_subj0)
+			_ = v_2
+			_ = v_3
+			if /* FFI return */ rt.AsBool(rt.Eq(v_0, v_2)) {
+				return true
+			} else {
+				_t1 := v_0
+				_t2 := v_3
+				v_0 = _t1
+				v_1 = _t2
+				continue
+			}
+		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Sky_Core_List_foldl(v_0 func(any, any) any, v_1 any, v_2 []any) any {
+	for {
+		_subj0 := v_2
+		if rt.SkyLenT(_subj0) == 0 {
+			return v_1
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_3 := rt.SkyElemT(_subj0, 0)
+			v_4 := rt.SkyTailSliceT(_subj0)
+			_ = v_3
+			_ = v_4
+			_t1 := v_0
+			_t2 := v_0(v_3, v_1)
+			_t3 := v_4
+			v_0 = _t1
+			v_1 = _t2
+			v_2 = _t3
+			continue
+		}
+		panic(rt.Unreachable("case"))
 	}
 }
 
@@ -2604,7 +2645,29 @@ func Std_Ui_input(v_0 []Std_Ui_Attribute) Std_Ui_Element {
 	return Std_Ui_Element_TaggedNode("input", Std_Ui_Description_NoDescription(), v_0, []Std_Ui_Element{})
 }
 
-func View_distinctTraceIds(v_0 []State_TraceRow_R) []string {
+func TracesTab_viewTracesTab(v_0 State_Model_R, v_1 []State_TraceRow_R) []Std_Ui_Element {
+	return []Std_Ui_Element{TracesTab_scopeBanner(v_0.SelectedService), TracesTab_tracesFilterPanel(v_0.TraceQuery), TracesTab_tracesPanel(v_0.TraceQuery, v_1)}
+}
+
+func TracesTab_tracesPanel(v_0 string, v_1 []State_TraceRow_R) Std_Ui_Element {
+	return TracesTab_panel("Recent traces", func() []Std_Ui_Element {
+		if rt.List_isEmptyT[State_TraceRow_R](v_1) && ( /* FFI return */ rt.AsString(rt.String_trim(any(v_0))) != "") {
+			return []Std_Ui_Element{TracesTab_emptyState("No traces match the filter.")}
+		} else {
+			if rt.List_isEmptyT[State_TraceRow_R](v_1) {
+				return []Std_Ui_Element{TracesTab_emptyState("No traces for this service in this range.")}
+			} else {
+				return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
+					_p0 := _e1
+					_ = _p0
+					return TracesTab_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
+				}, TracesTab_distinctTraceIds(v_1))
+			}
+		}
+	}())
+}
+
+func TracesTab_distinctTraceIds(v_0 []State_TraceRow_R) []string {
 	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ func() func(any, any) any {
 		_s := any(func(v_1 any, v_2 []string) []string {
 			if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
@@ -2621,121 +2684,6 @@ func View_distinctTraceIds(v_0 []State_TraceRow_R) []string {
 		}
 		return rt.CoerceFuncSlot[func(any, any) any](_s)
 	}(), []string{} /* primitive join */, rt.AsListT[any](v_0)))
-}
-
-func Sky_Core_List_member(v_0 any, v_1 []any) bool {
-	for {
-		_subj0 := v_1
-		if rt.SkyLenT(_subj0) == 0 {
-			return false
-		}
-		if rt.SkyLenT(_subj0) >= 1 {
-			v_2 := rt.SkyElemT(_subj0, 0)
-			v_3 := rt.SkyTailSliceT(_subj0)
-			_ = v_2
-			_ = v_3
-			if /* FFI return */ rt.AsBool(rt.Eq(v_0, v_2)) {
-				return true
-			} else {
-				_t1 := v_0
-				_t2 := v_3
-				v_0 = _t1
-				v_1 = _t2
-				continue
-			}
-		}
-		panic(rt.Unreachable("case"))
-	}
-}
-
-func Sky_Core_List_foldl(v_0 func(any, any) any, v_1 any, v_2 []any) any {
-	for {
-		_subj0 := v_2
-		if rt.SkyLenT(_subj0) == 0 {
-			return v_1
-		}
-		if rt.SkyLenT(_subj0) >= 1 {
-			v_3 := rt.SkyElemT(_subj0, 0)
-			v_4 := rt.SkyTailSliceT(_subj0)
-			_ = v_3
-			_ = v_4
-			_t1 := v_0
-			_t2 := v_0(v_3, v_1)
-			_t3 := v_4
-			v_0 = _t1
-			v_1 = _t2
-			v_2 = _t3
-			continue
-		}
-		panic(rt.Unreachable("case"))
-	}
-}
-
-func Sky_Core_List_any_(v_0 func(any) bool, v_1 []any) bool {
-	for {
-		_subj0 := v_1
-		if rt.SkyLenT(_subj0) == 0 {
-			return false
-		}
-		if rt.SkyLenT(_subj0) >= 1 {
-			v_2 := rt.SkyElemT(_subj0, 0)
-			v_3 := rt.SkyTailSliceT(_subj0)
-			_ = v_2
-			_ = v_3
-			if v_0(v_2) {
-				return true
-			} else {
-				_t1 := v_0
-				_t2 := v_3
-				v_0 = _t1
-				v_1 = _t2
-				continue
-			}
-		}
-		panic(rt.Unreachable("case"))
-	}
-}
-
-func TracesTab_viewTracesTab(v_0 State_Model_R, v_1 []State_TraceRow_R) []Std_Ui_Element {
-	return []Std_Ui_Element{TracesTab_scopeBanner(v_0.SelectedService), TracesTab_tracesFilterPanel(v_0.TraceQuery), TracesTab_tracesPanel(v_0.TraceQuery, v_1)}
-}
-
-func TracesTab_tracesPanel(v_0 string, v_1 []State_TraceRow_R) Std_Ui_Element {
-	{
-		lq_2 := /* FFI return */ rt.AsString(rt.String_toLower(rt.String_trim(any(v_0))))
-		_ = lq_2
-		matches_3 := func(v_6 State_TraceRow_R) bool {
-			return ( /* FFI return */ rt.AsBool(rt.String_contains(any(lq_2), rt.String_toLower(any(v_6.Name)))) || /* FFI return */ rt.AsBool(rt.String_contains(any(lq_2), rt.String_toLower(any(v_6.TraceId)))))
-		}
-		_ = matches_3
-		keepTrace_4 := func(v_7 string) bool {
-			return rt.List_anyT[State_TraceRow_R](func(v_8 State_TraceRow_R) bool { return ((v_8.TraceId == v_7) && matches_3(v_8)) }, v_1)
-		}
-		_ = keepTrace_4
-		visibleIds_5 := func() []string {
-			if lq_2 == "" {
-				return TracesTab_distinctTraceIds(v_1)
-			} else {
-				return rt.List_filterT[string](keepTrace_4, TracesTab_distinctTraceIds(v_1))
-			}
-		}()
-		_ = visibleIds_5
-		return TracesTab_panel("Recent traces", func() []Std_Ui_Element {
-			if rt.List_isEmptyT[State_TraceRow_R](v_1) {
-				return []Std_Ui_Element{TracesTab_emptyState("No traces captured for this service yet.")}
-			} else {
-				if rt.List_isEmptyT[string](visibleIds_5) {
-					return []Std_Ui_Element{TracesTab_emptyState("No traces match the filter.")}
-				} else {
-					return rt.List_mapT[string, Std_Ui_Element](func(_e1 string) Std_Ui_Element {
-						_p0 := _e1
-						_ = _p0
-						return TracesTab_traceGroupView(v_1 /* FFI return */, rt.AsString(_p0))
-					}, visibleIds_5)
-				}
-			}
-		}())
-	}
 }
 
 func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
@@ -2942,25 +2890,6 @@ func TracesTab_bgRaised() Std_Ui_Color {
 	return TracesTab_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
-func TracesTab_distinctTraceIds(v_0 []State_TraceRow_R) []string {
-	return /* FFI return */ rt.AsListT[string](Sky_Core_List_foldl( /* primitive join */ func() func(any, any) any {
-		_s := any(func(v_1 any, v_2 []string) []string {
-			if /* FFI return */ rt.AsBool(rt.Eq(rt.Field(v_1, "TraceId"), any(""))) || Sky_Core_List_member(rt.Field(v_1, "TraceId") /* primitive join */, rt.AsListT[any](v_2)) {
-				return v_2
-			} else {
-				return rt.List_appendT[string](v_2, []string{ /* FFI return */ rt.AsString(rt.Field(v_1, "TraceId"))})
-			}
-		})
-		if _f, _ok := _s.(func(any, any) any); _ok {
-			return _f
-		}
-		if _c, _ok := _s.(func(any) any); _ok {
-			return func(_a0 any, _a1 any) any { return rt.Coerce[any]((_c(any(_a0))).(func(any) any)(any(_a1))) }
-		}
-		return rt.CoerceFuncSlot[func(any, any) any](_s)
-	}(), []string{} /* primitive join */, rt.AsListT[any](v_0)))
-}
-
 func TracesTab_tracesFilterPanel(v_0 string) Std_Ui_Element {
 	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_Background_color(TracesTab_bgRaised()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(6), Std_Ui_padding(12), Std_Ui_spacing(8), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_input([]Std_Ui_Attribute{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter traces by span name or trace id…"), Std_Ui_htmlAttribute("value", v_0), Std_Ui_onInput(func(_e1 string) any { _p0 := _e1; _ = _p0; return State_Msg_TraceFilterQuery(_p0) }), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_Border_width(1), Std_Ui_Border_color(TracesTab_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 6), Std_Ui_Font_color(TracesTab_textPrimary()), Std_Ui_Font_size(12), Std_Ui_Font_family("ui-monospace, Menlo, monospace")}), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_paddingXY(8, 6), Std_Ui_Background_color(TracesTab_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_TraceFilterQuery("")), Std_Ui_Font_color(TracesTab_textSecondary()), Std_Ui_Font_size(11)}, Std_Ui_text("clear"))})
 }
@@ -3008,21 +2937,13 @@ func TracesTab_bgPage() Std_Ui_Color {
 }
 
 func View_logsView(v_0 State_Model_R, v_1 []State_LogEntry_R) []Std_Ui_Element {
-	{
-		filtered_2 := rt.List_filterT[State_LogEntry_R](func(_e1 State_LogEntry_R) bool {
-			_p0 := _e1
-			_ = _p0
-			return View_matchFilter(v_0.LogFilter /* FFI return */, rt.Coerce[State_LogEntry_R](_p0))
-		}, v_1)
-		_ = filtered_2
-		return []Std_Ui_Element{View_logsFilterPanel(v_0.LogFilter), View_panel("Recent log entries", func() []Std_Ui_Element {
-			if rt.List_isEmptyT[State_LogEntry_R](filtered_2) {
-				return []Std_Ui_Element{View_emptyState("No log entries match the current filter.")}
-			} else {
-				return rt.List_mapT[State_LogEntry_R, Std_Ui_Element](View_logRow, filtered_2)
-			}
-		}())}
-	}
+	return []Std_Ui_Element{View_logsFilterPanel(v_0.LogFilter), View_panel("Recent log entries", func() []Std_Ui_Element {
+		if rt.List_isEmptyT[State_LogEntry_R](v_1) {
+			return []Std_Ui_Element{View_emptyState("No log entries match the current filter.")}
+		} else {
+			return rt.List_mapT[State_LogEntry_R, Std_Ui_Element](View_logRow, v_1)
+		}
+	}())}
 }
 
 func View_logRow(v_0 State_LogEntry_R) Std_Ui_Element {
@@ -3128,34 +3049,6 @@ var View_bgSurface__caf rt.LazyCaf[Std_Ui_Color]
 
 func View_bgSurface() Std_Ui_Color {
 	return View_bgSurface__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(28, 32, 39) })
-}
-
-func View_matchFilter(v_0 State_LogFilter_R, v_1 State_LogEntry_R) bool {
-	{
-		levelOk_2 := func() bool {
-			_subj := v_1.Level
-			if _subj == "debug" {
-				return v_0.ShowDebug
-			}
-			if _subj == "info" {
-				return v_0.ShowInfo
-			}
-			if _subj == "warn" {
-				return v_0.ShowWarn
-			}
-			if _subj == "error" {
-				return v_0.ShowError
-			}
-			return true
-			panic(rt.Unreachable("case"))
-		}()
-		_ = levelOk_2
-		sessionOk_3 := ((v_0.Session == "") || (v_0.Session == v_1.SessionId))
-		_ = sessionOk_3
-		queryOk_4 := ((v_0.Query == "") || /* FFI return */ rt.AsBool(rt.String_contains(rt.String_toLower(any(v_0.Query)), rt.String_toLower(any((v_1.Message+(" "+(v_1.Route+(" "+v_1.Subapp)))))))))
-		_ = queryOk_4
-		return (levelOk_2 && (sessionOk_3 && queryOk_4))
-	}
 }
 
 func LogsTab_viewLogsTab(v_0 State_Model_R, v_1 []State_LogEntry_R) []Std_Ui_Element {
@@ -3722,7 +3615,7 @@ var Overview_focusedHint__caf rt.LazyCaf[Std_Ui_Element]
 
 func Overview_focusedHint() Std_Ui_Element {
 	return Overview_focusedHint__caf.Get(func() Std_Ui_Element {
-		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_padding(10), Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary())}, Std_Ui_text(("Drill into Logs / Traces / Errors tabs above — they'll " + "auto-filter to the selected service once B6 ships.")))
+		return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Background_color(Overview_bgCode()), Std_Ui_Border_rounded(4), Std_Ui_padding(10), Std_Ui_width(Std_Ui_fill()), Std_Ui_Font_size(12), Std_Ui_Font_color(Overview_textSecondary())}, Std_Ui_text(("The Logs, Traces, Errors and Metrics tabs above show " + "this service only.")))
 	})
 }
 
@@ -4819,74 +4712,67 @@ func Overview_allServicesChip(v_0 bool) Std_Ui_Element {
 	}
 }
 
-func View_matchTraceText(v_0 string, v_1 State_TraceRow_R) bool {
-	return ( /* FFI return */ rt.AsBool(rt.String_contains(any(v_0), rt.String_toLower(any(v_1.Name)))) || /* FFI return */ rt.AsBool(rt.String_contains(any(v_0), rt.String_toLower(any(v_1.TraceId)))))
-}
-
-func View_matchLogText(v_0 string, v_1 State_LogEntry_R) bool {
-	return ( /* FFI return */ rt.AsBool(rt.String_contains(any(v_0), rt.String_toLower(any(v_1.Message)))) || ( /* FFI return */ rt.AsBool(rt.String_contains(any(v_0), rt.String_toLower(any(v_1.Route)))) || ( /* FFI return */ rt.AsBool(rt.String_contains(any(v_0), rt.String_toLower(any(v_1.ReqId)))) || /* FFI return */ rt.AsBool(rt.String_contains(any(v_0), rt.String_toLower(any(v_1.SessionId)))))))
-}
-
-func View_rangeThresholdIso(v_0 State_Range, v_1 int) string {
-	{
-		_subj := v_0
-		if _subj == State_Range_RangeAll {
-			return ""
-		}
-		if v_1 <= 0 {
-			return ""
-		} else {
-			return /* FFI return */ rt.AsString(rt.Time_formatISO8601(any((v_1 - State_rangeMillis(v_0)))))
-		}
-		panic(rt.Unreachable("case"))
-	}
-}
-
-func State_rangeMillis(v_0 State_Range) int {
-	{
-		_subj := v_0
-		if _subj == State_Range_Last15m {
-			return ((15 * 60) * 1000)
-		}
-		if _subj == State_Range_Last1h {
-			return ((60 * 60) * 1000)
-		}
-		if _subj == State_Range_Last24h {
-			return (((24 * 60) * 60) * 1000)
-		}
-		if _subj == State_Range_Last7d {
-			return ((((7 * 24) * 60) * 60) * 1000)
-		}
-		if _subj == State_Range_RangeAll {
-			return 0
-		}
-		panic(rt.Unreachable("case"))
-	}
-}
-
 func View_globalFilterStrip(v_0 State_Model_R) Std_Ui_Element {
-	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 8), Std_Ui_spacing(6), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(struct {
-		Bottom int
-		Left   int
-		Right  int
-		Top    int
-	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_border_())}, []Std_Ui_Element{View_rangeRow(v_0.Range), func() Std_Ui_Element {
-		if v_0.HubDbPath != "" {
-			return View_serviceRow(v_0.SelectedService, v_0.ServiceStats)
+	{
+		showRange_1 := State_rangeApplies(v_0.Tab)
+		_ = showRange_1
+		showService_2 := (v_0.HubDbPath != "")
+		_ = showService_2
+		showSearch_3 := State_searchApplies(v_0.Tab)
+		_ = showSearch_3
+		if showRange_1 || (showService_2 || showSearch_3) {
+			return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(20, 8), Std_Ui_spacing(6), Std_Ui_Background_color(View_bgSurface()), Std_Ui_Border_widthEach(struct {
+				Bottom int
+				Left   int
+				Right  int
+				Top    int
+			}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(View_border_())}, []Std_Ui_Element{func() Std_Ui_Element {
+				if showRange_1 {
+					return View_rangeRow(v_0.Range)
+				} else {
+					return Std_Ui_none()
+				}
+			}(), func() Std_Ui_Element {
+				if showService_2 {
+					return View_serviceRow(v_0.SelectedService, v_0.ServiceStats)
+				} else {
+					return Std_Ui_none()
+				}
+			}(), func() Std_Ui_Element {
+				if showSearch_3 {
+					return View_queryRow(v_0.Tab, v_0.GlobalQuery)
+				} else {
+					return Std_Ui_none()
+				}
+			}()})
 		} else {
 			return Std_Ui_none()
 		}
-	}(), View_queryRow(v_0.GlobalQuery)})
+	}
 }
 
-func View_queryRow(v_0 string) Std_Ui_Element {
-	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Search")), Std_Ui_input([]Std_Ui_Attribute{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", "Filter logs + traces by message, route, name, id…"), Std_Ui_htmlAttribute("value", v_0), Std_Ui_onInput(func(_e1 string) any { _p0 := _e1; _ = _p0; return State_Msg_GlobalQuery(_p0) }), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 4), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(11)})})
+func View_queryRow(v_0 State_Tab, v_1 string) Std_Ui_Element {
+	return Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(6), Std_Ui_width(Std_Ui_fill())}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_color(View_textSecondary()), Std_Ui_Font_size(11), Std_Ui_paddingXY(0, 4), Std_Ui_width(Std_Ui_px(60))}, Std_Ui_text("Search")), Std_Ui_input([]Std_Ui_Attribute{Std_Ui_htmlAttribute("type", "search"), Std_Ui_htmlAttribute("placeholder", View_searchPlaceholder(v_0)), Std_Ui_htmlAttribute("aria-label", "Search"), Std_Ui_htmlAttribute("value", v_1), Std_Ui_onInput(func(_e1 string) any { _p0 := _e1; _ = _p0; return State_Msg_GlobalQuery(_p0) }), Std_Ui_width(Std_Ui_fill()), Std_Ui_Background_color(View_bgPage()), Std_Ui_Border_width(1), Std_Ui_Border_color(View_border_()), Std_Ui_Border_rounded(4), Std_Ui_paddingXY(8, 4), Std_Ui_Font_color(View_textPrimary()), Std_Ui_Font_size(11)})})
 }
 
 var View_bgPage__caf rt.LazyCaf[Std_Ui_Color]
 
 func View_bgPage() Std_Ui_Color {
 	return View_bgPage__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
+}
+
+func View_searchPlaceholder(v_0 State_Tab) string {
+	{
+		_subj := v_0
+		if _subj == State_Tab_TracesTab {
+			return "Search traces by span name or trace id…"
+		}
+		if _subj == State_Tab_ErrorsTab {
+			return "Search errors by message…"
+		}
+		return "Search logs by message, route, request, session…"
+		panic(rt.Unreachable("case"))
+	}
 }
 
 func View_serviceRow(v_0 string, v_1 []State_ServiceStat_R) Std_Ui_Element {
@@ -4975,6 +4861,43 @@ func State_rangeLabel(v_0 State_Range) string {
 		if _subj == State_Range_RangeAll {
 			return "All"
 		}
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func State_searchApplies(v_0 State_Tab) bool {
+	{
+		_subj := v_0
+		if _subj == State_Tab_LogsTab {
+			return true
+		}
+		if _subj == State_Tab_TracesTab {
+			return true
+		}
+		if _subj == State_Tab_ErrorsTab {
+			return true
+		}
+		return false
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func State_rangeApplies(v_0 State_Tab) bool {
+	{
+		_subj := v_0
+		if _subj == State_Tab_LogsTab {
+			return true
+		}
+		if _subj == State_Tab_TracesTab {
+			return true
+		}
+		if _subj == State_Tab_ErrorsTab {
+			return true
+		}
+		if _subj == State_Tab_AnalyticsTab {
+			return true
+		}
+		return false
 		panic(rt.Unreachable("case"))
 	}
 }
@@ -5692,6 +5615,31 @@ func Std_Ui_isTransitionOptOut(v_0 Std_Ui_Attribute) bool {
 			return /* FFI return */ rt.AsBool(rt.Basics_not(any(v_1)))
 		}
 		return false
+		panic(rt.Unreachable("case"))
+	}
+}
+
+func Sky_Core_List_any_(v_0 func(any) bool, v_1 []any) bool {
+	for {
+		_subj0 := v_1
+		if rt.SkyLenT(_subj0) == 0 {
+			return false
+		}
+		if rt.SkyLenT(_subj0) >= 1 {
+			v_2 := rt.SkyElemT(_subj0, 0)
+			v_3 := rt.SkyTailSliceT(_subj0)
+			_ = v_2
+			_ = v_3
+			if v_0(v_2) {
+				return true
+			} else {
+				_t1 := v_0
+				_t2 := v_3
+				v_0 = _t1
+				v_1 = _t2
+				continue
+			}
+		}
 		panic(rt.Unreachable("case"))
 	}
 }
@@ -7156,206 +7104,209 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 		if _subj.Tag == 0 {
 			v_2 := /* generic erase */ rt.Coerce[State_Tab](_subj.Fields[0])
 			_ = v_2
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Tab = v_2; return _u }(), V1: Main_fetchForTab(v_1, v_2, v_1.LogFilter)}
+			return Main_refetch(func() State_Model_R { _u := v_1; _u.Tab = v_2; return _u }())
 		}
 		if _subj.Tag == 1 {
-			return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(v_1, v_1.Tab, v_1.LogFilter), rt.Cmd_perform(rt.Time_unixMillis(any(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotNowMs(_p0)) }))}))}
+			return rt.T2[State_Model_R, any]{V0: v_1, V1: Main_fetchForTab(v_1, v_1.Tab)}
 		}
 		if (_subj.Tag == 2) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
 			v_3 := /* FFI return */ rt.Coerce[State_Overview_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
 			_ = v_3
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Overview = v_3; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
+			return rt.T2[State_Model_R, any]{V0: Main_cleared("overview", func() State_Model_R { _u := v_1; _u.Overview = v_3; return _u }()), V1: rt.Cmd_none()}
 		}
 		if (_subj.Tag == 2) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
 			v_4 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
 			_ = v_4
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
-				_u := v_1
-				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_4)))
-				return _u
-			}(), V1: rt.Cmd_none()}
+			return rt.T2[State_Model_R, any]{V0: Main_failed("overview", v_4, v_1), V1: rt.Cmd_none()}
 		}
-		if (_subj.Tag == 3) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_5 := /* FFI return */ rt.AsListT[State_LogEntry_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
+		if (_subj.Tag == 3) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 0) {
+			v_5 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_6 := /* FFI return */ rt.AsListT[State_LogEntry_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).OkValue)
 			_ = v_5
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Logs = v_5; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
-		}
-		if (_subj.Tag == 3) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
-			v_6 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
 			_ = v_6
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
-				_u := v_1
-				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_6)))
-				return _u
-			}(), V1: rt.Cmd_none()}
+			if v_5 == v_1.Gen {
+				return rt.T2[State_Model_R, any]{V0: Main_cleared("logs", func() State_Model_R { _u := v_1; _u.Logs = v_6; return _u }()), V1: rt.Cmd_none()}
+			} else {
+				return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
+			}
 		}
-		if (_subj.Tag == 4) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_7 := /* FFI return */ rt.AsListT[State_MetricRow_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
+		if (_subj.Tag == 3) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 1) {
+			v_7 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).ErrValue)
 			_ = v_7
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Metrics = v_7; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
+			return rt.T2[State_Model_R, any]{V0: Main_failed("logs", v_7, v_1), V1: rt.Cmd_none()}
 		}
-		if (_subj.Tag == 4) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
-			v_8 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
+		if (_subj.Tag == 4) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 0) {
+			v_8 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_9 := /* FFI return */ rt.AsListT[State_MetricRow_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).OkValue)
 			_ = v_8
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
-				_u := v_1
-				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_8)))
-				return _u
-			}(), V1: rt.Cmd_none()}
-		}
-		if (_subj.Tag == 5) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_9 := /* FFI return */ rt.AsListT[State_TraceRow_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
 			_ = v_9
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Traces = v_9; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
+			if v_8 == v_1.Gen {
+				return rt.T2[State_Model_R, any]{V0: Main_cleared("metrics", func() State_Model_R { _u := v_1; _u.Metrics = v_9; return _u }()), V1: rt.Cmd_none()}
+			} else {
+				return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
+			}
 		}
-		if (_subj.Tag == 5) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
-			v_10 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
+		if (_subj.Tag == 4) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 1) {
+			v_10 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).ErrValue)
 			_ = v_10
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
-				_u := v_1
-				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_10)))
-				return _u
-			}(), V1: rt.Cmd_none()}
+			return rt.T2[State_Model_R, any]{V0: Main_failed("metrics", v_10, v_1), V1: rt.Cmd_none()}
 		}
-		if (_subj.Tag == 6) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_11 := /* FFI return */ rt.AsListT[State_ErrorRow_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
+		if (_subj.Tag == 5) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 0) {
+			v_11 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_12 := /* FFI return */ rt.AsListT[State_TraceRow_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).OkValue)
 			_ = v_11
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Errors = v_11; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
-		}
-		if (_subj.Tag == 6) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
-			v_12 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
 			_ = v_12
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
-				_u := v_1
-				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_12)))
-				return _u
-			}(), V1: rt.Cmd_none()}
+			if v_11 == v_1.Gen {
+				return rt.T2[State_Model_R, any]{V0: Main_cleared("traces", func() State_Model_R { _u := v_1; _u.Traces = v_12; return _u }()), V1: rt.Cmd_none()}
+			} else {
+				return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
+			}
 		}
-		if (_subj.Tag == 7) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_13 := /* FFI return */ rt.Coerce[State_Analytics_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
+		if (_subj.Tag == 5) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 1) {
+			v_13 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).ErrValue)
 			_ = v_13
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Analytics = v_13; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
+			return rt.T2[State_Model_R, any]{V0: Main_failed("traces", v_13, v_1), V1: rt.Cmd_none()}
 		}
-		if (_subj.Tag == 7) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
-			v_14 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
+		if (_subj.Tag == 6) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 0) {
+			v_14 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_15 := /* FFI return */ rt.AsListT[State_ErrorRow_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).OkValue)
 			_ = v_14
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
-				_u := v_1
-				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_14)))
-				return _u
-			}(), V1: rt.Cmd_none()}
+			_ = v_15
+			if v_14 == v_1.Gen {
+				return rt.T2[State_Model_R, any]{V0: Main_cleared("errors", func() State_Model_R { _u := v_1; _u.Errors = v_15; return _u }()), V1: rt.Cmd_none()}
+			} else {
+				return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
+			}
+		}
+		if (_subj.Tag == 6) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 1) {
+			v_16 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).ErrValue)
+			_ = v_16
+			return rt.T2[State_Model_R, any]{V0: Main_failed("errors", v_16, v_1), V1: rt.Cmd_none()}
+		}
+		if (_subj.Tag == 7) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 0) {
+			v_17 := /* generic erase */ rt.AsInt(_subj.Fields[0])
+			v_18 := /* FFI return */ rt.Coerce[State_Analytics_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).OkValue)
+			_ = v_17
+			_ = v_18
+			if v_17 == v_1.Gen {
+				return rt.T2[State_Model_R, any]{V0: Main_cleared("analytics", func() State_Model_R { _u := v_1; _u.Analytics = v_18; return _u }()), V1: rt.Cmd_none()}
+			} else {
+				return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
+			}
+		}
+		if (_subj.Tag == 7) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).Tag == 1) {
+			v_19 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[1]).ErrValue)
+			_ = v_19
+			return rt.T2[State_Model_R, any]{V0: Main_failed("analytics", v_19, v_1), V1: rt.Cmd_none()}
 		}
 		if _subj.Tag == 8 {
-			v_15 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_15
+			v_20 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_20
 			{
-				f_16 := v_1.LogFilter
-				_ = f_16
-				f2_17 := func() State_LogFilter_R { _u := f_16; _u.Query = v_15; return _u }()
-				_ = f2_17
-				return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = f2_17; return _u }(), V1: Main_fetchLogsOnly(v_1, f2_17)}
+				f_21 := v_1.LogFilter
+				_ = f_21
+				return Main_refetch(func() State_Model_R {
+					_u := v_1
+					_u.LogFilter = func() State_LogFilter_R { _u := f_21; _u.Query = v_20; return _u }()
+					return _u
+				}())
 			}
 		}
 		if _subj.Tag == 9 {
-			v_18 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_18
+			v_22 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_22
 			{
-				f_19 := v_1.LogFilter
-				_ = f_19
-				f2_20 := func() State_LogFilter_R {
-					_subj := v_18
+				f_23 := v_1.LogFilter
+				_ = f_23
+				f2_24 := func() State_LogFilter_R {
+					_subj := v_22
 					if _subj == "debug" {
 						{
-							_u := f_19
-							_u.ShowDebug = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowDebug)))
+							_u := f_23
+							_u.ShowDebug = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_23.ShowDebug)))
 							return _u
 						}
 					}
 					if _subj == "info" {
 						{
-							_u := f_19
-							_u.ShowInfo = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowInfo)))
+							_u := f_23
+							_u.ShowInfo = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_23.ShowInfo)))
 							return _u
 						}
 					}
 					if _subj == "warn" {
 						{
-							_u := f_19
-							_u.ShowWarn = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowWarn)))
+							_u := f_23
+							_u.ShowWarn = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_23.ShowWarn)))
 							return _u
 						}
 					}
 					if _subj == "error" {
 						{
-							_u := f_19
-							_u.ShowError = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_19.ShowError)))
+							_u := f_23
+							_u.ShowError = /* FFI return */ rt.AsBool(rt.Basics_not(any(f_23.ShowError)))
 							return _u
 						}
 					}
-					return f_19
+					return f_23
 					panic(rt.Unreachable("case"))
 				}()
-				_ = f2_20
-				return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = f2_20; return _u }(), V1: Main_fetchLogsOnly(v_1, f2_20)}
+				_ = f2_24
+				return Main_refetch(func() State_Model_R { _u := v_1; _u.LogFilter = f2_24; return _u }())
 			}
 		}
 		if _subj.Tag == 10 {
-			v_21 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_21
+			v_25 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_25
 			{
-				f_22 := v_1.LogFilter
-				_ = f_22
-				f2_23 := func() State_LogFilter_R { _u := f_22; _u.Session = v_21; return _u }()
-				_ = f2_23
-				return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = f2_23; _u.Tab = State_Tab_LogsTab; return _u }(), V1: Main_fetchLogsOnly(v_1, f2_23)}
+				f_26 := v_1.LogFilter
+				_ = f_26
+				return Main_refetch(func() State_Model_R {
+					_u := v_1
+					_u.LogFilter = func() State_LogFilter_R { _u := f_26; _u.Session = v_25; return _u }()
+					_u.Tab = State_Tab_LogsTab
+					return _u
+				}())
 			}
 		}
 		if _subj.Tag == 11 {
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.LogFilter = State_emptyLogFilter(); return _u }(), V1: Main_fetchLogsOnly(v_1, State_emptyLogFilter())}
+			return Main_refetch(func() State_Model_R { _u := v_1; _u.LogFilter = State_emptyLogFilter(); return _u }())
 		}
 		if _subj.Tag == 12 {
-			v_24 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_24
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.TraceQuery = v_24; return _u }(), V1: rt.Cmd_none()}
+			v_27 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_27
+			return Main_refetch(func() State_Model_R { _u := v_1; _u.TraceQuery = v_27; return _u }())
 		}
 		if _subj.Tag == 13 {
-			v_25 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_25
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Tab = State_Tab_TracesTab; _u.TraceQuery = v_25; return _u }(), V1: rt.Cmd_perform(any(v_1.Store.ReadTraces(struct{}{})), any(func(_p1 any) any { return any(State_Msg_GotTraces(_p1)) }))}
+			v_28 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_28
+			return Main_refetch(func() State_Model_R { _u := v_1; _u.Tab = State_Tab_TracesTab; _u.TraceQuery = v_28; return _u }())
 		}
 		if _subj.Tag == 14 {
-			v_26 := /* generic erase */ rt.AsString(_subj.Fields[0])
-			_ = v_26
-			{
-				newModel_27 := func() State_Model_R { _u := v_1; _u.SelectedService = v_26; return _u }()
-				_ = newModel_27
-				return rt.T2[State_Model_R, any]{V0: newModel_27, V1: Main_fetchForTab(newModel_27, newModel_27.Tab, newModel_27.LogFilter)}
-			}
+			v_29 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_29
+			return Main_refetch(func() State_Model_R { _u := v_1; _u.SelectedService = v_29; return _u }())
 		}
 		if (_subj.Tag == 15) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_28 := /* FFI return */ rt.AsListT[State_ServiceStat_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
-			_ = v_28
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.ServiceStats = v_28; _u.LastError = ""; return _u }(), V1: rt.Cmd_none()}
+			v_30 := /* FFI return */ rt.AsListT[State_ServiceStat_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
+			_ = v_30
+			return rt.T2[State_Model_R, any]{V0: Main_cleared("services", func() State_Model_R { _u := v_1; _u.ServiceStats = v_30; return _u }()), V1: rt.Cmd_none()}
 		}
 		if (_subj.Tag == 15) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
-			v_29 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
-			_ = v_29
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
-				_u := v_1
-				_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_29)))
-				return _u
-			}(), V1: rt.Cmd_none()}
+			v_31 := /* FFI return */ rt.Coerce[Sky_Core_Error_Error]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).ErrValue)
+			_ = v_31
+			return rt.T2[State_Model_R, any]{V0: Main_failed("services", v_31, v_1), V1: rt.Cmd_none()}
 		}
 		if (_subj.Tag == 16) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_30 := /* FFI return */ rt.Coerce[Std_Live_Console_Identity_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
-			_ = v_30
+			v_32 := /* FFI return */ rt.Coerce[Std_Live_Console_Identity_R]( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
+			_ = v_32
 			{
-				tenant_31 := /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any("tenant"), any(v_30.Claims))))))
-				_ = tenant_31
+				tenant_33 := /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any("tenant"), any(v_32.Claims))))))
+				_ = tenant_33
 				return rt.T2[State_Model_R, any]{V0: func() State_Model_R {
 					_u := v_1
-					_u.Identity = rt.Just[Std_Live_Console_Identity_R](v_30)
-					_u.TenantPrefix = tenant_31
+					_u.Identity = rt.Just[Std_Live_Console_Identity_R](v_32)
+					_u.TenantPrefix = tenant_33
 					return _u
 				}(), V1: rt.Cmd_none()}
 			}
@@ -7364,25 +7315,88 @@ func Main_update(v_0 State_Msg, v_1 State_Model_R) rt.T2[State_Model_R, any] {
 			return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
 		}
 		if _subj.Tag == 17 {
-			v_32 := /* generic erase */ rt.Coerce[State_Range](_subj.Fields[0])
-			_ = v_32
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.Range = v_32; return _u }(), V1: rt.Cmd_none()}
-		}
-		if (_subj.Tag == 18) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 0) {
-			v_33 := /* FFI return */ rt.AsInt( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).OkValue)
-			_ = v_33
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.NowMs = v_33; return _u }(), V1: rt.Cmd_none()}
-		}
-		if (_subj.Tag == 18) && ( /* generic erase */ rt.ResultCoerce[any, any](_subj.Fields[0]).Tag == 1) {
-			return rt.T2[State_Model_R, any]{V0: v_1, V1: rt.Cmd_none()}
-		}
-		if _subj.Tag == 19 {
-			v_34 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			v_34 := /* generic erase */ rt.Coerce[State_Range](_subj.Fields[0])
 			_ = v_34
-			return rt.T2[State_Model_R, any]{V0: func() State_Model_R { _u := v_1; _u.GlobalQuery = v_34; return _u }(), V1: rt.Cmd_none()}
+			return Main_refetch(func() State_Model_R { _u := v_1; _u.Range = v_34; return _u }())
+		}
+		if _subj.Tag == 18 {
+			v_35 := /* generic erase */ rt.AsString(_subj.Fields[0])
+			_ = v_35
+			return Main_refetch(func() State_Model_R { _u := v_1; _u.GlobalQuery = v_35; return _u }())
 		}
 		panic(rt.Unreachable("case"))
 	}
+}
+
+func Main_refetch(v_0 State_Model_R) rt.T2[State_Model_R, any] {
+	{
+		next_1 := func() State_Model_R { _u := v_0; _u.Gen = (v_0.Gen + 1); return _u }()
+		_ = next_1
+		return rt.T2[State_Model_R, any]{V0: next_1, V1: Main_fetchForTab(next_1, next_1.Tab)}
+	}
+}
+
+func Main_fetchForTab(v_0 State_Model_R, v_1 State_Tab) any {
+	if Main_hasStoreSource(v_0) {
+		return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotOverview(_p0)) })), any(Main_tabFetches(v_0, v_1))))
+	} else {
+		return rt.Cmd_none()
+	}
+}
+
+func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab) []any {
+	{
+		scope_2 := Main_scopeOf(v_0)
+		_ = scope_2
+		g_3 := v_0.Gen
+		_ = g_3
+		{
+			_subj := v_1
+			if _subj == State_Tab_OverviewTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotServiceStats(_p0)) }))}
+			}
+			if _subj == State_Tab_LogsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(scope_2, v_0.LogFilter)), any(func(_w2 any) any {
+					return any(func(_p1 rt.SkyResult[Sky_Core_Error_Error, []State_LogEntry_R]) State_Msg {
+						return State_Msg_GotLogs(g_3, _p1)
+					}( /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_LogEntry_R](_w2, func(_v any) []State_LogEntry_R { return rt.AsListT[State_LogEntry_R](_v) })))
+				}))}
+			}
+			if _subj == State_Tab_MetricsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(scope_2)), any(func(_w4 any) any {
+					return any(func(_p3 rt.SkyResult[Sky_Core_Error_Error, []State_MetricRow_R]) State_Msg {
+						return State_Msg_GotMetrics(g_3, _p3)
+					}( /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_MetricRow_R](_w4, func(_v any) []State_MetricRow_R { return rt.AsListT[State_MetricRow_R](_v) })))
+				}))}
+			}
+			if _subj == State_Tab_TracesTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(scope_2, v_0.TraceQuery)), any(func(_w6 any) any {
+					return any(func(_p5 rt.SkyResult[Sky_Core_Error_Error, []State_TraceRow_R]) State_Msg {
+						return State_Msg_GotTraces(g_3, _p5)
+					}( /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_TraceRow_R](_w6, func(_v any) []State_TraceRow_R { return rt.AsListT[State_TraceRow_R](_v) })))
+				}))}
+			}
+			if _subj == State_Tab_ErrorsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(scope_2)), any(func(_w8 any) any {
+					return any(func(_p7 rt.SkyResult[Sky_Core_Error_Error, []State_ErrorRow_R]) State_Msg {
+						return State_Msg_GotErrors(g_3, _p7)
+					}( /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, []State_ErrorRow_R](_w8, func(_v any) []State_ErrorRow_R { return rt.AsListT[State_ErrorRow_R](_v) })))
+				}))}
+			}
+			if _subj == State_Tab_AnalyticsTab {
+				return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(scope_2)), any(func(_w10 any) any {
+					return any(func(_p9 rt.SkyResult[Sky_Core_Error_Error, State_Analytics_R]) State_Msg {
+						return State_Msg_GotAnalytics(g_3, _p9)
+					}( /* FFI return */ rt.ResultCoerceOk[Sky_Core_Error_Error, State_Analytics_R](_w10, func(_v any) State_Analytics_R { return rt.Coerce[State_Analytics_R](_v) })))
+				}))}
+			}
+			panic(rt.Unreachable("case"))
+		}
+	}
+}
+
+func Main_scopeOf(v_0 State_Model_R) State_Scope_R {
+	return State_Scope_R{Service: v_0.SelectedService, Range: State_rangeKey(v_0.Range), Search: v_0.GlobalQuery}
 }
 
 func Sky_Core_Maybe_withDefault(v_0 any, v_1 rt.SkyMaybe[any]) any {
@@ -7400,61 +7414,25 @@ func Sky_Core_Maybe_withDefault(v_0 any, v_1 rt.SkyMaybe[any]) any {
 	}
 }
 
-func Main_fetchForTab(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) any {
-	if Main_hasStoreSource(v_0) {
-		return rt.Cmd_batch(rt.List_cons(rt.Cmd_perform(any(v_0.Store.ReadOverview(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotOverview(_p0)) })), any(Main_tabFetches(v_0, v_1, v_2))))
-	} else {
-		return rt.Cmd_none()
+func Main_failed(v_0 string, v_1 Sky_Core_Error_Error, v_2 State_Model_R) State_Model_R {
+	{
+		_u := v_2
+		_u.LastError = /* FFI return */ rt.AsString(rt.Basics_errorToString(any(v_1)))
+		_u.ErrorFrom = v_0
+		return _u
 	}
 }
 
-func Main_tabFetches(v_0 State_Model_R, v_1 State_Tab, v_2 State_LogFilter_R) []any {
-	if v_0.HubDbPath != "" {
+func Main_cleared(v_0 string, v_1 State_Model_R) State_Model_R {
+	if v_1.ErrorFrom == v_0 {
 		{
-			_subj := v_1
-			if _subj == State_Tab_OverviewTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p0 any) any { return any(State_Msg_GotServiceStats(_p0)) }))}
-			}
-			if _subj == State_Tab_LogsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_2)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))}
-			}
-			if _subj == State_Tab_MetricsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredMetrics(v_0.SelectedService)), any(func(_p2 any) any { return any(State_Msg_GotMetrics(_p2)) }))}
-			}
-			if _subj == State_Tab_TracesTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredTraces(v_0.SelectedService)), any(func(_p3 any) any { return any(State_Msg_GotTraces(_p3)) }))}
-			}
-			if _subj == State_Tab_ErrorsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadFilteredErrors(v_0.SelectedService)), any(func(_p4 any) any { return any(State_Msg_GotErrors(_p4)) }))}
-			}
-			if _subj == State_Tab_AnalyticsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p5 any) any { return any(State_Msg_GotAnalytics(_p5)) }))}
-			}
-			panic(rt.Unreachable("case"))
+			_u := v_1
+			_u.LastError = ""
+			_u.ErrorFrom = ""
+			return _u
 		}
 	} else {
-		{
-			_subj := v_1
-			if _subj == State_Tab_OverviewTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadServiceStats(struct{}{})), any(func(_p6 any) any { return any(State_Msg_GotServiceStats(_p6)) }))}
-			}
-			if _subj == State_Tab_LogsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadLogs(v_2)), any(func(_p7 any) any { return any(State_Msg_GotLogs(_p7)) }))}
-			}
-			if _subj == State_Tab_MetricsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadMetrics(struct{}{})), any(func(_p8 any) any { return any(State_Msg_GotMetrics(_p8)) }))}
-			}
-			if _subj == State_Tab_TracesTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadTraces(struct{}{})), any(func(_p9 any) any { return any(State_Msg_GotTraces(_p9)) }))}
-			}
-			if _subj == State_Tab_ErrorsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadErrors(struct{}{})), any(func(_p10 any) any { return any(State_Msg_GotErrors(_p10)) }))}
-			}
-			if _subj == State_Tab_AnalyticsTab {
-				return []any{rt.Cmd_perform(any(v_0.Store.ReadAnalytics(struct{}{})), any(func(_p11 any) any { return any(State_Msg_GotAnalytics(_p11)) }))}
-			}
-			panic(rt.Unreachable("case"))
-		}
+		return v_1
 	}
 }
 
@@ -7466,19 +7444,11 @@ func State_emptyLogFilter() State_LogFilter_R {
 	})
 }
 
-func Main_fetchLogsOnly(v_0 State_Model_R, v_1 State_LogFilter_R) any {
-	if Main_hasStoreSource(v_0) {
-		if v_0.HubDbPath != "" {
-			return rt.Cmd_perform(any(v_0.Store.ReadFilteredLogs(v_0.SelectedService, v_1)), any(func(_p0 any) any { return any(State_Msg_GotLogs(_p0)) }))
-		} else {
-			return rt.Cmd_perform(any(v_0.Store.ReadLogs(v_1)), any(func(_p1 any) any { return any(State_Msg_GotLogs(_p1)) }))
-		}
-	} else {
-		return rt.Cmd_none()
-	}
+func Main_init_(_ any) rt.T2[State_Model_R, any] {
+	return Main_initWith("")
 }
 
-func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
+func Main_initWith(v_0 string) rt.T2[State_Model_R, any] {
 	{
 		parent_1 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_PARENT_URL"), any("")))
 		_ = parent_1
@@ -7486,45 +7456,45 @@ func Main_init_(v_0 any) rt.T2[State_Model_R, any] {
 		_ = hubDbPath_2
 		logoutUrl_3 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_CONSOLE_LOGOUT_URL"), any("")))
 		_ = logoutUrl_3
-		initialRange_4 := State_Range_Last24h
-		_ = initialRange_4
-		initialQuery_5 := ""
-		_ = initialQuery_5
-		initialService_6 := ""
-		_ = initialService_6
-		chosenStore_7 := func() State_Store_R {
+		params_4 := /* FFI return */ rt.AsMapT[string](rt.Http_parseQuery(any(v_0)))
+		_ = params_4
+		param_5 := func(v_10 string) string {
+			return /* FFI return */ rt.AsString(Sky_Core_Maybe_withDefault("" /* primitive join */, rt.MaybeCoerce[any]( /* FFI return */ rt.MaybeCoerce[string](rt.Dict_get(any(v_10), any(params_4))))))
+		}
+		_ = param_5
+		chosenStore_6 := func() State_Store_R {
 			if hubDbPath_2 != "" {
 				return HubStore_hubStore(hubDbPath_2)
 			} else {
 				return Main_httpStore(parent_1)
 			}
 		}()
-		_ = chosenStore_7
-		isStandalone_8 := ((parent_1 == "") && (hubDbPath_2 == ""))
-		_ = isStandalone_8
-		startModel_9 := State_Model_R{Tab: State_Tab_OverviewTab, ParentUrl: parent_1, HubDbPath: hubDbPath_2, Store: chosenStore_7, Overview: func() State_Overview_R {
-			if isStandalone_8 {
+		_ = chosenStore_6
+		isStandalone_7 := ((parent_1 == "") && (hubDbPath_2 == ""))
+		_ = isStandalone_7
+		startModel_8 := State_Model_R{Tab: State_parseTab(param_5("tab")), ParentUrl: parent_1, HubDbPath: hubDbPath_2, Store: chosenStore_6, Overview: func() State_Overview_R {
+			if isStandalone_7 {
 				return State_mockOverview()
 			} else {
 				return State_emptyOverview()
 			}
 		}(), Logs: func() []State_LogEntry_R {
-			if isStandalone_8 {
+			if isStandalone_7 {
 				return State_mockLogs()
 			} else {
 				return []State_LogEntry_R{}
 			}
-		}(), Metrics: []State_MetricRow_R{}, Traces: []State_TraceRow_R{}, Errors: []State_ErrorRow_R{}, LastError: "", LogFilter: State_emptyLogFilter(), TraceQuery: "", SelectedService: initialService_6, ServiceStats: []State_ServiceStat_R{}, Identity: rt.Nothing[Std_Live_Console_Identity_R](), TenantPrefix: "", Range: initialRange_4, NowMs: 0, GlobalQuery: initialQuery_5, Analytics: State_emptyAnalytics(), LogoutUrl: logoutUrl_3}
-		_ = startModel_9
-		identityCmd_10 := func() any {
+		}(), Metrics: []State_MetricRow_R{}, Traces: []State_TraceRow_R{}, Errors: []State_ErrorRow_R{}, LastError: "", ErrorFrom: "", LogFilter: State_emptyLogFilter(), TraceQuery: "", SelectedService: param_5("service"), ServiceStats: []State_ServiceStat_R{}, Identity: rt.Nothing[Std_Live_Console_Identity_R](), TenantPrefix: "", Range: State_parseRange(param_5("range")), Gen: 0, GlobalQuery: param_5("q"), Analytics: State_emptyAnalytics(), LogoutUrl: logoutUrl_3}
+		_ = startModel_8
+		identityCmd_9 := func() any {
 			if hubDbPath_2 != "" {
 				return rt.Cmd_perform(rt.Hub_currentIdentity(any(hubDbPath_2)), any(func(_p0 any) any { return any(State_Msg_GotIdentity(_p0)) }))
 			} else {
 				return rt.Cmd_none()
 			}
 		}()
-		_ = identityCmd_10
-		return rt.T2[State_Model_R, any]{V0: startModel_9, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(startModel_9, startModel_9.Tab, startModel_9.LogFilter), identityCmd_10, rt.Cmd_perform(rt.Time_unixMillis(any(struct{}{})), any(func(_p1 any) any { return any(State_Msg_GotNowMs(_p1)) }))}))}
+		_ = identityCmd_9
+		return rt.T2[State_Model_R, any]{V0: startModel_8, V1: rt.Cmd_batch(any([]any{Main_fetchForTab(startModel_8, startModel_8.Tab), identityCmd_9}))}
 	}
 }
 
@@ -7532,8 +7502,31 @@ var State_emptyAnalytics__caf rt.LazyCaf[State_Analytics_R]
 
 func State_emptyAnalytics() State_Analytics_R {
 	return State_emptyAnalytics__caf.Get(func() State_Analytics_R {
-		return State_Analytics_R{Total: 0, UniqueUsers: 0, Counts: /* primitive join */ rt.AsListT[State_EventCount_R]([]any{}), Recent: /* primitive join */ rt.AsListT[State_AnalyticsEvent_R]([]any{}), Revenue: /* primitive join */ rt.AsListT[State_CurrencyTotal_R]([]any{}), WindowDays: 0, RowCapHit: false, RowCap: 0}
+		return State_Analytics_R{Total: 0, UniqueUsers: 0, Counts: /* primitive join */ rt.AsListT[State_EventCount_R]([]any{}), Recent: /* primitive join */ rt.AsListT[State_AnalyticsEvent_R]([]any{}), Revenue: /* primitive join */ rt.AsListT[State_CurrencyTotal_R]([]any{}), WindowDays: 0, WindowLabel: "", RowCapHit: false, RowCap: 0}
 	})
+}
+
+func State_parseRange(v_0 string) State_Range {
+	{
+		_subj := v_0
+		if _subj == "15m" {
+			return State_Range_Last15m
+		}
+		if _subj == "1h" {
+			return State_Range_Last1h
+		}
+		if _subj == "24h" {
+			return State_Range_Last24h
+		}
+		if _subj == "7d" {
+			return State_Range_Last7d
+		}
+		if _subj == "all" {
+			return State_Range_RangeAll
+		}
+		return State_Range_Last24h
+		panic(rt.Unreachable("case"))
+	}
 }
 
 var State_mockLogs__caf rt.LazyCaf[[]State_LogEntry_R]
@@ -7558,47 +7551,56 @@ func State_mockOverview() State_Overview_R {
 	return State_mockOverview__caf.Get(func() State_Overview_R { return State_emptyOverview() })
 }
 
+func State_parseTab(v_0 string) State_Tab {
+	{
+		_subj := v_0
+		if _subj == "metrics" {
+			return State_Tab_MetricsTab
+		}
+		if _subj == "logs" {
+			return State_Tab_LogsTab
+		}
+		if _subj == "traces" {
+			return State_Tab_TracesTab
+		}
+		if _subj == "errors" {
+			return State_Tab_ErrorsTab
+		}
+		if _subj == "analytics" {
+			return State_Tab_AnalyticsTab
+		}
+		return State_Tab_OverviewTab
+		panic(rt.Unreachable("case"))
+	}
+}
+
 func Main_httpStore(v_0 string) State_Store_R {
-	return State_Store_R{ReadOverview: func(_e0 struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] { return Main_fetchOverview(v_0) }, ReadLogs: func(v_1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-		return Main_fetchLogs(v_0, v_1)
-	}, ReadMetrics: func(_e1 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
+	return State_Store_R{ReadOverview: func(_e0 struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] { return Main_fetchOverview(v_0) }, ReadLogs: func(v_1 State_Scope_R, v_2 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+		return Main_fetchLogs(v_0, v_1, v_2)
+	}, ReadMetrics: func(_e1 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
 		return Main_fetchMetrics(v_0)
-	}, ReadTraces: func(_e2 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] { return Main_fetchTraces(v_0) }, ReadErrors: func(_e3 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] { return Main_fetchErrors(v_0) }, ListServices: func(_e4 struct{}) rt.SkyTask[Sky_Core_Error_Error, []string] {
-		return /* generic erase */ rt.TaskCoerceT[Sky_Core_Error_Error, []string]( /* FFI return */ rt.TaskCoerceT[any, []string](rt.AnyTaskSucceed(any([]string{""}))))
-	}, ReadServiceStats: func(_e5 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
+	}, ReadTraces: func(v_3 State_Scope_R, v_4 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
+		return Main_fetchTraces(v_0, v_3, v_4)
+	}, ReadErrors: func(v_5 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
+		return Main_fetchErrors(v_0, v_5)
+	}, ReadServiceStats: func(_e2 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
 		return /* generic erase */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R]( /* FFI return */ rt.TaskCoerceT[any, []any](rt.AnyTaskSucceed(any([]any{}))))
-	}, ReadFilteredLogs: func(_e6 string, v_3 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-		v_2 := _e6
-		_ = v_2
-		return Main_fetchLogs(v_0, v_3)
-	}, ReadFilteredMetrics: func(_e7 string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-		v_4 := _e7
-		_ = v_4
-		return Main_fetchMetrics(v_0)
-	}, ReadFilteredTraces: func(_e8 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-		v_5 := _e8
-		_ = v_5
-		return Main_fetchTraces(v_0)
-	}, ReadFilteredErrors: func(_e9 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-		v_6 := _e9
-		_ = v_6
-		return Main_fetchErrors(v_0)
-	}, ReadAnalytics: func(_e10 struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
-		return Main_fetchAnalytics(v_0)
+	}, ReadAnalytics: func(v_6 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
+		return Main_fetchAnalytics(v_0, v_6)
 	}}
 }
 
-func Main_fetchAnalytics(v_0 string) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
-	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Analytics_R](Main_apiGet(v_0, "/_sky/console/api/analytics", Main_analyticsDecoder()))
+func Main_fetchAnalytics(v_0 string, v_1 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Analytics_R](Main_apiGet(v_0, ("/_sky/console/api/analytics?range=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_1.Range)))), Main_analyticsDecoder()))
 }
 
 var Main_analyticsDecoder__caf rt.LazyCaf[any]
 
 func Main_analyticsDecoder() any {
 	return Main_analyticsDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("rowCap"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("rowCapHit"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("windowDays"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(rt.CurryN(8, func(_ps0 []any) any {
-			return any(State_Analytics( /* FFI return */ rt.AsInt(_ps0[0]) /* FFI return */, rt.AsInt(_ps0[1]) /* FFI return */, rt.AsListT[State_EventCount_R](_ps0[2]) /* FFI return */, rt.AsListT[State_AnalyticsEvent_R](_ps0[3]) /* FFI return */, rt.AsListT[State_CurrencyTotal_R](_ps0[4]) /* FFI return */, rt.AsInt(_ps0[5]) /* FFI return */, rt.AsBool(_ps0[6]) /* FFI return */, rt.AsInt(_ps0[7])))
-		})))))))))))
+		return rt.JsonDecP_optional(any("rowCap"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("rowCapHit"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("windowLabel"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("windowDays"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("revenue"), rt.JsonDec_list(Main_currencyTotalDecoder()), any([]State_CurrencyTotal_R{}), rt.JsonDecP_optional(any("recent"), rt.JsonDec_list(Main_analyticsEventDecoder()), any([]State_AnalyticsEvent_R{}), rt.JsonDecP_optional(any("counts"), rt.JsonDec_list(Main_eventCountDecoder()), any([]State_EventCount_R{}), rt.JsonDecP_optional(any("uniqueUsers"), rt.JsonDec_int(), any(0), rt.JsonDecP_optional(any("total"), rt.JsonDec_int(), any(0), rt.JsonDec_succeed(any(rt.CurryN(9, func(_ps0 []any) any {
+			return any(State_Analytics( /* FFI return */ rt.AsInt(_ps0[0]) /* FFI return */, rt.AsInt(_ps0[1]) /* FFI return */, rt.AsListT[State_EventCount_R](_ps0[2]) /* FFI return */, rt.AsListT[State_AnalyticsEvent_R](_ps0[3]) /* FFI return */, rt.AsListT[State_CurrencyTotal_R](_ps0[4]) /* FFI return */, rt.AsInt(_ps0[5]) /* FFI return */, rt.AsString(_ps0[6]) /* FFI return */, rt.AsBool(_ps0[7]) /* FFI return */, rt.AsInt(_ps0[8])))
+		}))))))))))))
 	})
 }
 
@@ -7690,8 +7692,8 @@ func Sky_Core_Error_mkInfo(v_0 string) Sky_Core_Error_ErrorInfo_R {
 	return Sky_Core_Error_ErrorInfo_R{Message: v_0, Details: /* primitive join */ rt.MaybeCoerce[Sky_Core_Error_ErrorDetails](rt.Nothing[any]())}
 }
 
-func Main_fetchErrors(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](Main_apiGet(v_0, "/_sky/console/api/errors", Main_errorsDecoder()))
+func Main_fetchErrors(v_0 string, v_1 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](Main_apiGet(v_0, ("/_sky/console/api/errors?" + Main_scopeQuery(v_1)), Main_errorsDecoder()))
 }
 
 var Main_errorsDecoder__caf rt.LazyCaf[any]
@@ -7712,8 +7714,20 @@ func Main_errorRowDecoder() any {
 	})
 }
 
-func Main_fetchTraces(v_0 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](Main_apiGet(v_0, "/_sky/console/api/traces?limit=100", Main_tracesDecoder()))
+func Main_scopeQuery(v_0 State_Scope_R) string {
+	return ("range=" + ( /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_0.Range))) + Main_searchParam(v_0.Search)))
+}
+
+func Main_searchParam(v_0 string) string {
+	if /* FFI return */ rt.AsString(rt.String_trim(any(v_0))) == "" {
+		return ""
+	} else {
+		return ("&q=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(rt.String_trim(any(v_0)))))
+	}
+}
+
+func Main_fetchTraces(v_0 string, v_1 State_Scope_R, v_2 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](Main_apiGet(v_0, ("/_sky/console/api/traces?limit=100&" + (Main_scopeQuery(v_1) + Main_searchParam(v_2))), Main_tracesDecoder()))
 }
 
 var Main_tracesDecoder__caf rt.LazyCaf[any]
@@ -7752,8 +7766,8 @@ func Main_metricRowDecoder() any {
 	})
 }
 
-func Main_fetchLogs(v_0 string, v_1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](Main_apiGet(v_0, ("/_sky/console/api/logs?limit=200" + Main_buildLogQuery(v_1)), Main_logsDecoder()))
+func Main_fetchLogs(v_0 string, v_1 State_Scope_R, v_2 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+	return /* primitive join */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](Main_apiGet(v_0, ("/_sky/console/api/logs?limit=200&" + (Main_scopeQuery(v_1) + Main_buildLogQuery(v_2))), Main_logsDecoder()))
 }
 
 var Main_logsDecoder__caf rt.LazyCaf[any]
@@ -7804,11 +7818,27 @@ func Main_buildLogQuery(v_0 State_LogFilter_R) string {
 			}
 		}())))
 		_ = levels_1
-		if rt.List_lengthT[string](levels_1) == 4 {
-			return ""
-		} else {
-			return ("&level=" + /* FFI return */ rt.AsString(rt.String_join(any(","), any(levels_1))))
-		}
+		levelPart_2 := func() string {
+			if rt.List_lengthT[string](levels_1) == 4 {
+				return ""
+			} else {
+				if rt.List_isEmptyT[string](levels_1) {
+					return "&level=none"
+				} else {
+					return ("&level=" + /* FFI return */ rt.AsString(rt.String_join(any(","), any(levels_1))))
+				}
+			}
+		}()
+		_ = levelPart_2
+		sessionPart_3 := func() string {
+			if v_0.Session == "" {
+				return ""
+			} else {
+				return ("&session=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(any(v_0.Session))))
+			}
+		}()
+		_ = sessionPart_3
+		return (levelPart_2 + (Main_searchParam(v_0.Query) + sessionPart_3))
 	}
 }
 
@@ -7839,27 +7869,17 @@ func Main_intFromFloat() any {
 func HubStore_hubStore(v_0 string) State_Store_R {
 	return State_Store_R{ReadOverview: func(_e0 struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Overview_R] {
 		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Overview_R](rt.Hub_readOverview(any(v_0)))
-	}, ReadLogs: func(v_1 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readLogs(any(v_0), any(v_1)))
-	}, ReadMetrics: func(_e1 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readMetrics(any(v_0)))
-	}, ReadTraces: func(_e2 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readTraces(any(v_0)))
-	}, ReadErrors: func(_e3 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readErrors(any(v_0)))
-	}, ListServices: func(_e4 struct{}) rt.SkyTask[Sky_Core_Error_Error, []string] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []string](rt.Hub_listServices(any(v_0)))
-	}, ReadServiceStats: func(_e5 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.Hub_readServiceStats(any(v_0)))
-	}, ReadFilteredLogs: func(v_2 string, v_3 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readFilteredLogs(any(v_0), any(v_2), any(v_3)))
-	}, ReadFilteredMetrics: func(v_4 string) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readFilteredMetrics(any(v_0), any(v_4)))
-	}, ReadFilteredTraces: func(v_5 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
-		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readFilteredTraces(any(v_0), any(v_5)))
-	}, ReadFilteredErrors: func(v_6 string) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
+	}, ReadLogs: func(v_1 State_Scope_R, v_2 State_LogFilter_R) rt.SkyTask[Sky_Core_Error_Error, []State_LogEntry_R] {
+		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_LogEntry_R](rt.Hub_readFilteredLogs(any(v_0), any(v_1), any(v_2)))
+	}, ReadMetrics: func(v_3 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_MetricRow_R] {
+		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_MetricRow_R](rt.Hub_readFilteredMetrics(any(v_0), any(v_3)))
+	}, ReadTraces: func(v_4 State_Scope_R, v_5 string) rt.SkyTask[Sky_Core_Error_Error, []State_TraceRow_R] {
+		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_TraceRow_R](rt.Hub_readFilteredTraces(any(v_0), any(v_4), any(v_5)))
+	}, ReadErrors: func(v_6 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, []State_ErrorRow_R] {
 		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ErrorRow_R](rt.Hub_readFilteredErrors(any(v_0), any(v_6)))
-	}, ReadAnalytics: func(_e6 struct{}) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
+	}, ReadServiceStats: func(_e1 struct{}) rt.SkyTask[Sky_Core_Error_Error, []State_ServiceStat_R] {
+		return /* FFI return */ rt.TaskCoerceT[Sky_Core_Error_Error, []State_ServiceStat_R](rt.Hub_readServiceStats(any(v_0)))
+	}, ReadAnalytics: func(_e2 State_Scope_R) rt.SkyTask[Sky_Core_Error_Error, State_Analytics_R] {
 		return /* generic erase */ rt.TaskCoerceT[Sky_Core_Error_Error, State_Analytics_R]( /* FFI return */ rt.TaskCoerceT[any, State_Analytics_R](rt.AnyTaskSucceed(any(State_emptyAnalytics()))))
 	}}
 }
@@ -9429,5 +9449,5 @@ func Sky_Config_csrfValue(v_0 bool) string {
 }
 
 func init() {
-	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpRequest_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Overview_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Provider_Message_R{}, Std_Ai_Provider_Request_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
+	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpRequest_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Overview_R{}, State_Scope_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Provider_Message_R{}, Std_Ai_Provider_Request_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
 }

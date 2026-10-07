@@ -152,6 +152,7 @@ type alias Analytics =
     , recent : List AnalyticsEvent
     , revenue : List CurrencyTotal
     , windowDays : Int
+    , windowLabel : String
     , rowCapHit : Bool
     , rowCap : Int
     }
@@ -165,6 +166,7 @@ emptyAnalytics =
     , recent = []
     , revenue = []
     , windowDays = 0
+    , windowLabel = ""
     , rowCapHit = False
     , rowCap = 0
     }
@@ -188,46 +190,22 @@ type alias ServiceStat =
 
 -- ─── Time-range filter (v0.16.18 #558-PR1) ──────────────────────
 --
--- Global time-range applied across Logs / Traces tabs. Independent
--- of the per-tab filters (LogFilter / traceQuery). The selected
--- variant + a Tick-refreshed `nowMs` snapshot let the view path
--- compute the ISO-8601 threshold synchronously via
--- Time.formatISO8601 (pure Int -> String). Rows whose `time` /
--- `startTime` string is < threshold are filtered out before the
--- per-tab filters apply.
+-- Global time-range for the Logs, Traces, Errors and Analytics tabs.
+-- The range travels to the server as its key (`range=1h`) and the
+-- server filters its whole store BEFORE its row limit (v0.27.8). It
+-- used to be applied here, in the view, to the newest 200 rows the
+-- console had fetched, as a string compare between a UTC threshold
+-- and times stamped in the server's zone: the wider ranges showed the
+-- same rows and every range was off by the zone offset.
 --
--- `RangeAll` skips the filter entirely (no threshold computation).
 -- Default is `Last24h` — matches the typical "what's been happening
--- today" question. Future PRs widen to slug + free-text + saved
--- views built on the same row-filter foundation.
+-- today" question.
 type Range
     = Last15m
     | Last1h
     | Last24h
     | Last7d
     | RangeAll
-
-
--- Range duration in milliseconds. `RangeAll` returns 0 — caller
--- short-circuits the threshold computation and skips filtering.
-rangeMillis : Range -> Int
-rangeMillis r =
-    case r of
-
-        Last15m ->
-            15 * 60 * 1000
-
-        Last1h ->
-            60 * 60 * 1000
-
-        Last24h ->
-            24 * 60 * 60 * 1000
-
-        Last7d ->
-            7 * 24 * 60 * 60 * 1000
-
-        RangeAll ->
-            0
 
 
 rangeLabel : Range -> String
@@ -299,6 +277,106 @@ parseRange s =
         _ ->
             Last24h
 
+
+-- The tabs whose data has a time axis: the range chips show on these
+-- only. Overview and Metrics are process-lifetime snapshots, where a
+-- range would change nothing.
+rangeApplies : Tab -> Bool
+rangeApplies tab =
+    case tab of
+
+        LogsTab ->
+            True
+
+        TracesTab ->
+            True
+
+        ErrorsTab ->
+            True
+
+        AnalyticsTab ->
+            True
+
+        _ ->
+            False
+
+
+-- The tabs the global search box filters.
+searchApplies : Tab -> Bool
+searchApplies tab =
+    case tab of
+
+        LogsTab ->
+            True
+
+        TracesTab ->
+            True
+
+        ErrorsTab ->
+            True
+
+        _ ->
+            False
+
+
+-- URL token for a Tab (the `tab=` query parameter). Symmetric with
+-- parseTab.
+tabKey : Tab -> String
+tabKey tab =
+    case tab of
+
+        OverviewTab ->
+            "overview"
+
+        MetricsTab ->
+            "metrics"
+
+        LogsTab ->
+            "logs"
+
+        TracesTab ->
+            "traces"
+
+        ErrorsTab ->
+            "errors"
+
+        AnalyticsTab ->
+            "analytics"
+
+
+parseTab : String -> Tab
+parseTab s =
+    case s of
+
+        "metrics" ->
+            MetricsTab
+
+        "logs" ->
+            LogsTab
+
+        "traces" ->
+            TracesTab
+
+        "errors" ->
+            ErrorsTab
+
+        "analytics" ->
+            AnalyticsTab
+
+        _ ->
+            OverviewTab
+
+-- ─── Read scope ─────────────────────────────────────────────────
+-- What every tab read carries to its Store: the selected service
+-- (hub mode; "" = every service, ignored by the embedded console),
+-- the range key (`rangeKey`) and the global search text. The server
+-- applies all of it before its row limit.
+type alias Scope =
+    { service : String
+    , range : String
+    , search : String
+    }
+
 -- ─── Logs filter ────────────────────────────────────────────────
 -- Multi-axis filter: free-text search + level toggles + session id
 -- pivot. UI-side state; serialises into the /_sky/console/api/logs
@@ -341,32 +419,18 @@ emptyLogFilter =
 --     httpStore; one source ↔ three deployment shapes
 --     (embedded / hub-single / hub-multi).
 --
--- `listServices` is the v0.16.4 hub addition: embedded mode
--- reports a single-element list (the host app's name);
--- hubStore returns the distinct service_name values present.
---
--- `readFiltered*` (v0.16.4 B6) are the per-service drill-down
--- variants of readLogs/readMetrics/readTraces/readErrors used by
--- the dedicated tab pages (LogsTab.sky / MetricsTab.sky / …) when
--- the user picks a service from the multi-service Overview's
--- service card scroller. The first `String` arg is the service
--- name; an empty string means "all services" (callers should fall
--- back to the unfiltered read in that case). Embedded mode wires
--- these to the existing single-service readers (the `svc` arg is
--- ignored — embedded mode only knows about the host app).
+-- Every tab read takes the `Scope` (service, range, search); the
+-- Logs read adds the Logs tab's filter and the Traces read the
+-- Traces tab's own search. Embedded mode ignores the service (it
+-- only knows the host app).
 type alias Store =
     { readOverview : () -> Task Error Overview
-    , readLogs : LogFilter -> Task Error (List LogEntry)
-    , readMetrics : () -> Task Error (List MetricRow)
-    , readTraces : () -> Task Error (List TraceRow)
-    , readErrors : () -> Task Error (List ErrorRow)
-    , listServices : () -> Task Error (List String)
+    , readLogs : Scope -> LogFilter -> Task Error (List LogEntry)
+    , readMetrics : Scope -> Task Error (List MetricRow)
+    , readTraces : Scope -> String -> Task Error (List TraceRow)
+    , readErrors : Scope -> Task Error (List ErrorRow)
     , readServiceStats : () -> Task Error (List ServiceStat)
-    , readFilteredLogs : String -> LogFilter -> Task Error (List LogEntry)
-    , readFilteredMetrics : String -> Task Error (List MetricRow)
-    , readFilteredTraces : String -> Task Error (List TraceRow)
-    , readFilteredErrors : String -> Task Error (List ErrorRow)
-    , readAnalytics : () -> Task Error Analytics
+    , readAnalytics : Scope -> Task Error Analytics
     }
 
 -- ─── Model + Msg ─────────────────────────────────────────────────
@@ -387,6 +451,7 @@ type alias Model =
     , traces : List TraceRow
     , errors : List ErrorRow
     , lastError : String
+    , errorFrom : String
     , logFilter : LogFilter
     , traceQuery : String
     , selectedService : String
@@ -394,7 +459,7 @@ type alias Model =
     , identity : Maybe Identity
     , tenantPrefix : String
     , range : Range
-    , nowMs : Int
+    , gen : Int
     , globalQuery : String
     , analytics : Analytics
     , logoutUrl : String
@@ -404,17 +469,13 @@ type alias Model =
     -- injects SKY_CONSOLE_LOGOUT_URL. Standalone hub / aggregator
     -- consoles have no login cookie, so the value stays "" and the
     -- header renders no "Sign out" link.
-    -- v0.16.18 #558-PR1: global time-range filter applied across
-    -- Logs + Traces tabs. `nowMs` is refreshed every Tick via
-    -- Cmd.perform Time.unixMillis GotNowMs — the view path uses
-    -- `nowMs - rangeMillis range` as the ISO-8601 threshold
-    -- (Time.formatISO8601 is pure Int -> String).
-    -- v0.16.18 #558-PR3: free-text search applied alongside the
-    -- range + service filters. Empty string = no filter. Match
-    -- is case-insensitive substring against multiple row fields
-    -- (logs: message / route / reqId / sessionId; traces: name /
-    -- traceId). Errors + metrics carry no useful text axis so
-    -- the filter doesn't apply to them.
+    -- `range` / `globalQuery`: the global range and search, sent to
+    -- the server with every tab read (see Scope).
+    -- `gen` counts the changes of what the tabs read (range, search,
+    -- service, a tab filter). Each read is tagged with the gen it was
+    -- sent under; an answer for an older gen is dropped, so a slow
+    -- answer to the previous range or search cannot overwrite the
+    -- current one.
 
 -- Identity threaded from the hub auth-gate via Hub_currentIdentity
 -- (v0.16.6 / #493 part 2c).  Match Std.Live.Console.Identity's
@@ -440,11 +501,11 @@ type Msg
     = SelectTab Tab
     | Tick
     | GotOverview (Result Error Overview)
-    | GotLogs (Result Error (List LogEntry))
-    | GotMetrics (Result Error (List MetricRow))
-    | GotTraces (Result Error (List TraceRow))
-    | GotErrors (Result Error (List ErrorRow))
-    | GotAnalytics (Result Error Analytics)
+    | GotLogs Int (Result Error (List LogEntry))
+    | GotMetrics Int (Result Error (List MetricRow))
+    | GotTraces Int (Result Error (List TraceRow))
+    | GotErrors Int (Result Error (List ErrorRow))
+    | GotAnalytics Int (Result Error Analytics)
     | LogFilterQuery String
     | LogFilterToggleLevel String
     | LogFilterPickSession String
@@ -455,7 +516,6 @@ type Msg
     | GotServiceStats (Result Error (List ServiceStat))
     | GotIdentity (Result Error Identity)
     | SelectRange Range
-    | GotNowMs (Result Error Int)
     | GlobalQuery String
     -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
     -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.

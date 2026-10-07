@@ -92,14 +92,14 @@ func (f *fakeHubStoreReader) QueryFilteredMetricsJSON(serviceName string) (strin
 	return f.rowsMet, nil
 }
 
-func (f *fakeHubStoreReader) QueryFilteredSpansJSON(serviceName string) (string, error) {
+func (f *fakeHubStoreReader) QueryFilteredSpansJSON(serviceName, _ string) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}
 	return f.rowsSpn, nil
 }
 
-func (f *fakeHubStoreReader) QueryFilteredErrorsJSON(serviceName string) (string, error) {
+func (f *fakeHubStoreReader) QueryFilteredErrorsJSON(serviceName, _ string) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}

@@ -35,6 +35,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -639,6 +640,9 @@ type LogFilter struct {
 	ServiceName  string    // "" → no exact-match filter
 	TenantPrefix string    // "" → no tenant scoping; non-empty → AND service_name LIKE prefix || '%'
 	Level        string    // "" → no filter
+	Levels       []string  // empty → no filter; else level IN (…)
+	Search       []string  // lower-cased terms; each must occur in the row's text
+	SessionID    string    // "" → no filter; else attrs.session_id = SessionID
 	Since        time.Time // zero → no lower bound
 	Until        time.Time // zero → no upper bound
 	Limit        int       // 0 → 100
@@ -697,6 +701,26 @@ func buildLogQuery(f LogFilter) (string, []any) {
 	if f.Level != "" {
 		q += ` AND level = ?`
 		args = append(args, f.Level)
+	}
+	if len(f.Levels) > 0 {
+		q += ` AND level IN (?` + strings.Repeat(`, ?`, len(f.Levels)-1) + `)`
+		for _, l := range f.Levels {
+			args = append(args, l)
+		}
+	}
+	// The console's search: every term must occur in the message, the
+	// service, the trace id or one of the correlation attrs. instr, not
+	// LIKE, so a term's % or _ is matched literally.
+	for _, t := range f.Search {
+		q += ` AND instr(lower(message || ' ' || service_name || ' ' || trace_id || ' ' ||
+			coalesce(json_extract(attrs, '$.route'), '') || ' ' ||
+			coalesce(json_extract(attrs, '$.req_id'), '') || ' ' ||
+			coalesce(json_extract(attrs, '$.session_id'), '')), ?) > 0`
+		args = append(args, strings.ToLower(t))
+	}
+	if f.SessionID != "" {
+		q += ` AND json_extract(attrs, '$.session_id') = ?`
+		args = append(args, f.SessionID)
 	}
 	if !f.Since.IsZero() {
 		q += ` AND time >= ?`
@@ -796,6 +820,7 @@ type SpanFilter struct {
 	ServiceName  string
 	TenantPrefix string // "" → no tenant scoping
 	TraceID      string
+	Search       []string // keep the spans of traces in which some span matches each term
 	Since        time.Time
 	Until        time.Time
 	Limit        int
@@ -831,6 +856,11 @@ func (s *Store) QuerySpans(filter SpanFilter) ([]SpanRow, error) {
 	if filter.TraceID != "" {
 		q += ` AND trace_id = ?`
 		args = append(args, filter.TraceID)
+	}
+	for _, t := range filter.Search {
+		q += ` AND trace_id IN (SELECT trace_id FROM telemetry_span
+			WHERE instr(lower(name || ' ' || trace_id), ?) > 0)`
+		args = append(args, strings.ToLower(t))
 	}
 	if !filter.Since.IsZero() {
 		q += ` AND time >= ?`

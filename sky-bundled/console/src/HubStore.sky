@@ -22,6 +22,7 @@ import State exposing
     , TraceRow
     , ErrorRow
     , LogFilter
+    , Scope
     , ServiceStat
     , Identity
     , Analytics
@@ -38,22 +39,15 @@ import State exposing
 hubStore : String -> Store
 hubStore dbPath =
     { readOverview = \_ -> hubReadOverview dbPath
-    , readLogs = \filter -> hubReadLogs dbPath filter
-    , readMetrics = \_ -> hubReadMetrics dbPath
-    , readTraces = \_ -> hubReadTraces dbPath
-    , readErrors = \_ -> hubReadErrors dbPath
-    , listServices = \_ -> hubListServices dbPath
+    -- Every tab read is scoped: the Scope's service (empty = every
+    -- service), range and search, plus the Logs tab's filter and the
+    -- Traces tab's own search. The hub reader applies all of it in SQL,
+    -- before its row limit.
+    , readLogs = \scope filter -> hubReadFilteredLogs dbPath scope filter
+    , readMetrics = \scope -> hubReadFilteredMetrics dbPath scope
+    , readTraces = \scope q -> hubReadFilteredTraces dbPath scope q
+    , readErrors = \scope -> hubReadFilteredErrors dbPath scope
     , readServiceStats = \_ -> hubReadServiceStats dbPath
-    -- v0.16.4 B6: per-service drill-down readers.  Each takes the
-    -- service name as the first arg; an empty name means "all
-    -- services" which the runtime treats as no filter (falls back
-    -- to the un-filtered query).  Same JSON-encoded payload as
-    -- the single-service readers; rt.Coerce narrows into the
-    -- typed records at the call site.
-    , readFilteredLogs = \svc filter -> hubReadFilteredLogs dbPath svc filter
-    , readFilteredMetrics = \svc -> hubReadFilteredMetrics dbPath svc
-    , readFilteredTraces = \svc -> hubReadFilteredTraces dbPath svc
-    , readFilteredErrors = \svc -> hubReadFilteredErrors dbPath svc
     -- Product analytics is per-host-app (the app's own Std.Analytics
     -- event store), not aggregated into the hub's console-hot.db, so
     -- the hub Store surfaces an empty payload. The embedded console
@@ -67,58 +61,30 @@ hubReadOverview =
     Ffi.kernel "Hub_readOverview"
 
 
-hubReadLogs : String -> LogFilter -> Task Error (List LogEntry)
-hubReadLogs =
-    Ffi.kernel "Hub_readLogs"
-
-
-hubReadMetrics : String -> Task Error (List MetricRow)
-hubReadMetrics =
-    Ffi.kernel "Hub_readMetrics"
-
-
-hubReadTraces : String -> Task Error (List TraceRow)
-hubReadTraces =
-    Ffi.kernel "Hub_readTraces"
-
-
-hubReadErrors : String -> Task Error (List ErrorRow)
-hubReadErrors =
-    Ffi.kernel "Hub_readErrors"
-
-
-hubListServices : String -> Task Error (List String)
-hubListServices =
-    Ffi.kernel "Hub_listServices"
-
-
 hubReadServiceStats : String -> Task Error (List ServiceStat)
 hubReadServiceStats =
     Ffi.kernel "Hub_readServiceStats"
 
 
--- v0.16.4 B6: per-service drill-down kernels. Same shape as the
--- single-service readers above, plus a leading `String` arg
--- carrying the service name to filter by (empty = no filter).
--- Wire payload matches the existing single-service shape so the
--- typed Sky-side record narrowing path (rt.Coerce →
--- narrowMapToStruct) is reused verbatim.
-hubReadFilteredLogs : String -> String -> LogFilter -> Task Error (List LogEntry)
+-- Per-service, ranged and searched reads (runtime-go/rt/hub_bridge.go).
+-- The String is the unused dbPath; the Scope's service "" means every
+-- service.
+hubReadFilteredLogs : String -> Scope -> LogFilter -> Task Error (List LogEntry)
 hubReadFilteredLogs =
     Ffi.kernel "Hub_readFilteredLogs"
 
 
-hubReadFilteredMetrics : String -> String -> Task Error (List MetricRow)
+hubReadFilteredMetrics : String -> Scope -> Task Error (List MetricRow)
 hubReadFilteredMetrics =
     Ffi.kernel "Hub_readFilteredMetrics"
 
 
-hubReadFilteredTraces : String -> String -> Task Error (List TraceRow)
+hubReadFilteredTraces : String -> Scope -> String -> Task Error (List TraceRow)
 hubReadFilteredTraces =
     Ffi.kernel "Hub_readFilteredTraces"
 
 
-hubReadFilteredErrors : String -> String -> Task Error (List ErrorRow)
+hubReadFilteredErrors : String -> Scope -> Task Error (List ErrorRow)
 hubReadFilteredErrors =
     Ffi.kernel "Hub_readFilteredErrors"
 

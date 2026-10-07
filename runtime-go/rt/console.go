@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sky-app/rt/procenv"
 	"sort"
@@ -406,14 +407,22 @@ func mountEmbeddedConsoleFor(mux *http.ServeMux, owner any, onClaim func()) *liv
 	// active). Mount BEFORE the inline catch-all so the more-specific
 	// pattern wins in Go's ServeMux longest-prefix-match.
 	mountConsoleAuthRoutes(mux)
-	// Signal the in-process console app that a logout route + login
-	// cookie exist here (embedded mode). The bundled console reads this
-	// at init and renders a "Sign out" link ONLY when it's set — a
-	// standalone hub / aggregator console (which has no login cookie)
-	// never sees it, so it shows no sign-out.
+	// Signal the in-process console app that there is a sign-in to end.
+	// The bundled console reads this at init and renders a "Sign out" link
+	// ONLY when it is set. That is token mode alone: there the browser holds
+	// a console cookie the login form issued, and /_sky/console/_logout ends
+	// it. In dev-open mode there is no sign-in, and in app mode the app's own
+	// sign-in admits the user again on the next request (they sign out of the
+	// app), so a "Sign out" link there led straight back to the console — a
+	// control that did nothing. A standalone hub / aggregator console never
+	// sees it either.
 	// The program's own table (procenv), read by the console's System.getenvOr:
 	// a child process must not inherit it.
-	procenv.Set("SKY_CONSOLE_LOGOUT_URL", "/_sky/console/_logout", procenv.Runtime)
+	logoutURL := ""
+	if st.mode == consoleAuthModeToken {
+		logoutURL = "/_sky/console/_logout"
+	}
+	procenv.Set("SKY_CONSOLE_LOGOUT_URL", logoutURL, procenv.Runtime)
 
 	// F1 — mint + publish the per-boot internal token BEFORE the sub-app inits,
 	// so its loopback fetches to /_sky/console/api/* authenticate by that token,
@@ -694,42 +703,36 @@ func flattenMetricLabels(labels map[string]string) string {
 	return strings.Join(parts, ", ")
 }
 
-// HandleConsoleLogs returns the most-recent ring entries. Filter
-// via query params:
+// HandleConsoleLogs returns the newest matching ring entries, newest
+// first. Filter via query params (every filter applies BEFORE the limit, over
+// the whole ring):
 //
-//	?level=warn,error    — comma-separated set; default: all levels
-//	?req=<id>           — exact match on req_id field
-//	?limit=50           — cap on entries returned (default 50, max 1000)
+//	?range=15m|1h|24h|7d|all — time range (default: all)
+//	?level=warn,error        — comma-separated set; default: all levels
+//	?q=<text>                — case-insensitive search over message, route,
+//	                           request/trace id, subapp, error and session;
+//	                           repeat for several terms (all must match)
+//	?session=<id>            — exact match on the session_id field
+//	?req=<id>                — exact match on req_id
+//	?limit=50                — cap on entries returned (default 50, max 1000)
+//	?offset=0                — entries to skip (paging)
 //
 // Default cap lowered from 200 → 50 in v0.16.1 PR11 — the polling
 // console under Sub.every 3000 was returning 67 KB JSON per tick
-// at 2.5k buffer occupancy, pegging 1-CPU VMs at >180% CPU. 50
-// entries renders fully in <50 KB; UI pagination follow-up adds
-// ?offset for back-pages.
+// at 2.5k buffer occupancy, pegging 1-CPU VMs at >180% CPU.
 func HandleConsoleLogs(w http.ResponseWriter, r *http.Request) {
 	if !consoleAccessAllowed(w, r) {
 		return
 	}
-	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			if n > 1000 {
-				n = 1000
-			}
-			limit = n
-		}
-	}
-	offset := 0
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
-			offset = n
-		}
-	}
-	levelFilter := parseSetParam(r.URL.Query().Get("level"))
-	reqFilter := r.URL.Query().Get("req")
+	query := r.URL.Query()
+	limit, offset := consolePaging(query, 50)
+	levelFilter := parseSetParam(query.Get("level"))
+	reqFilter := query.Get("req")
+	sessionFilter := query.Get("session")
+	cq := parseConsoleQuery(query, time.Now())
 
 	logs := telemetry.Default().RecentLogs(0)
-	matched := make([]telemetry.LogEntry, 0, limit+offset)
+	matched := make([]telemetry.LogEntry, 0, 64)
 	for _, l := range logs {
 		if len(levelFilter) > 0 && !levelFilter[l.Level] {
 			continue
@@ -737,29 +740,28 @@ func HandleConsoleLogs(w http.ResponseWriter, r *http.Request) {
 		if reqFilter != "" && l.ReqID != reqFilter {
 			continue
 		}
-		matched = append(matched, l)
-		if len(matched) >= limit+offset {
-			break
+		if sessionFilter != "" && l.Fields["session_id"] != sessionFilter {
+			continue
 		}
+		if !cq.inRange(l.TS) {
+			continue
+		}
+		if !ConsoleTextMatch(cq.terms, l.Message, l.Route, l.ReqID, l.TraceID,
+			l.Subapp, l.ErrorStr, l.Fields["session_id"], l.Fields["user_label"]) {
+			continue
+		}
+		matched = append(matched, l)
 	}
-	out := matched
-	if offset < len(matched) {
-		out = matched[offset:]
-	} else {
-		out = matched[:0]
-	}
-	writeJSON(w, out)
+	// Newest first by time, not by arrival: an entry pushed by a sub-app or
+	// an exporter can arrive after newer ones.
+	sort.SliceStable(matched, func(i, j int) bool { return matched[i].TS.After(matched[j].TS) })
+	writeJSON(w, pageOf(matched, limit, offset))
 }
 
-// HandleConsoleTraces returns recent OTel-shaped trace spans.
-// Newest first; default 25 (was 100 pre-PR11). Use ?limit=N&offset=M
-// for pagination.
-func HandleConsoleTraces(w http.ResponseWriter, r *http.Request) {
-	if !consoleAccessAllowed(w, r) {
-		return
-	}
-	limit := 25
-	if l := r.URL.Query().Get("limit"); l != "" {
+// consolePaging reads ?limit (default def, max 1000) and ?offset.
+func consolePaging(query url.Values, def int) (limit, offset int) {
+	limit = def
+	if l := query.Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
 			if n > 1000 {
 				n = 1000
@@ -767,14 +769,71 @@ func HandleConsoleTraces(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	offset := 0
-	if o := r.URL.Query().Get("offset"); o != "" {
+	if o := query.Get("offset"); o != "" {
 		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
 			offset = n
 		}
 	}
-	_ = offset
-	traces := telemetry.Default().RecentTraces(limit)
+	return limit, offset
+}
+
+// pageOf returns items[offset : offset+limit], clamped, never nil.
+func pageOf[T any](items []T, limit, offset int) []T {
+	if offset >= len(items) {
+		return []T{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end]
+}
+
+// HandleConsoleTraces returns recent OTel-shaped trace spans, newest first
+// by start time. Default 25 spans (was 100 pre-PR11); ?limit=N&offset=M page.
+//
+//	?range=15m|1h|24h|7d|all — spans that started inside the range
+//	?q=<text>                — keep every span of a trace in which some span
+//	                           matches (name or trace id); repeat for several
+//	                           terms, all must match within the trace
+//
+// The search runs over the whole ring, so a log row's trace badge finds its
+// trace however many spans came after it.
+func HandleConsoleTraces(w http.ResponseWriter, r *http.Request) {
+	if !consoleAccessAllowed(w, r) {
+		return
+	}
+	query := r.URL.Query()
+	limit, offset := consolePaging(query, 25)
+	cq := parseConsoleQuery(query, time.Now())
+
+	all := telemetry.Default().RecentTraces(0)
+	inRange := make([]telemetry.TraceEntry, 0, len(all))
+	for _, t := range all {
+		if cq.inRange(t.StartTime) {
+			inRange = append(inRange, t)
+		}
+	}
+	traces := inRange
+	if len(cq.terms) > 0 {
+		// A trace is kept when each term matches one of its spans.
+		byTrace := map[string][]string{}
+		for _, t := range inRange {
+			byTrace[t.TraceID] = append(byTrace[t.TraceID], t.Name, t.TraceID)
+		}
+		keep := map[string]bool{}
+		for id, fields := range byTrace {
+			keep[id] = ConsoleTextMatch(cq.terms, fields...)
+		}
+		traces = make([]telemetry.TraceEntry, 0, len(inRange))
+		for _, t := range inRange {
+			if keep[t.TraceID] {
+				traces = append(traces, t)
+			}
+		}
+	}
+	sort.SliceStable(traces, func(i, j int) bool { return traces[i].StartTime.After(traces[j].StartTime) })
+	traces = pageOf(traces, limit, offset)
 	// Project a serialisable shape (avoid leaking the trace.Span
 	// SDK type — JSON-marshals as opaque).
 	type traceRow struct {
@@ -811,10 +870,12 @@ func HandleConsoleTraces(w http.ResponseWriter, r *http.Request) {
 // messages from the log ring buffer. Bucket key is (level, error
 // substring) so transient differences (timestamps, request IDs)
 // don't fragment the summary. Most-recent occurrence + count surfaces.
+// ?range= and ?q= narrow the log lines counted, as on /logs.
 func HandleConsoleErrors(w http.ResponseWriter, r *http.Request) {
 	if !consoleAccessAllowed(w, r) {
 		return
 	}
+	cq := parseConsoleQuery(r.URL.Query(), time.Now())
 	logs := telemetry.Default().RecentLogs(0)
 	type errSummary struct {
 		Level     string `json:"level"`
@@ -823,10 +884,17 @@ func HandleConsoleErrors(w http.ResponseWriter, r *http.Request) {
 		LastSeen  string `json:"lastSeen"`
 		LastReqID string `json:"lastReqId,omitempty"`
 		LastError string `json:"lastError,omitempty"`
+		lastTS    time.Time
 	}
 	buckets := make(map[string]*errSummary)
 	for _, l := range logs {
 		if l.Level != "warn" && l.Level != "error" {
+			continue
+		}
+		if !cq.inRange(l.TS) {
+			continue
+		}
+		if !ConsoleTextMatch(cq.terms, l.Message, l.ErrorStr, l.Route, l.Subapp) {
 			continue
 		}
 		// Bucket by message + truncated error string — keeps the
@@ -848,9 +916,10 @@ func HandleConsoleErrors(w http.ResponseWriter, r *http.Request) {
 			buckets[key] = b
 		}
 		b.Count++
-		// logs come newest-first → first occurrence is the
-		// most-recent. Keep.
-		if b.LastSeen == "" {
+		// The newest occurrence by time (entries can arrive out of
+		// time order) carries the last-seen fields.
+		if b.lastTS.IsZero() || l.TS.After(b.lastTS) {
+			b.lastTS = l.TS
 			b.LastSeen = l.TS.UTC().Format(time.RFC3339Nano)
 			b.LastReqID = l.ReqID
 			b.LastError = l.ErrorStr
@@ -865,7 +934,7 @@ func HandleConsoleErrors(w http.ResponseWriter, r *http.Request) {
 		if out[i].Count != out[j].Count {
 			return out[i].Count > out[j].Count
 		}
-		return out[i].LastSeen > out[j].LastSeen
+		return out[i].lastTS.After(out[j].lastTS)
 	})
 	writeJSON(w, out)
 }

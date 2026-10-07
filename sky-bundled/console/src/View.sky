@@ -3,7 +3,6 @@ module View exposing (view)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
-import Sky.Core.Time as Time
 import Sky.Core.Encoding as Encoding
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
@@ -232,24 +231,46 @@ tabStrip active =
 -- only see one service (their own host app) so the service picker
 -- would be redundant noise. Future PRs add level + free-text axes
 -- here so every filter lives in one consistent header location.
+--
+-- Each row shows only where it changes something (v0.27.8): the range
+-- on the tabs with a time axis (State.rangeApplies), the search on the
+-- tabs it filters (State.searchApplies). Overview and Metrics are
+-- snapshots; a range chip there used to look selectable and do nothing.
 globalFilterStrip : Model -> Element Msg
 globalFilterStrip model =
-    Ui.column
-        [ Ui.width Ui.fill
-        , Ui.paddingXY 20 8
-        , Ui.spacing 6
-        , Background.color bgSurface
-        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
-        , Border.color border_
-        ]
-        [ rangeRow model.range
-        , if model.hubDbPath /= "" then
-              serviceRow model.selectedService model.serviceStats
+    let
+        showRange = rangeApplies model.tab
+        showService = model.hubDbPath /= ""
+        showSearch = searchApplies model.tab
+    in
+        if showRange || showService || showSearch then
+            Ui.column
+                [ Ui.width Ui.fill
+                , Ui.paddingXY 20 8
+                , Ui.spacing 6
+                , Background.color bgSurface
+                , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+                , Border.color border_
+                ]
+                [ if showRange then
+                      rangeRow model.range
 
-          else
-              Ui.none
-        , queryRow model.globalQuery
-        ]
+                  else
+                      Ui.none
+                , if showService then
+                      serviceRow model.selectedService model.serviceStats
+
+                  else
+                      Ui.none
+                , if showSearch then
+                      queryRow model.tab model.globalQuery
+
+                  else
+                      Ui.none
+                ]
+
+        else
+            Ui.none
 
 
 rangeRow : Range -> Element Msg
@@ -360,8 +381,8 @@ rangeChip current r =
 -- already use — explicit `value` attribute keeps the input
 -- contents in sync across server-driven re-renders, onInput sends
 -- GlobalQuery on every keystroke.
-queryRow : String -> Element Msg
-queryRow current =
+queryRow : Tab -> String -> Element Msg
+queryRow tab current =
     Ui.row
         [ Ui.spacing 6, Ui.width Ui.fill ]
         [ Ui.el
@@ -373,9 +394,8 @@ queryRow current =
               (Ui.text "Search")
         , Ui.input
               [ Ui.htmlAttribute "type" "search"
-              , Ui.htmlAttribute
-                    "placeholder"
-                    "Filter logs + traces by message, route, name, id…"
+              , Ui.htmlAttribute "placeholder" (searchPlaceholder tab)
+              , Ui.htmlAttribute "aria-label" "Search"
               , Ui.htmlAttribute "value" current
               , Ui.onInput GlobalQuery
               , Ui.width Ui.fill
@@ -388,6 +408,20 @@ queryRow current =
               , Font.size 11
               ]
         ]
+
+
+searchPlaceholder : Tab -> String
+searchPlaceholder tab =
+    case tab of
+
+        TracesTab ->
+            "Search traces by span name or trace id…"
+
+        ErrorsTab ->
+            "Search errors by message…"
+
+        _ ->
+            "Search logs by message, route, request, session…"
 
 
 -- v0.16.18 #558-PR4 — emit a zero-height element whose
@@ -409,6 +443,12 @@ urlSync model =
 encodeFilters : Model -> String
 encodeFilters model =
     let
+        tabPart =
+            if model.tab == OverviewTab then
+                ""
+
+            else
+                "tab=" ++ tabKey model.tab
         rangePart =
             if model.range == Last24h then
                 ""
@@ -429,7 +469,7 @@ encodeFilters model =
                 "service=" ++ Encoding.urlEncode model.selectedService
     in
         joinQueryParts
-            (List.filter (\p -> p /= "") [rangePart, qPart, svcPart])
+            (List.filter (\p -> p /= "") [tabPart, rangePart, qPart, svcPart])
 
 
 joinQueryParts : List String -> String
@@ -444,45 +484,6 @@ joinQueryParts parts =
 
         p :: rest ->
             p ++ "&" ++ joinQueryParts rest
-
-
--- Case-insensitive substring match against the searchable text
--- axes of a LogEntry. The caller pre-lowers the query so each row
--- only lowers its candidate fields. Multiple fields are checked
--- so "/api/users" finds the route, "5xx" finds 5xx in messages,
--- a session id pivots to that session's logs.
-matchLogText : String -> LogEntry -> Bool
-matchLogText q l =
-    String.contains q (String.toLower l.message)
-        || String.contains q (String.toLower l.route)
-        || String.contains q (String.toLower l.reqId)
-        || String.contains q (String.toLower l.sessionId)
-
-
--- TraceRow doesn't carry a reqId or message — name + traceId are
--- the searchable axes. Same case-insensitive substring shape.
-matchTraceText : String -> TraceRow -> Bool
-matchTraceText q t =
-    String.contains q (String.toLower t.name)
-        || String.contains q (String.toLower t.traceId)
-
-
--- ISO-8601 threshold for a (range, nowMs) pair. Empty string means
--- "no filter" — caller short-circuits the List.filter. Returned
--- string sorts lexicographically against telemetry row .time /
--- .startTime values (hub schema writes ms-precision ISO-8601).
-rangeThresholdIso : Range -> Int -> String
-rangeThresholdIso r nowMs =
-    case r of
-        RangeAll ->
-            ""
-
-        _ ->
-            if nowMs <= 0 then
-                ""
-
-            else
-                Time.formatISO8601 (nowMs - rangeMillis r)
 
 
 tabButton : Tab -> Tab -> Element Msg
@@ -535,40 +536,9 @@ tabButton active tab =
 -- record-update, no extra Coerce sites.
 content : Model -> Element Msg
 content model =
-    let
-        -- v0.16.18 #558-PR1 + PR3: pre-filter time-bound rows once
-        -- per render so per-tab branches see the narrowed view.
-        -- Metrics + Errors have no time column or text axis (they're
-        -- aggregates) so neither filter applies to them.
-        threshold = rangeThresholdIso model.range model.nowMs
-        q = String.toLower (String.trim model.globalQuery)
-        logsAfterRange =
-            if threshold == "" then
-                model.logs
-
-            else
-                List.filter (\l -> l.time >= threshold) model.logs
-        tracesAfterRange =
-            if threshold == "" then
-                model.traces
-
-            else
-                List.filter
-                    (\t -> t.startTime >= threshold)
-                    model.traces
-        logsFinal =
-            if q == "" then
-                logsAfterRange
-
-            else
-                List.filter (matchLogText q) logsAfterRange
-        tracesFinal =
-            if q == "" then
-                tracesAfterRange
-
-            else
-                List.filter (matchTraceText q) tracesAfterRange
-    in
+    -- The rows arrive filtered: range, search, levels, session and the
+    -- tab searches are applied by the server (v0.27.8), so the view
+    -- renders them as they are.
     Ui.column
         [ Ui.width Ui.fill, Ui.padding 20, Ui.spacing 16 ]
         (case model.tab of
@@ -577,9 +547,7 @@ content model =
                 -- v0.16.4 B5: hub mode shows the multi-service
                 -- dashboard (Overview.viewOverview).  Embedded /
                 -- standalone modes (no SKY_CONSOLE_HUB_DB) keep
-                -- the single-service Overview that's shipped since
-                -- v0.16.0 — byte-identical output for embedded
-                -- consoles.
+                -- the single-service Overview.
                 if model.hubDbPath /= "" then
                     viewOverview model
 
@@ -587,11 +555,6 @@ content model =
                     overviewView model.overview
 
             MetricsTab ->
-                -- v0.16.4 B6: hub-mode drill-down. When a service
-                -- is selected in the multi-service Overview the
-                -- new MetricsTab page renders a scope banner +
-                -- pre-filtered metrics. Embedded / standalone
-                -- consoles keep the existing single-service view.
                 if model.hubDbPath /= "" then
                     viewMetricsTab model
 
@@ -599,23 +562,18 @@ content model =
                     metricsView model.metrics
 
             LogsTab ->
-                -- The filtered logs flow as an explicit arg so we
-                -- skip the record-update + Coerce roundtrip that
-                -- panicked production. Each tab branch sees the
-                -- unmodified `model` for everything else (logFilter,
-                -- store config, identity, etc.).
                 if model.hubDbPath /= "" then
-                    viewLogsTab model logsFinal
+                    viewLogsTab model model.logs
 
                 else
-                    logsView model logsFinal
+                    logsView model model.logs
 
             TracesTab ->
                 if model.hubDbPath /= "" then
-                    viewTracesTab model tracesFinal
+                    viewTracesTab model model.traces
 
                 else
-                    tracesView model.traceQuery tracesFinal
+                    tracesView model.traceQuery (model.traceQuery /= "" || model.globalQuery /= "") model.traces
 
             ErrorsTab ->
                 if model.hubDbPath /= "" then
@@ -706,51 +664,16 @@ infoRow label value =
 -- content router does the time-range + global-query filter once;
 -- here we apply only the per-tab level + free-text filter on top.
 logsView : Model -> List LogEntry -> List (Element Msg)
-logsView model preFilteredLogs =
-    let
-        filtered =
-            List.filter (matchFilter model.logFilter) preFilteredLogs
-    in
-        [ logsFilterPanel model.logFilter
-        , panel
-              "Recent log entries"
-              (if List.isEmpty filtered then
-                  [emptyState "No log entries match the current filter."]
+logsView model logs =
+    [ logsFilterPanel model.logFilter
+    , panel
+          "Recent log entries"
+          (if List.isEmpty logs then
+              [emptyState "No log entries match the current filter."]
 
-              else
-                  List.map logRow filtered)
-        ]
-
-
-matchFilter : LogFilter -> LogEntry -> Bool
-matchFilter f e =
-    let
-        levelOk =
-            case e.level of
-
-                "debug" ->
-                    f.showDebug
-
-                "info" ->
-                    f.showInfo
-
-                "warn" ->
-                    f.showWarn
-
-                "error" ->
-                    f.showError
-
-                _ ->
-                    True
-        sessionOk = f.session == "" || f.session == e.sessionId
-        queryOk =
-            f.query == ""
-                || String.contains
-                       (String.toLower f.query)
-                       (String.toLower
-                           (e.message ++ " " ++ e.route ++ " " ++ e.subapp))
-    in
-        levelOk && sessionOk && queryOk
+          else
+              List.map logRow logs)
+    ]
 
 
 logsFilterPanel : LogFilter -> Element Msg
@@ -1078,33 +1001,20 @@ formatAvg sum count =
 
 
 -- ─── Traces tab ──────────────────────────────────────────────────
-tracesView : String -> List TraceRow -> List (Element Msg)
-tracesView query rows =
-    let
-        lq = String.toLower (String.trim query)
-        matches r =
-            String.contains lq (String.toLower r.name)
-                || String.contains lq (String.toLower r.traceId)
-        keepTrace tid = List.any (\r -> r.traceId == tid && matches r) rows
-        visibleIds =
-            if lq == "" then
-                distinctTraceIds rows
+tracesView : String -> Bool -> List TraceRow -> List (Element Msg)
+tracesView query filtered rows =
+    [ tracesFilterPanel query
+    , panel
+          "Recent traces"
+          (if List.isEmpty rows && filtered then
+              [emptyState "No traces match the filter."]
 
-            else
-                List.filter keepTrace (distinctTraceIds rows)
-    in
-        [ tracesFilterPanel query
-        , panel
-              "Recent traces"
-              (if List.isEmpty rows then
-                  [emptyState "No traces captured yet."]
+          else if List.isEmpty rows then
+              [emptyState "No traces in this range."]
 
-              else if List.isEmpty visibleIds then
-                  [emptyState "No traces match the filter."]
-
-              else
-                  List.map (traceGroupView rows) visibleIds)
-        ]
+          else
+              List.map (traceGroupView rows) (distinctTraceIds rows))
+    ]
 
 
 tracesFilterPanel : String -> Element Msg

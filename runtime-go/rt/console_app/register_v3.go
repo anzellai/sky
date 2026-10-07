@@ -97,7 +97,11 @@ func init() {
 //     page wrapper.
 func buildInlineConsoleCfg() any {
 	return map[string]any{
-		"Init":          Main_init_,
+		// Init reads the page request's query string, so a console URL
+		// (?tab=logs&range=7d&q=…) opens on the state it names: the view
+		// writes the same parameters back (View.urlSync). Main.initWith
+		// is reachable from `main` (init calls it), so it is emitted.
+		"Init":          initFromRequest,
 		"Update":        Main_update,
 		"View":          Main_viewWrapped,
 		"Subscriptions": Main_subscriptions,
@@ -113,7 +117,23 @@ func buildInlineConsoleCfg() any {
 		"Routes":   []any{rt.Live_route(any("/"), any(struct{}{}))},
 		"NotFound": struct{}{},
 		"Store":    "memory",
-		"Ttl":      "30m",
+		// The console does not record its own dispatches, tasks and
+		// spans in the telemetry it shows (liveApp.quietTelemetry).
+		"QuietTelemetry": true,
+		"Ttl":            "30m",
 		// All other Live.app cfg fields fall through to Field(cfg, X) == nil.
 	}
+}
+
+// initFromRequest is the console's init for the embedded mount: the Sky.Live
+// runtime calls init with the request map (live.go handleInitial: path,
+// query, headers, …); the console reads only the raw query string.
+func initFromRequest(req any) any {
+	query := ""
+	if m, ok := req.(map[string]any); ok {
+		if q, ok := m["query"].(string); ok {
+			query = q
+		}
+	}
+	return Main_initWith(query)
 }

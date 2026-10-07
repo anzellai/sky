@@ -25,7 +25,6 @@ import Sky.Core.Json.Decode.Pipeline as Pipeline
 import Sky.Core.Task as Task
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
-import Sky.Core.Time as Time
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Error as Error
 import Sky.Core.Secret as Secret
@@ -154,6 +153,7 @@ analyticsDecoder =
         |> Pipeline.optional "recent" (Decode.list analyticsEventDecoder) []
         |> Pipeline.optional "revenue" (Decode.list currencyTotalDecoder) []
         |> Pipeline.optional "windowDays" Decode.int 0
+        |> Pipeline.optional "windowLabel" Decode.string ""
         |> Pipeline.optional "rowCapHit" Decode.bool False
         |> Pipeline.optional "rowCap" Decode.int 0
 
@@ -189,11 +189,10 @@ analyticsEventDecoder =
 httpStore : String -> Store
 httpStore parent =
     { readOverview = \_ -> fetchOverview parent
-    , readLogs = \filter -> fetchLogs parent filter
+    , readLogs = \scope filter -> fetchLogs parent scope filter
     , readMetrics = \_ -> fetchMetrics parent
-    , readTraces = \_ -> fetchTraces parent
-    , readErrors = \_ -> fetchErrors parent
-    , listServices = \_ -> Task.succeed [ "" ]
+    , readTraces = \scope q -> fetchTraces parent scope q
+    , readErrors = \scope -> fetchErrors parent scope
     -- v0.16.4 B5: the embedded console fetches its telemetry from
     -- the parent app's /_sky/console/api/* endpoints which only
     -- model a single service (the host).  Return an empty list so
@@ -202,48 +201,41 @@ httpStore parent =
     -- single-service `overviewView` automatically (it gates on
     -- `hubDbPath /= ""`).
     , readServiceStats = \_ -> Task.succeed []
-    -- v0.16.4 B6: per-service drill-down reads. Embedded mode has
-    -- only one service (the host app); ignore the `svc` arg and
-    -- forward to the existing single-service reader. Drill-down
-    -- UI is hub-mode-only, but the Store typed-alias still
-    -- requires every field so we wire reasonable no-ops here.
-    , readFilteredLogs = \_svc filter -> fetchLogs parent filter
-    , readFilteredMetrics = \_svc -> fetchMetrics parent
-    , readFilteredTraces = \_svc -> fetchTraces parent
-    , readFilteredErrors = \_svc -> fetchErrors parent
-    , readAnalytics = \_ -> fetchAnalytics parent
+    , readAnalytics = \scope -> fetchAnalytics parent scope
     }
 
 
 -- ─── Init / update / subscriptions / view ────────────────────────
+-- `init` ignores its argument; `initWith` is the real init. The
+-- embedded mount (runtime-go/rt/console_app/register_v3.go) calls
+-- `initWith` with the raw query string of the page request, so a
+-- console URL (`?tab=logs&range=7d&q=checkout`) opens on the state it
+-- names: a shared link or a bookmark. The view writes the same
+-- parameters back on every render (View.urlSync). Before v0.27.8 the
+-- URL was written and never read: a link opened on the defaults.
 init : a -> ( Model, Cmd Msg )
-init _req =
+init _ =
+    initWith ""
+
+
+initWith : String -> ( Model, Cmd Msg )
+initWith rawQuery =
     let
         parent = System.getenvOr "SKY_PARENT_URL" ""
         hubDbPath = System.getenvOr "SKY_CONSOLE_HUB_DB" ""
-        -- Set by the runtime's embedded mount path (console.go), right
-        -- where mountConsoleAuthRoutes wires the __Host-sky_console
-        -- cookie + the /_sky/console/_logout route. Empty in standalone
-        -- hub / aggregator mode (no login cookie → no sign-out).
+        -- Set by the runtime's embedded mount path (console.go) ONLY
+        -- when the console has a sign-in to end (SKY_CONSOLE_AUTH=token):
+        -- then a __Host-sky_console cookie + a /_sky/console/_logout
+        -- route exist. Empty otherwise (dev-open, app auth, hub), and the
+        -- header renders no "Sign out" link.
         logoutUrl = System.getenvOr "SKY_CONSOLE_LOGOUT_URL" ""
-        -- v0.16.18 #558-PR4: URL-encode the filter state on the
-        -- WRITE side (View.urlSync emits data-sky-query). The
-        -- READ side (parse req.query → seed Model) trips Sky HM's
-        -- req-shape over-specialisation when init's kernel
-        -- contract demands a polymorphic param. Tracked as a
-        -- follow-up alongside #422; until then bookmarks copy
-        -- the URL out but a fresh page-load boots with defaults.
-        initialRange = Last24h
-        initialQuery = ""
-        initialService = ""
+        params = Http.parseQuery rawQuery
+        param name = Maybe.withDefault "" (Dict.get name params)
         -- v0.16.4 Option B B4: when SKY_CONSOLE_HUB_DB is set the
         -- console is running IN-PROCESS with the hub daemon and
         -- reads telemetry via direct SQLite kernels (HubStore.sky)
         -- against the hub's console-hot.db.  Otherwise stick with
-        -- the embedded-mode HTTP-backed Store (httpStore) that
-        -- shipped in B3.  Either factory returns the same Store
-        -- typed record; downstream code (fetchForTab,
-        -- fetchLogsOnly, …) doesn't change.
+        -- the embedded-mode HTTP-backed Store (httpStore).
         chosenStore =
             if hubDbPath /= "" then
                 hubStore hubDbPath
@@ -255,16 +247,8 @@ init _req =
         -- specific to standalone `sky console` invocations that
         -- have NEITHER a parent NOR a hub DB.
         isStandalone = parent == "" && hubDbPath == ""
-        -- v0.16.4 B5: pick up `?service=<name>` from the request's
-        -- query string so the selection persists across reloads
-        -- and `sky-nav` fetches. `init`'s first argument is the
-        -- `Request` row-poly value Sky.Live feeds in; we field-
-        -- access it via `req.query` (a Dict String String). The
-        -- standalone `sky console` path passes `()` instead of a
-        -- request, so we guard against missing fields by falling
-        -- back to "" via `Dict.get`-returning Maybe.withDefault.
         startModel =
-            { tab = OverviewTab
+            { tab = parseTab (param "tab")
             , parentUrl = parent
             , hubDbPath = hubDbPath
             , store = chosenStore
@@ -284,9 +268,10 @@ init _req =
             , traces = []
             , errors = []
             , lastError = ""
+            , errorFrom = ""
             , logFilter = emptyLogFilter
             , traceQuery = ""
-            , selectedService = initialService
+            , selectedService = param "service"
             , serviceStats = []
             -- v0.16.6 #493 part 2c: identity is fetched async from
             -- the hub via Hub_currentIdentity; until the response
@@ -295,15 +280,11 @@ init _req =
             -- let in.
             , identity = Nothing
             , tenantPrefix = ""
-            -- v0.16.18 #558-PR1: global time-range filter. Last24h
-            -- is the typical "what's been happening today" default;
-            -- users can flip to 15m / 1h / 7d / All via the chip
-            -- row at the top of every tab. nowMs is populated on
-            -- the first Tick (defaults to 0 = no filter applies).
-            , range = initialRange
-            , nowMs = 0
-            -- v0.16.18 #558-PR3: empty = no filter.
-            , globalQuery = initialQuery
+            -- Last24h is the typical "what's been happening today"
+            -- default; an unknown or missing `range=` falls back to it.
+            , range = parseRange (param "range")
+            , gen = 0
+            , globalQuery = param "q"
             , analytics = emptyAnalytics
             , logoutUrl = logoutUrl
             }
@@ -318,23 +299,12 @@ init _req =
 
             else
                 Cmd.none
+        -- Fire one immediate fetch so the initial render isn't empty;
+        -- the Sub.every tick then keeps it fresh.
     in
         ( startModel
-        , Cmd.batch
-              [ fetchForTab startModel startModel.tab startModel.logFilter
-              , identityCmd
-              , Cmd.perform (Time.unixMillis ()) GotNowMs
-              ]
+        , Cmd.batch [ fetchForTab startModel startModel.tab, identityCmd ]
         )
-    -- Fire one immediate fetch so the initial render isn't empty;
-    -- the 3 s Sub.every then keeps it fresh.  When in hub mode the
-    -- batch picks up the multi-service stats too via fetchForTab's
-    -- OverviewTab branch.  identityCmd lands a single Hub_currentIdentity
-    -- result; subsequent update sets model.identity + tenantPrefix.
-        -- v0.16.18 #558-PR1: prime nowMs so the very first render
-        -- after init has a real threshold (the default range is
-        -- Last24h — without this Cmd, the first render sees
-        -- nowMs=0 and falls through to "no filter").
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -344,67 +314,77 @@ update msg model =
         SelectTab tab ->
             -- Fire a fetch for the newly-active tab IMMEDIATELY
             -- (otherwise the user sees stale / empty data until the
-            -- next 3 s Sub.every tick). Tab-scoped to keep wire +
-            -- re-render cost bounded — previously fetchAll fired
-            -- 5 endpoints every tick which piled up "context canceled"
-            -- proxy errors when re-renders ran longer than 3 s on
-            -- larger Metrics / Traces datasets.
-            ( { model | tab = tab }, fetchForTab model tab model.logFilter )
+            -- next Sub.every tick). Tab-scoped to keep wire +
+            -- re-render cost bounded.
+            refetch { model | tab = tab }
 
         Tick ->
-            ( model
-            , Cmd.batch
-                  [ fetchForTab model model.tab model.logFilter
-                  , Cmd.perform (Time.unixMillis ()) GotNowMs
-                  ]
-            )
+            ( model, fetchForTab model model.tab )
 
         GotOverview (Ok ov) ->
-            ( { model | overview = ov, lastError = "" }, Cmd.none )
+            ( cleared "overview" { model | overview = ov }, Cmd.none )
 
         GotOverview (Err e) ->
-            ( { model | lastError = errorToString e }, Cmd.none )
+            ( failed "overview" e model, Cmd.none )
 
-        GotLogs (Ok ls) ->
-            ( { model | logs = ls, lastError = "" }, Cmd.none )
+        -- A tab answer is used only when it was asked under the current
+        -- `gen` (see State.Model): an answer to a previous range, search
+        -- or filter that arrives late is dropped.
+        GotLogs g (Ok ls) ->
+            if g == model.gen then
+                ( cleared "logs" { model | logs = ls }, Cmd.none )
 
-        GotLogs (Err e) ->
-            ( { model | lastError = errorToString e }, Cmd.none )
+            else
+                ( model, Cmd.none )
 
-        GotMetrics (Ok ms) ->
-            ( { model | metrics = ms, lastError = "" }, Cmd.none )
+        GotLogs _ (Err e) ->
+            ( failed "logs" e model, Cmd.none )
 
-        GotMetrics (Err e) ->
-            ( { model | lastError = errorToString e }, Cmd.none )
+        GotMetrics g (Ok ms) ->
+            if g == model.gen then
+                ( cleared "metrics" { model | metrics = ms }, Cmd.none )
 
-        GotTraces (Ok ts) ->
-            ( { model | traces = ts, lastError = "" }, Cmd.none )
+            else
+                ( model, Cmd.none )
 
-        GotTraces (Err e) ->
-            ( { model | lastError = errorToString e }, Cmd.none )
+        GotMetrics _ (Err e) ->
+            ( failed "metrics" e model, Cmd.none )
 
-        GotErrors (Ok es) ->
-            ( { model | errors = es, lastError = "" }, Cmd.none )
+        GotTraces g (Ok ts) ->
+            if g == model.gen then
+                ( cleared "traces" { model | traces = ts }, Cmd.none )
 
-        GotErrors (Err e) ->
-            ( { model | lastError = errorToString e }, Cmd.none )
+            else
+                ( model, Cmd.none )
 
-        GotAnalytics (Ok a) ->
-            ( { model | analytics = a, lastError = "" }, Cmd.none )
+        GotTraces _ (Err e) ->
+            ( failed "traces" e model, Cmd.none )
 
-        GotAnalytics (Err e) ->
-            ( { model | lastError = errorToString e }, Cmd.none )
+        GotErrors g (Ok es) ->
+            if g == model.gen then
+                ( cleared "errors" { model | errors = es }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+        GotErrors _ (Err e) ->
+            ( failed "errors" e model, Cmd.none )
+
+        GotAnalytics g (Ok a) ->
+            if g == model.gen then
+                ( cleared "analytics" { model | analytics = a }, Cmd.none )
+
+            else
+                ( model, Cmd.none )
+
+        GotAnalytics _ (Err e) ->
+            ( failed "analytics" e model, Cmd.none )
 
         LogFilterQuery q ->
             let
                 f = model.logFilter
-                -- v0.16.18 #558-PR1: refresh nowMs so the time-range
-                -- filter's ISO-8601 threshold tracks wall-clock. We
-                -- only need this when range != RangeAll (the only
-                -- case it's actually consulted in the view path).
-                f2 = { f | query = q }
             in
-                ( { model | logFilter = f2 }, fetchLogsOnly model f2 )
+                refetch { model | logFilter = { f | query = q } }
 
         LogFilterToggleLevel lvl ->
             let
@@ -427,69 +407,51 @@ update msg model =
                         _ ->
                             f
             in
-                ( { model | logFilter = f2 }, fetchLogsOnly model f2 )
+                refetch { model | logFilter = f2 }
 
         LogFilterPickSession sid ->
             let
                 f = model.logFilter
-                f2 = { f | session = sid }
             in
-                ( { model | logFilter = f2, tab = LogsTab }
-                , fetchLogsOnly model f2
-                )
+                refetch
+                    { model | logFilter = { f | session = sid }, tab = LogsTab }
 
         LogFilterClear ->
-            ( { model | logFilter = emptyLogFilter }
-            , fetchLogsOnly model emptyLogFilter
-            )
+            refetch { model | logFilter = emptyLogFilter }
 
-        -- Traces filter is purely client-side — every span is
-        -- already in model.traces, so no re-fetch is needed.
+        -- The Traces tab's search is sent to the server, which keeps
+        -- every span of each trace in which a span matches, over its
+        -- whole store.
         TraceFilterQuery q ->
-            ( { model | traceQuery = q }, Cmd.none )
+            refetch { model | traceQuery = q }
 
         -- Log → trace pivot: clicking a log row's trace-id badge
-        -- jumps to the Traces tab pre-filtered to that id, and
-        -- fetches traces if they aren't loaded yet.
+        -- jumps to the Traces tab searched for that id. The server
+        -- finds the trace however many spans came after it.
         PivotToTrace tid ->
-            ( { model | tab = TracesTab, traceQuery = tid }
-            , Cmd.perform (model.store.readTraces ()) GotTraces
-            )
+            refetch { model | tab = TracesTab, traceQuery = tid }
 
         -- v0.16.4 B5: Multi-service Overview selector. Empty
-        -- name = "All services" (aggregate). Selection is
-        -- model-only — the URL stays at /_sky/console; the
-        -- service is part of in-app state, not the route, so a
-        -- shareable link still drops everyone on the same
-        -- aggregate landing.
+        -- name = "All services" (aggregate). The selection is part of
+        -- the console URL (`service=`), and every tab read is scoped
+        -- to it.
         SelectService name ->
-            -- v0.16.18 #558-PR2: trigger an immediate refetch with the
-            -- new service scope so the user sees the narrowed dataset
-            -- without waiting 3s for the next Tick. Without this the
-            -- global service-chip felt unresponsive (the highlight
-            -- flipped instantly but rows stayed stale until tick).
-            let
-                newModel = { model | selectedService = name }
-            in
-                ( newModel
-                , fetchForTab newModel newModel.tab newModel.logFilter
-                )
+            refetch { model | selectedService = name }
 
         GotServiceStats (Ok stats) ->
-            ( { model | serviceStats = stats, lastError = "" }, Cmd.none )
+            ( cleared "services" { model | serviceStats = stats }, Cmd.none )
 
         GotServiceStats (Err e) ->
-            ( { model | lastError = errorToString e }, Cmd.none )
+            ( failed "services" e model, Cmd.none )
 
         -- v0.16.6 #493 part 2c.  Identity arrived from
         -- Hub_currentIdentity.  Success: derive the tenant filter
-        -- from the `tenant` claim (operator convention — same
-        -- pattern as SkyDeploy).  Failure: silently leave identity
-        -- + tenantPrefix at their defaults — the per-tab queries
-        -- already use "" as the no-filter sentinel.  We do NOT
-        -- surface the Err on `model.lastError` because the
-        -- standalone-no-hub path always fails this call and would
-        -- otherwise paint a permanent error banner on /_sky/console.
+        -- from the `tenant` claim (operator convention).  Failure:
+        -- silently leave identity + tenantPrefix at their defaults —
+        -- the per-tab queries already use "" as the no-filter
+        -- sentinel.  We do NOT surface the Err on `model.lastError`
+        -- because the standalone-no-hub path always fails this call
+        -- and would otherwise paint a permanent error banner.
         GotIdentity (Ok identity) ->
             let
                 tenant =
@@ -502,43 +464,49 @@ update msg model =
         GotIdentity (Err _) ->
             ( model, Cmd.none )
 
-        -- v0.16.18 #558-PR1: global time-range filter.
+        -- The global range and search: the active tab is read again at
+        -- once, under the new scope.
         SelectRange r ->
-            ( { model | range = r }, Cmd.none )
+            refetch { model | range = r }
 
-        GotNowMs (Ok n) ->
-            ( { model | nowMs = n }, Cmd.none )
-
-        GotNowMs (Err _) ->
-            -- Time.unixMillis is infallible at the runtime layer
-            -- (System.NowMs equivalent), but the Result e a shape
-            -- still requires the Err arm. Keep nowMs untouched on
-            -- the unreachable failure case.
-            ( model, Cmd.none )
-
-        -- v0.16.18 #558-PR3: global free-text filter input event.
         GlobalQuery q ->
-            ( { model | globalQuery = q }, Cmd.none )
+            refetch { model | globalQuery = q }
 
 
-fetchLogsOnly : Model -> LogFilter -> Cmd Msg
-fetchLogsOnly model filter =
-    if hasStoreSource model then
-        if model.hubDbPath /= "" then
-            Cmd.perform
-                (model.store.readFilteredLogs model.selectedService filter)
-                GotLogs
+-- The error bar shows the last failed read. A read's answer clears it only
+-- when that read put it there: the overview read, which succeeds on every
+-- tick, used to clear a failing tab read's error a moment after it showed.
+failed : String -> Error -> Model -> Model
+failed src e model =
+    { model | lastError = errorToString e, errorFrom = src }
 
-        else
-            Cmd.perform (model.store.readLogs filter) GotLogs
+
+cleared : String -> Model -> Model
+cleared src model =
+    if model.errorFrom == src then
+        { model | lastError = "", errorFrom = "" }
 
     else
-        -- v0.16.4 B6: in hub mode the Logs tab is scoped to the
-        -- currently-selected service. Route through the filtered
-        -- reader so the wire payload is pre-narrowed; embedded
-        -- mode (httpStore) ignores the service arg and falls
-        -- through to the un-filtered fetch.
-        Cmd.none
+        model
+
+
+-- What the tabs read changed: start a new `gen` (older answers are
+-- dropped) and read the active tab now, not at the next tick.
+refetch : Model -> ( Model, Cmd Msg )
+refetch model =
+    let
+        next = { model | gen = model.gen + 1 }
+    in
+        ( next, fetchForTab next next.tab )
+
+
+-- The Scope every tab read carries (State.Scope).
+scopeOf : Model -> Scope
+scopeOf model =
+    { service = model.selectedService
+    , range = rangeKey model.range
+    , search = model.globalQuery
+    }
 
 
 -- True when a real data source is wired (embedded mode via SKY_PARENT_URL
@@ -553,96 +521,56 @@ hasStoreSource model =
 -- which the header always renders). Pre-2026-05-18 this was
 -- `fetchAll` firing all five endpoints every Tick — at 2 s
 -- interval with a Metrics tab holding 30+ series, the
--- re-render queue piled up faster than it drained, flooding
--- the server with "context canceled" proxy errors and hanging
--- the browser tab.
---
--- Now: overview always (cheap; needed for the header's uptime
--- + request counter), PLUS exactly one of the current tab's
--- endpoints. Tick interval also bumped to 3 s to give larger
--- re-renders breathing room.
-fetchForTab : Model -> Tab -> LogFilter -> Cmd Msg
-fetchForTab model tab filter =
+-- re-render queue piled up faster than it drained.
+fetchForTab : Model -> Tab -> Cmd Msg
+fetchForTab model tab =
     if hasStoreSource model then
         Cmd.batch
             (Cmd.perform (model.store.readOverview ()) GotOverview
-                :: tabFetches model tab filter)
+                :: tabFetches model tab)
 
     else
         Cmd.none
 
 
-tabFetches : Model -> Tab -> LogFilter -> List (Cmd Msg)
-tabFetches model tab filter =
-    -- v0.16.4 B6: in hub mode every drill-down tab routes through
-    -- the filtered reader (model.selectedService); embedded mode
-    -- ignores the service arg and falls through to the un-filtered
-    -- single-service variants. The branching keeps embedded
-    -- behaviour byte-identical to pre-B6.
-    if model.hubDbPath /= "" then
+-- One read for the tab, scoped and tagged with the current gen. The
+-- Store decides how: the embedded console asks the host app's
+-- /_sky/console/api/*, the hub reads its SQLite store.
+tabFetches : Model -> Tab -> List (Cmd Msg)
+tabFetches model tab =
+    let
+        scope = scopeOf model
+        g = model.gen
+    in
         case tab of
 
             OverviewTab ->
+                -- Hub mode renders the multi-service dashboard from the
+                -- per-service rollups; the embedded store answers [].
                 [ Cmd.perform (model.store.readServiceStats ()) GotServiceStats
                 ]
 
             LogsTab ->
                 [ Cmd.perform
-                      (model.store.readFilteredLogs model.selectedService filter)
-                      GotLogs
+                      (model.store.readLogs scope model.logFilter)
+                      (GotLogs g)
                 ]
 
             MetricsTab ->
-                [ Cmd.perform
-                      (model.store.readFilteredMetrics model.selectedService)
-                      GotMetrics
-                ]
+                [ Cmd.perform (model.store.readMetrics scope) (GotMetrics g) ]
 
             TracesTab ->
                 [ Cmd.perform
-                      (model.store.readFilteredTraces model.selectedService)
-                      GotTraces
+                      (model.store.readTraces scope model.traceQuery)
+                      (GotTraces g)
                 ]
 
             ErrorsTab ->
-                [ Cmd.perform
-                      (model.store.readFilteredErrors model.selectedService)
-                      GotErrors
-                ]
-
-            -- Analytics is host-app-scoped (the app's own event
-            -- store), not per-service hub telemetry, so both modes
-            -- read the same store-backed endpoint.
-            AnalyticsTab ->
-                [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
-
-    else
-        case tab of
-
-            OverviewTab ->
-                -- v0.16.4 B5: in hub mode (Model.hubDbPath /= "") the
-                -- Overview tab renders the multi-service dashboard,
-                -- which needs per-service rollups.  In embedded mode
-                -- (httpStore) `readServiceStats ()` returns
-                -- `Task.succeed []` so the dispatch is a no-op for the
-                -- rollup state — cheap, no extra wire round-trip.
-                [ Cmd.perform (model.store.readServiceStats ()) GotServiceStats
-                ]
-
-            LogsTab ->
-                [ Cmd.perform (model.store.readLogs filter) GotLogs ]
-
-            MetricsTab ->
-                [ Cmd.perform (model.store.readMetrics ()) GotMetrics ]
-
-            TracesTab ->
-                [ Cmd.perform (model.store.readTraces ()) GotTraces ]
-
-            ErrorsTab ->
-                [ Cmd.perform (model.store.readErrors ()) GotErrors ]
+                [ Cmd.perform (model.store.readErrors scope) (GotErrors g) ]
 
             AnalyticsTab ->
-                [ Cmd.perform (model.store.readAnalytics ()) GotAnalytics ]
+                [ Cmd.perform (model.store.readAnalytics scope) (GotAnalytics g)
+                ]
 
 
 -- Every embedded-console read is a loopback GET to the host app's
@@ -685,17 +613,35 @@ fetchOverview parent =
     apiGet parent "/_sky/console/api/overview" overviewDecoder
 
 
-fetchLogs : String -> LogFilter -> Task Error (List LogEntry)
-fetchLogs parent filter =
+-- The scope's query parameters: the range key and the global search.
+-- The server filters by them over its whole store, before its limit.
+scopeQuery : Scope -> String
+scopeQuery scope =
+    "range=" ++ Encoding.urlEncode scope.range ++ searchParam scope.search
+
+
+-- `&q=<text>`, or "" for no text. The server ANDs repeated `q` terms.
+searchParam : String -> String
+searchParam text =
+    if String.trim text == "" then
+        ""
+
+    else
+        "&q=" ++ Encoding.urlEncode (String.trim text)
+
+
+fetchLogs : String -> Scope -> LogFilter -> Task Error (List LogEntry)
+fetchLogs parent scope filter =
     apiGet
         parent
-        ("/_sky/console/api/logs?limit=200" ++ buildLogQuery filter)
+        ("/_sky/console/api/logs?limit=200&" ++ scopeQuery scope
+            ++ buildLogQuery filter)
         logsDecoder
 
 
--- Build the level= query string from the filter. Server-side filter
--- on level is precise; query (free-text) and session (pivot) are
--- applied client-side to avoid widening the API surface.
+-- The Logs tab's own filter as query parameters: the level set (all
+-- four = no level parameter), its search box and the session pivot.
+-- Every one is applied by the server, before its limit.
 buildLogQuery : LogFilter -> String
 buildLogQuery f =
     let
@@ -720,14 +666,25 @@ buildLogQuery f =
 
                    else
                        [])
-    in
-        if List.length levels == 4 then
-            ""
+        levelPart =
+            if List.length levels == 4 then
+                ""
 
-        else
-            "&level=" ++ String.join "," levels
-    -- All four levels selected = no level filter (don't add a query
-    -- param at all so the server returns everything).
+            else if List.isEmpty levels then
+                "&level=none"
+
+            else
+                -- Every level toggled off: ask for a level no entry has,
+                -- so the answer is empty, as the toggles say.
+                "&level=" ++ String.join "," levels
+        sessionPart =
+            if f.session == "" then
+                ""
+
+            else
+                "&session=" ++ Encoding.urlEncode f.session
+    in
+        levelPart ++ searchParam f.query ++ sessionPart
 
 
 fetchMetrics : String -> Task Error (List MetricRow)
@@ -735,19 +692,29 @@ fetchMetrics parent =
     apiGet parent "/_sky/console/api/metrics-summary" metricsDecoder
 
 
-fetchTraces : String -> Task Error (List TraceRow)
-fetchTraces parent =
-    apiGet parent "/_sky/console/api/traces?limit=100" tracesDecoder
+fetchTraces : String -> Scope -> String -> Task Error (List TraceRow)
+fetchTraces parent scope traceQuery =
+    apiGet
+        parent
+        ("/_sky/console/api/traces?limit=100&" ++ scopeQuery scope
+            ++ searchParam traceQuery)
+        tracesDecoder
 
 
-fetchErrors : String -> Task Error (List ErrorRow)
-fetchErrors parent =
-    apiGet parent "/_sky/console/api/errors" errorsDecoder
+fetchErrors : String -> Scope -> Task Error (List ErrorRow)
+fetchErrors parent scope =
+    apiGet
+        parent
+        ("/_sky/console/api/errors?" ++ scopeQuery scope)
+        errorsDecoder
 
 
-fetchAnalytics : String -> Task Error Analytics
-fetchAnalytics parent =
-    apiGet parent "/_sky/console/api/analytics" analyticsDecoder
+fetchAnalytics : String -> Scope -> Task Error Analytics
+fetchAnalytics parent scope =
+    apiGet
+        parent
+        ("/_sky/console/api/analytics?range=" ++ Encoding.urlEncode scope.range)
+        analyticsDecoder
 
 
 subscriptions : Model -> Sub Msg

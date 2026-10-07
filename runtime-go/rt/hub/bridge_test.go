@@ -317,7 +317,7 @@ func TestStoreReader_QueryFilteredSpans(t *testing.T) {
 	s.FlushSync(2 * time.Second)
 
 	reader := s.AsReader()
-	out, err := reader.QueryFilteredSpansJSON("alpha")
+	out, err := reader.QueryFilteredSpansJSON("alpha", "")
 	if err != nil {
 		t.Fatalf("QueryFilteredSpansJSON: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestStoreReader_QueryFilteredErrors(t *testing.T) {
 	s.FlushSync(2 * time.Second)
 
 	reader := s.AsReader()
-	out, err := reader.QueryFilteredErrorsJSON("alpha")
+	out, err := reader.QueryFilteredErrorsJSON("alpha", "")
 	if err != nil {
 		t.Fatalf("QueryFilteredErrorsJSON: %v", err)
 	}

@@ -120,9 +120,16 @@ scopeText a =
             base
 
 
+-- The window the figures cover, in words. The server names it
+-- (`windowLabel`: "15 minutes", "24 hours", "7 days", "30 days"), since
+-- the console's range chips narrow it below a day; an older server
+-- sends only whole days.
 windowLabel : Analytics -> String
 windowLabel a =
-    if a.windowDays == 1 then
+    if a.windowLabel /= "" then
+        a.windowLabel
+
+    else if a.windowDays == 1 then
         "day"
 
     else

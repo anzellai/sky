@@ -407,6 +407,11 @@ func newLiveAppFromCfg(cfg any, opts liveMountOpts) *liveApp {
 			app.staticURL = s
 		}
 	}
+	// The Sky Console sets QuietTelemetry: it must not record itself
+	// (liveApp.quietTelemetry).
+	if q, ok := fieldOrNil(cfg, "QuietTelemetry").(bool); ok {
+		app.quietTelemetry = q
+	}
 	storeKind := stringField(cfg, "Store")
 	storePath := stringField(cfg, "StorePath")
 	// L9: a sub-app (the inline console) must NOT inherit the HOST's LIVE_STORE

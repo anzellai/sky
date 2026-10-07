@@ -36,14 +36,14 @@ func (f *fakeTenantStore) QueryFilteredMetricsJSONWithTenant(svc, tenant string)
 	}
 	return f.metJSON, nil
 }
-func (f *fakeTenantStore) QueryFilteredSpansJSONWithTenant(svc, tenant string) (string, error) {
+func (f *fakeTenantStore) QueryFilteredSpansJSONWithTenant(svc, tenant, _ string) (string, error) {
 	f.gotSpnSvc, f.gotSpnTenant = svc, tenant
 	if f.spnJSON == "" {
 		return "[]", nil
 	}
 	return f.spnJSON, nil
 }
-func (f *fakeTenantStore) QueryFilteredErrorsJSONWithTenant(svc, tenant string) (string, error) {
+func (f *fakeTenantStore) QueryFilteredErrorsJSONWithTenant(svc, tenant, _ string) (string, error) {
 	f.gotErrSvc, f.gotErrTenant = svc, tenant
 	if f.errJSON == "" {
 		return "[]", nil
@@ -68,10 +68,10 @@ func (l *legacyOnlyStore) QueryFilteredMetricsJSON(svc string) (string, error) {
 	l.gotMetSvc = svc
 	return "[]", nil
 }
-func (l *legacyOnlyStore) QueryFilteredSpansJSON(svc string) (string, error) {
+func (l *legacyOnlyStore) QueryFilteredSpansJSON(svc, _ string) (string, error) {
 	return "[]", nil
 }
-func (l *legacyOnlyStore) QueryFilteredErrorsJSON(svc string) (string, error) {
+func (l *legacyOnlyStore) QueryFilteredErrorsJSON(svc, _ string) (string, error) {
 	return "[]", nil
 }
 
@@ -94,7 +94,7 @@ func TestTenantScope_RoutesToWithTenantWhenSessionHasTenant(t *testing.T) {
 
 	runWithLiveSession(sess, func() {
 		// Caller passes "" → kernel uses tenant alone as scope.
-		task := Hub_readFilteredLogs("/tmp/x", "", nil).(func() any)
+		task := Hub_readFilteredLogs("/tmp/x", hubScope(""), nil).(func() any)
 		res := task().(SkyResult[any, any])
 		if res.Tag != 0 {
 			t.Fatalf("expected Ok, got Err %v", res.ErrValue)
@@ -126,7 +126,7 @@ func TestTenantScope_RejectsCrossTenantSvc(t *testing.T) {
 
 	runWithLiveSession(sess, func() {
 		// Caller passes "customer-99-billing" — different tenant.
-		task := Hub_readFilteredLogs("/tmp/x", "customer-99-billing", nil).(func() any)
+		task := Hub_readFilteredLogs("/tmp/x", hubScope("customer-99-billing"), nil).(func() any)
 		res := task().(SkyResult[any, any])
 		if res.Tag != 1 {
 			t.Fatalf("expected Err on cross-tenant svc, got Ok %v", res.OkValue)
@@ -154,7 +154,7 @@ func TestTenantScope_AllowsInTenantSvc(t *testing.T) {
 
 	runWithLiveSession(sess, func() {
 		// In-tenant: customer-42-billing starts with customer-42-.
-		task := Hub_readFilteredMetrics("/tmp/x", "customer-42-billing").(func() any)
+		task := Hub_readFilteredMetrics("/tmp/x", hubScope("customer-42-billing")).(func() any)
 		res := task().(SkyResult[any, any])
 		if res.Tag != 0 {
 			t.Fatalf("expected Ok, got Err %v", res.ErrValue)
@@ -185,7 +185,7 @@ func TestTenantScope_PassThroughWhenNoTenantClaim(t *testing.T) {
 	}
 
 	runWithLiveSession(sess, func() {
-		task := Hub_readFilteredLogs("/tmp/x", "billing", nil).(func() any)
+		task := Hub_readFilteredLogs("/tmp/x", hubScope("billing"), nil).(func() any)
 		res := task().(SkyResult[any, any])
 		if res.Tag != 0 {
 			t.Fatalf("expected Ok, got Err %v", res.ErrValue)
@@ -214,7 +214,7 @@ func TestTenantScope_FallsThroughWhenStoreIsLegacy(t *testing.T) {
 	}
 
 	runWithLiveSession(sess, func() {
-		task := Hub_readFilteredLogs("/tmp/x", "", nil).(func() any)
+		task := Hub_readFilteredLogs("/tmp/x", hubScope(""), nil).(func() any)
 		res := task().(SkyResult[any, any])
 		if res.Tag != 0 {
 			t.Fatalf("expected Ok, got Err %v", res.ErrValue)
@@ -254,4 +254,10 @@ func TestEscapeLikePrefix_NoOpOnCleanInputs(t *testing.T) {
 				i, c.svc, c.tenant, got, ok, c.wantSvc, c.wantOk)
 		}
 	}
+}
+
+// hubScope is the console's Scope record for `svc` (State.Scope:
+// service, range, search), in the map shape the dynamic path carries.
+func hubScope(svc string) any {
+	return map[string]any{"service": svc, "range": "all", "search": ""}
 }

@@ -1045,6 +1045,16 @@ func chooseSSEFrame(snap frameSnapshot, prevTreeBeforeDispatch *VNode, patches [
 }
 
 type liveApp struct {
+	// quietTelemetry: this app's own Msg dispatches, Cmd.perform tasks and
+	// the spans they open are not recorded (no msg_dispatch log line, no
+	// sky_live_msg_* metric, no span). Set for the Sky Console sub-app
+	// (cfg "QuietTelemetry"): the console reads the telemetry store every
+	// 1.5–5 s, and recording its own reads filled the host app's log ring
+	// with "msg_dispatch GotLogs" lines — about one a second per open
+	// console tab, evicting the app's real history from the 10k ring within
+	// hours — and its Traces and Metrics tabs with the console's own work.
+	quietTelemetry bool
+
 	init          any // req -> (Model, Cmd Msg)
 	update        any // Msg -> Model -> (Model, Cmd Msg)
 	view          any // Model -> VNode
@@ -3393,6 +3403,11 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 	// dispatch) can decide whether to emit a log line. Lifecycle
 	// marker (Step 6) detected here too.
 	msgLogCtx := BeginMsgLogForSession(msg, sess.model, sess.currentSID())
+	if app.quietTelemetry {
+		// The update and the spans it opens run under a trace context
+		// that is not sampled, so nothing of this dispatch is recorded.
+		defer app.quiet()()
+	}
 	// Step 6 — unwrap Std.Live.lifecycle so the user's update
 	// receives the inner Msg, not the wrapper.
 	msg = UnwrapLifecycle(msg)
@@ -3475,7 +3490,9 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) (body string) {
 			sess.handlerGens = gensOnEntry
 			sess.commitRender(prevTreeOnEntry, prevComputedOnEntry)
 		}
-		ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
+		if !app.quietTelemetry {
+			ObserveMsgLog(msgLogCtx, sess.model, finalCmd, dispatchErr)
+		}
 	}()
 
 	if app.guard != nil && isFunc(app.guard) {
@@ -4021,6 +4038,9 @@ func (app *liveApp) performMsg(sess *liveSession, task any, toMsg any) (msg any,
 	}()
 	// task is a Sky Task — a zero-arg func() any returning SkyResult.
 	// Wrap its execution in a cmd.perform span (Tier 1 auto-trace).
+	if app.quietTelemetry {
+		defer app.quiet()()
+	}
 	result := WithCmdSpan("perform", func() any { return sky_call(task, nil) })
 	// toMsg : Result err a -> Msg — convert result to Msg
 	return sky_call(toMsg, result), true

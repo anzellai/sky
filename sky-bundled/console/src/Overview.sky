@@ -681,8 +681,8 @@ focusedHint =
         , Font.color textSecondary
         ]
         (Ui.text
-            ("Drill into Logs / Traces / Errors tabs above — they'll "
-                ++ "auto-filter to the selected service once B6 ships."))
+            ("The Logs, Traces, Errors and Metrics tabs above show "
+                ++ "this service only."))
 
 
 findStat : String -> List ServiceStat -> Maybe ServiceStat

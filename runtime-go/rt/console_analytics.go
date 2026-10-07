@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +69,10 @@ type consoleAnalyticsResponse struct {
 	// these numbers used to be all-time, and a windowed number rendered under
 	// an all-time label is a wrong number, not a fast one.
 	WindowDays int `json:"windowDays"`
+	// WindowLabel names the window in words ("15 minutes", "24 hours",
+	// "30 days"): the console's range chips narrow it below a day, where a
+	// whole number of days cannot say it.
+	WindowLabel string `json:"windowLabel"`
 	// RowCapHit reports that the revenue rollup stopped at its row cap, so its
 	// total is a floor over the window rather than the whole of it. The
 	// console renders "≥" when this is set.
@@ -152,6 +157,30 @@ func consoleAnalyticsCutoff() int64 {
 	return time.Now().Add(-consoleAnalyticsWindow).UnixMilli()
 }
 
+// consoleAnalyticsWindowFor is the window the console's range key selects:
+// the range itself, never more than consoleAnalyticsWindow ("all" and an
+// unknown key are the whole bounded window). Returns the window, its whole
+// days for the wire and its label.
+func consoleAnalyticsWindowFor(rangeKey string) (time.Duration, int, string) {
+	d, ok := ConsoleRangeWindow(rangeKey)
+	if !ok || d >= consoleAnalyticsWindow {
+		return consoleAnalyticsWindow, consoleAnalyticsWindowDays,
+			strconv.Itoa(consoleAnalyticsWindowDays) + " days"
+	}
+	switch {
+	case d < time.Hour:
+		return d, 0, strconv.Itoa(int(d/time.Minute)) + " minutes"
+	case d == time.Hour:
+		return d, 0, "1 hour"
+	case d < 24*time.Hour:
+		return d, 0, strconv.Itoa(int(d/time.Hour)) + " hours"
+	case d == 24*time.Hour:
+		return d, 1, "24 hours"
+	}
+	days := int(d / (24 * time.Hour))
+	return d, days, strconv.Itoa(days) + " days"
+}
+
 // moneyPropRe matches a stored Money prop value: a 3-5 letter uppercase ISO
 // (or crypto) code, a space, then a signed decimal amount — the exact shape
 // sqlMoneyToString emits. A plain string prop won't match unless it happens to
@@ -167,12 +196,15 @@ func HandleConsoleAnalytics(w http.ResponseWriter, r *http.Request) {
 	// Always emit non-nil slices so the JSON is `[]` not `null`
 	// (keeps the Sky decoder's List path happy either way).
 	out := consoleAnalyticsResponse{
-		Counts:     []consoleEventCount{},
-		Recent:     []consoleAnalyticsEvent{},
-		Revenue:    []consoleCurrencyTotal{},
-		WindowDays: consoleAnalyticsWindowDays,
-		RowCap:     consoleAnalyticsRowCap,
+		Counts:  []consoleEventCount{},
+		Recent:  []consoleAnalyticsEvent{},
+		Revenue: []consoleCurrencyTotal{},
+		RowCap:  consoleAnalyticsRowCap,
 	}
+	// ?range= narrows the window to the console's selected range.
+	window, windowDays, windowLabel := consoleAnalyticsWindowFor(r.URL.Query().Get("range"))
+	out.WindowDays = windowDays
+	out.WindowLabel = windowLabel
 	db := analyticsStore()
 	if db == nil {
 		writeJSON(w, out)
@@ -182,7 +214,7 @@ func HandleConsoleAnalytics(w http.ResponseWriter, r *http.Request) {
 	// app has just emitted rather than the ones from a quarter-second ago.
 	analyticsFlushPending()
 
-	cutoff := consoleAnalyticsCutoff()
+	cutoff := time.Now().Add(-window).UnixMilli()
 	_ = db.QueryRow(analyticsQ(qConsoleTotal), cutoff, consoleAnalyticsRowCap).Scan(&out.Total)
 	_ = db.QueryRow(analyticsQ(qConsoleUniqueUsers), cutoff, consoleAnalyticsRowCap).Scan(&out.UniqueUsers)
 

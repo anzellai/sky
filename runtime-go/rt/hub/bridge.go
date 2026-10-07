@@ -47,12 +47,64 @@ func (r *storeReader) Counts() (logs, metrics, spans int, err error) {
 // hubLogFilter mirrors the Sky-side LogFilter shape (camelCase
 // fields). Sent in via `rt.encodeFilterJSON` per call.
 type hubLogFilter struct {
-	Query     string `json:"query"`
-	Session   string `json:"session"`
-	ShowDebug bool   `json:"showDebug"`
-	ShowInfo  bool   `json:"showInfo"`
-	ShowWarn  bool   `json:"showWarn"`
-	ShowError bool   `json:"showError"`
+	Query   string `json:"query"`
+	Session string `json:"session"`
+	// The level toggles. nil = not sent (the traces / errors reads, or an
+	// old caller): no level filter.
+	ShowDebug *bool `json:"showDebug"`
+	ShowInfo  *bool `json:"showInfo"`
+	ShowWarn  *bool `json:"showWarn"`
+	ShowError *bool `json:"showError"`
+	// The console's scope (rt.encodeScopeJSON): the range key, the global
+	// search, and the Traces tab's own search box.
+	Range      string `json:"range"`
+	Search     string `json:"search"`
+	TraceQuery string `json:"traceQuery"`
+}
+
+// parseHubQuery decodes the console's filter/scope JSON. "" is the empty
+// query (every level, no range, no search).
+func parseHubQuery(raw string) (hubLogFilter, error) {
+	var f hubLogFilter
+	if raw == "" {
+		return f, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		return f, fmt.Errorf("filter unmarshal: %w", err)
+	}
+	return f, nil
+}
+
+// since is the lower time bound of the query's range (zero: none).
+func (f hubLogFilter) since() time.Time {
+	return rt.ConsoleRangeSince(f.Range, time.Now())
+}
+
+// levels is the set of levels the toggles leave on: nil (no level filter)
+// when no toggle was sent or all four are on, and the impossible level
+// "none" when all four are off, so the answer is empty as the toggles say.
+func (f hubLogFilter) levels() []string {
+	toggles := []struct {
+		on   *bool
+		name string
+	}{{f.ShowDebug, "debug"}, {f.ShowInfo, "info"}, {f.ShowWarn, "warn"}, {f.ShowError, "error"}}
+	sent := false
+	var out []string
+	for _, l := range toggles {
+		if l.on != nil {
+			sent = true
+			if *l.on {
+				out = append(out, l.name)
+			}
+		}
+	}
+	switch {
+	case !sent || len(out) == len(toggles):
+		return nil
+	case len(out) == 0:
+		return []string{"none"}
+	}
+	return out
 }
 
 // hubLogRow is the wire row shape the console UI's LogEntry record
@@ -101,88 +153,9 @@ type hubErrorRow struct {
 	Message string `json:"message"`
 }
 
-// QueryLogsJSON parses the Sky-side filter JSON, translates to a
-// hub.LogFilter, runs QueryLogs, and emits a JSON array of
-// hubLogRow values.
-//
-// `showDebug/Info/Warn/Error` map to the store's `Level` filter the
-// same way the embedded console's HTTP endpoint does (server-side
-// when exactly one level is selected; client-side / no-filter
-// otherwise — the store-side filter only accepts ONE level at a
-// time, so this matches behaviour).
+// QueryLogsJSON is QueryFilteredLogsJSON over every service.
 func (r *storeReader) QueryLogsJSON(filterJSON string) (string, error) {
-	var f hubLogFilter
-	if filterJSON != "" {
-		if err := json.Unmarshal([]byte(filterJSON), &f); err != nil {
-			return "", fmt.Errorf("filter unmarshal: %w", err)
-		}
-	}
-	storeFilter := LogFilter{
-		Limit: 200,
-		Level: pickSingleLevel(f),
-	}
-	rows, err := r.s.QueryLogs(storeFilter)
-	if err != nil {
-		return "", err
-	}
-	// Free-text + session filters are applied client-side because
-	// the store's where-clause doesn't have a `LIKE` arm yet —
-	// match the embedded console's UI behaviour.
-	out := make([]hubLogRow, 0, len(rows))
-	for _, row := range rows {
-		if f.Query != "" && !logMatchesQuery(row, f.Query) {
-			continue
-		}
-		if f.Session != "" && row.Attrs["session_id"] != f.Session {
-			continue
-		}
-		out = append(out, toHubLogRow(row))
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-// pickSingleLevel returns "" (no filter) when zero or two-plus
-// levels are toggled — the store applies an `=` filter so we can
-// only express "exactly one level" at a time. Mirror of the
-// existing HTTP endpoint behaviour.
-func pickSingleLevel(f hubLogFilter) string {
-	count := 0
-	chosen := ""
-	if f.ShowDebug {
-		count++
-		chosen = "debug"
-	}
-	if f.ShowInfo {
-		count++
-		chosen = "info"
-	}
-	if f.ShowWarn {
-		count++
-		chosen = "warn"
-	}
-	if f.ShowError {
-		count++
-		chosen = "error"
-	}
-	if count == 1 {
-		return chosen
-	}
-	return ""
-}
-
-func logMatchesQuery(row LogRow, q string) bool {
-	ql := strings.ToLower(q)
-	if strings.Contains(strings.ToLower(row.Message), ql) {
-		return true
-	}
-	if strings.Contains(strings.ToLower(row.ServiceName), ql) {
-		return true
-	}
-	return false
+	return r.QueryFilteredLogsJSONWithTenant("", "", filterJSON)
 }
 
 func toHubLogRow(row LogRow) hubLogRow {
@@ -218,6 +191,7 @@ func (r *storeReader) QueryMetricsJSON() (string, error) {
 			for k, v := range m.Attrs {
 				parts = append(parts, k+"="+v)
 			}
+			sort.Strings(parts) // map order reshuffled the labels on every refresh
 			labels = strings.Join(parts, ", ")
 		}
 		out = append(out, hubMetricRow{
@@ -236,62 +210,16 @@ func (r *storeReader) QueryMetricsJSON() (string, error) {
 	return string(b), nil
 }
 
-// QuerySpansJSON returns spans as TraceRow JSON.
+// QuerySpansJSON is QueryFilteredSpansJSON over every service, with no
+// range or search.
 func (r *storeReader) QuerySpansJSON() (string, error) {
-	rows, err := r.s.QuerySpans(SpanFilter{Limit: 100})
-	if err != nil {
-		return "", err
-	}
-	out := make([]hubTraceRow, 0, len(rows))
-	for _, sp := range rows {
-		durMs := 0.0
-		if !sp.StartTime.IsZero() && !sp.EndTime.IsZero() {
-			durMs = float64(sp.EndTime.Sub(sp.StartTime)) / float64(time.Millisecond)
-		}
-		status := ""
-		if sp.Attrs != nil {
-			status = sp.Attrs["status"]
-		}
-		out = append(out, hubTraceRow{
-			TraceID:    sp.TraceID,
-			SpanID:     sp.SpanID,
-			ParentID:   sp.ParentID,
-			Name:       sp.Name,
-			Kind:       sp.ServiceName,
-			StartTime:  sp.StartTime.UTC().Format(time.RFC3339),
-			DurationMs: durMs,
-			Status:     status,
-		})
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return r.QueryFilteredSpansJSONWithTenant("", "", "")
 }
 
-// QueryErrorsJSON aggregates error-level logs into ErrorRow shape.
-// v0.16.4 ships the simplest possible grouping (count by message).
-// Future cycles can layer in span error-rates + http-status
-// classification (B5/B6 territory).
+// QueryErrorsJSON is QueryFilteredErrorsJSON over every service, with no
+// range or search.
 func (r *storeReader) QueryErrorsJSON() (string, error) {
-	rows, err := r.s.QueryLogs(LogFilter{Level: "error", Limit: 500})
-	if err != nil {
-		return "", err
-	}
-	counts := make(map[string]int, len(rows))
-	for _, row := range rows {
-		counts[row.Message]++
-	}
-	out := make([]hubErrorRow, 0, len(counts))
-	for msg, c := range counts {
-		out = append(out, hubErrorRow{Count: c, Message: msg})
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return r.QueryFilteredErrorsJSONWithTenant("", "", "")
 }
 
 // Services delegates to Store.Services.
@@ -588,30 +516,27 @@ func (r *storeReader) QueryFilteredLogsJSON(serviceName, filterJSON string) (str
 // `AND service_name LIKE prefix || '%'` at the SQL layer so the
 // SQLite engine — not the caller — enforces the row scope.
 func (r *storeReader) QueryFilteredLogsJSONWithTenant(serviceName, tenantPrefix, filterJSON string) (string, error) {
-	var f hubLogFilter
-	if filterJSON != "" {
-		if err := json.Unmarshal([]byte(filterJSON), &f); err != nil {
-			return "", fmt.Errorf("filter unmarshal: %w", err)
-		}
+	f, err := parseHubQuery(filterJSON)
+	if err != nil {
+		return "", err
 	}
-	storeFilter := LogFilter{
+	// Every filter runs in SQL, before the LIMIT: the level toggles (any
+	// subset, not only one level), the range, the global search and the
+	// Logs tab's own search, and the session pivot.
+	rows, err := r.s.QueryLogs(LogFilter{
 		ServiceName:  serviceName,
 		TenantPrefix: tenantPrefix,
 		Limit:        200,
-		Level:        pickSingleLevel(f),
-	}
-	rows, err := r.s.QueryLogs(storeFilter)
+		Levels:       f.levels(),
+		Search:       rt.ConsoleSearchTerms([]string{f.Search, f.Query}),
+		SessionID:    f.Session,
+		Since:        f.since(),
+	})
 	if err != nil {
 		return "", err
 	}
 	out := make([]hubLogRow, 0, len(rows))
 	for _, row := range rows {
-		if f.Query != "" && !logMatchesQuery(row, f.Query) {
-			continue
-		}
-		if f.Session != "" && row.Attrs["session_id"] != f.Session {
-			continue
-		}
 		out = append(out, toHubLogRow(row))
 	}
 	b, err := json.Marshal(out)
@@ -647,6 +572,7 @@ func (r *storeReader) QueryFilteredMetricsJSONWithTenant(serviceName, tenantPref
 			for k, v := range m.Attrs {
 				parts = append(parts, k+"="+v)
 			}
+			sort.Strings(parts) // map order reshuffled the labels on every refresh
 			labels = strings.Join(parts, ", ")
 		}
 		out = append(out, hubMetricRow{
@@ -668,16 +594,22 @@ func (r *storeReader) QueryFilteredMetricsJSONWithTenant(serviceName, tenantPref
 // QueryFilteredSpansJSON narrows the span read to a single
 // service. `serviceName == ""` falls through to the un-filtered
 // query.
-func (r *storeReader) QueryFilteredSpansJSON(serviceName string) (string, error) {
-	return r.QueryFilteredSpansJSONWithTenant(serviceName, "")
+func (r *storeReader) QueryFilteredSpansJSON(serviceName, queryJSON string) (string, error) {
+	return r.QueryFilteredSpansJSONWithTenant(serviceName, "", queryJSON)
 }
 
 // QueryFilteredSpansJSONWithTenant is the tenant-scoped variant
 // (v0.16.6 #493 part 2c-defense).
-func (r *storeReader) QueryFilteredSpansJSONWithTenant(serviceName, tenantPrefix string) (string, error) {
+func (r *storeReader) QueryFilteredSpansJSONWithTenant(serviceName, tenantPrefix, queryJSON string) (string, error) {
+	f, err := parseHubQuery(queryJSON)
+	if err != nil {
+		return "", err
+	}
 	rows, err := r.s.QuerySpans(SpanFilter{
 		ServiceName:  serviceName,
 		TenantPrefix: tenantPrefix,
+		Search:       rt.ConsoleSearchTerms([]string{f.Search, f.TraceQuery}),
+		Since:        f.since(),
 		Limit:        100,
 	})
 	if err != nil {
@@ -715,17 +647,23 @@ func (r *storeReader) QueryFilteredSpansJSONWithTenant(serviceName, tenantPrefix
 // service. `serviceName == ""` falls through to the un-filtered
 // query. Aggregation strategy mirrors QueryErrorsJSON — count by
 // message over the most recent error-level log rows.
-func (r *storeReader) QueryFilteredErrorsJSON(serviceName string) (string, error) {
-	return r.QueryFilteredErrorsJSONWithTenant(serviceName, "")
+func (r *storeReader) QueryFilteredErrorsJSON(serviceName, queryJSON string) (string, error) {
+	return r.QueryFilteredErrorsJSONWithTenant(serviceName, "", queryJSON)
 }
 
 // QueryFilteredErrorsJSONWithTenant is the tenant-scoped variant
 // (v0.16.6 #493 part 2c-defense).
-func (r *storeReader) QueryFilteredErrorsJSONWithTenant(serviceName, tenantPrefix string) (string, error) {
+func (r *storeReader) QueryFilteredErrorsJSONWithTenant(serviceName, tenantPrefix, queryJSON string) (string, error) {
+	f, err := parseHubQuery(queryJSON)
+	if err != nil {
+		return "", err
+	}
 	rows, err := r.s.QueryLogs(LogFilter{
 		ServiceName:  serviceName,
 		TenantPrefix: tenantPrefix,
 		Level:        "error",
+		Search:       rt.ConsoleSearchTerms([]string{f.Search}),
+		Since:        f.since(),
 		Limit:        500,
 	})
 	if err != nil {
@@ -739,6 +677,14 @@ func (r *storeReader) QueryFilteredErrorsJSONWithTenant(serviceName, tenantPrefi
 	for msg, c := range counts {
 		out = append(out, hubErrorRow{Count: c, Message: msg})
 	}
+	// A stable order: most frequent first, then by message. Map order
+	// reshuffled the rows on every refresh.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Message < out[j].Message
+	})
 	b, err := json.Marshal(out)
 	if err != nil {
 		return "", err

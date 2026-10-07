@@ -103,10 +103,15 @@ type HubStoreReader interface {
 	// Wire shape matches the single-service variants exactly so the
 	// Sky-side typed record narrowing (rt.Coerce →
 	// narrowMapToStruct) is reused.
+	//
+	// `filterJSON` / `queryJSON` carry the console's scope (range key,
+	// global search, the Traces tab's search) and, for logs, the Logs
+	// tab's filter: see encodeQueryJSON. The reader applies all of it
+	// BEFORE its row limit.
 	QueryFilteredLogsJSON(serviceName, filterJSON string) (string, error)
 	QueryFilteredMetricsJSON(serviceName string) (string, error)
-	QueryFilteredSpansJSON(serviceName string) (string, error)
-	QueryFilteredErrorsJSON(serviceName string) (string, error)
+	QueryFilteredSpansJSON(serviceName, queryJSON string) (string, error)
+	QueryFilteredErrorsJSON(serviceName, queryJSON string) (string, error)
 }
 
 // HubStoreReaderWithTenant is the v0.16.6 #493 part 2c-defense
@@ -124,8 +129,8 @@ type HubStoreReader interface {
 type HubStoreReaderWithTenant interface {
 	QueryFilteredLogsJSONWithTenant(serviceName, tenantPrefix, filterJSON string) (string, error)
 	QueryFilteredMetricsJSONWithTenant(serviceName, tenantPrefix string) (string, error)
-	QueryFilteredSpansJSONWithTenant(serviceName, tenantPrefix string) (string, error)
-	QueryFilteredErrorsJSONWithTenant(serviceName, tenantPrefix string) (string, error)
+	QueryFilteredSpansJSONWithTenant(serviceName, tenantPrefix, queryJSON string) (string, error)
+	QueryFilteredErrorsJSONWithTenant(serviceName, tenantPrefix, queryJSON string) (string, error)
 }
 
 var (
@@ -452,18 +457,25 @@ func coerceFloatList(in []any) []any {
 // map[string]any from the dynamic path) to a JSON string. Failures
 // degrade to an empty filter — better than blocking the UI.
 func encodeFilterJSON(filterArg any) string {
-	if filterArg == nil {
-		return "{}"
-	}
-	// Pull fields via the same accessor path the rest of the
-	// runtime uses (recordField handles both struct and map shapes).
+	return encodeQueryJSON(nil, filterArg, "")
+}
+
+// encodeQueryJSON is the one JSON the hub readers take: the console's
+// Scope record (`range`, `search`; its `service` travels separately), the
+// Logs tab's LogFilter (nil for the other tabs) and the Traces tab's search.
+func encodeQueryJSON(scopeArg, filterArg any, traceQuery string) string {
 	out := map[string]any{
-		"query":     hubStringField(filterArg, "Query", "query"),
-		"session":   hubStringField(filterArg, "Session", "session"),
-		"showDebug": hubBoolField(filterArg, "ShowDebug", "showDebug"),
-		"showInfo":  hubBoolField(filterArg, "ShowInfo", "showInfo"),
-		"showWarn":  hubBoolField(filterArg, "ShowWarn", "showWarn"),
-		"showError": hubBoolField(filterArg, "ShowError", "showError"),
+		"range":      hubStringField(scopeArg, "Range", "range"),
+		"search":     hubStringField(scopeArg, "Search", "search"),
+		"traceQuery": traceQuery,
+	}
+	if filterArg != nil {
+		out["query"] = hubStringField(filterArg, "Query", "query")
+		out["session"] = hubStringField(filterArg, "Session", "session")
+		out["showDebug"] = hubBoolField(filterArg, "ShowDebug", "showDebug")
+		out["showInfo"] = hubBoolField(filterArg, "ShowInfo", "showInfo")
+		out["showWarn"] = hubBoolField(filterArg, "ShowWarn", "showWarn")
+		out["showError"] = hubBoolField(filterArg, "ShowError", "showError")
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
@@ -477,6 +489,9 @@ func encodeFilterJSON(filterArg any) string {
 // matches the narrowMapToStruct probe order so typed structs +
 // map-shape values both work.
 func hubStringField(v any, pascal, camel string) string {
+	if v == nil {
+		return ""
+	}
 	raw := recordField(v, pascal, camel)
 	if raw == nil {
 		return ""
@@ -575,24 +590,25 @@ func rejectCrossTenantSvc(svc, tenantPrefix string) (string, bool) {
 
 // Hub_readFilteredLogs implements:
 //
-//	HubStore.hubReadFilteredLogs : String -> String -> LogFilter -> Task Error (List LogEntry)
+//	HubStore.hubReadFilteredLogs : String -> Scope -> LogFilter -> Task Error (List LogEntry)
 //
-// The first arg is the unused dbPath (multi-store future), the
-// second is the service name to filter by, the third is the
-// LogFilter record. An empty service name means "no filter".
-func Hub_readFilteredLogs(_dbPathArg, serviceArg, filterArg any) any {
+// The first arg is the unused dbPath (multi-store future). `Scope` carries
+// the selected service (empty: every service), the range key and the global
+// search; the LogFilter the Logs tab's level toggles, search and session
+// pivot. The reader applies all of it before its row limit.
+func Hub_readFilteredLogs(_dbPathArg, scopeArg, filterArg any) any {
 	return func() any {
 		r := getHubStore()
 		if r == nil {
 			return Ok[any, any]([]any{})
 		}
-		svc := hubStringArg(serviceArg)
+		svc := hubStringField(scopeArg, "Service", "service")
 		tenant := tenantPrefixForSession()
 		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
 		if !ok {
 			return Err[any, any](ErrFfi("hub.readFilteredLogs: service outside tenant scope"))
 		}
-		filterJSON := encodeFilterJSON(filterArg)
+		filterJSON := encodeQueryJSON(scopeArg, filterArg, "")
 		out, err := readFilteredLogsRouted(r, effectiveSvc, tenant, filterJSON)
 		if err != nil {
 			return Err[any, any](ErrFfi("hub.readFilteredLogs: " + err.Error()))
@@ -620,14 +636,16 @@ func readFilteredLogsRouted(r HubStoreReader, svc, tenant, filterJSON string) (s
 
 // Hub_readFilteredMetrics implements:
 //
-//	HubStore.hubReadFilteredMetrics : String -> String -> Task Error (List MetricRow)
-func Hub_readFilteredMetrics(_dbPathArg, serviceArg any) any {
+//	HubStore.hubReadFilteredMetrics : String -> Scope -> Task Error (List MetricRow)
+//
+// Metrics are a snapshot, so only the scope's service applies.
+func Hub_readFilteredMetrics(_dbPathArg, scopeArg any) any {
 	return func() any {
 		r := getHubStore()
 		if r == nil {
 			return Ok[any, any]([]any{})
 		}
-		svc := hubStringArg(serviceArg)
+		svc := hubStringField(scopeArg, "Service", "service")
 		tenant := tenantPrefixForSession()
 		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
 		if !ok {
@@ -659,31 +677,35 @@ func Hub_readFilteredMetrics(_dbPathArg, serviceArg any) any {
 
 // Hub_readFilteredTraces implements:
 //
-//	HubStore.hubReadFilteredTraces : String -> String -> Task Error (List TraceRow)
-func Hub_readFilteredTraces(_dbPathArg, serviceArg any) any {
+//	HubStore.hubReadFilteredTraces : String -> Scope -> String -> Task Error (List TraceRow)
+//
+// The String after the scope is the Traces tab's own search (a trace id
+// after a log row's trace badge was clicked).
+func Hub_readFilteredTraces(_dbPathArg, scopeArg, traceQueryArg any) any {
 	return func() any {
 		r := getHubStore()
 		if r == nil {
 			return Ok[any, any]([]any{})
 		}
-		svc := hubStringArg(serviceArg)
+		svc := hubStringField(scopeArg, "Service", "service")
 		tenant := tenantPrefixForSession()
 		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
 		if !ok {
 			return Err[any, any](ErrFfi("hub.readFilteredTraces: service outside tenant scope"))
 		}
+		queryJSON := encodeQueryJSON(scopeArg, nil, hubStringArg(traceQueryArg))
 		var (
 			out string
 			err error
 		)
 		if tenant != "" {
 			if t, tok := r.(HubStoreReaderWithTenant); tok {
-				out, err = t.QueryFilteredSpansJSONWithTenant(effectiveSvc, tenant)
+				out, err = t.QueryFilteredSpansJSONWithTenant(effectiveSvc, tenant, queryJSON)
 			} else {
-				out, err = r.QueryFilteredSpansJSON(effectiveSvc)
+				out, err = r.QueryFilteredSpansJSON(effectiveSvc, queryJSON)
 			}
 		} else {
-			out, err = r.QueryFilteredSpansJSON(effectiveSvc)
+			out, err = r.QueryFilteredSpansJSON(effectiveSvc, queryJSON)
 		}
 		if err != nil {
 			return Err[any, any](ErrFfi("hub.readFilteredTraces: " + err.Error()))
@@ -698,31 +720,32 @@ func Hub_readFilteredTraces(_dbPathArg, serviceArg any) any {
 
 // Hub_readFilteredErrors implements:
 //
-//	HubStore.hubReadFilteredErrors : String -> String -> Task Error (List ErrorRow)
-func Hub_readFilteredErrors(_dbPathArg, serviceArg any) any {
+//	HubStore.hubReadFilteredErrors : String -> Scope -> Task Error (List ErrorRow)
+func Hub_readFilteredErrors(_dbPathArg, scopeArg any) any {
 	return func() any {
 		r := getHubStore()
 		if r == nil {
 			return Ok[any, any]([]any{})
 		}
-		svc := hubStringArg(serviceArg)
+		svc := hubStringField(scopeArg, "Service", "service")
 		tenant := tenantPrefixForSession()
 		effectiveSvc, ok := rejectCrossTenantSvc(svc, tenant)
 		if !ok {
 			return Err[any, any](ErrFfi("hub.readFilteredErrors: service outside tenant scope"))
 		}
+		queryJSON := encodeQueryJSON(scopeArg, nil, "")
 		var (
 			out string
 			err error
 		)
 		if tenant != "" {
 			if t, tok := r.(HubStoreReaderWithTenant); tok {
-				out, err = t.QueryFilteredErrorsJSONWithTenant(effectiveSvc, tenant)
+				out, err = t.QueryFilteredErrorsJSONWithTenant(effectiveSvc, tenant, queryJSON)
 			} else {
-				out, err = r.QueryFilteredErrorsJSON(effectiveSvc)
+				out, err = r.QueryFilteredErrorsJSON(effectiveSvc, queryJSON)
 			}
 		} else {
-			out, err = r.QueryFilteredErrorsJSON(effectiveSvc)
+			out, err = r.QueryFilteredErrorsJSON(effectiveSvc, queryJSON)
 		}
 		if err != nil {
 			return Err[any, any](ErrFfi("hub.readFilteredErrors: " + err.Error()))
