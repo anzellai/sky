@@ -36,6 +36,10 @@ set -euo pipefail
 
 budget_mb="${GO_CACHE_BUDGET_MB:-2048}"
 
+# Record the disk the job used, at its end (this runs as the last step). It is
+# the measurement scripts/ci/reclaim-runner-disk.sh sizes MIN_FREE_GB against.
+df -h / 2> /dev/null | awk 'NR==2 {print "bound-go-cache: disk at job end: " $3 " used, " $4 " free"}' || true
+
 # `go clean` needs a go toolchain; if there is none, report and succeed rather
 # than failing a job for a housekeeping step.
 if ! command -v go > /dev/null 2>&1; then

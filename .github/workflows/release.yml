@@ -348,20 +348,6 @@ jobs:
           neovim: 'true'
           rust-cache-writer: 'true'
 
-      # Reclaim ~20 GB of preinstalled tooling this gate never uses. coerce-floor
-      # EMITS every project and the workspace tests fill the go-build cache;
-      # freeing the runner's dotnet/android/ghc trees (not the warm go/rust
-      # cache) gives them headroom without slowing anything down. This is the
-      # OS-junk reclaim only — the cache-throwing `go clean -cache` that used to
-      # sit before the in-job sweep is REMOVED, because the sweep left this job.
-      - name: Free disk space
-        run: |
-          set -x
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          sudo docker image prune -af || true
-          df -h /
-
       # `--exclude sky`: the sky crate runs in gate-core-sky-1..9 below, sliced
       # by test with nextest. Doctests still run here (`cargo test` runs them;
       # nextest does not, and sky is bin-only, so it has none).
@@ -638,14 +624,6 @@ jobs:
         with:
           cache-key: corpus
 
-      - name: Free disk space
-        run: |
-          set -x
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          sudo docker image prune -af || true
-          df -h /
-
       # Release-built, deliberately. `preflight-tag.sh:70-74` records the
       # measurement: an unoptimised xtask made these ~10x slower, and `reject`
       # alone measured 780 s debug against 74 s release for an IDENTICAL
@@ -700,12 +678,6 @@ jobs:
           cache-key: core
           postgres: 'true'
           neovim: 'true'
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          sudo docker image prune -af || true
-          df -h /
       - name: Gate harness (T1 shard 1/4 — conformance and verify-cli) with proof requirement
         working-directory: rust
         env:
@@ -729,12 +701,6 @@ jobs:
           cache-key: core
           postgres: 'true'
           neovim: 'true'
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          sudo docker image prune -af || true
-          df -h /
       - name: Gate harness (T1 shard 2/4 — sky-verify, sky-suites, lsp) with proof requirement
         working-directory: rust
         env:
@@ -758,12 +724,6 @@ jobs:
           cache-key: core
           postgres: 'true'
           neovim: 'true'
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          sudo docker image prune -af || true
-          df -h /
       - name: Gate harness (T1 shard 3/4 — Layer-2 apps and CLI verbs) with proof requirement
         working-directory: rust
         env:
@@ -787,12 +747,6 @@ jobs:
           cache-key: core
           postgres: 'true'
           neovim: 'true'
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          sudo docker image prune -af || true
-          df -h /
       - name: Gate harness (T1 shard 4/4 — corpus, runtime safety, census) with proof requirement
         working-directory: rust
         env:
@@ -824,8 +778,9 @@ jobs:
           # All shards share one Go cache family so the build-run cache warms
           # once and is reused across the three shards.
           cache-key: buildrun
-      # The composite's free-disk default reclaims the OS junk before the sweep
-      # fills the go-build cache. No `go clean -cache` — the sweep repopulates
+      # The composite's free-disk default makes sure the job starts with room
+      # before the sweep fills the go-build cache (it reclaims OS junk only when
+      # the runner is short). No `go clean -cache` — the sweep repopulates
       # only what its third needs, and a warm cache is the whole point.
       - name: Codegen build + run (shard ${{ matrix.shard }}/3)
         working-directory: rust

@@ -40,10 +40,11 @@ inputs:
     default: 'false'
   free-disk:
     description: >-
-      Reclaim the ~30 GB of preinstalled toolchains this gate never uses, up
-      front, so the accumulated Go build output has room. This is a one-time
-      reclaim of UNUSED tooling — NOT a `go clean -cache`, which would throw
-      away the warm cache this setup exists to keep.
+      Make sure the job starts with room for the accumulated Go build output:
+      when / has under 80 GB free, remove preinstalled toolchains this gate
+      never uses, within a 180 s budget (scripts/ci/reclaim-runner-disk.sh).
+      UNUSED tooling only — NOT a `go clean -cache`, which would throw away
+      the warm cache this setup exists to keep.
     required: false
     default: 'true'
   rust-cache-writer:
@@ -57,20 +58,18 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    # UNUSED preinstalled toolchains, reclaimed up front. This is NOT the
-    # cache-throwing `go clean -cache` the old single gate ran mid-run — those
-    # reclaims are gone now that the work is split across jobs, each doing far
-    # less. This only removes tooling the gate never touches.
-    - name: Free up runner disk space
+    # UNUSED preinstalled toolchains, reclaimed only when the runner starts
+    # short of space, and inside a fixed budget. This is NOT the
+    # cache-throwing `go clean -cache` the old single gate ran mid-run. The
+    # unconditional `rm -rf` + `docker image prune` that used to sit here took
+    # a median 116 s per job and once 898 s, which cancelled a 30-minute job
+    # (run 37752520304); runners start with 86 GB free, which the nightly's
+    # heaviest jobs prove is enough. scripts/ci/reclaim-runner-disk.sh carries
+    # the measurements and never fails the job.
+    - name: Free up runner disk space (only when short)
       if: inputs.free-disk == 'true'
       shell: bash
-      run: |
-        df -h / | tail -1
-        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-          /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
-          /usr/local/share/powershell /usr/share/swift 2>/dev/null || true
-        sudo docker image prune --all --force 2>/dev/null || true
-        df -h / | tail -1
+      run: bash scripts/ci/reclaim-runner-disk.sh
 
     - uses: dtolnay/rust-toolchain@stable
 
