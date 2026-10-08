@@ -1,129 +1,129 @@
 {
   "gates": {
     "analytics-prune-errors-are-reported": {
-      "inputs_files": 774,
-      "inputs_hash": "43174518058e31fa4fa352add0f2424a4de776ae",
+      "inputs_files": 778,
+      "inputs_hash": "bb30706eb0a109ff66fddc23b99598f73d25a3f6",
       "mutation": "analytics-prune.discard-the-exec-error",
       "mutations": [
         "analytics-prune.discard-the-exec-error"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "analytics-retention-survives-a-panic": {
-      "inputs_files": 774,
-      "inputs_hash": "d4a8d863e219c35eaf321af13037e8e54c8ead0d",
+      "inputs_files": 778,
+      "inputs_hash": "2bc1f388205df88dc18ab48e2d6b9d7996a66fe4",
       "mutation": "analytics-retention.no-recover-inside-the-cycle",
       "mutations": [
         "analytics-retention.no-recover-inside-the-cycle"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "apps-bundled": {
       "inputs_files": 18,
-      "inputs_hash": "451bcb491d7ff1fa218966ef269479b801f1ac9a",
+      "inputs_hash": "f6c803e24038d9b0a6a5395a9c4418cd74780ca3",
       "mutation": "apps-bundled.reintroduce-missing-field",
       "mutations": [
         "apps-bundled.reintroduce-missing-field"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791420946
     },
     "apps-dispatch": {
       "inputs_files": 11,
-      "inputs_hash": "b69f6fbe1b741de3204e5160938181d09a5cbd91",
+      "inputs_hash": "ebf14594d9926bd32be103d05a07c10c26b95092",
       "mutation": "apps-dispatch.swallow-the-job-failure",
       "mutations": [
         "apps-dispatch.swallow-the-job-failure"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791420946
     },
     "apps-dispatch-destructive": {
       "inputs_files": 11,
-      "inputs_hash": "26862567670be462f770d0d4dc813fd9a0889dcf",
+      "inputs_hash": "1ff9f3b438cf02d5636ff65249cadbfc503ad126",
       "mutation": "apps-dispatch-destructive.rename-the-quarantine-target",
       "mutations": [
         "apps-dispatch-destructive.rename-the-quarantine-target"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "apps-dispatch-postgres": {
       "inputs_files": 11,
-      "inputs_hash": "746d6ec133e39ffc0d414220fd8cf04234d15fd3",
+      "inputs_hash": "c894e1c6cd53c6875d0eea4ecf5fe780e4fe99af",
       "mutation": "apps-dispatch-postgres.break-health-driver",
       "mutations": [
         "apps-dispatch-postgres.break-health-driver"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791421708
     },
     "apps-ffi-scale": {
       "inputs_files": 33,
-      "inputs_hash": "9b1ad5aba8f2890b4961145c092462a05e40307d",
+      "inputs_hash": "242987f1107efbdd256fcfe35a18b6ff6b3e0389",
       "mutation": "apps-ffi-scale.break-an-ffi-symbol",
       "mutations": [
         "apps-ffi-scale.break-an-ffi-symbol"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791420946
     },
     "apps-fieldbook": {
       "inputs_files": 15,
-      "inputs_hash": "2f3b3023b728057c588ae4db95fafe9a71267c94",
+      "inputs_hash": "268e77a44914b9327fbb7fb45201164b3e7671af",
       "mutation": "apps-fieldbook.diverge-one-backend",
       "mutations": [
         "apps-fieldbook.diverge-one-backend"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791420946
     },
     "apps-fleet": {
       "inputs_files": 19,
-      "inputs_hash": "f093f95074e8930f6b98d7d74a93f102fadeb482",
+      "inputs_hash": "263802b39e6e1c7bae6c4ddd559390f6d0ca78ba",
       "mutation": "apps-fleet.drop-the-production-gate",
       "mutations": [
         "apps-fleet.drop-the-production-gate"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327322
+      "proven_at_unix": 1791421708
     },
     "apps-ledger": {
       "inputs_files": 18,
-      "inputs_hash": "61ff6b46c738d305eb0b63cd69ecdf2c1ff8063d",
+      "inputs_hash": "8a154a2e6eee0fd2a09ef0ad9e9926da4e896e85",
       "mutation": "apps-ledger.drop-the-ordering",
       "mutations": [
         "apps-ledger.drop-the-ordering"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791420946
     },
     "apps-ledger-postgres": {
       "inputs_files": 18,
-      "inputs_hash": "f62aee172ce59a79790941fe3d740f5baeaa5c22",
+      "inputs_hash": "30a3d5dd7c1b7ad10cfb3cfbd4d329015baf0d23",
       "mutation": "apps-ledger-postgres.break-health-driver",
       "mutations": [
         "apps-ledger-postgres.break-health-driver"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791421708
     },
     "apps-relay": {
       "inputs_files": 9,
-      "inputs_hash": "7d5feb955b3a98c8fb2f488b8d2148762648f360",
+      "inputs_hash": "c873d9c8bd09cda02b6de77cb3287639f6f1a92c",
       "mutation": "apps-relay.break-health-identity",
       "mutations": [
         "apps-relay.break-health-identity",
@@ -131,99 +131,99 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790890190
+      "proven_at_unix": 1791420946
     },
     "canary": {
       "inputs_files": 2,
-      "inputs_hash": "2e529b9a5f7b240553279c64f9632c5e4cd13301",
+      "inputs_hash": "19b6cdcdee905d63b346daeb45cfbeaaf4499ec3",
       "mutation": "canary.noop",
       "mutations": [
         "canary.noop"
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327329
+      "proven_at_unix": 1791421708
     },
     "cli-verbs": {
       "inputs_files": 3,
-      "inputs_hash": "8d0c9aa1cdfe2b779ed88cc9715d8c9ff59fdab4",
+      "inputs_hash": "51bd89f94e12583d7366a494d7db802058111277",
       "mutation": "cli-verbs.break-an-expectation",
       "mutations": [
         "cli-verbs.break-an-expectation"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790884487
+      "proven_at_unix": 1791420946
     },
     "config-matrix": {
-      "inputs_files": 1352,
-      "inputs_hash": "4b374595519860dde29357a857aa3e6cb00af2f2",
+      "inputs_files": 1356,
+      "inputs_hash": "6c66a509b646d078b76bc64b6ea0b00d24bbad86",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "config-migrate": {
       "inputs_files": 5,
-      "inputs_hash": "62f6d179de3975b3e1c5c0ebb7b985f1afc3a8a2",
+      "inputs_hash": "08ab8084fc57dd2769fec45d4b4141d623482f59",
       "mutation": "config-migrate.hide-a-real-legacy-key",
       "mutations": [
         "config-migrate.hide-a-real-legacy-key"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790884487
+      "proven_at_unix": 1791420946
     },
     "config-migration": {
       "inputs_files": 5,
-      "inputs_hash": "a7f7e59388ce625f7c9aaae44e5e62ae90d1ddf0",
+      "inputs_hash": "21232d5163a218ce536d6e3106ba41cdad2ba775",
       "mutation": "config-migration.drop-a-builder-label",
       "mutations": [
         "config-migration.drop-a-builder-label"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "config-surface": {
-      "inputs_files": 781,
-      "inputs_hash": "4627a1ea97ba3cd9d1df7bdadd0cbdf1c12e8cba",
+      "inputs_files": 785,
+      "inputs_hash": "ec8d97efd3f13423817224861fa06803139a6c37",
       "mutation": "config-surface.seed-a-suffix-nothing-reads",
       "mutations": [
         "config-surface.seed-a-suffix-nothing-reads"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "conformance": {
       "inputs_files": 81,
-      "inputs_hash": "a19bdd04b0a9e63a7b295ed6abf7709507292d77",
+      "inputs_hash": "b58e61e90360930528af8363f7eefc8aedebf9a9",
       "mutation": "conformance.break-expectation",
       "mutations": [
         "conformance.break-expectation"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791421708
     },
     "console-analytics-queries-are-bounded": {
-      "inputs_files": 774,
-      "inputs_hash": "fa0dc2a7221dbbbc15065b43494c8b54fb44b474",
+      "inputs_files": 778,
+      "inputs_hash": "c67d793c6c27af9f82050c6de55af2e371adb2a2",
       "mutation": "console-analytics.unbound-the-revenue-scan",
       "mutations": [
         "console-analytics.unbound-the-revenue-scan"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "corpus": {
       "inputs_files": 128,
-      "inputs_hash": "536c86db0f68467d33ef27762a3f0a0414da7b3d",
+      "inputs_hash": "3b156c8d1b2d2388e88b52a1e350dd8e9d2b4217",
       "mutation": "corpus.wrong-expected-value",
       "mutations": [
         "corpus.wrong-expected-value",
@@ -231,11 +231,11 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "corpus-emit-shape": {
       "inputs_files": 128,
-      "inputs_hash": "24d5508241a7ca144bfebe12486ecac713a9b976",
+      "inputs_hash": "3e7876874fd6f71169f6f0a66dadd87d017956c9",
       "mutation": "corpus-emit-shape.erase-the-signature",
       "mutations": [
         "corpus-emit-shape.erase-the-signature",
@@ -244,33 +244,33 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "corpus-isolation": {
       "inputs_files": 128,
-      "inputs_hash": "d0fefa4b75be923b362d6cd61906f7bfddcf0376",
+      "inputs_hash": "130e4aa9f01184cf5fc2b99692108480933987d4",
       "mutation": "corpus-isolation.perturb-batch",
       "mutations": [
         "corpus-isolation.perturb-batch"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "corpus-manifest": {
       "inputs_files": 128,
-      "inputs_hash": "94a2824623b16d011a394261c81ef951d3a86aa3",
+      "inputs_hash": "cad1edd2b74f4ec0ef1fb49146a78da26e7051e5",
       "mutation": "corpus-manifest.drift",
       "mutations": [
         "corpus-manifest.drift"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "corpus-reject": {
       "inputs_files": 128,
-      "inputs_hash": "30c416d09fd514ca8777429e0043b30058fc8bf7",
+      "inputs_hash": "87b4fcbf381bfb8e79af38f2ea63013b53bc753b",
       "mutation": "corpus-reject.repair-the-defect",
       "mutations": [
         "corpus-reject.repair-the-defect",
@@ -279,154 +279,154 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "corpus-witness": {
       "inputs_files": 128,
-      "inputs_hash": "a31521097164439f9fe3fcef9d2ef748ebb940cb",
+      "inputs_hash": "0ce834f8d482529e666c0f46cfd34cb0dd892a38",
       "mutation": "corpus-witness.compare-against-itself",
       "mutations": [
         "corpus-witness.compare-against-itself"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "coverage-ledger": {
-      "inputs_files": 4235,
-      "inputs_hash": "8e23609abce435d7b851f7445a6ed72c55fa0610",
+      "inputs_files": 4243,
+      "inputs_hash": "b8d62784f28cd60a0d66f4eb2198eb65d6dbca19",
       "mutation": "coverage-ledger.drop-a-sole-owner-import",
       "mutations": [
         "coverage-ledger.drop-a-sole-owner-import"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "erasure-path-uses-an-index": {
-      "inputs_files": 774,
-      "inputs_hash": "59fc31b1f825454bc68fb60e51a25390f82d26cb",
+      "inputs_files": 778,
+      "inputs_hash": "eaa26cb38581daa16ded60612921fa93b06c0120",
       "mutation": "erasure-index.drop-the-anonymous-id-index",
       "mutations": [
         "erasure-index.drop-the-anonymous-id-index"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "jobs-complete-failure-is-reported": {
-      "inputs_files": 774,
-      "inputs_hash": "e3366d2c7e27d9b21977bbe281c9b034c010e2fb",
+      "inputs_files": 778,
+      "inputs_hash": "6535db2bd5d5a5efb179b99334b0eb0fa571f4c6",
       "mutation": "jobs-complete.discard-the-store-error",
       "mutations": [
         "jobs-complete.discard-the-store-error"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "kernel-members": {
       "inputs_files": 117,
-      "inputs_hash": "7656cfbf9ed223c8cccea4a415280681d73c1edb",
+      "inputs_hash": "ec8f3cd7f27f81f55fe88e8159bedea6346ab917",
       "mutation": "kernel-members.drop-a-real-member",
       "mutations": [
         "kernel-members.drop-a-real-member"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791131266
+      "proven_at_unix": 1791420946
     },
     "live-time-every-mutex-survives-a-panic": {
-      "inputs_files": 774,
-      "inputs_hash": "2743e57e64a27f84846f91d0ef1f6244e9a5d8d9",
+      "inputs_files": 778,
+      "inputs_hash": "be5ec7e224e21806da7f71505c44bd9455f7ad4b",
       "mutation": "time-every.unlock-only-on-the-happy-path",
       "mutations": [
         "time-every.unlock-only-on-the-happy-path"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "lsp": {
       "inputs_files": 34,
-      "inputs_hash": "044187ec5c4fb93acc89c0c308fb83fc8048c473",
+      "inputs_hash": "ccd255a49499f825a5c8f59f9479c3db11d8da9c",
       "mutation": "lsp.hover-echoes-the-token",
       "mutations": [
         "lsp.hover-echoes-the-token"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "periodic-loops-recover-per-cycle": {
-      "inputs_files": 774,
-      "inputs_hash": "1108a5672e9565b725ec77beb7686aae4b68bd96",
+      "inputs_files": 778,
+      "inputs_hash": "919dc92da785393e47bef6a757f1ea86bb9e186e",
       "mutation": "periodic-loops.recover-at-the-goroutine-top-level",
       "mutations": [
         "periodic-loops.recover-at-the-goroutine-top-level"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "reject": {
       "inputs_files": 4,
-      "inputs_hash": "211ad75494d0a4eb08f9661c89324489a170eedb",
+      "inputs_hash": "3e3048c45c815dfc9bfcfd46a2db9f1a80baa76a",
       "mutation": "reject.neutralise-axis",
       "mutations": [
         "reject.neutralise-axis"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1790884487
+      "proven_at_unix": 1791420946
     },
     "roundtrip": {
       "inputs_files": 437,
-      "inputs_hash": "5db6d7c0218bbbf5a5ed62a64b4bf284eb9917ff",
+      "inputs_hash": "e9cc961bc41396e27fd6fa7c25800909f9f53599",
       "mutation": "roundtrip.error-node",
       "mutations": [
         "roundtrip.error-node"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791131266
+      "proven_at_unix": 1791420946
     },
     "shared-world": {
       "inputs_files": 640,
-      "inputs_hash": "680072a9dc713101749c90318dbce721fa5c4790",
+      "inputs_hash": "16c5525b8aad634c3641feb69758968f21254ea3",
       "mutation": "shared-world.inject-divergence",
       "mutations": [
         "shared-world.inject-divergence"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791131266
+      "proven_at_unix": 1791420946
     },
     "sky-suites": {
       "inputs_files": 82,
-      "inputs_hash": "2dcbacead6873a43dfa884e4c12b92d0987b2215",
+      "inputs_hash": "3216715e4f6c98c01113d0d6a5475eda71ace572",
       "mutation": "sky-suites.break-expectation",
       "mutations": [
         "sky-suites.break-expectation"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791421708
     },
     "sky-verify": {
       "inputs_files": 513,
-      "inputs_hash": "0a9fa9e73b07fe681de5e308621ae4c8fb28b365",
+      "inputs_hash": "1caa080eafaca3106a9ee9f5d9314dd11c5f0a62",
       "mutation": "sky-verify.break-a-suite",
       "mutations": [
         "sky-verify.break-a-suite"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791420946
     },
     "spa-diff-fuzz": {
       "inputs_files": 12,
-      "inputs_hash": "85b3dbb49a42ac556f12ca06af8725d3525a7476",
+      "inputs_hash": "a4dae853e96c014b6d6c0008222b2914749b5b6a",
       "mutation": "spa-diff-fuzz.drop-msgarg-rename",
       "mutations": [
         "spa-diff-fuzz.drop-msgarg-rename",
@@ -434,18 +434,18 @@
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791153620
+      "proven_at_unix": 1791420946
     },
     "verify-cli": {
       "inputs_files": 440,
-      "inputs_hash": "96b63ae0e4837a7eaff7d063d6ab84d03552dae3",
+      "inputs_hash": "67daed4b428da6b02690ab1fde11f355c5f97359",
       "mutation": "verify-cli.drop-expected-output",
       "mutations": [
         "verify-cli.drop-expected-output"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791327179
+      "proven_at_unix": 1791421708
     }
   },
   "note": "Written by `xtask harness --verify-falsifiers`. A gate absent here, older than the declared window, or whose `inputs_hash` no longer matches its proof inputs (`harness --explain-inputs <gate>`), renders UNPROVEN under `--require-proofs` and is re-proven by the next incremental run.",
