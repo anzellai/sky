@@ -44,6 +44,15 @@
 #   RECLAIM_BUDGET_S   total wall-clock budget for removals (default 180)
 set -uo pipefail
 
+# Runner-only. This script deletes system directories with sudo, so it refuses
+# to act anywhere but an ephemeral GitHub-hosted Linux runner. A developer
+# machine (where, for example, /usr/share/swift is a real toolchain) gets a
+# no-op, whatever its free space. Set by the Actions runner, never by a person.
+if [ "${GITHUB_ACTIONS:-}" != "true" ] || [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ] || [ "$(uname -s)" != "Linux" ]; then
+    echo "reclaim-runner-disk: not a GitHub-hosted Linux runner; nothing removed"
+    exit 0
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/lib/with-timeout.sh
 source "$ROOT/scripts/lib/with-timeout.sh"
