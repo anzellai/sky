@@ -328,7 +328,7 @@ jobs:
 
   gate-core:
     runs-on: ubuntu-latest
-    # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..5.
+    # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..9.
     # They took ~37 min on the runner at v0.25.18 (run 36122173135), so the
     # corpus gates + coerce-floor + doc examples that used to follow them here
     # moved to gate-corpus. At v0.27.0 the sky crate alone outgrew the job: run
@@ -362,7 +362,7 @@ jobs:
           sudo docker image prune -af || true
           df -h /
 
-      # `--exclude sky`: the sky crate runs in gate-core-sky-1..5 below, sliced
+      # `--exclude sky`: the sky crate runs in gate-core-sky-1..9 below, sliced
       # by test with nextest. Doctests still run here (`cargo test` runs them;
       # nextest does not, and sky is bin-only, so it has none).
       - name: Workspace tests (every crate except sky)
@@ -377,16 +377,30 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-core-sky-1..5 — the `sky` crate's tests, split out of gate-core.
-  # `cargo nextest run -p sky --partition slice:k/5`: slice splits the whole
-  # sorted test list evenly across the five jobs, so a long binary such as
+  # gate-core-sky-1..9 — the `sky` crate's tests, split out of gate-core.
+  # `cargo nextest run -p sky --partition slice:k/9`: slice splits the whole
+  # sorted test list evenly across the nine jobs, so a long binary such as
   # spa_split_flow (81 tests, 25-40 min alone under `cargo test`) is spread
   # across all of them. Disjoint and total by construction;
-  # tests/workflows_parse.rs checks the five slices are all present. The
+  # tests/workflows_parse.rs checks the nine slices are all present. The
   # `serial-servers` group in rust/.config/nextest.toml still runs the
   # fixed-port server tests one at a time within each job. The same split the
-  # per-commit `test-sky` jobs use (9 slices there; seven had reached ~16 min
-  # each); here five slices plus setup, ~20 min each. Timeout = 1.5x = 30.
+  # per-commit `test-sky` jobs use (rust-ci.yml, also 9 slices).
+  #
+  # Why nine, measured (release runs 37545837777, 37594890617, 37713125127,
+  # 37752520304, all at five slices): the nextest execution summed over the
+  # five slices is 67-71 min per run (3997-4253 s); the slowest slice ran
+  # 968 s of tests, and its job took 22.0 min (gate-setup 1.6-4.2 min, test
+  # compile 1m40s-3m07s, then the tests). That is 27% headroom under the
+  # 30-min timeout, and v0.27.8 (run 37752520304) lost it: gate-core-sky-4
+  # spent 15 min in gate-setup's disk-reclaim step on a slow runner, then was
+  # cancelled at 30 min with 11.5 min of tests done (the re-run took 19.2).
+  # At nine slices the tests are ~8 min per slice (4253 s / 9 = 473 s), so
+  # with the ~6-7 min fixed setup + compile a slice job is ~14-16 min. The
+  # per-commit 9-slice test-sky jobs agree: their slowest job was 11.4 and
+  # 13.6 min (rust-ci runs 37711532703, 37750307576). That is >= 40% headroom
+  # under 30 min. Seven slices would put the slowest job at ~18 min, at the
+  # edge of that margin, so nine. Timeout stays 30.
   # The heavy `#[ignore]`d legs run in gate-app (`-- --ignored`), unchanged.
   gate-core-sky-1:
     runs-on: ubuntu-latest
@@ -402,12 +416,12 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 1/5 (nextest)
+      - name: sky crate tests, slice 1/9 (nextest)
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:1/5
+        run: cargo nextest run -p sky --locked --partition slice:1/9
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -427,12 +441,12 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 2/5 (nextest)
+      - name: sky crate tests, slice 2/9 (nextest)
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:2/5
+        run: cargo nextest run -p sky --locked --partition slice:2/9
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -452,12 +466,12 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 3/5 (nextest)
+      - name: sky crate tests, slice 3/9 (nextest)
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:3/5
+        run: cargo nextest run -p sky --locked --partition slice:3/9
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -477,12 +491,12 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 4/5 (nextest)
+      - name: sky crate tests, slice 4/9 (nextest)
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:4/5
+        run: cargo nextest run -p sky --locked --partition slice:4/9
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -502,12 +516,112 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 5/5 (nextest)
+      - name: sky crate tests, slice 5/9 (nextest)
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:5/5
+        run: cargo nextest run -p sky --locked --partition slice:5/9
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 6/9 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:6/9
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 7/9 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:7/9
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 8/9 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:8/9
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-core-sky-9:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          postgres: 'true'
+          install-compiler: 'false'
+      - name: Install cargo-nextest (prebuilt binary)
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
+      - name: sky crate tests, slice 9/9 (nextest)
+        working-directory: rust
+        env:
+          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          SKY_LIVE_TESTS: require
+        run: cargo nextest run -p sky --locked --partition slice:9/9
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1533,6 +1647,10 @@ jobs:
       - gate-core-sky-3
       - gate-core-sky-4
       - gate-core-sky-5
+      - gate-core-sky-6
+      - gate-core-sky-7
+      - gate-core-sky-8
+      - gate-core-sky-9
       - gate-corpus
       - gate-t1-1
       - gate-t1-2

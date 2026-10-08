@@ -1375,7 +1375,7 @@ fn the_console_drift_check_runs_on_a_pull_request() {
 /// # Why this exists
 ///
 /// The sky crate's tests are split by test across parallel jobs (rust-ci
-/// `test-sky` .. `test-sky-9`, release `gate-core-sky-1..5`). Each job's
+/// `test-sky` .. `test-sky-9`, release `gate-core-sky-1..9`). Each job's
 /// command names its own slice. Deleting one job, or two jobs naming the same
 /// slice, leaves a slice of tests that no job runs, and every remaining job
 /// still reports green. This makes the split disjoint-and-total a checked
