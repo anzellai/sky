@@ -81,6 +81,10 @@ pub enum Need {
     AndroidEmulator,
     /// Node.js, for the tests that run a `scripts/*.mjs` helper.
     Node,
+    /// The pinned `llama-server` and the Qwen development model in the
+    /// Std.Ai home, or the network to fetch them (`sky ai provision
+    /// --dev-model` fills the home; CI caches it).
+    AiEngine,
 }
 
 impl Need {
@@ -115,6 +119,11 @@ impl Need {
             Need::Node => {
                 "install Node.js 20+ (the e2e harnesses under scripts/ are Node programs)"
             }
+            Need::AiEngine => {
+                "run `sky ai provision --dev-model` once (it fetches the pinned llama-server \
+                 and the Qwen development model into the Std.Ai home), or give the test \
+                 network access to github.com and huggingface.co"
+            }
         }
     }
 
@@ -128,6 +137,7 @@ impl Need {
             Need::AndroidSdk => "the Android SDK and a JDK",
             Need::AndroidEmulator => "the Android emulator with an AVD",
             Need::Node => "Node.js",
+            Need::AiEngine => "the Std.Ai engine and development model",
         }
     }
 }

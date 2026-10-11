@@ -1,7 +1,13 @@
 # The AI application lifecycle in Sky: build, data, train, eval, registry, serve
 
-> Status: **design, not implemented.** Nothing in this document exists yet
-> unless the text says it ships today. It extends `Std.Ai` (see
+> Status: **phase 1 part A implemented (v0.28.0); the rest is design.**
+> `Std.Ai.Endpoint` (section 8.1), `Std.Ai.Local` (section 8.2, without
+> adapters, draft models and registry references), the `Provider` additions
+> `chatWith` and `embed` (section 8.3), and `sky ai provision | pull | ps |
+> start | stop` ship; the user guide is [`../ai/local.md`](../ai/local.md).
+> Part A reports failures with an existing `ErrorKind` and the failure's name
+> in the message; the typed `Std.Ai.Failure` values are part B. Everything
+> else in this document does not exist yet unless the text says it ships. It extends `Std.Ai` (see
 > [`std-ai.md`](std-ai.md)) from "call a model" to "own the whole lifecycle of
 > a model-backed application", written only in Sky. The live API for what
 > already ships is `sky doc Std.Ai.Provider` / `Agent` / `Tool` / `Policy` /
@@ -162,7 +168,9 @@ project changes it, so the chat URL is read from the `SKY` prefix plus
 > every `SKY_*` name in the live docs and fails when the number of documented
 > names with no reader rises. None of these variables has a reader yet. The
 > concrete names enter the docs in the same commit that adds their reader, in
-> phase 1. That is also the correct order for the census.
+> phase 1. That is also the correct order for the census. *(Done in phase 1
+> part A: the concrete names and their readers are in
+> [`../ai/local.md`](../ai/local.md) and `runtime-go/rt/ai_config.go`.)*
 
 The slot must be a string literal or a top-level `String` constant, read at
 build time, as `App.withAppUrl` already is. That lets the build list every AI
@@ -195,7 +203,7 @@ to `sky doctor` and to the census, and it rejects a slot that is not
 
 | Builder or source | Variable | Meaning | Fallback |
 |---|---|---|---|
-| none (machine setting) | `<PREFIX>_AI_HOME` | root of the engine, toolchain and model cache | `$SKY_HOME/ai`, else `~/.sky/ai` |
+| none (machine setting) | `<PREFIX>_AI_HOME` | root of the engine, toolchain and model cache | `$SKY_HOME/ai`, else the user cache directory (`~/Library/Caches/sky/ai` on macOS, `~/.cache/sky/ai` on Linux): one copy per user, shared by every project and test |
 | none (machine setting) | `<PREFIX>_AI_LLAMA_BIN` | operator's own `llama-server` directory. Set but incomplete is an error, as with `SKY_POSTGRES_BIN` | the pinned cache |
 | none (machine setting) | `<PREFIX>_AI_ACCEL` | force `cpu`, `metal`, `cuda`, `rocm` or `vulkan` | detected |
 | none (machine setting) | `<PREFIX>_AI_FETCH` | `on` or `off`. Whether a missing artefact may be downloaded at run time | `on` in development, `off` otherwise |
@@ -907,6 +915,13 @@ The CLI holds no hidden logic. Engine verbs run a bundled Sky program (in
 | `sky ai lineage <name>@<alias>` | project program | `Registry.resolve` and the manifest |
 
 Every verb accepts `--format json` for machine output, as the other verbs do.
+
+*Phase 1 part A:* `start` and `stop` run the bundled program too, because the
+project's `src/Ai.sky` entry arrives with `Std.Ai.Pipeline` in phase 2. The
+bundled `start` warms `Endpoint.endpoint <slot>` with `Local.devModel` (or
+`--model`), so the slot's own `<PREFIX>_AI_<SLOT>_*` variables still apply, and
+a project program whose slot has the same model and settings shares that
+engine through `engines.json`.
 
 ## 10. The lifecycle, end to end
 

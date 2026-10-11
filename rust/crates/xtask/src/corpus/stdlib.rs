@@ -363,6 +363,12 @@ pub const SURFACES: &[Surface] = &[
     // no write, FIFO order, Nothing once closed and empty, Err on a push to a
     // closed queue), not observations of this runtime.
     sf2("sync", "Std.Sync", &["Sky.Core.Task as Task"]),
+    // v0.28.0 Std.Ai.Local: a model reference and a spec are pure values (the
+    // reference string IS the pinning contract: it carries the digest), and a
+    // refusal of an unpinned model is decided before any fetch, so the
+    // failure edge needs no network and no engine. The expected values are
+    // the documented reference syntax, not observations of this runtime.
+    sf2("ailocal", "Std.Ai.Local", &["Sky.Core.Task as Task"]),
     // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
     // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
     // every web backend draws; the terminal as the island element it renders
@@ -691,6 +697,8 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Watch",
     // v0.27.0: Std.Sync lands covered (`sync` surface).
     "Std.Sync",
+    // v0.28.0: Std.Ai.Local lands covered (`ailocal` surface).
+    "Std.Ai.Local",
     // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
     // payloads) land covered, not dark.
     "Std.Ui.Canvas",
@@ -795,7 +803,19 @@ pub const ASSERTED_MODULES: &[&str] = &[
 /// `nav_client_test.go` (the browser client in node), the `spa_split_flow.rs`
 /// `a_server_arm_navigation_*` tests and the browser e2e `scripts/nav-e2e.sh`
 /// (Sky.Live and web:app, Chrome and WebKit, strict CSP).
-pub const DARK_MODULE_CEILING: usize = 74;
+///
+/// Raised 74 -> 75 (v0.28.0): the new `Std.Ai.Endpoint`. Its whole surface is
+/// an opaque `Endpoint` built by `withX` builders and consumed for its EFFECT:
+/// `provider` (calls go through a runtime-resolved slot and queue), `warm` and
+/// `describe` are `Task`s whose answer depends on the process environment.
+/// There is no pure value a Family-S assertion can print. It is covered by
+/// `runtime-go/rt/ai_test.go` (the resolution rule, precedence, prefix, queue,
+/// retries, no fallback), `tests/Std/Ai/ProviderEndpointTest.sky` (the
+/// `sky-suites` gate) and `rust/crates/sky/tests/ai_cli_flow.rs` /
+/// `ai_local_live.rs` (a compiled program's slots on a fake and on the real
+/// engine). `Std.Ai.Local`, added in the same release, lands covered
+/// (`ailocal` surface).
+pub const DARK_MODULE_CEILING: usize = 75;
 
 /// The five modules item 3 named, with the EXACT number of their public symbols
 /// Family S asserts. **Exact, never `>=`** (registry.rs: *"`ty/tests/reject.rs`
@@ -1289,6 +1309,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "process" => process_battery(edge),
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
+        "ailocal" => ailocal_battery(edge),
         "canvas" => canvas_battery(edge),
         "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
@@ -3717,6 +3738,56 @@ fn sync_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Local ---------------------------------------------------------
+//
+// `hf:<org>/<repo>/<file>#sha256=<hex>` and `file:<path>#sha256=<hex>` are the
+// documented reference syntax (docs/ai/local.md), shared with the
+// `SKY_AI_<SLOT>_MODEL` variable. An unpinned reference is refused before any
+// fetch (`aiParseModelRef`), which is what the failure edge asserts.
+fn ailocal_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Local.reference", "Local.huggingFace"],
+                "Local.reference (Local.huggingFace { repo = \"org/repo\", file = \"m.gguf\", sha256 = \"ab12\" })",
+                "hf:org/repo/m.gguf#sha256=ab12",
+            ),
+            s(
+                &["Local.reference", "Local.file"],
+                "Local.reference (Local.file { path = \"/m/x.gguf\", sha256 = \"cd34\" })",
+                "file:/m/x.gguf#sha256=cd34",
+            ),
+            s(
+                &["Local.devModel", "Local.reference"],
+                "String.right 64 (Local.reference Local.devModel)",
+                "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed",
+            ),
+            s(
+                &["Local.fromReference", "Local.reference"],
+                "Local.reference (Local.fromReference \"file:/a#sha256=00\")",
+                "file:/a#sha256=00",
+            ),
+            s(
+                &[
+                    "Local.model",
+                    "Local.withContext",
+                    "Local.withParallel",
+                    "Local.withIdleUnload",
+                    "Local.settings",
+                ],
+                "aiSpecShape",
+                "4096,3,0,F",
+            ),
+            s(&["Local.withEmbeddings", "Local.settings"], "aiSpecEmbeddings", "T"),
+        ],
+        "failure" => vec![
+            s(&["Local.fit", "Local.fromReference"], "aiUnpinnedFit", "E"),
+            s(&["Local.fetch", "Local.fromReference"], "aiUnpinnedFetch", "E"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -5625,6 +5696,57 @@ termFresh =
                     "N"
     in
     p ++ "/" ++ e
+"#
+        }
+        "ailocal" => {
+            r#"aiSpecShape : String
+aiSpecShape =
+    let
+        st =
+            Local.model Local.devModel
+                |> Local.withContext 4096
+                |> Local.withParallel 3
+                |> Local.withIdleUnload 0
+                |> Local.settings
+
+        num m =
+            case m of
+                Just n ->
+                    String.fromInt n
+
+                Nothing ->
+                    "-"
+    in
+    num st.context ++ "," ++ num st.parallel ++ "," ++ num st.idleUnloadSeconds ++ "," ++ (if st.embeddings then "T" else "F")
+
+
+aiSpecEmbeddings : String
+aiSpecEmbeddings =
+    if (Local.settings (Local.withEmbeddings (Local.model Local.devModel))).embeddings then
+        "T"
+
+    else
+        "F"
+
+
+aiUnpinnedFit : String
+aiUnpinnedFit =
+    case Task.run (Local.fit (Local.model (Local.fromReference "hf:org/repo/m.gguf"))) of
+        Ok _ ->
+            "ok"
+
+        Err _ ->
+            "E"
+
+
+aiUnpinnedFetch : String
+aiUnpinnedFetch =
+    case Task.run (Local.fetch (Local.fromReference "file:/nowhere.gguf")) of
+        Ok _ ->
+            "ok"
+
+        Err _ ->
+            "E"
 "#
         }
         "qr" => {

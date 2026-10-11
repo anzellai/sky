@@ -1,0 +1,298 @@
+module Std.Ai.ProviderEndpointTest exposing (tests)
+
+-- Sky-side tests for the v0.28.0 Std.Ai additions: Provider.chatWith options,
+-- Provider.embed, Provider.wire, the Std.Ai.Local values and the
+-- Std.Ai.Endpoint resolution a program can observe without an engine.
+--
+-- A `Provider.wire` transport here answers from the request itself, so each
+-- test sees exactly the JSON the provider sent. The engine, queue, fetch and
+-- supervision behaviour is covered by runtime-go/rt/ai_test.go, and the real
+-- engine by rust/crates/sky/tests/ai_local_live.rs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.String as String
+import Sky.Core.Secret as Secret
+import Sky.Core.Json.Encode as JsonE
+import Sky.Test as Test exposing (Test, TestResult(..))
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Local as Local
+
+
+-- A chat answer whose content is "<path>|<request body>".
+echo : String -> String -> Task Error String
+echo path body =
+    Task.succeed
+        (JsonE.encode
+            0
+            (JsonE.object
+                [ ( "choices"
+                  , JsonE.list
+                        identity
+                        [ JsonE.object
+                              [ ( "message"
+                                , JsonE.object
+                                      [ ( "content"
+                                        , JsonE.string (path ++ "|" ++ body)
+                                        )
+                                      ]
+                                )
+                              ]
+                        ]
+                  )
+                , ( "usage"
+                  , JsonE.object
+                        [ ( "prompt_tokens", JsonE.int 1 )
+                        , ( "completion_tokens", JsonE.int 2 )
+                        , ( "total_tokens", JsonE.int 3 )
+                        ]
+                  )
+                ]))
+
+
+embeddings : String -> String -> Task Error String
+embeddings _ _ =
+    Task.succeed
+        "{\"data\":[{\"index\":0,\"embedding\":[1,2.5]},{\"index\":1,\"embedding\":[-3,0]}]}"
+
+
+sent : Provider.Options -> Result Error String
+sent opts =
+    Provider.chatWith opts (Provider.wire echo "base-8b") [ Provider.user "hi" ]
+        |> Task.map .content
+        |> Task.run
+
+
+contains : String -> Result Error String -> Test.TestResult
+contains needle result =
+    case result of
+
+        Ok s ->
+            if String.contains needle s then
+                Test.pass
+
+            else
+                Test.fail ("`" ++ needle ++ "` not in " ++ s)
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+containsAll : List String -> Result Error String -> Test.TestResult
+containsAll needles result =
+    case needles of
+
+        [] ->
+            Test.pass
+
+        n :: more ->
+            case contains n result of
+
+                Test.Passed ->
+                    containsAll more result
+
+                failed ->
+                    failed
+
+
+lacks : String -> Result Error String -> Test.TestResult
+lacks needle result =
+    case result of
+
+        Ok s ->
+            if String.contains needle s then
+                Test.fail ("`" ++ needle ++ "` unexpectedly in " ++ s)
+
+            else
+                Test.pass
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ai.Provider chatWith / embed / wire"
+          [ Test.test
+                "a wire provider posts the chat to /chat/completions with its model"
+                (\_ ->
+                    contains
+                        "/chat/completions|{\"model\":\"base-8b\""
+                        (sent Provider.defaultOptions))
+          , Test.test
+                "default options send no sampling fields"
+                (\_ -> lacks "temperature" (sent Provider.defaultOptions))
+          , Test.test
+                "temperature, seed and max tokens are sent"
+                (\_ ->
+                    containsAll
+                        [ "\"temperature\":0.5"
+                        , "\"seed\":7"
+                        , "\"max_tokens\":16"
+                        ]
+                        (sent
+                            { temperature = Just 0.5
+                            , seed = Just 7
+                            , maxTokens = Just 16
+                            , adapter = Nothing
+                            }))
+          , Test.test
+                "an adapter replaces the model for the call"
+                (\_ ->
+                    contains
+                        "\"model\":\"support-lora\""
+                        (sent
+                            { temperature = Nothing
+                            , seed = Nothing
+                            , maxTokens = Nothing
+                            , adapter = Just "support-lora"
+                            }))
+          , Test.test
+                "chat is chatWith defaultOptions"
+                (\_ ->
+                    Test.equal
+                        (sent Provider.defaultOptions |> Result.map identity)
+                        (Provider.chat
+                            (Provider.wire echo "base-8b")
+                            [ Provider.user "hi" ]
+                            |> Task.map .content
+                            |> Task.run))
+          , Test.test
+                "embed decodes one vector per input, in order"
+                (\_ ->
+                    Test.equal
+                        (Ok [ [ 1.0, 2.5 ], [ -3.0, 0.0 ] ])
+                        (Provider.embed
+                            (Provider.wire embeddings "")
+                            [ "a", "b" ]
+                            |> Task.run))
+          , Test.test
+                "a custom provider has no embeddings route"
+                (\_ ->
+                    Test.expectErrorKind
+                        InvalidInput
+                        (Provider.embed
+                            (Provider.custom
+                                (\_ -> Task.fail (Error.unexpected "unused")))
+                            [ "a" ]
+                            |> Task.run))
+          , Test.test
+                "embed refuses a backend URL it cannot derive /embeddings from"
+                (\_ ->
+                    Test.expectErrorKind
+                        InvalidInput
+                        (Provider.embed
+                            (Provider.compatible
+                                "http://127.0.0.1:9/v1/other"
+                                (Secret.fromString "k")
+                                "m")
+                            [ "a" ]
+                            |> Task.run))
+          ]
+    , Test.suite
+          "Std.Ai.Local values"
+          [ Test.test
+                "huggingFace builds the pinned reference"
+                (\_ ->
+                    Test.equal
+                        "hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf#sha256=7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
+                        (Local.reference Local.devModel))
+          , Test.test
+                "file builds a file reference"
+                (\_ ->
+                    Test.equal
+                        "file:/m.gguf#sha256=ab"
+                        (Local.reference
+                            (Local.file { path = "/m.gguf", sha256 = "ab" })))
+          , Test.test
+                "a spec's unset settings read back as Nothing"
+                (\_ ->
+                    Test.equal
+                        { model = "file:/m#sha256=ab"
+                        , context = Nothing
+                        , gpu = Nothing
+                        , parallel = Nothing
+                        , idleUnloadSeconds = Nothing
+                        , embeddings = False
+                        , port = Nothing
+                        }
+                        (Local.settings
+                            (Local.model
+                                (Local.fromReference "file:/m#sha256=ab"))))
+          , Test.test
+                "builders set what they name"
+                (\_ ->
+                    Local.model Local.devModel |> Local.withContext 4096
+                        |> Local.withGpu Local.CpuOnly
+                        |> Local.withParallel 3
+                        |> Local.withIdleUnload 0
+                        |> Local.withEmbeddings
+                        |> Local.withPort 0
+                        |> Local.settings
+                        |> (\s ->
+                               Test.equal
+                                   ( Just 4096
+                                   , Just Local.CpuOnly
+                                   , ( Just 3, Just 0, ( True, Just 0 ) )
+                                   )
+                                   ( s.context
+                                   , s.gpu
+                                   , ( s.parallel
+                                     , s.idleUnloadSeconds
+                                     , ( s.embeddings, s.port )
+                                     )
+                                   )))
+          ]
+    , Test.suite
+          "Std.Ai.Endpoint resolution"
+          [ Test.test
+                "a slot with nothing configured is NotConfigured (InvalidInput)"
+                (\_ ->
+                    Test.expectErrorKind
+                        InvalidInput
+                        (Endpoint.describe (Endpoint.endpoint "nothing_here")
+                            |> Task.run))
+          , Test.test
+                "an invalid slot name is refused"
+                (\_ ->
+                    Test.expectErrorKind
+                        InvalidInput
+                        (Endpoint.describe (Endpoint.endpoint "Bad Slot")
+                            |> Task.run))
+          , Test.test
+                "a URL in code makes the slot remote and describe shows only scheme, host and port"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_remote"
+                        |> Endpoint.withUrl
+                               "https://gpu.example.test:8443/v1?token=abc"
+                        |> Endpoint.withKey (Secret.fromString "sk-secret")
+                        |> Endpoint.describe
+                        |> Task.map (\d -> ( d.mode, d.target ))
+                        |> Task.run
+                        |> Test.equal
+                               (Ok ( "remote", "https://gpu.example.test:8443" )))
+          , Test.test
+                "MODE=local with a URL in code is refused"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_conflict"
+                        |> Endpoint.withMode Endpoint.Local
+                        |> Endpoint.withUrl "https://gpu.example.test/v1"
+                        |> Endpoint.describe
+                        |> Task.run
+                        |> Test.expectErrorKind InvalidInput)
+          , Test.test
+                "a remote slot that is down is Unavailable and never falls back to its local spec"
+                (\_ ->
+                    Endpoint.endpoint "sky_test_down"
+                        |> Endpoint.withUrl "http://127.0.0.1:9/v1"
+                        |> Endpoint.withLocal (Local.model Local.devModel)
+                        |> Endpoint.withRetry 0
+                        |> Endpoint.provider
+                        |> (\p -> Provider.chat p [ Provider.user "x" ])
+                        |> Task.run
+                        |> Test.expectErrorKind Unavailable)
+          ]
+    ]

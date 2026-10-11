@@ -1,0 +1,325 @@
+module Main exposing (main)
+
+{-| The program behind `sky ai`. The CLI holds no logic of its own: it builds
+this program once per Sky version and runs it with the verb's arguments, and
+each verb is a call to the Std.Ai API a user's own program can make.
+
+    sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>]
+                                                 Local.provision, Local.fetch
+    sky ai pull <org>/<repo> <file>              Local.pull
+    sky ai ps [--all]                            Local.engines
+    sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]
+                                                 Endpoint.warm, then hold
+    sky ai stop <slot> | --all                   Local.stopSlot
+
+Every verb takes `--format json`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.Json.Encode as JsonE
+import Std.Log exposing (println)
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Local as Local
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+
+run : List String -> Task Error ()
+run args =
+    let
+        json = List.member "--format" args && List.member "json" args
+        rest = List.filter (\a -> a /= "--format" && a /= "json") args
+    in
+        case rest of
+
+            "provision" :: opts ->
+                provision json opts
+
+            ["pull", repo, file] ->
+                pull json repo file
+
+            "ps" :: opts ->
+                ps json (List.member "--all" opts)
+
+            "start" :: slot :: opts ->
+                start json slot opts
+
+            ["stop", "--all"] ->
+                stop json ""
+
+            ["stop", slot] ->
+                stop json slot
+
+            _ ->
+                Task.fail (Error.invalidInput usage)
+
+
+usage : String
+usage =
+    "usage: sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>] | pull <org>/<repo> <file> | ps [--all] | start <slot> [--model <ref>] [--context <n>] [--embeddings] | stop <slot>|--all  (each takes --format json)"
+
+
+-- The value after a flag, if the flag is there.
+flag : String -> List String -> Maybe String
+flag name opts =
+    case opts of
+
+        a :: b :: more ->
+            if a == name then
+                Just b
+
+            else
+                flag name (b :: more)
+
+        _ ->
+            Nothing
+
+
+-- Every value given to a repeatable flag.
+flags : String -> List String -> List String
+flags name opts =
+    case opts of
+
+        a :: b :: more ->
+            if a == name then
+                b :: flags name more
+
+            else
+                flags name (b :: more)
+
+        _ ->
+            []
+
+
+emit : Bool -> JsonE.Value -> String -> Task Error ()
+emit json value text =
+    if json then
+        println (JsonE.encode 0 value)
+
+    else
+        println text
+
+
+-- ─── provision ──────────────────────────────────────────────────────────
+provision : Bool -> List String -> Task Error ()
+provision json opts =
+    let
+        models =
+            flags "--model" opts
+                ++ (if List.member "--dev-model" opts then
+                       [ Local.reference Local.devModel ]
+
+                   else
+                       [])
+    in
+        Local.provision ()
+            |> Task.andThen (checkVariant (flag "--variant" opts))
+            |> Task.andThen
+                   (\p -> fetchModels models |> Task.map (\paths -> ( p, paths )))
+            |> Task.andThen (\( p, paths ) -> reportProvision json p paths)
+
+
+checkVariant : Maybe String -> Local.Provisioned -> Task Error Local.Provisioned
+checkVariant wanted p =
+    case wanted of
+
+        Just v ->
+            if v == p.variant then
+                Task.succeed p
+
+            else
+                Task.fail
+                    (Error.invalidInput
+                        ("sky ai provision: there is no pinned " ++ v
+                            ++ " build for "
+                            ++ p.platform
+                            ++ "; the pinned build here is "
+                            ++ p.variant))
+
+        Nothing ->
+            Task.succeed p
+
+
+fetchModels : List String -> Task Error (List String)
+fetchModels refs =
+    refs |> List.map (\r -> Local.fetch (Local.fromReference r))
+        |> Task.sequence
+
+
+reportProvision : Bool -> Local.Provisioned -> List String -> Task Error ()
+reportProvision json p paths =
+    emit
+        json
+        (JsonE.object
+            [ ( "engine", JsonE.string p.path )
+            , ( "build", JsonE.string p.build )
+            , ( "variant", JsonE.string p.variant )
+            , ( "platform", JsonE.string p.platform )
+            , ( "home", JsonE.string p.home )
+            , ( "models", JsonE.list JsonE.string paths )
+            ])
+        (String.join
+            "\n"
+            (("llama-server " ++ p.build ++ " (" ++ p.variant ++ ", "
+                ++ p.platform
+                ++ ") at "
+                ++ p.path)
+                :: List.map (\m -> "model at " ++ m) paths))
+
+
+-- ─── pull ───────────────────────────────────────────────────────────────
+pull : Bool -> String -> String -> Task Error ()
+pull json repo file =
+    Local.pull repo file
+        |> Task.andThen
+               (\p ->
+                   emit
+                       json
+                       (JsonE.object
+                           [ ( "repo", JsonE.string p.repo )
+                           , ( "file", JsonE.string p.file )
+                           , ( "path", JsonE.string p.path )
+                           , ( "sha256", JsonE.string p.sha256 )
+                           , ( "bytes", JsonE.int p.bytes )
+                           ])
+                       (String.join
+                           "\n"
+                           [ "stored " ++ String.fromInt p.bytes ++ " bytes at "
+                                 ++ p.path
+                           , ""
+                           , "Local.huggingFace"
+                           , "    { repo = \"" ++ p.repo ++ "\""
+                           , "    , file = \"" ++ p.file ++ "\""
+                           , "    , sha256 = \"" ++ p.sha256 ++ "\""
+                           , "    }"
+                           ]))
+
+
+-- ─── ps ─────────────────────────────────────────────────────────────────
+ps : Bool -> Bool -> Task Error ()
+ps json all =
+    Local.engines () |> Task.map (List.filter (\e -> all || e.state /= "stale"))
+        |> Task.andThen
+               (\es -> emit json (JsonE.list engineValue es) (engineTable es))
+
+
+engineValue : Local.EngineInfo -> JsonE.Value
+engineValue e =
+    JsonE.object
+        [ ( "slot", JsonE.string e.slot )
+        , ( "state", JsonE.string e.state )
+        , ( "pid", JsonE.int e.pid )
+        , ( "holderPid", JsonE.int e.holderPid )
+        , ( "port", JsonE.int e.port )
+        , ( "model", JsonE.string e.model )
+        , ( "build", JsonE.string e.build )
+        , ( "accelerator", JsonE.string e.accelerator )
+        , ( "context", JsonE.int e.context )
+        , ( "startedAt", JsonE.string e.startedAt )
+        ]
+
+
+engineTable : List Local.EngineInfo -> String
+engineTable es =
+    if List.isEmpty es then
+        "no engines are running"
+
+    else
+        String.join
+            "\n"
+            ("SLOT        STATE     PID     PORT   ACCEL  CTX    MODEL"
+                :: List.map engineRow es)
+
+
+engineRow : Local.EngineInfo -> String
+engineRow e =
+    String.join
+        " "
+        [ String.padRight 11 ' ' (orDash e.slot)
+        , String.padRight 9 ' ' e.state
+        , String.padRight 7 ' ' (String.fromInt e.pid)
+        , String.padRight 6 ' ' (String.fromInt e.port)
+        , String.padRight 6 ' ' e.accelerator
+        , String.padRight 6 ' ' (String.fromInt e.context)
+        , e.model
+        ]
+
+
+orDash : String -> String
+orDash s =
+    if s == "" then
+        "-"
+
+    else
+        s
+
+
+-- ─── start / stop ───────────────────────────────────────────────────────
+start : Bool -> String -> List String -> Task Error ()
+start json slot opts =
+    let
+        model =
+            flag "--model" opts |> Maybe.map Local.fromReference
+                |> Maybe.withDefault Local.devModel
+        sized =
+            case Maybe.andThen String.toInt (flag "--context" opts) of
+
+                Just n ->
+                    Local.withContext n
+
+                Nothing ->
+                    identity
+        embedding =
+            if List.member "--embeddings" opts then
+                Local.withEmbeddings
+
+            else
+                identity
+        spec =
+            Local.model model |> sized |> embedding |> Local.withIdleUnload 0
+    in
+        Endpoint.endpoint slot |> Endpoint.withLocal spec |> Endpoint.warm
+            |> Task.andThen (\d -> emit json (describeValue d) (describeText d))
+            |> Task.andThen (\_ -> Task.forever (Time.sleep 3600000))
+
+
+describeValue : Endpoint.Description -> JsonE.Value
+describeValue d =
+    JsonE.object
+        [ ( "slot", JsonE.string d.slot )
+        , ( "mode", JsonE.string d.mode )
+        , ( "target", JsonE.string d.target )
+        , ( "state", JsonE.string "ready" )
+        ]
+
+
+describeText : Endpoint.Description -> String
+describeText d =
+    "slot " ++ d.slot ++ " ready (" ++ d.mode ++ ", " ++ d.target
+        ++ "). Programs on this machine that use the same model and settings share this engine. Stop it with `sky ai stop "
+        ++ d.slot
+        ++ "` or Ctrl-C."
+
+
+stop : Bool -> String -> Task Error ()
+stop json slot =
+    Local.stopSlot slot
+        |> Task.andThen
+               (\n ->
+                   emit
+                       json
+                       (JsonE.object
+                           [ ( "slot", JsonE.string slot )
+                           , ( "stopped", JsonE.int n )
+                           ])
+                       ("stopped " ++ String.fromInt n ++ " engine(s)"))

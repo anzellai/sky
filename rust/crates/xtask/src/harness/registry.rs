@@ -432,9 +432,10 @@ pub static GATES: &[Gate] = &[
                 // task_slot, let_polymorphism and qualified_field (+95 cases,
                 // 519 → 614), and the v0.27.0 Std.Sync surface (+2 cases,
                 // 614 → 616), and the v0.27.7 adt_equality stratum (+60 cases,
-                // 616 → 676).
-                from: "n_min = 676",
-                to: "n_min = 677",
+                // 616 → 676), and the v0.28.0 Std.Ai.Local surface (+2 cases,
+                // 676 → 678).
+                from: "n_min = 678",
+                to: "n_min = 679",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -650,8 +651,9 @@ pub static GATES: &[Gate] = &[
         name: "apps-bundled",
         tier: Tier::T1,
         platforms: UNIX,
-        // Two full `go build`s of ~35 MB binaries from a wiped slate. Measured
-        // ~13 s warm on the dev host; the ceiling is sized for a cold CI runner
+        // Three full `go build`s from a wiped slate (console, doc, and since
+        // v0.28.0 the `sky ai` program). Measured ~13 s warm for the first two
+        // on the dev host; the ceiling is sized for a cold CI runner
         // with no Go build cache.
         budget_s: 900,
         expected: bodies::APPS_BUNDLED_EXPECTED,

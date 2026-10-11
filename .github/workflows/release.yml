@@ -1183,6 +1183,38 @@ jobs:
   # PostgreSQL, plus the `integration`-tagged Postgres session-store tests.
   # Mirrors rust-ci's `integration-postgres` (which explains why `-race` needs
   # cgo and why the embedded-supervisor tests need real binaries on the runner).
+  # gate-ai-local — the real managed engine with zero configuration
+  # (rust/crates/sky/tests/ai_local_live.rs). The sliced core-sky runs exclude
+  # it (rust/.config/nextest.toml, default-filter), so the model is fetched and
+  # cached in this one job. Same job as rust-ci.yml `ai-local-live`.
+  gate-ai-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          install-compiler: 'false'
+      - name: Cache the Std.Ai engine and development model
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+          key: sky-ai-home-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - name: Std.Ai live end to end (real llama-server, zero configuration)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_local_live -- --nocapture
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
   gate-race:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1615,6 +1647,7 @@ jobs:
       - gate-t2-corpus
       - gate-t2-rest
       - gate-app
+      - gate-ai-local
       - gate-falsifiers-1
       - gate-falsifiers-2
       - gate-falsifiers-3

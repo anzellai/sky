@@ -2419,6 +2419,36 @@ re-entrant. In a Sky.Spa app these calls run on the server.
 
 ---
 
+### `Std.Ai.Endpoint` and `Std.Ai.Local` — model slots and the managed local engine (v0.28.0)
+
+A **slot** names one use of a model. Its `withX` builders hold the local
+default in code, and each falls back to `<PREFIX>_AI_<SLOT>_<KEY>` (operator
+env > code > default; there is no `sky.toml` section for AI). A slot resolves
+to an ordinary `Provider`, so `Std.Ai.Agent`, `Tool`, `Policy` and `Trace` use
+it unchanged.
+
+```elm
+chat : Provider
+chat =
+    Endpoint.endpoint "chat"
+        |> Endpoint.withLocal (Local.model Local.devModel)
+        |> Endpoint.provider
+```
+
+With no variables set, the first call fetches the pinned `llama-server` and the
+pinned Qwen2.5 0.5B model (both verified by SHA-256), plans the memory fit,
+starts the engine on `127.0.0.1` and answers. With `SKY_AI_CHAT_URL` set, the
+same binary calls that OpenAI-compatible server. A down remote never falls back
+to the local engine.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe` |
+| `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
+| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire` |
+
+The full guide, every variable and the failure kinds: [`ai/local.md`](ai/local.md).
+
 ## The Prelude
 
 `Sky.Core.Prelude exposing (..)` is implicitly imported everywhere. It re-exports:

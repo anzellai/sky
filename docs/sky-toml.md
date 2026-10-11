@@ -300,6 +300,26 @@ older project.
 
 ---
 
+## Std.Ai configuration (no `[ai]` section)
+
+**AI settings are not sky.toml keys.** A model slot's settings are `withX`
+builders on `Std.Ai.Endpoint` / `Std.Ai.Local` in code, and each falls back to
+`<PREFIX>_AI_<SLOT>_<KEY>` from the environment, with the precedence every
+runtime setting has (operator env > code > default). The machine-wide
+variables are:
+
+| Variable | Meaning |
+|---|---|
+| `SKY_AI_HOME` | the engine and model cache, one per user (default `$SKY_HOME/ai`, else the user cache directory) |
+| `SKY_AI_LLAMA_BIN` | the directory of your own `llama-server` build, instead of the pinned one |
+| `SKY_AI_FETCH` | `on` / `off`: may a missing engine or model be downloaded at run time (default on in development, off otherwise) |
+| `SKY_AI_ACCEL` | force the accelerator the fit plan assumes: `cpu`, `metal`, `cuda`, `rocm`, `vulkan` |
+
+The per-slot variables (`SKY_AI_<SLOT>_MODE`, `_URL`, `_KEY`, `_MODEL`,
+`_ADAPTER`, `_TIMEOUT_MS`, `_MAX_INFLIGHT`, `_QUEUE`, `_QUEUE_WAIT_MS`,
+`_RETRIES`, `_CONTEXT`, `_GPU`, `_PARALLEL`, `_IDLE_UNLOAD_S`, `_PORT`) and
+their defaults are in [`ai/local.md`](ai/local.md).
+
 ## `[database]`
 
 Std.Db default connection. `Db.connect ()` (unit form) reads

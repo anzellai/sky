@@ -2021,6 +2021,60 @@ jobs:
   # blocks every open PR forever. Promote this to required only AFTER it has
   # reported green on real runs, and only then drop the others from the required
   # list.
+  # ── Std.Ai: the real managed engine, zero configuration ─────────────────
+  # ai_local_live.rs builds a Sky program whose code names only the pinned
+  # development model, runs it with no SKY_AI_* variable, and asserts a chat
+  # answer and an embedding from the real llama-server. The pinned engine
+  # build (~17 MB) and the Qwen2.5 0.5B Q4_0 model (~430 MB) live in the
+  # Std.Ai home, cached here and keyed on the file that pins them, so a pin
+  # change refetches and anything else restores. The test is excluded from the
+  # sliced `test-sky` runs (rust/.config/nextest.toml, default-filter) so the
+  # model is fetched and cached in this one job only. Measured locally: a
+  # cached run is under 10 s; ×1.5 and the build ≈ 25 min.
+  ai-local-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache Go build + module cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-test-sky-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: go-test-sky-
+      - name: Cache the Std.Ai engine and development model
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+          key: sky-ai-home-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - name: Std.Ai live end to end (real llama-server, zero configuration)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_local_live -- --nocapture
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
   ci-green:
     needs:
       - setup
@@ -2057,6 +2111,7 @@ jobs:
       - macos-determinism-3
       - macos-behaviour
       - macos-conformance
+      - ai-local-live
     # `always()` so a FAILED dependency still reaches the assertion below and is
     # reported as a failure here. Without it this job would be SKIPPED when an
     # upstream job failed, and a skipped required check is treated as neutral by
@@ -2114,7 +2169,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres ai-local-live build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
           MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance licence-gate-macos'
         run: |
           set -euo pipefail

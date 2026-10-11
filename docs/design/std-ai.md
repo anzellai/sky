@@ -5,6 +5,11 @@
 > effect and money layers already in the stdlib. The live API is `sky doc
 > Std.Ai.Provider` / `Std.Ai.Agent` / `Std.Ai.Tool` / `Std.Ai.Policy` /
 > `Std.Ai.Trace` / `Std.Ai.Memory.Pg`; this doc is the architecture behind it.
+>
+> v0.28.0 adds model slots and a managed local engine (`Std.Ai.Endpoint`,
+> `Std.Ai.Local`) and `Provider.chatWith` / `Provider.embed`: see
+> [`../ai/local.md`](../ai/local.md) and the lifecycle design,
+> [`std-ai-lifecycle.md`](std-ai-lifecycle.md).
 
 ## Two principles the design is built around
 

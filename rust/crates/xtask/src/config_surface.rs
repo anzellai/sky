@@ -182,6 +182,19 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          configLayers directly)",
     ),
     (
+        "runtime-go/rt/ai_config.go",
+        "Std.Ai.Endpoint slot settings (v0.28.0). A slot's variables are \
+         <PREFIX>_AI_<SLOT>_<KEY>: the SLOT is the app's own literal \
+         (`Endpoint.endpoint \"chat\"`), so the full suffix is built at run \
+         time (aiSlotSuffix) and read through configLayers. The KEY set is \
+         closed and literal in that file (MODE / URL / KEY / MODEL / ADAPTER / \
+         TIMEOUT_MS / MAX_INFLIGHT / QUEUE / QUEUE_WAIT_MS / RETRIES / CONTEXT / \
+         GPU / PARALLEL / IDLE_UNLOAD_S / PORT), each documented in \
+         docs/ai/local.md as SKY_AI_<SLOT>_<KEY>. The machine-wide AI_HOME / \
+         AI_LLAMA_BIN / AI_FETCH / AI_ACCEL are literal skyGetenv reads in \
+         ai_fetch.go / ai_gguf.go and are counted normally",
+    ),
+    (
         "runtime-go/rt/sky_config.go",
         "ApplyConfig resolves each Sky.Config key's env suffix with \
          skyEnvName(suffix), so the write is non-literal HERE while every suffix \

@@ -1378,6 +1378,38 @@ only the entry-point module switches between `Live.app` and
   local}`) — production-mode gate; suppresses console + banner
   entirely and gates `/_sky/metrics` behind auth.
 
+## AI models
+
+### `sky ai provision | pull | ps | start | stop` *(v0.28.0)*
+
+Drive the managed local model engines of `Std.Ai.Local`. The verbs hold no
+logic of their own: `sky ai` builds a bundled Sky program (`sky-bundled/ai`)
+once per Sky build and runs it, and the program calls the `Std.Ai.Local` and
+`Std.Ai.Endpoint` API a user's program has. Every verb takes `--format json`.
+
+```
+sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>]
+sky ai pull <org>/<repo> <file>
+sky ai ps [--all]
+sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]
+sky ai stop <slot> | --all
+```
+
+- `provision` installs the pinned `llama-server` build for this host into the
+  AI home (with `SKY_AI_LLAMA_BIN` set it checks that build and fetches
+  nothing), and `--dev-model` / `--model <ref>` fetch and verify models. Run it
+  in an image or at deploy, where fetching at run time is off.
+- `pull` downloads a GGUF file whose digest you do not know yet, stores it by
+  its digest, and prints the `Local.huggingFace { … }` value to pin in code.
+- `ps` lists the engines on this machine (`running`, or `orphaned` when the
+  program that held one was killed); `--all` adds stale entries.
+- `start` starts a slot's local engine and holds it in the foreground; programs
+  with the same model and settings use it instead of loading the model again.
+  `stop` ends it.
+
+A model `<ref>` is `hf:<org>/<repo>/<file>#sha256=<hex>` or
+`file:<path>#sha256=<hex>`. See [`../ai/local.md`](../ai/local.md).
+
 ## Formatting
 
 ### `sky fmt <file>`

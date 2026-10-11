@@ -1033,7 +1033,7 @@ impl<'a> Resolver<'a> {
         let see = if new_cands.is_empty() {
             String::new()
         } else {
-            " See docs/migration/v0.27.md#new-stdlib-names".to_string()
+            " See docs/migration/v0.28.md#new-stdlib-names".to_string()
         };
         let mut diag = Diagnostic::error(
             "E1012",

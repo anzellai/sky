@@ -1,0 +1,495 @@
+module Std.Ai.Local exposing
+    ( ModelRef
+    , huggingFace
+    , file
+    , devModel
+    , reference
+    , fromReference
+    , Spec
+    , Gpu(..)
+    , model
+    , withContext
+    , withGpu
+    , withParallel
+    , withIdleUnload
+    , withEmbeddings
+    , withPort
+    , Settings
+    , settings
+    , Fit
+    , fit
+    , Engine
+    , start
+    , provider
+    , Status
+    , status
+    , stop
+    , fetch
+    , Pulled
+    , pull
+    , Provisioned
+    , provision
+    , EngineInfo
+    , engines
+    , stopSlot
+    )
+
+{-| `Std.Ai.Local` — a managed local model engine.
+
+Sky does not run the model itself. It manages an upstream `llama-server`
+(llama.cpp) as a child process: it fetches a pinned build for the host and the
+pinned model, verifies both by SHA-256, predicts whether the model fits in
+memory before loading it, starts the engine on `127.0.0.1` behind a per-run key,
+waits until it is healthy, restarts it when it crashes in development, unloads
+it when idle, and stops it with the app. The result is an ordinary
+`Std.Ai.Provider`, so `Std.Ai.Agent`, `Tool`, `Policy` and `Trace` use it
+unchanged.
+
+    spec =
+        Local.model Local.devModel
+            |> Local.withContext 4096
+
+    Local.start spec
+        |> Task.andThen (\engine -> Provider.chat (Local.provider engine) [ Provider.user "Hi" ])
+
+Most apps do not call `start` themselves: they give an `Std.Ai.Endpoint` slot a
+local spec with `Endpoint.withLocal`, and the slot starts the engine on first
+use. The engine cache and the model store live in one place per user
+(`<PREFIX>_AI_HOME`, else `$SKY_HOME/ai`, else the user cache directory). See
+`docs/ai/local.md`.
+
+Failures are typed by kind: a model that does not fit is `InvalidInput`
+(`ModelTooLarge`), a digest that does not match is `Conflict`, an engine that
+crashed is `Unavailable` (`EngineCrashed`), and a model that is not provisioned
+while fetching is off is `NotFound` (`NotProvisioned`). The message names the
+failure and what fixes it.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Std.Ai.Provider as Provider exposing (Provider)
+
+-- ---------------------------------------------------------------------------
+-- Models
+-- ---------------------------------------------------------------------------
+{-| A pinned model: where it comes from and its SHA-256. A model without a
+digest cannot be written, so an unpinned model cannot be loaded. -}
+type ModelRef
+    = ModelRef String
+
+
+{-| A GGUF file in a Hugging Face repository, pinned by digest.
+`sky ai pull <repo> <file>` downloads it once and prints this value with the
+digest filled in.
+
+    Local.huggingFace
+        { repo = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+        , file = "qwen2.5-0.5b-instruct-q4_0.gguf"
+        , sha256 = "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
+        }
+-}
+huggingFace : { repo : String
+, file : String
+, sha256 : String
+} -> ModelRef
+huggingFace r =
+    ModelRef ("hf:" ++ r.repo ++ "/" ++ r.file ++ "#sha256=" ++ r.sha256)
+
+
+{-| A GGUF file on disk, pinned by digest. The file is hashed before each
+load, because it may have been replaced since the digest was written down. -}
+file : { path : String
+, sha256 : String
+} -> ModelRef
+file r =
+    ModelRef ("file:" ++ r.path ++ "#sha256=" ++ r.sha256)
+
+
+{-| The default development model: Qwen2.5 0.5B Instruct (Apache-2.0), Q4_0,
+about 430 MB. It is the smallest Qwen build that answers a chat and serves
+embeddings on a laptop CPU, so CI and the examples use it too. -}
+devModel : ModelRef
+devModel =
+    huggingFace
+        { repo = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+        , file = "qwen2.5-0.5b-instruct-q4_0.gguf"
+        , sha256 =
+            "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
+        }
+
+
+{-| The reference string: `hf:<org>/<repo>/<file>#sha256=<hex>` or
+`file:<path>#sha256=<hex>`. It is also the value an operator gives
+`<PREFIX>_AI_<SLOT>_MODEL` for a local slot. -}
+reference : ModelRef -> String
+reference ref =
+    case ref of
+
+        ModelRef s ->
+            s
+
+
+{-| A model from its reference string, as an operator writes it in
+`<PREFIX>_AI_<SLOT>_MODEL`. The string is checked when the model is used: one
+without a valid `#sha256=` digest fails with `InvalidInput`, so an unpinned
+model still cannot be loaded. -}
+fromReference : String -> ModelRef
+fromReference s =
+    ModelRef s
+
+-- ---------------------------------------------------------------------------
+-- Spec
+-- ---------------------------------------------------------------------------
+{-| Where the engine puts the model's layers. `Auto` uses the accelerator when
+the engine build has one (Metal on Apple silicon) and the CPU otherwise.
+`AllLayers` or `Layers n` on a CPU-only build fails with `NoAccelerator`: a
+missing GPU is never silently a slow CPU run. -}
+type Gpu
+    = Auto
+    | CpuOnly
+    | AllLayers
+    | Layers Int
+
+{-| What the engine runs, as the code wrote it. A field the code did not set
+is `Nothing`; the engine then uses its default (shown on each builder). -}
+type alias Settings =
+    { model : String
+    , context : Maybe Int
+    , gpu : Maybe Gpu
+    , parallel : Maybe Int
+    , idleUnloadSeconds : Maybe Int
+    , embeddings : Bool
+    , port : Maybe Int
+    }
+
+{-| An engine specification: a model plus launch settings. -}
+type Spec
+    = Spec Settings
+
+
+{-| A spec for a model, with every setting at its default. -}
+model : ModelRef -> Spec
+model ref =
+    Spec
+        { model = reference ref
+        , context = Nothing
+        , gpu = Nothing
+        , parallel = Nothing
+        , idleUnloadSeconds = Nothing
+        , embeddings = False
+        , port = Nothing
+        }
+
+
+{-| The context in tokens, shared by the engine's parallel slots. Default:
+8192, reduced to fit memory. An explicit context is never cut: if it does not
+fit, `start` fails with `ModelTooLarge`. -}
+withContext : Int -> Spec -> Spec
+withContext n (Spec s) =
+    Spec { s | context = Just n }
+
+
+{-| Where the layers go. Default: `Auto`. -}
+withGpu : Gpu -> Spec -> Spec
+withGpu g (Spec s) =
+    Spec { s | gpu = Just g }
+
+
+{-| How many requests the engine serves at once. Default: 2. -}
+withParallel : Int -> Spec -> Spec
+withParallel n (Spec s) =
+    Spec { s | parallel = Just n }
+
+
+{-| Stop the engine after this many seconds with no call; the next call starts
+it again. `0` keeps it loaded. Default: 600 in development, 0 otherwise. -}
+withIdleUnload : Int -> Spec -> Spec
+withIdleUnload n (Spec s) =
+    Spec { s | idleUnloadSeconds = Just n }
+
+
+{-| Serve `/v1/embeddings` (mean pooling) for `Provider.embed`. llama.cpp then
+serves embeddings only, so give chat and embeddings separate slots. -}
+withEmbeddings : Spec -> Spec
+withEmbeddings (Spec s) =
+    Spec { s | embeddings = True }
+
+
+{-| The port on 127.0.0.1. Default: `0`, a free port. -}
+withPort : Int -> Spec -> Spec
+withPort n (Spec s) =
+    Spec { s | port = Just n }
+
+
+{-| Read back what a spec holds. -}
+settings : Spec -> Settings
+settings (Spec s) =
+    s
+
+-- The record the runtime reads: an unset number is -1, so a deliberate 0
+-- (which means something for idle unload and port) is kept.
+type alias RawSpec =
+    { model : String
+    , context : Int
+    , gpu : String
+    , parallel : Int
+    , idleUnload : Int
+    , embeddings : Bool
+    , port : Int
+    }
+
+
+raw : Spec -> RawSpec
+raw (Spec s) =
+    { model = s.model
+    , context = Maybe.withDefault (-1) s.context
+    , gpu = Maybe.withDefault "" (Maybe.map gpuText s.gpu)
+    , parallel = Maybe.withDefault (-1) s.parallel
+    , idleUnload = Maybe.withDefault (-1) s.idleUnloadSeconds
+    , embeddings = s.embeddings
+    , port = Maybe.withDefault (-1) s.port
+    }
+
+
+gpuText : Gpu -> String
+gpuText g =
+    case g of
+
+        Auto ->
+            "auto"
+
+        CpuOnly ->
+            "cpu"
+
+        AllLayers ->
+            "all"
+
+        Layers n ->
+            String.fromInt n
+
+-- ---------------------------------------------------------------------------
+-- Fit
+-- ---------------------------------------------------------------------------
+{-| The plan for an engine, made before anything loads: the accelerator, the
+bytes the weights and the KV cache need, the bytes available, the GPU layers
+and the context chosen. `expectedTokensPerSecond` is an estimate from memory
+bandwidth, not a measurement. -}
+type alias Fit =
+    { accelerator : String
+    , weightsBytes : Int
+    , kvCacheBytes : Int
+    , availableBytes : Int
+    , gpuLayers : Int
+    , contextTokens : Int
+    , expectedTokensPerSecond : Maybe Int
+    }
+
+type alias RawFit =
+    { accelerator : String
+    , weightsBytes : Int
+    , kvCacheBytes : Int
+    , availableBytes : Int
+    , gpuLayers : Int
+    , contextTokens : Int
+    , expectedTokensPerSecond : Int
+    }
+
+
+fitRaw : RawSpec -> Task Error RawFit
+fitRaw =
+    Ffi.kernel "Ai_localFit"
+
+
+{-| Predict whether the spec fits this host, without starting an engine. It
+fetches the model when it is missing and fetching is allowed. Fails with
+`ModelTooLarge` (naming the bytes needed and available) or `NoAccelerator`. -}
+fit : Spec -> Task Error Fit
+fit spec =
+    fitRaw (raw spec)
+        |> Task.map
+               (\f ->
+                   { accelerator = f.accelerator
+                   , weightsBytes = f.weightsBytes
+                   , kvCacheBytes = f.kvCacheBytes
+                   , availableBytes = f.availableBytes
+                   , gpuLayers = f.gpuLayers
+                   , contextTokens = f.contextTokens
+                   , expectedTokensPerSecond =
+                       if f.expectedTokensPerSecond > 0 then
+                           Just f.expectedTokensPerSecond
+
+                       else
+                           Nothing
+                   })
+
+-- ---------------------------------------------------------------------------
+-- Engine
+-- ---------------------------------------------------------------------------
+{-| A started engine. -}
+type Engine
+    = Engine Int
+
+
+startRaw : RawSpec -> Task Error Int
+startRaw =
+    Ffi.kernel "Ai_localStart"
+
+
+{-| Start the engine now: fetch and verify the engine build and the model,
+plan the fit, launch, and wait until it is healthy. An engine with the same
+model and settings that is already running on this machine (another Sky
+program, or `sky ai start`) is used instead of loading the model again. -}
+start : Spec -> Task Error Engine
+start spec =
+    Task.map Engine (startRaw (raw spec))
+
+
+postRaw : Int -> String -> String -> Task Error String
+postRaw =
+    Ffi.kernel "Ai_localPost"
+
+
+{-| The engine as a `Provider`. A call to an engine that was unloaded for
+being idle starts it again. -}
+provider : Engine -> Provider
+provider (Engine id) =
+    Provider.wire (postRaw id) ""
+
+{-| What an engine is doing: `state` is `ready`, `starting`, `stopped`,
+`stopping` or `down` (crashed). `shared` is `True` when the engine belongs to
+another program on this machine. `lastCrash` is the last crash's exit and log
+tail, or `""`. -}
+type alias Status =
+    { state : String
+    , pid : Int
+    , port : Int
+    , model : String
+    , build : String
+    , accelerator : String
+    , contextTokens : Int
+    , gpuLayers : Int
+    , restarts : Int
+    , idleSeconds : Int
+    , shared : Bool
+    , lastCrash : String
+    }
+
+
+statusRaw : Int -> Task Error Status
+statusRaw =
+    Ffi.kernel "Ai_localStatus"
+
+
+{-| The engine's current status. -}
+status : Engine -> Task Error Status
+status (Engine id) =
+    statusRaw id
+
+
+stopRaw : Int -> Task Error ()
+stopRaw =
+    Ffi.kernel "Ai_localStop"
+
+
+{-| Stop the engine. A later call through its provider starts it again. -}
+stop : Engine -> Task Error ()
+stop (Engine id) =
+    stopRaw id
+
+
+-- ---------------------------------------------------------------------------
+-- Provisioning (the `sky ai` verbs use these)
+-- ---------------------------------------------------------------------------
+fetchRaw : String -> Task Error String
+fetchRaw =
+    Ffi.kernel "Ai_localFetch"
+
+
+{-| Make a pinned model present and verified in the model store, and return
+its path. With fetching off (`<PREFIX>_AI_FETCH=off`, the production default)
+a model that is not in the store fails with `NotProvisioned`. -}
+fetch : ModelRef -> Task Error String
+fetch ref =
+    fetchRaw (reference ref)
+
+{-| A model fetched by `pull`: where it is stored and its digest. -}
+type alias Pulled =
+    { repo : String
+    , file : String
+    , path : String
+    , sha256 : String
+    , bytes : Int
+    }
+
+
+{-| Download a GGUF file from a Hugging Face repository whose digest you do
+not know yet, store it by the digest of the bytes received, and return the
+digest so you can pin the model in code with `huggingFace`. -}
+pull : String -> String -> Task Error Pulled
+pull =
+    Ffi.kernel "Ai_localPull"
+
+{-| The engine build `provision` installed. -}
+type alias Provisioned =
+    { path : String
+    , build : String
+    , variant : String
+    , platform : String
+    , home : String
+    }
+
+
+provisionRaw : () -> Task Error Provisioned
+provisionRaw =
+    Ffi.kernel "Ai_localProvision"
+
+
+{-| Install the pinned `llama-server` build for this host now, so a host with
+fetching off can start engines later. -}
+provision : () -> Task Error Provisioned
+provision u =
+    provisionRaw u
+
+{-| One engine recorded on this machine. `state` is `running`, `orphaned` (the
+engine runs and the program that held it is gone) or `stale`. -}
+type alias EngineInfo =
+    { slot : String
+    , state : String
+    , pid : Int
+    , holderPid : Int
+    , port : Int
+    , model : String
+    , build : String
+    , accelerator : String
+    , context : Int
+    , startedAt : String
+    }
+
+
+enginesRaw : () -> Task Error (List EngineInfo)
+enginesRaw =
+    Ffi.kernel "Ai_localEngines"
+
+
+{-| Every engine recorded on this machine, including ones other programs
+started. -}
+engines : () -> Task Error (List EngineInfo)
+engines u =
+    enginesRaw u
+
+
+stopSlotRaw : String -> Task Error Int
+stopSlotRaw =
+    Ffi.kernel "Ai_localStopSlot"
+
+
+{-| Stop the recorded engines of a slot (`""` stops all of them) and return how
+many were stopped. An engine another program holds is stopped by asking that
+program to exit. -}
+stopSlot : String -> Task Error Int
+stopSlot slot =
+    stopSlotRaw slot

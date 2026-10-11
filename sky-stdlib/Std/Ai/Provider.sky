@@ -5,6 +5,8 @@ module Std.Ai.Provider exposing
     , router
     , custom
     , customTools
+    , WireTransport
+    , wire
     , Message
     , user
     , system
@@ -12,6 +14,10 @@ module Std.Ai.Provider exposing
     , Usage
     , ChatResponse
     , chat
+    , Options
+    , defaultOptions
+    , chatWith
+    , embed
     , PriceBook
     , priceBook
     , freePriceBook
@@ -45,7 +51,7 @@ import Sky.Core.Error as Error
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Result exposing (Result(..))
-import Sky.Core.Maybe exposing (Maybe(..))
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Secret as Secret exposing (Secret)
 import Sky.Core.Http as Http
 import Sky.Core.Json.Encode as JsonE
@@ -72,10 +78,24 @@ type alias CustomImpl =
     , chatTools : List Turn -> List ToolSpec -> Task Error ToolResponse
     }
 
+{-| How a `wire` provider reaches its server: `post path body` sends one
+OpenAI-compatible request body to `path` (relative to the server's `/v1` base,
+for example `"/chat/completions"` or `"/embeddings"`) and returns the response
+body. A failure is an `Error`, classified by the transport.
+-}
+type alias WireTransport =
+    String -> String -> Task Error String
+
+type alias WireImpl =
+    { post : WireTransport
+    , model : String
+    }
+
 type Provider
     = Backend Direct
     | Routed (List Message -> Provider)
     | Custom CustomImpl
+    | Wire WireImpl
 
 
 {-| The hosted OpenAI chat-completions endpoint. -}
@@ -155,6 +175,20 @@ customTools : (List Message -> Task Error ChatResponse) -> (List Turn -> List To
 customTools chatFn toolsFn =
     Custom { chat = chatFn, chatTools = toolsFn }
 
+
+{-| An OpenAI-compatible provider over your own transport. The provider builds
+and decodes the OpenAI wire format (chat, native tools, embeddings) and hands
+each request to `transport path body`. `Std.Ai.Endpoint` and `Std.Ai.Local`
+build their providers this way: the transport resolves where the call goes, the
+queue and the retries, and the wire stays here.
+
+`model` is the model name sent with each request. An empty `model` lets the
+transport fill it in at call time (an `Endpoint` does, from its resolved slot).
+-}
+wire : WireTransport -> String -> Provider
+wire transport model =
+    Wire { post = transport, model = model }
+
 -- ---------------------------------------------------------------------------
 -- Messages
 -- ---------------------------------------------------------------------------
@@ -193,18 +227,40 @@ type alias ChatResponse =
     }
 
 -- ---------------------------------------------------------------------------
--- chat
+-- Options
 -- ---------------------------------------------------------------------------
-type alias Request =
-    { model : String
-    , messages : List Message
+{-| Per-call sampling options. Each field left `Nothing` is not sent, so the
+server's own default applies.
+
+  - `temperature`: 0 makes an answer as repeatable as the server allows.
+  - `seed`: a fixed seed, for engines that honour one (llama.cpp, vLLM).
+  - `maxTokens`: the most tokens the answer may have.
+  - `adapter`: a fine-tuned adapter to answer with. It is sent as the request's
+    model name, which is how vLLM and an OpenAI-compatible gateway select a
+    LoRA adapter. It replaces the provider's model for this call.
+
+A `custom` provider receives only the messages, so it ignores the options.
+-}
+type alias Options =
+    { temperature : Maybe Float
+    , seed : Maybe Int
+    , maxTokens : Maybe Int
+    , adapter : Maybe String
     }
 
 
-requestCodec : Codec Request
-requestCodec =
-    Codec.auto { model = "", messages = [ { role = "", content = "" } ] }
+{-| Every option unset: the server's defaults. -}
+defaultOptions : Options
+defaultOptions =
+    { temperature = Nothing
+    , seed = Nothing
+    , maxTokens = Nothing
+    , adapter = Nothing
+    }
 
+-- ---------------------------------------------------------------------------
+-- chat
+-- ---------------------------------------------------------------------------
 -- The OpenAI response subset we read. A lenient decoder ignores the other fields
 -- (id / object / created / finish_reason / …).
 type alias RawMessage =
@@ -238,47 +294,189 @@ classified `Error` on a non-2xx response, naming the status and body.
 -}
 chat : Provider -> List Message -> Task Error ChatResponse
 chat provider messages =
+    chatWith defaultOptions provider messages
+
+
+{-| `chat` with per-call `Options` (temperature, seed, max tokens, adapter).
+
+    Provider.chatWith
+        { defaultOptions | temperature = Just 0, seed = Just 7 }
+        provider
+        [ Provider.user "Hi" ]
+-}
+chatWith : Options -> Provider -> List Message -> Task Error ChatResponse
+chatWith opts provider messages =
     case provider of
 
         Routed select ->
-            chat (select messages) messages
+            chatWith opts (select messages) messages
 
         Backend p ->
-            chatBackend p messages
+            postBackend
+                "chat"
+                p.endpoint
+                p.apiKey
+                (chatBody opts p.model messages)
+                |> Task.andThen decodeChat
 
         Custom c ->
             c.chat messages
 
+        Wire w ->
+            w.post "/chat/completions" (chatBody opts w.model messages)
+                |> Task.andThen decodeChat
 
-chatBackend : Direct -> List Message -> Task Error ChatResponse
-chatBackend p messages =
+
+chatBody : Options -> String -> List Message -> String
+chatBody opts model messages =
+    JsonE.encode
+        0
+        (JsonE.object
+            (( "model", JsonE.string (modelFor opts model) )
+                :: ( "messages", JsonE.list messageValue messages )
+                :: optionFields opts))
+
+
+modelFor : Options -> String -> String
+modelFor opts model =
+    case opts.adapter of
+
+        Just a ->
+            a
+
+        Nothing ->
+            model
+
+
+messageValue : Message -> JsonE.Value
+messageValue m =
+    Codec.toValue messageCodec m
+
+
+messageCodec : Codec Message
+messageCodec =
+    Codec.auto { role = "", content = "" }
+
+
+optionFields opts =
+    List.filterMap
+        identity
+        [ Maybe.map (\t -> ( "temperature", JsonE.float t )) opts.temperature
+        , Maybe.map (\n -> ( "seed", JsonE.int n )) opts.seed
+        , Maybe.map (\n -> ( "max_tokens", JsonE.int n )) opts.maxTokens
+        ]
+
+
+decodeChat : String -> Task Error ChatResponse
+decodeChat body =
+    case Codec.fromJson responseCodec body of
+
+        Ok raw ->
+            Task.succeed (extract raw)
+
+        Err e ->
+            Task.fail e
+
+
+-- POST one OpenAI-compatible body to a fixed URL (the built-in backends).
+postBackend : String -> String -> Secret -> String -> Task Error String
+postBackend what url apiKey body =
     let
-        body =
-            Codec.toJson requestCodec { model = p.model, messages = messages }
-        req = Http.defaultRequest p.endpoint
+        req = Http.defaultRequest url
     in
-        { req | method = "POST" } |> Http.withBearer p.apiKey
+        { req | method = "POST" } |> Http.withBearer apiKey
             |> Http.withHeader "Content-Type" "application/json"
             |> Http.withBody body
             |> Http.request
             |> Task.andThen
                    (\resp ->
                        if resp.status >= 200 && resp.status < 300 then
-                           case Codec.fromJson responseCodec resp.body of
-
-                               Ok raw ->
-                                   Task.succeed (extract raw)
-
-                               Err e ->
-                                   Task.fail e
+                           Task.succeed resp.body
 
                        else
                            Task.fail
                                (Error.unexpected
-                                   ("chat failed: HTTP "
+                                   (what ++ " failed: HTTP "
                                        ++ String.fromInt resp.status
                                        ++ " — "
                                        ++ resp.body)))
+
+
+-- ---------------------------------------------------------------------------
+-- Embeddings
+-- ---------------------------------------------------------------------------
+{-| Embed each input text as a vector, in input order, through the server's
+OpenAI-compatible `/embeddings` route. A local engine serves embeddings when its
+spec has `Local.withEmbeddings`.
+
+A `custom` provider has no embeddings route and fails with `InvalidInput`. A
+`router` routes on the inputs as user messages.
+-}
+embed : Provider -> List String -> Task Error (List (List Float))
+embed provider inputs =
+    case provider of
+
+        Routed select ->
+            embed (select (List.map user inputs)) inputs
+
+        Backend p ->
+            case embeddingsUrl p.endpoint of
+
+                Just url ->
+                    postBackend "embed" url p.apiKey (embedBody p.model inputs)
+                        |> Task.andThen decodeEmbeddings
+
+                Nothing ->
+                    Task.fail
+                        (Error.invalidInput
+                            ("Provider.embed: cannot derive the embeddings URL from "
+                                ++ p.endpoint
+                                ++ " (it does not end with /chat/completions)"))
+
+        Custom _ ->
+            Task.fail
+                (Error.invalidInput
+                    "Provider.embed: a custom provider has no embeddings route; use Provider.wire for an OpenAI-compatible server")
+
+        Wire w ->
+            w.post "/embeddings" (embedBody w.model inputs)
+                |> Task.andThen decodeEmbeddings
+
+
+embeddingsUrl : String -> Maybe String
+embeddingsUrl endpoint =
+    if String.endsWith "/chat/completions" endpoint then
+        Just (String.dropRight 17 endpoint ++ "/embeddings")
+
+    else
+        Nothing
+
+
+embedBody : String -> List String -> String
+embedBody model inputs =
+    JsonE.encode
+        0
+        (JsonE.object
+            [ ( "model", JsonE.string model )
+            , ( "input", JsonE.list JsonE.string inputs )
+            ])
+
+
+decodeEmbeddings : String -> Task Error (List (List Float))
+decodeEmbeddings body =
+    case JsonD.decodeString embeddingsDecoder body of
+
+        Ok vs ->
+            Task.succeed vs
+
+        Err e ->
+            Task.fail e
+
+
+embeddingsDecoder =
+    JsonD.field
+        "data"
+        (JsonD.list (JsonD.field "embedding" (JsonD.list JsonD.float)))
 
 
 extract : RawResponse -> ChatResponse
@@ -370,6 +568,23 @@ chatTools provider turns tools =
         Custom c ->
             c.chatTools turns tools
 
+        Wire w ->
+            w.post
+                "/chat/completions"
+                (JsonE.encode 0 (requestValue w.model turns tools))
+                |> Task.andThen decodeToolResponse
+
+
+decodeToolResponse : String -> Task Error ToolResponse
+decodeToolResponse body =
+    case JsonD.decodeString toolResponseDecoder body of
+
+        Ok r ->
+            Task.succeed r
+
+        Err e ->
+            Task.fail e
+
 
 -- The router policy is a `List Message -> Provider`; project the turns to plain
 -- messages so a router can inspect them the same way it inspects a `chat` call.
@@ -392,32 +607,12 @@ turnMessages turns =
 
 chatToolsBackend : Direct -> List Turn -> List ToolSpec -> Task Error ToolResponse
 chatToolsBackend p turns tools =
-    let
-        body = JsonE.encode 0 (requestValue p.model turns tools)
-        req = Http.defaultRequest p.endpoint
-    in
-        { req | method = "POST" } |> Http.withBearer p.apiKey
-            |> Http.withHeader "Content-Type" "application/json"
-            |> Http.withBody body
-            |> Http.request
-            |> Task.andThen
-                   (\resp ->
-                       if resp.status >= 200 && resp.status < 300 then
-                           case JsonD.decodeString toolResponseDecoder resp.body of
-
-                               Ok r ->
-                                   Task.succeed r
-
-                               Err e ->
-                                   Task.fail e
-
-                       else
-                           Task.fail
-                               (Error.unexpected
-                                   ("chatTools failed: HTTP "
-                                       ++ String.fromInt resp.status
-                                       ++ " — "
-                                       ++ resp.body)))
+    postBackend
+        "chatTools"
+        p.endpoint
+        p.apiKey
+        (JsonE.encode 0 (requestValue p.model turns tools))
+        |> Task.andThen decodeToolResponse
 
 
 requestValue model turns tools =

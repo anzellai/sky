@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 180 |
-| covered by the new corpus (>= Asserted) | 169 |
-| verdict `stronger` | 164 |
+| surfaces | 183 |
+| covered by the new corpus (>= Asserted) | 172 |
+| verdict `stronger` | 167 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 131 |
-| stdlib modules (denominator) | 113 |
-| stdlib entries (denominator) | 2223 |
+| corpus units | 132 |
+| stdlib modules (denominator) | 115 |
+| stdlib entries (denominator) | 2281 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 8.0% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 759 | 34.1% |
-| symbols unreferenced under the generous rule | 668 | 30.0% |
+| stdlib modules imported by nothing | 9 | 7.8% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 782 | 34.3% |
+| symbols unreferenced under the generous rule | 690 | 30.2% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -83,6 +83,7 @@ None.
 |---|---|---|---|---|
 | `auth.password-session` | auth | Asserted | Falsified | stronger |
 | `cli.add` | cli | None | Falsified | stronger |
+| `cli.ai` | cli | None | Falsified | stronger |
 | `cli.build` | cli | Runs | Falsified | stronger |
 | `cli.check` | cli | None | Falsified | stronger |
 | `cli.clean` | cli | None | Falsified | stronger |
@@ -187,9 +188,11 @@ None.
 | `stdlib.Sky.Http.Server.WebSocket` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Agent` | stdlib | None | Asserted | stronger |
+| `stdlib.Std.Ai.Endpoint` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Local` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Policy` | stdlib | Runs | Asserted | stronger |
-| `stdlib.Std.Ai.Provider` | stdlib | Runs | Asserted | stronger |
+| `stdlib.Std.Ai.Provider` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Std.Ai.Tool` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Trace` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Asserted | stronger |

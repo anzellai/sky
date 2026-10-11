@@ -2,8 +2,11 @@ module Main exposing (main)
 
 -- Regression: a PROJECT type alias whose name shares its tail with a stdlib type
 -- that is in the compile set (here `Message`, same tail as
--- `Std.Ai.Provider.Message`, which every Std.App build pulls in transitively and
--- which this app never imports). The project's own `Message = { author, body }`
+-- `Std.Ai.Provider.Message`). The app imports Std.Ai.Provider QUALIFIED and uses
+-- `Provider.Message` once, so the stdlib record is always in the build: the
+-- collision used to arrive only as a side effect of Std.Ai.Provider's own
+-- `Request` record alias, and it stopped arriving when v0.28.0 removed that
+-- alias, which made this fixture vacuous. The project's own `Message = { author, body }`
 -- must win — the emitted Go Model field must be `[]Main_Message_R`, not the
 -- stdlib `[]Std_Ai_Provider_Message_R` (`{ role, content }`). Before the fix, the
 -- bare first-writer-wins alias table (stdlib loaded first) silently substituted
@@ -14,6 +17,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.App as App
 import Std.Ui as Ui exposing (Element)
+import Std.Ai.Provider as Provider
 
 type Page
     = Home
@@ -58,11 +62,19 @@ update msg model =
             )
 
 
+-- The stdlib record with the same tail, used where the bare name is NOT.
+greeting : Provider.Message
+greeting =
+    Provider.system "hello"
+
+
 view : Model -> Element Msg
 view model =
     Ui.column
         []
-        (Ui.text ("count " ++ String.fromInt (List.length model.messages))
+        (Ui.text
+            ("count " ++ String.fromInt (List.length model.messages) ++ " "
+                ++ greeting.role)
             :: List.map
                    (\m -> Ui.text (m.author ++ ": " ++ m.body))
                    model.messages)

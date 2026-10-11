@@ -754,7 +754,11 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// constructor values x 5 carriers x 2 union representations). `==` and `/=`
 /// on two different constructors of a sealed type answered as if they were
 /// equal; see `corpus/lang_shapes.rs` `adt_equality`.
-pub const CORPUS_EXPECTED: u64 = 676;
+///
+/// **678 since v0.28.0** (+2, Family S: the `ailocal` surface, nominal and
+/// failure edges, for `Std.Ai.Local`; see `corpus/stdlib.rs`
+/// `ailocal_battery`).
+pub const CORPUS_EXPECTED: u64 = 678;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -790,7 +794,10 @@ pub const CORPUS_EXPECTED: u64 = 676;
 ///
 /// **530 since the v0.27.7 `adt_equality` stratum** (+60, all built and run;
 /// the same +60 as `CORPUS_EXPECTED`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 530;
+///
+/// **532 since v0.28.0** (+2, the `ailocal` stdlib surface, both built and
+/// run).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 532;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -992,13 +999,14 @@ pub fn shared_world(ctx: &GateCtx) -> GateOutcome {
 // Layer 2 — real-world projects (v2 §6)
 // ---------------------------------------------------------------------------
 
-/// Member F: `sky-bundled/console` + `sky-bundled/doc`.
+/// Member F: `sky-bundled/console` + `sky-bundled/doc` + `sky-bundled/ai`
+/// (v0.28.0, the program behind `sky ai`).
 ///
 /// Two assertions per project — the build's exit status, and the artifact it
 /// was supposed to leave behind. The artifact half is not redundant: a builder
 /// that exits 0 having emitted nothing is exactly the shape of the "could never
 /// pass on a clean checkout" defect, inverted.
-pub const APPS_BUNDLED_EXPECTED: u64 = 4;
+pub const APPS_BUNDLED_EXPECTED: u64 = 6;
 
 /// The single largest Sky application the project ships, gated by nothing.
 ///
@@ -1014,7 +1022,7 @@ pub const APPS_BUNDLED_EXPECTED: u64 = 4;
 pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
     use super::layer2;
 
-    let projects = ["sky-bundled/console", "sky-bundled/doc"];
+    let projects = ["sky-bundled/console", "sky-bundled/doc", "sky-bundled/ai"];
     let mut assertions = 0u64;
     let mut failures: Vec<String> = Vec::new();
     let mut timings: Vec<String> = Vec::new();
@@ -2833,7 +2841,17 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   `tests/conformance` to stay the sole Sky importer of `Sky.Core.Set`.
 ///
 /// 669 + 26 = 695.
-pub const SKY_SUITES_EXPECTED: u64 = 695;
+///
+/// 695 -> 712:
+///
+/// * `Std/Ai/ProviderEndpointTest` (+17) — `Provider.chatWith` options and
+///   adapter, `Provider.embed`, `Provider.wire`, the `Std.Ai.Local` values and
+///   builders, and the `Std.Ai.Endpoint` resolution a program observes with no
+///   engine (NotConfigured, an invalid slot, a redacted remote target, MODE=local
+///   with a URL refused, a down remote never falling back to local) (v0.28.0).
+///
+/// 695 + 17 = 712.
+pub const SKY_SUITES_EXPECTED: u64 = 712;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

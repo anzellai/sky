@@ -90,3 +90,14 @@ logic for a `web:app` (or desktop / mobile) client. The runtime re-sends a
 transiently failing request, shows "Reconnecting…" after 3 s and the Retry
 bar only once its budget is spent; `App.withRpcError` sees FINAL errors only.
 For an app-owned indicator use `Sub.connection` (see AGENTS.md).
+
+### A local model slot starts a process
+
+An `Std.Ai.Endpoint` slot with `Endpoint.withLocal` starts a `llama-server`
+child process on its first call (and downloads the pinned engine and model
+once, about 450 MB, into the per-user AI home). It stops with the program.
+`sky ai start <slot>` is persistent: it holds the engine until `sky ai stop
+<slot>`. Check with `sky ai ps` before declaring a task done, and stop what you
+started. Never `pkill llama-server`: other programs on the machine may share an
+engine. Do not run `sky ai provision` or `sky ai pull` speculatively; they
+download hundreds of megabytes.

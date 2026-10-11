@@ -143,6 +143,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         // Bundled-app verbs: build + spawn a bundled Sky/Go app from the repo
         // tree (`console`/`console-serve`/`doc --serve`/`doc --tui`).
         Some("console") => cmd_console(&args[1..]),
+        Some("ai") => cmd_ai(&args[1..]),
         Some("console-serve") => cmd_console_serve(&args[1..]),
         Some("spa-partition") => cmd_spa_partition(&args[1..]),
         Some("spa-split") => cmd_spa_split(&args[1..]),
@@ -11503,6 +11504,88 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
     }
 }
 
+// ---- ai ------------------------------------------------------------------
+
+/// The `sky ai` usage line, printed for a missing or unknown verb.
+const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
+  provision [--variant cpu|metal] [--dev-model] [--model <ref>]
+                     install the pinned llama-server for this host (and models)
+  pull <org>/<repo> <file>
+                     download a GGUF file and print its pinned Local.huggingFace value
+  ps [--all]         list the engines running on this machine
+  start <slot> [--model <ref>] [--context <n>] [--embeddings]
+                     start a slot's local engine and hold it (Ctrl-C stops it)
+  stop <slot> | --all
+                     stop the engines of a slot
+A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
+
+/// `sky ai <verb>`: the Std.Ai engine verbs. The CLI holds no logic of its
+/// own: it checks the verb's shape, builds the bundled program
+/// (`sky-bundled/ai`, once per Sky build) and runs it with the arguments. The
+/// program calls `Std.Ai.Local` / `Std.Ai.Endpoint`, the same API a user's
+/// program has.
+fn cmd_ai(args: &[String]) -> ExitCode {
+    let positional: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| *a != "--format" && *a != "json")
+        .collect();
+    let shape_ok = match positional.as_slice() {
+        ["provision", ..] | ["ps", ..] => true,
+        ["pull", repo, file] => repo.contains('/') && !file.is_empty(),
+        ["start", slot, ..] => !slot.starts_with('-'),
+        ["stop", _] => true,
+        _ => false,
+    };
+    if !shape_ok {
+        eprintln!("{AI_USAGE}");
+        return ExitCode::from(2);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(repo_root) = assets_root_for(&cwd) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "ai") else {
+        return bundled_missing("ai");
+    };
+    let out_dir = match bundled::ensure_built(
+        &repo_root,
+        &src_dir,
+        "ai",
+        "cli",
+        bundled::ENTRY_LIVE,
+        &bundled_cache_slug(),
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let bin = out_dir.join("app");
+    // On Unix the program REPLACES this process, so Ctrl-C and `sky ai stop`'s
+    // SIGTERM reach the program that holds the engine (`start`), and the
+    // engine stops with it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = Command::new(&bin).args(args).exec();
+        eprintln!("sky ai: could not launch {}: {err}", bin.display());
+        ExitCode::FAILURE
+    }
+    #[cfg(not(unix))]
+    {
+        match Command::new(&bin).args(args).status() {
+            Ok(s) => propagate(s.code()),
+            Err(e) => {
+                eprintln!("sky ai: could not launch {}: {e}", bin.display());
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
 // ---- bundled-app helpers -------------------------------------------------
 
 /// Run the built `app` binary at `<out_dir>/app` with inherited stdio + `envs`,
@@ -14993,6 +15076,7 @@ fn print_help() {
          \x20 doc   --serve|--tui  browse the docs (HTTP server / terminal)\n\
          \x20 console [--port N] [--tui]   run the Sky Console mini-app\n\
          \x20 console-serve [...]          run the Sky Console hub daemon\n\
+         \x20 ai    <provision|pull|ps|start|stop>  managed local model engines (Std.Ai.Local)\n\
          \x20 watch <file>     rebuild + restart on source change\n\
          \x20 config migrate [--dry-run|--check]  rewrite legacy sky.toml → typed config\n\
          \x20 db    <status|migrate> [file]  Std.Db migrations\n\

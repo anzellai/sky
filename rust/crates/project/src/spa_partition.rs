@@ -176,6 +176,10 @@ const EFFECT_KERNELS: &[&str] = &[
     // Task touched would otherwise live in one browser tab, not beside the
     // server state it coordinates.
     "Sync",
+    // v0.28.0 Std.Ai.Endpoint / Std.Ai.Local: a model slot resolves server
+    // settings and secrets, and a local engine is a child process. Neither
+    // can run in a browser, and a slot's key must never reach one.
+    "Ai",
 ];
 
 /// **KNOWN-PURE** kernel pseudo-modules — pure computation / pure TEA plumbing
@@ -7150,6 +7154,8 @@ mod tests {
             ("Sync", "withLock"),
             ("Sync", "push"),
             ("Sync", "popWithin"),
+            ("Ai", "endpointPost"),
+            ("Ai", "localStart"),
         ] {
             assert_eq!(
                 classify_kernel(m, f),
@@ -7162,7 +7168,8 @@ mod tests {
         record_ffi_symbol("Watch_changes", &mut acc, false);
         record_ffi_symbol("File_resolveWithin", &mut acc, false);
         record_ffi_symbol("Sync_compareAndSwap", &mut acc, false);
-        assert_eq!(acc.server_kernels.len(), 4, "{:?}", acc.server_kernels);
+        record_ffi_symbol("Ai_endpointPost", &mut acc, false);
+        assert_eq!(acc.server_kernels.len(), 5, "{:?}", acc.server_kernels);
     }
 
     /// The device secure store and biometric prompt run in the wasm client,

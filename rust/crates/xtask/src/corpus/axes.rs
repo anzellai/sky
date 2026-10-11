@@ -189,6 +189,7 @@ pub const SURFACE: Axis = Axis::new(
         "process",
         "watch",
         "sync",
+        "ailocal",
         "canvas",
         "terminal",
     ],

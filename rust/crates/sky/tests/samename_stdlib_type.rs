@@ -3,9 +3,11 @@
 //! emitted Go.
 //!
 //! Found building a real app: a project `type alias Message = { author, body }`
-//! used in a model field `messages : List Message`. Every `Std.App` build pulls
-//! `Std.Ai.Provider` (whose `Message = { role, content }`) into the compile set
-//! transitively, and the record-alias field expansion consulted a BARE,
+//! used in a model field `messages : List Message`, with `Std.Ai.Provider`
+//! (whose `Message = { role, content }`) in the compile set — the fixture
+//! imports it qualified and uses `Provider.Message` once, so the collision is
+//! there by construction, not by an accident of what the stdlib keeps at top
+//! level — and the record-alias field expansion consulted a BARE,
 //! first-writer-wins alias table (stdlib loads first). So `messages` silently
 //! lowered to `[]Std_Ai_Provider_Message_R` — the stdlib record's shape — while
 //! the view/update kept `Main_Message_R`, an inconsistency that renders wrong
