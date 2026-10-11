@@ -164,7 +164,9 @@ each step has a typed failure:
    arguments the supervisor relies on. The pinned build is llama.cpp `b11200`
    from its GitHub release, for macOS arm64 (Metal) and Linux x64 (CPU),
    recorded with its SHA-256 in `runtime-go/rt/ai_pins.go`. On another host,
-   set `SKY_AI_LLAMA_BIN`.
+   set `SKY_AI_LLAMA_BIN`. The Linux build needs a glibc userland with
+   `libstdc++`, `libgomp` and OpenSSL 3 (Ubuntu 22.04 or later, Debian 12, or a
+   `debian-slim` image with `libgomp1`). It does not run on Alpine (musl).
 2. **Fetch and verify.** A download is checked against its pinned SHA-256 from
    the bytes on disk. A mismatch installs nothing and names both digests
    (`ChecksumMismatch`, `Conflict`). An engine archive is unpacked outside the
@@ -187,7 +189,7 @@ each step has a typed failure:
 6. **Supervise.** If the engine dies during a call, that call fails with
    `EngineCrashed` (`Unavailable`), naming the exit code and the end of the
    engine's log. In development the engine restarts with backoff, at most three
-   times a minute; after that it stays down and every call says so. Outside
+   times a minute. After that it stays down and every call says so. Outside
    development the app exits non-zero, as it does when its embedded PostgreSQL
    dies, so the platform restarts the whole program instead of hiding a fault.
 7. **Unload when idle.** After the idle window with no call, the engine stops.
@@ -196,7 +198,7 @@ each step has a typed failure:
 Engines are recorded in `<AI home>/engines.json`. A program that needs an
 engine with the same model and settings as one already running on the machine
 uses that one instead of loading the model again. An engine whose program was
-killed (for example by `SIGKILL`) keeps running in its own process group; the
+killed (for example by `SIGKILL`) keeps running in its own process group. The
 next program that starts an engine ends it. Engines are identified by the key
 file on their command line, so a recycled process id is never killed.
 
@@ -219,7 +221,7 @@ name, which is how vLLM and gateways select a LoRA adapter). A field left
 
 `Provider.embed provider texts` returns one vector per text, in order.
 `Provider.wire transport model` builds an OpenAI-compatible provider over your
-own transport; `Endpoint` and `Local` build theirs with it.
+own transport. `Endpoint` and `Local` build theirs with it.
 
 ## Failures
 
