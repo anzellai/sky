@@ -471,9 +471,47 @@ also maps to an `ErrorKind` that existing handlers already understand:
 `Overloaded`, `Unreachable`, `EngineCrashed` and `NoAccelerator` are
 `Unavailable`. `TimedOut` is `Timeout`. `ModelTooLarge`, `NotConfigured` and
 `BudgetExceeded` are `InvalidInput`. `ChecksumMismatch` is `Conflict`.
-`NotProvisioned` is `NotFound`. Whether the payload rides in
-`ErrorDetails.Custom` with a stable tag or in a new typed `ErrorDetails`
-variant is open question 8.
+`NotProvisioned` is `NotFound`.
+
+**Decided (2026-10-11): the payload is a generic `Domain` variant.** Open
+question 8 is closed. `Sky.Core.Error.ErrorDetails` gains exactly one new
+variant, `Domain DomainFailure`. It is generic, so it is the last change the
+core type needs: later domains (database, durable runs, auth, payments) reuse
+it and add no variant of their own.
+
+- `DomainFailure` is opaque. It holds a domain name (`String`, for example
+  `"ai"`), a stable code (`String`), whether the failure is retryable (`Bool`),
+  an optional retry delay (`Maybe Int`, milliseconds) and a typed payload. The
+  payload is encoded with a `Codec`, so it crosses the Sky.Spa wire and goes
+  into logs safely. It never holds a secret.
+- `Sky.Core.Error` gains three generic helpers that work for every domain and
+  never break when a domain adds a failure: `Error.domain : Error -> Maybe
+  String`, `Error.isRetryable : Error -> Bool` and `Error.retryAfter : Error ->
+  Maybe Int`.
+- `Std.Ai.Failure` holds the typed AI ADT (`Overloaded { retryAfterMs }`,
+  `TimedOut`, `EngineCrashed { exitCode }`, `ModelTooLarge { needMb, haveMb }`,
+  `NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `BudgetExceeded`,
+  `NotConfigured`, and the rest of the list above), with `fromError : Error ->
+  Maybe Failure` and `toError : Failure -> Error`.
+- `toError` always sets an existing `ErrorKind`, so code that matches only on
+  `ErrorKind` keeps working. `Overloaded`, `Unreachable`, `EngineCrashed` and
+  `NoAccelerator` are `Unavailable`. `TimedOut` is `Timeout`.
+  `ModelTooLarge` and `NotConfigured` are `InvalidInput`. `ChecksumMismatch`
+  is `Conflict`. `NotProvisioned` is `NotFound`. `BudgetExceeded` is
+  `PermissionDenied`: the call is refused by a rule the operator set, and
+  retrying it unchanged does not help, which `Unavailable` would suggest.
+- The two stdlib files that match `ErrorDetails` exhaustively are updated. The
+  compiler gives a hint for user code whose exhaustive `ErrorDetails` match
+  breaks: it names the new variant and suggests a `_ ->` branch.
+- Tests: a Sky.Spa wire round trip of a `Domain` failure, Go runtime tests,
+  cargo tests and `Sky.Test` tests. The CHANGELOG entry goes under `v0.28.0`.
+  `docs/errors/` and the AI guide recommend the helpers, or a `_ ->` branch,
+  for code that must not depend on future AI failures.
+
+Phasing. Phase 1 part A returns each AI failure as an `Error` with the
+`ErrorKind` above and a clear message, and keeps the classification in one
+internal function. Phase 1 part B adds `Domain`, `DomainFailure`, the helpers
+and `Std.Ai.Failure`, and switches that one function to typed values.
 
 ### 8.4 `Std.Ai.Dataset`
 
@@ -1235,9 +1273,8 @@ suite run against both.
 7. **vLLM in development.** Should `Local` also manage vLLM on a Linux NVIDIA
    workstation for exact parity with production, or is `llama-server` enough
    locally?
-8. **Error payload.** Carry `Failure` as a tagged `ErrorDetails.Custom`
-   payload, or add a typed `ErrorDetails` variant to `Sky.Core.Error`? The
-   second is cleaner and touches the core error type and its codec.
+8. **Error payload.** Decided 2026-10-11: one generic `ErrorDetails` variant,
+   `Domain DomainFailure`, shared by every domain. See section 8.3.
 9. **Engine sandboxing on macOS.** `sandbox-exec` is deprecated. Accept process
    isolation alone on macOS, or invest in an App Sandbox helper?
 10. **Licensing of bundled toolchains.** Re-host the Python toolchains with CUDA
