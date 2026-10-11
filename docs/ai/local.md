@@ -225,26 +225,67 @@ own transport. `Endpoint` and `Local` build theirs with it.
 
 ## Failures
 
-Part A of phase 1 returns each failure as an `Error` with an existing
-`ErrorKind`, and the message starts with the failure's name:
+Every AI failure is an ordinary `Error` (so every signature stays
+`Task Error a`) with an existing `ErrorKind`, a message that starts with
+`Std.Ai <code>:`, and a typed `Domain` failure in the `"ai"` domain.
+`Std.Ai.Failure.fromError` gives it back as a value:
 
-| Failure | `ErrorKind` |
-|---|---|
-| `Overloaded`, `Unreachable`, `EngineCrashed`, `NoAccelerator` | `Unavailable` |
-| `TimedOut` | `Timeout` |
-| `ModelTooLarge`, `NotConfigured`, an invalid setting | `InvalidInput` |
-| `ChecksumMismatch` | `Conflict` |
-| `NotProvisioned` | `NotFound` |
-| a remote server's other error | by HTTP status: 400 `InvalidInput`, 401 / 403 `PermissionDenied`, 404 `NotFound`, 5xx `Unavailable` |
+```elm
+import Sky.Core.Error as Error exposing (Error)
+import Std.Ai.Failure as Failure exposing (Failure(..))
 
-The typed `Std.Ai.Failure` values (`Failure.fromError`) and the generic
-`Error.domain` / `Error.retryAfter` helpers arrive in phase 1 part B, through
-one new `ErrorDetails` variant shared by every domain. Code that matches on
-`ErrorKind`, or uses a `_ ->` branch, keeps working when they land.
+
+explain : Error -> String
+explain err =
+    case Failure.fromError err of
+        Just (Overloaded o) ->
+            "busy; try again in " ++ String.fromInt (Maybe.withDefault 1000 o.retryAfterMs) ++ " ms"
+
+        Just (ModelTooLarge m) ->
+            "the model needs " ++ String.fromInt m.needBytes ++ " bytes"
+
+        Just (NotConfigured c) ->
+            "set " ++ c.setting
+
+        _ ->
+            Error.toString err
+```
+
+Keep the `_ ->` branch: later releases add failures. Code that only decides
+whether to retry needs no typed view: `Error.isRetryable err` and
+`Error.retryAfter err` work for every domain
+([`../errors/error-system.md`](../errors/error-system.md#domain-failures)).
+
+| Failure | `ErrorKind` | Retryable | Fields |
+|---|---|---|---|
+| `NotConfigured` | `InvalidInput` | no | `setting`: the variable to set |
+| `InvalidSetting` | `InvalidInput` | no | `setting`, `reason` |
+| `Unreachable` | `Unavailable` | yes | `target`: scheme, host and port only |
+| `Overloaded` | `Unavailable` | yes | `retryAfterMs` (the server's `Retry-After`), `status` (429 or 503) |
+| `TimedOut` | `Timeout` | yes | `afterMs` when known |
+| `EngineCrashed` | `Unavailable` | no | `exitCode` (`Nothing` when a signal ended it), `logTail` |
+| `EngineFailed` | `Unavailable` | no | `reason` |
+| `ModelTooLarge` | `InvalidInput` | no | `needBytes`, `availableBytes` |
+| `NoAccelerator` | `Unavailable` | no | `wanted` |
+| `NotProvisioned` | `NotFound` | no | `what`, `command` (the `sky ai` command that provisions it) |
+| `ChecksumMismatch` | `Conflict` | no | `expected`, `actual` |
+| `RemoteRejected` | by status: 400 / 422 `InvalidInput`, 401 / 403 `PermissionDenied`, 404 `NotFound`, 5xx `Unavailable`, else `Unexpected` | 5xx only | `status` |
+| `BudgetExceeded` | `PermissionDenied` | no | `budget`, `estimate` (`Std.Money`) |
+| `ToolchainFailed` | `Unavailable` | no | `tool`, `logTail` |
+| `GateFailed` | `PermissionDenied` | no | `suite`, `reasons` (`Std.Ai.Eval`, [`eval.md`](eval.md)) |
+
+A crashed engine is not retryable even though it is `Unavailable`: the
+engine's supervisor restarts it, and a crash loop must not be retried blindly.
+A timed-out call is retryable by your code, but the endpoint never retries it
+in place, because the server may have done the work.
+
+`Failure.toError` builds the same `Error` (for a provider or a test that
+reports an AI failure), and `Failure.code` is the constructor's name, which
+is also the `error.code` field of a structured log line.
 
 ## Tests
 
-Under `sky test` (test mode) no engine starts and no network is used. A call
+Under `sky test` in test mode (a project that commits a `.env.test`) no engine starts and no network is used. A call
 through any slot, local or remote, is answered by a fixture under
 `tests/mocks/`. A local slot's calls go to a URL only a fixture can answer, so
 a fixture with `"urlContains": "/chat/completions"` (or `"/embeddings"`)
@@ -271,6 +312,16 @@ A program whose slot has the same model and settings uses the held engine.
 These parts of the design are later work: adapters and draft models in
 `Local` (`withAdapters`, `withDraft`), registry model references
 (`fromRegistry`), the startup-report lines and `sky doctor` checks for slots,
-the console AI panel, the build-time check that a slot name is a literal, the
-typed `Std.Ai.Failure` values, and Sky's own published engine bundles (the pins
-use the upstream llama.cpp release assets today).
+the build-time check that a slot name is a literal, and Sky's own published
+engine bundles (the pins use the upstream llama.cpp release assets today).
+
+## In the Sky Console
+
+The console's **AI** tab (`/_sky/console?tab=ai`) shows this process's slots
+(mode, target, in-flight and waiting calls, p50 and p95 latency, and where
+each setting came from, never a key), its local engines (state, model,
+accelerator, context, restarts, idle time, last crash), its recent model calls
+(slot, kind, outcome, latency, token counts; "Failed" shows only failures, and
+a slot's chip shows only that slot) and its `Std.Ai.Eval` runs (pass rate,
+gate verdict, and each case's verdict and reason). It holds no prompt and no
+answer.

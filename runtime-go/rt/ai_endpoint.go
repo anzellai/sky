@@ -150,6 +150,19 @@ func (s *aiSlot) post(path, body string) (string, error) {
 	return e.post(ctx, s.cfg.timeout, path, body)
 }
 
+// call is post, recorded for the Sky Console's AI panel (ai_console.go).
+func (s *aiSlot) call(path, body string) (string, error) {
+	start := time.Now()
+	out, err := s.post(path, body)
+	rec := aiCallRecord{TS: start.UTC(), Slot: s.cfg.slot, Mode: s.cfg.mode, Kind: aiCallKind(path),
+		Model: aiConsoleModel(s.cfg), Outcome: aiCallOutcome(err), LatencyMs: aiCallLatency(start)}
+	if err == nil {
+		rec.PromptTokens, rec.CompletionTokens = aiUsage(out)
+	}
+	aiRecordCall(rec)
+	return out, err
+}
+
 // aiPatchModel fills the request's `model` when the Sky side left it empty:
 // the slot's model is resolved here, at call time, from env or code. A
 // request that names a model (Provider.Options adapter) keeps it.
@@ -196,7 +209,8 @@ func aiRemotePost(ctx context.Context, c *aiSlotConfig, url, body string) (strin
 		select {
 		case <-time.After(wait):
 		case <-ctx.Done():
-			return "", aiFailf(aiTimedOut, "slot %q: no answer within %s", c.slot, c.timeout)
+			return "", aiFailf(aiTimedOut, "slot %q: no answer within %s", c.slot, c.timeout).
+				withInt("afterMs", int(c.timeout/time.Millisecond))
 		}
 	}
 }
@@ -218,7 +232,7 @@ func aiBackoff(attempt int, retryAfter time.Duration) time.Duration {
 func aiPostOnce(ctx context.Context, url, key string, hasKey bool, body string) (string, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte(body)))
 	if err != nil {
-		return "", 0, aiFailf(aiInvalidSetting, "bad URL: %v", err)
+		return "", 0, aiFailf(aiInvalidSetting, "bad URL: %v", err).with("setting", "url")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if hasKey {
@@ -229,7 +243,7 @@ func aiPostOnce(ctx context.Context, url, key string, hasKey bool, body string) 
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 			return "", 0, aiFailf(aiTimedOut, "%s: no answer before the deadline", aiRedactURL(url))
 		}
-		return "", 0, aiFailf(aiUnreachable, "%s: %v", aiRedactURL(url), aiStripURL(err))
+		return "", 0, aiFailf(aiUnreachable, "%s: %v", aiRedactURL(url), aiStripURL(err)).with("target", aiRedactURL(url))
 	}
 	defer resp.Body.Close()
 	data, rerr := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
@@ -237,7 +251,7 @@ func aiPostOnce(ctx context.Context, url, key string, hasKey bool, body string) 
 		if ctx.Err() != nil {
 			return "", 0, aiFailf(aiTimedOut, "%s: no answer before the deadline", aiRedactURL(url))
 		}
-		return "", 0, aiFailf(aiUnreachable, "%s: reading the answer: %v", aiRedactURL(url), rerr)
+		return "", 0, aiFailf(aiUnreachable, "%s: reading the answer: %v", aiRedactURL(url), rerr).with("target", aiRedactURL(url))
 	}
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
@@ -246,6 +260,7 @@ func aiPostOnce(ctx context.Context, url, key string, hasKey bool, body string) 
 		ra := aiRetryAfter(resp.Header.Get("Retry-After"))
 		f := aiFailf(aiOverloaded, "%s answered HTTP %d: %s", aiRedactURL(url), resp.StatusCode, aiTail(string(data), 300))
 		f.retryAfterMs = int(ra / time.Millisecond)
+		f.httpStatus = resp.StatusCode
 		return "", ra, f
 	default:
 		f := aiFailf(aiRemoteRejected, "%s answered HTTP %d: %s", aiRedactURL(url), resp.StatusCode, aiTail(string(data), 500))
@@ -331,7 +346,7 @@ func Ai_endpointPost(cfgArg, pathArg, bodyArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
-		out, err := s.post(path, body)
+		out, err := s.call(path, body)
 		if err != nil {
 			return aiTaskErr(err)
 		}

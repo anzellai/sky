@@ -125,7 +125,14 @@ func Ai_localPost(idArg, pathArg, bodyArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
+		start := time.Now()
 		out, err := e.post(ctx, aiLocalCallTimeout, path, body)
+		rec := aiCallRecord{TS: start.UTC(), Slot: orDefault(e.slot, "local"), Mode: "local", Kind: aiCallKind(path),
+			Model: e.spec.model.String(), Outcome: aiCallOutcome(err), LatencyMs: aiCallLatency(start)}
+		if err == nil {
+			rec.PromptTokens, rec.CompletionTokens = aiUsage(out)
+		}
+		aiRecordCall(rec)
 		if err != nil {
 			return aiTaskErr(err)
 		}

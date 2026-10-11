@@ -241,12 +241,14 @@ fn endpoint_slots_run_a_compiled_program_on_the_managed_engine() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    let busy = busy_server();
     let out = Command::new(project.join("sky-out/app"))
         .current_dir(&project)
         .env("SKY_AI_HOME", &fake.home)
         .env("SKY_AI_LLAMA_BIN", &fake.dir)
         .env("SKY_AI_CHAT_MODEL", &fake.model_ref)
         .env("SKY_AI_EMBED_MODEL", &fake.model_ref)
+        .env("SKY_AI_BUSY_URL", format!("http://{busy}/v1"))
         .env_remove("ENV")
         .output()
         .unwrap();
@@ -274,6 +276,20 @@ fn endpoint_slots_run_a_compiled_program_on_the_managed_engine() {
             && stdout.contains("SKY_AI_GHOST_URL"),
         "{stdout}"
     );
+    // The typed view (Std.Ai.Failure, v0.28.0): the same failure read as a
+    // typed value, with the generic Error helpers. A remote 429 with
+    // Retry-After is Overloaded, carries the delay and the status, and is
+    // retryable; NotConfigured names the variable and is not.
+    assert!(
+        stdout.contains(
+            "ghostTyped=NotConfigured setting=SKY_AI_GHOST_URL domain=ai retryable=False"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("busy=Overloaded retryAfterMs=2000 status=429 domain=ai retryable=True"),
+        "{stdout}"
+    );
     // Two slots, two engines (chat and an embeddings engine), both stopped
     // with the program.
     assert_eq!(launches(&fake), 2);
@@ -283,6 +299,25 @@ fn endpoint_slots_run_a_compiled_program_on_the_managed_engine() {
         "engines outlived the program: {reg}"
     );
     let _ = std::fs::remove_dir_all(&project);
+}
+
+/// A server that answers every request with HTTP 429 and `Retry-After: 2`,
+/// as an overloaded OpenAI-compatible gateway does. Returns its address.
+fn busy_server() -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { continue };
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(
+                b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        }
+    });
+    addr
 }
 
 #[cfg(unix)]

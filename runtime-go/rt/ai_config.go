@@ -31,16 +31,16 @@ var aiReservedSlots = map[string]bool{
 // aiValidSlot checks a slot name: `[a-z][a-z0-9_]*`, not reserved.
 func aiValidSlot(slot string) error {
 	if slot == "" {
-		return aiFailf(aiInvalidSetting, "the slot name is empty; name it, for example Endpoint.endpoint \"chat\"")
+		return aiFailf(aiInvalidSetting, "the slot name is empty; name it, for example Endpoint.endpoint \"chat\"").with("setting", "slot")
 	}
 	for i, c := range slot {
 		ok := c >= 'a' && c <= 'z' || i > 0 && (c >= '0' && c <= '9' || c == '_')
 		if !ok {
-			return aiFailf(aiInvalidSetting, "slot %q: a slot name is lower case, starts with a letter and uses only a-z, 0-9 and _", slot)
+			return aiFailf(aiInvalidSetting, "slot %q: a slot name is lower case, starts with a letter and uses only a-z, 0-9 and _", slot).with("setting", "slot")
 		}
 	}
 	if aiReservedSlots[slot] {
-		return aiFailf(aiInvalidSetting, "slot %q is a reserved word (it would collide with a global AI variable); choose another name", slot)
+		return aiFailf(aiInvalidSetting, "slot %q is a reserved word (it would collide with a global AI variable); choose another name", slot).with("setting", "slot")
 	}
 	return nil
 }
@@ -213,7 +213,7 @@ func resolveAiLocal(slot string, b aiLocalBuilder, modelOverride string, record 
 	}
 	if modelStr == "" {
 		return spec, aiFailf(aiNotConfigured, "the local engine has no model; give it Local.model (or set %s to hf:<org>/<repo>/<file>#sha256=<hex>)",
-			skyEnvName(aiSlotSuffix(orDefault(slot, "<SLOT>"), "MODEL")))
+			skyEnvName(aiSlotSuffix(orDefault(slot, "<SLOT>"), "MODEL"))).with("setting", skyEnvName(aiSlotSuffix(orDefault(slot, "<SLOT>"), "MODEL")))
 	}
 	m, err := aiParseModelRef(modelStr)
 	if err != nil {
@@ -370,7 +370,7 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 		return s == "local" || s == "remote"
 	}
 	if raw, ok := lookupEnvRaw(name("MODE")); ok && raw != "" && !modeOK(raw) {
-		return nil, aiFailf(aiInvalidSetting, "%s=%q: use local or remote", name("MODE"), raw)
+		return nil, aiFailf(aiInvalidSetting, "%s=%q: use local or remote", name("MODE"), raw).with("setting", name("MODE"))
 	}
 	mode, modeSrc := layer("MODE", b.mode, modeOK)
 	mode = strings.ToLower(strings.TrimSpace(mode))
@@ -382,10 +382,10 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 		return nil, aiFailf(aiInvalidSetting,
 			"slot %q: MODE is local (from %s) and a URL is set (from %s); a local slot cannot also be remote. Unset %s, or set %s=remote",
 			b.slot, aiSourceText(modeSrc, name("MODE"), "Endpoint.withMode"),
-			aiSourceText(urlSrc, name("URL"), "Endpoint.withUrl"), name("URL"), name("MODE"))
+			aiSourceText(urlSrc, name("URL"), "Endpoint.withUrl"), name("URL"), name("MODE")).with("setting", name("MODE"))
 	case mode == "remote":
 		if url == "" {
-			return nil, aiFailf(aiNotConfigured, "slot %q: MODE is remote and there is no URL; set %s to the OpenAI-compatible base URL (ending /v1)", b.slot, name("URL"))
+			return nil, aiFailf(aiNotConfigured, "slot %q: MODE is remote and there is no URL; set %s to the OpenAI-compatible base URL (ending /v1)", b.slot, name("URL")).with("setting", name("URL"))
 		}
 		c.mode = "remote"
 	case mode == "local":
@@ -397,12 +397,12 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 	default:
 		return nil, aiFailf(aiNotConfigured,
 			"slot %q is not configured: set %s to a remote OpenAI-compatible base URL, or %s=local with %s=hf:<org>/<repo>/<file>#sha256=<hex>, or give the slot Endpoint.withLocal in code",
-			b.slot, name("URL"), name("MODE"), name("MODEL"))
+			b.slot, name("URL"), name("MODE"), name("MODEL")).with("setting", name("URL"))
 	}
 
 	if c.mode == "remote" {
 		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			return nil, aiFailf(aiInvalidSetting, "%s=%q: the URL must start with http:// or https://", name("URL"), url)
+			return nil, aiFailf(aiInvalidSetting, "%s=%q: the URL must start with http:// or https://", name("URL"), url).with("setting", name("URL"))
 		}
 		c.baseURL = url
 	}
@@ -431,7 +431,7 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 		if err != nil {
 			if f, ok := err.(*aiFailure); ok && f.code == aiNotConfigured {
 				return nil, aiFailf(aiNotConfigured, "slot %q is local and has no model: set %s=hf:<org>/<repo>/<file>#sha256=<hex>, or give the slot Endpoint.withLocal (Local.model …) in code",
-					b.slot, name("MODEL"))
+					b.slot, name("MODEL")).with("setting", name("MODEL"))
 			}
 			return nil, err
 		}

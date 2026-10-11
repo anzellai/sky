@@ -12,7 +12,10 @@ module SkyCoreErrorCoverageTest exposing (main, tests)
 --   * withMessage replaces the message but PRESERVES kind + details
 --   * withDetails attaches details but PRESERVES kind + message
 --   * kindLabel / toString render the documented `<Kind>: <message>` form
---   * isRetryable is True for exactly {Timeout, Network, Unavailable}
+--   * isRetryable is True for exactly {Timeout, Network, Unavailable} when the
+--     error carries no domain failure, and a domain failure's flag wins
+--   * a domain failure (Domain DomainFailure) round-trips through its builders
+--     and readers, and domain / failureOf / retryAfter read it back
 -- Error / ErrorKind / ErrorDetails are all exposed, so assertions pattern-match
 -- the value directly rather than trusting a single rendering path.
 
@@ -63,6 +66,9 @@ detailsLabel err =
 
                         FfiPanic pi ->
                             "panic:" ++ pi.message
+
+                        Domain f ->
+                            "domain:" ++ E.failureDomain f ++ "/" ++ E.failureCode f
 
 
 hasDetails : Error -> Bool
@@ -234,6 +240,37 @@ tests =
         (\_ -> Test.isFalse (E.isRetryable (E.conflict "x")))
     , Test.test "isRetryable unexpected == False"
         (\_ -> Test.isFalse (E.isRetryable (E.unexpected "x")))
+
+    -- ── Domain failures: builders, readers and the generic helpers ──
+    , Test.test "failure sets domain and code"
+        (\_ -> Test.equal ( "db", "Deadlock" ) ( E.failureDomain (E.failure "db" "Deadlock"), E.failureCode (E.failure "db" "Deadlock") ))
+    , Test.test "failure starts not retryable, with no delay and no attributes"
+        (\_ -> Test.equal ( False, Nothing, [] ) ( E.failureRetryable (E.failure "d" "c"), E.failureRetryAfter (E.failure "d" "c"), E.failureAttrs (E.failure "d" "c") ))
+    , Test.test "withRetryable and withRetryAfter are read back"
+        (\_ -> Test.equal ( True, Just 250 ) ( E.failureRetryable (E.failure "d" "c" |> E.withRetryable True), E.failureRetryAfter (E.failure "d" "c" |> E.withRetryAfter 250) ))
+    , Test.test "withAttr keeps order and replaces a key in place"
+        (\_ ->
+            Test.equal [ ( "a", "3" ), ( "b", "2" ) ]
+                (E.failureAttrs (E.failure "d" "c" |> E.withAttr "a" "1" |> E.withAttr "b" "2" |> E.withAttr "a" "3"))
+        )
+    , Test.test "failureAttr reads one attribute"
+        (\_ -> Test.equal ( Just "2", Nothing ) ( E.failureAttr "b" (E.failure "d" "c" |> E.withAttr "b" "2"), E.failureAttr "z" (E.failure "d" "c") ))
+    , Test.test "fromDomain sets the kind, the message and the Domain detail"
+        (\_ -> Test.equal ( Conflict, "deadlock", "domain:db/Deadlock" ) ( kindOf (E.fromDomain Conflict "deadlock" (E.failure "db" "Deadlock")), messageOf (E.fromDomain Conflict "deadlock" (E.failure "db" "Deadlock")), detailsLabel (E.fromDomain Conflict "deadlock" (E.failure "db" "Deadlock")) ))
+    , Test.test "failureOf reads the failure back"
+        (\_ -> Test.equal (Just (E.failure "db" "Deadlock")) (E.failureOf (E.fromDomain Conflict "x" (E.failure "db" "Deadlock"))))
+    , Test.test "failureOf of other details is Nothing"
+        (\_ -> Test.equal Nothing (E.failureOf (E.withDetails (HttpStatus 500) (E.network "x"))))
+    , Test.test "domain names the domain"
+        (\_ -> Test.equal ( Just "db", Nothing ) ( E.domain (E.fromDomain Conflict "x" (E.failure "db" "Deadlock")), E.domain (E.io "x") ))
+    , Test.test "retryAfter reads the delay"
+        (\_ -> Test.equal ( Just 900, Nothing ) ( E.retryAfter (E.fromDomain Unavailable "x" (E.failure "d" "c" |> E.withRetryAfter 900)), E.retryAfter (E.unavailable "x") ))
+    , Test.test "isRetryable: a domain flag True wins over a non-transient kind"
+        (\_ -> Test.isTrue (E.isRetryable (E.fromDomain Conflict "x" (E.failure "db" "Deadlock" |> E.withRetryable True))))
+    , Test.test "isRetryable: a domain flag False wins over a transient kind"
+        (\_ -> Test.isFalse (E.isRetryable (E.fromDomain Unavailable "x" (E.failure "ai" "EngineCrashed"))))
+    , Test.test "toString is unchanged by a domain failure"
+        (\_ -> Test.equal "Conflict: deadlock" (E.toString (E.fromDomain Conflict "deadlock" (E.failure "db" "Deadlock"))))
     ]
 
 

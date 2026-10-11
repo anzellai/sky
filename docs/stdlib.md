@@ -2449,6 +2449,29 @@ to the local engine.
 
 The full guide, every variable and the failure kinds: [`ai/local.md`](ai/local.md).
 
+### `Std.Ai.Failure` and `Std.Ai.Eval` — typed AI failures and evals (v0.28.0)
+
+Every AI failure is an `Error` with an existing `ErrorKind` and a typed
+`Domain` failure in the `"ai"` domain. `Failure.fromError : Error -> Maybe
+Failure` reads it (`NotConfigured`, `InvalidSetting`, `Unreachable`,
+`Overloaded`, `TimedOut`, `EngineCrashed`, `EngineFailed`, `ModelTooLarge`,
+`NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `RemoteRejected`,
+`BudgetExceeded`, `ToolchainFailed`, `GateFailed`); match it with a `_ ->`
+branch.
+
+`Std.Ai.Eval` evaluates a model with Sky values: a `Suite` of `Case`s, scorers
+(`Exact`, `Contains`, `Matches`, `JsonShape`, `CallsTool`, `Refuses`, `Rubric`
+by a judge, `Custom`, `AllOf`), a seeded repeatable `run` that returns a typed
+`Report`, `compare` against a baseline, and `check` / `gate` thresholds that
+return an opaque `Passed` or a `GateFailed` error.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Failure` | `Failure(..)`, `fromError`, `toError`, `code`, `kind`, `retryable` |
+| `Std.Ai.Eval` | `suite`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `withPassScore`, `judgeSlot`, `defaultJudge`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown` |
+
+Guides: [`ai/local.md`](ai/local.md#failures) and [`ai/eval.md`](ai/eval.md).
+
 ## The Prelude
 
 `Sky.Core.Prelude exposing (..)` is implicitly imported everywhere. It re-exports:

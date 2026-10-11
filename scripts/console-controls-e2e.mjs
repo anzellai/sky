@@ -85,6 +85,11 @@ const INGEST = "console-controls-e2e-ingest-0123456789abcdef";
 const TZ = "America/New_York";
 const PROXY_PORT = PORT + 1;
 const TLS_PORT = PORT + 2;
+// A fake OpenAI-compatible model the fixture's AI slots call
+// (SKY_AI_CHAT_URL, SKY_AI_DRAFT_URL): it answers every chat with "hello
+// from the fake model", and a request that says "busy" with HTTP 429, so the
+// AI panel has an ok and an Overloaded call to tell apart.
+const MODEL_PORT = PORT + 3;
 // ORIGIN is the server itself (seeding, volume). The browser reaches the
 // embedded scenario's production app over HTTPS, as production does: its
 // cookies are Secure (__Host-sky_console, the CSRF cookie), which WebKit does
@@ -183,6 +188,8 @@ function startServer() {
     env.SKY_ANALYTICS_DB_PATH = join(WORK, "analytics.db");
     env.SKY_DB_PATH = join(WORK, "app.db");
     env.SKY_PARENT_URL = `http://127.0.0.1:${PROXY_PORT}`;
+    env.SKY_AI_CHAT_URL = `http://127.0.0.1:${MODEL_PORT}/v1`;
+    env.SKY_AI_DRAFT_URL = `http://127.0.0.1:${MODEL_PORT}/v1`;
     if (SCENARIO === "embedded") {
       env.ENV = "production";
       env.SKY_CONSOLE_AUTH = "token";
@@ -235,6 +242,25 @@ function startProxy() {
     req.pipe(up);
   });
   return new Promise((r) => proxy.listen(PROXY_PORT, "127.0.0.1", r));
+}
+
+let fakeModel = null;
+function startFakeModel() {
+  fakeModel = http.createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      if (/busy/.test(body)) {
+        res.writeHead(429, { "retry-after": "1", "content-type": "application/json" });
+        res.end('{"error":{"message":"busy"}}');
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "hello from the fake model" } }], usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14 } }));
+    });
+  });
+  return new Promise((r) => fakeModel.listen(MODEL_PORT, "127.0.0.1", r));
 }
 
 // The TLS front for the embedded scenario: a self-signed certificate
@@ -363,6 +389,7 @@ async function clickText(text, nth = 0) {
 const TAB_HEADINGS = {
   Overview: /REQUESTS TOTAL|SCOPE/i, Metrics: /METRICS SNAPSHOT|SCOPE/i, Logs: /RECENT LOG ENTRIES/i,
   Traces: /RECENT TRACES/i, Errors: /TOP ERRORS BY FREQUENCY|SCOPE/i, Analytics: /EVENTS BY NAME/i,
+  AI: /MODEL SLOTS/i,
 };
 async function clickTab(label) {
   // The tab strip is the first element with each tab label. Wait for the
@@ -409,6 +436,7 @@ let browser = null;
 let exitCode = 1;
 try {
   if (SCENARIO !== "hub") await startProxy();
+  if (SCENARIO !== "hub") await startFakeModel();
   if (SCENARIO === "embedded") await startTlsFront();
   startServer();
   const bootMs = SCENARIO === "hub" ? 240000 : 30000; // the hub builds its daemon once
@@ -454,6 +482,11 @@ try {
       await sleep(400);
       return { ok: /worked [1-9]/.test(await bodyText(visitor)) };
     }, 20000);
+    // The AI panel's data: two chat calls (one Overloaded), a draft call
+    // and an eval run, from the fixture's "Run AI" button.
+    // One press: a second run would add calls the panel checks count.
+    await visitor.getByText("Run AI", { exact: true }).first().click({ timeout: 10000 });
+    await waitFor("the fixture app runs its AI calls and eval", async () => ({ ok: /ai runs 1/.test(await bodyText(visitor)) }), 30000);
     navigating();
     await visitor.close();
   }
@@ -478,6 +511,7 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => {});
   if (proxy) proxy.close();
+  if (fakeModel) fakeModel.close();
   if (tlsFront) tlsFront.close();
   await stopServer();
   if (SCENARIO === "hub") {
@@ -576,6 +610,7 @@ async function runEmbedded() {
     { label: "Traces", key: "traces", heading: /RECENT TRACES/i, read: "/_sky/console/api/traces" },
     { label: "Errors", key: "errors", heading: /TOP ERRORS BY FREQUENCY/i, read: "/_sky/console/api/errors" },
     { label: "Analytics", key: "analytics", heading: /EVENTS BY NAME/i, read: "/_sky/console/api/analytics" },
+    { label: "AI", key: "ai", heading: /MODEL SLOTS/i, read: "/_sky/console/api/ai" },
     { label: "Overview", key: null, heading: /REQUESTS TOTAL/i, read: "/_sky/console/api/overview" },
   ];
   for (const t of tabs) {
@@ -599,6 +634,7 @@ async function runEmbedded() {
     { tab: "Traces", range: true, search: true },
     { tab: "Errors", range: true, search: true },
     { tab: "Analytics", range: true, search: false },
+    { tab: "AI", range: false, search: false },
   ];
   for (const v of visibility) {
     await check(`filter strip: ${v.tab} shows ${v.range ? "the range chips" : "no range chips"} and ${v.search ? "the search box" : "no search box"}`, async () => {
@@ -909,6 +945,8 @@ async function runEmbedded() {
     await (await searchInputs()).nth(0).fill("");
   });
 
+  await runAiPanel();
+
   // Reload keeps the state (the session and the URL agree)
   await check("reload: keeps the tab, range and search", async () => {
     await clickTab("Errors");
@@ -956,6 +994,86 @@ async function runEmbedded() {
     navigating();
     await page.goto(PAGE_ORIGIN + BASE, { waitUntil: "domcontentloaded" });
     expect((await page.locator("input[name=token]").count()) === 1, "the console opened again without a sign-in");
+  });
+}
+
+// ── the AI panel (v0.28.0) ──────────────────────────────────────────────────
+// The fixture made five calls (chat: ok, Overloaded, and two ok eval calls;
+// draft: ok) and one eval run of two cases (greet passes, count fails).
+async function callOutcomes() {
+  return page.locator("[data-ai-call]").evaluateAll((els) => els.map((e) => e.getAttribute("data-ai-call")));
+}
+async function checkCalls(desc, since, wantParams, want) {
+  await waitFor(desc + " (page)", async () => {
+    const got = await callOutcomes();
+    return { ok: got.length === want.length && got.every((o, i) => o === want[i]), why: `page shows ${fmt(got)}, want ${fmt(want)}` };
+  });
+  await waitRead(desc + " (read)", "/_sky/console/api/ai", since, (r) => {
+    for (const [k, v] of Object.entries(wantParams)) {
+      const got = r.params.get(k);
+      if (v === null ? got !== null : got !== v) return `param ${k}=${got === null ? "(absent)" : got}, want ${v === null ? "(absent)" : v}`;
+    }
+    const ans = ((r.json && r.json.calls) || []).map((c) => c.outcome);
+    return setEq(ans, want) ? true : `server answered ${fmt(ans)}, want ${fmt(want)}`;
+  });
+}
+async function runAiPanel() {
+  await check("ai: the slots show each setting's source, and no key and no URL path", async () => {
+    await clickTab("AI");
+    await waitFor("slots", async () => {
+      const t = await bodyText();
+      const okSlots = /slot chat/.test(t) && /slot draft/.test(t) && new RegExp(`URL=http://127\\.0\\.0\\.1:${MODEL_PORT} \\(env\\)`).test(t);
+      return { ok: okSlots && !/\/v1\b/.test(t), why: t.slice(0, 400) };
+    });
+  });
+  await check("ai: recent calls list every call, newest first, with its outcome", async () => {
+    await clickTab("AI");
+    await checkCalls("all calls", 0, { calls: null, slot: null }, ["ok", "ok", "ok", "Overloaded", "ok"]);
+  });
+  await check("ai: the Failed chip asks the server for failed calls only, and All shows every call", async () => {
+    let since = Date.now();
+    await clickText("Failed");
+    await checkCalls("failed calls", since, { calls: "failed" }, ["Overloaded"]);
+    await waitFor("URL calls", async () => ({ ok: urlParams().get("calls") === "failed", why: page.url() }));
+    since = Date.now();
+    await clickText("All");
+    await checkCalls("all calls again", since, { calls: null }, ["ok", "ok", "ok", "Overloaded", "ok"]);
+    expect(urlParams().get("calls") === null, `URL still has calls=${urlParams().get("calls")}`);
+  });
+  await check("ai: a slot chip filters the calls to that slot, and All slots clears it", async () => {
+    let since = Date.now();
+    await clickText("slot draft");
+    await checkCalls("draft calls", since, { slot: "draft" }, ["ok"]);
+    await waitFor("URL slot", async () => ({ ok: urlParams().get("slot") === "draft", why: page.url() }));
+    since = Date.now();
+    await clickText("All slots");
+    await checkCalls("every slot", since, { slot: null }, ["ok", "ok", "ok", "Overloaded", "ok"]);
+  });
+  await check("ai: an eval run opens its cases and the gate verdict, and closes again", async () => {
+    await clickTab("AI");
+    await waitFor("eval row", async () => ({ ok: /eval fixture-eval/.test(await bodyText()) && /50% passed/.test(await bodyText()), why: (await bodyText()).slice(-400) }));
+    expect((await page.locator("[data-ai-case]").count()) === 0, "cases are shown before the run is opened");
+    await clickText("eval fixture-eval");
+    await waitFor("cases", async () => {
+      const ids = await page.locator("[data-ai-case]").evaluateAll((els) => els.map((e) => e.getAttribute("data-ai-case")));
+      const t = await bodyText();
+      return { ok: setEq(ids.sort(), ["count", "greet"]) && /pass\s*\n?\s*case greet/.test(t) && /fail\s*\n?\s*case count/.test(t), why: `cases ${fmt(ids)}` };
+    });
+    const id = urlParams().get("eval");
+    expect(id && id.length === 16, `URL eval=${id}`);
+    await clickText("eval fixture-eval");
+    await waitFor("cases closed", async () => ({ ok: (await page.locator("[data-ai-case]").count()) === 0 && urlParams().get("eval") === null }));
+  });
+  await check("ai: reload keeps the AI tab and its calls filter", async () => {
+    await clickText("Failed");
+    await waitFor("URL", async () => ({ ok: urlParams().get("tab") === "ai" && urlParams().get("calls") === "failed", why: page.url() }));
+    navigating();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitFor("after reload", async () => {
+      const got = await callOutcomes();
+      return { ok: setEq(got, ["Overloaded"]) && /MODEL SLOTS/i.test(await bodyText()), why: `calls ${fmt(got)}` };
+    });
+    await clickText("All");
   });
 }
 

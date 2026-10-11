@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 678
+n_min = 682
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 677
+class_v = 681
 class_d = 1
-family_S = 172
+family_S = 176
 family_L = 361
 family_E = 10
 family_R = 135
@@ -3395,7 +3395,7 @@ witness    = "value"
 axes       = { edge = "failure", surface = "error" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "T|T|T|F|F|F|Network: n"
+stdout     = "T|T|T|F|F|F|Network: n|F|T|db|none|1500|-1|db/Deadlock|21|T|Conflict: deadlock"
 
 [[case]]
 id         = "stdlib_edge/nominal-decimal"
@@ -4449,6 +4449,58 @@ axes       = { edge = "failure", surface = "ailocal" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "E|E"
+
+[[case]]
+id         = "stdlib_edge/nominal-aifailure"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aifailure" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "Overloaded|T|T|Timeout|PermissionDenied|PermissionDenied|T|T"
+
+[[case]]
+id         = "stdlib_edge/failure-aifailure"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aifailure" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "F|T|T|T"
+
+[[case]]
+id         = "stdlib_edge/nominal-aieval"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aieval" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "3/0/0|corpus|3,0,250|T"
+
+[[case]]
+id         = "stdlib_edge/failure-aieval"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aieval" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "ai/F|2/1/1"
 
 [[case]]
 id         = "stdlib_edge/nominal-canvas"

@@ -352,6 +352,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Ai", "localProvision", "rt.Ai_localProvision"),
     ("Ai", "localEngines", "rt.Ai_localEngines"),
     ("Ai", "localStopSlot", "rt.Ai_localStopSlot"),
+    ("Ai", "recordEval", "rt.Ai_recordEval"),
     ("File", "readFile", "rt.File_readFile"),
     ("File", "readFileLimit", "rt.File_readFileLimit"),
     ("File", "readFileBytes", "rt.File_readFileBytes"),

@@ -1297,6 +1297,22 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 			if k == "time" || k == "level" || k == "msg" {
 				continue
 			}
+			// A Sky Error logs as `<Kind>: <message>`, and a domain
+			// failure inside it adds `<key>.domain`, `<key>.code`,
+			// `<key>.retryable`, `<key>.retryAfterMs` and
+			// `<key>.attr.<name>` fields (error_domain.go), so a log
+			// query can group failures by code without parsing text.
+			if rendered, ok := renderSkyError(v); ok {
+				fields[k] = rendered
+				if f, ok := DomainOf(v); ok {
+					for dk, dv := range domainLogFields(k, f) {
+						if _, taken := m[dk]; !taken {
+							fields[dk] = fmt.Sprintf("%v", dv)
+						}
+					}
+				}
+				continue
+			}
 			fields[k] = fmt.Sprintf("%v", v)
 		}
 	}
@@ -1331,6 +1347,15 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 		if m, ok := ctx.(map[string]any); ok {
 			for k, v := range m {
 				if k != "time" && k != "level" && k != "msg" {
+					entryMap[k] = v
+				}
+			}
+			// A Sky Error value and its domain fields take their
+			// rendered form (see the fields loop above).
+			for k, v := range fields {
+				if _, raw := m[k]; !raw {
+					entryMap[k] = v
+				} else if _, isErr := renderSkyError(m[k]); isErr {
 					entryMap[k] = v
 				}
 			}

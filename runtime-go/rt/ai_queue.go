@@ -66,7 +66,8 @@ func (q *aiQueue) acquire() (func(), error) {
 	case q.permits <- struct{}{}:
 		return release, nil
 	case <-timer.C:
-		return nil, aiFailf(aiTimedOut, "slot %q: waited %s in the queue for a free call", q.slot, q.queueWait)
+		return nil, aiFailf(aiTimedOut, "slot %q: waited %s in the queue for a free call", q.slot, q.queueWait).
+			withInt("afterMs", int(q.queueWait/time.Millisecond))
 	}
 }
 

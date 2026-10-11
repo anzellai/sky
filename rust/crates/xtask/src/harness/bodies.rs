@@ -758,7 +758,11 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// **678 since v0.28.0** (+2, Family S: the `ailocal` surface, nominal and
 /// failure edges, for `Std.Ai.Local`; see `corpus/stdlib.rs`
 /// `ailocal_battery`).
-pub const CORPUS_EXPECTED: u64 = 678;
+///
+/// **682 since v0.28.0 phase 1 part B** (+4, Family S: the `aifailure` and
+/// `aieval` surfaces, nominal and failure edges each, for `Std.Ai.Failure` and
+/// `Std.Ai.Eval`).
+pub const CORPUS_EXPECTED: u64 = 682;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -797,7 +801,10 @@ pub const CORPUS_EXPECTED: u64 = 678;
 ///
 /// **532 since v0.28.0** (+2, the `ailocal` stdlib surface, both built and
 /// run).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 532;
+///
+/// **536 since v0.28.0 phase 1 part B** (+4, the `aifailure` and `aieval`
+/// stdlib surfaces, all built and run).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 536;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

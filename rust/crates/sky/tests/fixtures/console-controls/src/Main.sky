@@ -7,6 +7,11 @@ line at each level (debug, info, warn, error) and tracks an identified
 analytics event, and every page view is an access-log line and a span. The
 e2e adds older, time-spread data through the observability ingest endpoint
 and the analytics store, so each range of the console shows a different set.
+
+A press on "Run AI" gives the console's AI panel its data: two calls through
+the `chat` slot (the e2e points `SKY_AI_CHAT_URL` at a fake OpenAI-compatible
+server, which answers the second with HTTP 429, so it is `Overloaded`), and
+one Std.Ai.Eval run of two cases (one passes, one fails).
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -17,21 +22,29 @@ import Std.App as App
 import Std.Ui as Ui exposing (Element)
 import Std.Log as Log
 import Std.Analytics as Analytics
+import Std.Db as Db
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Eval as Eval exposing (Expect(..))
 
 type Page
     = Home
 
 type alias Model =
-    { worked : Int }
+    { worked : Int
+    , aiRuns : Int
+    }
 
 type Msg
     = Work
     | Worked (Result Error ())
+    | RunAi
+    | RanAi (Result Error ())
 
 
 init : a -> ( Model, Cmd Msg )
 init _ =
-    ( { worked = 0 }, Cmd.none )
+    ( { worked = 0, aiRuns = 0 }, Cmd.none )
 
 
 work : Task Error ()
@@ -48,6 +61,60 @@ work =
                (\_ -> Analytics.track (Analytics.event "fixture_live_work" []))
 
 
+-- The `chat` slot: remote, no retry (so the 429 is one Overloaded call).
+chatSlot : Endpoint
+chatSlot =
+    Endpoint.endpoint "chat" |> Endpoint.withRetry 0
+
+
+chat : Provider
+chat =
+    Endpoint.provider chatSlot
+
+
+-- A second slot, so the panel's slot filter has something to tell apart.
+draft : Provider
+draft =
+    Endpoint.provider (Endpoint.endpoint "draft" |> Endpoint.withRetry 0)
+
+
+fixtureSuite : Eval.Suite String
+fixtureSuite =
+    Eval.suite
+        "fixture-eval"
+        (\q -> [ Provider.user q ])
+        [ { id = "greet"
+          , input = "say hello"
+          , expect = Contains "hello"
+          , tags = []
+          }
+        , { id = "count"
+          , input = "count to one"
+          , expect = Exact "1"
+          , tags = []
+          }
+        ]
+
+
+-- Each step is best effort: a failed call is what the panel shows.
+runAi : Task Error ()
+runAi =
+    Task.sequence
+        [ Provider.chat chat [ Provider.user "say hello" ]
+              |> Task.map (\_ -> ())
+              |> Task.onError (\_ -> Task.succeed ())
+        , Provider.chat chat [ Provider.user "busy please" ]
+              |> Task.map (\_ -> ())
+              |> Task.onError (\_ -> Task.succeed ())
+        , Provider.chat draft [ Provider.user "draft please" ]
+              |> Task.map (\_ -> ())
+              |> Task.onError (\_ -> Task.succeed ())
+        ]
+        |> Task.andThen (\_ -> Db.open "sqlite" ":memory:")
+        |> Task.andThen (\db -> Eval.runAs "fake-model" db chat fixtureSuite)
+        |> Task.map (\_ -> ())
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -61,6 +128,15 @@ update msg model =
         Worked (Err _) ->
             ( model, Cmd.none )
 
+        RunAi ->
+            ( model, Cmd.perform runAi RanAi )
+
+        RanAi (Ok _) ->
+            ( { model | aiRuns = model.aiRuns + 1 }, Cmd.none )
+
+        RanAi (Err _) ->
+            ( model, Cmd.none )
+
 
 view : Model -> Element Msg
 view model =
@@ -69,6 +145,8 @@ view model =
         [ Ui.text "console controls fixture"
         , Ui.button [] { onPress = Just Work, label = Ui.text "Work" }
         , Ui.text ("worked " ++ String.fromInt model.worked)
+        , Ui.button [] { onPress = Just RunAi, label = Ui.text "Run AI" }
+        , Ui.text ("ai runs " ++ String.fromInt model.aiRuns)
         ]
 
 

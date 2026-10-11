@@ -193,7 +193,41 @@ fn check_case(
                 names.join(", ")
             ),
             labels: subject_label("this `case` is not exhaustive"),
-            suggestion: None,
+            suggestion: open_union_hint(all, &missing),
         });
     }
+}
+
+/// The constructor members of `Sky.Core.Error.ErrorDetails`, before `Domain`.
+/// Matched as a set (with `Domain`) so a same-named user union is not taken for
+/// the stdlib one.
+const ERROR_DETAILS_CORE: &[&str] = &[
+    "FfiPanic",
+    "TypeMismatch",
+    "HttpStatus",
+    "JsonDecode",
+    "Custom",
+];
+
+/// A hint for a match that misses `Sky.Core.Error.Domain`. `ErrorDetails` is
+/// the one stdlib union designed to stay open to domains (v0.28.0): a program
+/// that matched every variant before `Domain` existed stops compiling, and the
+/// fix that never breaks again is a generic helper or a `_ ->` branch, not a
+/// `Domain` arm that a later domain's failures then reach unhandled.
+fn open_union_hint(all: &[String], missing: &[&String]) -> Option<String> {
+    let is_error_details = all.iter().any(|c| c == "Domain")
+        && ERROR_DETAILS_CORE
+            .iter()
+            .all(|c| all.iter().any(|a| a == c));
+    if !is_error_details || !missing.iter().any(|m| m.as_str() == "Domain") {
+        return None;
+    }
+    Some(
+        "`Sky.Core.Error.ErrorDetails` gained `Domain DomainFailure` in v0.28.0: the failures of a \
+         stdlib domain (for example Std.Ai) or of your app. Add a `_ ->` branch, or use the \
+         generic helpers `Error.domain`, `Error.isRetryable` and `Error.retryAfter` (or a \
+         domain's typed view, such as `Std.Ai.Failure.fromError`), so later domains need no \
+         change here. See docs/migration/v0.28.md#a-new-errordetails-variant."
+            .to_string(),
+    )
 }

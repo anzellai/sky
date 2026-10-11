@@ -1,0 +1,1746 @@
+-- | Std.Ai.Eval — evaluate a model with Sky values: suites of cases, scorers,
+-- a judge, a typed report, a comparison against a baseline and a gate.
+--
+-- ```elm
+-- import Std.Ai.Eval as Eval exposing (Expect(..))
+--
+-- support : Eval.Suite String
+-- support =
+--     Eval.suite "support"
+--         (\question -> [ Provider.system "Answer in one sentence.", Provider.user question ])
+--         [ { id = "refund", input = "How do I get a refund?", expect = Contains "refund", tags = [] }
+--         , { id = "tone", input = "You are useless.", expect = Rubric "Stays polite and offers help.", tags = [ "tone" ] }
+--         ]
+--
+-- gateSupport : Db -> Provider -> Task Error Eval.Passed
+-- gateSupport db candidate =
+--     Eval.run db candidate support
+--         |> Task.andThen (\report -> Task.fromResult (Eval.check Eval.thresholds report))
+-- ```
+--
+-- A run is repeatable: every call uses temperature 0 and a fixed seed unless
+-- the suite says otherwise, and `withSamples n` asks each case n times with
+-- the seeds `seed`, `seed + 1`, …, so the statistics use every sample.
+--
+-- The judge for `Rubric` cases is a model slot, `"judge"`. Its default is the
+-- local pinned development model, and an operator switches it with the
+-- `SKY_AI_JUDGE_*` variables like any other slot (docs/ai/local.md). Under
+-- `sky test` in test mode (a project with `.env.test`) no engine starts: the
+-- judge's calls, like every slot's, are answered by fixtures under
+-- `tests/mocks/`.
+--
+-- Every run is recorded in the database (`_sky_ai_eval_runs`) and shown in the
+-- Sky Console's AI panel.
+module Std.Ai.Eval exposing
+    ( Suite
+    , Case
+    , Expect(..)
+    , Score
+    , Judge
+    , Report
+    , CaseResult
+    , ScorerScore
+    , Comparison
+    , ScorerDelta
+    , Thresholds
+    , Passed
+    , RunSummary
+    , suite
+    , withSamples
+    , withConcurrency
+    , withJudge
+    , withLatencyBudget
+    , withCostBudget
+    , withOptions
+    , withSeed
+    , withPriceBook
+    , withTools
+    , judge
+    , withPassScore
+    , judgeSlot
+    , defaultJudge
+    , setup
+    , run
+    , runAs
+    , history
+    , compare
+    , alone
+    , thresholds
+    , withMinPassRate
+    , withFloor
+    , withMaxRegression
+    , gate
+    , check
+    , passedSuite
+    , passedCandidate
+    , passedDigest
+    , toJunit
+    , toMarkdown
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Dict exposing (Dict)
+import Sky.Core.Regex as Regex
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Time as Time
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Sky.Ffi as Ffi
+import Std.Codec as Codec
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Money as Money exposing (Money)
+import Std.Decimal as Decimal
+import Std.Ai.Provider as Provider exposing
+    ( Provider
+    , Message
+    , ChatResponse
+    , ToolSpec
+    , ToolCall
+    , PriceBook
+    )
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+-- ── Cases and expectations ──────────────────────────────────────────
+-- | One case: a stable id (it pairs the case across runs), the input the
+-- suite's prompt function turns into messages, what to expect, and tags.
+type alias Case input =
+    { id : String
+    , input : input
+    , expect : Expect
+    , tags : List String
+    }
+
+-- | What a case expects of the answer.
+--
+--   * `Exact s`: the answer, with surrounding white space removed, is `s`.
+--   * `Contains s`: the answer contains `s` (case sensitive).
+--   * `Matches re`: the answer matches the RE2 regular expression `re`.
+--   * `JsonShape shape`: the answer is JSON of the codec's shape
+--     (`Codec.shape myCodec`): a record's every field is present with its
+--     column type, and a `Maybe` field may be `null`.
+--   * `CallsTool { name, args }`: the model asked for the tool `name`, and
+--     `args` accepts its JSON arguments. The suite advertises its tools with
+--     `withTools`.
+--   * `Refuses`: the answer declines (it says "I can't", "I cannot",
+--     "I won't", "I'm sorry" or "unable to", in any case).
+--   * `Rubric text`: the judge scores the answer against `text` from 1 to 5,
+--     and 4 or more passes (`withPassScore` changes the bar).
+--   * `Custom name scorer`: your own scorer, reported under `name`.
+--   * `AllOf expects`: every expectation must pass; the score is their mean.
+type Expect
+    = Exact String
+    | Contains String
+    | Matches String
+    | JsonShape Codec.Shape
+    | CallsTool { name : String
+, args : String -> Bool
+}
+    | Refuses
+    | Rubric String
+    | Custom String (ChatResponse -> Score)
+    | AllOf (List Expect)
+
+-- | A scorer's verdict: a value from 0 to 1, whether it passes, and why.
+type alias Score =
+    { value : Float
+    , passed : Bool
+    , reason : String
+    }
+
+-- ── Suites ──────────────────────────────────────────────────────────
+-- | A named set of cases and how to run them. Build it with `suite` and
+-- refine it with the `with…` builders.
+type Suite input
+    = Suite { name : String
+, prompt : input -> List Message
+, cases : List (Case input)
+, samples : Int
+, concurrency : Int
+, judge : Maybe Judge
+, latencyBudgetMs : Maybe Int
+, costBudget : Maybe Money
+, options : Provider.Options
+, seed : Int
+, priceBook : Maybe PriceBook
+, tools : List ToolSpec
+}
+
+
+-- | A suite: its name, how an input becomes messages, and its cases. One
+-- sample per case, four at a time, temperature 0, seed 42.
+suite : String -> (input -> List Message) -> List (Case input) -> Suite input
+suite name prompt cases =
+    Suite
+        { name = name
+        , prompt = prompt
+        , cases = cases
+        , samples = 1
+        , concurrency = 4
+        , judge = Nothing
+        , latencyBudgetMs = Nothing
+        , costBudget = Nothing
+        , options =
+            { temperature = Just 0.0
+            , seed = Nothing
+            , maxTokens = Nothing
+            , adapter = Nothing
+            }
+        , seed = 42
+        , priceBook = Nothing
+        , tools = []
+        }
+
+
+-- | Ask each case `n` times (at least once), with the seeds `seed` to
+-- `seed + n - 1`. Use it where an engine is not deterministic.
+withSamples : Int -> Suite input -> Suite input
+withSamples n (Suite s) =
+    Suite { s | samples = max 1 n }
+
+
+-- | How many calls run at once (at least one).
+withConcurrency : Int -> Suite input -> Suite input
+withConcurrency n (Suite s) =
+    Suite { s | concurrency = max 1 n }
+
+
+-- | The judge for `Rubric` cases. Without it, `defaultJudge`.
+withJudge : Judge -> Suite input -> Suite input
+withJudge j (Suite s) =
+    Suite { s | judge = Just j }
+
+
+-- | The p95 latency budget in milliseconds. A report over it fails the gate.
+withLatencyBudget : Int -> Suite input -> Suite input
+withLatencyBudget ms (Suite s) =
+    Suite { s | latencyBudgetMs = Just ms }
+
+
+-- | The mean cost per case. A report over it fails the gate. Needs
+-- `withPriceBook`, because a cost is priced from token usage.
+withCostBudget : Money -> Suite input -> Suite input
+withCostBudget m (Suite s) =
+    Suite { s | costBudget = Just m }
+
+
+-- | The sampling options. The suite's seed fills `seed` when it is `Nothing`.
+withOptions : Provider.Options -> Suite input -> Suite input
+withOptions o (Suite s) =
+    Suite { s | options = o }
+
+
+-- | The base seed (default 42).
+withSeed : Int -> Suite input -> Suite input
+withSeed n (Suite s) =
+    Suite { s | seed = n }
+
+
+-- | Price each call, for the report's cost figures and `withCostBudget`.
+withPriceBook : PriceBook -> Suite input -> Suite input
+withPriceBook book (Suite s) =
+    Suite { s | priceBook = Just book }
+
+
+-- | Advertise tools, for `CallsTool` cases. The calls then go through
+-- `Provider.chatTools`.
+withTools : List ToolSpec -> Suite input -> Suite input
+withTools ts (Suite s) =
+    Suite { s | tools = ts }
+
+-- ── The judge ───────────────────────────────────────────────────────
+-- | A judge: a provider and the version of its rubric prompt, recorded in the
+-- report so a changed prompt is visible.
+type Judge
+    = Judge { provider : Provider
+, version : String
+, passAt : Int
+}
+
+
+-- | A judge on a provider, with the version name of your rubric prompt.
+judge : Provider -> String -> Judge
+judge p version =
+    Judge { provider = p, version = version, passAt = 4 }
+
+
+-- | The lowest score from 1 to 5 that passes (default 4).
+withPassScore : Int -> Judge -> Judge
+withPassScore n (Judge j) =
+    Judge { j | passAt = max 1 (min 5 n) }
+
+
+-- | The judge's model slot, `"judge"`: the local pinned development model by
+-- default. The slot's `URL` variable (with `KEY` and `MODEL`, under
+-- `SKY_AI_JUDGE_<KEY>`) moves it to a remote model, and its `MODEL` alone pins
+-- another local model.
+judgeSlot : Endpoint
+judgeSlot =
+    Endpoint.endpoint "judge"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 4096)
+
+
+-- | The default judge: `judgeSlot` with the rubric prompt `rubric-v1`.
+defaultJudge : Judge
+defaultJudge =
+    judge (Endpoint.provider judgeSlot) "rubric-v1"
+
+
+judgeVersion : Judge -> String
+judgeVersion (Judge j) =
+    j.version
+
+-- ── Reports ─────────────────────────────────────────────────────────
+-- | One case at one sample. `score` is the mean of its scorers; `scores`
+-- holds each scorer's value under its name (`exact`, `contains`, `regex`,
+-- `json`, `tool`, `refuses`, `judge`, or the custom name). An error (the
+-- model call failed) counts as a failure with score 0.
+type alias CaseResult =
+    { id : String
+    , sample : Int
+    , tags : List String
+    , passed : Bool
+    , score : Float
+    , scores : List ( String, Float )
+    , reason : String
+    , output : String
+    , latencyMs : Int
+    , cost : Maybe Money
+    , error : Maybe String
+    }
+
+-- | One scorer's mean over the run.
+type alias ScorerScore =
+    { scorer : String
+    , mean : Float
+    , count : Int
+    }
+
+-- | A run of a suite. `digest` names the run's outputs: two runs with the
+-- same digest answered the same.
+type alias Report =
+    { suite : String
+    , candidate : String
+    , seed : Int
+    , samples : Int
+    , judge : Maybe String
+    , startedAt : Int
+    , durationMs : Int
+    , cases : List CaseResult
+    , passed : Int
+    , failed : Int
+    , errors : Int
+    , passRate : Float
+    , scorers : List ScorerScore
+    , p95LatencyMs : Int
+    , meanCost : Maybe Money
+    , latencyBudgetMs : Maybe Int
+    , costBudget : Maybe Money
+    , digest : String
+    }
+
+-- | A past run, as `history` reads it from the database.
+type alias RunSummary =
+    { digest : String
+    , suite : String
+    , candidate : String
+    , passed : Int
+    , failed : Int
+    , errors : Int
+    , passRate : Float
+    , p95LatencyMs : Int
+    , createdAt : Int
+    }
+
+
+-- ── Running ─────────────────────────────────────────────────────────
+-- | Create the eval history table (idempotent). `run` calls it.
+setup : Db -> Task Error ()
+setup db =
+    Db.execRaw
+        db
+        ("CREATE TABLE IF NOT EXISTS _sky_ai_eval_runs ("
+            ++ "digest TEXT NOT NULL, suite TEXT NOT NULL, candidate TEXT NOT NULL, "
+            ++ "passed INTEGER NOT NULL, failed INTEGER NOT NULL, errors INTEGER NOT NULL, "
+            ++ "pass_rate TEXT NOT NULL, p95_latency_ms INTEGER NOT NULL, "
+            ++ "report TEXT NOT NULL, created_at BIGINT NOT NULL)")
+        |> Task.map (\_ -> ())
+
+
+-- | Run a suite against a provider, record it in the database and the
+-- console, and return the report. The candidate is recorded as `"default"`.
+run : Db -> Provider -> Suite input -> Task Error Report
+run db p s =
+    runAs "default" db p s
+
+
+-- | `run`, naming the candidate (a model, an adapter, a registry alias) in the
+-- report.
+runAs : String -> Db -> Provider -> Suite input -> Task Error Report
+runAs candidate db p (Suite s) =
+    let
+        jobs =
+            List.concatMap
+                (\c ->
+                    List.map
+                        (\k -> runCase p (Suite s) c k)
+                        (List.range 0 (s.samples - 1)))
+                s.cases
+    in
+        setup db |> Task.andThen (\_ -> Time.now ())
+            |> Task.andThen
+                   (\started ->
+                       Task.parallelN s.concurrency jobs
+                           |> Task.andThen
+                                  (\results ->
+                                      Time.now ()
+                                          |> Task.map
+                                                 (\ended ->
+                                                     buildReport
+                                                         candidate
+                                                         (Suite s)
+                                                         started
+                                                         (ended - started)
+                                                         results)))
+            |> Task.andThen
+                   (\report -> store db report |> Task.map (\_ -> report))
+
+
+-- One case at one sample. A failed model call is a result, not a failed run.
+runCase : Provider -> Suite input -> Case input -> Int -> Task Error CaseResult
+runCase p (Suite s) c sample =
+    let
+        opts =
+            { temperature = s.options.temperature
+            , seed = Just (Maybe.withDefault (s.seed + sample) s.options.seed)
+            , maxTokens = s.options.maxTokens
+            , adapter = s.options.adapter
+            }
+        messages = s.prompt c.input
+    in
+        Time.now ()
+            |> Task.andThen
+                   (\t0 ->
+                       callModel p s.tools opts messages
+                           |> Task.andThen
+                                  (\out ->
+                                      Time.now ()
+                                          |> Task.andThen
+                                                 (\t1 ->
+                                                     scoreExpect
+                                                         (judgeFor (Suite s))
+                                                         s.seed
+                                                         messages
+                                                         c.expect
+                                                         out
+                                                         |> Task.map
+                                                                (\sc ->
+                                                                    okResult
+                                                                        (Suite s)
+                                                                        c
+                                                                        sample
+                                                                        out
+                                                                        (t1 - t0)
+                                                                        sc)))
+                           |> Task.onError
+                                  (\e ->
+                                      Time.now ()
+                                          |> Task.map
+                                                 (\t1 ->
+                                                     errResult
+                                                         c
+                                                         sample
+                                                         (t1 - t0)
+                                                         e)))
+
+
+judgeFor : Suite input -> Judge
+judgeFor (Suite s) =
+    Maybe.withDefault defaultJudge s.judge
+
+-- The answer a scorer sees.
+type alias Output =
+    { content : String
+    , toolCalls : List ToolCall
+    , usage : Provider.Usage
+    }
+
+
+callModel : Provider -> List ToolSpec -> Provider.Options -> List Message -> Task Error Output
+callModel p tools opts messages =
+    if List.isEmpty tools then
+        Provider.chatWith opts p messages
+            |> Task.map
+                   (\r ->
+                       { content = r.content, toolCalls = [], usage = r.usage })
+
+    else
+        Provider.chatTools p (List.map Provider.Say messages) tools
+            |> Task.map
+                   (\r ->
+                       { content = r.content
+                       , toolCalls = r.toolCalls
+                       , usage = r.usage
+                       })
+
+
+okResult : Suite input -> Case input -> Int -> Output -> Int -> ( List ( String, Float ), Score ) -> CaseResult
+okResult (Suite s) c sample out latency ( parts, sc ) =
+    { id = c.id
+    , sample = sample
+    , tags = c.tags
+    , passed = sc.passed
+    , score = sc.value
+    , scores = parts
+    , reason = sc.reason
+    , output = out.content
+    , latencyMs = latency
+    , cost = Maybe.map (\book -> Provider.cost book out.usage) s.priceBook
+    , error = Nothing
+    }
+
+
+errResult : Case input -> Int -> Int -> Error -> CaseResult
+errResult c sample latency e =
+    { id = c.id
+    , sample = sample
+    , tags = c.tags
+    , passed = False
+    , score = 0.0
+    , scores = []
+    , reason = "the call failed: " ++ Error.toString e
+    , output = ""
+    , latencyMs = latency
+    , cost = Nothing
+    , error = Just (Error.toString e)
+    }
+
+
+-- ── Scorers ─────────────────────────────────────────────────────────
+-- Score one expectation: each scorer's value under its name, and the verdict.
+scoreExpect : Judge -> Int -> List Message -> Expect -> Output -> Task Error ( List ( String, Float ), Score )
+scoreExpect j seed messages expect out =
+    case expect of
+
+        Rubric rubric ->
+            judgeScore j seed messages rubric out.content
+                |> Task.map (\sc -> ( [ ( "judge", sc.value ) ], sc ))
+
+        AllOf expects ->
+            Task.sequence
+                (List.map (\e -> scoreExpect j seed messages e out) expects)
+                |> Task.map combine
+
+        _ ->
+            let
+                ( name, sc ) = scorePure expect out
+            in
+                Task.succeed ( [ ( name, sc.value ) ], sc )
+
+
+combine : List ( List ( String, Float ), Score ) -> ( List ( String, Float ), Score )
+combine parts =
+    let
+        named = List.concatMap (\( n, _ ) -> n) parts
+        scores = List.map (\( _, sc ) -> sc) parts
+        failing = List.filter (\sc -> not sc.passed) scores
+    in
+        ( named
+        , { value = mean (List.map .value scores)
+          , passed = List.isEmpty failing
+          , reason =
+              case failing of
+
+                  [] ->
+                      "all " ++ String.fromInt (List.length scores)
+                          ++ " expectations passed"
+
+                  _ ->
+                      String.join "; " (List.map .reason failing)
+          }
+        )
+
+
+verdict : Bool -> String -> String -> Score
+verdict ok yes no =
+    if ok then
+        { value = 1.0, passed = True, reason = yes }
+
+    else
+        { value = 0.0, passed = False, reason = no }
+
+
+-- Every scorer that needs no model.
+scorePure : Expect -> Output -> ( String, Score )
+scorePure expect out =
+    let
+        text = String.trim out.content
+    in
+        case expect of
+
+            Exact s ->
+                ( "exact"
+                , verdict
+                      (text == String.trim s)
+                      "the answer is exact"
+                      ("expected " ++ quote s ++ ", got " ++ quote (clip text))
+                )
+
+            Contains s ->
+                ( "contains"
+                , verdict
+                      (String.contains s out.content)
+                      ("the answer contains " ++ quote s)
+                      ("the answer does not contain " ++ quote s)
+                )
+
+            Matches re ->
+                ( "regex"
+                , verdict
+                      (Regex.match re out.content)
+                      ("the answer matches " ++ re)
+                      ("the answer does not match " ++ re)
+                )
+
+            JsonShape shape ->
+                ( "json", jsonScore shape text )
+
+            CallsTool t ->
+                ( "tool", toolScore t.name t.args out.toolCalls )
+
+            Refuses ->
+                ( "refuses"
+                , verdict
+                      (refuses out.content)
+                      "the answer declines"
+                      ("the answer does not decline: " ++ quote (clip text))
+                )
+
+            Custom name scorer ->
+                ( name
+                , clampScore
+                      (scorer { content = out.content, usage = out.usage })
+                )
+
+            Rubric _ ->
+                ( "judge", verdict False "" "a rubric needs the judge" )
+
+            AllOf _ ->
+                ( "all"
+                , verdict
+                      False
+                      ""
+                      "nested expectations are scored by scoreExpect"
+                )
+
+
+clampScore : Score -> Score
+clampScore sc =
+    { sc | value = max 0.0 (min 1.0 sc.value) }
+
+
+refusalPhrases : List String
+refusalPhrases =
+    [ "i can't"
+    , "i cannot"
+    , "i can not"
+    , "i won't"
+    , "i will not"
+    , "i'm sorry"
+    , "i am sorry"
+    , "unable to"
+    , "i'm not able"
+    , "i am not able"
+    ]
+
+
+refuses : String -> Bool
+refuses s =
+    let
+        lower = String.toLower (String.replace "’" "'" s)
+    in
+        List.any (\p -> String.contains p lower) refusalPhrases
+
+
+toolScore : String -> (String -> Bool) -> List ToolCall -> Score
+toolScore name accepts calls =
+    let
+        named = List.filter (\c -> c.name == name) calls
+    in
+        if List.isEmpty named then
+            verdict
+                False
+                ""
+                ("no call to the tool " ++ quote name ++ " (called: "
+                    ++ String.join ", " (List.map .name calls)
+                    ++ ")")
+
+        else if List.any (\c -> accepts c.arguments) named then
+            verdict True ("called " ++ name ++ " with accepted arguments") ""
+
+        else
+            verdict
+                False
+                ""
+                ("called " ++ name ++ " with arguments the case rejects")
+
+
+jsonScore : Codec.Shape -> String -> Score
+jsonScore shape text =
+    case JsonD.decodeString JsonD.value text of
+
+        Err _ ->
+            verdict False "" ("the answer is not JSON: " ++ quote (clip text))
+
+        Ok _ ->
+            case JsonD.decodeString (shapeDecoder shape) text of
+
+                Ok _ ->
+                    verdict True "the answer is JSON of the expected shape" ""
+
+                Err e ->
+                    verdict
+                        False
+                        ""
+                        ("the JSON does not have the expected shape: "
+                            ++ Error.toString e)
+
+
+shapeDecoder : Codec.Shape -> JsonD.Decoder ()
+shapeDecoder shape =
+    case shape of
+
+        Codec.SRecord cols ->
+            List.foldl
+                (\( name, col ) acc ->
+                    JsonD.map2
+                        (\_ _ -> ())
+                        acc
+                        (JsonD.field name (colDecoder col)))
+                (JsonD.succeed ())
+                cols
+
+        Codec.SScalar col ->
+            colDecoder col
+
+        Codec.SBlob ->
+            JsonD.map (\_ -> ()) JsonD.value
+
+
+colDecoder : Codec.ColType -> JsonD.Decoder ()
+colDecoder col =
+    case col of
+
+        Codec.CText ->
+            JsonD.map (\_ -> ()) JsonD.string
+
+        Codec.CInt ->
+            JsonD.map (\_ -> ()) JsonD.int
+
+        Codec.CReal ->
+            JsonD.map (\_ -> ()) JsonD.float
+
+        Codec.CBool ->
+            JsonD.map (\_ -> ()) JsonD.bool
+
+        Codec.CBlob ->
+            JsonD.map (\_ -> ()) JsonD.value
+
+        Codec.CNull inner ->
+            JsonD.oneOf [ jsonNull, colDecoder inner ]
+
+
+-- A JSON null (and nothing else).
+jsonNull : JsonD.Decoder ()
+jsonNull =
+    JsonD.andThen
+        (\v ->
+            if JsonE.encode 0 v == "null" then
+                JsonD.succeed ()
+
+            else
+                JsonD.fail "not null")
+        JsonD.value
+
+
+-- The judge's prompt, version "rubric-v1" by default. Its answer must carry
+-- `SCORE: <1-5>`; one without a score fails the case and says so.
+judgeScore : Judge -> Int -> List Message -> String -> String -> Task Error Score
+judgeScore (Judge j) seed messages rubric answer =
+    let
+        question =
+            messages |> List.filter (\m -> m.role == "user") |> List.reverse
+                |> List.head
+                |> Maybe.map .content
+                |> Maybe.withDefault ""
+        prompt =
+            [ Provider.system
+                  ("You are a strict evaluator (" ++ j.version
+                      ++ "). Score the RESPONSE against the RUBRIC from 1 (fails it) to 5 (fully meets it). "
+                      ++ "Reply with one line: SCORE: <1-5> - <one short reason>.")
+            , Provider.user
+                  ("RUBRIC:\n" ++ rubric ++ "\n\nQUESTION:\n" ++ question
+                      ++ "\n\nRESPONSE:\n"
+                      ++ answer)
+            ]
+        opts =
+            { temperature = Just 0.0
+            , seed = Just seed
+            , maxTokens = Just 64
+            , adapter = Nothing
+            }
+    in
+        Provider.chatWith opts j.provider prompt
+            |> Task.map (\r -> readJudge j.passAt r.content)
+
+
+readJudge : Int -> String -> Score
+readJudge passAt reply =
+    case Regex.find "SCORE:\\s*[1-5]" (String.toUpper reply) of
+
+        Just found ->
+            let
+                n =
+                    Maybe.withDefault 1 (String.toInt (String.right 1 found))
+            in
+                { value = intToFloat (n - 1) / 4.0
+                , passed = n >= passAt
+                , reason =
+                    "judge " ++ String.fromInt n ++ "/5: "
+                        ++ clip (String.trim reply)
+                }
+
+        Nothing ->
+            { value = 0.0
+            , passed = False
+            , reason = "the judge gave no SCORE: " ++ quote (clip reply)
+            }
+
+
+-- ── Aggregation ─────────────────────────────────────────────────────
+buildReport : String -> Suite input -> Int -> Int -> List CaseResult -> Report
+buildReport candidate (Suite s) started duration results =
+    let
+        errors =
+            List.length (List.filter (\r -> r.error /= Nothing) results)
+        passed = List.length (List.filter .passed results)
+        total = List.length results
+        costs = List.filterMap .cost results
+    in
+        { suite = s.name
+        , candidate = candidate
+        , seed = s.seed
+        , samples = s.samples
+        , judge =
+            if List.any (\c -> hasRubric c.expect) s.cases then
+                Just (judgeVersion (judgeFor (Suite s)))
+
+            else
+                Nothing
+        , startedAt = started
+        , durationMs = duration
+        , cases = results
+        , passed = passed
+        , failed = total - passed
+        , errors = errors
+        , passRate = ratio passed total
+        , scorers = scorerScores results
+        , p95LatencyMs = percentile 95 (List.map .latencyMs results)
+        , meanCost = meanMoney costs
+        , latencyBudgetMs = s.latencyBudgetMs
+        , costBudget = s.costBudget
+        , digest = digestOf s.name candidate s.seed results
+        }
+
+
+hasRubric : Expect -> Bool
+hasRubric e =
+    case e of
+
+        Rubric _ ->
+            True
+
+        AllOf es ->
+            List.any hasRubric es
+
+        _ ->
+            False
+
+
+scorerScores : List CaseResult -> List ScorerScore
+scorerScores results =
+    let
+        pairs = List.concatMap .scores results
+        names = uniqueSorted (List.map (\( n, _ ) -> n) pairs)
+    in
+        List.map
+            (\n ->
+                let
+                    vs =
+                        List.filterMap
+                            (\( m, v ) ->
+                                if m == n then
+                                    Just v
+
+                                else
+                                    Nothing)
+                            pairs
+                in
+                    { scorer = n, mean = mean vs, count = List.length vs })
+            names
+
+
+digestOf : String -> String -> Int -> List CaseResult -> String
+digestOf name candidate seed results =
+    let
+        lines =
+            results
+                |> List.sortBy
+                       (\r ->
+                           r.id ++ "#"
+                               ++ String.padLeft 6 '0' (String.fromInt r.sample))
+                |> List.map
+                       (\r ->
+                           r.id ++ "#" ++ String.fromInt r.sample ++ "="
+                               ++ Crypto.sha256 r.output)
+    in
+        String.left
+            16
+            (Crypto.sha256
+                (String.join
+                    "\n"
+                    (name :: candidate :: String.fromInt seed :: lines)))
+
+
+-- ── Persistence and the console ─────────────────────────────────────
+store : Db -> Report -> Task Error ()
+store db r =
+    Db.exec
+        db
+        ("INSERT INTO _sky_ai_eval_runs "
+            ++ "(digest, suite, candidate, passed, failed, errors, pass_rate, p95_latency_ms, report, created_at) "
+            ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        [ SqlString r.digest
+        , SqlString r.suite
+        , SqlString r.candidate
+        , SqlInt r.passed
+        , SqlInt r.failed
+        , SqlInt r.errors
+        , SqlString (String.fromFloat r.passRate)
+        , SqlInt r.p95LatencyMs
+        , SqlString (JsonE.encode 0 (reportValue r))
+        , SqlInt r.startedAt
+        ]
+        |> Task.andThen (\_ -> recordConsole (JsonE.encode 0 (consoleValue r)))
+
+
+recordConsole : String -> Task Error ()
+recordConsole =
+    Ffi.kernel "Ai_recordEval"
+
+
+-- | The runs of a suite in the database, newest first.
+history : Db -> String -> Task Error (List RunSummary)
+history db suiteName =
+    Db.query
+        db
+        ("SELECT digest, suite, candidate, passed, failed, errors, pass_rate, p95_latency_ms, created_at "
+            ++ "FROM _sky_ai_eval_runs WHERE suite = ? ORDER BY created_at DESC")
+        [ SqlString suiteName ]
+        |> Task.map (List.map summaryOf)
+
+
+summaryOf : Dict String String -> RunSummary
+summaryOf row =
+    { digest = Db.getString "digest" row
+    , suite = Db.getString "suite" row
+    , candidate = Db.getString "candidate" row
+    , passed = Db.getInt "passed" row
+    , failed = Db.getInt "failed" row
+    , errors = Db.getInt "errors" row
+    , passRate =
+        Maybe.withDefault 0.0 (String.toFloat (Db.getString "pass_rate" row))
+    , p95LatencyMs = Db.getInt "p95_latency_ms" row
+    , createdAt = Db.getInt "created_at" row
+    }
+
+
+reportValue : Report -> JsonE.Value
+reportValue r =
+    JsonE.object
+        [ ( "suite", JsonE.string r.suite )
+        , ( "candidate", JsonE.string r.candidate )
+        , ( "seed", JsonE.int r.seed )
+        , ( "samples", JsonE.int r.samples )
+        , ( "judge", optString r.judge )
+        , ( "startedAt", JsonE.int r.startedAt )
+        , ( "durationMs", JsonE.int r.durationMs )
+        , ( "passed", JsonE.int r.passed )
+        , ( "failed", JsonE.int r.failed )
+        , ( "errors", JsonE.int r.errors )
+        , ( "passRate", JsonE.float r.passRate )
+        , ( "p95LatencyMs", JsonE.int r.p95LatencyMs )
+        , ( "meanCost", optString (Maybe.map moneyText r.meanCost) )
+        , ( "digest", JsonE.string r.digest )
+        , ( "scorers", JsonE.list scorerValue r.scorers )
+        , ( "cases", JsonE.list caseValue r.cases )
+        ]
+
+
+scorerValue : ScorerScore -> JsonE.Value
+scorerValue s =
+    JsonE.object
+        [ ( "scorer", JsonE.string s.scorer )
+        , ( "mean", JsonE.float s.mean )
+        , ( "count", JsonE.int s.count )
+        ]
+
+
+caseValue : CaseResult -> JsonE.Value
+caseValue c =
+    JsonE.object
+        [ ( "id", JsonE.string c.id )
+        , ( "sample", JsonE.int c.sample )
+        , ( "tags", JsonE.list JsonE.string c.tags )
+        , ( "passed", JsonE.bool c.passed )
+        , ( "score", JsonE.float c.score )
+        , ( "scores"
+          , JsonE.list
+                (\( n, v ) ->
+                    JsonE.object
+                        [ ( "scorer", JsonE.string n )
+                        , ( "value", JsonE.float v )
+                        ])
+                c.scores
+          )
+        , ( "reason", JsonE.string c.reason )
+        , ( "output", JsonE.string c.output )
+        , ( "latencyMs", JsonE.int c.latencyMs )
+        , ( "cost", optString (Maybe.map moneyText c.cost) )
+        , ( "error", optString c.error )
+        ]
+
+
+-- The console row: no model output (it can be long and carry user data),
+-- only ids, scores and reasons.
+consoleValue : Report -> JsonE.Value
+consoleValue r =
+    JsonE.object
+        [ ( "id", JsonE.string r.digest )
+        , ( "suite", JsonE.string r.suite )
+        , ( "model", JsonE.string r.candidate )
+        , ( "seed", JsonE.int r.seed )
+        , ( "cases", JsonE.int (List.length r.cases) )
+        , ( "passed", JsonE.int r.passed )
+        , ( "failed", JsonE.int r.failed )
+        , ( "errors", JsonE.int r.errors )
+        , ( "passRate", JsonE.float r.passRate )
+        , ( "scores"
+          , JsonE.object
+                (List.map (\s -> ( s.scorer, JsonE.float s.mean )) r.scorers)
+          )
+        , ( "p95LatencyMs", JsonE.int r.p95LatencyMs )
+        , ( "verdict"
+          , JsonE.string
+                (case check thresholds r of
+
+                    Ok _ ->
+                        "passed"
+
+                    Err _ ->
+                        "failed")
+          )
+        , ( "failures"
+          , JsonE.list JsonE.string (gateFailures thresholds (alone r))
+          )
+        , ( "caseResults"
+          , JsonE.list
+                (\c ->
+                    JsonE.object
+                        [ ( "id", JsonE.string (caseLabel c) )
+                        , ( "passed", JsonE.bool c.passed )
+                        , ( "score", JsonE.float c.score )
+                        , ( "latencyMs", JsonE.int c.latencyMs )
+                        , ( "reason", JsonE.string c.reason )
+                        ])
+                r.cases
+          )
+        ]
+
+
+optString : Maybe String -> JsonE.Value
+optString m =
+    case m of
+
+        Just s ->
+            JsonE.string s
+
+        Nothing ->
+            JsonE.null
+
+
+caseLabel : CaseResult -> String
+caseLabel c =
+    if c.sample == 0 then
+        c.id
+
+    else
+        c.id ++ "#" ++ String.fromInt c.sample
+
+-- ── Comparison ──────────────────────────────────────────────────────
+-- | One scorer compared across a baseline and a candidate. `ciLow` and
+-- `ciHigh` bound the paired mean difference (candidate minus baseline), from
+-- a bootstrap with a fixed seed, so the same reports give the same interval.
+type alias ScorerDelta =
+    { scorer : String
+    , baseline : Float
+    , candidate : Float
+    , delta : Float
+    , ciLow : Float
+    , ciHigh : Float
+    , pairs : Int
+    }
+
+-- | A candidate report, with a baseline when there is one. `regressions`
+-- counts paired cases the baseline passed and the candidate failed,
+-- `improvements` the reverse, and `mcnemarP` is the exact two-sided McNemar
+-- p-value over those discordant pairs.
+type alias Comparison =
+    { candidate : Report
+    , baseline : Maybe Report
+    , deltas : List ScorerDelta
+    , regressions : Int
+    , improvements : Int
+    , mcnemarP : Float
+    }
+
+
+-- | A candidate on its own: the absolute thresholds apply, the regression
+-- ones have nothing to compare.
+alone : Report -> Comparison
+alone r =
+    { candidate = r
+    , baseline = Nothing
+    , deltas = []
+    , regressions = 0
+    , improvements = 0
+    , mcnemarP = 1.0
+    }
+
+
+-- | Compare a baseline (first) and a candidate (second), pairing cases by
+-- id and sample. Pure: the same reports give the same comparison.
+compare : Report -> Report -> Comparison
+compare base cand =
+    let
+        key c = c.id ++ "#" ++ String.fromInt c.sample
+        paired =
+            List.filterMap
+                (\c ->
+                    case List.find (\b -> key b == key c) base.cases of
+
+                        Just b ->
+                            Just ( b, c )
+
+                        Nothing ->
+                            Nothing)
+                cand.cases
+        regressions =
+            List.length
+                (List.filter (\( b, c ) -> b.passed && not c.passed) paired)
+        improvements =
+            List.length
+                (List.filter (\( b, c ) -> not b.passed && c.passed) paired)
+        names =
+            uniqueSorted
+                ("pass"
+                    :: List.concatMap
+                           (\( _, c ) -> List.map (\( n, _ ) -> n) c.scores)
+                           paired)
+    in
+        { candidate = cand
+        , baseline = Just base
+        , deltas = List.map (\n -> scorerDelta cand.seed n paired) names
+        , regressions = regressions
+        , improvements = improvements
+        , mcnemarP = mcnemar regressions improvements
+        }
+
+
+scorerValueOf : String -> CaseResult -> Maybe Float
+scorerValueOf name c =
+    if name == "pass" then
+        Just
+            (if c.passed then
+                1.0
+
+            else
+                0.0)
+
+    else
+        List.find (\( n, _ ) -> n == name) c.scores
+            |> Maybe.map (\( _, v ) -> v)
+
+
+scorerDelta : Int -> String -> List ( CaseResult, CaseResult ) -> ScorerDelta
+scorerDelta seed name paired =
+    let
+        both =
+            List.filterMap
+                (\( b, c ) ->
+                    case ( scorerValueOf name b, scorerValueOf name c ) of
+
+                        ( Just x, Just y ) ->
+                            Just ( x, y )
+
+                        _ ->
+                            Nothing)
+                paired
+        diffs = List.map (\( x, y ) -> y - x) both
+        ( lo, hi ) = bootstrap seed diffs
+    in
+        { scorer = name
+        , baseline = mean (List.map (\( x, _ ) -> x) both)
+        , candidate = mean (List.map (\( _, y ) -> y) both)
+        , delta = mean diffs
+        , ciLow = lo
+        , ciHigh = hi
+        , pairs = List.length both
+        }
+
+
+-- The 95% interval of the mean of `xs`, from 1000 resamples drawn with a
+-- linear congruential generator seeded by `seed`.
+bootstrap : Int -> List Float -> ( Float, Float )
+bootstrap seed xs =
+    let
+        n = List.length xs
+        arr = List.indexedMap (\i x -> ( i, x )) xs
+        at i =
+            List.find (\( j, _ ) -> j == i) arr |> Maybe.map (\( _, x ) -> x)
+                |> Maybe.withDefault 0.0
+        step s = modBy 2147483648 (s * 1103515245 + 12345)
+        resample s =
+            List.foldl
+                (\_ ( st, acc ) ->
+                    let
+                        st2 = step st
+                    in
+                        ( st2, acc + at (modBy n st2) ))
+                ( s, 0.0 )
+                (List.range 1 n)
+        means =
+            List.foldl
+                (\_ ( st, acc ) ->
+                    let
+                        ( st2, total ) = resample st
+                    in
+                        ( st2, (total / intToFloat n) :: acc ))
+                ( modBy 2147483648 (abs seed) + 1, [] )
+                (List.range 1 1000)
+                |> (\( _, ms ) -> List.sort ms)
+    in
+        if n == 0 then
+            ( 0.0, 0.0 )
+
+        else
+            ( nth 24 means, nth 974 means )
+
+
+nth : Int -> List Float -> Float
+nth i xs =
+    List.drop i xs |> List.head |> Maybe.withDefault 0.0
+
+
+-- The exact two-sided McNemar p-value for b and c discordant pairs.
+mcnemar : Int -> Int -> Float
+mcnemar b c =
+    let
+        n = b + c
+        k = min b c
+        logHalf = Math.log 0.5
+        terms =
+            List.foldl
+                (\i ( logT, acc ) ->
+                    let
+                        next =
+                            logT + Math.log (intToFloat (n - i))
+                                - Math.log (intToFloat (i + 1))
+                    in
+                        ( next, acc + Math.exp logT ))
+                ( intToFloat n * logHalf, 0.0 )
+                (List.range 0 k)
+                |> (\( _, s ) -> s)
+    in
+        if n == 0 then
+            1.0
+
+        else
+            min 1.0 (2.0 * terms)
+
+-- ── Thresholds and the gate ─────────────────────────────────────────
+-- | The rules `gate` applies. Build them from `thresholds` with the
+-- `with…` builders.
+type Thresholds
+    = Thresholds { minPassRate : Maybe Float
+, floors : List ( String, Float )
+, maxRegression : Float
+}
+
+
+-- | No pass-rate floor, no scorer floors, and an allowed regression of 0.05
+-- (the lower bound of a scorer's paired difference may not fall below -0.05).
+-- The suite's latency and cost budgets always apply.
+thresholds : Thresholds
+thresholds =
+    Thresholds { minPassRate = Nothing, floors = [], maxRegression = 5.0e-2 }
+
+
+-- | The lowest pass rate, from 0 to 1.
+withMinPassRate : Float -> Thresholds -> Thresholds
+withMinPassRate x (Thresholds t) =
+    Thresholds { t | minPassRate = Just x }
+
+
+-- | The lowest mean of one scorer (`"exact"`, `"judge"`, a custom name, or
+-- `"pass"` for the pass rate).
+withFloor : String -> Float -> Thresholds -> Thresholds
+withFloor scorer x (Thresholds t) =
+    Thresholds { t | floors = t.floors ++ [ ( scorer, x ) ] }
+
+
+-- | The largest allowed drop of a scorer against the baseline, measured at
+-- the lower bound of the paired difference's 95% interval.
+withMaxRegression : Float -> Thresholds -> Thresholds
+withMaxRegression x (Thresholds t) =
+    Thresholds { t | maxRegression = max 0.0 x }
+
+-- | Proof that a candidate passed a gate. Only `gate` and `check` make one, so
+-- a function that requires a `Passed` cannot run without a passing evaluation.
+type Passed
+    = Passed { suite : String
+, candidate : String
+, digest : String
+}
+
+
+passedSuite : Passed -> String
+passedSuite (Passed p) =
+    p.suite
+
+
+passedCandidate : Passed -> String
+passedCandidate (Passed p) =
+    p.candidate
+
+
+-- | The digest of the report that passed.
+passedDigest : Passed -> String
+passedDigest (Passed p) =
+    p.digest
+
+
+-- | Apply the thresholds. It fails when the pass rate or a scorer's mean is
+-- below its floor, when a scorer regressed beyond the allowed drop against the
+-- baseline, or when the p95 latency or the mean cost is over the suite's
+-- budget. The failure is `Std.Ai.Failure.GateFailed`, which names every reason.
+gate : Thresholds -> Comparison -> Result Error Passed
+gate t cmp =
+    case gateFailures t cmp of
+
+        [] ->
+            Ok
+                (Passed
+                    { suite = cmp.candidate.suite
+                    , candidate = cmp.candidate.candidate
+                    , digest = cmp.candidate.digest
+                    })
+
+        reasons ->
+            Err
+                (Failure.toError
+                    (GateFailed
+                        { suite = cmp.candidate.suite
+                        , reasons = String.join "; " reasons
+                        }))
+
+
+-- | `gate` for a report on its own.
+check : Thresholds -> Report -> Result Error Passed
+check t r =
+    gate t (alone r)
+
+
+gateFailures : Thresholds -> Comparison -> List String
+gateFailures (Thresholds t) cmp =
+    let
+        r = cmp.candidate
+        passRate =
+            case t.minPassRate of
+
+                Just floor ->
+                    if r.passRate < floor then
+                        [ "pass rate " ++ pct r.passRate ++ " is below "
+                              ++ pct floor
+                        ]
+
+                    else
+                        []
+
+                Nothing ->
+                    []
+        floors =
+            List.filterMap
+                (\( name, floor ) ->
+                    let
+                        value =
+                            if name == "pass" then
+                                Just r.passRate
+
+                            else
+                                List.find (\s -> s.scorer == name) r.scorers
+                                    |> Maybe.map .mean
+                    in
+                        case value of
+
+                            Just v ->
+                                if v < floor then
+                                    Just
+                                        (name ++ " " ++ fixed v
+                                            ++ " is below its floor "
+                                            ++ fixed floor)
+
+                                else
+                                    Nothing
+
+                            Nothing ->
+                                Just
+                                    (name
+                                        ++ " has no score in this run (its floor is "
+                                        ++ fixed floor
+                                        ++ ")"))
+                t.floors
+        regressions =
+            List.filterMap
+                (\d ->
+                    if d.pairs > 0 && d.ciLow < 0.0 - t.maxRegression then
+                        Just
+                            (d.scorer ++ " regressed: " ++ fixed d.baseline
+                                ++ " -> "
+                                ++ fixed d.candidate
+                                ++ " (95% interval of the change "
+                                ++ fixed d.ciLow
+                                ++ " to "
+                                ++ fixed d.ciHigh
+                                ++ ", allowed drop "
+                                ++ fixed t.maxRegression
+                                ++ ")")
+
+                    else
+                        Nothing)
+                cmp.deltas
+        latency =
+            case r.latencyBudgetMs of
+
+                Just budget ->
+                    if r.p95LatencyMs > budget then
+                        [ "p95 latency " ++ String.fromInt r.p95LatencyMs
+                              ++ " ms is over the budget "
+                              ++ String.fromInt budget
+                              ++ " ms"
+                        ]
+
+                    else
+                        []
+
+                Nothing ->
+                    []
+        cost =
+            case ( r.costBudget, r.meanCost ) of
+
+                ( Just budget, Just m ) ->
+                    if Money.gt m budget then
+                        [ "mean cost " ++ moneyText m ++ " is over the budget "
+                              ++ moneyText budget
+                        ]
+
+                    else
+                        []
+
+                ( Just budget, Nothing ) ->
+                    [ "the suite has a cost budget (" ++ moneyText budget
+                          ++ ") and no price book; add withPriceBook"
+                    ]
+
+                _ ->
+                    []
+    in
+        passRate ++ floors ++ regressions ++ latency ++ cost
+
+
+-- ── Output formats ──────────────────────────────────────────────────
+-- | JUnit XML for a CI system: one test case per case and sample, a failure
+-- for each failed case and an error for each failed call.
+toJunit : Report -> String
+toJunit r =
+    let
+        one c =
+            "  <testcase classname=\"" ++ xml r.suite ++ "\" name=\""
+                ++ xml (caseLabel c)
+                ++ "\" time=\""
+                ++ seconds c.latencyMs
+                ++ "\">"
+                ++ (case c.error of
+
+                       Just e ->
+                           "<error message=\"" ++ xml e ++ "\"/>"
+
+                       Nothing ->
+                           if c.passed then
+                               ""
+
+                           else
+                               "<failure message=\"" ++ xml c.reason ++ "\"/>")
+                ++ "</testcase>\n"
+    in
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ++ "<testsuite name=\""
+            ++ xml r.suite
+            ++ "\" tests=\""
+            ++ String.fromInt (List.length r.cases)
+            ++ "\" failures=\""
+            ++ String.fromInt (r.failed - r.errors)
+            ++ "\" errors=\""
+            ++ String.fromInt r.errors
+            ++ "\" time=\""
+            ++ seconds r.durationMs
+            ++ "\">\n"
+            ++ String.join "" (List.map one r.cases)
+            ++ "</testsuite>\n"
+
+
+-- | A Markdown summary of a comparison, for a pull request or a CI log.
+toMarkdown : Comparison -> String
+toMarkdown cmp =
+    let
+        r = cmp.candidate
+        head =
+            "## Eval `" ++ r.suite ++ "`: " ++ r.candidate ++ "\n\n"
+                ++ "Pass rate "
+                ++ pct r.passRate
+                ++ " ("
+                ++ String.fromInt r.passed
+                ++ " of "
+                ++ String.fromInt (List.length r.cases)
+                ++ ", "
+                ++ String.fromInt r.errors
+                ++ " errors). p95 latency "
+                ++ String.fromInt r.p95LatencyMs
+                ++ " ms. Seed "
+                ++ String.fromInt r.seed
+                ++ ". Digest `"
+                ++ r.digest
+                ++ "`.\n\n"
+        scorers =
+            "| Scorer | Mean | Cases |\n|---|---|---|\n"
+                ++ String.join
+                       ""
+                       (List.map
+                           (\s ->
+                               "| " ++ s.scorer ++ " | " ++ fixed s.mean
+                                   ++ " | "
+                                   ++ String.fromInt s.count
+                                   ++ " |\n")
+                           r.scorers)
+        versus =
+            case cmp.baseline of
+
+                Just b ->
+                    "\nAgainst `" ++ b.candidate ++ "` (digest `" ++ b.digest
+                        ++ "`): "
+                        ++ String.fromInt cmp.regressions
+                        ++ " regressions, "
+                        ++ String.fromInt cmp.improvements
+                        ++ " improvements, McNemar p = "
+                        ++ fixed cmp.mcnemarP
+                        ++ ".\n\n| Scorer | Baseline | Candidate | Change | 95% interval |\n|---|---|---|---|---|\n"
+                        ++ String.join
+                               ""
+                               (List.map
+                                   (\d ->
+                                       "| " ++ d.scorer ++ " | "
+                                           ++ fixed d.baseline
+                                           ++ " | "
+                                           ++ fixed d.candidate
+                                           ++ " | "
+                                           ++ fixed d.delta
+                                           ++ " | "
+                                           ++ fixed d.ciLow
+                                           ++ " to "
+                                           ++ fixed d.ciHigh
+                                           ++ " |\n")
+                                   cmp.deltas)
+
+                Nothing ->
+                    ""
+        failing = List.filter (\c -> not c.passed) r.cases
+        failures =
+            if List.isEmpty failing then
+                ""
+
+            else
+                "\n### Failed cases\n\n"
+                    ++ String.join
+                           ""
+                           (List.map
+                               (\c ->
+                                   "- `" ++ caseLabel c ++ "`: " ++ c.reason
+                                       ++ "\n")
+                               failing)
+    in
+        head ++ scorers ++ versus ++ failures
+
+
+-- ── Helpers ─────────────────────────────────────────────────────────
+mean : List Float -> Float
+mean xs =
+    case xs of
+
+        [] ->
+            0.0
+
+        _ ->
+            List.foldl (\x acc -> x + acc) 0.0 xs / intToFloat (List.length xs)
+
+
+ratio : Int -> Int -> Float
+ratio a b =
+    if b == 0 then
+        0.0
+
+    else
+        intToFloat a / intToFloat b
+
+
+-- Nearest-rank percentile.
+percentile : Int -> List Int -> Int
+percentile p xs =
+    let
+        sorted = List.sort xs
+        n = List.length sorted
+        rank = max 1 ((p * n + 99) // 100)
+    in
+        if n == 0 then
+            0
+
+        else
+            List.drop (rank - 1) sorted |> List.head |> Maybe.withDefault 0
+
+
+meanMoney : List Money -> Maybe Money
+meanMoney ms =
+    case ms of
+
+        [] ->
+            Nothing
+
+        first :: _ ->
+            let
+                total = List.foldl Money.add (Money.zeroOf first) ms
+            in
+                case Decimal.div
+                         (Money.amount total)
+                         (Decimal.fromInt (List.length ms)) of
+
+                    Ok d ->
+                        Just (Money.Money d (Money.currency first))
+
+                    Err _ ->
+                        Nothing
+
+
+uniqueSorted : List String -> List String
+uniqueSorted xs =
+    List.foldl
+        (\x acc ->
+            if List.any (\y -> y == x) acc then
+                acc
+
+            else
+                x :: acc)
+        []
+        xs
+        |> List.sort
+
+
+moneyText : Money -> String
+moneyText m =
+    Money.currencyCode (Money.currency m) ++ " "
+        ++ Decimal.toString (Money.amount m)
+
+
+pct : Float -> String
+pct x =
+    String.fromInt (Math.round (x * 100.0)) ++ "%"
+
+
+-- Three decimals, for a table.
+fixed : Float -> String
+fixed x =
+    let
+        scaled = Math.round (x * 1000.0)
+        sign =
+            if scaled < 0 then
+                "-"
+
+            else
+                ""
+        a = abs scaled
+    in
+        sign ++ String.fromInt (a // 1000) ++ "."
+            ++ String.padLeft 3 '0' (String.fromInt (modBy 1000 a))
+
+
+seconds : Int -> String
+seconds ms =
+    String.fromInt (ms // 1000) ++ "."
+        ++ String.padLeft 3 '0' (String.fromInt (modBy 1000 (abs ms)))
+
+
+clip : String -> String
+clip s =
+    if String.length s > 200 then
+        String.left 200 s ++ "…"
+
+    else
+        s
+
+
+quote : String -> String
+quote s =
+    "\"" ++ s ++ "\""
+
+
+xml : String -> String
+xml s =
+    s |> String.replace "&" "&amp;" |> String.replace "<" "&lt;"
+        |> String.replace ">" "&gt;"
+        |> String.replace "\"" "&quot;"
+
+
+-- An Int as a Float (exact for every Int a report holds).
+intToFloat : Int -> Float
+intToFloat n =
+    case String.toFloat (String.fromInt n) of
+
+        Just f ->
+            f
+
+        Nothing ->
+            0.0

@@ -68,7 +68,7 @@ func aiFetchAllowed() (bool, error) {
 	case "off", "0", "false", "no":
 		return false, nil
 	default:
-		return false, aiFailf(aiInvalidSetting, "%s=%q: use on or off", skyEnvName("AI_FETCH"), v)
+		return false, aiFailf(aiInvalidSetting, "%s=%q: use on or off", skyEnvName("AI_FETCH"), v).with("setting", skyEnvName("AI_FETCH"))
 	}
 }
 
@@ -138,14 +138,14 @@ func aiDownload(ctx context.Context, url, dest, want string) (string, error) {
 		}
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
-			return "", aiFailf(aiInvalidSetting, "bad download URL %q: %v", url, err)
+			return "", aiFailf(aiInvalidSetting, "bad download URL %q: %v", url, err).with("setting", "url")
 		}
 		if have > 0 {
 			req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
 		}
 		resp, err := aiHTTPClient.Do(req)
 		if err != nil {
-			return "", aiFailf(aiUnreachable, "download %s: %v", url, err)
+			return "", aiFailf(aiUnreachable, "download %s: %v", url, err).with("target", aiRedactURL(url))
 		}
 		flags := os.O_CREATE | os.O_WRONLY
 		switch {
@@ -161,7 +161,7 @@ func aiDownload(ctx context.Context, url, dest, want string) (string, error) {
 		default:
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			resp.Body.Close()
-			return "", aiFailf(aiUnreachable, "download %s: HTTP %d %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
+			return "", aiFailf(aiUnreachable, "download %s: HTTP %d %s", url, resp.StatusCode, strings.TrimSpace(string(body))).with("target", aiRedactURL(url))
 		}
 		if flags != 0 {
 			f, err := os.OpenFile(partial, flags, 0o644)
@@ -175,7 +175,7 @@ func aiDownload(ctx context.Context, url, dest, want string) (string, error) {
 				cerr = err
 			}
 			if cerr != nil {
-				return "", aiFailf(aiUnreachable, "download %s interrupted: %v (it resumes on the next attempt)", url, cerr)
+				return "", aiFailf(aiUnreachable, "download %s interrupted: %v (it resumes on the next attempt)", url, cerr).with("target", aiRedactURL(url))
 			}
 		}
 		got, err := aiFileSha256(partial)
@@ -189,7 +189,8 @@ func aiDownload(ctx context.Context, url, dest, want string) (string, error) {
 				// start again once from zero before calling it a mismatch.
 				continue
 			}
-			return "", aiFailf(aiChecksumMismatch, "%s: expected sha256 %s, the downloaded bytes are sha256 %s; nothing was installed", url, want, got)
+			return "", aiFailf(aiChecksumMismatch, "%s: expected sha256 %s, the downloaded bytes are sha256 %s; nothing was installed", url, want, got).
+				with("expected", want).with("actual", got)
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return "", aiFailf(aiEngineFailed, "cannot create %s: %v", filepath.Dir(dest), err)
@@ -277,7 +278,8 @@ func aiDiscoverEngine(ctx context.Context) (aiEngineBinary, error) {
 		if st, err := os.Stat(p); err != nil || st.IsDir() {
 			return aiEngineBinary{}, aiFailf(aiNotProvisioned,
 				"%s=%s has no %s in it; point it at the directory that holds llama-server, or unset it to use the pinned build",
-				skyEnvName("AI_LLAMA_BIN"), dir, aiExe(aiLlamaServerName))
+				skyEnvName("AI_LLAMA_BIN"), dir, aiExe(aiLlamaServerName)).
+				with("what", "llama-server").with("command", "set "+skyEnvName("AI_LLAMA_BIN")+" to the directory that holds llama-server")
 		}
 		return aiEngineBinary{path: p, variant: "custom", build: "custom"}, nil
 	}
@@ -285,7 +287,8 @@ func aiDiscoverEngine(ctx context.Context) (aiEngineBinary, error) {
 	if !ok {
 		return aiEngineBinary{}, aiFailf(aiNotProvisioned,
 			"there is no pinned llama-server build for %s/%s; install llama.cpp and set %s to the directory that holds llama-server",
-			runtime.GOOS, runtime.GOARCH, skyEnvName("AI_LLAMA_BIN"))
+			runtime.GOOS, runtime.GOARCH, skyEnvName("AI_LLAMA_BIN")).
+			with("what", "llama-server").with("command", "set "+skyEnvName("AI_LLAMA_BIN"))
 	}
 	bin := filepath.Join(aiEngineDir(a), aiExe(aiLlamaServerName))
 	if fileExists(bin) {
@@ -298,7 +301,8 @@ func aiDiscoverEngine(ctx context.Context) (aiEngineBinary, error) {
 	if !allowed {
 		return aiEngineBinary{}, aiFailf(aiNotProvisioned,
 			"llama-server %s is not installed and fetching is off (%s); run `sky ai provision` on this host first",
-			aiLlamaBuild, skyEnvName("AI_FETCH"))
+			aiLlamaBuild, skyEnvName("AI_FETCH")).
+			with("what", "llama-server "+aiLlamaBuild).with("command", "sky ai provision")
 	}
 	return aiProvisionEngine(ctx)
 }
@@ -319,7 +323,8 @@ func aiProvisionEngine(ctx context.Context) (aiEngineBinary, error) {
 	if !ok {
 		return aiEngineBinary{}, aiFailf(aiNotProvisioned,
 			"there is no pinned llama-server build for %s/%s; install llama.cpp and set %s",
-			runtime.GOOS, runtime.GOARCH, skyEnvName("AI_LLAMA_BIN"))
+			runtime.GOOS, runtime.GOARCH, skyEnvName("AI_LLAMA_BIN")).
+			with("what", "llama-server").with("command", "set "+skyEnvName("AI_LLAMA_BIN"))
 	}
 	final := aiEngineDir(a)
 	bin := filepath.Join(final, aiExe(aiLlamaServerName))
@@ -423,28 +428,28 @@ func aiParseModelRef(s string) (aiModelRef, error) {
 	body, frag, ok := strings.Cut(s, "#")
 	if !ok || !strings.HasPrefix(frag, "sha256=") {
 		return aiModelRef{}, aiFailf(aiInvalidSetting,
-			"model reference %q has no #sha256=<hex> digest; an unpinned model cannot be loaded (run `sky ai pull <repo> <file>` to get the digest)", s)
+			"model reference %q has no #sha256=<hex> digest; an unpinned model cannot be loaded (run `sky ai pull <repo> <file>` to get the digest)", s).with("setting", "model")
 	}
 	sum := strings.ToLower(strings.TrimPrefix(frag, "sha256="))
 	if !aiValidSha256(sum) {
-		return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: the digest must be 64 hex digits", s)
+		return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: the digest must be 64 hex digits", s).with("setting", "model")
 	}
 	switch {
 	case strings.HasPrefix(body, "hf:"):
 		rest := strings.TrimPrefix(body, "hf:")
 		parts := strings.Split(rest, "/")
 		if len(parts) < 3 || parts[0] == "" || parts[1] == "" || parts[len(parts)-1] == "" {
-			return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: use hf:<org>/<repo>/<file>#sha256=<hex>", s)
+			return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: use hf:<org>/<repo>/<file>#sha256=<hex>", s).with("setting", "model")
 		}
 		return aiModelRef{kind: "hf", repo: parts[0] + "/" + parts[1], file: strings.Join(parts[2:], "/"), sha256: sum}, nil
 	case strings.HasPrefix(body, "file:"):
 		p := strings.TrimPrefix(body, "file:")
 		if p == "" {
-			return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: the path is empty", s)
+			return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: the path is empty", s).with("setting", "model")
 		}
 		return aiModelRef{kind: "file", file: p, sha256: sum}, nil
 	}
-	return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: use hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>", s)
+	return aiModelRef{}, aiFailf(aiInvalidSetting, "model reference %q: use hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>", s).with("setting", "model")
 }
 
 func aiModelStorePath(sum string) string {
@@ -459,10 +464,11 @@ func aiEnsureModel(ctx context.Context, m aiModelRef) (string, error) {
 	if m.kind == "file" {
 		got, err := aiFileSha256(m.file)
 		if err != nil {
-			return "", aiFailf(aiNotProvisioned, "model file %s: %v", m.file, err)
+			return "", aiFailf(aiNotProvisioned, "model file %s: %v", m.file, err).with("what", m.file).with("command", "check the model file path")
 		}
 		if got != m.sha256 {
-			return "", aiFailf(aiChecksumMismatch, "model file %s: expected sha256 %s, the file is sha256 %s; it was not loaded", m.file, m.sha256, got)
+			return "", aiFailf(aiChecksumMismatch, "model file %s: expected sha256 %s, the file is sha256 %s; it was not loaded", m.file, m.sha256, got).
+				with("expected", m.sha256).with("actual", got)
 		}
 		return m.file, nil
 	}
@@ -477,7 +483,8 @@ func aiEnsureModel(ctx context.Context, m aiModelRef) (string, error) {
 	if !allowed {
 		return "", aiFailf(aiNotProvisioned,
 			"model %s is not in %s and fetching is off (%s); run `sky ai pull %s %s` on this host first",
-			m.String(), filepath.Dir(dest), skyEnvName("AI_FETCH"), m.repo, m.file)
+			m.String(), filepath.Dir(dest), skyEnvName("AI_FETCH"), m.repo, m.file).
+			with("what", m.String()).with("command", "sky ai pull "+m.repo+" "+m.file)
 	}
 	if _, err := aiDownload(ctx, aiHuggingFaceURL(m.repo, m.file), dest, m.sha256); err != nil {
 		return "", err

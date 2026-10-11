@@ -66,6 +66,11 @@ fn error_wire_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-error-wire/src/Main.sky")
 }
 
+fn ai_failure_wire_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-ai-failure-wire/src/Main.sky")
+}
+
 fn msg_with_wire_types_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/spa-msg-with-wire-types/src/Main.sky")
@@ -1610,6 +1615,79 @@ fn wires_a_result_error_payload_through_the_stdlib_error_codec() {
     assert!(
         frontend_build.success(),
         "error-wire frontend must build to wasm"
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "frontend stages a hashed main.<hash>.wasm"
+    );
+
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// v0.28.0: a typed AI failure crosses the Sky.Spa wire. The model call is a
+/// server effect (a slot holds server settings and secrets); its `Err` is an
+/// `Error` carrying a `Domain` failure, wired by the stdlib `Codec.error`; and
+/// the client reads it with `Std.Ai.Failure.fromError`, which is pure, so that
+/// branch stays on the client and no AI kernel reaches the wasm.
+#[test]
+fn a_typed_ai_failure_crosses_the_wire_and_is_read_on_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let status = Command::new(SKY)
+        .args([
+            "spa-split",
+            ai_failure_wire_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sky spa-split");
+    assert!(
+        status.success(),
+        "sky spa-split must split an app that reads Std.Ai.Failure on the client"
+    );
+
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let front_shared = std::fs::read_to_string(out.join("frontend/src/Shared.sky")).unwrap();
+    assert!(
+        shared.contains("(Codec.result Codec.error Codec.string)"),
+        "the answer's `Result Error String` must wire through the stdlib Error codec:\n{shared}"
+    );
+    assert!(
+        front.contains("Failure.fromError"),
+        "the typed failure is read on the client (Std.Ai.Failure is pure):\n{front}"
+    );
+    for needle in ["Endpoint.", "Provider.chat", "Ai_endpointPost"] {
+        assert!(
+            !front.contains(needle) && !front_shared.contains(needle),
+            "SECURITY LEAK: the client carries the server's model call (`{needle}`):\n{front}\n{front_shared}"
+        );
+    }
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    let backend_build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(out.join("backend"))
+        .status()
+        .expect("run sky build (backend)");
+    assert!(
+        backend_build.success(),
+        "ai-failure-wire backend must build natively"
+    );
+    let frontend_build = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .status()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend_build.success(),
+        "ai-failure-wire frontend (Std.Ai.Failure) must build to wasm"
     );
     assert!(
         dist_has_wasm(&out.join("frontend/dist")),
