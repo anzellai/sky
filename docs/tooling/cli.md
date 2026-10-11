@@ -1335,7 +1335,7 @@ Behaviour:
 
 ```bash
 $ sky upgrade-claude
-Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.27.0)
+Refreshed CLAUDE.md (118432 → 132422 bytes, from sky v0.28.0)
   previous version saved as CLAUDE.md.bak
 ```
 

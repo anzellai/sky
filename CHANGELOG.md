@@ -11,6 +11,97 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
+## v0.28.0 — Model slots and a managed local model engine (Std.Ai.Endpoint, Std.Ai.Local) (unreleased)
+
+Phase 1 part A of the Std.Ai lifecycle design (`docs/design/std-ai-lifecycle.md`).
+The user guide is `docs/ai/local.md`.
+
+### Added
+
+- **`Std.Ai.Endpoint`: a named model slot configured in code, overridden per
+  environment.** `Endpoint.endpoint "chat"` with `withMode`, `withUrl`,
+  `withKey` (a `Secret`), `withModel`, `withAdapter`, `withLocal`,
+  `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait` and
+  `withRetry`. Each falls back to `SKY_AI_<SLOT>_<KEY>` (prefix-aware) through
+  the runtime's one precedence: operator env > `withX` in code > default.
+  There is no `sky.toml` key for AI. A URL makes the slot remote, `withLocal`
+  makes it a managed local engine, `MODE=local` with a URL is an error naming
+  both sources, nothing configured is `NotConfigured` naming the variable to
+  set, and a remote endpoint that is down never falls back to a local model.
+  Each slot has a bounded queue: a full queue fails at once (`Unavailable`,
+  Overloaded), a long wait is `Timeout`, and only 429 / 503 and connections
+  that never reached the server are retried. `Endpoint.provider` is pure and
+  resolves on the first call; `warm` starts a local engine now; `describe`
+  reports each setting's source without secrets or URL paths.
+  (`sky-stdlib/Std/Ai/Endpoint.sky`, `runtime-go/rt/ai_config.go`,
+  `ai_endpoint.go`, `ai_queue.go`.)
+- **`Std.Ai.Local`: the managed `llama-server`.** A pinned llama.cpp build
+  (`b11200`, macOS arm64 Metal and Linux x64 CPU, SHA-256 recorded in
+  `runtime-go/rt/ai_pins.go`) and pinned GGUF models (`Local.huggingFace`,
+  `Local.file`; `Local.devModel` is Qwen2.5 0.5B Instruct Q4_0, Apache-2.0)
+  are fetched into one per-user AI home and verified from the bytes on disk; a
+  mismatch installs nothing. Before loading, the GGUF header and the host's
+  memory give a fit plan (`Local.fit`): an explicit context or a model that
+  does not fit fails with `ModelTooLarge`, GPU layers on a CPU build with
+  `NoAccelerator`. The engine binds `127.0.0.1` behind a per-run key passed
+  in a `0600` file, starts with a cleared environment, is health-checked,
+  restarts with backoff in development (three times a minute at most) and
+  exits the app outside it, unloads when idle, and stops with the app.
+  Engines are recorded in `engines.json`, shared between programs that need
+  the same one, and an engine whose program was killed is reaped by the next
+  start. `Local.start`, `provider`, `status`, `stop`, `fetch`, `pull`,
+  `provision`, `engines`, `stopSlot`. (`runtime-go/rt/ai_engine.go`,
+  `ai_fetch.go`, `ai_gguf.go`, `ai_registry.go`, `ai_local.go`.)
+- **`Provider.chatWith`, `Provider.embed`, `Provider.wire`.** `chatWith`
+  sends per-call `Options` (temperature, seed, max tokens, adapter); `chat` is
+  `chatWith defaultOptions`. `embed` returns one vector per text. `wire`
+  builds an OpenAI-compatible provider over a caller's transport. Existing
+  providers are unchanged.
+- **`sky ai provision | pull | ps | start | stop`**, run by a bundled Sky
+  program over the API above (`sky-bundled/ai`). Every verb takes
+  `--format json`.
+- New variables: `SKY_AI_HOME`, `SKY_AI_LLAMA_BIN`, `SKY_AI_FETCH`,
+  `SKY_AI_ACCEL`, and per slot `SKY_AI_<SLOT>_MODE`, `_URL`, `_KEY`,
+  `_MODEL`, `_ADAPTER`, `_TIMEOUT_MS`, `_MAX_INFLIGHT`, `_QUEUE`,
+  `_QUEUE_WAIT_MS`, `_RETRIES`, `_CONTEXT`, `_GPU`, `_PARALLEL`,
+  `_IDLE_UNLOAD_S`, `_PORT`.
+- Under `sky test` (test mode) no engine starts: a call through any slot is
+  answered by a `tests/mocks/` fixture.
+
+### Tests
+
+- `runtime-go/rt/ai_test.go` against a fake engine
+  (`runtime-go/rt/testdata/fakellama`): the resolution rule, precedence and
+  prefix, checksum refusal for models and engine archives, fetch off,
+  resumable downloads, GGUF parsing and hostile headers, fit planning, the
+  queue, remote retries and no fallback, launch hygiene (key file, cleared
+  environment, loopback), crash restart, giving up, exit outside
+  development, idle unload, sharing, stop and orphan reaping.
+- `rust/crates/sky/tests/ai_cli_flow.rs`: the `sky ai` verbs and a compiled
+  program's slots on the fake engine. `ai_local_live.rs`: a live test that
+  runs a program with no configuration on the real engine and model (chat
+  and an embedding); CI runs it in its own job with the engine and model
+  cached (`ai-local-live`, release `gate-ai-local`).
+- `tests/Std/Ai/ProviderEndpointTest.sky`: options, embeddings, the Local
+  values and the Endpoint resolution a program observes.
+
+### Migration
+
+- **New stdlib names.** `Std.Ai.Provider` now exports `Options`,
+  `defaultOptions` and `embed`. A program that exposes it with `(..)` together
+  with `Std.Watch` (`Options`, `defaultOptions`) or `Std.Html` (`embed`) and
+  uses one of those names bare gets `[E1012]`, which names both modules. Qualify
+  the name (`Html.embed`) or import it by name
+  (`import Std.Html exposing (embed)`). `docs/migration/v0.28.md`.
+
+### Changed
+
+- The stdlib-collision baseline (`[E1012]`'s "new since" note and the E-5
+  test) is now v0.27.8 (`rust/crates/hir/data/stdlib-exports-v0.27.8.tsv`).
+- The `samename-stdlib-type` fixture imports `Std.Ai.Provider` itself: the
+  collision it guards used to arrive only through Provider's internal
+  `Request` alias, which this release removed.
+
 ## v0.27.8 — Every Sky Console control works, and a browser gate proves it (2026-10-07)
 
 ### Fixed
