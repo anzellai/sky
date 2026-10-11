@@ -101,3 +101,11 @@ once, about 450 MB, into the per-user AI home). It stops with the program.
 started. Never `pkill llama-server`: other programs on the machine may share an
 engine. Do not run `sky ai provision` or `sky ai pull` speculatively; they
 download hundreds of megabytes.
+
+`Std.Ai.Eval` scores `Rubric` cases with a judge slot (`"judge"`) whose
+default is the same local pinned model, so a real eval run (outside `sky
+test`) can start an engine too. Under `sky test` in test mode (the project has
+a `.env.test`) no engine starts: give the
+judge a `tests/mocks/` fixture, or pass `Eval.withJudge` a `Provider.custom`.
+An eval is a test: let its `Eval.check` thresholds fail it, and do not loosen
+a threshold to make a run pass.

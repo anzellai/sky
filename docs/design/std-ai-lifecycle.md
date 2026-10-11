@@ -455,21 +455,25 @@ defaultOptions : Options
 chatWith : Options -> Provider -> List Message -> Task Error ChatResponse
 embed : Provider -> List String -> Task Error (List (List Float))
 
--- Std.Ai.Failure
+-- Std.Ai.Failure (as shipped in phase 1 part B)
 type Failure
-    = NotConfigured String                      -- names the variable to set
-    | Unreachable String
-    | Overloaded { retryAfterMs : Maybe Int }
-    | TimedOut Int
-    | EngineCrashed { exitCode : Int, logTail : String }
+    = NotConfigured { setting : String }        -- names the variable to set
+    | InvalidSetting { setting : String, reason : String }
+    | Unreachable { target : String }           -- scheme, host and port only
+    | Overloaded { retryAfterMs : Maybe Int, status : Maybe Int }
+    | TimedOut { afterMs : Maybe Int }
+    | EngineCrashed { exitCode : Maybe Int, logTail : String }
+    | EngineFailed { reason : String }
     | ModelTooLarge { needBytes : Int, availableBytes : Int }
-    | NoAccelerator String
-    | NotProvisioned String                     -- names the provision command
+    | NoAccelerator { wanted : String }
+    | NotProvisioned { what : String, command : String }   -- names the provision command
     | ChecksumMismatch { expected : String, actual : String }
+    | RemoteRejected { status : Int }
     | BudgetExceeded { budget : Money, estimate : Money }
     | ToolchainFailed { tool : String, logTail : String }
+    | GateFailed { suite : String, reasons : String }      -- Std.Ai.Eval
 
-of : Error -> Maybe Failure
+fromError : Error -> Maybe Failure
 toError : Failure -> Error
 ```
 
@@ -477,9 +481,9 @@ toError : Failure -> Error
 `Task Error a` and the "never `String` as an error" rule holds. Each failure
 also maps to an `ErrorKind` that existing handlers already understand:
 `Overloaded`, `Unreachable`, `EngineCrashed` and `NoAccelerator` are
-`Unavailable`. `TimedOut` is `Timeout`. `ModelTooLarge`, `NotConfigured` and
-`BudgetExceeded` are `InvalidInput`. `ChecksumMismatch` is `Conflict`.
-`NotProvisioned` is `NotFound`.
+`Unavailable`. `TimedOut` is `Timeout`. `ModelTooLarge` and `NotConfigured`
+are `InvalidInput`. `ChecksumMismatch` is `Conflict`. `NotProvisioned` is
+`NotFound`. `BudgetExceeded` is `PermissionDenied` (below).
 
 **Decided (2026-10-11): the payload is a generic `Domain` variant.** Open
 question 8 is closed. `Sky.Core.Error.ErrorDetails` gains exactly one new
@@ -497,10 +501,10 @@ it and add no variant of their own.
   String`, `Error.isRetryable : Error -> Bool` and `Error.retryAfter : Error ->
   Maybe Int`.
 - `Std.Ai.Failure` holds the typed AI ADT (`Overloaded { retryAfterMs }`,
-  `TimedOut`, `EngineCrashed { exitCode }`, `ModelTooLarge { needMb, haveMb }`,
-  `NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `BudgetExceeded`,
-  `NotConfigured`, and the rest of the list above), with `fromError : Error ->
-  Maybe Failure` and `toError : Failure -> Error`.
+  `TimedOut`, `EngineCrashed { exitCode }`, `ModelTooLarge { needBytes,
+  availableBytes }`, `NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`,
+  `BudgetExceeded`, `NotConfigured`, and the rest of the list above), with
+  `fromError : Error -> Maybe Failure` and `toError : Failure -> Error`.
 - `toError` always sets an existing `ErrorKind`, so code that matches only on
   `ErrorKind` keeps working. `Overloaded`, `Unreachable`, `EngineCrashed` and
   `NoAccelerator` are `Unavailable`. `TimedOut` is `Timeout`.
@@ -520,6 +524,14 @@ Phasing. Phase 1 part A returns each AI failure as an `Error` with the
 `ErrorKind` above and a clear message, and keeps the classification in one
 internal function. Phase 1 part B adds `Domain`, `DomainFailure`, the helpers
 and `Std.Ai.Failure`, and switches that one function to typed values.
+*(Done in phase 1 part B. The retryable flag decides `Error.isRetryable`:
+`Unreachable`, `Overloaded`, `TimedOut` and a remote 5xx are retryable;
+`EngineCrashed` is `Unavailable` and not retryable, because the supervisor
+restarts a crashed engine and a crash loop must not be retried blindly. The
+runtime's table is `aiFailSpecs` in `runtime-go/rt/ai_failure.go`, and a Go
+test keeps it equal to `Std.Ai.Failure`. User guide:
+[`../ai/local.md`](../ai/local.md#failures);
+[`../errors/error-system.md`](../errors/error-system.md#domain-failures).)*
 
 ### 8.4 `Std.Ai.Dataset`
 
@@ -741,6 +753,14 @@ seed, so the result is reproducible. `gate` fails when:
 - p95 latency or mean cost exceeds its budget, or
 - the judge failed calibration.
 
+*(Phase 1 part B ships the core: suites, every scorer above, the judge as the
+`"judge"` slot with the local pinned model by default, seeded samples, the
+typed `Report`, latency and cost budgets, `compare` with the exact McNemar
+test and the seeded paired bootstrap, `gate` / `check`, `Passed`, `toJunit`,
+`toMarkdown`, and run history in the database. Calibration, pairwise judging
+and journalled judge calls are phase 2. User guide:
+[`../ai/eval.md`](../ai/eval.md).)*
+
 `gate` returns `Passed`, an opaque value only `gate` can construct. It carries
 the candidate's digest and the report's digest. `Registry.promote` requires a
 `Passed` (section 8.7), so the type system enforces "no promotion without a
@@ -892,6 +912,14 @@ The Sky console gains an **AI** panel:
 - training runs: step, loss curve, throughput, checkpoint, spend against budget,
 - eval history per alias: scores over time and each gate verdict,
 - registry: aliases, current version and the promotion log.
+
+*(Phase 1 part B ships the AI tab with the slots (resolved source per
+setting, in-flight and waiting calls, failures, `Overloaded` count, p50 and
+p95 latency), the local engines, the recent calls (filtered by outcome and by
+slot) and the eval runs (each case's verdict and reason). It reads
+`/_sky/console/api/ai` (`runtime-go/rt/ai_console.go`), whose rings hold no
+prompt, no answer and no secret. The GPU tier, training and registry views
+arrive with their phases.)*
 
 ## 9. CLI verbs
 

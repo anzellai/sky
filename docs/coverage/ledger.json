@@ -289,7 +289,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 532,
+      "expected_assertions": 536,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -349,7 +349,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 678,
+      "expected_assertions": 682,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -603,6 +603,18 @@
           "tests/conformance"
         ]
       },
+      "Std.Ai.Eval": {
+        "path": "scripts/console-controls-e2e.sh",
+        "units": [
+          "e2e:scripts/console-controls-e2e.sh"
+        ]
+      },
+      "Std.Ai.Failure": {
+        "path": "rust/crates/sky/tests/ai_cli_flow.rs",
+        "units": [
+          "flow:ai_cli_flow"
+        ]
+      },
       "Std.Ai.Memory.Pg": {
         "path": "rust/crates/sky/tests/ai_memory_pg_flow.rs",
         "units": [
@@ -673,13 +685,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2281,
-    "stdlib_modules": 115,
-    "surfaces_covered": 172,
-    "surfaces_covered_pct": 94.0,
+    "stdlib_entries": 2346,
+    "stdlib_modules": 117,
+    "surfaces_covered": 174,
+    "surfaces_covered_pct": 94.1,
     "surfaces_equal": 16,
-    "surfaces_stronger": 167,
-    "surfaces_total": 183,
+    "surfaces_stronger": 169,
+    "surfaces_total": 185,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -8288,6 +8300,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -8313,6 +8330,50 @@
       },
       "description": "the Std.Ai.Endpoint public API",
       "id": "stdlib.Std.Ai.Endpoint",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Ai.Eval public API",
+      "id": "stdlib.Std.Ai.Eval",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 3
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Ai.Failure public API",
+      "id": "stdlib.Std.Ai.Failure",
       "verdict": "stronger"
     },
     {
@@ -8418,6 +8479,11 @@
       "cover_new": {
         "class": "Falsified",
         "evidence": [
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
           {
             "by": "examples/66-slack-agent (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
@@ -10358,6 +10424,11 @@
             "by": "apps:ledger (gate `apps-ledger`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -15112,7 +15183,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 7.8
+      "pct_of_denominator": 7.7
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -15194,8 +15265,9 @@
           ]
         },
         "Sky.Core.Error": {
-          "count": 3,
+          "count": 4,
           "symbols": [
+            "DomainFailure",
             "ErrorInfo",
             "PanicInfo",
             "TypeInfo"
@@ -15422,6 +15494,59 @@
             "withQueue",
             "withQueueWait",
             "withTimeout"
+          ]
+        },
+        "Std.Ai.Eval": {
+          "count": 40,
+          "symbols": [
+            "Case",
+            "CaseResult",
+            "Comparison",
+            "Judge",
+            "Passed",
+            "Report",
+            "RunSummary",
+            "Score",
+            "ScorerDelta",
+            "ScorerScore",
+            "Thresholds",
+            "alone",
+            "check",
+            "compare",
+            "defaultJudge",
+            "gate",
+            "history",
+            "judge",
+            "judgeSlot",
+            "passedCandidate",
+            "passedDigest",
+            "passedSuite",
+            "run",
+            "setup",
+            "thresholds",
+            "toJunit",
+            "toMarkdown",
+            "withConcurrency",
+            "withCostBudget",
+            "withFloor",
+            "withJudge",
+            "withLatencyBudget",
+            "withMaxRegression",
+            "withMinPassRate",
+            "withOptions",
+            "withPassScore",
+            "withPriceBook",
+            "withSamples",
+            "withSeed",
+            "withTools"
+          ]
+        },
+        "Std.Ai.Failure": {
+          "count": 3,
+          "symbols": [
+            "kind",
+            "retryable",
+            "toError"
           ]
         },
         "Std.Ai.Local": {
@@ -16254,8 +16379,8 @@
           ]
         }
       },
-      "count": 690,
-      "pct_of_denominator": 30.2
+      "count": 734,
+      "pct_of_denominator": 31.3
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -16317,8 +16442,9 @@
           ]
         },
         "Sky.Core.Error": {
-          "count": 5,
+          "count": 6,
           "symbols": [
+            "DomainFailure",
             "ErrorDetails",
             "ErrorInfo",
             "ErrorKind",
@@ -16572,6 +16698,61 @@
             "withQueue",
             "withQueueWait",
             "withTimeout"
+          ]
+        },
+        "Std.Ai.Eval": {
+          "count": 41,
+          "symbols": [
+            "Case",
+            "CaseResult",
+            "Comparison",
+            "Expect",
+            "Judge",
+            "Passed",
+            "Report",
+            "RunSummary",
+            "Score",
+            "ScorerDelta",
+            "ScorerScore",
+            "Thresholds",
+            "alone",
+            "check",
+            "compare",
+            "defaultJudge",
+            "gate",
+            "history",
+            "judge",
+            "judgeSlot",
+            "passedCandidate",
+            "passedDigest",
+            "passedSuite",
+            "run",
+            "setup",
+            "thresholds",
+            "toJunit",
+            "toMarkdown",
+            "withConcurrency",
+            "withCostBudget",
+            "withFloor",
+            "withJudge",
+            "withLatencyBudget",
+            "withMaxRegression",
+            "withMinPassRate",
+            "withOptions",
+            "withPassScore",
+            "withPriceBook",
+            "withSamples",
+            "withSeed",
+            "withTools"
+          ]
+        },
+        "Std.Ai.Failure": {
+          "count": 4,
+          "symbols": [
+            "Failure",
+            "kind",
+            "retryable",
+            "toError"
           ]
         },
         "Std.Ai.Local": {
@@ -17492,8 +17673,8 @@
           ]
         }
       },
-      "count": 782,
-      "pct_of_denominator": 34.3
+      "count": 828,
+      "pct_of_denominator": 35.3
     }
   },
   "units": [
@@ -17632,10 +17813,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/console-controls-e2e.sh",
-      "modules_imported": 7,
+      "modules_imported": 11,
       "path": "scripts/console-controls-e2e.sh",
-      "refs_generous": 26,
-      "refs_qualified": 25,
+      "refs_generous": 41,
+      "refs_qualified": 37,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -18791,10 +18972,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "flow:ai_cli_flow",
-      "modules_imported": 9,
+      "modules_imported": 10,
       "path": "rust/crates/sky/tests/ai_cli_flow.rs",
-      "refs_generous": 31,
-      "refs_qualified": 27,
+      "refs_generous": 38,
+      "refs_qualified": 33,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -19261,8 +19442,8 @@
       "id": "tests/conformance",
       "modules_imported": 55,
       "path": "tests/conformance",
-      "refs_generous": 741,
-      "refs_qualified": 724,
+      "refs_generous": 755,
+      "refs_qualified": 738,
       "role": "Conformance",
       "sky_files": 44,
       "sky_toml_sections": []

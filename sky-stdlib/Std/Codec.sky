@@ -331,13 +331,88 @@ errorDetailsCodec =
                     ( "JsonDecode", [ toValue string s ] )
 
                 Error.Custom s ->
-                    ( "Custom", [ toValue string s ] ))
+                    ( "Custom", [ toValue string s ] )
+
+                Error.Domain f ->
+                    ( "Domain", [ toValue domainFailureCodec f ] ))
         [ var1 "FfiPanic" Error.FfiPanic panicInfoCodec
         , var1 "TypeMismatch" Error.TypeMismatch typeInfoCodec
         , var1 "HttpStatus" Error.HttpStatus int
         , var1 "JsonDecode" Error.JsonDecode string
         , var1 "Custom" Error.Custom string
+        , var1 "Domain" Error.Domain domainFailureCodec
         ]
+
+
+-- | The wire form of a domain failure: one JSON object,
+-- `{"domain", "code", "retryable", "retryAfterMs", "attrs": [[k, v], …]}`.
+-- Decoding is forward-compatible: `domain` and `code` are required, a missing
+-- `retryable` is `false`, a missing or null `retryAfterMs` is no delay, a
+-- missing `attrs` is none, and keys a later release adds are ignored. Any
+-- domain and any code decode, so a failure from a newer peer survives the wire
+-- with its kind, message, code and retry flag.
+domainFailureCodec : Codec Error.DomainFailure
+domainFailureCodec =
+    Codec
+        { enc =
+            \f ->
+                E.object
+                    [ ( "domain", E.string (Error.failureDomain f) )
+                    , ( "code", E.string (Error.failureCode f) )
+                    , ( "retryable", E.bool (Error.failureRetryable f) )
+                    , ( "retryAfterMs"
+                      , case Error.failureRetryAfter f of
+
+                            Just ms ->
+                                E.int ms
+
+                            Nothing ->
+                                E.null
+                      )
+                    , ( "attrs"
+                      , E.list
+                            (\( k, v ) -> E.list E.string [ k, v ])
+                            (Error.failureAttrs f)
+                      )
+                    ]
+        , dec =
+            D.map5
+                buildDomainFailure
+                (D.field "domain" D.string)
+                (D.field "code" D.string)
+                (D.oneOf [ D.field "retryable" D.bool, D.succeed False ])
+                (D.oneOf
+                    [ D.map Just (D.field "retryAfterMs" D.int)
+                    , D.succeed Nothing
+                    ])
+                (D.oneOf
+                    [ D.field
+                          "attrs"
+                          (D.list
+                              (D.map2
+                                  (\k v -> ( k, v ))
+                                  (D.index 0 D.string)
+                                  (D.index 1 D.string)))
+                    , D.succeed []
+                    ])
+        , shp = SBlob
+        }
+
+
+buildDomainFailure : String -> String -> Bool -> Maybe Int -> List ( String, String ) -> Error.DomainFailure
+buildDomainFailure dom code retry after attrs =
+    let
+        base = Error.failure dom code |> Error.withRetryable retry
+        timed =
+            case after of
+
+                Just ms ->
+                    Error.withRetryAfter ms base
+
+                Nothing ->
+                    base
+    in
+        List.foldl (\( k, v ) acc -> Error.withAttr k v acc) timed attrs
 
 
 -- | Adapt a codec to another type via a bijection (`to` on decode, `from` on

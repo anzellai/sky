@@ -461,6 +461,41 @@ tests =
         (\_ -> roundTrip Codec.error (mkErr Decode "json" (Just (JsonDecode "bad path"))))
     , Test.test "error: Custom details round-trip"
         (\_ -> roundTrip Codec.error (mkErr Unexpected "custom" (Just (Custom "extra"))))
+    , Test.test "error: Domain details round-trip (every field)"
+        (\_ ->
+            roundTrip Codec.error
+                (Error.fromDomain Unavailable "busy"
+                    (Error.failure "ai" "Overloaded"
+                        |> Error.withRetryable True
+                        |> Error.withRetryAfter 1500
+                        |> Error.withAttr "status" "429"
+                        |> Error.withAttr "note" "a \"quoted\" value"
+                    )
+                )
+        )
+    , Test.test "error: Domain details with no delay and no attributes round-trip"
+        (\_ -> roundTrip Codec.error (Error.fromDomain Conflict "deadlock" (Error.failure "db" "Deadlock")))
+    , Test.test "error: Domain wire shape is a plain object"
+        (\_ ->
+            Test.equal
+                "[\"Error\",\"Conflict\",{\"message\":\"x\",\"details\":[\"Domain\",{\"domain\":\"db\",\"code\":\"Deadlock\",\"retryable\":true,\"retryAfterMs\":null,\"attrs\":[[\"table\",\"orders\"]]}]}]"
+                (Codec.toJson Codec.error (Error.fromDomain Conflict "x" (Error.failure "db" "Deadlock" |> Error.withRetryable True |> Error.withAttr "table" "orders")))
+        )
+    , Test.test "error: a Domain object without its optional keys decodes with defaults"
+        (\_ ->
+            Test.equal (Ok (Error.fromDomain Conflict "x" (Error.failure "db" "Deadlock")))
+                (Codec.fromJson Codec.error "[\"Error\",\"Conflict\",{\"message\":\"x\",\"details\":[\"Domain\",{\"domain\":\"db\",\"code\":\"Deadlock\"}]}]")
+        )
+    , Test.test "error: a Domain object with keys a later release adds still decodes"
+        (\_ ->
+            Test.equal (Ok (Error.fromDomain Conflict "x" (Error.failure "db" "Deadlock")))
+                (Codec.fromJson Codec.error "[\"Error\",\"Conflict\",{\"message\":\"x\",\"details\":[\"Domain\",{\"domain\":\"db\",\"code\":\"Deadlock\",\"severity\":\"high\"}]}]")
+        )
+    , Test.test "error: a details variant this release does not know decodes as no details"
+        (\_ ->
+            Test.equal (Ok (Error.unavailable "x"))
+                (Codec.fromJson Codec.error "[\"Error\",\"Unavailable\",{\"message\":\"x\",\"details\":[\"Future\",1]}]")
+        )
 
     -- ── Codec.result: Ok / Err over Codec.error round-trip ────────────────
     , Test.test "result: Ok String round-trips"

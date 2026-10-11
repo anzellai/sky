@@ -160,7 +160,7 @@ missed everything older.
 
 | Control | Where | What it does | Msg | Read / parameters |
 |---|---|---|---|---|
-| Tab buttons (Overview, Metrics, Logs, Traces, Errors, Analytics) | every page | shows the tab, reads its data at once, puts `tab=` in the URL | `SelectTab` | the tab's endpoint |
+| Tab buttons (Overview, Metrics, Logs, Traces, Errors, Analytics, AI) | every page | shows the tab, reads its data at once, puts `tab=` in the URL | `SelectTab` | the tab's endpoint |
 | Range chips (15m, 1h, 24h, 7d, All) | Logs, Traces, Errors, Analytics | narrows the tab to the range, reads it again at once, puts `range=` in the URL (24h is the default and is left out) | `SelectRange` | `range=15m\|1h\|24h\|7d\|all` |
 | Search box (global) | Logs, Traces, Errors | case-insensitive search: logs by message, route, request id, session, subapp, error; traces by span name or trace id (whole traces kept); errors by message | `GlobalQuery` | `q=` |
 | Level toggles (DEBUG, INFO, WARN, ERROR) | Logs | shows only the levels left on; debug is off by default; all off shows nothing | `LogFilterToggleLevel` | `level=info,warn,error` (absent when all four are on, `none` when all are off) |
@@ -171,6 +171,9 @@ missed everything older.
 | Traces search box, clear | Traces | searches span names and trace ids; clear empties it | `TraceFilterQuery` | a second `q=` on `/traces` |
 | Service chips, service cards, "All services" | hub: every tab | scopes every read to one service, puts `service=` in the URL | `SelectService` | the reader's service filter |
 | Auto-refresh | every tab | reads the active tab again every 3 s (Logs 1.5 s, Errors 5 s) | `Tick` | the tab's endpoint |
+| Outcome chips (All, Failed) | AI, recent model calls | shows every call, or only the failed ones, and puts `calls=failed` in the URL | `AiShowFailed` | `calls=failed` on `/ai` |
+| Slot chip (`slot <name>`), All slots | AI, slots | shows only that slot's calls (the slots stay listed), puts `slot=` in the URL; All slots clears it | `AiPickSlot` | `slot=` on `/ai` |
+| Eval run row (`eval <suite>`) | AI, eval runs | opens the run's cases (each verdict and reason) and its gate failures, puts `eval=<digest>` in the URL; a second click closes them | `AiOpenEval` | none (the run is already read) |
 | Sign out | header, token mode only | ends the console session (`/_sky/console/_logout`) and shows the sign-in form | link | |
 
 A failed read shows a red "Telemetry read failed: …" bar under the header; the
@@ -178,9 +181,9 @@ next good answer from the same read clears it. Every list has an empty state
 ("No log entries match the current filter.", "No traces match the filter.",
 "No errors recorded — nice work.", "No events captured yet.").
 
-Overview and Metrics are process snapshots, so they show no range chips; the
-Analytics tab has no text search. The URL carries `tab`, `range`, `q` and
-`service`: a console link opens on the state it names, through the sign-in form
+Overview, Metrics and AI are process snapshots, so they show no range chips; the
+Analytics and AI tabs have no text search. The URL carries `tab`, `range`, `q`,
+`service`, and on the AI tab `calls`, `slot` and `eval`: a console link opens on the state it names, through the sign-in form
 when there is one (the form returns to the link). "Sign out" shows only under
 `SKY_CONSOLE_AUTH=token`: in dev mode there is no sign-in, and under `app` the
 app's own sign-in admits the user again, so they sign out of the app.
@@ -190,6 +193,14 @@ tasks and the spans they open (its loopback reads included) are not written to
 the telemetry it shows. Before v0.27.8 an open console tab added about one
 `msg_dispatch GotLogs` line a second to the host app's 10k-line log ring, and
 its own spans and `sky_live_msg_*` series to the Traces and Metrics tabs.
+
+The **AI** tab (v0.28.0) reads `/_sky/console/api/ai`: the `Std.Ai` slots the
+process resolved (each setting with its source, `env`, `code` or `default`;
+a key shows as `(secret)` and a URL as scheme, host and port), its local
+engines, its last 200 model calls (slot, kind, outcome, latency, token counts)
+and its last 50 `Std.Ai.Eval` runs. The rings hold no prompt, no answer and
+no secret. The hub has no AI data, so its AI tab is empty. Guide:
+[`ai/local.md`](ai/local.md#in-the-sky-console).
 
 `scripts/console-controls-e2e.sh` operates every control above in Chromium and
 WebKit, against the embedded console in production shape (token sign-in,

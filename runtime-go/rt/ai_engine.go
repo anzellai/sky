@@ -113,28 +113,29 @@ type aiEngine struct {
 	slot string
 	spec aiLocalSpec
 
-	mu       sync.Mutex
-	state    string        // "stopped", "starting", "ready", "down"
-	starting chan struct{} // closed when the current start attempt ends
-	startErr error
-	proc     *procHandle
-	pid      int
-	port     int
-	apiKey   string
-	keyFile  string
-	bin      aiEngineBinary
-	fit      aiFit
-	lastUse  time.Time
-	inflight int
-	stopping bool
-	crashes  []time.Time
-	restarts int
-	gaveUp   bool
-	lastExit string // the last crash, for status and errors
-	attached bool   // using an engine another process holds (engines.json)
-	regID    string
-	idleOn   bool
-	retired  bool // forgotten by aiResetEngines: background loops end
+	mu           sync.Mutex
+	state        string        // "stopped", "starting", "ready", "down"
+	starting     chan struct{} // closed when the current start attempt ends
+	startErr     error
+	proc         *procHandle
+	pid          int
+	port         int
+	apiKey       string
+	keyFile      string
+	bin          aiEngineBinary
+	fit          aiFit
+	lastUse      time.Time
+	inflight     int
+	stopping     bool
+	crashes      []time.Time
+	restarts     int
+	gaveUp       bool
+	lastExit     string // the last crash, for status and errors
+	lastExitCode int    // its exit code (-1 when a signal ended it)
+	attached     bool   // using an engine another process holds (engines.json)
+	regID        string
+	idleOn       bool
+	retired      bool // forgotten by aiResetEngines: background loops end
 }
 
 var (
@@ -184,7 +185,7 @@ func aiEngineByID(id int64) (*aiEngine, error) {
 	if e, ok := aiEngineIDs[id]; ok {
 		return e, nil
 	}
-	return nil, aiFailf(aiInvalidSetting, "no local engine %d in this program", id)
+	return nil, aiFailf(aiInvalidSetting, "no local engine %d in this program", id).with("setting", "engine")
 }
 
 // ensure makes the engine ready, starting it when it is not. Concurrent
@@ -215,9 +216,14 @@ func (e *aiEngine) ensure(ctx context.Context) error {
 			}
 		case "down":
 			if e.gaveUp {
-				msg := e.lastExit
+				msg, exitCode, crashes := e.lastExit, e.lastExitCode, len(e.crashes)
 				e.mu.Unlock()
-				return aiFailf(aiEngineCrashed, "the local engine crashed %d times within %s and stays down: %s", len(e.crashes), aiK().crashWindow, msg)
+				f := aiFailf(aiEngineCrashed, "the local engine crashed %d times within %s and stays down: %s", crashes, aiK().crashWindow, msg).
+					with("logTail", msg)
+				if exitCode >= 0 {
+					f.withInt("exitCode", exitCode)
+				}
+				return f
 			}
 		}
 		// stopped, or down with a restart allowed: start it.
@@ -357,11 +363,11 @@ func (e *aiEngine) start(ctx context.Context) error {
 func aiFitFor(modelPath string, spec aiLocalSpec, variant string) (aiFit, error) {
 	meta, err := readGGUFMeta(modelPath)
 	if err != nil {
-		return aiFit{}, aiFailf(aiInvalidSetting, "model %s: %v", modelPath, err)
+		return aiFit{}, aiFailf(aiInvalidSetting, "model %s: %v", modelPath, err).with("setting", "model")
 	}
 	st, err := os.Stat(modelPath)
 	if err != nil {
-		return aiFit{}, aiFailf(aiNotProvisioned, "model %s: %v", modelPath, err)
+		return aiFit{}, aiFailf(aiNotProvisioned, "model %s: %v", modelPath, err).with("what", modelPath).with("command", "sky ai provision")
 	}
 	accel, err := aiAccelerator(variant)
 	if err != nil {
@@ -409,14 +415,16 @@ func aiWaitHealthy(ctx context.Context, h *procHandle, port int, key string) err
 		select {
 		case <-h.exited:
 			code, _ := h.exitInfo()
-			return aiFailf(aiEngineCrashed, "llama-server exited with code %d while loading the model: %s", code, h.logTail(1500))
+			return aiFailf(aiEngineCrashed, "llama-server exited with code %d while loading the model: %s", code, h.logTail(1500)).
+				withInt("exitCode", code).with("logTail", h.logTail(1500))
 		default:
 		}
 		if aiHealthy(port, key) {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return aiFailf(aiTimedOut, "llama-server did not report healthy within %s: %s", k.healthTimeout, h.logTail(1500))
+			return aiFailf(aiTimedOut, "llama-server did not report healthy within %s: %s", k.healthTimeout, h.logTail(1500)).
+				withInt("afterMs", int(k.healthTimeout/time.Millisecond))
 		}
 		select {
 		case <-ctx.Done():
@@ -487,6 +495,10 @@ func (e *aiEngine) supervise(h *procHandle) {
 	e.mu.Lock()
 	now := time.Now()
 	e.lastExit = msg
+	e.lastExitCode = code
+	if sig != 0 {
+		e.lastExitCode = -1 // killed by a signal: no exit code
+	}
 	e.state = "down"
 	recent := e.crashes[:0]
 	for _, t := range e.crashes {
@@ -635,7 +647,9 @@ func (e *aiEngine) post(ctx context.Context, timeout time.Duration, path, body s
 			case resp.StatusCode >= 200 && resp.StatusCode < 300:
 				return string(data), nil
 			case resp.StatusCode == 503 || resp.StatusCode == 429:
-				return "", aiFailf(aiOverloaded, "the local engine is busy (HTTP %d): %s", resp.StatusCode, aiTail(string(data), 300))
+				f := aiFailf(aiOverloaded, "the local engine is busy (HTTP %d): %s", resp.StatusCode, aiTail(string(data), 300))
+				f.httpStatus = resp.StatusCode
+				return "", f
 			default:
 				f := aiFailf(aiRemoteRejected, "the local engine answered HTTP %d: %s", resp.StatusCode, aiTail(string(data), 500))
 				f.httpStatus = resp.StatusCode
@@ -645,7 +659,8 @@ func (e *aiEngine) post(ctx context.Context, timeout time.Duration, path, body s
 		err = rerr
 	}
 	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-		return "", aiFailf(aiTimedOut, "the local engine gave no answer within %s", timeout)
+		return "", aiFailf(aiTimedOut, "the local engine gave no answer within %s", timeout).
+			withInt("afterMs", int(timeout/time.Millisecond))
 	}
 	// The child may have died under the call: wait briefly for the reaper.
 	if h != nil {
@@ -656,7 +671,8 @@ func (e *aiEngine) post(ctx context.Context, timeout time.Duration, path, body s
 		select {
 		case <-h.exited:
 			code, _ := h.exitInfo()
-			return "", aiFailf(aiEngineCrashed, "llama-server exited with code %d during the call: %s", code, h.logTail(1500))
+			return "", aiFailf(aiEngineCrashed, "llama-server exited with code %d during the call: %s", code, h.logTail(1500)).
+				withInt("exitCode", code).with("logTail", h.logTail(1500))
 		default:
 		}
 	}
@@ -668,7 +684,8 @@ func (e *aiEngine) post(ctx context.Context, timeout time.Duration, path, body s
 		e.state = "stopped"
 	}
 	e.mu.Unlock()
-	return "", aiFailf(aiUnreachable, "the local engine on 127.0.0.1:%d: %v", port, aiStripURL(err))
+	return "", aiFailf(aiUnreachable, "the local engine on 127.0.0.1:%d: %v", port, aiStripURL(err)).
+		with("target", fmt.Sprintf("http://127.0.0.1:%d", port))
 }
 
 // status is the Sky `Status` record.

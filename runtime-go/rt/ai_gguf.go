@@ -290,7 +290,7 @@ func aiPlanFit(m ggufMeta, weights int64, ctx int, gpu, accel string, avail int6
 	}
 	if m.contextLength > 0 && ctx > m.contextLength {
 		if explicit {
-			return fit, aiFailf(aiInvalidSetting, "context %d exceeds the model's trained context %d", ctx, m.contextLength)
+			return fit, aiFailf(aiInvalidSetting, "context %d exceeds the model's trained context %d", ctx, m.contextLength).with("setting", "context")
 		}
 		ctx = m.contextLength
 	}
@@ -305,16 +305,16 @@ func aiPlanFit(m ggufMeta, weights int64, ctx int, gpu, accel string, avail int6
 		fit.gpuLayers = 0
 	case "all":
 		if accel == "cpu" {
-			return fit, aiFailf(aiNoAccelerator, "GPU layers were asked for (all), and this engine has no accelerator (it is a CPU build); use the CPU or provision a GPU build")
+			return fit, aiFailf(aiNoAccelerator, "GPU layers were asked for (all), and this engine has no accelerator (it is a CPU build); use the CPU or provision a GPU build").with("wanted", "all")
 		}
 		fit.gpuLayers = m.blockCount + 1
 	default:
 		n, err := strconv.Atoi(gpu)
 		if err != nil || n < 0 {
-			return fit, aiFailf(aiInvalidSetting, "GPU setting %q: use auto, cpu, all or a layer count", gpu)
+			return fit, aiFailf(aiInvalidSetting, "GPU setting %q: use auto, cpu, all or a layer count", gpu).with("setting", "gpu")
 		}
 		if n > 0 && accel == "cpu" {
-			return fit, aiFailf(aiNoAccelerator, "%d GPU layers were asked for, and this engine has no accelerator (it is a CPU build)", n)
+			return fit, aiFailf(aiNoAccelerator, "%d GPU layers were asked for, and this engine has no accelerator (it is a CPU build)", n).with("wanted", strconv.Itoa(n))
 		}
 		fit.gpuLayers = n
 	}
@@ -325,7 +325,8 @@ func aiPlanFit(m ggufMeta, weights int64, ctx int, gpu, accel string, avail int6
 			return fit, aiFailf(aiModelTooLarge,
 				"the model needs %s (weights %s, KV cache %s for %d tokens, overhead %s) and %s is available; use a smaller model or quantisation, or a smaller context",
 				memUnit(uint64(need(ctx))), memUnit(uint64(weights)), memUnit(uint64(perTok*int64(ctx))), ctx,
-				memUnit(uint64(aiComputeOverhead+weights/20)), memUnit(uint64(avail)))
+				memUnit(uint64(aiComputeOverhead+weights/20)), memUnit(uint64(avail))).
+				withInt("needBytes", int(need(ctx))).withInt("availableBytes", int(avail))
 		}
 		ctx /= 2
 	}
@@ -352,7 +353,7 @@ func aiAccelerator(variant string) (string, error) {
 	case "cpu", "metal", "cuda", "rocm", "vulkan":
 		return v, nil
 	default:
-		return "", aiFailf(aiInvalidSetting, "%s=%q: use cpu, metal, cuda, rocm or vulkan", skyEnvName("AI_ACCEL"), v)
+		return "", aiFailf(aiInvalidSetting, "%s=%q: use cpu, metal, cuda, rocm or vulkan", skyEnvName("AI_ACCEL"), v).with("setting", skyEnvName("AI_ACCEL"))
 	}
 	switch variant {
 	case "metal", "cpu":

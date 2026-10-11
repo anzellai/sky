@@ -11,12 +11,74 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.28.0 — Model slots and a managed local model engine (Std.Ai.Endpoint, Std.Ai.Local) (unreleased)
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures and evals (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval) (unreleased)
 
-Phase 1 part A of the Std.Ai lifecycle design (`docs/design/std-ai-lifecycle.md`).
-The user guide is `docs/ai/local.md`.
+Phase 1 of the Std.Ai lifecycle design (`docs/design/std-ai-lifecycle.md`).
+The user guides are `docs/ai/local.md` and `docs/ai/eval.md`.
 
 ### Added
+
+- **One open variant for every domain's failures: `Sky.Core.Error.Domain
+  DomainFailure`.** `ErrorDetails` gains its last variant. A `DomainFailure`
+  is opaque and holds a domain (`"ai"`, later `"db"`, `"durable"`, or an
+  app's `"myapp.billing"`), a stable code, a retryable flag, an optional retry
+  delay and string attributes, and it always comes with an existing
+  `ErrorKind`. Builders `Error.failure`, `withRetryable`, `withRetryAfter`,
+  `withAttr`, `fromDomain`; readers `failureOf`, `failureDomain`,
+  `failureCode`, `failureRetryable`, `failureRetryAfter`, `failureAttr`,
+  `failureAttrs`; generic helpers `Error.domain`, `Error.retryAfter`, and
+  `Error.isRetryable`, where the domain's flag now wins over the kind. A new
+  domain or a new code needs no change to the core type.
+  `Codec.error` carries it across the Sky.Spa wire as one object and decodes
+  forward-compatibly (any domain and code; missing optional keys default;
+  unknown keys are ignored). A structured log line with an `Error` attribute
+  logs it as `<Kind>: <message>` and adds `error.domain`, `error.code`,
+  `error.retryable`, `error.retryAfterMs` and `error.attr.<name>`. `[E3001]`
+  on an `ErrorDetails` match that misses `Domain` names the helpers and the
+  `_ ->` fix. (`sky-stdlib/Sky/Core/Error.sky`, `Std/Codec.sky`;
+  `runtime-go/rt/error_domain.go`, `rt.go` `logEmit`;
+  `rust/crates/ty/src/exhaustive.rs`; `docs/errors/error-system.md#domain-failures`.)
+- **`Std.Ai.Failure`: every AI failure, typed.** `fromError`, `toError`,
+  `code`, `kind`, `retryable` over `NotConfigured`, `InvalidSetting`,
+  `Unreachable`, `Overloaded { retryAfterMs, status }`, `TimedOut`,
+  `EngineCrashed { exitCode, logTail }`, `EngineFailed`, `ModelTooLarge
+  { needBytes, availableBytes }`, `NoAccelerator`, `NotProvisioned { what,
+  command }`, `ChecksumMismatch`, `RemoteRejected { status }`,
+  `BudgetExceeded` (in `Std.Money`), `ToolchainFailed` and `GateFailed`. The
+  runtime's one classifier now returns the typed `Domain` value (every message
+  and kind unchanged), and every failure site records its attributes; a URL
+  is reduced to scheme, host and port. The kind and retryable table is
+  `aiFailSpecs` (`runtime-go/rt/ai_failure.go`), checked against the Sky
+  module by a Go test. (`sky-stdlib/Std/Ai/Failure.sky`.)
+- **`Std.Ai.Eval`: evaluate a model with Sky values.** `suite` of `Case`s
+  with `Exact`, `Contains`, `Matches` (RE2), `JsonShape` (a codec's shape),
+  `CallsTool`, `Refuses`, `Rubric` (scored by a judge), `Custom` and `AllOf`;
+  `withSamples`, `withConcurrency`, `withSeed`, `withOptions`, `withJudge`,
+  `withLatencyBudget`, `withCostBudget`, `withPriceBook`, `withTools`. The
+  judge is the model slot `"judge"`: the local pinned development model by
+  default, switched by the slot's variables like any other slot. A run is
+  repeatable (temperature 0, seed `seed + sample`), a failed call is a case
+  error rather than a failed run, and `run` / `runAs` return a typed `Report`
+  (per-case results, scorer means, pass rate, p95 latency, mean cost, a digest
+  of the outputs), store it in the database (`history`) and show it in the
+  console. `compare` pairs a baseline and a candidate (regressions,
+  improvements, the exact McNemar p-value, a seeded paired bootstrap interval
+  per scorer). `check` / `gate` apply `thresholds` (`withMinPassRate`,
+  `withFloor`, `withMaxRegression`, and the suite's budgets) and return an
+  opaque `Passed` or the typed `GateFailed`. `toJunit`, `toMarkdown`. Under
+  `sky test` in test mode (`.env.test`) the judge, like every slot, is
+  answered by `tests/mocks/`.
+  (`sky-stdlib/Std/Ai/Eval.sky`, kernel `Ai_recordEval`.)
+- **The Sky Console's AI tab.** The `Std.Ai` slots this process resolved
+  (each setting's source, never a key, a URL as scheme, host and port;
+  in-flight and waiting calls, failures, `Overloaded` count, p50 and p95),
+  its local engines, its recent model calls with an outcome filter (`Failed`)
+  and a slot filter, and its eval runs, which open to each case's verdict and
+  reason. Every control is in the console URL (`tab=ai`, `calls=failed`,
+  `slot=`, `eval=`). It reads `/_sky/console/api/ai`, whose bounded rings
+  hold no prompt, no answer and no secret. (`runtime-go/rt/ai_console.go`,
+  `sky-bundled/console/src/AiTab.sky`, `runtime-go/rt/console_app/main.go`
+  regenerated; `docs/observability.md`.)
 
 - **`Std.Ai.Endpoint`: a named model slot configured in code, overridden per
   environment.** `Endpoint.endpoint "chat"` with `withMode`, `withUrl`,
@@ -84,9 +146,42 @@ The user guide is `docs/ai/local.md`.
   cached (`ai-local-live`, release `gate-ai-local`).
 - `tests/Std/Ai/ProviderEndpointTest.sky`: options, embeddings, the Local
   values and the Endpoint resolution a program observes.
+- Domain failures and `Std.Ai.Failure`: `runtime-go/rt/error_domain_test.go`
+  (the runtime's tags follow `Error.sky`, `ErrDomain` / `DomainOf` round
+  trip, every AI code's kind, flag and attributes, the Go and Sky tables
+  agree, no URL secret in an attribute, `SkyShow`, log fields);
+  `tests/Std/Ai/FailureTest.sky` (`fromError (toError f) == Just f` for every
+  failure, kinds, retry flags and delays, other domains and unknown codes);
+  `tests/conformance/tests/SkyCoreErrorCoverageTest.sky` and
+  `CodecConformanceTest.sky` (the helpers, the wire shape, forward-compatible
+  decoding); `rust/crates/ty/tests/error_details_domain_hint.rs` (the
+  `[E3001]` hint); `ai_cli_flow.rs` (a compiled program reads a remote 429 as
+  `Overloaded` with its delay and status, and `NotConfigured` with its
+  setting); the corpus surfaces `aifailure`, `aieval` and the error battery's
+  domain rows.
+- `Std.Ai.Eval`: `tests/Std/Ai/EvalTest.sky` (every scorer, the judge and a
+  judge reply without a score, seeded samples, digests, tools, gates and their
+  typed failure, cost, McNemar, regressions, JUnit, Markdown, the judge mocked
+  history); `rust/crates/sky/tests/ai_eval_test_mode_flow.rs` (in test mode
+  the default judge is a `tests/mocks/` fixture, and no engine starts).
+- The console's AI tab: `runtime-go/rt/ai_console_test.go` (the API's slots,
+  calls, filters and eval runs, no secret, bounded rings) and the embedded
+  scenario of `scripts/console-controls-e2e.sh`, which drives the fixture's
+  slots against a fake model and operates the tab, the outcome and slot
+  filters, an eval run's cases and a reload in Chromium and WebKit.
 
 ### Migration
 
+- **A new `ErrorDetails` variant (loud).** A `case` over `ErrorDetails` with
+  one arm per variant and no `_ ->` is `[E3001]`. Add `_ ->`, or use
+  `Error.domain` / `Error.isRetryable` / `Error.retryAfter` or a domain's
+  typed view. `docs/migration/v0.28.md#a-new-errordetails-variant`.
+- **`Error.isRetryable` follows a domain failure's flag (silent).** A crashed
+  or failed AI engine, a missing accelerator and a failed toolchain are
+  `Unavailable` and no longer retryable. Errors without a domain failure keep
+  the kind rule.
+- **An older peer reads a domain failure as no details (silent).** Its kind
+  and message survive.
 - **New stdlib names.** `Std.Ai.Provider` now exports `Options`,
   `defaultOptions` and `embed`. A program that exposes it with `(..)` together
   with `Std.Watch` (`Options`, `defaultOptions`) or `Std.Html` (`embed`) and

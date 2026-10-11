@@ -66,6 +66,19 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     "value withPort",
     "value withTimeout",
     "value withUrl",
+    // v0.28.0: Std.Ai.Eval and Std.Ai.Failure, named by the design
+    // (docs/design/std-ai-lifecycle.md §8.3, §8.6). `Expect.Custom` meets
+    // `Error.Custom` (and three older unions) and `Eval.compare` meets
+    // `Basics.compare` under `exposing (..)`: the guides import Std.Ai.Eval
+    // `as Eval exposing (Expect(..))` and read the rest qualified.
+    "ctor Custom",
+    "type Suite",
+    "value code",
+    "value compare",
+    "value gate",
+    "value run",
+    "value setup",
+    "value suite",
 ];
 
 fn repo_root() -> PathBuf {

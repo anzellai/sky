@@ -16,6 +16,7 @@ import MetricsTab exposing (viewMetricsTab)
 import TracesTab exposing (viewTracesTab)
 import ErrorsTab exposing (viewErrorsTab)
 import AnalyticsTab exposing (analyticsView)
+import AiTab exposing (aiView)
 
 
 -- ─── Palette ─────────────────────────────────────────────────────
@@ -217,7 +218,7 @@ tabStrip active =
         ]
         (List.map
             (tabButton active)
-            [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab, AnalyticsTab ])
+            [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab, AnalyticsTab, AiTab ])
 
 
 -- ─── Global filter strip (v0.16.18 #558-PR1 + PR2) ──────────────
@@ -467,9 +468,28 @@ encodeFilters model =
 
             else
                 "service=" ++ Encoding.urlEncode model.selectedService
+        -- The AI panel's controls (calls filter, slot, open eval run).
+        callsPart =
+            if model.aiFilter.failedOnly then
+                "calls=failed"
+
+            else
+                ""
+        slotPart =
+            if model.aiFilter.slot == "" then
+                ""
+
+            else
+                "slot=" ++ Encoding.urlEncode model.aiFilter.slot
+        evalPart =
+            if model.aiFilter.openEval == "" then
+                ""
+
+            else
+                "eval=" ++ Encoding.urlEncode model.aiFilter.openEval
     in
         joinQueryParts
-            (List.filter (\p -> p /= "") [tabPart, rangePart, qPart, svcPart])
+            (List.filter (\p -> p /= "") [tabPart, rangePart, qPart, svcPart, callsPart, slotPart, evalPart])
 
 
 joinQueryParts : List String -> String
@@ -586,7 +606,12 @@ content model =
             -- both modes — the data is the app's own event store, read
             -- via the parent's /_sky/console/api/analytics endpoint.
             AnalyticsTab ->
-                analyticsView model.analytics)
+                analyticsView model.analytics
+
+            -- Std.Ai: slots, engines, recent calls and eval runs of the
+            -- host process (runtime-go/rt/ai_console.go).
+            AiTab ->
+                aiView model.aiFilter model.ai)
 
 
 -- ─── Overview tab ────────────────────────────────────────────────

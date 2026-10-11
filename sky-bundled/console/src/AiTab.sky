@@ -1,0 +1,470 @@
+module AiTab exposing (aiView)
+
+-- The AI tab (v0.28.0): the Std.Ai slots, local engines, recent model calls
+-- and eval runs of the host process. Data comes from the parent's
+-- /_sky/console/api/ai endpoint (runtime-go/rt/ai_console.go), which holds no
+-- prompt, no answer and no secret.
+--
+-- Controls (each part of the console URL):
+--   * a slot's name filters the recent calls to that slot (`slot=`), and
+--     "All slots" clears it;
+--   * "All" / "Failed" chips filter the recent calls by outcome
+--     (`calls=failed`);
+--   * an eval run's row opens its cases (`eval=<id>`), and a second click
+--     closes them.
+--
+-- Palette mirrors ErrorsTab.sky so the tab is visually consistent with the
+-- rest of the console.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Ui as Ui
+import Std.Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import State exposing (..)
+
+
+bgRaised : Ui.Color
+bgRaised =
+    Ui.rgb 20 23 28
+
+
+bgCode : Ui.Color
+bgCode =
+    Ui.rgb 44 50 60
+
+
+border_ : Ui.Color
+border_ =
+    Ui.rgb 53 59 70
+
+
+borderSoft : Ui.Color
+borderSoft =
+    Ui.rgb 42 47 56
+
+
+textPrimary : Ui.Color
+textPrimary =
+    Ui.rgb 240 243 247
+
+
+textSecondary : Ui.Color
+textSecondary =
+    Ui.rgb 197 203 212
+
+
+textMuted : Ui.Color
+textMuted =
+    Ui.rgb 141 150 163
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 126 182 255
+
+
+ok : Ui.Color
+ok =
+    Ui.rgb 120 220 150
+
+
+err : Ui.Color
+err =
+    Ui.rgb 255 117 117
+
+
+-- ─── Entry point ────────────────────────────────────────────────
+aiView : AiFilter -> AiData -> List (Element Msg)
+aiView filter data =
+    [ slotsPanel filter data.slots
+    , enginesPanel data.engines
+    , callsPanel filter data.calls
+    , evalsPanel filter data.evals
+    ]
+
+
+-- ─── Slots ──────────────────────────────────────────────────────
+slotsPanel : AiFilter -> List AiSlot -> Element Msg
+slotsPanel filter slots =
+    panel
+        "Model slots"
+        (if List.isEmpty slots then
+            [ emptyState "No Std.Ai slot has been used by this process yet." ]
+
+        else
+            List.map (slotRow filter) slots)
+
+
+slotRow : AiFilter -> AiSlot -> Element Msg
+slotRow filter s =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 8
+        , Ui.spacing 4
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        , Ui.htmlAttribute "data-ai-slot" s.slot
+        ]
+        [ Ui.row
+              [ Ui.spacing 12, Ui.width Ui.fill ]
+              [ chip
+                    (filter.slot == s.slot)
+                    ("slot " ++ s.slot)
+                    (AiPickSlot s.slot)
+              , muted s.mode
+              , mono s.target
+              , Ui.el [ Ui.width Ui.fill ] (Ui.text "")
+              , muted
+                    (String.fromInt s.inFlight ++ "/"
+                        ++ String.fromInt s.maxInFlight
+                        ++ " in flight · "
+                        ++ String.fromInt s.waiting
+                        ++ "/"
+                        ++ String.fromInt s.queue
+                        ++ " waiting")
+              ]
+        , muted
+              (String.fromInt s.calls ++ " calls · " ++ String.fromInt s.failures
+                  ++ " failed · "
+                  ++ String.fromInt s.overloaded
+                  ++ " overloaded · p50 "
+                  ++ String.fromInt s.p50Ms
+                  ++ " ms · p95 "
+                  ++ String.fromInt s.p95Ms
+                  ++ " ms")
+        , Ui.paragraph
+              [ Font.size 12, Font.color textMuted ]
+              [ Ui.text (String.join " · " (List.map settingText s.settings)) ]
+        ]
+
+
+settingText : AiSetting -> String
+settingText st =
+    st.key ++ "=" ++ st.value ++ " (" ++ st.source ++ ")"
+
+
+-- ─── Engines ────────────────────────────────────────────────────
+enginesPanel : List AiEngine -> Element Msg
+enginesPanel engines =
+    panel
+        "Local engines"
+        (if List.isEmpty engines then
+            [ emptyState "No local engine is running in this process." ]
+
+        else
+            List.map engineRow engines)
+
+
+engineRow : AiEngine -> Element Msg
+engineRow e =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 4
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        ]
+        [ Ui.row
+              [ Ui.spacing 12 ]
+              [ Ui.el [ Font.bold, Font.size 13 ] (Ui.text e.slot)
+              , Ui.el
+                    [ Font.size 12
+                    , Font.color
+                          (if e.state == "ready" then
+                              ok
+
+                          else
+                              textSecondary)
+                    ]
+                    (Ui.text e.state)
+              , mono e.model
+              ]
+        , muted
+              (e.accelerator ++ " · context " ++ String.fromInt e.contextTokens
+                  ++ " · GPU layers "
+                  ++ String.fromInt e.gpuLayers
+                  ++ " · restarts "
+                  ++ String.fromInt e.restarts
+                  ++ " · idle "
+                  ++ String.fromInt e.idleSeconds
+                  ++ " s")
+        , if e.lastCrash == "" then
+              Ui.none
+
+          else
+              Ui.paragraph
+                  [ Font.size 12, Font.color err ]
+                  [ Ui.text ("last crash: " ++ e.lastCrash) ]
+        ]
+
+
+-- ─── Recent calls ───────────────────────────────────────────────
+callsPanel : AiFilter -> List AiCall -> Element Msg
+callsPanel filter calls =
+    panel
+        "Recent model calls"
+        (Ui.row
+            [ Ui.spacing 8 ]
+            [ chip (not filter.failedOnly) "All" (AiShowFailed False)
+            , chip filter.failedOnly "Failed" (AiShowFailed True)
+            , if filter.slot == "" then
+                  Ui.none
+
+              else
+                  chip False "All slots" (AiPickSlot "")
+            ]
+            :: (if List.isEmpty calls then
+                   [ emptyState "No model call matches." ]
+
+               else
+                   List.map callRow calls))
+
+
+callRow : AiCall -> Element Msg
+callRow c =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 5
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        , Ui.htmlAttribute "data-ai-call" c.outcome
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 90), Font.size 12, Font.color textMuted ]
+              (Ui.text (clock c.ts))
+        , Ui.el [ Ui.width (Ui.px 80), Font.size 13 ] (Ui.text c.slot)
+        , Ui.el
+              [ Ui.width (Ui.px 50), Font.size 12, Font.color textMuted ]
+              (Ui.text c.kind)
+        , Ui.el
+              [ Ui.width (Ui.px 130)
+              , Font.size 12
+              , Font.bold
+              , Font.color
+                    (if c.outcome == "ok" then
+                        ok
+
+                    else
+                        err)
+              ]
+              (Ui.text c.outcome)
+        , Ui.el
+              [ Ui.width (Ui.px 80), Font.size 12 ]
+              (Ui.text (String.fromInt c.latencyMs ++ " ms"))
+        , Ui.el
+              [ Ui.width (Ui.px 110), Font.size 12, Font.color textMuted ]
+              (Ui.text
+                  (String.fromInt c.promptTokens ++ " in · "
+                      ++ String.fromInt c.completionTokens
+                      ++ " out"))
+        , mono c.model
+        ]
+
+
+-- ─── Eval runs ──────────────────────────────────────────────────
+evalsPanel : AiFilter -> List AiEval -> Element Msg
+evalsPanel filter evals =
+    panel
+        "Eval runs"
+        (if List.isEmpty evals then
+            [ emptyState "No Std.Ai.Eval run in this process yet." ]
+
+        else
+            List.map (evalRow filter) evals)
+
+
+evalRow : AiFilter -> AiEval -> Element Msg
+evalRow filter e =
+    let
+        open = filter.openEval == e.id
+    in
+        Ui.column
+            [ Ui.width Ui.fill
+            , Ui.paddingXY 0 6
+            , Ui.spacing 4
+            , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+            , Border.color borderSoft
+            , Ui.htmlAttribute "data-ai-eval" e.id
+            ]
+            (Ui.row
+                [ Ui.spacing 12
+                , Ui.width Ui.fill
+                , Ui.pointer
+                , Ui.onClick (AiOpenEval e.id)
+                ]
+                [ Ui.el
+                      [ Font.bold, Font.size 13 ]
+                      (Ui.text ("eval " ++ e.suite))
+                , muted e.model
+                , Ui.el
+                      [ Font.size 12 ]
+                      (Ui.text (percent e.passRate ++ " passed"))
+                , muted
+                      (String.fromInt e.passed ++ " passed · "
+                          ++ String.fromInt e.failed
+                          ++ " failed · "
+                          ++ String.fromInt e.errors
+                          ++ " errors · p95 "
+                          ++ String.fromInt e.p95LatencyMs
+                          ++ " ms")
+                , Ui.el [ Ui.width Ui.fill ] (Ui.text "")
+                , Ui.el
+                      [ Font.size 12
+                      , Font.bold
+                      , Font.color
+                            (if e.verdict == "passed" then
+                                ok
+
+                            else
+                                err)
+                      ]
+                      (Ui.text ("gate " ++ e.verdict))
+                , muted
+                      (if open then
+                          "hide cases"
+
+                      else
+                          "show cases")
+                ]
+                :: (if open then
+                       List.map failureLine e.failures
+                           ++ List.map caseRow e.caseResults
+
+                   else
+                       []))
+
+
+failureLine : String -> Element Msg
+failureLine f =
+    Ui.paragraph [ Font.size 12, Font.color err ] [ Ui.text ("gate: " ++ f) ]
+
+
+caseRow : AiEvalCase -> Element Msg
+caseRow c =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.paddingXY 12 2
+        , Ui.htmlAttribute "data-ai-case" c.id
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 60)
+              , Font.size 12
+              , Font.bold
+              , Font.color
+                    (if c.passed then
+                        ok
+
+                    else
+                        err)
+              ]
+              (Ui.text
+                  (if c.passed then
+                      "pass"
+
+                  else
+                      "fail"))
+        , Ui.el
+              [ Ui.width (Ui.px 140), Font.size 12 ]
+              (Ui.text ("case " ++ c.id))
+        , Ui.el
+              [ Ui.width (Ui.px 70), Font.size 12, Font.color textMuted ]
+              (Ui.text (String.fromInt c.latencyMs ++ " ms"))
+        , Ui.paragraph
+              [ Font.size 12, Font.color textSecondary ]
+              [ Ui.text c.reason ]
+        ]
+
+
+-- ─── Primitives ─────────────────────────────────────────────────
+panel : String -> List (Element Msg) -> Element Msg
+panel title children =
+    Ui.column
+        [ Background.color bgRaised
+        , Border.width 1
+        , Border.color border_
+        , Border.rounded 6
+        , Ui.padding 14
+        , Ui.spacing 6
+        , Ui.width Ui.fill
+        ]
+        (Ui.el
+            [ Font.size 12
+            , Font.bold
+            , Font.color textMuted
+            , Font.letterSpacing 5.0e-2
+            , Ui.paddingXY 0 4
+            ]
+            (Ui.text (String.toUpper title))
+            :: children)
+
+
+chip : Bool -> String -> Msg -> Element Msg
+chip active label msg =
+    Ui.el
+        [ Ui.paddingXY 10 4
+        , Border.rounded 12
+        , Border.width 1
+        , Border.color
+              (if active then
+                  accent
+
+              else
+                  border_)
+        , Background.color
+              (if active then
+                  accent
+
+              else
+                  bgRaised)
+        , Font.size 12
+        , Font.color
+              (if active then
+                  Ui.rgb 20 23 28
+
+              else
+                  textSecondary)
+        , Ui.pointer
+        , Ui.onClick msg
+        ]
+        (Ui.text label)
+
+
+muted : String -> Element Msg
+muted s =
+    Ui.el [ Font.size 12, Font.color textMuted ] (Ui.text s)
+
+
+mono : String -> Element Msg
+mono s =
+    Ui.el
+        [ Background.color bgCode
+        , Border.rounded 3
+        , Ui.paddingXY 6 2
+        , Font.family "ui-monospace, Menlo, monospace"
+        , Font.size 12
+        , Font.color textPrimary
+        ]
+        (Ui.text s)
+
+
+emptyState : String -> Element Msg
+emptyState message =
+    Ui.el
+        [ Ui.padding 20, Ui.centerX, Font.color textMuted, Font.italic ]
+        (Ui.text message)
+
+
+-- "2026-10-11T18:04:05.123Z" → "18:04:05".
+clock : String -> String
+clock ts =
+    String.left 8 (String.dropLeft 11 ts)
+
+
+percent : Float -> String
+percent x =
+    String.fromInt (Math.round (x * 100.0)) ++ "%"

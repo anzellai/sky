@@ -369,6 +369,30 @@ pub const SURFACES: &[Surface] = &[
     // failure edge needs no network and no engine. The expected values are
     // the documented reference syntax, not observations of this runtime.
     sf2("ailocal", "Std.Ai.Local", &["Sky.Core.Task as Task"]),
+    // v0.28.0 Std.Ai.Failure: the typed view of an AI failure is pure. A
+    // failure built with `toError` reads back through `fromError` (the same
+    // path a runtime failure takes), with the documented kind and retry flag;
+    // another domain and an unknown code read as `Nothing`. The expected
+    // values are the documented table (docs/ai/local.md), not observations.
+    sf2(
+        "aifailure",
+        "Std.Ai.Failure",
+        &["Sky.Core.Error as Error", "Std.Money as Money"],
+    ),
+    // v0.28.0 Std.Ai.Eval: a suite run against a `Provider.custom` that
+    // answers from a table, so every expected value follows from the table
+    // and the documented scorers (exact, contains, regex), the gate and the
+    // exact McNemar p-value, not from a model.
+    sf2(
+        "aieval",
+        "Std.Ai.Eval",
+        &[
+            "Std.Ai.Provider as Provider",
+            "Std.Db as Db",
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+        ],
+    ),
     // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
     // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
     // every web backend draws; the terminal as the island element it renders
@@ -699,6 +723,10 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Sync",
     // v0.28.0: Std.Ai.Local lands covered (`ailocal` surface).
     "Std.Ai.Local",
+    // v0.28.0: Std.Ai.Failure lands covered (`aifailure` surface).
+    "Std.Ai.Failure",
+    // v0.28.0: Std.Ai.Eval lands covered (`aieval` surface).
+    "Std.Ai.Eval",
     // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
     // payloads) land covered, not dark.
     "Std.Ui.Canvas",
@@ -1310,6 +1338,8 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "watch" => watch_battery(edge),
         "sync" => sync_battery(edge),
         "ailocal" => ailocal_battery(edge),
+        "aifailure" => aifailure_battery(edge),
+        "aieval" => aieval_battery(edge),
         "canvas" => canvas_battery(edge),
         "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
@@ -3788,6 +3818,110 @@ fn ailocal_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Failure -------------------------------------------------------
+//
+// The table in docs/ai/local.md: each failure's code, ErrorKind and retry
+// flag, and the round trip `fromError (toError f) == Just f` that every
+// runtime failure also takes (the runtime builds the same `Domain` value).
+fn aifailure_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Failure.code", "Failure.toError", "Failure.fromError"],
+                "Maybe.withDefault \"none\" (Maybe.map Failure.code (Failure.fromError (Failure.toError (Overloaded { retryAfterMs = Just 1500, status = Just 429 }))))",
+                "Overloaded",
+            ),
+            bo(
+                &["Failure.fromError", "Failure.toError"],
+                "Failure.fromError (Failure.toError (ModelTooLarge { needBytes = 9, availableBytes = 4 })) == Just (ModelTooLarge { needBytes = 9, availableBytes = 4 })",
+                true,
+            ),
+            bo(
+                &["Failure.fromError", "Failure.toError"],
+                "Failure.fromError (Failure.toError (BudgetExceeded { budget = Money.fromMinor Money.USD 4000, estimate = Money.fromMinor Money.USD 5250 })) == Just (BudgetExceeded { budget = Money.fromMinor Money.USD 4000, estimate = Money.fromMinor Money.USD 5250 })",
+                true,
+            ),
+            s(
+                &["Failure.kind"],
+                "Error.kindLabel (Failure.kind (TimedOut { afterMs = Nothing }))",
+                "Timeout",
+            ),
+            s(
+                &["Failure.kind"],
+                "Error.kindLabel (Failure.kind (BudgetExceeded { budget = Money.fromMinor Money.USD 1, estimate = Money.fromMinor Money.USD 2 }))",
+                "PermissionDenied",
+            ),
+            s(
+                &["Failure.kind"],
+                "Error.kindLabel (Failure.kind (RemoteRejected { status = 403 }))",
+                "PermissionDenied",
+            ),
+            bo(&["Failure.retryable"], "Failure.retryable (Unreachable { target = \"https://h:1\" })", true),
+            bo(&["Failure.retryable"], "Failure.retryable (RemoteRejected { status = 502 })", true),
+        ],
+        "failure" => vec![
+            // An engine crash is Unavailable and still not retryable: the
+            // domain flag wins over the kind.
+            bo(
+                &["Failure.retryable", "Failure.toError"],
+                "Failure.retryable (EngineCrashed { exitCode = Just 134, logTail = \"\" }) || Error.isRetryable (Failure.toError (EngineCrashed { exitCode = Just 134, logTail = \"\" }))",
+                false,
+            ),
+            bo(
+                &["Failure.fromError"],
+                "Failure.fromError (Error.unavailable \"plain\") == Nothing",
+                true,
+            ),
+            bo(
+                &["Failure.fromError"],
+                "Failure.fromError (Error.fromDomain Error.Conflict \"x\" (Error.failure \"db\" \"Deadlock\")) == Nothing",
+                true,
+            ),
+            bo(
+                &["Failure.fromError"],
+                "Failure.fromError (Error.fromDomain Error.Unavailable \"x\" (Error.failure \"ai\" \"FromTheFuture\")) == Nothing",
+                true,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Eval ----------------------------------------------------------
+//
+// One three-case suite (Exact "yes", Contains "y", Matches "^n") against a
+// table provider: the good table passes all three, the bad one none. The
+// comparison's McNemar p-value for three discordant pairs to none is
+// 2 x 0.5^3 = 0.25 (reported x 1000).
+fn aieval_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Eval.suite", "Eval.run"],
+                "aiEvalCounts aiEvalGood",
+                "3/0/0",
+            ),
+            s(
+                &[
+                    "Eval.check",
+                    "Eval.thresholds",
+                    "Eval.withMinPassRate",
+                    "Eval.passedSuite",
+                ],
+                "aiEvalGate",
+                "corpus",
+            ),
+            s(&["Eval.compare"], "aiEvalCompare", "3,0,250"),
+            s(&["Eval.toJunit"], "aiEvalJunit", "T"),
+        ],
+        "failure" => vec![
+            s(&["Eval.check"], "aiEvalGateFail", "ai/F"),
+            s(&["Eval.run"], "aiEvalCounts aiEvalPartial", "2/1/1"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -4135,6 +4269,61 @@ fn error_battery(edge: &str) -> Vec<Check> {
                 &["Error.withDetails"],
                 "Error.toString (Error.withDetails (HttpStatus 404) (Error.network \"n\"))",
                 "Network: n",
+            ),
+            // v0.28.0 domain failures (`Domain DomainFailure`). The domain's
+            // retryable flag wins over the kind in both directions: a crashed
+            // engine is `Unavailable` and must not be retried blindly, and a
+            // deadlock is a `Conflict` that a retry resolves.
+            bo(
+                &["Error.isRetryable", "Error.fromDomain", "Error.failure"],
+                "Error.isRetryable (Error.fromDomain Unavailable \"x\" (Error.failure \"ai\" \"EngineCrashed\"))",
+                false,
+            ),
+            bo(
+                &["Error.isRetryable", "Error.withRetryable"],
+                "Error.isRetryable (Error.fromDomain Conflict \"x\" (Error.failure \"db\" \"Deadlock\" |> Error.withRetryable True))",
+                true,
+            ),
+            s(
+                &["Error.domain", "Error.fromDomain"],
+                "Maybe.withDefault \"none\" (Error.domain (Error.fromDomain Conflict \"x\" (Error.failure \"db\" \"Deadlock\")))",
+                "db",
+            ),
+            s(
+                &["Error.domain"],
+                "Maybe.withDefault \"none\" (Error.domain (Error.io \"x\"))",
+                "none",
+            ),
+            i(
+                &["Error.retryAfter", "Error.withRetryAfter"],
+                "Maybe.withDefault -1 (Error.retryAfter (Error.fromDomain Unavailable \"x\" (Error.failure \"ai\" \"Overloaded\" |> Error.withRetryAfter 1500)))",
+                1500,
+            ),
+            i(
+                &["Error.retryAfter"],
+                "Maybe.withDefault -1 (Error.retryAfter (Error.unavailable \"x\"))",
+                -1,
+            ),
+            s(
+                &["Error.failureOf", "Error.failureCode", "Error.failureDomain"],
+                "Maybe.withDefault \"none\" (Maybe.map (\\f -> Error.failureDomain f ++ \"/\" ++ Error.failureCode f) (Error.failureOf (Error.fromDomain Conflict \"x\" (Error.failure \"db\" \"Deadlock\"))))",
+                "db/Deadlock",
+            ),
+            s(
+                &["Error.withAttr", "Error.failureAttr", "Error.failureAttrs"],
+                "Maybe.withDefault \"none\" (Error.failureAttr \"a\" (Error.failure \"d\" \"c\" |> Error.withAttr \"a\" \"1\" |> Error.withAttr \"a\" \"2\")) ++ String.fromInt (List.length (Error.failureAttrs (Error.failure \"d\" \"c\" |> Error.withAttr \"a\" \"1\" |> Error.withAttr \"a\" \"2\")))",
+                "21",
+            ),
+            bo(
+                &["Error.failureRetryable", "Error.failureRetryAfter"],
+                "not (Error.failureRetryable (Error.failure \"d\" \"c\")) && Error.failureRetryAfter (Error.failure \"d\" \"c\") == Nothing",
+                true,
+            ),
+            // A domain failure leaves the human rendering unchanged.
+            s(
+                &["Error.toString", "Error.fromDomain"],
+                "Error.toString (Error.fromDomain Conflict \"deadlock\" (Error.failure \"db\" \"Deadlock\"))",
+                "Conflict: deadlock",
             ),
         ],
         "unicode" => vec![s(
@@ -5698,6 +5887,115 @@ termFresh =
     p ++ "/" ++ e
 "#
         }
+        "aieval" => {
+            r#"aiEvalAnswer : List ( String, String ) -> List Provider.Message -> Task Error Provider.ChatResponse
+aiEvalAnswer rows messages =
+    case List.filter (\( q, _ ) -> List.any (\m -> m.content == q) messages) rows of
+        ( _, a ) :: _ ->
+            Task.succeed { content = a, usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 } }
+
+        [] ->
+            Task.fail (Error.unavailable "no answer")
+
+
+aiEvalSuite : Eval.Suite String
+aiEvalSuite =
+    Eval.suite "corpus"
+        (\q -> [ Provider.user q ])
+        [ { id = "a", input = "a", expect = Exact "yes", tags = [] }
+        , { id = "b", input = "b", expect = Contains "y", tags = [] }
+        , { id = "c", input = "c", expect = Matches "^n", tags = [] }
+        ]
+
+
+aiEvalGood : List ( String, String )
+aiEvalGood =
+    [ ( "a", "yes" ), ( "b", "yes" ), ( "c", "no" ) ]
+
+
+aiEvalBad : List ( String, String )
+aiEvalBad =
+    [ ( "a", "no" ), ( "b", "x" ), ( "c", "yes" ) ]
+
+
+aiEvalPartial : List ( String, String )
+aiEvalPartial =
+    [ ( "a", "yes" ), ( "b", "yes" ) ]
+
+
+aiEvalRun : List ( String, String ) -> Result Error Eval.Report
+aiEvalRun rows =
+    Task.run (Db.open "sqlite" ":memory:" |> Task.andThen (\db -> Eval.run db (Provider.custom (aiEvalAnswer rows)) aiEvalSuite))
+
+
+aiEvalCounts : List ( String, String ) -> String
+aiEvalCounts rows =
+    case aiEvalRun rows of
+        Ok r ->
+            String.fromInt r.passed ++ "/" ++ String.fromInt r.failed ++ "/" ++ String.fromInt r.errors
+
+        Err _ ->
+            "E"
+
+
+aiEvalGate : String
+aiEvalGate =
+    case aiEvalRun aiEvalGood of
+        Ok r ->
+            case Eval.check (Eval.thresholds |> Eval.withMinPassRate 1.0) r of
+                Ok p ->
+                    Eval.passedSuite p
+
+                Err _ ->
+                    "refused"
+
+        Err _ ->
+            "E"
+
+
+aiEvalGateFail : String
+aiEvalGateFail =
+    case aiEvalRun aiEvalBad of
+        Ok r ->
+            case Eval.check (Eval.thresholds |> Eval.withMinPassRate 0.5) r of
+                Ok _ ->
+                    "passed"
+
+                Err e ->
+                    Maybe.withDefault "none" (Error.domain e) ++ "/" ++ (if Error.isRetryable e then "T" else "F")
+
+        Err _ ->
+            "E"
+
+
+aiEvalCompare : String
+aiEvalCompare =
+    case ( aiEvalRun aiEvalGood, aiEvalRun aiEvalBad ) of
+        ( Ok b, Ok c ) ->
+            let
+                cmp =
+                    Eval.compare b c
+            in
+            String.fromInt cmp.regressions ++ "," ++ String.fromInt cmp.improvements ++ "," ++ String.fromInt (Math.round (cmp.mcnemarP * 1000.0))
+
+        _ ->
+            "E"
+
+
+aiEvalJunit : String
+aiEvalJunit =
+    case aiEvalRun aiEvalBad of
+        Ok r ->
+            if String.contains "tests=\"3\" failures=\"3\" errors=\"0\"" (Eval.toJunit r) then
+                "T"
+
+            else
+                "F"
+
+        Err _ ->
+            "E"
+"#
+        }
         "ailocal" => {
             r#"aiSpecShape : String
 aiSpecShape =
@@ -5845,6 +6143,9 @@ fn import_exposing(module: &str) -> Option<&'static str> {
         // The canvas battery builds paths from the command constructors.
         "Std.Ui.Canvas" => Some("PathCommand(..)"),
         "Std.Watch" => Some("Change(..)"),
+        // The AI failure battery builds failures from their constructors.
+        "Std.Ai.Failure" => Some("Failure(..)"),
+        "Std.Ai.Eval" => Some("Expect(..)"),
         _ => None,
     }
 }

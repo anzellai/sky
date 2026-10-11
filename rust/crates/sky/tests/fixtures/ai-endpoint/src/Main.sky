@@ -14,6 +14,8 @@ It prints one line per check:
     embed=<count> dims=<length>
     describe chat mode=local source(model)=<code or env>
     ghost=<the NotConfigured error>
+    ghostTyped=<the typed Std.Ai.Failure view of it>
+    busy=<the typed view of a remote 429, when SKY_AI_BUSY_URL is set>
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -26,6 +28,7 @@ import Std.Log exposing (println)
 import Std.Ai.Provider as Provider exposing (Provider)
 import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
 import Std.Ai.Local as Local
+import Std.Ai.Failure as Failure exposing (Failure(..))
 
 
 chatSlot : Endpoint
@@ -46,6 +49,11 @@ embedSlot =
 ghostSlot : Endpoint
 ghostSlot =
     Endpoint.endpoint "ghost"
+
+
+busySlot : Endpoint
+busySlot =
+    Endpoint.endpoint "busy" |> Endpoint.withRetry 0
 
 
 chat : Provider
@@ -107,9 +115,64 @@ askGhost =
         |> Task.andThen (\s -> println ("ghost=" ++ s))
 
 
+-- The typed view of a failure, as one line.
+typed : Error -> String
+typed e =
+    let
+        retry =
+            " retryable="
+                ++ (if Error.isRetryable e then
+                       "True"
+
+                   else
+                       "False")
+        dom = " domain=" ++ Maybe.withDefault "none" (Error.domain e)
+    in
+        case Failure.fromError e of
+
+            Just (Overloaded o) ->
+                "Overloaded retryAfterMs="
+                    ++ Maybe.withDefault
+                           "none"
+                           (Maybe.map String.fromInt o.retryAfterMs)
+                    ++ " status="
+                    ++ Maybe.withDefault
+                           "none"
+                           (Maybe.map String.fromInt o.status)
+                    ++ dom
+                    ++ retry
+
+            Just (NotConfigured r) ->
+                "NotConfigured setting=" ++ r.setting ++ dom ++ retry
+
+            Just f ->
+                Failure.code f ++ dom ++ retry
+
+            Nothing ->
+                "untyped " ++ Error.toString e
+
+
+askGhostTyped : Task Error ()
+askGhostTyped =
+    Provider.chat (Endpoint.provider ghostSlot) [ Provider.user "x" ]
+        |> Task.map (\_ -> "answered")
+        |> Task.onError (\e -> Task.succeed (typed e))
+        |> Task.andThen (\s -> println ("ghostTyped=" ++ s))
+
+
+askBusy : Task Error ()
+askBusy =
+    Provider.chat (Endpoint.provider busySlot) [ Provider.user "x" ]
+        |> Task.map (\_ -> "answered")
+        |> Task.onError (\e -> Task.succeed (typed e))
+        |> Task.andThen (\s -> println ("busy=" ++ s))
+
+
 main : Task Error ()
 main =
     askChat |> Task.andThen (\_ -> askEmbed)
         |> Task.andThen (\_ -> Endpoint.describe chatSlot)
         |> Task.andThen showDescription
         |> Task.andThen (\_ -> askGhost)
+        |> Task.andThen (\_ -> askGhostTyped)
+        |> Task.andThen (\_ -> askBusy)

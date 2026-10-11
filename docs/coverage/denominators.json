@@ -9,50 +9,49 @@
   "removals_accounted": 75,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 2281,
+    "entries": 2346,
     "explicit_exposing": {
-      "entries": 2080,
-      "modules": 111,
-      "unfiltered_entries": 2631
+      "entries": 2168,
+      "modules": 114,
+      "unfiltered_entries": 2786
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
-      "entries": 201,
+      "entries": 178,
       "module_names": [
-        "Sky.Core.Error",
         "Std.Html",
         "Std.Html.Attributes",
         "Std.Html.Events"
       ],
-      "modules": 4
+      "modules": 3
     },
-    "modules": 115,
-    "types": 234,
+    "modules": 117,
+    "types": 249,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 2832,
-      "hidden_by_exposing": 551,
-      "types": 266,
-      "values": 2566
+      "entries": 2964,
+      "hidden_by_exposing": 618,
+      "types": 282,
+      "values": 2682
     },
-    "values": 2047
+    "values": 2097
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
     "conformance": {
-      "assertion_calls_incl_pass": 1489,
-      "assertions": 1482,
+      "assertion_calls_incl_pass": 1506,
+      "assertions": 1499,
       "by_assertion_fn": {
-        "equal": 1087,
+        "equal": 1102,
         "err": 119,
         "expectErrorKind": 34,
         "fail": 48,
-        "isFalse": 48,
-        "isTrue": 107,
+        "isFalse": 49,
+        "isTrue": 108,
         "notEqual": 24,
         "ok": 15
       },
-      "cases": 1482,
+      "cases": 1501,
       "vacuous_pass": 7
     },
     "examples": {
