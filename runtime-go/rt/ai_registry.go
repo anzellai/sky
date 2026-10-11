@@ -24,6 +24,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"sky-app/rt/periodic"
 )
 
 type aiRegistryEntry struct {
@@ -249,8 +251,15 @@ func aiKillEngineGroup(pid int) {
 
 func aiWaitGone(pid int, d time.Duration) bool {
 	deadline := time.Now().Add(d)
+	gone := false
 	for time.Now().Before(deadline) {
-		if !processAlive(pid) {
+		// Each poll runs inside its own recover, so a panic in one probe
+		// is reported and the wait goes on to its deadline.
+		periodic.Guard("ai.wait-gone", periodicReport, func() error {
+			gone = !processAlive(pid)
+			return nil
+		})
+		if gone {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)
