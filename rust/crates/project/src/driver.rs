@@ -187,9 +187,7 @@ pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<Exi
     // `<project>`) — the directory that holds THIS app's `sky.toml`. `resolve()`
     // walks up from the entry file to the NEAREST sky.toml, so a sub-app with its
     // own sky.toml (deeper than any monorepo root) roots at ITS OWN dir, while a
-    // sub-app without one shares its parent's root. Either way this is exactly
-    // where the app's relative paths (.env, data/, the sqlite store, static dirs)
-    // are meant to resolve, and it is independent of where `sky run` was invoked.
+    // sub-app without one shares its parent's root.
     let project_dir = out_dir.parent().filter(|p| !p.as_os_str().is_empty());
     let bin_name = project_dir
         .map(crate::build::configured_bin_name)
@@ -202,27 +200,60 @@ pub fn run_app(out_dir: &Path, envs: &[(String, String)]) -> std::io::Result<Exi
     let bin_abs =
         std::fs::canonicalize(out_dir.join(&bin_name)).unwrap_or_else(|_| out_dir.join(&bin_name));
     let mut cmd = Command::new(&bin_abs);
-    // Run from the PROJECT ROOT (the sky.toml dir), NOT sky-out/. The old
-    // `current_dir(out_dir)` ran the app inside sky-out/, so every relative path
-    // the app uses (.env, data/, the sqlite store path, static dirs) resolved
-    // against sky-out/ and silently broke — e.g. the sqlite store reported
-    // "unable to open database file" and fell back to the memory store. Canonical
-    // absolute cwd so it's stable regardless of the invocation dir. Falls back to
-    // the invocation dir, then out_dir, if the project dir can't be resolved.
-    let cwd = project_dir
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| out_dir.to_path_buf());
-    cmd.current_dir(&cwd);
+    cmd.current_dir(app_run_cwd(out_dir));
     for (k, v) in envs {
         cmd.env(k, v);
     }
     cmd.status()
 }
 
+/// The working directory a built app runs in: the PROJECT ROOT (the sky.toml
+/// dir, `out_dir`'s parent), NOT the build output folder. This is the single
+/// definition `sky run` (`run_app`), `sky run --open`, `sky watch`, the
+/// in-process `build_example` run and every run in the `xtask build-run` gate
+/// share, so a gate runs a program exactly where a user's `sky run` does.
+///
+/// The old `current_dir(out_dir)` ran the app inside `sky-out/`, so every
+/// relative path the app uses (.env, data/, the sqlite store path, static dirs)
+/// resolved against `sky-out/` and silently broke — e.g. the sqlite store
+/// reported "unable to open database file" and fell back to the memory store,
+/// and a project-relative `data/tickets.jsonl` read failed only under the gate.
+///
+/// Canonical absolute path, so it is stable regardless of the invocation dir.
+/// Falls back to the invocation dir, then `out_dir`, when the project dir
+/// cannot be resolved.
+pub fn app_run_cwd(out_dir: &Path) -> PathBuf {
+    match out_dir.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(project_dir) => project_run_cwd(project_dir),
+        None => std::env::current_dir().unwrap_or_else(|_| out_dir.to_path_buf()),
+    }
+}
+
+/// [`app_run_cwd`] for a caller that knows the project dir directly (the
+/// in-process `build_example` run, whose output folder may sit outside the
+/// project): the canonical project dir, else the path as given.
+pub fn project_run_cwd(project_dir: &Path) -> PathBuf {
+    std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `sky run` runs a program from the project folder, not from `sky-out/`.
+    /// Every other runner (the `xtask build-run` gate, `build_example`'s inline
+    /// run, `sky watch`) takes its cwd from here, so this pins the shared rule.
+    #[test]
+    fn app_runs_in_the_project_dir_not_the_output_dir() {
+        let base = std::env::temp_dir().join(format!("sky-run-cwd-{}", std::process::id()));
+        let out = base.join("proj").join("sky-out-rust");
+        std::fs::create_dir_all(&out).unwrap();
+        let project = std::fs::canonicalize(base.join("proj")).unwrap();
+        assert_eq!(app_run_cwd(&out), project);
+        assert_eq!(app_run_cwd(&base.join("proj").join("sky-out")), project);
+        assert_eq!(project_run_cwd(&base.join("proj")), project);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn cap_first_capitalises() {

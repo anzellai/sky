@@ -9682,12 +9682,8 @@ fn run_app_open(
         .unwrap_or_else(|| "app".to_string());
     let bin_abs =
         std::fs::canonicalize(out_dir.join(&bin_name)).unwrap_or_else(|_| out_dir.join(&bin_name));
-    let cwd = project_dir
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| out_dir.to_path_buf());
     let mut cmd = Command::new(&bin_abs);
-    cmd.current_dir(&cwd);
+    cmd.current_dir(project::app_run_cwd(out_dir));
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -13235,8 +13231,13 @@ fn watch_build_and_spawn(
     }
     let out_dir = project_dir.join("sky-out");
     let bin_name = project::configured_bin_name(project_dir);
-    let mut cmd = Command::new(format!("./{bin_name}"));
-    cmd.current_dir(&out_dir);
+    // Run from the project folder, as `sky run` does (`app_run_cwd`), so a
+    // project-relative path (`data/…`, `.env`, a sqlite file) resolves the same
+    // under `sky watch`. Absolute program path: a relative one combined with a
+    // `current_dir` resolves platform-specifically.
+    let bin = out_dir.join(&bin_name);
+    let mut cmd = Command::new(std::fs::canonicalize(&bin).unwrap_or(bin));
+    cmd.current_dir(project::app_run_cwd(&out_dir));
     // The embedded cluster's DSN, when the project has one. EVERY respawn gets
     // it: a rebuild replaces the process, and a replacement that lost its DSN
     // would fail to connect while the cluster it was meant to use sat running.

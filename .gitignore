@@ -142,6 +142,12 @@ _verify/
 # never source.
 .sky/
 
+# Runtime data dir a built app creates beside its working directory (the
+# project folder under `sky run` and the xtask build-run gate): the embedded
+# PostgreSQL cluster and the Sky.Spa session secret (SKY_DATA_DIR, else
+# <cwd>/.skydata). Per-machine state, never source.
+.skydata/
+
 # Rust-compiler M4 build outputs (xtask build-run)
 examples/*/sky-out-rust/
 
