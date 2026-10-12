@@ -1229,8 +1229,15 @@ fn build_inner(
     // ---- run ----
     if opts.run && report.go_build_ok {
         use std::io::Write;
-        let mut cmd = Command::new(format!("./{bin_name}"));
-        cmd.current_dir(&out_dir);
+        // Run it the way `sky run` does: from the PROJECT folder, not the
+        // output folder, so a project-relative path (`data/…`, `.env`, a
+        // sqlite file) resolves for this run exactly as it does for a user.
+        // Absolute program path, because a relative one combined with a
+        // `current_dir` resolves platform-specifically.
+        let bin = out_dir.join(&bin_name);
+        let bin_abs = std::fs::canonicalize(&bin).unwrap_or(bin);
+        let mut cmd = Command::new(bin_abs);
+        cmd.current_dir(crate::driver::project_run_cwd(&opts.example_dir));
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
