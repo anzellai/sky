@@ -249,6 +249,7 @@ type alias AiEval =
     , verdict : String
     , failures : List String
     , caseResults : List AiEvalCase
+    , source : String
     }
 
 -- The model registry (Std.Ai.Registry): one model's aliases, newest

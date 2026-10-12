@@ -64,13 +64,17 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   `withTokenizer` or the estimate when the engine does not answer.
 - **`dedupeBy` dedupes in bounded memory**: past `dedupeMemoryKeys` (250000)
   key digests it spills them, sorted, to files under `.sky/ai/work/dedupe/`
-  and looks them up there (`dedupeBounded n` sets the bound).
+  and looks them up there (`dedupeBounded n` sets the bound). `inspect` and
+  `validate` find duplicate conversations through the same bounded set, with
+  the row each one repeats (`withMemoryKeys n` sets their bound), so a
+  dataset larger than memory is inspected in bounded memory too.
 - `Endpoint.inspect` (settings and sources without resolving an adapter or
   starting anything), `Endpoint.slotName`, `Eval.suiteName`.
 - **The console's AI tab shows eval runs from the app's database**, read when
   the tab asks, so a `sky ai eval` run in CI or a terminal appears in the
   running app's console (each run's console row is stored with it, migration
-  `_sky_ai_eval_0002`).
+  `_sky_ai_eval_0002`). Each row is labelled `from database` or
+  `this process`.
 - `sky doctor` reports the pipeline (`ai-pipeline`, `ai-pipeline-invalid`)
   and checks the slots only the pipeline uses, marked `(pipeline)`.
 - `examples/72-ai-support-desk`: a Sky.Live support desk with Std.Ui whose
@@ -323,6 +327,22 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
 
 ### Fixed
 
+- **A Sky.Spa split app whose `init` command reaches the server failed to
+  build.** `update` arms that return `Cmd.perform <server task> ToMsg` were
+  rewritten into an RPC, but `init` was copied into the wasm client verbatim,
+  so `sky build --target web:app` on `examples/72-ai-support-desk` failed with
+  `Undefined name: loadTickets` and reported a split defect. The client `init`
+  now sends one RPC (`POST /_rpc/SpaInit_`); the backend runs `init`'s command
+  and answers the follow-up Msgs, which the client dispatches through
+  `update`. This covers a direct `Cmd.perform`, `Cmd.batch`, helpers, `let`
+  bindings, qualified bindings of other modules and an `init` in a sibling
+  module (`spa_split::plan_init_rpc`; tests in `spa_split_flow.rs`).
+- **A Sky.Spa split backend lost the app's `[database]` settings.** The
+  generated `backend/sky.toml` carried only `[live] store` / `storePath`, so a
+  database-backed app built with `--target web:app` answered every read with
+  "db.connect: no path given". The backend now carries the runtime tables the
+  build bakes into the binary (`[database]`, `[log]`, `[analytics]`, `[jobs]`,
+  `[env]`, `[security]`) verbatim (`spa_split::emit_backend_runtime_sections`).
 - **The memoised-binding lint warned about every top-level AI slot that serves
   registry adapters.** `chatSlot = Endpoint.endpoint "chat" |>
   Endpoint.fromRegistry (Registry.resolver openRegistry)` only STORES the
@@ -372,7 +392,10 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   three chunks, the engine tokenizer's fallback);
   `runtime-go/rt/ai_dedupe_test.go` (the set never holds more than its limit
   in memory, the live heap does not grow with ten times the keys, merges,
-  sweeps), `ai_console_test.go` (runs read from the database, merged with the
+  sweeps; `inspect`'s duplicate check stays within its limit and names the
+  first row of every repeat), `DatasetTest.sky` (a spilled `inspect` over
+  three chunks), `console_app/console_ai_eval_source_test.go` (an eval run's
+  source label), `ai_console_test.go` (runs read from the database, merged with the
   ring); `rust/crates/sky/tests/ai_pipeline_flow.rs` (the flagship's suites
   offline, the whole lifecycle through the CLI on the fake engine, the
   adapter guard, the app serving the promoted adapter, refusals without

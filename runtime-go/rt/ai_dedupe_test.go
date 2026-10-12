@@ -158,3 +158,87 @@ func TestAiDedupeSweepsStaleDirectories(t *testing.T) {
 		t.Fatal("a stale set directory was not removed")
 	}
 }
+
+// The duplicate check of `inspect` / `validate` (Ai_dedupeFirst) uses the
+// same bounded set: it holds at most `limit` digests in memory however many
+// conversations it sees, and still answers every repeat with the row where
+// the conversation first appeared, whether that row is in memory, in a run,
+// or in a merged run.
+func TestAiDedupeFirstRowsStayBounded(t *testing.T) {
+	root := t.TempDir()
+	const limit = 64
+	const distinct = 5000
+	h := Ai_dedupeOpen(root, limit).(func() any)()
+	handle := AsString(aiDedupeTestOk(t, h))
+	s, err := aiDedupeLookup(handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := 1
+	check := func(keys []string, want []int) {
+		t.Helper()
+		got := AsList(aiDedupeTestOk(t, Ai_dedupeFirst(handle, row, keys).(func() any)()))
+		if len(got) != len(want) {
+			t.Fatalf("got %d answers, want %d", len(got), len(want))
+		}
+		for i := range want {
+			if AsInt(got[i]) != want[i] {
+				t.Fatalf("row %d (%q): first = %d, want %d", row+i, keys[i], AsInt(got[i]), want[i])
+			}
+		}
+		if len(s.mem) > limit {
+			t.Fatalf("the map holds %d digests, over the limit %d", len(s.mem), limit)
+		}
+		row += len(keys)
+	}
+	conv := func(i int) string { return fmt.Sprintf("user\x01question %d\x00assistant\x01answer", i) }
+	// Rows 1..distinct are all new, sent in chunks of 100.
+	for c := 0; c < distinct; c += 100 {
+		keys := make([]string, 0, 100)
+		want := make([]int, 0, 100)
+		for i := c; i < c+100; i++ {
+			keys = append(keys, conv(i))
+			want = append(want, 0)
+		}
+		check(keys, want)
+	}
+	if s.peak > limit {
+		t.Fatalf("peak %d digests in memory, over the limit %d", s.peak, limit)
+	}
+	if len(s.runs) == 0 || len(s.runs) > aiDedupeMaxRuns {
+		t.Fatalf("runs = %d, want between 1 and %d", len(s.runs), aiDedupeMaxRuns)
+	}
+	// Every conversation again: each repeats the row it first appeared at.
+	for c := distinct - 100; c >= 0; c -= 100 {
+		keys := make([]string, 0, 100)
+		want := make([]int, 0, 100)
+		for i := c; i < c+100; i++ {
+			keys = append(keys, conv(i))
+			want = append(want, i+1)
+		}
+		check(keys, want)
+	}
+	// A repeat inside one chunk names the chunk's own earlier row.
+	next := row
+	check([]string{"fresh", "other", "fresh"}, []int{0, 0, next})
+	dir := s.dir
+	if n := AsInt(aiDedupeTestOk(t, Ai_dedupeClose(handle).(func() any)())); n != distinct+2 {
+		t.Fatalf("close counted %d distinct conversations, want %d", n, distinct+2)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the work directory %s survived close", dir)
+	}
+}
+
+// aiDedupeTestOk unwraps an `Ok` task result, failing the test on `Err`.
+func aiDedupeTestOk(t *testing.T, r any) any {
+	t.Helper()
+	res, ok := r.(SkyResult[any, any])
+	if !ok {
+		t.Fatalf("not a Result: %T", r)
+	}
+	if res.Tag != 0 {
+		t.Fatalf("Err: %v", res.ErrValue)
+	}
+	return res.OkValue
+}

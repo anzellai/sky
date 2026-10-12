@@ -2,20 +2,23 @@
 
 package rt
 
-// ai_dedupe.go — the seen-key set behind `Std.Ai.Dataset.dedupeBy`, with a
-// memory bound.
+// ai_dedupe.go — the seen-key set behind `Std.Ai.Dataset.dedupeBy` and the
+// duplicate-row check of `inspect` / `validate`, with a memory bound.
 //
 //	Ai_dedupeOpen  : String -> Int -> Task Error String
 //	Ai_dedupeAdd   : String -> List String -> Task Error (List Bool)
+//	Ai_dedupeFirst : String -> Int -> List String -> Task Error (List Int)
 //	Ai_dedupeClose : String -> Task Error Int
 //
 // A dataset can be far larger than memory, and dedupe must remember every
 // key it has seen. The set keeps the SHA-256 of each key (32 bytes, never the
-// key itself, which can be personal data). It holds at most `limit` digests
-// in memory; when it is full it writes them, sorted, to a run file under its
-// work directory and starts again with an empty map. A lookup checks the map,
-// then each run by binary search on the file (32-byte records, read with
-// ReadAt). When there are more than aiDedupeMaxRuns runs they are merged into
+// key itself, which can be personal data), with the row number where the key
+// was first seen (`inspect` reports a repeat as "row N repeats row M"). It
+// holds at most `limit` digests in memory; when it is full it writes them,
+// sorted, to a run file under its work directory and starts again with an
+// empty map. A lookup checks the map, then each run by binary search on the
+// file (40-byte records: the digest, then the row as a big-endian uint64,
+// read with ReadAt). When there are more than aiDedupeMaxRuns runs they are merged into
 // one by a streaming merge, so a lookup reads a bounded number of files.
 //
 // Memory is bounded by `limit` digests plus one buffered reader per run while
@@ -27,6 +30,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -44,15 +48,19 @@ const aiDedupeMaxRuns = 8
 // aiDedupeKey is the SHA-256 of a key.
 type aiDedupeKey = [sha256.Size]byte
 
+// aiDedupeRecord is the size of one run-file record: the digest, then the
+// row where the key was first seen.
+const aiDedupeRecord = sha256.Size + 8
+
 // aiDedupeSet is one dedupe step's seen keys.
 type aiDedupeSet struct {
 	mu    sync.Mutex
 	dir   string
 	limit int
-	mem   map[aiDedupeKey]struct{}
-	runs  []string // sorted run files, each a sequence of 32-byte digests
-	count int      // distinct keys seen
-	seq   int      // next run file number
+	mem   map[aiDedupeKey]uint64 // digest -> row first seen at
+	runs  []string               // sorted run files of aiDedupeRecord records
+	count int                    // distinct keys seen
+	seq   int                    // next run file number
 	// peak is the largest the in-memory map has been (tests read it).
 	peak int
 }
@@ -82,7 +90,7 @@ func newAiDedupeSet(root string, limit int) (*aiDedupeSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &aiDedupeSet{dir: dir, limit: limit, mem: make(map[aiDedupeKey]struct{})}, nil
+	return &aiDedupeSet{dir: dir, limit: limit, mem: make(map[aiDedupeKey]uint64)}, nil
 }
 
 // aiDedupeSweep removes set directories older than age (left by a process
@@ -105,24 +113,46 @@ func aiDedupeSweep(root string, age time.Duration) {
 // add records each key and reports whether it was new. A key repeated
 // within keys counts as seen from its second occurrence.
 func (s *aiDedupeSet) add(keys []string) ([]bool, error) {
+	first, err := s.first(0, keys)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]bool, len(keys))
+	for i, f := range first {
+		out[i] = f == 0
+	}
+	return out, nil
+}
+
+// first records each key as seen at row start+i (rows count from 1) and
+// returns, per key, the row where it was first seen, or 0 when it is new. A
+// key repeated within keys is new at its first occurrence and a repeat of
+// that row after. With start 0 every key is recorded at row 0, and only the
+// new/seen answer (0 or not) is meaningful: `add` uses it that way.
+func (s *aiDedupeSet) first(start int, keys []string) ([]uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]bool, len(keys))
+	out := make([]uint64, len(keys))
 	for i, k := range keys {
 		d := sha256.Sum256([]byte(k))
-		if _, ok := s.mem[d]; ok {
+		row := uint64(0)
+		if start > 0 {
+			row = uint64(start + i)
+		}
+		if prev, ok := s.mem[d]; ok {
+			out[i] = aiDedupeSeenRow(prev)
 			continue
 		}
-		seen, err := s.inRuns(d)
+		prev, seen, err := s.inRuns(d)
 		if err != nil {
 			return nil, err
 		}
 		if seen {
+			out[i] = aiDedupeSeenRow(prev)
 			continue
 		}
-		s.mem[d] = struct{}{}
+		s.mem[d] = row
 		s.count++
-		out[i] = true
 		if len(s.mem) > s.peak {
 			s.peak = len(s.mem)
 		}
@@ -135,51 +165,63 @@ func (s *aiDedupeSet) add(keys []string) ([]bool, error) {
 	return out, nil
 }
 
-// inRuns is whether a digest is in any run file.
-func (s *aiDedupeSet) inRuns(d aiDedupeKey) (bool, error) {
+// aiDedupeSeenRow is the answer for a key seen before: its row, or 1 for a
+// set that records no rows (a seen key must never answer 0, "new").
+func aiDedupeSeenRow(row uint64) uint64 {
+	if row == 0 {
+		return 1
+	}
+	return row
+}
+
+// inRuns looks a digest up in the run files: its row and whether it is there.
+func (s *aiDedupeSet) inRuns(d aiDedupeKey) (uint64, bool, error) {
 	for _, path := range s.runs {
-		ok, err := aiDedupeSearch(path, d)
+		row, ok, err := aiDedupeSearch(path, d)
 		if err != nil || ok {
-			return ok, err
+			return row, ok, err
 		}
 	}
-	return false, nil
+	return 0, false, nil
 }
 
 // aiDedupeSearch binary-searches one sorted run file.
-func aiDedupeSearch(path string, d aiDedupeKey) (bool, error) {
+func aiDedupeSearch(path string, d aiDedupeKey) (uint64, bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
-	n := int(info.Size() / sha256.Size)
-	var buf aiDedupeKey
+	n := int(info.Size() / aiDedupeRecord)
+	var buf [aiDedupeRecord]byte
 	var readErr error
 	i := sort.Search(n, func(i int) bool {
 		if readErr != nil {
 			return true
 		}
-		if _, err := f.ReadAt(buf[:], int64(i)*sha256.Size); err != nil {
+		if _, err := f.ReadAt(buf[:], int64(i)*aiDedupeRecord); err != nil {
 			readErr = err
 			return true
 		}
-		return bytes.Compare(buf[:], d[:]) >= 0
+		return bytes.Compare(buf[:sha256.Size], d[:]) >= 0
 	})
 	if readErr != nil {
-		return false, readErr
+		return 0, false, readErr
 	}
 	if i >= n {
-		return false, nil
+		return 0, false, nil
 	}
-	if _, err := f.ReadAt(buf[:], int64(i)*sha256.Size); err != nil {
-		return false, err
+	if _, err := f.ReadAt(buf[:], int64(i)*aiDedupeRecord); err != nil {
+		return 0, false, err
 	}
-	return buf == d, nil
+	if !bytes.Equal(buf[:sha256.Size], d[:]) {
+		return 0, false, nil
+	}
+	return binary.BigEndian.Uint64(buf[sha256.Size:]), true, nil
 }
 
 // spill writes the in-memory digests to a new sorted run and empties the
@@ -197,8 +239,11 @@ func (s *aiDedupeSet) spill() error {
 		return err
 	}
 	w := bufio.NewWriterSize(f, 64<<10)
+	var rec [aiDedupeRecord]byte
 	for _, k := range keys {
-		if _, err := w.Write(k[:]); err != nil {
+		copy(rec[:], k[:])
+		binary.BigEndian.PutUint64(rec[sha256.Size:], s.mem[k])
+		if _, err := w.Write(rec[:]); err != nil {
 			f.Close()
 			return err
 		}
@@ -211,7 +256,7 @@ func (s *aiDedupeSet) spill() error {
 		return err
 	}
 	s.runs = append(s.runs, path)
-	s.mem = make(map[aiDedupeKey]struct{})
+	s.mem = make(map[aiDedupeKey]uint64)
 	if len(s.runs) > aiDedupeMaxRuns {
 		return s.merge()
 	}
@@ -224,7 +269,7 @@ func (s *aiDedupeSet) merge() error {
 	type head struct {
 		r   *bufio.Reader
 		f   *os.File
-		cur aiDedupeKey
+		cur [aiDedupeRecord]byte
 		ok  bool
 	}
 	heads := make([]*head, 0, len(s.runs))
@@ -268,19 +313,21 @@ func (s *aiDedupeSet) merge() error {
 	for {
 		var min *head
 		for _, h := range heads {
-			if h.ok && (min == nil || bytes.Compare(h.cur[:], min.cur[:]) < 0) {
+			if h.ok && (min == nil || bytes.Compare(h.cur[:sha256.Size], min.cur[:sha256.Size]) < 0) {
 				min = h
 			}
 		}
 		if min == nil {
 			break
 		}
-		if !wrote || min.cur != last {
+		var d aiDedupeKey
+		copy(d[:], min.cur[:sha256.Size])
+		if !wrote || d != last {
 			if _, err := w.Write(min.cur[:]); err != nil {
 				out.Close()
 				return err
 			}
-			last, wrote = min.cur, true
+			last, wrote = d, true
 		}
 		if err := next(min); err != nil {
 			out.Close()
@@ -370,6 +417,39 @@ func Ai_dedupeAdd(handleArg, keysArg any) any {
 		out := make([]any, len(fresh))
 		for i, b := range fresh {
 			out[i] = b
+		}
+		return Ok[any, any](out)
+	}
+}
+
+// Ai_dedupeFirst : String -> Int -> List String -> Task Error (List Int) —
+// record keys as rows start, start+1, …; each result is the row where the
+// key was first seen, or 0 for a key not seen before. `inspect` uses it to
+// report "row N repeats row M" without holding every row's key in memory.
+func Ai_dedupeFirst(handleArg, startArg, keysArg any) any {
+	handle := AsString(handleArg)
+	start := AsInt(startArg)
+	items := AsList(keysArg)
+	return func() any {
+		s, err := aiDedupeLookup(handle)
+		if err != nil {
+			return aiTaskErr(err)
+		}
+		if start < 1 {
+			start = 1
+		}
+		keys := make([]string, len(items))
+		for i, k := range items {
+			keys[i] = AsString(k)
+		}
+		first, err := s.first(start, keys)
+		if err != nil {
+			return aiTaskErr(aiFailf(aiDatasetInvalid, "inspect: the spill files under %s failed: %v", s.dir, aiPathErr(err)).
+				with("dataset", "inspect").with("reasons", "spill files failed"))
+		}
+		out := make([]any, len(first))
+		for i, f := range first {
+			out[i] = int(f)
 		}
 		return Ok[any, any](out)
 	}

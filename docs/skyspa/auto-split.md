@@ -989,6 +989,26 @@ built from (`Cmd.batch [ <native leaves>, Spa.rpc … ]`). A native leaf that
 uses a `let`-bound value of the arm or a server-tainted binding fails the build,
 naming it.
 
+**`init`'s command runs on the server when it must (v0.28.0).** `init`'s
+command runs once when the client starts, unless the SSR page settled it. When
+that command reaches a server-only binding (a task that opens the database, an
+AI slot, a qualified binding of a server module, through a helper or a `let`)
+and is not the GET-safe read the SSR settles, the client cannot hold it. The
+split then gives `init` the follow-up treatment of a server branch: the client
+`init` keeps its model and sends one RPC, `POST /_rpc/SpaInit_`; the backend
+handler runs `init ()`'s command (`Spa_collectFollowUps`) and answers the
+follow-up Msgs as JSON; the client dispatches them in order through `update`
+(`AppliedSpaInit_`), and a follow-up it cannot decode, or a failed RPC, goes to
+`App.withRpcError`, else the console. `let` bindings that only the command used
+become `Cmd.none` in the client copy, and a `Std.Native` or navigation leaf
+runs in the client when the RPC is sent. Shapes the split cannot rewrite fail
+the build, naming the binding: an `init` whose body is not a `( model, cmd )`
+tuple (through `let … in`), or a model that uses a server-only binding.
+`spa_split::plan_init_rpc`; tests `init_command_reaching_server_bindings_runs_through_an_init_rpc`
+and `init_in_a_sibling_module_reaching_server_bindings_runs_through_an_init_rpc`.
+Before, `init` was copied verbatim and the client failed with `Undefined name`
+(`examples/72-ai-support-desk` under `--target web:app`).
+
 **Guard.** `App.withGuard` runs in the client before `update` for every Msg,
 exactly like Live (`Spa.withGuard`, `spaGuardedUpdate`); a rejected Msg keeps the
 model and runs no Cmd. The backend still runs the guard on every server branch
@@ -1038,7 +1058,8 @@ left (the SSR settle runs one round) and no write was suppressed (a GET never
 mutates). The client skips exactly the named commands, so a settled deep link
 makes no RPC and `onNavigate` runs once per navigation, as on Sky.Live. A
 command the server did not finish (a chained read, a suppressed write, an
-`init` command that is not GET-safe) still runs once on the client.
+`init` command that is not GET-safe) still runs once on the client; an `init`
+command that reaches server-only bindings runs through the init RPC (§20).
 
 **`update` without `case msg of`.** A wholly pure `update` with no `case` runs in
 the client as written. One that reaches a server effect fails with a message

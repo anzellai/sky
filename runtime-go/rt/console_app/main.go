@@ -397,12 +397,13 @@ type State_AiEval_R struct {
 	Verdict      string               `sky:"verdict,string"`
 	Failures     []string             `sky:"failures,[]string"`
 	CaseResults  []State_AiEvalCase_R `sky:"caseResults,[]State_AiEvalCase_R"`
+	Source       string               `sky:"source,string"`
 }
 
 func init() { rt.RegisterGobType(State_AiEval_R{}) }
 
-func State_AiEval(p0 string, p1 string, p2 string, p3 string, p4 int, p5 int, p6 int, p7 int, p8 float64, p9 int, p10 string, p11 []string, p12 []State_AiEvalCase_R) State_AiEval_R {
-	return State_AiEval_R{Id: p0, Ts: p1, Suite: p2, Model: p3, Cases: p4, Passed: p5, Failed: p6, Errors: p7, PassRate: p8, P95LatencyMs: p9, Verdict: p10, Failures: p11, CaseResults: p12}
+func State_AiEval(p0 string, p1 string, p2 string, p3 string, p4 int, p5 int, p6 int, p7 int, p8 float64, p9 int, p10 string, p11 []string, p12 []State_AiEvalCase_R, p13 string) State_AiEval_R {
+	return State_AiEval_R{Id: p0, Ts: p1, Suite: p2, Model: p3, Cases: p4, Passed: p5, Failed: p6, Errors: p7, PassRate: p8, P95LatencyMs: p9, Verdict: p10, Failures: p11, CaseResults: p12, Source: p13}
 }
 
 type State_AiFilter_R struct {
@@ -2447,7 +2448,7 @@ func AiTab_bgRaised() Std_Ui_Color {
 func AiTab_evalsPanel(v_0 State_AiFilter_R, v_1 []State_AiEval_R) Std_Ui_Element {
 	return AiTab_panel("Eval runs", func() []Std_Ui_Element {
 		if rt.List_isEmptyT[State_AiEval_R](v_1) {
-			return []Std_Ui_Element{AiTab_emptyState("No Std.Ai.Eval run in this process yet.")}
+			return []Std_Ui_Element{AiTab_emptyState("No Std.Ai.Eval run in this process or in the app's database yet.")}
 		} else {
 			return rt.List_mapT[State_AiEval_R, Std_Ui_Element](func(_e1 State_AiEval_R) Std_Ui_Element {
 				_p0 := _e1
@@ -2467,7 +2468,7 @@ func AiTab_evalRow(v_0 State_AiFilter_R, v_1 State_AiEval_R) Std_Ui_Element {
 			Left   int
 			Right  int
 			Top    int
-		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-eval", v_1.Id)}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenEval(v_1.Id))}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("eval " + v_1.Suite))), AiTab_muted(v_1.Model), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12)}, Std_Ui_text((AiTab_percent(v_1.PassRate) + " passed"))), AiTab_muted(( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.Passed))) + (" passed · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.Failed))) + (" failed · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.Errors))) + (" errors · p95 " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.P95LatencyMs))) + " ms")))))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(func() Std_Ui_Color {
+		}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-eval", v_1.Id)}, /* FFI return */ rt.AsListT[Std_Ui_Element](rt.List_cons(any(Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12), Std_Ui_width(Std_Ui_fill()), Std_Ui_pointer(), Std_Ui_onClick(State_Msg_AiOpenEval(v_1.Id))}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("eval " + v_1.Suite))), AiTab_muted(v_1.Model), AiTab_evalSource(v_1.Source), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12)}, Std_Ui_text((AiTab_percent(v_1.PassRate) + " passed"))), AiTab_muted(( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.Passed))) + (" passed · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.Failed))) + (" failed · " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.Errors))) + (" errors · p95 " + ( /* FFI return */ rt.AsString(rt.String_fromInt(any(v_1.P95LatencyMs))) + " ms")))))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill())}, Std_Ui_text("")), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(func() Std_Ui_Color {
 			if v_1.Verdict == "passed" {
 				return AiTab_ok()
 			} else {
@@ -2517,6 +2518,16 @@ func Std_Ui_paragraphMarker() Std_Ui_Attribute {
 
 func AiTab_failureLine(v_0 string) Std_Ui_Element {
 	return Std_Ui_paragraph([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_color(AiTab_err())}, []Std_Ui_Element{Std_Ui_text(("gate: " + v_0))})
+}
+
+func AiTab_evalSource(v_0 string) Std_Ui_Element {
+	return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(11), Std_Ui_Font_color(AiTab_textMuted()), Std_Ui_paddingXY(6, 1), Std_Ui_Border_rounded(8), Std_Ui_Border_width(1), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-eval-source", v_0)}, Std_Ui_text(func() string {
+		if v_0 == "database" {
+			return "from database"
+		} else {
+			return "this process"
+		}
+	}()))
 }
 
 func AiTab_callsPanel(v_0 State_AiFilter_R, v_1 []State_AiCall_R) Std_Ui_Element {
@@ -8459,9 +8470,9 @@ var Main_aiEvalDecoder__caf rt.LazyCaf[any]
 
 func Main_aiEvalDecoder() any {
 	return Main_aiEvalDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("caseResults"), rt.JsonDec_list(Main_aiEvalCaseDecoder()), any([]State_AiEvalCase_R{}), rt.JsonDecP_optional(any("failures"), rt.JsonDec_list(rt.JsonDec_string()), any([]string{}), rt.JsonDecP_optional(any("verdict"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("p95LatencyMs"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("passRate"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("errors"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("failed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("passed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("cases"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("model"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("suite"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("id"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(13, func(_ps0 []any) any {
-			return any(State_AiEval( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3]) /* FFI return */, rt.AsInt(_ps0[4]) /* FFI return */, rt.AsInt(_ps0[5]) /* FFI return */, rt.AsInt(_ps0[6]) /* FFI return */, rt.AsInt(_ps0[7]) /* FFI return */, rt.AsFloat(_ps0[8]) /* FFI return */, rt.AsInt(_ps0[9]) /* FFI return */, rt.AsString(_ps0[10]) /* FFI return */, rt.AsListT[string](_ps0[11]) /* FFI return */, rt.AsListT[State_AiEvalCase_R](_ps0[12])))
-		}))))))))))))))))
+		return rt.JsonDecP_optional(any("source"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("caseResults"), rt.JsonDec_list(Main_aiEvalCaseDecoder()), any([]State_AiEvalCase_R{}), rt.JsonDecP_optional(any("failures"), rt.JsonDec_list(rt.JsonDec_string()), any([]string{}), rt.JsonDecP_optional(any("verdict"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("p95LatencyMs"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("passRate"), rt.JsonDec_float(), any(0.0), rt.JsonDecP_optional(any("errors"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("failed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("passed"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("cases"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("model"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("suite"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ts"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("id"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(14, func(_ps0 []any) any {
+			return any(State_AiEval( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsString(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3]) /* FFI return */, rt.AsInt(_ps0[4]) /* FFI return */, rt.AsInt(_ps0[5]) /* FFI return */, rt.AsInt(_ps0[6]) /* FFI return */, rt.AsInt(_ps0[7]) /* FFI return */, rt.AsFloat(_ps0[8]) /* FFI return */, rt.AsInt(_ps0[9]) /* FFI return */, rt.AsString(_ps0[10]) /* FFI return */, rt.AsListT[string](_ps0[11]) /* FFI return */, rt.AsListT[State_AiEvalCase_R](_ps0[12]) /* FFI return */, rt.AsString(_ps0[13])))
+		})))))))))))))))))
 	})
 }
 

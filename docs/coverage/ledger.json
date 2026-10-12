@@ -486,7 +486,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 957,
+      "expected_assertions": 958,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -662,7 +662,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2603,
+    "stdlib_entries": 2604,
     "stdlib_modules": 123,
     "surfaces_covered": 180,
     "surfaces_covered_pct": 94.2,
@@ -20882,8 +20882,8 @@
       "id": "tests/Std",
       "modules_imported": 42,
       "path": "tests/Std",
-      "refs_generous": 477,
-      "refs_qualified": 461,
+      "refs_generous": 481,
+      "refs_qualified": 465,
       "role": "SkySuite",
       "sky_files": 17,
       "sky_toml_sections": []

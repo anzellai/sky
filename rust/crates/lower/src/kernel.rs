@@ -370,6 +370,7 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Ai", "endpointInspect", "rt.Ai_endpointInspect"),
     ("Ai", "dedupeOpen", "rt.Ai_dedupeOpen"),
     ("Ai", "dedupeAdd", "rt.Ai_dedupeAdd"),
+    ("Ai", "dedupeFirst", "rt.Ai_dedupeFirst"),
     ("Ai", "dedupeClose", "rt.Ai_dedupeClose"),
     ("File", "readFile", "rt.File_readFile"),
     ("File", "readFileLimit", "rt.File_readFileLimit"),

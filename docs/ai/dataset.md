@@ -135,7 +135,12 @@ broken) when the dataset breaks a limit. The issues:
 | `DuplicateRow` | the conversation repeats an earlier one exactly |
 
 The limits are `withMaxIssues` (default 0), `withMaxDuplicateRate` (0.05) and
-`withMinRows` (1). Tokens are estimated as a quarter of the characters plus 4
+`withMinRows` (1). The duplicate check uses the same bounded set as
+`dedupeBy`: it keeps the SHA-256 of each distinct conversation with the row
+where it first appeared, at most `dedupeMemoryKeys` of them in memory
+(`withMemoryKeys n` sets the bound), and spills the rest, sorted, to files
+under `.sky/ai/work/dedupe`. A dataset larger than memory is inspected in
+bounded memory, and the files are removed when the check ends. Tokens are estimated as a quarter of the characters plus 4
 per message (`estimateTokens`). `withEngineTokenizer slot` counts with the
 model's own tokenizer: each message goes to the slot's engine `/tokenize`
 route (`Endpoint.tokenize`; llama-server and vLLM serve it). When the engine
@@ -351,6 +356,4 @@ per topic and two judge fixtures. In a unit test, `withTeacher name
 
 The journal is a table in the database rather than a `Std.Durable` step per
 call: a re-run (or a resumed one) pays for no call it already made, which is
-the property a durable step gives. `inspect` and `validate` keep their
-duplicate-row index (one digest and row number per distinct conversation) in
-memory.
+the property a durable step gives.

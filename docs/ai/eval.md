@@ -281,6 +281,8 @@ Every run is a row of `_sky_ai_eval_runs` in the run's database, with the row
 the console shows. The AI tab lists this process's runs and the newest runs in
 the app's database, read when the tab asks, so a `sky ai eval` run in CI or a
 terminal (on the app's own database) appears in the running app's console.
+Each row says where the run came from: `from database` for a run read from
+the app's database, `this process` for a run this process made.
 
 ## Not yet
 

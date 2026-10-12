@@ -47,6 +47,7 @@ module Std.Ai.Dataset exposing
     , withMaxIssues
     , withTokenizer
     , withEngineTokenizer
+    , withMemoryKeys
     , estimateTokens
     , Issue(..)
     , describeIssue
@@ -986,6 +987,7 @@ type Limits
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
 , engine : Maybe Endpoint
+, memoryKeys : Int
 }
 
 
@@ -1004,6 +1006,7 @@ limits =
         , maxIssues = 0
         , tokenizer = Nothing
         , engine = Nothing
+        , memoryKeys = dedupeMemoryKeys
         }
 
 
@@ -1042,6 +1045,15 @@ withMinRows n (Limits l) =
 withMaxIssues : Int -> Limits -> Limits
 withMaxIssues n (Limits l) =
     Limits { l | maxIssues = n }
+
+
+-- | How many conversation digests the duplicate check keeps in memory before
+-- it spills them to disk (at least 1; default `dedupeMemoryKeys`). The check
+-- uses the same bounded set as `dedupeBy`, so a dataset larger than memory is
+-- inspected in bounded memory.
+withMemoryKeys : Int -> Limits -> Limits
+withMemoryKeys n (Limits l) =
+    Limits { l | memoryKeys = max 1 n }
 
 
 -- | Count tokens with the model's own tokenizer instead of the estimate. The
@@ -1151,7 +1163,6 @@ type alias Acc =
     , issues : List Issue
     , issueCount : Int
     , duplicates : Int
-    , seen : Dict String Int
     , maxTokens : Int
     , totalTokens : Int
     }
@@ -1188,19 +1199,28 @@ inspectWith : { maxTokens : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
 , engine : Maybe Endpoint
+, memoryKeys : Int
 } -> Dataset Chat -> Task Error Report
 inspectWith l ds =
-    fold
-        (\acc rs _ -> checkChunk l acc rs)
-        { rows = 0
-        , issues = []
-        , issueCount = 0
-        , duplicates = 0
-        , seen = Dict.empty
-        , maxTokens = 0
-        , totalTokens = 0
-        }
-        ds
+    dedupeOpen "" (max 1 l.memoryKeys)
+        |> Task.andThen
+               (\handle ->
+                   fold
+                       (\acc rs _ -> checkChunk l handle acc rs)
+                       { rows = 0
+                       , issues = []
+                       , issueCount = 0
+                       , duplicates = 0
+                       , maxTokens = 0
+                       , totalTokens = 0
+                       }
+                       ds
+                       |> Task.andThen
+                              (\acc -> dedupeClose handle |> Task.map (\_ -> acc))
+                       |> Task.onError
+                              (\e ->
+                                  dedupeClose handle
+                                      |> Task.andThen (\_ -> Task.fail e)))
         |> Task.map (finishReport l)
 
 
@@ -1229,17 +1249,49 @@ checkChunk : { maxTokens : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
 , engine : Maybe Endpoint
-} -> Acc -> List Chat -> Task Error Acc
-checkChunk l acc rs =
-    case rs of
+, memoryKeys : Int
+} -> String -> Acc -> List Chat -> Task Error Acc
+checkChunk l handle acc rs =
+    dedupeFirst handle (acc.rows + 1) (List.map rowKey rs)
+        |> Task.andThen (\firsts -> checkRows l acc rs firsts)
 
-        [] ->
-            Task.succeed acc
 
-        r :: more ->
+-- Each row with the row it repeats (0 when it is the first of its kind).
+checkRows : { maxTokens : Int
+, minTurns : Int
+, maxTurns : Int
+, maxDuplicateRate : Float
+, minRows : Int
+, maxIssues : Int
+, tokenizer : Maybe (String -> Task Error Int)
+, engine : Maybe Endpoint
+, memoryKeys : Int
+} -> Acc -> List Chat -> List Int -> Task Error Acc
+checkRows l acc rs firsts =
+    case ( rs, firsts ) of
+
+        ( r :: more, first :: rest ) ->
             tokensOf l.tokenizer l.engine r
                 |> Task.andThen
-                       (\tokens -> checkChunk l (checkRow l acc r tokens) more)
+                       (\tokens ->
+                           checkRows l (checkRow l acc r tokens first) more rest)
+
+        _ ->
+            Task.succeed acc
+
+
+-- The duplicate check's key for a conversation: its roles and contents. The
+-- set keeps its SHA-256, never the text.
+rowKey : Chat -> String
+rowKey r =
+    String.join
+        "\u{0}"
+        (List.map (\m -> m.role ++ "\u{1}" ++ m.content) r.messages)
+
+
+dedupeFirst : String -> Int -> List String -> Task Error (List Int)
+dedupeFirst =
+    Ffi.kernel "Ai_dedupeFirst"
 
 
 tokensOf : Maybe (String -> Task Error Int) -> Maybe Endpoint -> Chat -> Task Error Int
@@ -1280,8 +1332,9 @@ checkRow : { maxTokens : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
 , engine : Maybe Endpoint
-} -> Acc -> Chat -> Int -> Acc
-checkRow l acc r tokens =
+, memoryKeys : Int
+} -> Acc -> Chat -> Int -> Int -> Acc
+checkRow l acc r tokens first =
     let
         n = acc.rows + 1
         turns =
@@ -1321,19 +1374,12 @@ checkRow l acc r tokens =
             else
                 []
         found = empties ++ order ++ length ++ turnIssues
-        h =
-            Crypto.sha256
-                (String.join
-                    "\u{0}"
-                    (List.map (\m -> m.role ++ "\u{1}" ++ m.content) r.messages))
-        ( dup, seen ) =
-            case Dict.get h acc.seen of
+        dup =
+            if first > 0 then
+                [ DuplicateRow { row = n, firstRow = first } ]
 
-                Just first ->
-                    ( [ DuplicateRow { row = n, firstRow = first } ], acc.seen )
-
-                Nothing ->
-                    ( [], Dict.insert h n acc.seen )
+            else
+                []
         listed = found ++ dup
         room = max 0 (100 - List.length acc.issues)
     in
@@ -1341,7 +1387,6 @@ checkRow l acc r tokens =
         , issues = acc.issues ++ List.take room listed
         , issueCount = acc.issueCount + List.length found
         , duplicates = acc.duplicates + List.length dup
-        , seen = seen
         , maxTokens = max acc.maxTokens tokens
         , totalTokens = acc.totalTokens + tokens
         }
@@ -1419,6 +1464,7 @@ finishReport : { maxTokens : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
 , engine : Maybe Endpoint
+, memoryKeys : Int
 } -> Acc -> Report
 finishReport l acc =
     let
