@@ -386,12 +386,22 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
                 .map(|go| (names.clone(), go.clone()))
         })
     };
+    // The record aliases a value of which this program can hold: those
+    // declared in a module the program loads. Scopes the wider-nominal check on
+    // an open row (`goty::wider_nominal_could_carry`, doc 14 §9.8).
+    let loaded = program_type_closure(db.as_sky_db(), entry, &type_decls);
+    let carrier_scope: HashSet<String> = type_decls
+        .iter()
+        .filter(|d| matches!(d.kind, TypeDeclKind::Record(_)) && loaded.contains(&d.module))
+        .map(|d| d.go_name.clone())
+        .collect();
     let env = TypeEnv {
         nominal,
         nominal_by_module,
         record_fieldsets,
         record_params,
         record_templates,
+        carrier_scope: Some(carrier_scope),
         model,
         goty_cache: Default::default(),
     };
@@ -958,6 +968,61 @@ fn program_needs_console(db: &dyn SkyDb, entry: base::ModuleId) -> bool {
         }
     }
     false
+}
+
+/// The names of the modules whose record values this program can hold: the
+/// entry's transitive import closure, seeded also with every module a program
+/// reaches WITHOUT an `import` line:
+///
+/// * each source module behind a kernel pseudo-module (`hir::KERNEL_MODULES`).
+///   A bare qualifier (`Db.query`, `String.length`) resolves to `Res::Kernel`
+///   with no import, and its scheme comes from that module's `.sky`
+///   signatures (`ty::sig`, pass 2), so its record aliases can reach the
+///   program through a kernel return;
+/// * `Sky.Core.Error`, the home of the builtin `Error` type (C19);
+/// * each module declaring a record alias named like a kernel-implicit type
+///   (`Request`, `Handler`, …). Such a name written bare stays unresolved, and
+///   `ty::sig::World::expand` then expands it through the last-writer bare
+///   alias table, which can name an alias in any interned module.
+///
+/// The seeds over-approximate on purpose. A module left OUT would let a value
+/// of its alias reach an open row unseen and lose fields at the Go boundary
+/// (doc 14 §9.8); a module kept IN only costs a reflective field read.
+fn program_type_closure(
+    db: &dyn SkyDb,
+    entry: base::ModuleId,
+    type_decls: &[TypeDecl],
+) -> HashSet<String> {
+    let mut stack: Vec<base::ModuleId> = vec![entry];
+    let dep = |path: &str| match db.classify_import(path) {
+        ImportSource::Dep(id) => Some(id),
+        _ => None,
+    };
+    for (path, _) in hir::KERNEL_MODULES {
+        stack.extend(dep(path));
+    }
+    stack.extend(dep("Sky.Core.Error"));
+    for d in type_decls {
+        if matches!(d.kind, TypeDeclKind::Record(_))
+            && hir::KERNEL_IMPLICIT_TYPES.contains(&d.name.as_str())
+        {
+            stack.extend(dep(&d.module));
+        }
+    }
+    let mut seen: HashSet<base::ModuleId> = HashSet::new();
+    while let Some(m) = stack.pop() {
+        if !seen.insert(m) {
+            continue;
+        }
+        for imp in db.module_parse(m).tree().imports() {
+            if let Some(id) = imp.name().and_then(|n| dep(&n.text())) {
+                stack.push(id);
+            }
+        }
+    }
+    seen.into_iter()
+        .map(|m| db.module_name(m).to_string())
+        .collect()
 }
 
 /// The bootstrap `init()` every emitted program opens with (doc 08 §3).

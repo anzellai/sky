@@ -916,6 +916,16 @@ user `Game` row resolved to the stdlib `Std.Durable.ResultRow { result }`.
   (the value keeps its cookie and path at run time) and
   `spa_split_flow.rs::spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body`.
   `coerce-floor` recorded the widening: narrow +8 over three rows, adapter 0.
+- **Scope (v0.28.0):** the build interns the whole stdlib, so the check
+  counts only record aliases declared in a module the program loads: the
+  entry's transitive import closure, seeded with the source modules behind the
+  kernel qualifiers (`hir::KERNEL_MODULES`), `Sky.Core.Error`, and any module
+  declaring a record alias named like a kernel-implicit type (a bare `Request`
+  expands through the bare alias table). A value of an alias outside that set
+  cannot exist in the program (`lower.rs::program_type_closure`,
+  `lower/tests/open_row_wider_nominal_scope.rs`). Without it a new
+  `Std.Ai.Eval.ScorerScore { scorer, mean, count }` widened
+  `09-live-counter`'s `{ count | r }` view row.
 
 ## 10. How to cite this document
 
