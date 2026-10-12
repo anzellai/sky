@@ -415,6 +415,19 @@ pub const SURFACES: &[Surface] = &[
             "Sky.Core.Maybe as Maybe",
         ],
     ),
+    // v0.28.0 Std.Ai.Device: the decision is a pure function of the device's
+    // capabilities, the server's offer and the prompt's length; its expected
+    // values follow from the rules in docs/ai/device.md, not from a device.
+    sf2(
+        "aidevice",
+        "Std.Ai.Device",
+        &[
+            "Std.Ai.Failure as Failure",
+            "Sky.Core.String as String",
+            "Sky.Core.List as List",
+            "Sky.Core.Maybe as Maybe",
+        ],
+    ),
     sf2(
         "aieval",
         "Std.Ai.Eval",
@@ -822,6 +835,8 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Ai.Registry",
     // v0.28.0: Std.Ai.Train lands covered (`aitrain` surface).
     "Std.Ai.Train",
+    // v0.28.0: Std.Ai.Device lands covered (`aidevice` surface).
+    "Std.Ai.Device",
     // v0.28.0: Std.Ai.Dataset, its Scrub and Synthetic modules land covered
     // (`aidataset`, `aiscrub`, `aisynthetic` surfaces).
     "Std.Ai.Dataset",
@@ -1445,6 +1460,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "aistore" => aistore_battery(edge),
         "airegistry" => airegistry_battery(edge),
         "aitrain" => aitrain_battery(edge),
+        "aidevice" => aidevice_battery(edge),
         "aiscrub" => aiscrub_battery(edge),
         "aidataset" => aidataset_battery(edge),
         "aisynthetic" => aisynthetic_battery(edge),
@@ -4241,6 +4257,35 @@ fn aitrain_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Device ---------------------------------------------------------
+//
+// The device decision: on the device when it holds the files, a download
+// first when it does not, the server for an operator's ServerOnly, and a typed
+// StorageDenied for DeviceOnly without room.
+fn aidevice_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Device.decide", "Device.backendText"],
+                "aiDeviceWhere aiDeviceCaps",
+                "device:webgpu",
+            ),
+            s(
+                &["Device.decide"],
+                "aiDeviceWhere { aiDeviceCaps | ready = [] }",
+                "download:webgpu:420",
+            ),
+            s(
+                &["Device.decodeOffer", "Device.placementText"],
+                "aiDeviceOfferPlacement",
+                "auto",
+            ),
+        ],
+        "failure" => vec![s(&["Device.decide"], "aiDeviceRefusal", "StorageDenied")],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -6645,6 +6690,74 @@ aiTrainRefused =
 
         Ok _ ->
             "accepted"
+"#
+        }
+        "aidevice" => {
+            r#"aiDeviceOffer : Device.Offer
+aiDeviceOffer =
+    { slot = "chat"
+    , placement = Device.Auto
+    , model = { label = "m.gguf", sha256 = "aa", bytes = 400, url = "/_sky/ai/blob/aa" }
+    , adapter = Just { label = "a.gguf", sha256 = "bb", bytes = 20, url = "/_sky/ai/blob/bb" }
+    , context = 2048
+    , maxDownloadBytes = 1000
+    , backends = [ Device.Native, Device.WebGpu, Device.WasmCpu ]
+    , metered = False
+    , server = True
+    , here = False
+    , refused = Nothing
+    }
+
+
+aiDeviceCaps : Device.Capabilities
+aiDeviceCaps =
+    { platform = "browser"
+    , backends = [ { backend = Device.WebGpu, maxModelBytes = 1000 }, { backend = Device.WasmCpu, maxModelBytes = 1000 } ]
+    , unsupported = []
+    , storageAvailableBytes = 10000
+    , metered = False
+    , ready = [ "aa", "bb" ]
+    , failed = []
+    }
+
+
+aiDeviceWhere : Device.Capabilities -> String
+aiDeviceWhere caps =
+    case Device.decide caps aiDeviceOffer 10 of
+
+        Device.OnDevice b ->
+            "device:" ++ Device.backendText b
+
+        Device.NeedsDownload b n ->
+            "download:" ++ Device.backendText b ++ ":" ++ String.fromInt n
+
+        Device.OnServer _ ->
+            "server"
+
+        Device.Refused f ->
+            Failure.code f
+
+
+aiDeviceOfferPlacement : String
+aiDeviceOfferPlacement =
+    case Device.decodeOffer "{\"slot\":\"chat\",\"placement\":\"auto\",\"model\":{\"label\":\"m\",\"sha256\":\"aa\",\"bytes\":1,\"url\":\"/x\"},\"context\":2048,\"maxDownloadBytes\":10,\"backends\":[\"wasm-cpu\"],\"metered\":false,\"server\":true,\"here\":false}" of
+
+        Ok o ->
+            Device.placementText o.placement
+
+        Err _ ->
+            "unreadable"
+
+
+aiDeviceRefusal : String
+aiDeviceRefusal =
+    case Device.decide { aiDeviceCaps | ready = [], storageAvailableBytes = 100 } { aiDeviceOffer | placement = Device.DeviceOnly, server = False } 10 of
+
+        Device.Refused f ->
+            Failure.code f
+
+        _ ->
+            "not refused"
 "#
         }
         "aistore" => {

@@ -2583,6 +2583,26 @@ whole workflow offline. `Local.withAdapter` serves the adapter.
 Guide: [`ai/train.md`](ai/train.md). CLI: `sky ai provision --train`,
 `sky ai train`, `sky ai train status | runs | resume | cancel`, `sky ai export`.
 
+### `Std.Ai.Device`: a model slot on the user's device (v0.28.0)
+
+The server's slot gets `Endpoint.withDevice spec` (placement `Auto`,
+`DeviceOnly` or `ServerOnly`, required; `SKY_AI_<SLOT>_PLACEMENT`,
+`_DEVICE_MODEL`, `_DEVICE_ADAPTER` override the code). A Sky.Spa client asks
+`provider "<slot>"`, an ordinary `Provider` that answers on the device
+(llama.cpp: WebGPU or CPU WebAssembly in a Web Worker, the iOS and Android
+apps, the Mac app) when it holds the model, and from the server otherwise.
+`decide` is the policy as a pure function. Nothing downloads before `prepare`,
+which the app calls after the user's consent; `status` gives the size and the
+progress. `record` and `replay` with `Eval.prompts` score one suite on both
+sides. `Registry.allowOnDevice` clears an adapter for devices.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Device` | `spec`, `withModel`, `withAdapter`, `withContext`, `withMaxDownload`, `withBackends`, `withMetered`, `raw`, `placementText`, `backendText`, `backendFromText`, `decide`, `estimateTokens`, `decodeOffer`, `decodeCapabilities`, `provider`, `statusOf`, `status`, `prepare`, `evict`, `capabilities`, `record`, `replay`, `encodeRecording`, `decodeRecording` |
+
+Guide: [`ai/device.md`](ai/device.md). CLI: `sky ai provision --device`,
+`sky build --ai-web-engine`, `sky build --ai-embed`.
+
 ## The Prelude
 
 `Sky.Core.Prelude exposing (..)` is implicitly imported everywhere. It re-exports:

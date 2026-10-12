@@ -12561,7 +12561,7 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
 const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
   provision [--variant cpu|metal] [--dev-model] [--model <ref>]
                      install the pinned llama-server for this host (and models)
-  provision --device web|ios|android|all [--from <dir|archive>]
+  provision --device web|ios|android|all [--from <dir|archive>] [--check]
                      install the Std.Ai.Device engines a build stages (llama.cpp b11200)
   pull <org>/<repo> <file>
                      download a GGUF file and print its pinned Local.huggingFace value

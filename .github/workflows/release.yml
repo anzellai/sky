@@ -1282,6 +1282,159 @@ jobs:
           SKY_LIVE_TESTS: require
         run: cargo test -p sky --locked --test ai_train_mlx_live -- --nocapture
 
+  # gate-ai-device-web — Std.Ai.Device in real browsers
+  # (scripts/ai-device-e2e.sh, docs/ai/device.md): the web engine is built
+  # here from the pinned llama.cpp source (scripts/ai/device/
+  # build-device-bundles.sh, the script the ai-device-bundles workflow runs),
+  # installed with `sky ai provision --device web --from`, and the probe runs
+  # the synthetic Qwen2 model on the CPU engine in Chromium and WebKit under
+  # the strict policy: the download, the device answer with no call reaching
+  # the server, a private WebKit window answered by the server, the operator's
+  # server placement, and DeviceOnly refused typed. The WebGPU engine needs a
+  # GPU with shader-f16 (a local run: `scripts/ai-device-e2e.sh --webgpu`).
+  gate-ai-device-web:
+    runs-on: ubuntu-latest
+    # The emsdk install (~4 min), the two engine builds (~12 min), the
+    # fixture build (~4 min) and five browser runs (~6 min): 45.
+    timeout-minutes: 45
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+      GO_CACHE_BUDGET_MB: '6144'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: web
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Playwright with Chromium and WebKit
+        timeout-minutes: 10
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium webkit
+      - name: Cache the Std.Ai home (the server's engine)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sky-ai/engines
+          key: sky-ai-engines-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go') }}
+      - name: Build the web engine from the pinned source
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq ninja-build
+          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.12 && "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.12
+          curl -fsSL -o "$RUNNER_TEMP/dawn.zip" https://github.com/google/dawn/releases/download/v20260423.175430/emdawnwebgpu_pkg-v20260423.175430.zip
+          echo "3ad7ebe95a4a20764df46c5a63b0ad489782aee26804fff8511d9797c10e732f  $RUNNER_TEMP/dawn.zip" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/dawn" && unzip -q "$RUNNER_TEMP/dawn.zip" -d "$RUNNER_TEMP/dawn"
+          ./scripts/ai/device/build-device-bundles.sh web --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" \
+            --out "$RUNNER_TEMP/engines" --emsdk "$RUNNER_TEMP/emsdk" --emdawnwebgpu "$RUNNER_TEMP/dawn/emdawnwebgpu_pkg"
+          ./sky-out/sky ai provision --device web --from "$RUNNER_TEMP/engines"
+          ./sky-out/sky ai provision
+      - name: Std.Ai.Device browser e2e (Chromium + WebKit, strict CSP, synthetic model)
+        timeout-minutes: 25
+        run: scripts/ai-device-e2e.sh
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-ai-device-native — Std.Ai.Device in the iOS simulator and the macOS
+  # desktop app (rust/crates/sky/tests/ai_device_native_flow.rs): the iOS
+  # engine (SkyLlama.xcframework) is built here from the pinned source and
+  # installed with `--from`; the probe downloads the synthetic model from its
+  # backend, checks it and answers on the device's own llama.cpp.
+  gate-ai-device-native:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: runtime-go/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build sky and the iOS engine from the pinned source
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          brew install ninja
+          ./scripts/build.sh
+          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
+          ./scripts/ai/device/build-device-bundles.sh ios --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" --out "$RUNNER_TEMP/engines"
+          ./sky-out/sky ai provision --device ios --from "$RUNNER_TEMP/engines"
+          ./sky-out/sky ai provision
+      - name: iOS simulator and desktop:mac on-device runs
+        timeout-minutes: 30
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_device_native_flow -- --ignored --test-threads=1 --skip android
+
+  # gate-ai-device-android — the Android counterpart on an x86_64 emulator
+  # with KVM: the JNI engine for x86_64 is built here (NDK 27.0.12077973) and
+  # the probe answers on the device.
+  gate-ai-device-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+          cache-dependency-path: runtime-go/go.sum
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build sky and the Android engine from the pinned source
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq ninja-build
+          ./scripts/build.sh
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" > /dev/null
+          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
+          echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
+          ./scripts/ai/device/build-device-bundles.sh android --llama-src "$RUNNER_TEMP/src/llama.cpp-b11200" \
+            --out "$RUNNER_TEMP/engines" --android-sdk "$ANDROID_HOME"
+          ./sky-out/sky ai provision --device android --from "$RUNNER_TEMP/engines"
+          cd rust && cargo test -p sky --locked --test ai_device_native_flow --no-run
+      - name: Android emulator on-device run
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SKY_LIVE_TESTS: require
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: cd rust && cargo test -p sky --locked --test ai_device_native_flow -- --ignored --test-threads=1 android
+
   gate-race:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1717,6 +1870,9 @@ jobs:
       - gate-ai-local
       - gate-ai-train
       - gate-ai-train-mlx
+      - gate-ai-device-web
+      - gate-ai-device-native
+      - gate-ai-device-android
       - gate-falsifiers-1
       - gate-falsifiers-2
       - gate-falsifiers-3

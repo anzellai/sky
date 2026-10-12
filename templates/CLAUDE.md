@@ -142,3 +142,11 @@ the base weights and the dev model are about 700 MB, and a run uses the GPU and
 gigabytes of memory. Test training under `sky test` with
 `SKY_AI_TRAIN_BACKEND=fake` in `.env.test`: test mode simulates the trainer
 and downloads nothing.
+
+`Std.Ai.Device` runs a slot on the user's device: never call `Device.prepare`
+before the user agreed to the download (the page shows the size from
+`Device.status`), and never make a `DeviceOnly` slot answer from the server
+another way: its prompts must not reach the server. A registry adapter runs on
+devices only after `Registry.allowOnDevice`; do not clear one the user has not
+reviewed. `sky ai provision --device ios|android|web` and `--ai-embed` download
+hundreds of megabytes: run them when the task needs them.

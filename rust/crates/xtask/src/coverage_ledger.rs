@@ -554,6 +554,15 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     // v0.28.0 phase 3: a relaunched Std.Ai.Train trainer resumes from the
     // newest verified checkpoint (runtime-go/rt/ai_train.go).
     ("ai-train-resume", &["stdlib.Std.Ai.Train"]),
+    // v0.28.0 phase 5: Std.Ai.Device (docs/ai/device.md).
+    ("ai-device-decide", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-no-silent-fallback", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-digest", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-blob-allowlist", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-partition", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-privacy", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-csp", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-ios-sim", &["stdlib.Std.Ai.Device"]),
     (
         "live-time-every-mutex-survives-a-panic",
         &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],

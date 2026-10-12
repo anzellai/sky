@@ -3867,6 +3867,211 @@ pub fn ai_train_resumes_from_the_newest_checkpoint(ctx: &GateCtx) -> GateOutcome
     )
 }
 
+// ---- Std.Ai.Device (v0.28.0 phase 5) ----------------------------------
+
+/// `TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported`
+/// (runtime-go/rt/ai_device_worker_test.go): the browser worker under node
+/// with a fake WebGPU engine that registers no GPU device. Five assertions:
+/// the call fails, typed DeviceUnsupported, naming webgpu, only the WebGPU
+/// engine was loaded, and with a GPU device the same call answers on WebGPU.
+pub const AI_DEVICE_NO_SILENT_FALLBACK_EXPECTED: u64 = 5;
+
+pub fn ai_device_no_silent_fallback(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported",
+        AI_DEVICE_NO_SILENT_FALLBACK_EXPECTED,
+    )
+}
+
+/// `TestDeviceWorkerDigests`: the worker's streaming SHA-256 against the
+/// platform's, a verified download, a chunk that does not match (refused, not
+/// stored) and a file whose whole digest does not match (refused, not
+/// stored). Six assertions, measured by the gate.
+pub const AI_DEVICE_DIGEST_EXPECTED: u64 = 6;
+
+pub fn ai_device_digest(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestDeviceWorkerDigests",
+        AI_DEVICE_DIGEST_EXPECTED,
+    )
+}
+
+/// `TestDeviceBlobServesOnlyOfferedDigests` (ai_device_serve_test.go): no
+/// blob before an offer, the offered one with Range, not a model the host
+/// holds that no offer names, three malformed names, and the chunk list.
+/// Eight assertions, measured by the gate.
+pub const AI_DEVICE_BLOB_ALLOWLIST_EXPECTED: u64 = 8;
+
+pub fn ai_device_blob_allowlist(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestDeviceBlobServesOnlyOfferedDigests",
+        AI_DEVICE_BLOB_ALLOWLIST_EXPECTED,
+    )
+}
+
+/// `tests/Std/Ai/DeviceTest.sky`, run by itself: every rule of the decision,
+/// the status, the wire values, the spec builders, record and replay, and one
+/// suite scored on both sides. The count is the suite's passing cases,
+/// measured by the gate.
+pub const AI_DEVICE_DECIDE_EXPECTED: u64 = 38;
+
+pub fn ai_device_decide(ctx: &GateCtx) -> GateOutcome {
+    let sky = match super::layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let out_dir = scratch(&ctx.repo_root).join("ai-device-decide");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = Command::new(&sky)
+        .args(["test", "tests/Std/Ai/DeviceTest.sky", "--out"])
+        .arg(&out_dir)
+        .current_dir(&ctx.repo_root)
+        .stdin(std::process::Stdio::null())
+        .output();
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::new(false, 0, format!("could not run sky test: {e}")),
+    };
+    let text = String::from_utf8_lossy(&o.stdout).into_owned();
+    let passed = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("ok "))
+        .count() as u64;
+    let failed = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("FAIL "))
+        .count();
+    GateOutcome::new(
+        o.status.success() && failed == 0,
+        passed,
+        format!(
+            "{passed} Std.Ai.Device cases passed, {failed} failed:\n{}",
+            super::layer2::tail(&text, 15)
+        ),
+    )
+}
+
+/// `rust/crates/sky/tests/ai_device_flow.rs`: the build refuses a provider
+/// without a server slot and a slot binding with parameters, and a web:app
+/// build puts the `AiDevice_` kernels in the client and the registration in
+/// the server, and serves the offer and the allow-listed blob. Three tests.
+pub const AI_DEVICE_PARTITION_EXPECTED: u64 = 3;
+
+pub fn ai_device_partition(ctx: &GateCtx) -> GateOutcome {
+    let out = Command::new("cargo")
+        .args(["test", "-p", "sky", "--test", "ai_device_flow"])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .stdin(std::process::Stdio::null())
+        .output();
+    cargo_test_outcome(out, "ai_device_flow", AI_DEVICE_PARTITION_EXPECTED)
+}
+
+/// `ai_device_native_flow.rs` `ios_simulator_runs_the_slot_on_the_device`:
+/// the probe on the iOS simulator reports not-downloaded on the native
+/// backend, prepared and ready, and an answer. One test.
+pub const AI_DEVICE_IOS_SIM_EXPECTED: u64 = 1;
+
+pub fn ai_device_ios_sim(ctx: &GateCtx) -> GateOutcome {
+    let out = Command::new("cargo")
+        .args([
+            "test",
+            "-p",
+            "sky",
+            "--test",
+            "ai_device_native_flow",
+            "--",
+            "--ignored",
+            "--test-threads=1",
+            "ios_simulator",
+        ])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .env(
+            "DEVELOPER_DIR",
+            "/Applications/Xcode.app/Contents/Developer",
+        )
+        .stdin(std::process::Stdio::null())
+        .output();
+    cargo_test_outcome(
+        out,
+        "ai_device_native_flow ios_simulator",
+        AI_DEVICE_IOS_SIM_EXPECTED,
+    )
+}
+
+/// A `cargo test` run as a gate outcome: green only when every test passed
+/// and exactly `expected` ran.
+fn cargo_test_outcome(
+    out: std::io::Result<std::process::Output>,
+    what: &str,
+    expected: u64,
+) -> GateOutcome {
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::new(false, 0, format!("could not run cargo test: {e}")),
+    };
+    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    let ran = stdout
+        .lines()
+        .find_map(|l| {
+            let l = l.trim();
+            let rest = l.strip_prefix("test result: ok. ")?;
+            rest.split_whitespace().next()?.parse::<u64>().ok()
+        })
+        .unwrap_or(0);
+    GateOutcome::new(
+        o.status.success() && ran == expected,
+        ran,
+        format!(
+            "{what}: {ran} passed (exit {:?}):\n{}",
+            o.status.code(),
+            super::layer2::tail(
+                &format!("{stdout}{}", String::from_utf8_lossy(&o.stderr)),
+                25
+            )
+        ),
+    )
+}
+
+/// `scripts/ai-device-e2e.sh --scenarios chromium-cpu`: the probe on the CPU
+/// engine in Chromium under the strict policy. Six checks: the status, the
+/// preparation, the device's answer, the download from the app's own server,
+/// no call reaching the server, and no policy violation.
+pub const AI_DEVICE_BROWSER_EXPECTED: u64 = 6;
+
+pub fn ai_device_browser(ctx: &GateCtx) -> GateOutcome {
+    let out = Command::new("bash")
+        .args(["scripts/ai-device-e2e.sh", "--scenarios", "chromium-cpu"])
+        .current_dir(&ctx.repo_root)
+        .stdin(std::process::Stdio::null())
+        .output();
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return GateOutcome::new(false, 0, format!("could not run ai-device-e2e.sh: {e}"))
+        }
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let ok = text.lines().filter(|l| l.starts_with("ok  ")).count() as u64;
+    let pass = text.lines().any(|l| l.trim() == "PASS");
+    GateOutcome::new(
+        pass && o.status.success(),
+        ok,
+        format!("{ok} checks green:\n{}", super::layer2::tail(&text, 20)),
+    )
+}
+
 #[cfg(test)]
 mod corpus_count_sync {
     //! Keep the declared corpus assertion counts in lockstep with what the

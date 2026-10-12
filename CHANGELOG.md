@@ -19,7 +19,62 @@ training and GGUF export) of the Std.Ai lifecycle design
 `docs/ai/eval.md`, `docs/ai/dataset.md`, `docs/ai/registry.md`,
 `docs/ai/pipeline.md` and `docs/ai/train.md`.
 
+Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
+`docs/ai/device.md`.
+
 ### Added
+
+- **`Std.Ai.Device`: a model slot on the user's own device.** The server's
+  slot gets `Endpoint.withDevice (Device.spec Device.Auto)`; a Sky.Spa client
+  (`web:app`, `desktop:mac`, `mobile:ios`, `mobile:android`) asks
+  `Device.provider "<slot>"`, an ordinary `Provider` that answers on the
+  device when it holds the model and can run it, and from the server's slot
+  otherwise. The placement is required (`Auto`, `DeviceOnly`, `ServerOnly`);
+  `DeviceOnly` fails typed and never reaches the server. `Device.decide` is
+  the policy as a pure function; `Device.status`, `prepare` (after the user's
+  consent: nothing downloads on its own), `evict` and `capabilities`;
+  `Device.record` and `replay` with the new `Eval.prompts` score one eval
+  suite on the device and on the server. The operator overrides the code with
+  `SKY_AI_<SLOT>_PLACEMENT`, `_DEVICE_MODEL` and `_DEVICE_ADAPTER`; no
+  `sky.toml` key.
+- **One engine on every device: llama.cpp b11200 with Sky's engine core**
+  (`scripts/ai/device/sky_llama.cpp`): the WebGPU and CPU WebAssembly builds
+  in a same-origin Web Worker (the strict policy runs them with no violation;
+  WebGPU only with JavaScript Promise Integration and `shader-f16`, and a
+  WebGPU engine that registers no GPU device fails with `DeviceUnsupported`
+  instead of running on the CPU), `SkyLlama.xcframework` (ios-arm64 with
+  Metal and ios-arm64-simulator) in the iOS app, `libskyllama.so` (arm64-v8a
+  and x86_64, 16 KB aligned, loaded in place) in the Android app, and the
+  managed `llama-server` in the Mac app. Every target loads the same GGUF
+  model and LoRA adapter, a `Std.Ai.Train` adapter included.
+- The server answers `GET /_sky/ai/device/<slot>` (the offer, with an ETag),
+  `GET /_sky/ai/blob/<sha256>` (only the digests an offer names, Range
+  requests, a chunk list) and `POST /_sky/ai/device/<slot>/call` (the
+  fallback: same origin, `application/json`, 64 KiB, 30 calls a minute per
+  session; absent for `DeviceOnly`). A device checks every 64 MiB chunk and
+  the whole file against its SHA-256 before it uses a file.
+- `Registry.allowOnDevice registry version reason`: an adapter runs on
+  devices only after this audited step, which needs a GGUF version trained on
+  a scrubbed dataset version in the same registry (migration
+  `_sky_ai_registry_0003`, an `allow-on-device` event). `Endpoint.Adapter`
+  gains `onDevice` and `Registry.Version` gains `onDevice`.
+- New failures: `DeviceUnsupported { backend, reason }` (`Unavailable`) and
+  `StorageDenied { needBytes, availableBytes }` (`PermissionDenied`).
+- `sky ai provision --device web|ios|android|all [--from <dir|archive>]
+  [--check]` installs the engines; `sky build --ai-web-engine
+  webgpu|cpu|both|none` picks the browser engines (both when installed);
+  `sky build --ai-embed <slot>` puts the slot's model and adapter in a native
+  app. `Bundle.IncreasedMemoryLimit` declares the iOS entitlement an
+  on-device model needs.
+- The `ai-device-bundles` workflow builds the engines from the pinned source
+  (emsdk 6.0.12, Dawn v20260423.175430, NDK 27.0.12077973, Xcode) and
+  publishes the release `sky-llama-b11200`.
+- `examples/75-ai-everywhere`: private notes whose assistant runs on the
+  device, with a consent card, a badge that says where each summary was made,
+  a server-only Help page and an eval self-check, for every target.
+- Measured on an Apple M-series Mac with 16 GB, the dev model and a 24-step
+  MLX adapter, one short question: Chromium WebGPU 0.45 s, Chromium CPU 5.5 s,
+  WebKit CPU 6.1 s; the WebGPU answer matched the server's word for word.
 
 - **`Std.Ai.Pipeline` and the project-mode `sky ai` verbs.** A project
   declares its AI lifecycle as `pipeline` in `src/Ai.sky`: `withSlot`,
@@ -429,6 +484,19 @@ training and GGUF export) of the Std.Ai lifecycle design
 
 ### Fixed
 
+- **Two types of one module could share a constructor name.** The module
+  type-checked and failed `go build` (`too many arguments in call to …`), or
+  showed a confusing type mismatch. It is now `[E1002]` at the second
+  constructor (`rust/crates/hir/tests/duplicate_constructor.rs`).
+- **A Sky.Spa client that shares a module with an AI slot did not build:**
+  the wasm half was given the server-only slot declaration
+  (`undefined: rt.AiDeclareSlots`). Only the server half declares slots now.
+- **The AI slot scan read a type's `(..)` as exposing every value**
+  (`import Std.Ai.Endpoint exposing (Mode(..))` made a bare `endpoint` a
+  slot call) and matched names inside strings and comments.
+- **A large response was cut at the server's 30-second write deadline** on a
+  slow link: an Android emulator's model download ended with "unexpected end
+  of stream". A blob's deadline now moves with its size.
 - **A Sky.Spa split app whose `init` command reaches the server failed to
   build.** `update` arms that return `Cmd.perform <server task> ToMsg` were
   rewritten into an RPC, but `init` was copied into the wasm client verbatim,
@@ -556,6 +624,19 @@ training and GGUF export) of the Std.Ai lifecycle design
 
 ### Tests
 
+- Device (phase 5): `tests/Std/Ai/DeviceTest.sky` (every rule of the
+  decision, the status, the wire values, the spec builders, record, replay
+  and one suite scored on both sides), the `allowOnDevice` cases of
+  `RegistryTest`, `runtime-go/rt/ai_device_serve_test.go` (the offer, the
+  allow-list, the chunk list, the fallback call's rules, the write deadline),
+  `ai_device_worker_test.go` (under node: no silent CPU run, the streaming
+  SHA-256, chunk and file digests, a refused store),
+  `ai_device_desktop_test.go`, `rust/crates/sky/tests/ai_device_flow.rs` (the
+  build errors, the split, the served offer) and `ai_device_native_flow.rs`
+  (the iOS simulator, the Android emulator and the Mac app, ignored in the
+  per-commit run), and `scripts/ai-device-e2e.sh` (Chromium and WebKit under
+  the strict policy). `go run ./cmd/sky-tiny-gguf` writes the synthetic Qwen2
+  model they run.
 - Pipeline (phase 2 part C): `tests/Std/Ai/PipelineTest.sky` (members, alone
   and against an alias, the typed gate failure, the attached report,
   `--promote-to` on a pass only and only against a compared alias, the

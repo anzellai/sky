@@ -245,6 +245,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 pub fn cmd_provision_device(args: &[String]) -> ExitCode {
     let mut target = None;
     let mut from = None;
+    let mut check = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -257,6 +258,10 @@ pub fn cmd_provision_device(args: &[String]) -> ExitCode {
                 i += 2;
             }
             "provision" => i += 1,
+            "--check" => {
+                check = true;
+                i += 1;
+            }
             other => {
                 eprintln!("sky ai provision --device: unknown argument {other:?}");
                 return ExitCode::from(2);
@@ -264,7 +269,9 @@ pub fn cmd_provision_device(args: &[String]) -> ExitCode {
         }
     }
     let Some(target) = target else {
-        eprintln!("usage: sky ai provision --device web|ios|android [--from <dir|archive>]");
+        eprintln!(
+            "usage: sky ai provision --device web|ios|android|all [--from <dir|archive>] [--check]"
+        );
         return ExitCode::from(2);
     };
     let targets: Vec<&str> = if target == "all" {
@@ -272,6 +279,26 @@ pub fn cmd_provision_device(args: &[String]) -> ExitCode {
     } else {
         vec![target.as_str()]
     };
+    if check {
+        // `--check`: report whether each engine is installed; install nothing.
+        let mut ok = true;
+        for t in &targets {
+            if installed(t) {
+                println!(
+                    "sky ai provision --device {t}: installed in {}",
+                    engine_dir(t).display()
+                );
+            } else {
+                eprintln!("sky ai provision --device {t}: {}", not_provisioned(t));
+                ok = false;
+            }
+        }
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        };
+    }
     for t in targets {
         match provision(t, from.as_deref()) {
             Ok(done) => println!(

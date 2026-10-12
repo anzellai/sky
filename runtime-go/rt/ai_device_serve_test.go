@@ -144,40 +144,42 @@ func TestDeviceOfferWithoutAModelIsNotConfigured(t *testing.T) {
 	}
 }
 
+// TestDeviceBlobServesOnlyOfferedDigests: the blob route serves only the
+// digests a current offer names, never a path and never another model this
+// host holds. The harness gate `ai-device-blob-allowlist` runs it; its
+// mutation serves any model in the host's store.
 func TestDeviceBlobServesOnlyOfferedDigests(t *testing.T) {
+	c := &counter{t: t}
 	aiTestEnv(t, nil)
 	data := make([]byte, 3*1024+17)
 	for i := range data {
 		data[i] = byte(i * 7)
 	}
 	path, sum := writeBytes(t, "model.gguf", data)
-	_, otherSum := writeBytes(t, "other.gguf", []byte("not offered"))
+	// A model this host pulled for something else: in the store, not offered.
+	other := []byte("a model the host holds but no offer names")
+	otherDigest := sha256.Sum256(other)
+	otherSum := hex.EncodeToString(otherDigest[:])
+	_ = os.MkdirAll(filepath.Dir(aiModelStorePath(otherSum)), 0o755)
+	_ = os.WriteFile(aiModelStorePath(otherSum), other, 0o644)
 	srv := deviceServer(t, deviceEndpoint("chat", "", "auto", "file:"+path+"#sha256="+sum, ""))
 	// The allow-list is the offers made so far: none yet.
-	if r, _ := get(t, srv.URL+"/_sky/ai/blob/"+sum, nil); r.StatusCode != 404 {
-		t.Fatalf("blob before any offer: %d", r.StatusCode)
-	}
+	r, _ := get(t, srv.URL+"/_sky/ai/blob/"+sum, nil)
+	c.check(r.StatusCode == 404, "blob before any offer: %d", r.StatusCode)
 	get(t, srv.URL+"/_sky/ai/device/chat", nil)
 	r, b := get(t, srv.URL+"/_sky/ai/blob/"+sum, map[string]string{"Range": "bytes=10-19"})
-	if r.StatusCode != 206 || b != string(data[10:20]) {
-		t.Fatalf("range: %d %q", r.StatusCode, b)
-	}
-	if r, _ := get(t, srv.URL+"/_sky/ai/blob/"+otherSum, nil); r.StatusCode != 404 {
-		t.Fatalf("a digest no offer names: %d", r.StatusCode)
-	}
+	c.check(r.StatusCode == 206 && b == string(data[10:20]), "range: %d %q", r.StatusCode, b)
+	r, _ = get(t, srv.URL+"/_sky/ai/blob/"+otherSum, nil)
+	c.check(r.StatusCode == 404, "a model in the store that no offer names: %d", r.StatusCode)
 	for _, bad := range []string{"..%2f..%2fetc%2fpasswd", strings.Repeat("g", 64), sum[:63]} {
-		if r, _ := get(t, srv.URL+"/_sky/ai/blob/"+bad, nil); r.StatusCode != 404 {
-			t.Fatalf("%q: %d", bad, r.StatusCode)
-		}
+		r, _ := get(t, srv.URL+"/_sky/ai/blob/"+bad, nil)
+		c.check(r.StatusCode == 404, "%q: %d", bad, r.StatusCode)
 	}
 	r, b = get(t, srv.URL+"/_sky/ai/blob/"+sum+".chunks.json", nil)
-	var c aiDeviceChunks
-	if r.StatusCode != 200 || json.Unmarshal([]byte(b), &c) != nil {
-		t.Fatalf("chunks: %d %s", r.StatusCode, b)
-	}
-	if c.Sha256 != sum || c.Size != int64(len(data)) || c.ChunkBytes != aiDeviceChunkBytes || len(c.Chunks) != 1 || c.Chunks[0] != sum {
-		t.Fatalf("chunks: %+v", c)
-	}
+	var ch aiDeviceChunks
+	c.check(r.StatusCode == 200 && json.Unmarshal([]byte(b), &ch) == nil, "chunks: %d %s", r.StatusCode, b)
+	c.check(ch.Sha256 == sum && ch.Size == int64(len(data)) && ch.ChunkBytes == aiDeviceChunkBytes && len(ch.Chunks) == 1 && ch.Chunks[0] == sum, "chunks: %+v", ch)
+	c.done()
 }
 
 func TestDeviceChunkListSplitsAt64MiB(t *testing.T) {
@@ -377,5 +379,39 @@ func TestDeviceBlobOutlivesTheServerWriteDeadline(t *testing.T) {
 	}
 	if got != len(data) {
 		t.Fatalf("read %d of %d bytes: the server cut the response at its write deadline", got, len(data))
+	}
+}
+
+// The device model follows the slot's own model: an operator who moves the
+// slot's engine to another model (MODEL) moves the device with it, unless
+// DEVICE_MODEL names another.
+func TestDeviceModelFollowsTheSlotModel(t *testing.T) {
+	_, modelRef := aiTestEnv(t, nil)
+	otherPath, otherSum := writeBytes(t, "other.gguf", []byte("another model"))
+	cfg := deviceEndpoint("chat", "", "auto", "", "")
+	cfg["hasLocal"] = true
+	cfg["local"] = map[string]any{"model": modelRef, "adapter": "", "context": -1, "gpu": "", "parallel": -1, "idleUnload": -1, "embeddings": false, "port": -1}
+	srv := deviceServer(t, cfg)
+	var o aiDeviceOffer
+	_, body := get(t, srv.URL+"/_sky/ai/device/chat", nil)
+	_ = json.Unmarshal([]byte(body), &o)
+	if !strings.Contains(modelRef, o.Model.Sha256) || o.Model.Sha256 == "" {
+		t.Fatalf("the code's local model: %s", body)
+	}
+	t.Setenv("SKY_AI_CHAT_MODEL", "file:"+otherPath+"#sha256="+otherSum)
+	aiDeviceReset()
+	srv = deviceServer(t, cfg)
+	_, body = get(t, srv.URL+"/_sky/ai/device/chat", nil)
+	_ = json.Unmarshal([]byte(body), &o)
+	if o.Model.Sha256 != otherSum {
+		t.Fatalf("the operator's slot model: %s", body)
+	}
+	t.Setenv("SKY_AI_CHAT_DEVICE_MODEL", modelRef)
+	aiDeviceReset()
+	srv = deviceServer(t, cfg)
+	_, body = get(t, srv.URL+"/_sky/ai/device/chat", nil)
+	_ = json.Unmarshal([]byte(body), &o)
+	if !strings.Contains(modelRef, o.Model.Sha256) {
+		t.Fatalf("DEVICE_MODEL wins: %s", body)
 	}
 }

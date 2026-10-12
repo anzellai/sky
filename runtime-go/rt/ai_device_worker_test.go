@@ -15,6 +15,7 @@ package rt
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,46 +148,57 @@ func wireCode(t *testing.T, s string) string {
 	return string(f.code)
 }
 
-// TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported: a WebGPU engine that
-// registers no GPU device never answers on the CPU in silence.
-func TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported(t *testing.T) {
-	v := runWorker(t, "no-gpu")
-	if v["ok"] == true || wireCode(t, v["error"].(string)) != "DeviceUnsupported" {
-		t.Fatalf("no GPU device: %v", v)
-	}
-	if !strings.Contains(v["error"].(string), "webgpu") {
-		t.Fatalf("the failure names the backend: %v", v)
-	}
-	loaded := v["loaded"].([]any)
-	if len(loaded) != 1 || loaded[0] != "webgpu" {
-		t.Fatalf("only the WebGPU engine was loaded, never the CPU one in its place: %v", loaded)
-	}
-	// The twin: with a GPU device the same request answers on WebGPU.
-	v = runWorker(t, "gpu")
-	if v["ok"] != true || !strings.Contains(v["value"].(string), "on webgpu") {
-		t.Fatalf("with a GPU: %v", v)
+// counter is a gate test's assertion count: the harness reads the
+// `ASSERTIONS: <n>` line the test prints when it passes.
+type counter struct {
+	t *testing.T
+	n int
+}
+
+func (c *counter) check(ok bool, format string, args ...any) {
+	c.t.Helper()
+	c.n++
+	if !ok {
+		c.t.Fatalf(format, args...)
 	}
 }
 
+func (c *counter) done() { fmt.Printf("ASSERTIONS: %d\n", c.n) }
+
+// TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported: a WebGPU engine that
+// registers no GPU device never answers on the CPU in silence. The harness
+// gate `ai-device-no-silent-fallback` runs it; its mutation lets the worker
+// run with no GPU device.
+func TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported(t *testing.T) {
+	c := &counter{t: t}
+	v := runWorker(t, "no-gpu")
+	c.check(v["ok"] != true, "no GPU device answered: %v", v)
+	c.check(wireCode(t, v["error"].(string)) == "DeviceUnsupported", "no GPU device: %v", v)
+	c.check(strings.Contains(v["error"].(string), "webgpu"), "the failure names the backend: %v", v)
+	loaded := v["loaded"].([]any)
+	c.check(len(loaded) == 1 && loaded[0] == "webgpu", "only the WebGPU engine was loaded, never the CPU one in its place: %v", loaded)
+	// The twin: with a GPU device the same request answers on WebGPU.
+	v = runWorker(t, "gpu")
+	c.check(v["ok"] == true && strings.Contains(v["value"].(string), "on webgpu"), "with a GPU: %v", v)
+	c.done()
+}
+
 // TestDeviceWorkerDigests: the streaming SHA-256, the per-chunk check, the
-// whole-file check, and a verified download marked ready.
+// whole-file check, and a verified download marked ready. The harness gate
+// `ai-device-digest` runs it; its mutation skips the per-chunk check.
 func TestDeviceWorkerDigests(t *testing.T) {
+	c := &counter{t: t}
 	v := runWorker(t, "sha")
-	if v["all"] != true {
-		t.Fatalf("the worker's SHA-256 differs from the platform's: %v", v)
-	}
+	c.check(v["all"] == true, "the worker's SHA-256 differs from the platform's: %v", v)
 	v = runWorker(t, "download")
-	if v["ok"] != true || v["stored"] != true || v["bytesEqual"] != true {
-		t.Fatalf("a verified download: %v", v)
-	}
+	c.check(v["ok"] == true && v["stored"] == true && v["bytesEqual"] == true, "a verified download: %v", v)
 	v = runWorker(t, "corrupt")
-	if v["ok"] == true || wireCode(t, v["error"].(string)) != "ChecksumMismatch" || v["stored"] == true {
-		t.Fatalf("a chunk that does not match: %v", v)
-	}
+	c.check(v["ok"] != true && wireCode(t, v["error"].(string)) == "ChecksumMismatch", "a chunk that does not match: %v", v)
+	c.check(v["stored"] != true, "a chunk that does not match was stored: %v", v)
 	v = runWorker(t, "wrong-whole")
-	if v["ok"] == true || wireCode(t, v["error"].(string)) != "ChecksumMismatch" || v["stored"] == true {
-		t.Fatalf("a file that does not match the offer's digest: %v", v)
-	}
+	c.check(v["ok"] != true && wireCode(t, v["error"].(string)) == "ChecksumMismatch", "a file that does not match the offer's digest: %v", v)
+	c.check(v["stored"] != true, "a file that does not match was stored: %v", v)
+	c.done()
 }
 
 // TestDeviceWorkerRefusedStoreIsStorageDenied: a private window's store.

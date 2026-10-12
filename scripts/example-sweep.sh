@@ -321,6 +321,11 @@ declare -a EXAMPLES=(
     # network. The training workflow itself runs offline in its `sky test`
     # suite (rust/crates/sky/tests/ai_train_flow.rs).
     "73-ai-train:server:8073:/"
+    # 75 — Std.Ai.Device in a full-stack app (Std.App, Std.Ui): serving `/`
+    # reads the notes and the device status; nothing downloads and no model
+    # runs until the user asks, so it needs no model. The device flows are
+    # scripts/ai-device-e2e.sh and rust/crates/sky/tests/ai_device_*.rs.
+    "75-ai-everywhere:server:8075:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

@@ -183,7 +183,10 @@ func (e *aiDeviceEntry) resolveOffer(ctx context.Context) (*aiDeviceOffer, map[s
 	if placement == "server" {
 		return o, files, nil
 	}
-	modelRef, _ := aiLayer(aiSlotSuffix(e.slot, "DEVICE_MODEL"), orDefault(e.spec.model, e.b.local.model), nil)
+	// The device model: DEVICE_MODEL, else the spec's, else the model the
+	// slot's own engine runs (its MODEL variable, else Endpoint.withLocal).
+	slotModel, _ := aiLayer(aiSlotSuffix(e.slot, "MODEL"), e.b.local.model, nil)
+	modelRef, _ := aiLayer(aiSlotSuffix(e.slot, "DEVICE_MODEL"), orDefault(e.spec.model, slotModel), nil)
 	if modelRef == "" {
 		name := skyEnvName(aiSlotSuffix(e.slot, "DEVICE_MODEL"))
 		return nil, nil, aiFailf(aiNotConfigured,
