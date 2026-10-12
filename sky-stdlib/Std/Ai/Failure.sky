@@ -37,7 +37,10 @@
 -- | `EngineCrashed`, `EngineFailed`, `NoAccelerator`, `ToolchainFailed` | `Unavailable` | no |
 -- | `NotProvisioned` | `NotFound` | no |
 -- | `ChecksumMismatch` | `Conflict` | no |
--- | `BudgetExceeded`, `GateFailed` | `PermissionDenied` | no |
+-- | `BudgetExceeded`, `GateFailed`, `NotPromotable` | `PermissionDenied` | no |
+-- | `NotRegistered` | `NotFound` | no |
+-- | `PromotionConflict` | `Conflict` | no |
+-- | `AdapterMismatch` | `InvalidInput` | no |
 -- | `RemoteRejected` | by status: 400 / 422 `InvalidInput`, 401 / 403 `PermissionDenied`, 404 `NotFound`, 5xx `Unavailable`, else `Unexpected` | 5xx only |
 --
 -- An engine crash is not retryable: the engine's supervisor restarts it, and a
@@ -87,6 +90,18 @@ type Failure
 }
     | GateFailed { suite : String
 , reasons : String
+}
+    | NotRegistered { ref : String }
+    | NotPromotable { ref : String
+, reason : String
+}
+    | PromotionConflict { ref : String
+, expected : String
+, actual : String
+}
+    | AdapterMismatch { adapter : String
+, adapterBase : String
+, engineBase : String
 }
 
 
@@ -147,6 +162,18 @@ code f =
         GateFailed _ ->
             "GateFailed"
 
+        NotRegistered _ ->
+            "NotRegistered"
+
+        NotPromotable _ ->
+            "NotPromotable"
+
+        PromotionConflict _ ->
+            "PromotionConflict"
+
+        AdapterMismatch _ ->
+            "AdapterMismatch"
+
 
 -- | The `ErrorKind` a failure sets.
 kind : Failure -> ErrorKind
@@ -194,6 +221,18 @@ kind f =
 
         GateFailed _ ->
             PermissionDenied
+
+        NotPromotable _ ->
+            PermissionDenied
+
+        NotRegistered _ ->
+            NotFound
+
+        PromotionConflict _ ->
+            Conflict
+
+        AdapterMismatch _ ->
+            InvalidInput
 
         RemoteRejected r ->
             remoteKind r.status
@@ -341,6 +380,24 @@ attrsOf f =
         GateFailed r ->
             [ ( "suite", r.suite ), ( "reasons", r.reasons ) ]
 
+        NotRegistered r ->
+            [ ( "ref", r.ref ) ]
+
+        NotPromotable r ->
+            [ ( "ref", r.ref ), ( "reason", r.reason ) ]
+
+        PromotionConflict r ->
+            [ ( "ref", r.ref )
+            , ( "expected", r.expected )
+            , ( "actual", r.actual )
+            ]
+
+        AdapterMismatch r ->
+            [ ( "adapter", r.adapter )
+            , ( "adapterBase", r.adapterBase )
+            , ( "engineBase", r.engineBase )
+            ]
+
 
 optInt : String -> Maybe Int -> List ( String, String )
 optInt key m =
@@ -404,6 +461,20 @@ describe f =
 
         GateFailed r ->
             "the eval gate for " ++ r.suite ++ " failed: " ++ r.reasons
+
+        NotRegistered r ->
+            r.ref ++ " is not in the registry"
+
+        NotPromotable r ->
+            r.ref ++ " cannot be promoted: " ++ r.reason
+
+        PromotionConflict r ->
+            r.ref ++ " moved: expected " ++ r.expected ++ ", found " ++ r.actual
+
+        AdapterMismatch r ->
+            r.adapter ++ " was trained on base sha256 " ++ r.adapterBase
+                ++ ", but the engine runs base sha256 "
+                ++ r.engineBase
 
 
 -- Money as "<ISO code> <exact decimal>", for example "USD 40.00".
@@ -566,6 +637,32 @@ decode df =
                     (\s r -> GateFailed { suite = s, reasons = r })
                     (str "suite")
                     (str "reasons")
+
+            "NotRegistered" ->
+                Maybe.map (\r -> NotRegistered { ref = r }) (str "ref")
+
+            "NotPromotable" ->
+                Maybe.map2
+                    (\r why -> NotPromotable { ref = r, reason = why })
+                    (str "ref")
+                    (str "reason")
+
+            "PromotionConflict" ->
+                Maybe.map3
+                    (\a e x ->
+                        PromotionConflict { ref = a, expected = e, actual = x })
+                    (str "ref")
+                    (str "expected")
+                    (str "actual")
+
+            "AdapterMismatch" ->
+                Maybe.map3
+                    (\a ab eb ->
+                        AdapterMismatch
+                            { adapter = a, adapterBase = ab, engineBase = eb })
+                    (str "adapter")
+                    (str "adapterBase")
+                    (str "engineBase")
 
             _ ->
                 Nothing

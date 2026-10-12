@@ -13,7 +13,10 @@ package rt
 //   - engines: the managed llama-server engines this process holds;
 //   - recent calls: the last aiCallRingSize model calls, each with its slot,
 //     latency, token counts and outcome (`ok` or the Std.Ai.Failure code);
-//   - eval runs: the last aiEvalRingSize Std.Ai.Eval reports.
+//   - eval runs: the last aiEvalRingSize Std.Ai.Eval reports;
+//   - the model registry: each Std.Ai.Registry model this process read or
+//     changed, with its aliases, newest versions, alias log and attached eval
+//     reports (ai_model_registry.go).
 //
 // The rings are in-process and bounded. They hold no prompt, no answer and no
 // secret: a call row is metadata, and an eval row carries the case ids, scores
@@ -180,10 +183,11 @@ type aiConsoleSlot struct {
 
 // AiConsoleResponse is the shape served by /_sky/console/api/ai.
 type AiConsoleResponse struct {
-	Slots   []aiConsoleSlot  `json:"slots"`
-	Engines []map[string]any `json:"engines"`
-	Calls   []aiCallRecord   `json:"calls"`
-	Evals   []aiEvalRecord   `json:"evals"`
+	Slots    []aiConsoleSlot   `json:"slots"`
+	Engines  []map[string]any  `json:"engines"`
+	Calls    []aiCallRecord    `json:"calls"`
+	Evals    []aiEvalRecord    `json:"evals"`
+	Registry []aiRegistryModel `json:"registry"`
 }
 
 // aiConsoleSnapshot builds the panel's data. outcome is "" (every call) or
@@ -195,7 +199,7 @@ func aiConsoleSnapshot(outcome, slot string) AiConsoleResponse {
 	evals := append([]aiEvalRecord(nil), aiEvalRing...)
 	aiConsoleMu.Unlock()
 
-	resp := AiConsoleResponse{Slots: []aiConsoleSlot{}, Engines: []map[string]any{}, Calls: []aiCallRecord{}, Evals: []aiEvalRecord{}}
+	resp := AiConsoleResponse{Slots: []aiConsoleSlot{}, Engines: []map[string]any{}, Calls: []aiCallRecord{}, Evals: []aiEvalRecord{}, Registry: aiRegistrySnapshot()}
 
 	aiSlotsMu.Lock()
 	seen := map[string]bool{}

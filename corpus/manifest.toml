@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 682
+n_min = 685
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 681
+class_v = 684
 class_d = 1
-family_S = 176
+family_S = 179
 family_L = 361
 family_E = 10
 family_R = 135
@@ -4501,6 +4501,45 @@ axes       = { edge = "failure", surface = "aieval" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "ai/F|2/1/1"
+
+[[case]]
+id         = "stdlib_edge/nominal-aistore"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aistore" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "T|gs://models/reg"
+
+[[case]]
+id         = "stdlib_edge/failure-aistore"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aistore" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "ai/F"
+
+[[case]]
+id         = "stdlib_edge/nominal-airegistry"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "airegistry" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "support-lora@v3 support-lora-v3"
 
 [[case]]
 id         = "stdlib_edge/nominal-canvas"

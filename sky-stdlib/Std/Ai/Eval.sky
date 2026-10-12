@@ -31,6 +31,17 @@
 --
 -- Every run is recorded in the database (`_sky_ai_eval_runs`) and shown in the
 -- Sky Console's AI panel.
+--
+-- **Judge discipline.** Every judge call is journalled in the database
+-- (`_sky_ai_eval_judge_journal`), keyed by the judge's identity, the rubric
+-- prompt version and the exact prompt (rubric, question and answer), so a
+-- re-run of an unchanged output costs nothing and returns the same verdict.
+-- `withCalibration` gives a judge human-labelled cases: a run first measures
+-- the judge's agreement with them and records it in the report, and the gate
+-- refuses a report whose judge fell below the agreement it needs.
+-- `pairwise` compares two reports' answers case by case and asks the judge
+-- in both orders, so a judge that prefers the first (or second) position
+-- cannot decide the result.
 module Std.Ai.Eval exposing
     ( Suite
     , Case
@@ -45,6 +56,11 @@ module Std.Ai.Eval exposing
     , Thresholds
     , Passed
     , RunSummary
+    , Labelled
+    , Calibration
+    , Disagreement
+    , Pairwise
+    , PairResult
     , suite
     , withSamples
     , withConcurrency
@@ -59,6 +75,10 @@ module Std.Ai.Eval exposing
     , withPassScore
     , judgeSlot
     , defaultJudge
+    , judgeOn
+    , withCalibration
+    , calibrate
+    , pairwise
     , setup
     , run
     , runAs
@@ -69,6 +89,7 @@ module Std.Ai.Eval exposing
     , withMinPassRate
     , withFloor
     , withMaxRegression
+    , withCalibratedJudge
     , gate
     , check
     , passedSuite
@@ -76,6 +97,8 @@ module Std.Ai.Eval exposing
     , passedDigest
     , toJunit
     , toMarkdown
+    , encodeReport
+    , decodeReport
     )
 
 import Sky.Core.Prelude exposing (..)
@@ -261,13 +284,63 @@ type Judge
     = Judge { provider : Provider
 , version : String
 , passAt : Int
+, slot : Maybe Endpoint
+, labelled : List Labelled
+, minAgreement : Float
 }
 
+-- | A human-labelled judging case: a question, an answer, the rubric, and
+-- whether a person judged that the answer meets the rubric.
+type alias Labelled =
+    { id : String
+    , question : String
+    , answer : String
+    , rubric : String
+    , passes : Bool
+    }
 
--- | A judge on a provider, with the version name of your rubric prompt.
+
+-- | A judge on a provider, with the version name of your rubric prompt. The
+-- version is the judge's identity in the judge journal: change it when you
+-- change the judge's model or prompt. A judge on a slot (`judgeOn`) also
+-- records the slot's resolved model.
 judge : Provider -> String -> Judge
 judge p version =
-    Judge { provider = p, version = version, passAt = 4 }
+    Judge
+        { provider = p
+        , version = version
+        , passAt = 4
+        , slot = Nothing
+        , labelled = []
+        , minAgreement = 0.0
+        }
+
+
+-- | A judge on a model slot. Its identity in the judge journal is the
+-- version plus the slot's resolved target, model and adapter, so moving the
+-- slot to another model (an operator's `SKY_AI_<SLOT>_MODEL`) never reuses a
+-- verdict from the old one.
+judgeOn : Endpoint -> String -> Judge
+judgeOn slot version =
+    Judge
+        { provider = Endpoint.provider slot
+        , version = version
+        , passAt = 4
+        , slot = Just slot
+        , labelled = []
+        , minAgreement = 0.0
+        }
+
+
+-- | Calibrate the judge on human-labelled cases. Before a run scores any
+-- `Rubric` case, it asks the judge about each labelled case and measures how
+-- often the judge agrees with the label. The report records the result, and
+-- `gate` fails when the agreement is below `minAgreement` (from 0 to 1), so a
+-- drifting judge cannot pass a bad model.
+withCalibration : List Labelled -> Float -> Judge -> Judge
+withCalibration cases minAgreement (Judge j) =
+    Judge
+        { j | labelled = cases, minAgreement = max 0.0 (min 1.0 minAgreement) }
 
 
 -- | The lowest score from 1 to 5 that passes (default 4).
@@ -290,7 +363,7 @@ judgeSlot =
 -- | The default judge: `judgeSlot` with the rubric prompt `rubric-v1`.
 defaultJudge : Judge
 defaultJudge =
-    judge (Endpoint.provider judgeSlot) "rubric-v1"
+    judgeOn judgeSlot "rubric-v1"
 
 
 judgeVersion : Judge -> String
@@ -343,7 +416,36 @@ type alias Report =
     , meanCost : Maybe Money
     , latencyBudgetMs : Maybe Int
     , costBudget : Maybe Money
+    , calibration : Maybe Calibration
     , digest : String
+    }
+
+-- | A judge's calibration: how often it agreed with the human labels.
+-- `kappa` is Cohen's kappa (agreement corrected for chance). `truePass` counts
+-- cases both the label and the judge passed, `falsePass` cases the judge
+-- passed and the label failed, and so on. `calibrated` is `agreement >=
+-- minAgreement` on at least one labelled case.
+type alias Calibration =
+    { judge : String
+    , cases : Int
+    , agreed : Int
+    , agreement : Float
+    , kappa : Float
+    , truePass : Int
+    , trueFail : Int
+    , falsePass : Int
+    , falseFail : Int
+    , minAgreement : Float
+    , calibrated : Bool
+    , disagreements : List Disagreement
+    }
+
+-- | A labelled case the judge decided differently.
+type alias Disagreement =
+    { id : String
+    , label : Bool
+    , verdict : Bool
+    , reason : String
     }
 
 -- | A past run, as `history` reads it from the database.
@@ -361,17 +463,33 @@ type alias RunSummary =
 
 
 -- ── Running ─────────────────────────────────────────────────────────
--- | Create the eval history table (idempotent). `run` calls it.
+-- The eval tables, in the format of `db/migrations/*.json`: dialect-neutral
+-- ops applied through the `_sky_migrations` ledger (ids `_sky_ai_eval_*`).
+evalMigrations : String
+evalMigrations =
+    """[{"id":"_sky_ai_eval_0001","ops":[
+{"kind":"createTable","table":"_sky_ai_eval_runs","columns":[
+{"name":"digest","type":"text"},{"name":"suite","type":"text"},{"name":"candidate","type":"text"},
+{"name":"passed","type":"int"},{"name":"failed","type":"int"},{"name":"errors","type":"int"},
+{"name":"pass_rate","type":"text"},{"name":"p95_latency_ms","type":"int"},{"name":"report","type":"text"},
+{"name":"created_at","type":"int"}]},
+{"kind":"createTable","table":"_sky_ai_eval_judge_journal","columns":[
+{"name":"entry_key","type":"text"},{"name":"judge","type":"text"},{"name":"reply","type":"text"},
+{"name":"created_at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_eval_judge_journal_key","table":"_sky_ai_eval_judge_journal","indexColumns":["entry_key"],"unique":true}
+]}]"""
+
+
+migrateRaw : Db -> String -> Task Error (List String)
+migrateRaw =
+    Ffi.kernel "Ai_migrate"
+
+
+-- | Create or update the eval tables (idempotent): the run history and the
+-- judge journal. `run` calls it.
 setup : Db -> Task Error ()
 setup db =
-    Db.execRaw
-        db
-        ("CREATE TABLE IF NOT EXISTS _sky_ai_eval_runs ("
-            ++ "digest TEXT NOT NULL, suite TEXT NOT NULL, candidate TEXT NOT NULL, "
-            ++ "passed INTEGER NOT NULL, failed INTEGER NOT NULL, errors INTEGER NOT NULL, "
-            ++ "pass_rate TEXT NOT NULL, p95_latency_ms INTEGER NOT NULL, "
-            ++ "report TEXT NOT NULL, created_at BIGINT NOT NULL)")
-        |> Task.map (\_ -> ())
+    migrateRaw db evalMigrations |> Task.map (\_ -> ())
 
 
 -- | Run a suite against a provider, record it in the database and the
@@ -380,21 +498,66 @@ run : Db -> Provider -> Suite input -> Task Error Report
 run db p s =
     runAs "default" db p s
 
+-- What a run's judge calls need: the judge, the journal's database and the
+-- judge's identity (resolved once per run).
+type alias JudgeCtx =
+    { judge : Judge
+    , db : Db
+    , identity : String
+    }
 
--- | `run`, naming the candidate (a model, an adapter, a registry alias) in the
--- report.
+
+-- | `run`, naming the candidate (a model, an adapter, a registry version
+-- such as `Registry.label v`) in the report.
 runAs : String -> Db -> Provider -> Suite input -> Task Error Report
 runAs candidate db p (Suite s) =
+    let
+        j = judgeFor (Suite s)
+        rubric = List.any (\c -> hasRubric c.expect) s.cases
+    in
+        setup db
+            |> Task.andThen
+                   (\_ ->
+                       if rubric then
+                           judgeIdentity j
+
+                       else
+                           Task.succeed "")
+            |> Task.map
+                   (\identity -> { judge = j, db = db, identity = identity })
+            |> Task.andThen
+                   (\ctx ->
+                       calibrateIf rubric ctx |> Task.map (\cal -> ( ctx, cal )))
+            |> Task.andThen
+                   (\( ctx, cal ) -> runCases candidate ctx p (Suite s) cal)
+            |> Task.andThen
+                   (\report -> store db report |> Task.map (\_ -> report))
+
+
+calibrateIf : Bool -> JudgeCtx -> Task Error (Maybe Calibration)
+calibrateIf rubric ctx =
+    case ctx.judge of
+
+        Judge j ->
+            if rubric && not (List.isEmpty j.labelled) then
+                calibrateWith ctx |> Task.map Just
+
+            else
+                Task.succeed Nothing
+
+
+runCases : String -> JudgeCtx -> Provider -> Suite input -> Maybe Calibration -> Task Error Report
+runCases candidate ctx p (Suite s) cal =
     let
         jobs =
             List.concatMap
                 (\c ->
                     List.map
-                        (\k -> runCase p (Suite s) c k)
+                        (\k -> runCase ctx p (Suite s) c k)
                         (List.range 0 (s.samples - 1)))
                 s.cases
     in
-        setup db |> Task.andThen (\_ -> Time.now ())
+        Time.now ()
             |> Task.andThen
                    (\started ->
                        Task.parallelN s.concurrency jobs
@@ -406,16 +569,15 @@ runAs candidate db p (Suite s) =
                                                      buildReport
                                                          candidate
                                                          (Suite s)
+                                                         cal
                                                          started
                                                          (ended - started)
                                                          results)))
-            |> Task.andThen
-                   (\report -> store db report |> Task.map (\_ -> report))
 
 
 -- One case at one sample. A failed model call is a result, not a failed run.
-runCase : Provider -> Suite input -> Case input -> Int -> Task Error CaseResult
-runCase p (Suite s) c sample =
+runCase : JudgeCtx -> Provider -> Suite input -> Case input -> Int -> Task Error CaseResult
+runCase ctx p (Suite s) c sample =
     let
         opts =
             { temperature = s.options.temperature
@@ -435,7 +597,7 @@ runCase p (Suite s) c sample =
                                           |> Task.andThen
                                                  (\t1 ->
                                                      scoreExpect
-                                                         (judgeFor (Suite s))
+                                                         ctx
                                                          s.seed
                                                          messages
                                                          c.expect
@@ -525,7 +687,7 @@ errResult c sample latency e =
 
 -- ── Scorers ─────────────────────────────────────────────────────────
 -- Score one expectation: each scorer's value under its name, and the verdict.
-scoreExpect : Judge -> Int -> List Message -> Expect -> Output -> Task Error ( List ( String, Float ), Score )
+scoreExpect : JudgeCtx -> Int -> List Message -> Expect -> Output -> Task Error ( List ( String, Float ), Score )
 scoreExpect j seed messages expect out =
     case expect of
 
@@ -771,34 +933,134 @@ jsonNull =
 
 
 -- The judge's prompt, version "rubric-v1" by default. Its answer must carry
--- `SCORE: <1-5>`; one without a score fails the case and says so.
-judgeScore : Judge -> Int -> List Message -> String -> String -> Task Error Score
-judgeScore (Judge j) seed messages rubric answer =
-    let
-        question =
-            messages |> List.filter (\m -> m.role == "user") |> List.reverse
-                |> List.head
-                |> Maybe.map .content
-                |> Maybe.withDefault ""
-        prompt =
-            [ Provider.system
-                  ("You are a strict evaluator (" ++ j.version
-                      ++ "). Score the RESPONSE against the RUBRIC from 1 (fails it) to 5 (fully meets it). "
-                      ++ "Reply with one line: SCORE: <1-5> - <one short reason>.")
-            , Provider.user
-                  ("RUBRIC:\n" ++ rubric ++ "\n\nQUESTION:\n" ++ question
-                      ++ "\n\nRESPONSE:\n"
-                      ++ answer)
-            ]
-        opts =
-            { temperature = Just 0.0
-            , seed = Just seed
-            , maxTokens = Just 64
-            , adapter = Nothing
-            }
-    in
-        Provider.chatWith opts j.provider prompt
-            |> Task.map (\r -> readJudge j.passAt r.content)
+-- `SCORE: <1-5>`; one without a score fails the case and says so. The call
+-- goes through the judge journal.
+judgeScore : JudgeCtx -> Int -> List Message -> String -> String -> Task Error Score
+judgeScore ctx seed messages rubric answer =
+    case ctx.judge of
+
+        Judge j ->
+            let
+                question =
+                    messages |> List.filter (\m -> m.role == "user")
+                        |> List.reverse
+                        |> List.head
+                        |> Maybe.map .content
+                        |> Maybe.withDefault ""
+                prompt =
+                    [ Provider.system
+                          ("You are a strict evaluator (" ++ j.version
+                              ++ "). Score the RESPONSE against the RUBRIC from 1 (fails it) to 5 (fully meets it). "
+                              ++ "Reply with one line: SCORE: <1-5> - <one short reason>.")
+                    , Provider.user
+                          ("RUBRIC:\n" ++ rubric ++ "\n\nQUESTION:\n" ++ question
+                              ++ "\n\nRESPONSE:\n"
+                              ++ answer)
+                    ]
+            in
+                journalled ctx seed 64 prompt
+                    |> Task.map (\reply -> readJudge j.passAt reply)
+
+
+-- One judge call through the journal: an entry for the same judge identity,
+-- version and prompt is the answer; otherwise the judge is asked and its
+-- answer recorded. Two runs that race on one entry both keep the first
+-- answer written.
+journalled : JudgeCtx -> Int -> Int -> List Message -> Task Error String
+journalled ctx seed maxTokens prompt =
+    case ctx.judge of
+
+        Judge j ->
+            let
+                key =
+                    Crypto.sha256
+                        (String.join
+                            "\n"
+                            [ ctx.identity
+                            , j.version
+                            , String.fromInt seed
+                            , String.fromInt maxTokens
+                            , JsonE.encode 0 (JsonE.list messageValue prompt)
+                            ])
+                opts =
+                    { temperature = Just 0.0
+                    , seed = Just seed
+                    , maxTokens = Just maxTokens
+                    , adapter = Nothing
+                    }
+                ask =
+                    Provider.chatWith opts j.provider prompt
+                        |> Task.andThen
+                               (\r ->
+                                   remember ctx key r.content
+                                       |> Task.map (\_ -> r.content))
+            in
+                Db.query
+                    ctx.db
+                    "SELECT reply FROM _sky_ai_eval_judge_journal WHERE entry_key = ?"
+                    [ SqlString key ]
+                    |> Task.andThen
+                           (\rows ->
+                               case List.head rows of
+
+                                   Just row ->
+                                       Task.succeed (Db.getString "reply" row)
+
+                                   Nothing ->
+                                       ask)
+
+
+remember : JudgeCtx -> String -> String -> Task Error ()
+remember ctx key reply =
+    Time.now ()
+        |> Task.andThen
+               (\now ->
+                   Db.exec
+                       ctx.db
+                       "INSERT INTO _sky_ai_eval_judge_journal (entry_key, judge, reply, created_at) VALUES (?, ?, ?, ?)"
+                       [ SqlString key
+                       , SqlString (judgeVersion ctx.judge)
+                       , SqlString reply
+                       , SqlInt now
+                       ]
+                       |> Task.map (\_ -> ())
+                       |> Task.onError (\_ -> Task.succeed ()))
+
+
+messageValue : Message -> JsonE.Value
+messageValue m =
+    JsonE.object
+        [ ( "role", JsonE.string m.role )
+        , ( "content", JsonE.string m.content )
+        ]
+
+
+-- The judge's identity: its slot's resolved target, model and adapter (no
+-- secret, no URL path), or "" for a judge on a plain provider.
+judgeIdentity : Judge -> Task Error String
+judgeIdentity (Judge j) =
+    case j.slot of
+
+        Just slot ->
+            Endpoint.describe slot
+                |> Task.map
+                       (\d ->
+                           String.join
+                               "|"
+                               (d.slot :: d.mode :: d.target
+                                   :: List.filterMap
+                                          (\st ->
+                                              if st.key == "MODEL" || st.key
+                                                  == "ADAPTER" then
+                                                  Just
+                                                      (st.key ++ "=" ++ st.value)
+
+                                              else
+                                                  Nothing)
+                                          d.settings))
+
+        Nothing ->
+            Task.succeed ""
 
 
 readJudge : Int -> String -> Score
@@ -824,9 +1086,302 @@ readJudge passAt reply =
             }
 
 
+-- ── Calibration ─────────────────────────────────────────────────────
+-- | Calibrate a judge on its labelled cases (`withCalibration`): ask the
+-- judge about each one, compare its verdict with the label, and report the
+-- agreement. The calls go through the judge journal, so calibrating an
+-- unchanged judge again costs nothing. A judge with no labelled cases fails
+-- with `InvalidSetting`.
+calibrate : Db -> Judge -> Task Error Calibration
+calibrate db (Judge j) =
+    if List.isEmpty j.labelled then
+        Task.fail
+            (Failure.toError
+                (InvalidSetting
+                    { setting = "calibration"
+                    , reason =
+                        "the judge has no labelled cases; give it Eval.withCalibration"
+                    }))
+
+    else
+        setup db |> Task.andThen (\_ -> judgeIdentity (Judge j))
+            |> Task.andThen
+                   (\identity ->
+                       calibrateWith
+                           { judge = Judge j, db = db, identity = identity })
+
+
+calibrateWith : JudgeCtx -> Task Error Calibration
+calibrateWith ctx =
+    case ctx.judge of
+
+        Judge j ->
+            j.labelled
+                |> List.map
+                       (\l ->
+                           judgeScore
+                               ctx
+                               42
+                               [ Provider.user l.question ]
+                               l.rubric
+                               l.answer
+                               |> Task.map (\sc -> ( l, sc )))
+                |> Task.sequence
+                |> Task.map (calibrationOf j.version j.minAgreement)
+
+
+calibrationOf : String -> Float -> List ( Labelled, Score ) -> Calibration
+calibrationOf version minAgreement verdicts =
+    let
+        count p = List.length (List.filter p verdicts)
+        n = List.length verdicts
+        tp = count (\( l, sc ) -> l.passes && sc.passed)
+        tn = count (\( l, sc ) -> not l.passes && not sc.passed)
+        fp = count (\( l, sc ) -> not l.passes && sc.passed)
+        fn = count (\( l, sc ) -> l.passes && not sc.passed)
+        agreement = ratio (tp + tn) n
+        labelYes = ratio (tp + fn) n
+        judgeYes = ratio (tp + fp) n
+        chance = labelYes * judgeYes + (1.0 - labelYes) * (1.0 - judgeYes)
+        kappa =
+            if n == 0 then
+                0.0
+
+            else if chance >= 1.0 then
+                if agreement >= 1.0 then
+                    1.0
+
+                else
+                    0.0
+
+            else
+                (agreement - chance) / (1.0 - chance)
+    in
+        { judge = version
+        , cases = n
+        , agreed = tp + tn
+        , agreement = agreement
+        , kappa = kappa
+        , truePass = tp
+        , trueFail = tn
+        , falsePass = fp
+        , falseFail = fn
+        , minAgreement = minAgreement
+        , calibrated = n > 0 && agreement >= minAgreement
+        , disagreements =
+            verdicts |> List.filter (\( l, sc ) -> l.passes /= sc.passed)
+                |> List.map
+                       (\( l, sc ) ->
+                           { id = l.id
+                           , label = l.passes
+                           , verdict = sc.passed
+                           , reason = sc.reason
+                           })
+        }
+
+-- ── Pairwise judging ────────────────────────────────────────────────
+-- | One paired case: the winner (`"candidate"`, `"baseline"` or `"tie"`) and
+-- what the judge said in each order (`first`: the baseline shown as A,
+-- `second`: the candidate shown as A). `"unclear"` is an answer without a
+-- `WINNER:` line.
+type alias PairResult =
+    { id : String
+    , sample : Int
+    , winner : String
+    , first : String
+    , second : String
+    }
+
+-- | A pairwise comparison of two reports' answers. A case counts as a win
+-- only when the judge picked the same answer in both orders; a judge that
+-- changes its mind with the order gives a tie. `winRate` is the candidate's
+-- wins plus half the ties, over the pairs; `unclear` counts pairs where an
+-- answer had no verdict.
+type alias Pairwise =
+    { suite : String
+    , baseline : String
+    , candidate : String
+    , judge : String
+    , pairs : Int
+    , candidateWins : Int
+    , baselineWins : Int
+    , ties : Int
+    , unclear : Int
+    , winRate : Float
+    , cases : List PairResult
+    }
+
+
+-- | Compare a baseline report (first) and a candidate report (second) with
+-- the judge, against a rubric. Cases are paired by id and sample, as in
+-- `compare`; a case that failed its call in either report is left out. The
+-- suite gives each case's question. Every judge call goes through the judge
+-- journal.
+pairwise : Db -> Judge -> String -> Suite input -> Report -> Report -> Task Error Pairwise
+pairwise db j rubric (Suite s) base cand =
+    let
+        key c = c.id ++ "#" ++ String.fromInt c.sample
+        questionOf id =
+            List.find (\c -> c.id == id) s.cases
+                |> Maybe.map (\c -> lastUserText (s.prompt c.input))
+                |> Maybe.withDefault ""
+        paired =
+            List.filterMap
+                (\c ->
+                    case List.find (\b -> key b == key c) base.cases of
+
+                        Just b ->
+                            if b.error == Nothing && c.error == Nothing then
+                                Just ( questionOf c.id, b, c )
+
+                            else
+                                Nothing
+
+                        Nothing ->
+                            Nothing)
+                cand.cases
+    in
+        setup db |> Task.andThen (\_ -> judgeIdentity j)
+            |> Task.andThen
+                   (\identity ->
+                       paired
+                           |> List.map
+                                  (judgePair
+                                      { judge = j
+                                      , db = db
+                                      , identity = identity
+                                      }
+                                      rubric
+                                      s.seed)
+                           |> Task.sequence)
+            |> Task.map
+                   (pairwiseOf
+                       s.name
+                       base.candidate
+                       cand.candidate
+                       (judgeVersion j))
+
+
+judgePair : JudgeCtx -> String -> Int -> ( String, CaseResult, CaseResult ) -> Task Error PairResult
+judgePair ctx rubric seed ( question, b, c ) =
+    let
+        ask first second =
+            journalled
+                ctx
+                seed
+                64
+                (pairPrompt (judgeVersion ctx.judge) rubric question first second)
+                |> Task.map readWinner
+    in
+        Task.map2
+            (\one two ->
+                let
+                    firstSays = winnerName one "baseline" "candidate"
+                    secondSays = winnerName two "candidate" "baseline"
+                in
+                    { id = b.id
+                    , sample = b.sample
+                    , winner =
+                        if firstSays == secondSays && firstSays /= "unclear" then
+                            firstSays
+
+                        else
+                            "tie"
+                    , first = firstSays
+                    , second = secondSays
+                    })
+            (ask b.output c.output)
+            (ask c.output b.output)
+
+
+pairPrompt : String -> String -> String -> String -> String -> List Message
+pairPrompt version rubric question a b =
+    [ Provider.system
+          ("You are a strict evaluator (" ++ version
+              ++ "). Compare RESPONSE A and RESPONSE B against the RUBRIC for the QUESTION. "
+              ++ "Reply with one line: WINNER: A, WINNER: B or WINNER: TIE - <one short reason>.")
+    , Provider.user
+          ("RUBRIC:\n" ++ rubric ++ "\n\nQUESTION:\n" ++ question
+              ++ "\n\nRESPONSE A:\n"
+              ++ a
+              ++ "\n\nRESPONSE B:\n"
+              ++ b)
+    ]
+
+
+-- "A", "B", "TIE", or "" for an answer without a verdict.
+readWinner : String -> String
+readWinner reply =
+    case Regex.find "WINNER:\\s*(TIE|A|B)" (String.toUpper reply) of
+
+        Just found ->
+            if String.endsWith "TIE" found then
+                "TIE"
+
+            else
+                String.right 1 found
+
+        Nothing ->
+            ""
+
+
+winnerName : String -> String -> String -> String
+winnerName verdict ifA ifB =
+    if verdict == "A" then
+        ifA
+
+    else if verdict == "B" then
+        ifB
+
+    else if verdict == "TIE" then
+        "tie"
+
+    else
+        "unclear"
+
+
+pairwiseOf : String -> String -> String -> String -> List PairResult -> Pairwise
+pairwiseOf suiteName baseName candName version results =
+    let
+        count w = List.length (List.filter (\r -> r.winner == w) results)
+        n = List.length results
+        ties = count "tie"
+    in
+        { suite = suiteName
+        , baseline = baseName
+        , candidate = candName
+        , judge = version
+        , pairs = n
+        , candidateWins = count "candidate"
+        , baselineWins = count "baseline"
+        , ties = ties
+        , unclear =
+            List.length
+                (List.filter
+                    (\r -> r.first == "unclear" || r.second == "unclear")
+                    results)
+        , winRate =
+            if n == 0 then
+                0.0
+
+            else
+                (intToFloat (count "candidate") + 0.5 * intToFloat ties)
+                    / intToFloat n
+        , cases = results
+        }
+
+
+lastUserText : List Message -> String
+lastUserText messages =
+    messages |> List.filter (\m -> m.role == "user") |> List.reverse
+        |> List.head
+        |> Maybe.map .content
+        |> Maybe.withDefault ""
+
+
 -- ── Aggregation ─────────────────────────────────────────────────────
-buildReport : String -> Suite input -> Int -> Int -> List CaseResult -> Report
-buildReport candidate (Suite s) started duration results =
+buildReport : String -> Suite input -> Maybe Calibration -> Int -> Int -> List CaseResult -> Report
+buildReport candidate (Suite s) cal started duration results =
     let
         errors =
             List.length (List.filter (\r -> r.error /= Nothing) results)
@@ -856,6 +1411,7 @@ buildReport candidate (Suite s) started duration results =
         , meanCost = meanMoney costs
         , latencyBudgetMs = s.latencyBudgetMs
         , costBudget = s.costBudget
+        , calibration = cal
         , digest = digestOf s.name candidate s.seed results
         }
 
@@ -988,10 +1544,194 @@ reportValue r =
         , ( "passRate", JsonE.float r.passRate )
         , ( "p95LatencyMs", JsonE.int r.p95LatencyMs )
         , ( "meanCost", optString (Maybe.map moneyText r.meanCost) )
+        , ( "latencyBudgetMs", optInt r.latencyBudgetMs )
+        , ( "costBudget", optString (Maybe.map moneyText r.costBudget) )
+        , ( "calibration"
+          , case r.calibration of
+
+                Just c ->
+                    calibrationValue c
+
+                Nothing ->
+                    JsonE.null
+          )
         , ( "digest", JsonE.string r.digest )
         , ( "scorers", JsonE.list scorerValue r.scorers )
         , ( "cases", JsonE.list caseValue r.cases )
         ]
+
+
+calibrationValue : Calibration -> JsonE.Value
+calibrationValue c =
+    JsonE.object
+        [ ( "judge", JsonE.string c.judge )
+        , ( "cases", JsonE.int c.cases )
+        , ( "agreed", JsonE.int c.agreed )
+        , ( "agreement", JsonE.float c.agreement )
+        , ( "kappa", JsonE.float c.kappa )
+        , ( "truePass", JsonE.int c.truePass )
+        , ( "trueFail", JsonE.int c.trueFail )
+        , ( "falsePass", JsonE.int c.falsePass )
+        , ( "falseFail", JsonE.int c.falseFail )
+        , ( "minAgreement", JsonE.float c.minAgreement )
+        , ( "calibrated", JsonE.bool c.calibrated )
+        , ( "disagreements"
+          , JsonE.list
+                (\d ->
+                    JsonE.object
+                        [ ( "id", JsonE.string d.id )
+                        , ( "label", JsonE.bool d.label )
+                        , ( "verdict", JsonE.bool d.verdict )
+                        , ( "reason", JsonE.string d.reason )
+                        ])
+                c.disagreements
+          )
+        ]
+
+
+optInt : Maybe Int -> JsonE.Value
+optInt m =
+    case m of
+
+        Just n ->
+            JsonE.int n
+
+        Nothing ->
+            JsonE.null
+
+
+-- | A report as JSON text: every field, so `decodeReport` reads the same
+-- report back. The registry stores attached reports in this form.
+encodeReport : Report -> String
+encodeReport r =
+    JsonE.encode 0 (reportValue r)
+
+
+-- | A report from the JSON `encodeReport` wrote. A report written before a
+-- field existed reads that field as absent.
+decodeReport : String -> Result Error Report
+decodeReport text =
+    JsonD.decodeString reportDecoder text
+
+
+apply : JsonD.Decoder a -> JsonD.Decoder (a -> b) -> JsonD.Decoder b
+apply da df =
+    JsonD.andThen (\f -> JsonD.map f da) df
+
+
+req : String -> JsonD.Decoder a -> JsonD.Decoder (a -> b) -> JsonD.Decoder b
+req name d df =
+    apply (JsonD.field name d) df
+
+
+opt : String -> JsonD.Decoder a -> JsonD.Decoder (Maybe a -> b) -> JsonD.Decoder b
+opt name d df =
+    apply
+        (JsonD.oneOf
+            [ JsonD.field
+                  name
+                  (JsonD.oneOf
+                      [ JsonD.map Just d, JsonD.map (\_ -> Nothing) jsonNull ])
+            , JsonD.succeed Nothing
+            ])
+        df
+
+
+moneyDecoder : JsonD.Decoder Money
+moneyDecoder =
+    JsonD.andThen
+        (\text ->
+            case String.split " " (String.trim text) of
+
+                [c, amount] ->
+                    case Money.fromString (Money.parseCurrency c) amount of
+
+                        Ok m ->
+                            JsonD.succeed m
+
+                        Err _ ->
+                            JsonD.fail ("not an amount: " ++ text)
+
+                _ ->
+                    JsonD.fail ("not an amount: " ++ text))
+        JsonD.string
+
+
+reportDecoder : JsonD.Decoder Report
+reportDecoder =
+    JsonD.succeed Report |> req "suite" JsonD.string
+        |> req "candidate" JsonD.string
+        |> req "seed" JsonD.int
+        |> req "samples" JsonD.int
+        |> opt "judge" JsonD.string
+        |> req "startedAt" JsonD.int
+        |> req "durationMs" JsonD.int
+        |> req "cases" (JsonD.list caseDecoder)
+        |> req "passed" JsonD.int
+        |> req "failed" JsonD.int
+        |> req "errors" JsonD.int
+        |> req "passRate" JsonD.float
+        |> req "scorers" (JsonD.list scorerDecoder)
+        |> req "p95LatencyMs" JsonD.int
+        |> opt "meanCost" moneyDecoder
+        |> opt "latencyBudgetMs" JsonD.int
+        |> opt "costBudget" moneyDecoder
+        |> opt "calibration" calibrationDecoder
+        |> req "digest" JsonD.string
+
+
+scorerDecoder : JsonD.Decoder ScorerScore
+scorerDecoder =
+    JsonD.map3
+        (\n m c -> { scorer = n, mean = m, count = c })
+        (JsonD.field "scorer" JsonD.string)
+        (JsonD.field "mean" JsonD.float)
+        (JsonD.field "count" JsonD.int)
+
+
+caseDecoder : JsonD.Decoder CaseResult
+caseDecoder =
+    JsonD.succeed CaseResult |> req "id" JsonD.string |> req "sample" JsonD.int
+        |> req "tags" (JsonD.list JsonD.string)
+        |> req "passed" JsonD.bool
+        |> req "score" JsonD.float
+        |> req
+               "scores"
+               (JsonD.list
+                   (JsonD.map2
+                       (\n v -> ( n, v ))
+                       (JsonD.field "scorer" JsonD.string)
+                       (JsonD.field "value" JsonD.float)))
+        |> req "reason" JsonD.string
+        |> req "output" JsonD.string
+        |> req "latencyMs" JsonD.int
+        |> opt "cost" moneyDecoder
+        |> opt "error" JsonD.string
+
+
+calibrationDecoder : JsonD.Decoder Calibration
+calibrationDecoder =
+    JsonD.succeed Calibration |> req "judge" JsonD.string
+        |> req "cases" JsonD.int
+        |> req "agreed" JsonD.int
+        |> req "agreement" JsonD.float
+        |> req "kappa" JsonD.float
+        |> req "truePass" JsonD.int
+        |> req "trueFail" JsonD.int
+        |> req "falsePass" JsonD.int
+        |> req "falseFail" JsonD.int
+        |> req "minAgreement" JsonD.float
+        |> req "calibrated" JsonD.bool
+        |> req
+               "disagreements"
+               (JsonD.list
+                   (JsonD.map4
+                       (\i l v why ->
+                           { id = i, label = l, verdict = v, reason = why })
+                       (JsonD.field "id" JsonD.string)
+                       (JsonD.field "label" JsonD.bool)
+                       (JsonD.field "verdict" JsonD.bool)
+                       (JsonD.field "reason" JsonD.string)))
 
 
 scorerValue : ScorerScore -> JsonE.Value
@@ -1292,6 +2032,7 @@ type Thresholds
     = Thresholds { minPassRate : Maybe Float
 , floors : List ( String, Float )
 , maxRegression : Float
+, calibratedJudge : Bool
 }
 
 
@@ -1300,7 +2041,12 @@ type Thresholds
 -- The suite's latency and cost budgets always apply.
 thresholds : Thresholds
 thresholds =
-    Thresholds { minPassRate = Nothing, floors = [], maxRegression = 5.0e-2 }
+    Thresholds
+        { minPassRate = Nothing
+        , floors = []
+        , maxRegression = 5.0e-2
+        , calibratedJudge = False
+        }
 
 
 -- | The lowest pass rate, from 0 to 1.
@@ -1322,6 +2068,14 @@ withMaxRegression : Float -> Thresholds -> Thresholds
 withMaxRegression x (Thresholds t) =
     Thresholds { t | maxRegression = max 0.0 x }
 
+
+-- | Require a calibrated judge: a report that scored `Rubric` cases with a
+-- judge that has no labelled cases (`withCalibration`) fails the gate. A
+-- judge that has them and fell below its agreement always fails it.
+withCalibratedJudge : Thresholds -> Thresholds
+withCalibratedJudge (Thresholds t) =
+    Thresholds { t | calibratedJudge = True }
+
 -- | Proof that a candidate passed a gate. Only `gate` and `check` make one, so
 -- a function that requires a `Passed` cannot run without a passing evaluation.
 type Passed
@@ -1331,11 +2085,14 @@ type Passed
 }
 
 
+-- | The suite the passing report ran.
 passedSuite : Passed -> String
 passedSuite (Passed p) =
     p.suite
 
 
+-- | The candidate the passing report named (`Registry.label v` for a
+-- registry version).
 passedCandidate : Passed -> String
 passedCandidate (Passed p) =
     p.candidate
@@ -1349,8 +2106,8 @@ passedDigest (Passed p) =
 
 -- | Apply the thresholds. It fails when the pass rate or a scorer's mean is
 -- below its floor, when a scorer regressed beyond the allowed drop against the
--- baseline, or when the p95 latency or the mean cost is over the suite's
--- budget. The failure is `Std.Ai.Failure.GateFailed`, which names every reason.
+-- baseline, when the p95 latency or the mean cost is over the suite's
+-- budget, or when the judge failed its calibration. The failure is `Std.Ai.Failure.GateFailed`, which names every reason.
 gate : Thresholds -> Comparison -> Result Error Passed
 gate t cmp =
     case gateFailures t cmp of
@@ -1481,8 +2238,35 @@ gateFailures (Thresholds t) cmp =
 
                 _ ->
                     []
+        calibration =
+            case r.calibration of
+
+                Just c ->
+                    if c.calibrated then
+                        []
+
+                    else
+                        [ "the judge " ++ c.judge
+                              ++ " failed calibration: it agreed with "
+                              ++ String.fromInt c.agreed
+                              ++ " of "
+                              ++ String.fromInt c.cases
+                              ++ " labelled cases ("
+                              ++ pct c.agreement
+                              ++ "), below "
+                              ++ pct c.minAgreement
+                        ]
+
+                Nothing ->
+                    if t.calibratedJudge && r.judge /= Nothing then
+                        [ "the judge " ++ Maybe.withDefault "" r.judge
+                              ++ " has no calibration; give it Eval.withCalibration"
+                        ]
+
+                    else
+                        []
     in
-        passRate ++ floors ++ regressions ++ latency ++ cost
+        passRate ++ floors ++ regressions ++ latency ++ cost ++ calibration
 
 
 -- ── Output formats ──────────────────────────────────────────────────
@@ -1603,8 +2387,30 @@ toMarkdown cmp =
                                    "- `" ++ caseLabel c ++ "`: " ++ c.reason
                                        ++ "\n")
                                failing)
+        calibrated =
+            case r.calibration of
+
+                Just c ->
+                    "\nJudge `" ++ c.judge ++ "` calibration: agreed with "
+                        ++ String.fromInt c.agreed
+                        ++ " of "
+                        ++ String.fromInt c.cases
+                        ++ " labelled cases ("
+                        ++ pct c.agreement
+                        ++ ", kappa "
+                        ++ fixed c.kappa
+                        ++ "), "
+                        ++ (if c.calibrated then
+                               "calibrated"
+
+                           else
+                               "below the required " ++ pct c.minAgreement)
+                        ++ ".\n"
+
+                Nothing ->
+                    ""
     in
-        head ++ scorers ++ versus ++ failures
+        head ++ scorers ++ calibrated ++ versus ++ failures
 
 
 -- ── Helpers ─────────────────────────────────────────────────────────

@@ -57,44 +57,59 @@ func readGGUFMeta(path string) (ggufMeta, error) {
 }
 
 func parseGGUFMeta(r io.Reader) (ggufMeta, error) {
+	kv, err := parseGGUFKV(r)
+	if err != nil {
+		return ggufMeta{}, err
+	}
+	return ggufMetaFromKV(kv)
+}
+
+// parseGGUFKV reads a GGUF header's metadata entries (bounded, as above).
+// An adapter file has the same header as a model and no block count, so the
+// registry reads it through this and checks `general.type` itself.
+func parseGGUFKV(r io.Reader) (map[string]any, error) {
 	var hdr struct {
 		Magic   [4]byte
 		Version uint32
 	}
 	if err := binary.Read(r, binary.LittleEndian, &hdr); err != nil {
-		return ggufMeta{}, fmt.Errorf("not a GGUF file: %v", err)
+		return nil, fmt.Errorf("not a GGUF file: %v", err)
 	}
 	if string(hdr.Magic[:]) != "GGUF" {
-		return ggufMeta{}, fmt.Errorf("not a GGUF file (magic %q)", hdr.Magic[:])
+		return nil, fmt.Errorf("not a GGUF file (magic %q)", hdr.Magic[:])
 	}
 	if hdr.Version < 2 || hdr.Version > 3 {
-		return ggufMeta{}, fmt.Errorf("GGUF version %d is not supported (2 or 3)", hdr.Version)
+		return nil, fmt.Errorf("GGUF version %d is not supported (2 or 3)", hdr.Version)
 	}
 	var counts struct{ Tensors, KV uint64 }
 	if err := binary.Read(r, binary.LittleEndian, &counts); err != nil {
-		return ggufMeta{}, fmt.Errorf("truncated GGUF header: %v", err)
+		return nil, fmt.Errorf("truncated GGUF header: %v", err)
 	}
 	if counts.KV > ggufMaxKV {
-		return ggufMeta{}, fmt.Errorf("GGUF declares %d metadata entries (limit %d)", counts.KV, ggufMaxKV)
+		return nil, fmt.Errorf("GGUF declares %d metadata entries (limit %d)", counts.KV, ggufMaxKV)
 	}
 	kv := map[string]any{}
 	for i := uint64(0); i < counts.KV; i++ {
 		key, err := ggufString(r)
 		if err != nil {
-			return ggufMeta{}, fmt.Errorf("GGUF metadata entry %d: %v", i, err)
+			return nil, fmt.Errorf("GGUF metadata entry %d: %v", i, err)
 		}
 		var typ uint32
 		if err := binary.Read(r, binary.LittleEndian, &typ); err != nil {
-			return ggufMeta{}, fmt.Errorf("GGUF metadata %q: %v", key, err)
+			return nil, fmt.Errorf("GGUF metadata %q: %v", key, err)
 		}
 		v, err := ggufValue(r, typ, 0)
 		if err != nil {
-			return ggufMeta{}, fmt.Errorf("GGUF metadata %q: %v", key, err)
+			return nil, fmt.Errorf("GGUF metadata %q: %v", key, err)
 		}
 		if v != nil {
 			kv[key] = v
 		}
 	}
+	return kv, nil
+}
+
+func ggufMetaFromKV(kv map[string]any) (ggufMeta, error) {
 	m := ggufMeta{}
 	m.arch, _ = kv["general.architecture"].(string)
 	if m.arch == "" {

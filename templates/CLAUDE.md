@@ -109,3 +109,8 @@ a `.env.test`) no engine starts: give the
 judge a `tests/mocks/` fixture, or pass `Eval.withJudge` a `Provider.custom`.
 An eval is a test: let its `Eval.check` thresholds fail it, and do not loosen
 a threshold to make a run pass.
+
+`Std.Ai.Registry` promotion needs evidence: never use `Registry.forcePromote`
+(or `sky ai promote --force`) to get past a failing gate unless the user asks,
+and never `block` or `rollback` a production alias on your own. Read with
+`sky ai lineage <name>@<alias>` first.

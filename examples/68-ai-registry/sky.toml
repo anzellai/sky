@@ -1,0 +1,16 @@
+name = "ai-registry"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+# The model registry in one program: register two adapter versions with their
+# lineage, gate each on an eval suite, promote, roll back, and read the
+# lineage. The records live in a SQLite file here (Std.Db, the same code on
+# PostgreSQL), the adapter files in a local store (file://, gs:// or s3:// with
+# SKY_AI_REGISTRY). Each run starts from a fresh directory, so it is
+# repeatable and needs no network and no model.
+#
+# `sky test` (test mode, see .env.test) serves the promoted adapter through a
+# model slot: tests/RegistryExampleTest.sky.

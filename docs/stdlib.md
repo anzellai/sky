@@ -2443,7 +2443,7 @@ to the local engine.
 
 | Module | Main functions |
 |---|---|
-| `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe` |
+| `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe` |
 | `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
 | `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire` |
 
@@ -2456,21 +2456,47 @@ Every AI failure is an `Error` with an existing `ErrorKind` and a typed
 Failure` reads it (`NotConfigured`, `InvalidSetting`, `Unreachable`,
 `Overloaded`, `TimedOut`, `EngineCrashed`, `EngineFailed`, `ModelTooLarge`,
 `NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `RemoteRejected`,
-`BudgetExceeded`, `ToolchainFailed`, `GateFailed`); match it with a `_ ->`
-branch.
+`BudgetExceeded`, `ToolchainFailed`, `GateFailed`, `NotRegistered`,
+`NotPromotable`, `PromotionConflict`, `AdapterMismatch`); match it with a
+`_ ->` branch.
 
 `Std.Ai.Eval` evaluates a model with Sky values: a `Suite` of `Case`s, scorers
 (`Exact`, `Contains`, `Matches`, `JsonShape`, `CallsTool`, `Refuses`, `Rubric`
 by a judge, `Custom`, `AllOf`), a seeded repeatable `run` that returns a typed
 `Report`, `compare` against a baseline, and `check` / `gate` thresholds that
-return an opaque `Passed` or a `GateFailed` error.
+return an opaque `Passed` or a `GateFailed` error. The judge's calls are
+journalled in the run's database (an unchanged verdict is asked once), a judge
+can be calibrated on human-labelled cases (`withCalibration`; the gate refuses
+a judge below its agreement), and `pairwise` compares two reports' answers in
+both orders.
 
 | Module | Main functions |
 |---|---|
 | `Std.Ai.Failure` | `Failure(..)`, `fromError`, `toError`, `code`, `kind`, `retryable` |
-| `Std.Ai.Eval` | `suite`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `withPassScore`, `judgeSlot`, `defaultJudge`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown` |
+| `Std.Ai.Eval` | `suite`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `judgeOn`, `withPassScore`, `withCalibration`, `calibrate`, `pairwise`, `judgeSlot`, `defaultJudge`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `withCalibratedJudge`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown`, `encodeReport`, `decodeReport` |
 
 Guides: [`ai/local.md`](ai/local.md#failures) and [`ai/eval.md`](ai/eval.md).
+
+### `Std.Ai.Registry` and `Std.Ai.Store` — the model registry (v0.28.0)
+
+`Std.Ai.Registry` holds versions of fine-tuned adapters (LoRA, QLoRA; GGUF or
+safetensors), each pinned to its base model's digest, with its lineage
+(dataset version and digest, trainer metadata), its attached eval reports and
+the aliases serving follows. The records are rows in the app's own database
+(`Std.Db`: SQLite or PostgreSQL, the same code), the files are blobs in a
+`Std.Ai.Store` (a local directory, GCS or S3, by SHA-256). `promote` needs an
+`Eval.Passed` for the version; every alias move is a compare-and-swap with a
+logged event; `rollback` pops the alias's log. A model slot serves an alias
+with `Endpoint.fromRegistry (Registry.resolver registry)` and
+`withAdapter "registry:<name>@<alias>"`, and follows it as it moves.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Registry` | `open`, `openConfigured`, `store`, `database`, `register`, `attachReport`, `reports`, `evalHistory`, `promote`, `promoteIf`, `promoteChecked`, `evidence`, `forcePromote`, `rollback`, `resolve`, `version`, `versions`, `aliases`, `history`, `lineage`, `trainedOn`, `block`, `fetch`, `label`, `servedName`, `resolver`, `versionValue`, `eventValue`, `reportLinkValue`, `lineageValue` |
+| `Std.Ai.Store` | `local`, `gcs`, `s3`, `fromUrl`, `configured`, `withEndpoint`, `withToken`, `withAwsKeys`, `location`, `put`, `fetch`, `signV4` |
+
+Guide: [`ai/registry.md`](ai/registry.md). CLI: `sky ai promote | rollback |
+lineage`.
 
 ## The Prelude
 

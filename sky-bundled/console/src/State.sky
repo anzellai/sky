@@ -251,32 +251,82 @@ type alias AiEval =
     , caseResults : List AiEvalCase
     }
 
+-- The model registry (Std.Ai.Registry): one model's aliases, newest
+-- versions, alias events and attached eval reports, as the registry last
+-- published them in this process.
+type alias AiAlias =
+    { aliasName : String
+    , number : Int
+    , generation : Int
+    }
+
+type alias AiVersion =
+    { label : String
+    , number : Int
+    , digest : String
+    , baseDigest : String
+    , dataset : String
+    , method : String
+    , format : String
+    , blocked : String
+    }
+
+type alias AiAliasEvent =
+    { aliasName : String
+    , seq : Int
+    , action : String
+    , from : Int
+    , to : Int
+    , report : String
+    , reason : String
+    }
+
+type alias AiReportLink =
+    { suite : String
+    , number : Int
+    , digest : String
+    , passRate : Float
+    , verdict : String
+    }
+
+type alias AiModel =
+    { name : String
+    , store : String
+    , aliases : List AiAlias
+    , versions : List AiVersion
+    , events : List AiAliasEvent
+    , reports : List AiReportLink
+    }
+
 type alias AiData =
     { slots : List AiSlot
     , engines : List AiEngine
     , calls : List AiCall
     , evals : List AiEval
+    , registry : List AiModel
     }
 
 
 emptyAiData : AiData
 emptyAiData =
-    { slots = [], engines = [], calls = [], evals = [] }
+    { slots = [], engines = [], calls = [], evals = [], registry = [] }
 
 -- The AI panel's controls. `failedOnly` and `slot` filter the recent
 -- calls on the server (`calls=failed`, `slot=<name>`); `openEval` is the
--- eval run whose cases are shown ("" for none). All three are part of
--- the console URL.
+-- eval run whose cases are shown ("" for none); `openModel` is the registry
+-- model whose versions, alias log and eval history are shown. All four are
+-- part of the console URL.
 type alias AiFilter =
     { failedOnly : Bool
     , slot : String
     , openEval : String
+    , openModel : String
     }
 
 
 emptyAiFilter : AiFilter
 emptyAiFilter =
-    { failedOnly = False, slot = "", openEval = "" }
+    { failedOnly = False, slot = "", openEval = "", openModel = "" }
 
 -- Per-service rollup row consumed by the multi-service Overview
 -- (v0.16.4 B5). One ServiceStat per distinct service_name in the
@@ -637,6 +687,7 @@ type Msg
     | AiShowFailed Bool
     | AiPickSlot String
     | AiOpenEval String
+    | AiOpenModel String
     -- v0.16.6 #493 part 2c: identity from the auth-gate.  Populated
     -- by `Cmd.perform Hub.currentIdentity GotIdentity` in init.
     -- A successful response with a tenant claim derives the

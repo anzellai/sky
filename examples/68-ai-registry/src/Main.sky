@@ -1,0 +1,189 @@
+module Main exposing (main)
+
+{-| The model registry, end to end, in one program:
+
+1.  register two adapter versions with their lineage;
+2.  evaluate each against the support suite and attach the report;
+3.  promote v1 to `prod` on its passing evaluation;
+4.  try v2, whose evaluation failed: the gate refuses it;
+5.  force v2 to `qa` with a recorded reason, then roll `qa` back;
+6.  print the lineage of `support-lora@prod`.
+
+Run it with `sky run src/Main.sky`. Run `sky test` to serve the promoted
+adapter through a model slot (tests/RegistryExampleTest.sky).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Eval as Eval
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Registry as Registry
+import Support
+
+type alias World =
+    { dir : String
+    , db : Db
+    , reg : Registry.Registry
+    }
+
+
+main : Task Error ()
+main =
+    File.tempDir "ai-registry-example" |> Task.andThen open
+        |> Task.andThen story
+
+
+open : String -> Task Error World
+open dir =
+    Db.open "sqlite" (dir ++ "/registry.db")
+        |> Task.andThen
+               (\db ->
+                   Registry.openConfigured db ("file://" ++ dir ++ "/store")
+                       |> Task.map (\reg -> { dir = dir, db = db, reg = reg }))
+
+
+story : World -> Task Error ()
+story w =
+    registerVersion w "support-v1" "11"
+        |> Task.andThen
+               (\v1 ->
+                   registerVersion w "support-v2" "12"
+                       |> Task.map (\v2 -> ( v1, v2 )))
+        |> Task.andThen
+               (\( v1, v2 ) ->
+                   evaluate w 1 v1 |> Task.andThen (\_ -> evaluate w 2 v2)
+                       |> Task.map (\_ -> ( v1, v2 )))
+        |> Task.andThen
+               (\( v1, v2 ) -> promoteFirst w v1 |> Task.map (\_ -> ( v1, v2 )))
+        |> Task.andThen (\( _, v2 ) -> tryPromote w v2 |> Task.map (\_ -> v2))
+        |> Task.andThen (\v2 -> forceAndRollBack w v2)
+        |> Task.andThen (\_ -> showLineage w)
+
+
+registerVersion : World -> String -> String -> Task Error Registry.Version
+registerVersion w name seed =
+    Support.adapterFile w.dir name
+        |> Task.andThen
+               (\adapter ->
+                   Registry.register
+                       w.reg
+                       "support-lora"
+                       adapter
+                       (Support.lineage seed))
+        |> Task.andThen
+               (\v ->
+                   println
+                       ("registered " ++ Registry.label v ++ "  adapter sha256:"
+                           ++ String.left 12 v.digest
+                           ++ "  base sha256:"
+                           ++ String.left 12 v.baseDigest)
+                       |> Task.map (\_ -> v))
+
+
+-- Run the suite with the version's label as the candidate, so a passing
+-- report names exactly this version, and attach it.
+evaluate : World -> Int -> Registry.Version -> Task Error ()
+evaluate w n v =
+    Eval.runAs (Registry.label v) w.db (Support.candidateFor n) Support.suite
+        |> Task.andThen
+               (\report ->
+                   Registry.attachReport w.reg v report
+                       |> Task.andThen
+                              (\_ ->
+                                  println
+                                      ("evaluated " ++ Registry.label v ++ "  "
+                                          ++ String.fromInt report.passed
+                                          ++ " of "
+                                          ++ String.fromInt
+                                                 (List.length report.cases)
+                                          ++ " passed")))
+
+
+-- `promoteChecked` re-applies the gate to the attached report and promotes
+-- with the `Eval.Passed` it gives. Without a passing report there is no
+-- `Passed`, so there is no promotion.
+promoteFirst : World -> Registry.Version -> Task Error ()
+promoteFirst w v =
+    Registry.promoteChecked
+        w.reg
+        "prod"
+        v
+        (Eval.thresholds |> Eval.withMinPassRate 1.0)
+        |> Task.andThen
+               (\ev ->
+                   println
+                       ("promoted " ++ Registry.label v ++ " to prod ("
+                           ++ ev.action
+                           ++ ")"))
+
+
+tryPromote : World -> Registry.Version -> Task Error ()
+tryPromote w v =
+    Registry.promoteChecked
+        w.reg
+        "prod"
+        v
+        (Eval.thresholds |> Eval.withMinPassRate 1.0)
+        |> Task.map (\_ -> "promoted")
+        |> Task.onError
+               (\e ->
+                   case Failure.fromError e of
+
+                       Just (GateFailed g) ->
+                           Task.succeed ("refused by the gate: " ++ g.reasons)
+
+                       _ ->
+                           Task.fail e)
+        |> Task.andThen
+               (\outcome -> println (Registry.label v ++ " to prod: " ++ outcome))
+
+
+forceAndRollBack : World -> Registry.Version -> Task Error ()
+forceAndRollBack w v2 =
+    Registry.resolve w.reg "support-lora@prod"
+        |> Task.andThen
+               (\v1 -> Registry.forcePromote w.reg "qa" v1 "first QA build")
+        |> Task.andThen
+               (\_ ->
+                   Registry.forcePromote w.reg "qa" v2 "try the new tone in QA")
+        |> Task.andThen (\_ -> Registry.rollback w.reg "support-lora@qa")
+        |> Task.andThen
+               (\ev ->
+                   println
+                       ("qa rolled back: v" ++ String.fromInt ev.from ++ " -> v"
+                           ++ String.fromInt ev.to))
+
+
+showLineage : World -> Task Error ()
+showLineage w =
+    Registry.lineage w.reg "support-lora@prod"
+        |> Task.andThen
+               (\l ->
+                   println
+                       (String.join
+                           "\n"
+                           ([ "lineage of support-lora@prod: "
+                                 ++ Registry.label l.version
+                           , "  aliases  " ++ String.join ", " l.aliases
+                           , "  dataset  " ++ l.version.dataset
+                           , "  base     " ++ l.version.base
+                           , "  reports  "
+                                 ++ String.fromInt (List.length l.reports)
+                           ]
+                               ++ List.map
+                                      (\e ->
+                                          "  event    " ++ e.aliasName ++ " #"
+                                              ++ String.fromInt e.seq
+                                              ++ " "
+                                              ++ e.action
+                                              ++ " v"
+                                              ++ String.fromInt e.from
+                                              ++ " -> v"
+                                              ++ String.fromInt e.to)
+                                      l.events)))

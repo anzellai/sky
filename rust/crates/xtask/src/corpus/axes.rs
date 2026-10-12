@@ -192,6 +192,8 @@ pub const SURFACE: Axis = Axis::new(
         "ailocal",
         "aifailure",
         "aieval",
+        "aistore",
+        "airegistry",
         "canvas",
         "terminal",
     ],

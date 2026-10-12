@@ -40,6 +40,13 @@ every =
           }
     , ToolchainFailed { tool = "mlx", logTail = "out of memory" }
     , GateFailed { suite = "support", reasons = "pass rate 50% is below 90%" }
+    , NotRegistered { ref = "support-lora@prod" }
+    , NotPromotable
+          { ref = "support-lora@v3", reason = "it is blocked: erasure request" }
+    , PromotionConflict
+          { ref = "support-lora@prod", expected = "v2", actual = "v3" }
+    , AdapterMismatch
+          { adapter = "support-lora@v3", adapterBase = "aa", engineBase = "bb" }
     ]
 
 
@@ -133,6 +140,20 @@ tests =
                  "GateFailed"
                  (GateFailed { suite = "s", reasons = "r" })
                  PermissionDenied
+           , kindCase "NotRegistered" (NotRegistered { ref = "r" }) NotFound
+           , kindCase
+                 "NotPromotable"
+                 (NotPromotable { ref = "r", reason = "x" })
+                 PermissionDenied
+           , kindCase
+                 "PromotionConflict"
+                 (PromotionConflict { ref = "a", expected = "v1", actual = "v2" })
+                 Conflict
+           , kindCase
+                 "AdapterMismatch"
+                 (AdapterMismatch
+                     { adapter = "a", adapterBase = "b", engineBase = "c" })
+                 InvalidInput
            , kindCase
                  "RemoteRejected 400"
                  (RemoteRejected { status = 400 })

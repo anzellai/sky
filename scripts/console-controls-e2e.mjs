@@ -1064,6 +1064,35 @@ async function runAiPanel() {
     await clickText("eval fixture-eval");
     await waitFor("cases closed", async () => ({ ok: (await page.locator("[data-ai-case]").count()) === 0 && urlParams().get("eval") === null }));
   });
+  await check("ai: the registry shows the model's aliases, and its row opens versions, alias log and eval history", async () => {
+    await clickTab("AI");
+    await waitFor("registry row", async () => {
+      const aliases = await page.locator("[data-ai-model='fixture-lora'] [data-ai-alias]").evaluateAll((els) => els.map((e) => e.textContent.trim()));
+      return { ok: setEq(aliases.sort(), ["prod → v1", "qa → v2"]), why: `aliases ${fmt(aliases)}` };
+    });
+    expect((await page.locator("[data-ai-version]").count()) === 0, "versions are shown before the model is opened");
+    await clickText("model fixture-lora");
+    await waitFor("versions, events and reports", async () => {
+      const versions = await page.locator("[data-ai-version]").evaluateAll((els) => els.map((e) => e.getAttribute("data-ai-version")));
+      const events = await page.locator("[data-ai-event]").evaluateAll((els) => els.map((e) => e.textContent));
+      const reports = await page.locator("[data-ai-report]").count();
+      const t = await bodyText();
+      const ok = setEq(versions.sort(), ["fixture-lora@v1", "fixture-lora@v2"]) &&
+        events.length === 4 && events.some((e) => /rollback/.test(e)) && /reason: e2e check/.test(t) &&
+        reports === 2 && /gate passed/.test(t);
+      return { ok, why: `versions ${fmt(versions)} events ${events.length} reports ${reports}` };
+    });
+    await waitFor("URL model", async () => ({ ok: urlParams().get("model") === "fixture-lora", why: page.url() }));
+    await waitRead("registry read", "/_sky/console/api/ai", 0, (r) => {
+      const models = ((r.json && r.json.registry) || []).map((m) => m.name);
+      return models.includes("fixture-lora") ? true : `server answered ${fmt(models)}`;
+    });
+    navigating();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitFor("open after reload", async () => ({ ok: (await page.locator("[data-ai-version]").count()) === 2, why: page.url() }));
+    await clickText("model fixture-lora");
+    await waitFor("closed", async () => ({ ok: (await page.locator("[data-ai-version]").count()) === 0 && urlParams().get("model") === null }));
+  });
   await check("ai: reload keeps the AI tab and its calls filter", async () => {
     await clickText("Failed");
     await waitFor("URL", async () => ({ ok: urlParams().get("tab") === "ai" && urlParams().get("calls") === "failed", why: page.url() }));

@@ -22,10 +22,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,7 +42,38 @@ type aiSlot struct {
 
 	engineMu sync.Mutex
 	engine   *aiEngine
+
+	// The registry adapter (cfg.registry): the current resolution, when it was
+	// made, and the last failure to refresh it. resolveMu makes one caller
+	// resolve while the others keep serving the current adapter.
+	adMu      sync.Mutex
+	ad        *aiResolvedAdapter
+	adAt      time.Time
+	adErr     string
+	resolveMu sync.Mutex
 }
+
+// aiRegistryScheme marks an adapter the slot resolves through its registry.
+const aiRegistryScheme = "registry:"
+
+// aiLocalAdapter is a LoRA adapter a local engine loads with its model
+// (`--lora`): a verified GGUF file.
+type aiLocalAdapter struct {
+	path   string
+	sha256 string
+	label  string
+}
+
+// aiResolvedAdapter is the Sky `Endpoint.Adapter` a resolver returned.
+type aiResolvedAdapter struct {
+	ref, label, servedName, digest, baseDigest, format, path string
+}
+
+// aiSkyError carries a Sky `Error` value (a resolver's own failure) through
+// Go code unchanged, so the caller sees exactly what the registry said.
+type aiSkyError struct{ v any }
+
+func (e *aiSkyError) Error() string { return fmt.Sprintf("%v", e.v) }
 
 var (
 	aiSlotsMu sync.Mutex
@@ -94,15 +128,124 @@ var aiCallClient = &http.Client{Transport: &testHttpTransport{base: &http.Transp
 // urlContains "/chat/completions" or "/embeddings").
 func aiTestLocalBase(slot string) string { return "http://sky-ai-local.invalid/" + slot + "/v1" }
 
-// engine returns the slot's engine, starting it on first use.
-func (s *aiSlot) ensureEngine(ctx context.Context) (*aiEngine, error) {
+// engine returns the slot's engine for its current adapter, starting it on
+// first use. When the registry moved the slot to another adapter, the slot
+// switches to an engine with that adapter and retires the old one once its
+// calls have finished.
+func (s *aiSlot) ensureEngine(ctx context.Context, ad *aiResolvedAdapter) (*aiEngine, error) {
+	spec := s.cfg.local
+	if ad != nil {
+		spec.adapter = aiLocalAdapter{path: ad.path, sha256: ad.digest, label: ad.label}
+	}
 	s.engineMu.Lock()
-	if s.engine == nil {
-		s.engine = aiEngineFor(s.cfg.slot, s.cfg.local)
+	var retired *aiEngine
+	if s.engine == nil || s.engine.key != aiEngineKey(spec) {
+		retired = s.engine
+		s.engine = aiEngineFor(s.cfg.slot, spec)
 	}
 	e := s.engine
 	s.engineMu.Unlock()
+	if retired != nil {
+		aiRetireEngine(retired)
+	}
 	return e, e.ensure(ctx)
+}
+
+// adapter returns the slot's registry adapter (nil when the slot has none),
+// resolving it on first use and again when the refresh interval has passed.
+// A failed refresh keeps the current adapter and is reported in describe and
+// on stderr; a failed first resolution fails the call.
+func (s *aiSlot) adapter() (*aiResolvedAdapter, error) {
+	if !s.cfg.registry {
+		return nil, nil
+	}
+	s.adMu.Lock()
+	cur, at := s.ad, s.adAt
+	s.adMu.Unlock()
+	if cur != nil {
+		if s.cfg.adapterRefresh <= 0 || time.Since(at) < s.cfg.adapterRefresh {
+			return cur, nil
+		}
+		// Due: one caller refreshes, the others keep serving the current one.
+		if !s.resolveMu.TryLock() {
+			return cur, nil
+		}
+	} else {
+		s.resolveMu.Lock()
+	}
+	defer s.resolveMu.Unlock()
+	s.adMu.Lock()
+	if s.ad != nil && s.ad != cur {
+		// Another caller resolved while this one waited.
+		ad := s.ad
+		s.adMu.Unlock()
+		return ad, nil
+	}
+	s.adMu.Unlock()
+
+	ad, err := s.resolveAdapter()
+	s.adMu.Lock()
+	defer s.adMu.Unlock()
+	s.adAt = time.Now()
+	if err != nil {
+		if cur == nil {
+			return nil, err
+		}
+		msg := aiErrorText(err)
+		if msg != s.adErr {
+			fmt.Fprintf(os.Stderr, "[sky] Std.Ai.Endpoint: slot %q: cannot re-resolve %s, still serving %s: %s\n", s.cfg.slot, s.cfg.adapter, cur.label, msg)
+		}
+		s.adErr = msg
+		return cur, nil
+	}
+	s.ad, s.adErr = ad, ""
+	return ad, nil
+}
+
+// resolveAdapter asks the slot's Sky resolver for the adapter its
+// `registry:<name>@<alias>` names now. A local slot also checks the base
+// model: an adapter trained on another base than the engine runs would load
+// and answer nonsense, so it is AdapterMismatch instead.
+func (s *aiSlot) resolveAdapter() (*aiResolvedAdapter, error) {
+	ref := strings.TrimPrefix(s.cfg.adapter, aiRegistryScheme)
+	local := s.cfg.mode == "local"
+	res := AnyTaskRun(sky_call2(s.cfg.resolve, ref, local))
+	tag, okV, errV := anyResultView(res)
+	if tag != 0 {
+		return nil, &aiSkyError{v: errV}
+	}
+	a := &aiResolvedAdapter{
+		ref:        aiStrField(okV, "Ref", "ref"),
+		label:      aiStrField(okV, "Label", "label"),
+		servedName: aiStrField(okV, "ServedName", "servedName"),
+		digest:     aiStrField(okV, "Digest", "digest"),
+		baseDigest: aiStrField(okV, "BaseDigest", "baseDigest"),
+		format:     aiStrField(okV, "Format", "format"),
+		path:       aiStrField(okV, "Path", "path"),
+	}
+	if a.servedName == "" || !aiValidSha256(a.digest) {
+		return nil, aiFailf(aiInvalidSetting, "slot %q: the registry resolved %s to an adapter with no name or digest", s.cfg.slot, ref).with("setting", "adapter")
+	}
+	if local {
+		if a.baseDigest != s.cfg.local.model.sha256 {
+			return nil, aiFailf(aiAdapterMismatch,
+				"slot %q: %s (%s) was trained on base sha256 %s, but the engine runs %s (sha256 %s); serve it on its own base model, or promote an adapter trained on this one",
+				s.cfg.slot, ref, a.label, a.baseDigest, s.cfg.local.model.file, s.cfg.local.model.sha256).
+				with("adapter", a.label).with("adapterBase", a.baseDigest).with("engineBase", s.cfg.local.model.sha256)
+		}
+		if a.format != "gguf" || a.path == "" {
+			return nil, aiFailf(aiInvalidSetting, "slot %q: %s is %s; a local engine loads a GGUF adapter file", s.cfg.slot, a.label, orDefault(a.format, "not a file")).with("setting", "adapter")
+		}
+	}
+	return a, nil
+}
+
+// aiErrorText is a failure's message for a log line.
+func aiErrorText(err error) string {
+	if se, ok := err.(*aiSkyError); ok {
+		return skyErrorMessage(se.v)
+	}
+	return err.Error()
 }
 
 // post sends one request body to path (relative to the base, "/chat/completions")
@@ -114,11 +257,17 @@ func (s *aiSlot) post(path, body string) (string, error) {
 	}
 	defer release()
 
+	ad, err := s.adapter()
+	if err != nil {
+		return "", err
+	}
 	model := s.cfg.model
-	if s.cfg.adapter != "" {
+	if ad != nil {
+		model = ad.servedName
+	} else if s.cfg.adapter != "" {
 		model = s.cfg.adapter
 	}
-	if s.cfg.mode == "local" {
+	if s.cfg.mode == "local" && ad == nil {
 		model = orDefault(model, "local")
 		model = strings.TrimSpace(model)
 		if strings.HasPrefix(model, "hf:") || strings.HasPrefix(model, "file:") {
@@ -140,7 +289,7 @@ func (s *aiSlot) post(path, body string) (string, error) {
 	// deadline, not by the call's timeout; the call's own timeout starts when
 	// the engine is ready.
 	startCtx, cancelStart := context.WithTimeout(context.Background(), aiStartTimeout())
-	e, err := s.ensureEngine(startCtx)
+	e, err := s.ensureEngine(startCtx, ad)
 	cancelStart()
 	if err != nil {
 		return "", err
@@ -312,6 +461,28 @@ func (s *aiSlot) description() any {
 			"source": st.source,
 		})
 	}
+	if s.cfg.registry {
+		s.adMu.Lock()
+		ad, adErr := s.ad, s.adErr
+		s.adMu.Unlock()
+		for i, st := range settings {
+			m := st.(map[string]any)
+			if m["key"] != "ADAPTER" {
+				continue
+			}
+			v := s.cfg.adapter
+			switch {
+			case ad != nil && adErr != "":
+				v += " -> " + ad.label + " (sha256:" + ad.digest[:12] + "; refresh failed: " + aiTail(adErr, 160) + ")"
+			case ad != nil:
+				v += " -> " + ad.label + " (sha256:" + ad.digest[:12] + ")"
+			default:
+				v += " (not resolved yet)"
+			}
+			m["value"] = v
+			settings[i] = m
+		}
+	}
 	inFlight, waiting := s.q.depth()
 	return map[string]any{
 		"slot":        c.slot,
@@ -362,6 +533,9 @@ func Ai_endpointDescribe(cfgArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
+		if _, err := s.adapter(); err != nil {
+			return aiTaskErr(err)
+		}
 		return Ok[any, any](s.description())
 	}
 }
@@ -375,13 +549,33 @@ func Ai_endpointWarm(cfgArg any) any {
 		if err != nil {
 			return aiTaskErr(err)
 		}
+		ad, err := s.adapter()
+		if err != nil {
+			return aiTaskErr(err)
+		}
 		if s.cfg.mode == "local" && !testModeActive() {
 			ctx, cancel := context.WithTimeout(context.Background(), aiStartTimeout())
 			defer cancel()
-			if _, err := s.ensureEngine(ctx); err != nil {
+			if _, err := s.ensureEngine(ctx, ad); err != nil {
 				return aiTaskErr(err)
 			}
 		}
 		return Ok[any, any](s.description())
 	}
+}
+
+// skyErrorMessage is the message of a Sky `Error` value (its ErrorInfo's
+// `message`), for a log line; any other value is printed as it is.
+func skyErrorMessage(v any) string {
+	ev := reflect.ValueOf(derefPointer(unwrapAny(v)))
+	if ev.IsValid() && ev.Kind() == reflect.Struct {
+		if fields := ev.FieldByName("Fields"); fields.IsValid() && fields.Kind() == reflect.Slice && fields.Len() == 2 {
+			if info := reflectElem(fields.Index(1)); info.IsValid() && info.Kind() == reflect.Struct {
+				if m := info.FieldByName("Message"); m.IsValid() && m.Kind() == reflect.String {
+					return m.String()
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("%v", v)
 }

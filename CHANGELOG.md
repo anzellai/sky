@@ -11,10 +11,11 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.28.0 — Model slots, a managed local model engine, typed AI failures and evals (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval) (unreleased)
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals and the model registry (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Registry) (unreleased)
 
-Phase 1 of the Std.Ai lifecycle design (`docs/design/std-ai-lifecycle.md`).
-The user guides are `docs/ai/local.md` and `docs/ai/eval.md`.
+Phase 1 and the registry part of phase 2 of the Std.Ai lifecycle design
+(`docs/design/std-ai-lifecycle.md`). The user guides are `docs/ai/local.md`,
+`docs/ai/eval.md` and `docs/ai/registry.md`.
 
 ### Added
 
@@ -130,8 +131,97 @@ The user guides are `docs/ai/local.md` and `docs/ai/eval.md`.
 - Under `sky test` (test mode) no engine starts: a call through any slot is
   answered by a `tests/mocks/` fixture.
 
+- **`Std.Ai.Registry`: versions of fine-tuned adapters, their lineage and
+  evidence, and the aliases serving follows.** The records (versions, aliases,
+  the alias log, attached eval reports) are rows in the app's own database
+  through `Std.Db`, SQLite or PostgreSQL with the same code, created by
+  dialect-neutral migrations in the `_sky_migrations` ledger
+  (`_sky_ai_registry_*`, applied on `open`, never ending the process under
+  `SKY_DB_OP`). `register` checks that a file is a LoRA / QLoRA adapter (GGUF
+  with `general.type = adapter`, or safetensors), pins it to its base model's
+  digest, stores it by SHA-256, and returns the existing version for the same
+  bytes. `attachReport`, `reports`, `evalHistory`; `promote` takes an
+  `Eval.Passed` that must name the version (`Eval.runAs (Registry.label v)`)
+  and whose report is attached, so promotion without a passing evaluation
+  does not compile; `promoteIf` (compare-and-swap from the state the caller
+  saw: of two promotions from one state at most one wins), `promoteChecked`
+  and `evidence` (re-gate the attached reports), `forcePromote` (a recorded
+  reason), `rollback` (the alias's log is a stack), `block`, `resolve`,
+  `version`, `versions`, `aliases`, `history`, `lineage`, `trainedOn` (the
+  versions to retrain after an erasure), `fetch`, and `resolver` for serving.
+  New failures `NotRegistered`, `NotPromotable`, `PromotionConflict`,
+  `AdapterMismatch`. (`sky-stdlib/Std/Ai/Registry.sky`,
+  `runtime-go/rt/ai_model_registry.go`, kernels `Ai_migrate`,
+  `Ai_recordRegistry`, `Ai_adapterInfo`.)
+- **`Std.Ai.Store`: the registry's artefacts in a local directory, GCS or S3,
+  with one code path.** Blobs under `blobs/sha256/<hex>`, uploads as
+  conditional creates, every read checked against its digest, remote blobs
+  cached in the AI home. GCS through a service-account JWT or the metadata
+  server, S3 through the standard variables or IMDSv2, signed with AWS
+  Signature Version 4 written in Sky (`Store.signV4`, tested against the AWS
+  examples). `configured` reads `SKY_AI_REGISTRY`; `withEndpoint`,
+  `withToken`, `withAwsKeys` for emulators and S3-compatible servers. The
+  runtime streams the bytes (`Ai_fileDigest`, `Ai_storeLocalPut`,
+  `Ai_storeLocalGet`, `Ai_storeHttpPut`, `Ai_storeHttpGet`, `Ai_storeCached`,
+  `Ai_registryLocation`; `runtime-go/rt/ai_store.go`).
+- **Serving follows the registry.** `Endpoint.fromRegistry (Registry.resolver
+  registry)` lets a slot's adapter be `registry:<name>@<alias>` (in code or
+  `SKY_AI_<SLOT>_ADAPTER`). A remote slot sends the version's served name; a
+  local slot loads the version's GGUF file with `--lora` after checking its
+  digest and that it was trained on the engine's base model
+  (`AdapterMismatch`). The slot resolves the alias at start and again after
+  `Endpoint.withAdapterRefresh` seconds (`SKY_AI_<SLOT>_ADAPTER_REFRESH_S`,
+  default 30); a local slot moving to another version retires its old engine
+  when the last call ends, and a failed refresh keeps the current adapter and
+  says so in `describe`.
+- **`Std.Ai.Eval`: the judge journal, calibration and pairwise judging.**
+  Every judge call is journalled in the run's database
+  (`_sky_ai_eval_judge_journal`), keyed by the judge's identity, version and
+  exact prompt, so an unchanged re-run asks the judge nothing. `judgeOn`
+  (a judge on a slot, identified by its resolved model). `withCalibration`
+  runs the judge on human-labelled cases before a run and records the
+  agreement, Cohen's kappa and the disagreements in the report's
+  `calibration`; the gate fails a judge below its agreement, and
+  `withCalibratedJudge` refuses an uncalibrated one. `calibrate`. `pairwise`
+  asks the judge in both orders and counts a win only when both agree.
+  `encodeReport` / `decodeReport`. The eval tables are now created through the
+  migration ledger (`_sky_ai_eval_*`).
+- **`sky ai promote | rollback | lineage`**, on the app's database (`--db`,
+  else `SKY_DB_PATH`, `DATABASE_URL`, or the project's `[database]`), each
+  with `--format json`; `promote` takes `--min-pass-rate`, `--expect`,
+  `--force --reason`; `lineage --dataset <sha256>`.
+- **Startup report and `sky doctor` for AI slots.** The build lists the slots
+  the source names (`project/src/ai_slots.rs`, generated
+  `ai_slots_gen.go`; a refused literal name is a build warning), and a server
+  prints one line per slot under `listening`: mode, target (scheme, host,
+  port) and which settings the environment sets, never a value.
+  `sky doctor` applies the slot rule to the environment (mode, URL, registry
+  adapter, pinned model, a TCP probe of the remote), checks `SKY_AI_FETCH`,
+  `SKY_AI_ACCEL`, `SKY_AI_REGISTRY` and `SKY_AI_LLAMA_BIN`, and with fetching
+  off reports an engine or model that is not provisioned.
+- **The console's AI tab shows the model registry:** each model's aliases, and
+  on a click (`model=` in the URL) its versions, alias log and eval history.
+- New variables: `SKY_AI_REGISTRY`, `SKY_AI_<SLOT>_ADAPTER_REFRESH_S`.
+- `examples/68-ai-registry`: register, evaluate, promote, refuse, force, roll
+  back and read the lineage, with no model and no network; its test serves the
+  promoted adapter through a slot in test mode.
+
 ### Tests
 
+- Registry (phase 2): `tests/Std/Ai/RegistryTest.sky` (versions, lineage,
+  evidence, compare-and-swap race, rollback stack, block, force, resolver),
+  `tests/Std/Ai/StoreTest.sky` (SigV4 against the AWS examples, locations,
+  local put and fetch), `tests/Std/Ai/EvalTest.sky` (journal, calibration,
+  kappa, gate refusal, pairwise, report codec), `runtime-go/rt/ai_store_test.go`
+  (digest-checked transfers against an httptest bucket, adapter detection,
+  `SKY_AI_REGISTRY` precedence), `ai_endpoint_registry_test.go` (served name,
+  refresh, failed refresh, `--lora`, engine switch, `AdapterMismatch`, a
+  swapped file), `ai_startup_test.go`, the console registry section;
+  `rust/crates/sky/tests/ai_registry_flow.rs` (program + CLI on SQLite with the
+  fake engine, GCS and S3 offline in test mode, the example, and the same
+  registry on a real PostgreSQL cluster, `--ignored`), `doctor_flow.rs`, the
+  `ai_slots` and `ai_doctor` unit tests, corpus surface `aistore`, and the
+  console-controls e2e registry check.
 - `runtime-go/rt/ai_test.go` against a fake engine
   (`runtime-go/rt/testdata/fakellama`): the resolution rule, precedence and
   prefix, checksum refusal for models and engine archives, fetch off,
@@ -191,6 +281,13 @@ The user guides are `docs/ai/local.md` and `docs/ai/eval.md`.
 
 ### Changed
 
+- `sky ai` (and every bundled verb) prints "building bundled app" to stderr,
+  so `--format json` output is one JSON value even on a cold cache.
+- The exit audit (`pg_embed_exit_audit_test.go`) skips `testdata/`, which no
+  app links (the fake llama-server exits by design).
+- `Eval.passedSuite` and `Eval.passedCandidate` have doc summaries, and the
+  `sky-suites` exact count records the phase 1 Eval and Failure suites it had
+  missed.
 - The stdlib-collision baseline (`[E1012]`'s "new since" note and the E-5
   test) is now v0.27.8 (`rust/crates/hir/data/stdlib-exports-v0.27.8.tsv`).
 - The `samename-stdlib-type` fixture imports `Std.Ai.Provider` itself: the

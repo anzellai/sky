@@ -14,6 +14,7 @@ import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
 import Sky.Core.Json.Encode as JsonE
 import Sky.Test as Test exposing (Test, TestResult)
 import Std.Codec as Codec
@@ -22,6 +23,7 @@ import Std.Money as Money exposing (Currency(..))
 import Std.Ai.Provider as Provider exposing (Provider, Message)
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Sync as Sync
 
 
 -- ── Candidates ──────────────────────────────────────────────────────
@@ -401,6 +403,222 @@ history =
         |> Task.run
 
 
+-- ── Phase 2: the judge journal, calibration and pairwise judging ────
+-- A judge that counts its calls and scores "Polite" 5 and anything else 2.
+countingJudge : Sync.Ref Int -> Provider
+countingJudge calls =
+    Provider.custom
+        (\messages ->
+            Sync.update (\n -> n + 1) calls
+                |> Task.map
+                       (\_ ->
+                           if String.contains
+                               "RESPONSE:\nPolite"
+                               (lastUser messages) then
+                               answer "SCORE: 5 - polite"
+
+                           else
+                               answer "SCORE: 2 - not polite"))
+
+
+journalSuite : Provider -> Eval.Suite String
+journalSuite judgeProvider =
+    Eval.suite
+        "journal"
+        ask
+        [ caseOf "j1" (Rubric "Journal rubric: stays polite.")
+        , caseOf "j2" (Rubric "Journal rubric: stays polite.")
+        ]
+        |> Eval.withJudge (Eval.judge judgeProvider "journal-v1")
+
+
+-- Two runs of an unchanged suite on one database: the second asks the judge
+-- nothing.
+journalCalls : Result Error ( Int, Int, Bool )
+journalCalls =
+    Task.map2 (\calls db -> ( calls, db )) (Sync.newRef 0) memoryDb
+        |> Task.andThen (\( calls, db ) -> journalTwice calls db)
+        |> Task.run
+
+
+journalRun : Sync.Ref Int -> Db -> Task Error ( Eval.Report, Int )
+journalRun calls db =
+    Eval.run
+        db
+        (table [ ( "j1", "Polite one." ), ( "j2", "Rude one." ) ])
+        (journalSuite (countingJudge calls))
+        |> Task.andThen
+               (\report -> Sync.get calls |> Task.map (\n -> ( report, n )))
+
+
+journalTwice : Sync.Ref Int -> Db -> Task Error ( Int, Int, Bool )
+journalTwice calls db =
+    journalRun calls db
+        |> Task.andThen
+               (\( first, afterFirst ) ->
+                   journalRun calls db
+                       |> Task.map
+                              (\( second, afterSecond ) ->
+                                  ( afterFirst
+                                  , afterSecond
+                                  , List.map .reason first.cases
+                                        == List.map .reason second.cases
+                                  )))
+
+
+labelled : List Eval.Labelled
+labelled =
+    [ { id = "l1"
+      , question = "Help me?"
+      , answer = "Polite reply."
+      , rubric = "Stays polite."
+      , passes = True
+      }
+    , { id = "l2"
+      , question = "Help me?"
+      , answer = "Polite again."
+      , rubric = "Stays polite."
+      , passes = True
+      }
+    , { id = "l3"
+      , question = "Help me?"
+      , answer = "Rude reply."
+      , rubric = "Stays polite."
+      , passes = False
+      }
+    , { id = "l4"
+      , question = "Help me?"
+      , answer = "Rude but labelled fine."
+      , rubric = "Stays polite."
+      , passes = True
+      }
+    ]
+
+
+calibratedTone : Float -> Eval.Suite String
+calibratedTone minAgreement =
+    Eval.suite
+        "calibrated-tone"
+        ask
+        [ caseOf "polite" (Rubric "Stays polite.") ]
+        |> Eval.withJudge
+               (Eval.judge fairJudge "rubric-cal"
+                   |> Eval.withCalibration labelled minAgreement)
+
+
+calibratedRun : Float -> Result Error Eval.Report
+calibratedRun minAgreement =
+    runOn (table toneAnswers) (calibratedTone minAgreement)
+
+
+directCalibration : Result Error Eval.Calibration
+directCalibration =
+    memoryDb
+        |> Task.andThen
+               (\db ->
+                   Eval.calibrate
+                       db
+                       (Eval.judge fairJudge "rubric-cal"
+                           |> Eval.withCalibration labelled 0.7))
+        |> Task.run
+
+
+noLabels : Result Error Eval.Calibration
+noLabels =
+    memoryDb
+        |> Task.andThen
+               (\db -> Eval.calibrate db (Eval.judge fairJudge "rubric-none"))
+        |> Task.run
+
+
+-- Pairwise: the baseline answers rudely, the candidate politely.
+pairSuite : Eval.Suite String
+pairSuite =
+    Eval.suite
+        "pair"
+        ask
+        [ caseOf "p1" (Contains "a"), caseOf "p2" (Contains "a") ]
+
+
+pairReports : Result Error ( Eval.Report, Eval.Report )
+pairReports =
+    memoryDb
+        |> Task.andThen
+               (\db ->
+                   Eval.runAs
+                       "rude"
+                       db
+                       (table [ ( "p1", "Rude a." ), ( "p2", "Rude a." ) ])
+                       pairSuite
+                       |> Task.andThen
+                              (\b ->
+                                  Eval.runAs
+                                      "polite"
+                                      db
+                                      (table
+                                          [ ( "p1", "Polite a." )
+                                          , ( "p2", "Polite a." )
+                                          ])
+                                      pairSuite
+                                      |> Task.map (\c -> ( b, c ))))
+        |> Task.run
+
+
+-- A fair pair judge picks the polite response wherever it is.
+fairPairJudge : Provider
+fairPairJudge =
+    Provider.custom
+        (\messages ->
+            if String.contains "RESPONSE A:\nPolite" (lastUser messages) then
+                Task.succeed (answer "WINNER: A - polite")
+
+            else if String.contains "RESPONSE B:\nPolite" (lastUser messages) then
+                Task.succeed (answer "WINNER: B - polite")
+
+            else
+                Task.succeed (answer "WINNER: TIE - same"))
+
+
+-- A position-biased judge always prefers the first response.
+firstPairJudge : Provider
+firstPairJudge =
+    Provider.custom (\_ -> Task.succeed (answer "WINNER: A - the first one"))
+
+
+pairwiseWith : Provider -> String -> Result Error Eval.Pairwise
+pairwiseWith p version =
+    case pairReports of
+
+        Ok ( b, c ) ->
+            memoryDb
+                |> Task.andThen
+                       (\db ->
+                           Eval.pairwise
+                               db
+                               (Eval.judge p version)
+                               "Stays polite."
+                               pairSuite
+                               b
+                               c)
+                |> Task.run
+
+        Err e ->
+            Err e
+
+
+codecRoundTrip : Result Error Bool
+codecRoundTrip =
+    calibratedRun 0.7
+        |> Result.andThen
+               (\r ->
+                   Eval.decodeReport (Eval.encodeReport r)
+                       |> Result.map
+                              (\back ->
+                                  Eval.encodeReport back == Eval.encodeReport r
+                                      && back.calibration
+                                      /= Nothing))
+
+
 tests : List Test
 tests =
     [ Test.test
@@ -699,4 +917,133 @@ tests =
     , Test.test
           "history reads the run back from the database"
           (\_ -> Test.equal (Ok ( 1, "True" )) history)
+    , Test.test
+          "the judge journal answers an unchanged re-run with no judge call"
+          (\_ -> Test.equal (Ok ( 2, 2, True )) journalCalls)
+    , Test.test
+          "calibration measures agreement and Cohen's kappa"
+          (\_ ->
+              case directCalibration of
+
+                  Ok c ->
+                      Test.equal
+                          ( ( 4, 3, 75 ), ( 50, 2, 1 ), ( True, [ "l4" ] ) )
+                          ( ( c.cases
+                            , c.agreed
+                            , Math.round (c.agreement * 100.0)
+                            )
+                          , ( Math.round (c.kappa * 100.0)
+                            , c.truePass
+                            , c.falseFail
+                            )
+                          , ( c.calibrated, List.map .id c.disagreements )
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "calibrating a judge with no labelled cases is InvalidSetting"
+          (\_ ->
+              case noLabels of
+
+                  Ok _ ->
+                      Test.fail "calibrated with nothing"
+
+                  Err e ->
+                      case Failure.fromError e of
+
+                          Just (InvalidSetting r) ->
+                              Test.equal "calibration" r.setting
+
+                          _ ->
+                              Test.fail (Error.toString e))
+    , Test.test
+          "a run records the judge's calibration in the report"
+          (\_ ->
+              onReport
+                  (\r ->
+                      Test.equal
+                          (Just ( 3, 4 ))
+                          (Maybe.map (\c -> ( c.agreed, c.cases )) r.calibration))
+                  (calibratedRun 0.7))
+    , Test.test
+          "the gate refuses a judge below its required agreement"
+          (\_ ->
+              onReport
+                  (\r ->
+                      hasText
+                          "failed calibration"
+                          (gateReason (Eval.check Eval.thresholds r)))
+                  (calibratedRun 0.9))
+    , Test.test
+          "the gate accepts a judge at its required agreement"
+          (\_ ->
+              onReport
+                  (\r ->
+                      Test.equal
+                          "passed"
+                          (gateReason (Eval.check Eval.thresholds r)))
+                  (calibratedRun 0.7))
+    , Test.test
+          "withCalibratedJudge refuses an uncalibrated judge"
+          (\_ ->
+              onReport
+                  (\r ->
+                      hasText
+                          "has no calibration"
+                          (gateReason
+                              (Eval.check
+                                  (Eval.thresholds |> Eval.withCalibratedJudge)
+                                  r)))
+                  (runOn (table toneAnswers) tone))
+    , Test.test
+          "toMarkdown reports the calibration"
+          (\_ ->
+              onReport
+                  (\r ->
+                      hasText
+                          "calibration: agreed with 3 of 4 labelled cases"
+                          (Eval.toMarkdown (Eval.alone r)))
+                  (calibratedRun 0.7))
+    , Test.test
+          "pairwise: a fair judge prefers the better candidate in both orders"
+          (\_ ->
+              case pairwiseWith fairPairJudge "pair-fair" of
+
+                  Ok p ->
+                      Test.equal
+                          ( 2, 0, 0, 100 )
+                          ( p.candidateWins
+                          , p.baselineWins
+                          , p.ties
+                          , Math.round (p.winRate * 100.0)
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "pairwise: a judge that prefers a position gives ties"
+          (\_ ->
+              case pairwiseWith firstPairJudge "pair-first" of
+
+                  Ok p ->
+                      Test.equal
+                          ( 0
+                          , 0
+                          , 2
+                          , 50
+                          , [ "baseline/candidate", "baseline/candidate" ]
+                          )
+                          ( p.candidateWins
+                          , p.baselineWins
+                          , p.ties
+                          , Math.round (p.winRate * 100.0)
+                          , List.map (\c -> c.first ++ "/" ++ c.second) p.cases
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a report survives encodeReport and decodeReport"
+          (\_ -> Test.equal (Ok True) codecRoundTrip)
     ]

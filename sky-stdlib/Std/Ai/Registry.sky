@@ -1,0 +1,1555 @@
+-- | Std.Ai.Registry — versions of fine-tuned adapters, their lineage and eval
+-- evidence, and the aliases (`dev`, `qa`, `prod`) that serving follows.
+--
+-- ```elm
+-- import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+--
+-- release : Registry.Registry -> Eval.Passed -> Task Error Registry.AliasEvent
+-- release reg passed =
+--     Registry.register reg "support-lora"
+--         { path = "out/adapter.gguf", format = Gguf, method = Lora }
+--         { base = Local.devModel, dataset = "support@3", datasetDigest = dataDigest, metadata = [ ( "seed", "7" ) ] }
+--         |> Task.andThen (\v -> Registry.promote reg "prod" v passed)
+-- ```
+--
+-- The registry has two halves:
+--
+--   * **The records** live in the app's own database (`Std.Db`): SQLite in
+--     development, PostgreSQL in QA and production, with the same code. Every
+--     version, alias, alias event and attached eval report is a row. The
+--     schema is a list of dialect-neutral migrations applied through the
+--     `_sky_migrations` ledger when the registry opens (ids
+--     `_sky_ai_registry_*`).
+--   * **The artefacts** live in a `Std.Ai.Store`: a local directory, a GCS
+--     bucket or an S3 bucket, content-addressed by SHA-256.
+--
+-- Only adapters are registered (LoRA and QLoRA, as GGUF for llama.cpp or
+-- safetensors for training and vLLM), and each is pinned to the digest of the
+-- base model it was trained on. `register` refuses a file that is not an
+-- adapter, and an engine refuses an adapter whose base digest differs from its
+-- own model (`AdapterMismatch`).
+--
+-- **Promotion needs evidence.** `promote` takes an `Eval.Passed`, which only
+-- `Eval.gate` and `Eval.check` can make, so a version without a passing
+-- evaluation cannot be promoted: the program does not compile. The `Passed`
+-- must name this version (run the suite with `Eval.runAs (Registry.label v)`)
+-- and its report must be attached (`attachReport`). `forcePromote` skips the
+-- evidence and records the reason. Every alias move is a compare-and-swap with
+-- a logged event, so two promotions racing from the same state cannot both
+-- win, and `rollback` returns the alias to the version before the current
+-- one.
+--
+-- **Serving follows the aliases.** `Endpoint.fromRegistry (Registry.resolver
+-- reg)` lets a slot name an adapter as `registry:<name>@<alias>` (in code with
+-- `Endpoint.withAdapter`, or with `SKY_AI_<SLOT>_ADAPTER`), and the slot
+-- resolves it when it starts and again as the alias moves.
+module Std.Ai.Registry exposing
+    ( Registry
+    , Format(..)
+    , Method(..)
+    , Adapter
+    , Lineage
+    , Version
+    , AliasState
+    , AliasEvent
+    , ReportLink
+    , LineageReport
+    , open
+    , openConfigured
+    , store
+    , database
+    , register
+    , attachReport
+    , reports
+    , evalHistory
+    , promote
+    , promoteIf
+    , promoteChecked
+    , evidence
+    , forcePromote
+    , rollback
+    , resolve
+    , version
+    , versions
+    , aliases
+    , history
+    , lineage
+    , trainedOn
+    , block
+    , fetch
+    , label
+    , servedName
+    , resolver
+    , versionValue
+    , eventValue
+    , reportLinkValue
+    , lineageValue
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Regex as Regex
+import Sky.Core.Dict exposing (Dict)
+import Sky.Core.Time as Time
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Std.Ai.Store as Store exposing (Store)
+import Std.Ai.Local as Local
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Eval as Eval
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+-- ── Types ───────────────────────────────────────────────────────────
+-- | The registry: a database for the records and a store for the artefacts.
+type Registry
+    = Registry { db : Db
+, store : Store
+}
+
+-- | The file format of an adapter: GGUF (what llama.cpp loads) or
+-- safetensors (what training and vLLM use).
+type Format
+    = Gguf
+    | Safetensors
+
+-- | How the adapter was trained.
+type Method
+    = Lora
+    | Qlora
+
+-- | An adapter file to register.
+type alias Adapter =
+    { path : String
+    , format : Format
+    , method : Method
+    }
+
+-- | Where an adapter came from. `base` is the pinned base model it was
+-- trained on (its digest is the pin), `dataset` names the dataset version
+-- (for example `"support@3"`) and `datasetDigest` is its SHA-256. `metadata`
+-- holds the rest of the lineage as text: trainer seed, backend, cloud job id,
+-- toolchain build, durable run id, the training job's encoded spec.
+type alias Lineage =
+    { base : Local.ModelRef
+    , dataset : String
+    , datasetDigest : String
+    , metadata : List ( String, String )
+    }
+
+-- | A registered version. `number` counts from 1 per model name. `digest`
+-- is the adapter's SHA-256 and `baseDigest` the base model's. `blocked` holds
+-- the reason when the version may not be promoted again (`block`).
+type alias Version =
+    { name : String
+    , number : Int
+    , digest : String
+    , size : Int
+    , format : String
+    , method : String
+    , architecture : String
+    , base : String
+    , baseDigest : String
+    , dataset : String
+    , datasetDigest : String
+    , metadata : List ( String, String )
+    , blocked : Maybe String
+    , createdAt : Int
+    }
+
+-- | Where an alias points now. `generation` counts its moves.
+type alias AliasState =
+    { name : String
+    , aliasName : String
+    , number : Int
+    , generation : Int
+    , updatedAt : Int
+    }
+
+-- | One move of an alias: `promote`, `force` or `rollback`, from one version
+-- number to another (`from` is 0 for the alias's first move). `report` is the
+-- digest of the passing report for a promotion, and `reason` the reason of a
+-- forced promotion.
+type alias AliasEvent =
+    { name : String
+    , aliasName : String
+    , seq : Int
+    , action : String
+    , from : Int
+    , to : Int
+    , report : String
+    , reason : String
+    , at : Int
+    }
+
+-- | An eval report attached to a version.
+type alias ReportLink =
+    { name : String
+    , number : Int
+    , suite : String
+    , digest : String
+    , candidate : String
+    , passed : Int
+    , failed : Int
+    , errors : Int
+    , passRate : Float
+    , verdict : String
+    , createdAt : Int
+    }
+
+-- | Everything known about one version: the version, the aliases that point
+-- at it now, its attached reports and the alias events that moved to or from
+-- it.
+type alias LineageReport =
+    { version : Version
+    , aliases : List String
+    , reports : List ReportLink
+    , events : List AliasEvent
+    }
+
+
+-- ── Opening ─────────────────────────────────────────────────────────
+-- The schema, in the format of `db/migrations/*.json`: dialect-neutral ops
+-- the runtime renders for SQLite or PostgreSQL. A shipped migration is never
+-- edited (the ledger refuses a changed checksum); a change is a new one.
+migrations : String
+migrations =
+    """[{"id":"_sky_ai_registry_0001","ops":[
+{"kind":"createTable","table":"_sky_ai_registry_versions","columns":[
+{"name":"name","type":"text"},{"name":"number","type":"int"},{"name":"digest","type":"text"},
+{"name":"size","type":"int"},{"name":"format","type":"text"},{"name":"method","type":"text"},
+{"name":"architecture","type":"text"},{"name":"base","type":"text"},{"name":"base_digest","type":"text"},
+{"name":"dataset","type":"text"},{"name":"dataset_digest","type":"text"},{"name":"metadata","type":"text"},
+{"name":"blocked","type":"text"},{"name":"created_at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_registry_versions_number","table":"_sky_ai_registry_versions","indexColumns":["name","number"],"unique":true},
+{"kind":"addIndex","name":"_sky_ai_registry_versions_digest","table":"_sky_ai_registry_versions","indexColumns":["name","digest"],"unique":true},
+{"kind":"addIndex","name":"_sky_ai_registry_versions_dataset","table":"_sky_ai_registry_versions","indexColumns":["dataset_digest"]},
+{"kind":"createTable","table":"_sky_ai_registry_aliases","columns":[
+{"name":"name","type":"text"},{"name":"alias","type":"text"},{"name":"number","type":"int"},
+{"name":"generation","type":"int"},{"name":"updated_at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_registry_aliases_key","table":"_sky_ai_registry_aliases","indexColumns":["name","alias"],"unique":true},
+{"kind":"createTable","table":"_sky_ai_registry_events","columns":[
+{"name":"name","type":"text"},{"name":"alias","type":"text"},{"name":"seq","type":"int"},
+{"name":"action","type":"text"},{"name":"from_number","type":"int"},{"name":"to_number","type":"int"},
+{"name":"report","type":"text"},{"name":"reason","type":"text"},{"name":"at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_registry_events_key","table":"_sky_ai_registry_events","indexColumns":["name","alias","seq"],"unique":true},
+{"kind":"createTable","table":"_sky_ai_registry_reports","columns":[
+{"name":"name","type":"text"},{"name":"number","type":"int"},{"name":"suite","type":"text"},
+{"name":"digest","type":"text"},{"name":"candidate","type":"text"},{"name":"passed","type":"int"},
+{"name":"failed","type":"int"},{"name":"errors","type":"int"},{"name":"pass_rate","type":"text"},
+{"name":"verdict","type":"text"},{"name":"report","type":"text"},{"name":"created_at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_registry_reports_key","table":"_sky_ai_registry_reports","indexColumns":["name","number","digest"],"unique":true}
+]}]"""
+
+
+migrateRaw : Db -> String -> Task Error (List String)
+migrateRaw =
+    Ffi.kernel "Ai_migrate"
+
+
+recordConsoleRaw : String -> Task Error ()
+recordConsoleRaw =
+    Ffi.kernel "Ai_recordRegistry"
+
+
+-- | Open the registry on a database and a store. The registry's tables are
+-- created or brought up to date first (idempotent, safe on every start).
+open : Db -> Store -> Task Error Registry
+open db st =
+    migrateRaw db migrations
+        |> Task.map (\_ -> Registry { db = db, store = st })
+
+
+-- | `open` with the store at `SKY_AI_REGISTRY` (under the project's prefix),
+-- else the location in code (`Store.configured`).
+openConfigured : Db -> String -> Task Error Registry
+openConfigured db codeUrl =
+    Store.configured codeUrl |> Task.andThen (open db)
+
+
+-- | The registry's artefact store.
+store : Registry -> Store
+store (Registry r) =
+    r.store
+
+
+-- | The registry's database: the app's own, where the eval runs that gate a
+-- version are recorded too.
+database : Registry -> Db
+database (Registry r) =
+    r.db
+
+
+-- ── Names ───────────────────────────────────────────────────────────
+-- | A version's label: `<name>@v<number>`. Run a suite with
+-- `Eval.runAs (Registry.label v)` so the `Passed` names the version.
+label : Version -> String
+label v =
+    v.name ++ "@v" ++ String.fromInt v.number
+
+
+-- | The name a server knows the adapter by (the request's model name):
+-- `<name>-v<number>`.
+servedName : Version -> String
+servedName v =
+    v.name ++ "-v" ++ String.fromInt v.number
+
+
+lowerWord : String -> Bool
+lowerWord s =
+    Regex.match "^[a-z][a-z0-9_-]*$" s
+
+
+validName : String -> Result Error String
+validName n =
+    if lowerWord n && String.length n <= 64 then
+        Ok n
+
+    else
+        Err
+            (invalidSetting
+                "name"
+                (quote n
+                    ++ ": a model name is lower case, starts with a letter and uses a-z, 0-9, _ and - (at most 64)"))
+
+
+-- An alias may not look like a version (`v3`), so `name@v3` is never
+-- ambiguous.
+validAlias : String -> Result Error String
+validAlias a =
+    if not (lowerWord a) || String.length a > 32 then
+        Err
+            (invalidSetting
+                "alias"
+                (quote a
+                    ++ ": an alias is lower case, starts with a letter and uses a-z, 0-9, _ and - (at most 32)"))
+
+    else if isVersionWord a then
+        Err
+            (invalidSetting
+                "alias"
+                (quote a ++ " reads as a version number; choose another alias"))
+
+    else
+        Ok a
+
+
+isVersionWord : String -> Bool
+isVersionWord s =
+    String.startsWith "v" s && String.toInt (String.dropLeft 1 s) /= Nothing
+
+
+-- `name@alias` or `name@v<n>`.
+splitRef : String -> Result Error ( String, String )
+splitRef ref =
+    case String.split "@" (String.trim ref) of
+
+        [n, a] ->
+            if n /= "" && a /= "" then
+                Ok ( n, a )
+
+            else
+                Err (badRef ref)
+
+        _ ->
+            Err (badRef ref)
+
+
+badRef : String -> Error
+badRef ref =
+    invalidSetting
+        "reference"
+        (quote ref ++ ": write <name>@<alias> or <name>@v<number>")
+
+
+invalidSetting : String -> String -> Error
+invalidSetting setting reason =
+    Failure.toError (InvalidSetting { setting = setting, reason = reason })
+
+
+notRegistered : String -> Error
+notRegistered ref =
+    Failure.toError (NotRegistered { ref = ref })
+
+
+notPromotable : String -> String -> Error
+notPromotable ref reason =
+    Failure.toError (NotPromotable { ref = ref, reason = reason })
+
+-- ── Registering ─────────────────────────────────────────────────────
+type alias AdapterInfo =
+    { format : String
+    , kind : String
+    , architecture : String
+    }
+
+
+adapterInfoRaw : String -> Task Error AdapterInfo
+adapterInfoRaw =
+    Ffi.kernel "Ai_adapterInfo"
+
+
+formatText : Format -> String
+formatText f =
+    case f of
+
+        Gguf ->
+            "gguf"
+
+        Safetensors ->
+            "safetensors"
+
+
+methodText : Method -> String
+methodText m =
+    case m of
+
+        Lora ->
+            "lora"
+
+        Qlora ->
+            "qlora"
+
+
+-- The digest a pinned base reference carries (`…#sha256=<hex>`).
+baseDigestOf : Local.ModelRef -> Result Error String
+baseDigestOf ref =
+    let
+        text = Local.reference ref
+    in
+        case String.split "#sha256=" text of
+
+            [_, hex] ->
+                if Regex.match "^[0-9a-f]{64}$" hex then
+                    Ok hex
+
+                else
+                    Err
+                        (invalidSetting
+                            "base"
+                            (text
+                                ++ ": the base model is not pinned by a sha256 digest"))
+
+            _ ->
+                Err
+                    (invalidSetting
+                        "base"
+                        (text
+                            ++ ": the base model is not pinned by a sha256 digest"))
+
+
+-- | Register an adapter under a model name. The file is checked (a GGUF file
+-- must be a LoRA adapter, a safetensors file must parse), stored by digest,
+-- and recorded with its lineage as the next version number. Registering the
+-- same bytes under the same name again returns the existing version, so a
+-- resumed workflow does not create a second one; the same bytes with another
+-- base model are refused.
+register : Registry -> String -> Adapter -> Lineage -> Task Error Version
+register (Registry r) name adapter lin =
+    let
+        checked =
+            Result.map2
+                (\n base -> ( n, base ))
+                (validName name)
+                (baseDigestOf lin.base)
+    in
+        Task.fromResult checked
+            |> Task.andThen
+                   (\( _, baseDigest ) ->
+                       if not (Regex.match "^[0-9a-f]{64}$" lin.datasetDigest) then
+                           Task.fail
+                               (invalidSetting
+                                   "datasetDigest"
+                                   (quote lin.datasetDigest
+                                       ++ " is not a sha256 digest (64 lower-case hex digits)"))
+
+                       else
+                           adapterInfoRaw adapter.path
+                               |> Task.andThen
+                                      (\info ->
+                                          if info.format
+                                              /= formatText adapter.format then
+                                              Task.fail
+                                                  (invalidSetting
+                                                      "format"
+                                                      (adapter.path ++ " is "
+                                                          ++ info.format
+                                                          ++ ", not "
+                                                          ++ formatText
+                                                                 adapter.format))
+
+                                          else
+                                              Store.put r.store adapter.path
+                                                  |> Task.andThen
+                                                         (\blob ->
+                                                             insertVersion
+                                                                 (Registry r)
+                                                                 name
+                                                                 adapter
+                                                                 lin
+                                                                 baseDigest
+                                                                 info
+                                                                 blob)))
+            |> Task.andThen
+                   (\v -> publish (Registry r) name |> Task.map (\_ -> v))
+
+
+insertVersion : Registry -> String -> Adapter -> Lineage -> String -> AdapterInfo -> Store.Blob -> Task Error Version
+insertVersion (Registry r) name adapter lin baseDigest info blob =
+    Db.withTransaction
+        r.db
+        (\tx ->
+            Db.query
+                tx
+                "SELECT * FROM _sky_ai_registry_versions WHERE name = ? AND digest = ?"
+                [ SqlString name, SqlString blob.sha256 ]
+                |> Task.andThen
+                       (\rows ->
+                           case List.head rows of
+
+                               Just row ->
+                                   let
+                                       existing = versionOf row
+                                   in
+                                       if existing.baseDigest == baseDigest then
+                                           Task.succeed existing
+
+                                       else
+                                           Task.fail
+                                               (invalidSetting
+                                                   "base"
+                                                   (label existing
+                                                       ++ " already holds these bytes with base sha256 "
+                                                       ++ existing.baseDigest))
+
+                               Nothing ->
+                                   Db.query
+                                       tx
+                                       "SELECT COALESCE(MAX(number), 0) AS n FROM _sky_ai_registry_versions WHERE name = ?"
+                                       [ SqlString name ]
+                                       |> Task.andThen
+                                              (\nrows ->
+                                                  Time.unixMillis ()
+                                                      |> Task.andThen
+                                                             (\now ->
+                                                                 let
+                                                                     number =
+                                                                         1
+                                                                             + (List.head
+                                                                                   nrows
+                                                                                   |> Maybe.map
+                                                                                          (Db.getInt
+                                                                                              "n")
+                                                                                   |> Maybe.withDefault
+                                                                                          0)
+                                                                     v =
+                                                                         { name =
+                                                                             name
+                                                                         , number =
+                                                                             number
+                                                                         , digest =
+                                                                             blob.sha256
+                                                                         , size =
+                                                                             blob.size
+                                                                         , format =
+                                                                             formatText
+                                                                                 adapter.format
+                                                                         , method =
+                                                                             methodText
+                                                                                 adapter.method
+                                                                         , architecture =
+                                                                             info.architecture
+                                                                         , base =
+                                                                             Local.reference
+                                                                                 lin.base
+                                                                         , baseDigest =
+                                                                             baseDigest
+                                                                         , dataset =
+                                                                             lin.dataset
+                                                                         , datasetDigest =
+                                                                             lin.datasetDigest
+                                                                         , metadata =
+                                                                             lin.metadata
+                                                                         , blocked =
+                                                                             Nothing
+                                                                         , createdAt =
+                                                                             now
+                                                                         }
+                                                                 in
+                                                                     Db.exec
+                                                                         tx
+                                                                         ("INSERT INTO _sky_ai_registry_versions "
+                                                                             ++ "(name, number, digest, size, format, method, architecture, base, base_digest, "
+                                                                             ++ "dataset, dataset_digest, metadata, blocked, created_at) "
+                                                                             ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                                                                         [ SqlString
+                                                                               v.name
+                                                                         , SqlInt
+                                                                               v.number
+                                                                         , SqlString
+                                                                               v.digest
+                                                                         , SqlInt
+                                                                               v.size
+                                                                         , SqlString
+                                                                               v.format
+                                                                         , SqlString
+                                                                               v.method
+                                                                         , SqlString
+                                                                               v.architecture
+                                                                         , SqlString
+                                                                               v.base
+                                                                         , SqlString
+                                                                               v.baseDigest
+                                                                         , SqlString
+                                                                               v.dataset
+                                                                         , SqlString
+                                                                               v.datasetDigest
+                                                                         , SqlString
+                                                                               (JsonE.encode
+                                                                                   0
+                                                                                   (pairsRows
+                                                                                       v.metadata))
+                                                                         , SqlString
+                                                                               ""
+                                                                         , SqlInt
+                                                                               v.createdAt
+                                                                         ]
+                                                                         |> Task.map
+                                                                                (\_ ->
+                                                                                    v)))))
+
+
+-- | Attach an eval report to a version, so `promote` can check the evidence
+-- and `lineage` can show it. The report must name the version
+-- (`Eval.runAs (Registry.label v)`). Attaching the same report twice is a
+-- no-op.
+attachReport : Registry -> Version -> Eval.Report -> Task Error ()
+attachReport (Registry r) v report =
+    if report.candidate /= label v then
+        Task.fail
+            (invalidSetting
+                "report"
+                ("the report names " ++ quote report.candidate ++ ", not "
+                    ++ label v
+                    ++ "; run the suite with Eval.runAs (Registry.label version)"))
+
+    else
+        Db.query
+            r.db
+            "SELECT digest FROM _sky_ai_registry_reports WHERE name = ? AND number = ? AND digest = ?"
+            [ SqlString v.name, SqlInt v.number, SqlString report.digest ]
+            |> Task.andThen
+                   (\rows ->
+                       if not (List.isEmpty rows) then
+                           Task.succeed ()
+
+                       else
+                           Time.unixMillis ()
+                               |> Task.andThen
+                                      (\now ->
+                                          Db.exec
+                                              r.db
+                                              ("INSERT INTO _sky_ai_registry_reports "
+                                                  ++ "(name, number, suite, digest, candidate, passed, failed, errors, pass_rate, verdict, report, created_at) "
+                                                  ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                                              [ SqlString v.name
+                                              , SqlInt v.number
+                                              , SqlString report.suite
+                                              , SqlString report.digest
+                                              , SqlString report.candidate
+                                              , SqlInt report.passed
+                                              , SqlInt report.failed
+                                              , SqlInt report.errors
+                                              , SqlString
+                                                    (String.fromFloat
+                                                        report.passRate)
+                                              , SqlString (verdictOf report)
+                                              , SqlString
+                                                    (Eval.encodeReport report)
+                                              , SqlInt now
+                                              ]
+                                              |> Task.map (\_ -> ())))
+            |> Task.andThen (\_ -> publish (Registry r) v.name)
+
+
+verdictOf : Eval.Report -> String
+verdictOf report =
+    case Eval.check Eval.thresholds report of
+
+        Ok _ ->
+            "passed"
+
+        Err _ ->
+            "failed"
+
+
+-- | The reports attached to a version, newest first.
+reports : Registry -> Version -> Task Error (List ReportLink)
+reports (Registry r) v =
+    Db.query
+        r.db
+        ("SELECT name, number, suite, digest, candidate, passed, failed, errors, pass_rate, verdict, created_at "
+            ++ "FROM _sky_ai_registry_reports WHERE name = ? AND number = ? ORDER BY created_at DESC")
+        [ SqlString v.name, SqlInt v.number ]
+        |> Task.map (List.map reportLinkOf)
+
+
+-- | Every report attached to any version of a model, newest first: the
+-- model's eval history.
+evalHistory : Registry -> String -> Task Error (List ReportLink)
+evalHistory (Registry r) name =
+    Db.query
+        r.db
+        ("SELECT name, number, suite, digest, candidate, passed, failed, errors, pass_rate, verdict, created_at "
+            ++ "FROM _sky_ai_registry_reports WHERE name = ? ORDER BY created_at DESC, number DESC")
+        [ SqlString name ]
+        |> Task.map (List.map reportLinkOf)
+
+
+-- The stored report of a version, decoded, newest first (for the CLI, which
+-- re-checks the gate on the evidence).
+storedReports : Registry -> Version -> Task Error (List Eval.Report)
+storedReports (Registry r) v =
+    Db.query
+        r.db
+        "SELECT report FROM _sky_ai_registry_reports WHERE name = ? AND number = ? ORDER BY created_at DESC"
+        [ SqlString v.name, SqlInt v.number ]
+        |> Task.map
+               (List.filterMap
+                   (\row ->
+                       Eval.decodeReport (Db.getString "report" row)
+                           |> Result.toMaybe))
+
+
+-- ── Promotion ───────────────────────────────────────────────────────
+-- | Point an alias at a version. The `Passed` must name this version
+-- (`Registry.label v`), its report must be attached, and the version may not
+-- be blocked. The move is a compare-and-swap from the alias's current state.
+promote : Registry -> String -> Version -> Eval.Passed -> Task Error AliasEvent
+promote reg aliasName v passed =
+    checkEvidence reg v passed
+        |> Task.andThen
+               (\_ ->
+                   move
+                       reg
+                       aliasName
+                       Nothing
+                       v
+                       "promote"
+                       (Eval.passedDigest passed)
+                       "")
+
+
+-- | `promote`, only when the alias still points at `expected` (`Nothing`: the
+-- alias does not exist yet). Use it when the gate compared against the
+-- alias's current version: if another promotion moved the alias meanwhile,
+-- the comparison is stale and this one fails with `PromotionConflict`. Of two
+-- promotions that start from the same state, at most one wins.
+promoteIf : Registry -> String -> Maybe Version -> Version -> Eval.Passed -> Task Error AliasEvent
+promoteIf reg aliasName expected v passed =
+    checkEvidence reg v passed
+        |> Task.andThen
+               (\_ ->
+                   move
+                       reg
+                       aliasName
+                       (Just (Maybe.map .number expected |> Maybe.withDefault 0))
+                       v
+                       "promote"
+                       (Eval.passedDigest passed)
+                       "")
+
+
+-- | The evidence already attached to a version: re-apply the gate
+-- (`Eval.check` with the thresholds) to its attached reports, newest first,
+-- and return the `Passed` of the first that passes. With no attached report it
+-- is `NotPromotable`; when none passes it is `GateFailed` with the newest
+-- report's reasons.
+evidence : Registry -> Version -> Eval.Thresholds -> Task Error Eval.Passed
+evidence reg v t =
+    storedReports reg v
+        |> Task.andThen
+               (\stored ->
+                   case List.filterMap
+                            (\r -> Eval.check t r |> Result.toMaybe)
+                            stored of
+
+                       passed :: _ ->
+                           Task.succeed passed
+
+                       [] ->
+                           case stored of
+
+                               newest :: _ ->
+                                   Task.fromResult (Eval.check t newest)
+
+                               [] ->
+                                   Task.fail
+                                       (notPromotable
+                                           (label v)
+                                           "no eval report is attached; run the suite with Eval.runAs (Registry.label version) and Registry.attachReport"))
+
+
+-- | Promote on the evidence already attached (`evidence`). This is what
+-- `sky ai promote` runs.
+promoteChecked : Registry -> String -> Version -> Eval.Thresholds -> Task Error AliasEvent
+promoteChecked reg aliasName v t =
+    evidence reg v t |> Task.andThen (\passed -> promote reg aliasName v passed)
+
+
+-- | Point an alias at a version without eval evidence. The reason is required
+-- and recorded in the alias's log.
+forcePromote : Registry -> String -> Version -> String -> Task Error AliasEvent
+forcePromote reg aliasName v reason =
+    if String.trim reason == "" then
+        Task.fail (invalidSetting "reason" "a forced promotion needs a reason")
+
+    else
+        refuseBlocked v
+            |> Task.andThen
+                   (\_ ->
+                       move
+                           reg
+                           aliasName
+                           Nothing
+                           v
+                           "force"
+                           ""
+                           (String.trim reason))
+
+
+refuseBlocked : Version -> Task Error ()
+refuseBlocked v =
+    case v.blocked of
+
+        Just why ->
+            Task.fail (notPromotable (label v) ("it is blocked: " ++ why))
+
+        Nothing ->
+            Task.succeed ()
+
+
+checkEvidence : Registry -> Version -> Eval.Passed -> Task Error ()
+checkEvidence (Registry r) v passed =
+    refuseBlocked v
+        |> Task.andThen
+               (\_ ->
+                   if Eval.passedCandidate passed /= label v then
+                       Task.fail
+                           (notPromotable
+                               (label v)
+                               ("the passing evaluation is for "
+                                   ++ quote (Eval.passedCandidate passed)
+                                   ++ "; run the suite with Eval.runAs (Registry.label version)"))
+
+                   else
+                       Db.query
+                           r.db
+                           "SELECT digest FROM _sky_ai_registry_reports WHERE name = ? AND number = ? AND digest = ?"
+                           [ SqlString v.name
+                           , SqlInt v.number
+                           , SqlString (Eval.passedDigest passed)
+                           ]
+                           |> Task.andThen
+                                  (\rows ->
+                                      if List.isEmpty rows then
+                                          Task.fail
+                                              (notPromotable
+                                                  (label v)
+                                                  ("the passing report "
+                                                      ++ Eval.passedDigest
+                                                             passed
+                                                      ++ " is not attached; call Registry.attachReport first"))
+
+                                      else
+                                          Task.succeed ()))
+
+
+-- The one place an alias moves: in a transaction, read the alias, check the
+-- expected state, write it with its generation as the compare-and-swap, and
+-- append the event.
+move : Registry -> String -> Maybe Int -> Version -> String -> String -> String -> Task Error AliasEvent
+move (Registry r) aliasName expected v action reportDigest reason =
+    Task.fromResult (validAlias aliasName)
+        |> Task.andThen
+               (\_ ->
+                   Db.withTransaction
+                       r.db
+                       (\tx ->
+                           checkStored tx v
+                               |> Task.andThen
+                                      (\_ -> readAlias tx v.name aliasName)
+                               |> Task.andThen
+                                      (\current ->
+                                          let
+                                              from =
+                                                  Maybe.map .number current
+                                                      |> Maybe.withDefault 0
+                                          in
+                                              case expected of
+
+                                                  Just want ->
+                                                      if want /= from then
+                                                          Task.fail
+                                                              (conflict
+                                                                  v.name
+                                                                  aliasName
+                                                                  want
+                                                                  from)
+
+                                                      else
+                                                          writeAlias
+                                                              tx
+                                                              current
+                                                              v
+                                                              aliasName
+                                                              action
+                                                              from
+                                                              reportDigest
+                                                              reason
+
+                                                  Nothing ->
+                                                      writeAlias
+                                                          tx
+                                                          current
+                                                          v
+                                                          aliasName
+                                                          action
+                                                          from
+                                                          reportDigest
+                                                          reason)))
+        |> Task.andThen
+               (\ev -> publish (Registry r) v.name |> Task.map (\_ -> ev))
+
+
+-- The version as stored, inside the move's transaction: it exists, its
+-- digest is the caller's, and it is not blocked now (a `Version` is a plain
+-- record, so the caller's copy may be stale or made up).
+checkStored : Db -> Version -> Task Error ()
+checkStored tx v =
+    Db.query
+        tx
+        "SELECT digest, blocked FROM _sky_ai_registry_versions WHERE name = ? AND number = ?"
+        [ SqlString v.name, SqlInt v.number ]
+        |> Task.andThen
+               (\rows ->
+                   case List.head rows of
+
+                       Nothing ->
+                           Task.fail (notRegistered (label v))
+
+                       Just row ->
+                           if Db.getString "digest" row /= v.digest then
+                               Task.fail
+                                   (invalidSetting
+                                       "version"
+                                       (label v
+                                           ++ " is stored with another digest than the one given"))
+
+                           else if Db.getString "blocked" row /= "" then
+                               Task.fail
+                                   (notPromotable
+                                       (label v)
+                                       ("it is blocked: "
+                                           ++ Db.getString "blocked" row))
+
+                           else
+                               Task.succeed ())
+
+
+conflict : String -> String -> Int -> Int -> Error
+conflict name aliasName want actual =
+    Failure.toError
+        (PromotionConflict
+            { ref = name ++ "@" ++ aliasName
+            , expected = numberText want
+            , actual = numberText actual
+            })
+
+
+numberText : Int -> String
+numberText n =
+    if n == 0 then
+        "(none)"
+
+    else
+        "v" ++ String.fromInt n
+
+
+readAlias : Db -> String -> String -> Task Error (Maybe AliasState)
+readAlias db name aliasName =
+    Db.query
+        db
+        "SELECT name, alias, number, generation, updated_at FROM _sky_ai_registry_aliases WHERE name = ? AND alias = ?"
+        [ SqlString name, SqlString aliasName ]
+        |> Task.map (\rows -> List.head rows |> Maybe.map aliasStateOf)
+
+
+writeAlias : Db -> Maybe AliasState -> Version -> String -> String -> Int -> String -> String -> Task Error AliasEvent
+writeAlias tx current v aliasName action from reportDigest reason =
+    Time.unixMillis ()
+        |> Task.andThen
+               (\now ->
+                   (case current of
+
+                       Just st ->
+                           Db.exec
+                               tx
+                               ("UPDATE _sky_ai_registry_aliases SET number = ?, generation = ?, updated_at = ? "
+                                   ++ "WHERE name = ? AND alias = ? AND generation = ?")
+                               [ SqlInt v.number
+                               , SqlInt (st.generation + 1)
+                               , SqlInt now
+                               , SqlString v.name
+                               , SqlString aliasName
+                               , SqlInt st.generation
+                               ]
+                               |> Task.andThen
+                                      (\n ->
+                                          if n == 1 then
+                                              Task.succeed ()
+
+                                          else
+                                              Task.fail
+                                                  (conflict
+                                                      v.name
+                                                      aliasName
+                                                      from
+                                                      from))
+
+                       Nothing ->
+                           Db.exec
+                               tx
+                               "INSERT INTO _sky_ai_registry_aliases (name, alias, number, generation, updated_at) VALUES (?, ?, ?, ?, ?)"
+                               [ SqlString v.name
+                               , SqlString aliasName
+                               , SqlInt v.number
+                               , SqlInt 1
+                               , SqlInt now
+                               ]
+                               |> Task.map (\_ -> ())
+                               |> Task.onError
+                                      (\_ ->
+                                          Task.fail
+                                              (conflict v.name aliasName 0 0)))
+                       |> Task.andThen
+                              (\_ ->
+                                  Db.query
+                                      tx
+                                      "SELECT COALESCE(MAX(seq), 0) AS n FROM _sky_ai_registry_events WHERE name = ? AND alias = ?"
+                                      [ SqlString v.name, SqlString aliasName ]
+                                      |> Task.andThen
+                                             (\rows ->
+                                                 let
+                                                     ev =
+                                                         { name = v.name
+                                                         , aliasName = aliasName
+                                                         , seq =
+                                                             1
+                                                                 + (List.head
+                                                                       rows
+                                                                       |> Maybe.map
+                                                                              (Db.getInt
+                                                                                  "n")
+                                                                       |> Maybe.withDefault
+                                                                              0)
+                                                         , action = action
+                                                         , from = from
+                                                         , to = v.number
+                                                         , report = reportDigest
+                                                         , reason = reason
+                                                         , at = now
+                                                         }
+                                                 in
+                                                     Db.exec
+                                                         tx
+                                                         ("INSERT INTO _sky_ai_registry_events "
+                                                             ++ "(name, alias, seq, action, from_number, to_number, report, reason, at) "
+                                                             ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                                                         [ SqlString ev.name
+                                                         , SqlString
+                                                               ev.aliasName
+                                                         , SqlInt ev.seq
+                                                         , SqlString ev.action
+                                                         , SqlInt ev.from
+                                                         , SqlInt ev.to
+                                                         , SqlString ev.report
+                                                         , SqlString ev.reason
+                                                         , SqlInt ev.at
+                                                         ]
+                                                         |> Task.map (\_ -> ev))))
+
+
+-- | Move `<name>@<alias>` back to the version it pointed at before the
+-- current one. The alias's log is a stack: a promotion pushes, a rollback
+-- pops, so rolling back twice goes back two promotions. A blocked previous
+-- version is refused (promote another version with `forcePromote` instead).
+rollback : Registry -> String -> Task Error AliasEvent
+rollback (Registry r) ref =
+    Task.fromResult (splitRef ref)
+        |> Task.andThen
+               (\( name, aliasName ) ->
+                   history (Registry r) name aliasName
+                       |> Task.andThen
+                              (\events ->
+                                  case stackOf events of
+
+                                      current :: previous :: _ ->
+                                          version (Registry r) name previous
+                                              |> Task.andThen
+                                                     (\prev ->
+                                                         refuseBlocked prev
+                                                             |> Task.andThen
+                                                                    (\_ ->
+                                                                        move
+                                                                            (Registry
+                                                                                r)
+                                                                            aliasName
+                                                                            (Just
+                                                                                current)
+                                                                            prev
+                                                                            "rollback"
+                                                                            ""
+                                                                            ""))
+
+                                      _ ->
+                                          Task.fail
+                                              (notPromotable
+                                                  ref
+                                                  "there is no earlier version to roll back to")))
+
+
+-- The alias's versions as a stack, newest first: replay the log oldest
+-- first, pushing on a promotion and popping on a rollback.
+stackOf : List AliasEvent -> List Int
+stackOf events =
+    events |> List.sortBy .seq
+        |> List.foldl
+               (\ev stack ->
+                   if ev.action == "rollback" then
+                       List.drop 1 stack
+
+                   else
+                       ev.to :: stack)
+               []
+
+
+-- ── Reading ─────────────────────────────────────────────────────────
+-- | The version a reference names: `<name>@<alias>` or `<name>@v<number>`.
+resolve : Registry -> String -> Task Error Version
+resolve (Registry r) ref =
+    Task.fromResult (splitRef ref)
+        |> Task.andThen
+               (\( name, which ) ->
+                   if isVersionWord which then
+                       version
+                           (Registry r)
+                           name
+                           (String.toInt (String.dropLeft 1 which)
+                               |> Maybe.withDefault 0)
+
+                   else
+                       readAlias r.db name which
+                           |> Task.andThen
+                                  (\st ->
+                                      case st of
+
+                                          Just s ->
+                                              version (Registry r) name s.number
+
+                                          Nothing ->
+                                              Task.fail (notRegistered ref)))
+
+
+-- | One version by name and number.
+version : Registry -> String -> Int -> Task Error Version
+version (Registry r) name number =
+    Db.query
+        r.db
+        "SELECT * FROM _sky_ai_registry_versions WHERE name = ? AND number = ?"
+        [ SqlString name, SqlInt number ]
+        |> Task.andThen
+               (\rows ->
+                   case List.head rows of
+
+                       Just row ->
+                           Task.succeed (versionOf row)
+
+                       Nothing ->
+                           Task.fail
+                               (notRegistered
+                                   (name ++ "@v" ++ String.fromInt number)))
+
+
+-- | Every version of a model, newest first.
+versions : Registry -> String -> Task Error (List Version)
+versions (Registry r) name =
+    Db.query
+        r.db
+        "SELECT * FROM _sky_ai_registry_versions WHERE name = ? ORDER BY number DESC"
+        [ SqlString name ]
+        |> Task.map (List.map versionOf)
+
+
+-- | Every alias of a model.
+aliases : Registry -> String -> Task Error (List AliasState)
+aliases (Registry r) name =
+    Db.query
+        r.db
+        "SELECT name, alias, number, generation, updated_at FROM _sky_ai_registry_aliases WHERE name = ? ORDER BY alias"
+        [ SqlString name ]
+        |> Task.map (List.map aliasStateOf)
+
+
+-- | The moves of `<name>@<alias>`, newest first.
+history : Registry -> String -> String -> Task Error (List AliasEvent)
+history (Registry r) name aliasName =
+    Db.query
+        r.db
+        ("SELECT name, alias, seq, action, from_number, to_number, report, reason, at "
+            ++ "FROM _sky_ai_registry_events WHERE name = ? AND alias = ? ORDER BY seq DESC")
+        [ SqlString name, SqlString aliasName ]
+        |> Task.map (List.map eventOf)
+
+
+allEvents : Registry -> String -> Task Error (List AliasEvent)
+allEvents (Registry r) name =
+    Db.query
+        r.db
+        ("SELECT name, alias, seq, action, from_number, to_number, report, reason, at "
+            ++ "FROM _sky_ai_registry_events WHERE name = ? ORDER BY at DESC, seq DESC")
+        [ SqlString name ]
+        |> Task.map (List.map eventOf)
+
+
+-- | The full lineage of the version a reference names: the version (with its
+-- base model, dataset and metadata), the aliases that point at it now, its
+-- attached reports and the alias events that moved to or from it.
+lineage : Registry -> String -> Task Error LineageReport
+lineage reg ref =
+    resolve reg ref
+        |> Task.andThen
+               (\v ->
+                   Task.map3
+                       (\als reps evs ->
+                           { version = v
+                           , aliases =
+                               als |> List.filter (\a -> a.number == v.number)
+                                   |> List.map .aliasName
+                           , reports = reps
+                           , events =
+                               List.filter
+                                   (\e -> e.to == v.number || e.from == v.number)
+                                   evs
+                           })
+                       (aliases reg v.name)
+                       (reports reg v)
+                       (allEvents reg v.name))
+
+
+-- | Every version trained on a dataset, by the dataset's digest: the
+-- versions to retrain (and `block`) when a record must be erased from it.
+trainedOn : Registry -> String -> Task Error (List Version)
+trainedOn (Registry r) datasetDigest =
+    Db.query
+        r.db
+        "SELECT * FROM _sky_ai_registry_versions WHERE dataset_digest = ? ORDER BY name, number"
+        [ SqlString datasetDigest ]
+        |> Task.map (List.map versionOf)
+
+
+-- | Mark a version so it can never be promoted again (a forced promotion and a
+-- rollback to it are refused too). The reason is recorded. Aliases that point
+-- at it now keep serving it until they are moved.
+block : Registry -> Version -> String -> Task Error ()
+block (Registry r) v reason =
+    if String.trim reason == "" then
+        Task.fail (invalidSetting "reason" "blocking a version needs a reason")
+
+    else
+        Db.exec
+            r.db
+            "UPDATE _sky_ai_registry_versions SET blocked = ? WHERE name = ? AND number = ?"
+            [ SqlString (String.trim reason)
+            , SqlString v.name
+            , SqlInt v.number
+            ]
+            |> Task.andThen
+                   (\n ->
+                       if n == 1 then
+                           publish (Registry r) v.name
+
+                       else
+                           Task.fail (notRegistered (label v)))
+
+
+-- | A local path holding the version's adapter, checked against its digest.
+fetch : Registry -> Version -> Task Error String
+fetch (Registry r) v =
+    Store.fetch r.store v.digest
+
+
+-- ── Serving ─────────────────────────────────────────────────────────
+-- | The resolver a slot uses to serve `registry:<name>@<alias>` adapters
+-- (`Endpoint.fromRegistry`). The registry is opened by the given task when
+-- the slot first resolves the alias, so a top-level slot stays pure. A slot
+-- with a local engine fetches the adapter (it must be GGUF, the format
+-- llama.cpp loads); a remote slot only needs its served name.
+resolver : Task Error Registry -> Endpoint.Resolver
+resolver openRegistry =
+    { name = "registry"
+    , resolve =
+        \ref localEngine ->
+            openRegistry
+                |> Task.andThen
+                       (\reg -> adapterFor reg (stripScheme ref) localEngine)
+    }
+
+
+stripScheme : String -> String
+stripScheme ref =
+    if String.startsWith "registry:" ref then
+        String.dropLeft 9 ref
+
+    else
+        ref
+
+
+adapterFor : Registry -> String -> Bool -> Task Error Endpoint.Adapter
+adapterFor reg ref localEngine =
+    resolve reg ref
+        |> Task.andThen (\v -> publish reg v.name |> Task.map (\_ -> v))
+        |> Task.andThen
+               (\v ->
+                   let
+                       info path =
+                           { ref = ref
+                           , label = label v
+                           , servedName = servedName v
+                           , digest = v.digest
+                           , baseDigest = v.baseDigest
+                           , format = v.format
+                           , path = path
+                           }
+                   in
+                       if not localEngine then
+                           Task.succeed (info "")
+
+                       else if v.format /= "gguf" then
+                           Task.fail
+                               (invalidSetting
+                                   "adapter"
+                                   (label v ++ " is " ++ v.format
+                                       ++ "; a local engine (llama.cpp) loads GGUF adapters only"))
+
+                       else
+                           fetch reg v |> Task.map info)
+
+
+-- ── The console ─────────────────────────────────────────────────────
+-- Hand the console's AI panel the model's current state: aliases, the
+-- newest versions and the newest alias events. A console failure never fails
+-- the registry call.
+publish : Registry -> String -> Task Error ()
+publish (Registry r) name =
+    Task.map4
+        (\als vs evs reps ->
+            JsonE.object
+                [ ( "name", JsonE.string name )
+                , ( "store", JsonE.string (Store.location r.store) )
+                , ( "aliases", JsonE.list aliasValue als )
+                , ( "versions", JsonE.list versionValue (List.take 20 vs) )
+                , ( "events", JsonE.list eventValue (List.take 20 evs) )
+                , ( "reports", JsonE.list reportLinkValue (List.take 20 reps) )
+                ])
+        (aliases (Registry r) name)
+        (versions (Registry r) name)
+        (allEvents (Registry r) name)
+        (evalHistory (Registry r) name)
+        |> Task.andThen (\value -> recordConsoleRaw (JsonE.encode 0 value))
+        |> Task.onError (\_ -> Task.succeed ())
+
+
+-- ── Rows and JSON ───────────────────────────────────────────────────
+versionOf : Dict String String -> Version
+versionOf row =
+    { name = Db.getString "name" row
+    , number = Db.getInt "number" row
+    , digest = Db.getString "digest" row
+    , size = Db.getInt "size" row
+    , format = Db.getString "format" row
+    , method = Db.getString "method" row
+    , architecture = Db.getString "architecture" row
+    , base = Db.getString "base" row
+    , baseDigest = Db.getString "base_digest" row
+    , dataset = Db.getString "dataset" row
+    , datasetDigest = Db.getString "dataset_digest" row
+    , metadata = decodePairs (Db.getString "metadata" row)
+    , blocked =
+        if Db.getString "blocked" row == "" then
+            Nothing
+
+        else
+            Just (Db.getString "blocked" row)
+    , createdAt = Db.getInt "created_at" row
+    }
+
+
+aliasStateOf : Dict String String -> AliasState
+aliasStateOf row =
+    { name = Db.getString "name" row
+    , aliasName = Db.getString "alias" row
+    , number = Db.getInt "number" row
+    , generation = Db.getInt "generation" row
+    , updatedAt = Db.getInt "updated_at" row
+    }
+
+
+eventOf : Dict String String -> AliasEvent
+eventOf row =
+    { name = Db.getString "name" row
+    , aliasName = Db.getString "alias" row
+    , seq = Db.getInt "seq" row
+    , action = Db.getString "action" row
+    , from = Db.getInt "from_number" row
+    , to = Db.getInt "to_number" row
+    , report = Db.getString "report" row
+    , reason = Db.getString "reason" row
+    , at = Db.getInt "at" row
+    }
+
+
+reportLinkOf : Dict String String -> ReportLink
+reportLinkOf row =
+    { name = Db.getString "name" row
+    , number = Db.getInt "number" row
+    , suite = Db.getString "suite" row
+    , digest = Db.getString "digest" row
+    , candidate = Db.getString "candidate" row
+    , passed = Db.getInt "passed" row
+    , failed = Db.getInt "failed" row
+    , errors = Db.getInt "errors" row
+    , passRate =
+        String.toFloat (Db.getString "pass_rate" row) |> Maybe.withDefault 0.0
+    , verdict = Db.getString "verdict" row
+    , createdAt = Db.getInt "created_at" row
+    }
+
+
+pairsValue : List ( String, String ) -> JsonE.Value
+pairsValue pairs =
+    JsonE.object (List.map (\( k, v ) -> ( k, JsonE.string v )) pairs)
+
+
+-- The metadata column: an array of [key, value] pairs, so the order the
+-- lineage was written in is kept.
+pairsRows : List ( String, String ) -> JsonE.Value
+pairsRows pairs =
+    JsonE.list (\( k, v ) -> JsonE.list JsonE.string [ k, v ]) pairs
+
+
+decodePairs : String -> List ( String, String )
+decodePairs text =
+    JsonD.decodeString
+        (JsonD.list
+            (JsonD.map2
+                (\k v -> ( k, v ))
+                (JsonD.index 0 JsonD.string)
+                (JsonD.index 1 JsonD.string)))
+        text
+        |> Result.withDefault []
+
+
+-- | A version as JSON (for `sky ai lineage --format json` and the console).
+versionValue : Version -> JsonE.Value
+versionValue v =
+    JsonE.object
+        [ ( "name", JsonE.string v.name )
+        , ( "number", JsonE.int v.number )
+        , ( "label", JsonE.string (label v) )
+        , ( "servedName", JsonE.string (servedName v) )
+        , ( "digest", JsonE.string v.digest )
+        , ( "size", JsonE.int v.size )
+        , ( "format", JsonE.string v.format )
+        , ( "method", JsonE.string v.method )
+        , ( "architecture", JsonE.string v.architecture )
+        , ( "base", JsonE.string v.base )
+        , ( "baseDigest", JsonE.string v.baseDigest )
+        , ( "dataset", JsonE.string v.dataset )
+        , ( "datasetDigest", JsonE.string v.datasetDigest )
+        , ( "metadata", pairsValue v.metadata )
+        , ( "blocked"
+          , case v.blocked of
+
+                Just why ->
+                    JsonE.string why
+
+                Nothing ->
+                    JsonE.null
+          )
+        , ( "createdAt", JsonE.int v.createdAt )
+        ]
+
+
+aliasValue : AliasState -> JsonE.Value
+aliasValue a =
+    JsonE.object
+        [ ( "alias", JsonE.string a.aliasName )
+        , ( "number", JsonE.int a.number )
+        , ( "generation", JsonE.int a.generation )
+        , ( "updatedAt", JsonE.int a.updatedAt )
+        ]
+
+
+-- | An alias event as JSON.
+eventValue : AliasEvent -> JsonE.Value
+eventValue e =
+    JsonE.object
+        [ ( "alias", JsonE.string e.aliasName )
+        , ( "seq", JsonE.int e.seq )
+        , ( "action", JsonE.string e.action )
+        , ( "from", JsonE.int e.from )
+        , ( "to", JsonE.int e.to )
+        , ( "report", JsonE.string e.report )
+        , ( "reason", JsonE.string e.reason )
+        , ( "at", JsonE.int e.at )
+        ]
+
+
+-- | An attached report as JSON.
+reportLinkValue : ReportLink -> JsonE.Value
+reportLinkValue l =
+    JsonE.object
+        [ ( "suite", JsonE.string l.suite )
+        , ( "number", JsonE.int l.number )
+        , ( "digest", JsonE.string l.digest )
+        , ( "candidate", JsonE.string l.candidate )
+        , ( "passed", JsonE.int l.passed )
+        , ( "failed", JsonE.int l.failed )
+        , ( "errors", JsonE.int l.errors )
+        , ( "passRate", JsonE.float l.passRate )
+        , ( "verdict", JsonE.string l.verdict )
+        , ( "createdAt", JsonE.int l.createdAt )
+        ]
+
+
+-- | A lineage report as JSON.
+lineageValue : LineageReport -> JsonE.Value
+lineageValue l =
+    JsonE.object
+        [ ( "version", versionValue l.version )
+        , ( "aliases", JsonE.list JsonE.string l.aliases )
+        , ( "reports", JsonE.list reportLinkValue l.reports )
+        , ( "events", JsonE.list eventValue l.events )
+        ]
+
+
+quote : String -> String
+quote s =
+    "\"" ++ s ++ "\""

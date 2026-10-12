@@ -43,6 +43,7 @@ use project::{
 };
 use testrunner::run_test;
 
+mod ai_doctor;
 mod app_url;
 mod bundled;
 mod json_out;
@@ -11517,6 +11518,15 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
                      start a slot's local engine and hold it (Ctrl-C stops it)
   stop <slot> | --all
                      stop the engines of a slot
+  promote <name> <version> --to <alias> [--min-pass-rate <x>] [--expect <n>|none]
+          [--force --reason <text>]
+                     point a registry alias at a version, on its attached eval evidence
+  rollback <name>@<alias>
+                     move a registry alias back to the version before the current one
+  lineage <name>@<alias>|<name>@v<n> | --dataset <sha256>
+                     print a version's lineage, or the versions trained on a dataset
+The registry verbs take --db <dsn> (else SKY_DB_PATH, DATABASE_URL, or the project's
+[database] path or url) and --registry <url> (else SKY_AI_REGISTRY).
 A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
 
 /// `sky ai <verb>`: the Std.Ai engine verbs. The CLI holds no logic of its
@@ -11535,11 +11545,27 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         ["pull", repo, file] => repo.contains('/') && !file.is_empty(),
         ["start", slot, ..] => !slot.starts_with('-'),
         ["stop", _] => true,
+        ["promote", name, version, rest @ ..] => {
+            !name.starts_with('-') && !version.starts_with('-') && rest.contains(&"--to")
+        }
+        ["rollback", reference, ..] => reference.contains('@'),
+        ["lineage", "--dataset", digest, ..] => !digest.starts_with('-'),
+        ["lineage", reference, ..] => reference.contains('@'),
         _ => false,
     };
     if !shape_ok {
         eprintln!("{AI_USAGE}");
         return ExitCode::from(2);
+    }
+    let mut args: Vec<String> = args.to_vec();
+    if matches!(
+        positional.first().copied(),
+        Some("promote" | "rollback" | "lineage")
+    ) {
+        if let Some(dsn) = ai_registry_db_default(&args) {
+            args.push("--db".to_string());
+            args.push(dsn);
+        }
     }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -11570,13 +11596,13 @@ fn cmd_ai(args: &[String]) -> ExitCode {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let err = Command::new(&bin).args(args).exec();
+        let err = Command::new(&bin).args(&args).exec();
         eprintln!("sky ai: could not launch {}: {err}", bin.display());
         ExitCode::FAILURE
     }
     #[cfg(not(unix))]
     {
-        match Command::new(&bin).args(args).status() {
+        match Command::new(&bin).args(&args).status() {
             Ok(s) => propagate(s.code()),
             Err(e) => {
                 eprintln!("sky ai: could not launch {}: {e}", bin.display());
@@ -11584,6 +11610,33 @@ fn cmd_ai(args: &[String]) -> ExitCode {
             }
         }
     }
+}
+
+/// The database a registry verb (`sky ai promote | rollback | lineage`) opens
+/// when it names none: the project's own, as the app reads it. An explicit
+/// `--db`, `SKY_DB_PATH` or `DATABASE_URL` wins (the program reads the
+/// variables itself), so the CLI adds the project's `[database]` `url` or
+/// `path` only when none of them is set. A relative SQLite path is relative to
+/// the project directory, where the app runs.
+fn ai_registry_db_default(args: &[String]) -> Option<String> {
+    if args.iter().any(|a| a == "--db") {
+        return None;
+    }
+    let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
+    if set("SKY_DB_PATH") || set("DATABASE_URL") {
+        return None;
+    }
+    let cwd = std::env::current_dir().ok()?;
+    let root = locate_project_root(&cwd)?;
+    let value = project::sky_toml_section_key(&root, "database", "url")
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            project::sky_toml_section_key(&root, "database", "path").filter(|v| !v.is_empty())
+        })?;
+    if value.contains("://") || Path::new(&value).is_absolute() {
+        return Some(value);
+    }
+    Some(root.join(value).to_string_lossy().into_owned())
 }
 
 // ---- bundled-app helpers -------------------------------------------------
@@ -13526,7 +13579,49 @@ fn run_all_checks(root: &Path) -> Vec<Finding> {
     out.extend(check_auth_secret(root));
     out.extend(check_embedded_postgres(root));
     out.extend(check_path_deps(root));
+    out.extend(check_ai(root));
     out
+}
+
+/// Std.Ai: the slots the source declares, the engine and the model store
+/// (`ai_doctor.rs`), against the operator's environment as the runtime reads
+/// it.
+fn check_ai(root: &Path) -> Vec<Finding> {
+    let prefix = project::sky_toml_section_key(root, "env", "prefix")
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| "SKY".to_string());
+    let env = |k: &str| std::env::var(k).ok();
+    let inputs = ai_doctor::Inputs {
+        home: ai_doctor::ai_home(&prefix, &env),
+        slots: project::ai_slots::discover(root),
+        prefix,
+        env: &env,
+        // The runtime's rule (productionFromEnv): `ENV` (else `SKY_ENV`) set
+        // to anything but dev / development / local.
+        production: std::env::var("ENV")
+            .ok()
+            .or_else(|| std::env::var("SKY_ENV").ok())
+            .map(|v| {
+                let v = v.trim().to_lowercase();
+                !v.is_empty() && !["dev", "development", "local"].contains(&v.as_str())
+            })
+            .unwrap_or(false),
+        reachable: &ai_doctor::reachable,
+    };
+    ai_doctor::findings(&inputs)
+        .into_iter()
+        .map(|f| Finding {
+            check: f.check,
+            severity: match f.level {
+                ai_doctor::Level::Info => Severity::Info,
+                ai_doctor::Level::Warn => Severity::Warn,
+                ai_doctor::Level::Error => Severity::Error,
+            },
+            message: f.message,
+            hint: f.hint,
+            fix: None,
+        })
+        .collect()
 }
 
 /// Local path dependencies (`sky add ./dir`): one that does not exist breaks

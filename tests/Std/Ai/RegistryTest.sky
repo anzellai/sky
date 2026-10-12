@@ -1,0 +1,1013 @@
+module Std.Ai.RegistryTest exposing (tests)
+
+-- Std.Ai.Registry on SQLite with a local store: registering adapters with
+-- their lineage, attaching eval evidence, promotion gated by `Eval.Passed`,
+-- compare-and-swap promotion, rollback, blocking, lineage, eval history and
+-- the resolver a slot serves through. The same code on PostgreSQL is proven by
+-- rust/crates/sky/tests/ai_registry_flow.rs (a real cluster, live-gated).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Provider as Provider exposing (Provider)
+import Std.Ai.Local as Local
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Store as Store
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+
+
+-- ── Fixtures ────────────────────────────────────────────────────────
+-- A minimal safetensors file: an 8-byte little-endian header length, then a
+-- JSON header. Different metadata gives different bytes, so a different
+-- version.
+safetensors : String -> String
+safetensors tag =
+    let
+        header = "{\"__metadata__\":{\"tag\":\"" ++ tag ++ "\"}}"
+        n = String.length header
+        hex = String.padLeft 2 '0' (hexByte n)
+    in
+        (Encoding.hexDecode (hex ++ "00000000000000") |> Result.withDefault "")
+            ++ header
+
+
+hexByte : Int -> String
+hexByte n =
+    let
+        digit d = String.slice d (d + 1) "0123456789abcdef"
+    in
+        digit (n // 16) ++ digit (modBy 16 n)
+
+
+base : Local.ModelRef
+base =
+    Local.devModel
+
+
+dataDigest : String
+dataDigest =
+    Crypto.sha256 "support dataset v3"
+
+
+lineage : Registry.Lineage
+lineage =
+    { base = base
+    , dataset = "support@3"
+    , datasetDigest = dataDigest
+    , metadata = [ ( "seed", "7" ), ( "backend", "fake" ) ]
+    }
+
+type alias World =
+    { reg : Registry.Registry
+    , db : Db
+    , dir : String
+    }
+
+
+-- A fresh registry: a SQLite file and a store in a new temporary directory.
+world : Task Error World
+world =
+    File.tempDir "sky-registry-test"
+        |> Task.andThen
+               (\dir ->
+                   Db.open "sqlite" (dir ++ "/registry.db")
+                       |> Task.andThen
+                              (\db ->
+                                  Registry.open
+                                      db
+                                      (Store.local (dir ++ "/store"))
+                                      |> Task.map
+                                             (\reg ->
+                                                 { reg = reg
+                                                 , db = db
+                                                 , dir = dir
+                                                 })))
+
+
+adapterFile : World -> String -> Task Error Registry.Adapter
+adapterFile w tag =
+    let
+        path = w.dir ++ "/" ++ tag ++ ".safetensors"
+    in
+        File.writeFile path (safetensors tag)
+            |> Task.map
+                   (\_ -> { path = path, format = Safetensors, method = Lora })
+
+
+registerTag : World -> String -> Task Error Registry.Version
+registerTag w tag =
+    adapterFile w tag
+        |> Task.andThen (\a -> Registry.register w.reg "support-lora" a lineage)
+
+
+-- A suite every candidate passes, so `Eval.check` gives a `Passed`.
+politeSuite : Eval.Suite String
+politeSuite =
+    Eval.suite
+        "support"
+        (\q -> [ Provider.user q ])
+        [ { id = "refund"
+          , input = "How do I get a refund?"
+          , expect = Contains "refund"
+          , tags = []
+          }
+        ]
+
+
+answers : Provider
+answers =
+    Provider.custom
+        (\_ ->
+            Task.succeed
+                { content = "Ask for a refund within 30 days."
+                , usage =
+                    { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+                })
+
+
+-- Evaluate a version, attach the report and return the evidence.
+evidence : World -> Registry.Version -> Task Error Eval.Passed
+evidence w v =
+    Eval.runAs (Registry.label v) w.db answers politeSuite
+        |> Task.andThen
+               (\report ->
+                   Registry.attachReport w.reg v report
+                       |> Task.andThen
+                              (\_ ->
+                                  Task.fromResult
+                                      (Eval.check Eval.thresholds report)))
+
+
+failureOf : Result Error a -> Maybe Failure
+failureOf r =
+    case r of
+
+        Ok _ ->
+            Nothing
+
+        Err e ->
+            Failure.fromError e
+
+
+expectFailure : (Failure -> Bool) -> String -> Result Error a -> TestResult
+expectFailure isIt what r =
+    case r of
+
+        Ok _ ->
+            Test.fail ("expected " ++ what ++ ", it succeeded")
+
+        Err e ->
+            case Failure.fromError e of
+
+                Just f ->
+                    if isIt f then
+                        Test.pass
+
+                    else
+                        Test.fail
+                            ("expected " ++ what ++ ", got " ++ Error.toString e)
+
+                Nothing ->
+                    Test.fail
+                        ("expected " ++ what ++ ", got " ++ Error.toString e)
+
+
+isNotPromotable : Failure -> Bool
+isNotPromotable f =
+    case f of
+
+        NotPromotable _ ->
+            True
+
+        _ ->
+            False
+
+
+isInvalid : Failure -> Bool
+isInvalid f =
+    case f of
+
+        InvalidSetting _ ->
+            True
+
+        _ ->
+            False
+
+
+-- ── Scenarios ───────────────────────────────────────────────────────
+registerTwice : Result Error ( Registry.Version, Registry.Version, Registry.Version )
+registerTwice =
+    world
+        |> Task.andThen
+               (\w ->
+                   Task.map3
+                       (\a b c -> ( a, b, c ))
+                       (registerTag w "one")
+                       (registerTag w "one")
+                       (registerTag w "two"))
+        |> Task.run
+
+-- Promote v1, v2, v3 to prod with evidence, then roll back twice and once
+-- more (nothing left).
+type alias Ladder =
+    { afterPromotions : Int
+    , afterFirstRollback : Int
+    , afterSecondRollback : Int
+    , third : Result Error Registry.AliasEvent
+    , events : List String
+    }
+
+
+ladder : Result Error Ladder
+ladder =
+    world |> Task.andThen ladderIn |> Task.run
+
+
+promoteWithEvidence : World -> Registry.Version -> Task Error Registry.AliasEvent
+promoteWithEvidence w v =
+    evidence w v |> Task.andThen (\p -> Registry.promote w.reg "prod" v p)
+
+
+prodNumber : World -> Task Error Int
+prodNumber w =
+    Registry.resolve w.reg "support-lora@prod" |> Task.map .number
+
+
+rollbackProd : World -> Task Error Int
+rollbackProd w =
+    Registry.rollback w.reg "support-lora@prod"
+        |> Task.andThen (\_ -> prodNumber w)
+
+
+ladderIn : World -> Task Error Ladder
+ladderIn w =
+    Task.sequence [ registerTag w "a", registerTag w "b", registerTag w "c" ]
+        |> Task.andThen
+               (\vs -> Task.sequence (List.map (promoteWithEvidence w) vs))
+        |> Task.andThen (\_ -> prodNumber w)
+        |> Task.andThen
+               (\top -> rollbackProd w |> Task.map (\one -> ( top, one )))
+        |> Task.andThen
+               (\( top, one ) ->
+                   rollbackProd w |> Task.map (\two -> ( top, one, two )))
+        |> Task.andThen
+               (\( top, one, two ) ->
+                   attempt (Registry.rollback w.reg "support-lora@prod")
+                       |> Task.map
+                              (\third ->
+                                  { afterPromotions = top
+                                  , afterFirstRollback = one
+                                  , afterSecondRollback = two
+                                  , third = third
+                                  , events = []
+                                  }))
+        |> Task.andThen
+               (\l ->
+                   Registry.history w.reg "support-lora" "prod"
+                       |> Task.map
+                              (\evs ->
+                                  { l
+                                      | events =
+                                          List.map eventText (List.reverse evs)
+                                  }))
+
+
+eventText : Registry.AliasEvent -> String
+eventText e =
+    e.action ++ ":" ++ String.fromInt e.from ++ ">" ++ String.fromInt e.to
+
+
+-- The evidence of v1 cannot promote v2.
+wrongEvidence : Result Error Registry.AliasEvent
+wrongEvidence =
+    world
+        |> Task.andThen
+               (\w ->
+                   Task.map2
+                       (\a b -> ( a, b ))
+                       (registerTag w "a")
+                       (registerTag w "b")
+                       |> Task.andThen
+                              (\( v1, v2 ) ->
+                                  evidence w v1
+                                      |> Task.andThen
+                                             (\p ->
+                                                 Registry.promote
+                                                     w.reg
+                                                     "prod"
+                                                     v2
+                                                     p)))
+        |> Task.run
+
+
+-- A passing report that was never attached is not evidence.
+unattached : Result Error Registry.AliasEvent
+unattached =
+    world
+        |> Task.andThen
+               (\w ->
+                   registerTag w "a"
+                       |> Task.andThen
+                              (\v ->
+                                  Eval.runAs
+                                      (Registry.label v)
+                                      w.db
+                                      answers
+                                      politeSuite
+                                      |> Task.andThen
+                                             (\r ->
+                                                 Task.fromResult
+                                                     (Eval.check
+                                                         Eval.thresholds
+                                                         r))
+                                      |> Task.andThen
+                                             (\p ->
+                                                 Registry.promote
+                                                     w.reg
+                                                     "prod"
+                                                     v
+                                                     p)))
+        |> Task.run
+
+-- Two promotions that both expect prod at v1: exactly one wins, the other is
+-- PromotionConflict.
+type alias Race =
+    { wins : Int
+    , conflicts : Int
+    , prod : Int
+    }
+
+
+race : Result Error Race
+race =
+    world
+        |> Task.andThen
+               (\w ->
+                   Task.sequence
+                       [ registerTag w "a"
+                       , registerTag w "b"
+                       , registerTag w "c"
+                       ]
+                       |> Task.andThen
+                              (\vs ->
+                                  case vs of
+
+                                      [v1, v2, v3] ->
+                                          Task.map3
+                                              (\p1 p2 p3 -> ( p1, p2, p3 ))
+                                              (evidence w v1)
+                                              (evidence w v2)
+                                              (evidence w v3)
+                                              |> Task.andThen
+                                                     (\( p1, p2, p3 ) ->
+                                                         Registry.promote
+                                                             w.reg
+                                                             "prod"
+                                                             v1
+                                                             p1
+                                                             |> Task.map
+                                                                    (\_ ->
+                                                                        ( p2
+                                                                        , p3
+                                                                        )))
+                                              |> Task.andThen
+                                                     (\( p2, p3 ) ->
+                                                         Task.parallel
+                                                             [ attempt
+                                                                   (Registry.promoteIf
+                                                                       w.reg
+                                                                       "prod"
+                                                                       (Just v1)
+                                                                       v2
+                                                                       p2)
+                                                             , attempt
+                                                                   (Registry.promoteIf
+                                                                       w.reg
+                                                                       "prod"
+                                                                       (Just v1)
+                                                                       v3
+                                                                       p3)
+                                                             ])
+                                              |> Task.andThen
+                                                     (\outcomes ->
+                                                         Registry.resolve
+                                                             w.reg
+                                                             "support-lora@prod"
+                                                             |> Task.map
+                                                                    (\prod ->
+                                                                        { wins =
+                                                                            List.length
+                                                                                (List.filter
+                                                                                    isOk
+                                                                                    outcomes)
+                                                                        , conflicts =
+                                                                            List.length
+                                                                                (List.filter
+                                                                                    (\o ->
+                                                                                        case failureOf
+                                                                                                 o of
+
+                                                                                            Just (PromotionConflict _) ->
+                                                                                                True
+
+                                                                                            _ ->
+                                                                                                False)
+                                                                                    outcomes)
+                                                                        , prod =
+                                                                            prod.number
+                                                                        }))
+
+                                      _ ->
+                                          Task.fail
+                                              (Error.unexpected "three versions")))
+        |> Task.run
+
+
+attempt : Task Error a -> Task Error (Result Error a)
+attempt t =
+    t |> Task.map Ok |> Task.onError (\e -> Task.succeed (Err e))
+
+
+isOk : Result e a -> Bool
+isOk r =
+    case r of
+
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+-- A stale expectation is PromotionConflict.
+stale : Result Error Registry.AliasEvent
+stale =
+    world
+        |> Task.andThen
+               (\w ->
+                   Task.map2
+                       (\a b -> ( a, b ))
+                       (registerTag w "a")
+                       (registerTag w "b")
+                       |> Task.andThen
+                              (\( v1, v2 ) ->
+                                  evidence w v1
+                                      |> Task.andThen
+                                             (\p1 ->
+                                                 Registry.promote
+                                                     w.reg
+                                                     "prod"
+                                                     v1
+                                                     p1)
+                                      |> Task.andThen (\_ -> evidence w v2)
+                                      |> Task.andThen
+                                             (\p2 ->
+                                                 Registry.promoteIf
+                                                     w.reg
+                                                     "prod"
+                                                     Nothing
+                                                     v2
+                                                     p2)))
+        |> Task.run
+
+-- forcePromote records its reason; a blocked version can be neither
+-- promoted nor forced.
+type alias Forced =
+    { action : String
+    , reason : String
+    , blockedPromote : Result Error Registry.AliasEvent
+    , blockedForce : Result Error Registry.AliasEvent
+    , noReason : Result Error Registry.AliasEvent
+    , staleCopy : Result Error Registry.AliasEvent
+    }
+
+
+forced : Result Error Forced
+forced =
+    world |> Task.andThen forcedIn |> Task.run
+
+
+forcedIn : World -> Task Error Forced
+forcedIn w =
+    Task.map2 (\a b -> ( a, b )) (registerTag w "a") (registerTag w "b")
+        |> Task.andThen
+               (\( v1, v2 ) ->
+                   Registry.forcePromote
+                       w.reg
+                       "qa"
+                       v1
+                       "hotfix while the judge is down"
+                       |> Task.andThen
+                              (\ev ->
+                                  evidence w v2 |> Task.map (\p2 -> ( ev, p2 )))
+                       |> Task.andThen
+                              (\( ev, p2 ) ->
+                                  Registry.block w.reg v2 "erasure request 42"
+                                      |> Task.map (\_ -> ( ev, p2 )))
+                       |> Task.andThen
+                              (\( ev, p2 ) ->
+                                  Registry.version w.reg "support-lora" 2
+                                      |> Task.map (\b2 -> ( ev, p2, b2 )))
+                       |> Task.andThen
+                              (\( ev, p2, b2 ) ->
+                                  blockedOutcomes w v1 v2 ev p2 b2))
+
+
+blockedOutcomes : World -> Registry.Version -> Registry.Version -> Registry.AliasEvent -> Eval.Passed -> Registry.Version -> Task Error Forced
+blockedOutcomes w v1 v2 ev p2 blockedV2 =
+    Task.map4
+        (\bp bf nr sc ->
+            { action = ev.action
+            , reason = ev.reason
+            , blockedPromote = bp
+            , blockedForce = bf
+            , noReason = nr
+            , staleCopy = sc
+            })
+        (attempt (Registry.promote w.reg "prod" blockedV2 p2))
+        (attempt (Registry.forcePromote w.reg "prod" blockedV2 "anyway"))
+        (attempt (Registry.forcePromote w.reg "prod" v1 "  "))
+        (attempt
+            (Registry.forcePromote w.reg "prod" v2 "a copy read before the block"))
+
+-- Lineage, eval history and the erasure query.
+type alias Lineage =
+    { version : Registry.Version
+    , aliases : List String
+    , reports : Int
+    , events : Int
+    , history : Int
+    , trained : List Int
+    }
+
+
+lineageOf : Result Error Lineage
+lineageOf =
+    world
+        |> Task.andThen
+               (\w ->
+                   Task.map2
+                       (\a b -> ( a, b ))
+                       (registerTag w "a")
+                       (registerTag w "b")
+                       |> Task.andThen
+                              (\( v1, v2 ) ->
+                                  evidence w v1
+                                      |> Task.andThen
+                                             (\p1 ->
+                                                 Registry.promote
+                                                     w.reg
+                                                     "prod"
+                                                     v1
+                                                     p1)
+                                      |> Task.andThen (\_ -> evidence w v1)
+                                      |> Task.andThen
+                                             (\p1 ->
+                                                 Registry.promote
+                                                     w.reg
+                                                     "dev"
+                                                     v1
+                                                     p1)
+                                      |> Task.andThen (\_ -> evidence w v2)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.lineage
+                                                     w.reg
+                                                     "support-lora@prod")
+                                      |> Task.andThen
+                                             (\l ->
+                                                 Task.map2
+                                                     (\hist trained ->
+                                                         { version = l.version
+                                                         , aliases = l.aliases
+                                                         , reports =
+                                                             List.length
+                                                                 l.reports
+                                                         , events =
+                                                             List.length
+                                                                 l.events
+                                                         , history =
+                                                             List.length hist
+                                                         , trained =
+                                                             List.map
+                                                                 .number
+                                                                 trained
+                                                         })
+                                                     (Registry.evalHistory
+                                                         w.reg
+                                                         "support-lora")
+                                                     (Registry.trainedOn
+                                                         w.reg
+                                                         dataDigest))))
+        |> Task.run
+
+-- The resolver a slot uses: a remote slot gets the served name, a local
+-- slot gets a verified file (and a safetensors adapter is refused there).
+type alias Resolved =
+    { remote : String
+    , remotePath : String
+    , local : Result Error String
+    }
+
+
+resolved : Result Error Resolved
+resolved =
+    world
+        |> Task.andThen
+               (\w ->
+                   registerTag w "a"
+                       |> Task.andThen
+                              (\v1 ->
+                                  evidence w v1
+                                      |> Task.andThen
+                                             (\p1 ->
+                                                 Registry.promote
+                                                     w.reg
+                                                     "prod"
+                                                     v1
+                                                     p1)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 let
+                                                     r =
+                                                         Registry.resolver
+                                                             (Task.succeed w.reg)
+                                                 in
+                                                     Task.map2
+                                                         (\remote local ->
+                                                             { remote =
+                                                                 remote.servedName
+                                                                     ++ " "
+                                                                     ++ remote.label
+                                                                     ++ " "
+                                                                     ++ remote.baseDigest
+                                                             , remotePath =
+                                                                 remote.path
+                                                             , local =
+                                                                 Result.map
+                                                                     .path
+                                                                     local
+                                                             })
+                                                         (r.resolve
+                                                             "registry:support-lora@prod"
+                                                             False)
+                                                         (attempt
+                                                             (r.resolve
+                                                                 "registry:support-lora@prod"
+                                                                 True)))))
+        |> Task.run
+
+
+notAnAdapter : Result Error Registry.Version
+notAnAdapter =
+    world
+        |> Task.andThen
+               (\w ->
+                   File.writeFile (w.dir ++ "/notes.txt") "just text"
+                       |> Task.andThen
+                              (\_ ->
+                                  Registry.register
+                                      w.reg
+                                      "support-lora"
+                                      { path = w.dir ++ "/notes.txt"
+                                      , format = Safetensors
+                                      , method = Lora
+                                      }
+                                      lineage))
+        |> Task.run
+
+
+unpinnedBase : Result Error Registry.Version
+unpinnedBase =
+    world
+        |> Task.andThen
+               (\w ->
+                   adapterFile w "a"
+                       |> Task.andThen
+                              (\a ->
+                                  Registry.register
+                                      w.reg
+                                      "support-lora"
+                                      a
+                                      { lineage
+                                          | base =
+                                              Local.fromReference
+                                                  "hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/model.gguf"
+                                      }))
+        |> Task.run
+
+
+-- Opening twice applies the migrations once.
+migrated : Result Error ( Int, Int )
+migrated =
+    world
+        |> Task.andThen
+               (\w ->
+                   Registry.open w.db (Store.local (w.dir ++ "/store"))
+                       |> Task.andThen
+                              (\_ ->
+                                  Db.query
+                                      w.db
+                                      "SELECT name FROM _sky_migrations WHERE name LIKE '_sky_ai_registry_%'"
+                                      []
+                                      |> Task.map List.length)
+                       |> Task.andThen
+                              (\n ->
+                                  Registry.versions w.reg "nothing-here"
+                                      |> Task.map (\vs -> ( n, List.length vs ))))
+        |> Task.run
+
+
+-- ── Tests ───────────────────────────────────────────────────────────
+tests : List Test
+tests =
+    [ Test.test
+          "register numbers versions and returns the existing one for the same bytes"
+          (\_ ->
+              case registerTwice of
+
+                  Ok ( a, b, c ) ->
+                      Test.equal ( 1, 1, 2 ) ( a.number, b.number, c.number )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a version records its lineage and is pinned to its base"
+          (\_ ->
+              case registerTwice of
+
+                  Ok ( a, _, _ ) ->
+                      Test.equal
+                          ( "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
+                          , "support@3"
+                          , [ ( "seed", "7" ), ( "backend", "fake" ) ]
+                          )
+                          ( a.baseDigest, a.dataset, a.metadata )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the label and served name name the version"
+          (\_ ->
+              case registerTwice of
+
+                  Ok ( _, _, c ) ->
+                      Test.equal
+                          ( "support-lora@v2", "support-lora-v2" )
+                          ( Registry.label c, Registry.servedName c )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a file that is not an adapter is refused"
+          (\_ -> expectFailure isInvalid "InvalidSetting" notAnAdapter)
+    , Test.test
+          "a base model without a digest is refused"
+          (\_ -> expectFailure isInvalid "InvalidSetting" unpinnedBase)
+    , Test.test
+          "promote, then rollback twice, walks the alias back"
+          (\_ ->
+              case ladder of
+
+                  Ok l ->
+                      Test.equal
+                          ( 3, 2, 1 )
+                          ( l.afterPromotions
+                          , l.afterFirstRollback
+                          , l.afterSecondRollback
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a rollback with nothing before it is NotPromotable"
+          (\_ ->
+              case ladder of
+
+                  Ok l ->
+                      expectFailure isNotPromotable "NotPromotable" l.third
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "every alias move is a logged event"
+          (\_ ->
+              case ladder of
+
+                  Ok l ->
+                      Test.equal
+                          [ "promote:0>1"
+                          , "promote:1>2"
+                          , "promote:2>3"
+                          , "rollback:3>2"
+                          , "rollback:2>1"
+                          ]
+                          l.events
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the evidence of one version cannot promote another"
+          (\_ -> expectFailure isNotPromotable "NotPromotable" wrongEvidence)
+    , Test.test
+          "a passing report that is not attached is not evidence"
+          (\_ -> expectFailure isNotPromotable "NotPromotable" unattached)
+    , Test.test
+          "two promotions from the same state: exactly one wins"
+          (\_ ->
+              case race of
+
+                  Ok r ->
+                      if r.wins /= 1 || r.conflicts /= 1 then
+                          Test.fail
+                              ("wins " ++ String.fromInt r.wins ++ ", conflicts "
+                                  ++ String.fromInt r.conflicts)
+
+                      else if r.prod /= 2 && r.prod /= 3 then
+                          Test.fail ("prod is v" ++ String.fromInt r.prod)
+
+                      else
+                          Test.pass
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "promoteIf on a stale state is PromotionConflict"
+          (\_ ->
+              expectFailure
+                  (\f ->
+                      case f of
+
+                          PromotionConflict c ->
+                              c.expected == "(none)" && c.actual == "v1"
+
+                          _ ->
+                              False)
+                  "PromotionConflict"
+                  stale)
+    , Test.test
+          "forcePromote records the reason"
+          (\_ ->
+              case forced of
+
+                  Ok f ->
+                      Test.equal
+                          ( "force", "hotfix while the judge is down" )
+                          ( f.action, f.reason )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a blocked version cannot be promoted"
+          (\_ ->
+              case forced of
+
+                  Ok f ->
+                      expectFailure
+                          isNotPromotable
+                          "NotPromotable"
+                          f.blockedPromote
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a blocked version cannot be forced either"
+          (\_ ->
+              case forced of
+
+                  Ok f ->
+                      expectFailure
+                          isNotPromotable
+                          "NotPromotable"
+                          f.blockedForce
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a copy of a version read before it was blocked is refused too"
+          (\_ ->
+              case forced of
+
+                  Ok f ->
+                      expectFailure isNotPromotable "NotPromotable" f.staleCopy
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a forced promotion needs a reason"
+          (\_ ->
+              case forced of
+
+                  Ok f ->
+                      expectFailure isInvalid "InvalidSetting" f.noReason
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "lineage names the version, its aliases, reports and events"
+          (\_ ->
+              case lineageOf of
+
+                  Ok l ->
+                      Test.equal
+                          ( 1, [ "dev", "prod" ], ( 1, 2 ) )
+                          ( l.version.number
+                          , l.aliases
+                          , ( l.reports, l.events )
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "eval history holds every attached report of the model"
+          (\_ ->
+              case lineageOf of
+
+                  Ok l ->
+                      Test.equal 2 l.history
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "trainedOn finds every version trained on a dataset"
+          (\_ ->
+              case lineageOf of
+
+                  Ok l ->
+                      Test.equal [ 1, 2 ] l.trained
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the resolver gives a remote slot the served name and no file"
+          (\_ ->
+              case resolved of
+
+                  Ok r ->
+                      Test.equal
+                          ( "support-lora-v1 support-lora@v1 7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
+                          , ""
+                          )
+                          ( r.remote, r.remotePath )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the resolver refuses a safetensors adapter for a local engine"
+          (\_ ->
+              case resolved of
+
+                  Ok r ->
+                      expectFailure isInvalid "InvalidSetting" r.local
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "opening twice applies the registry migrations once"
+          (\_ -> Test.equal (Ok ( 1, 0 )) migrated)
+    , Test.test
+          "an unknown alias is NotRegistered"
+          (\_ ->
+              expectFailure
+                  (\f ->
+                      case f of
+
+                          NotRegistered r ->
+                              r.ref == "support-lora@prod"
+
+                          _ ->
+                              False)
+                  "NotRegistered"
+                  (world
+                      |> Task.andThen
+                             (\w -> Registry.resolve w.reg "support-lora@prod")
+                      |> Task.run))
+    , Test.test
+          "an alias that reads as a version is refused"
+          (\_ ->
+              expectFailure
+                  isInvalid
+                  "InvalidSetting"
+                  (world
+                      |> Task.andThen
+                             (\w ->
+                                 registerTag w "a"
+                                     |> Task.andThen
+                                            (\v ->
+                                                Registry.forcePromote
+                                                    w.reg
+                                                    "v2"
+                                                    v
+                                                    "test"))
+                      |> Task.run))
+    ]

@@ -189,6 +189,59 @@ aiDecoder =
         |> Pipeline.optional "engines" (Decode.list aiEngineDecoder) []
         |> Pipeline.optional "calls" (Decode.list aiCallDecoder) []
         |> Pipeline.optional "evals" (Decode.list aiEvalDecoder) []
+        |> Pipeline.optional "registry" (Decode.list aiModelDecoder) []
+
+
+aiModelDecoder : Decode.Decoder AiModel
+aiModelDecoder =
+    Decode.succeed AiModel |> Pipeline.optional "name" Decode.string ""
+        |> Pipeline.optional "store" Decode.string ""
+        |> Pipeline.optional "aliases" (Decode.list aiAliasDecoder) []
+        |> Pipeline.optional "versions" (Decode.list aiVersionDecoder) []
+        |> Pipeline.optional "events" (Decode.list aiAliasEventDecoder) []
+        |> Pipeline.optional "reports" (Decode.list aiReportLinkDecoder) []
+
+
+aiAliasDecoder : Decode.Decoder AiAlias
+aiAliasDecoder =
+    Decode.succeed AiAlias |> Pipeline.optional "alias" Decode.string ""
+        |> Pipeline.optional "number" intFromFloat 0
+        |> Pipeline.optional "generation" intFromFloat 0
+
+
+aiVersionDecoder : Decode.Decoder AiVersion
+aiVersionDecoder =
+    Decode.succeed AiVersion |> Pipeline.optional "label" Decode.string ""
+        |> Pipeline.optional "number" intFromFloat 0
+        |> Pipeline.optional "digest" Decode.string ""
+        |> Pipeline.optional "baseDigest" Decode.string ""
+        |> Pipeline.optional "dataset" Decode.string ""
+        |> Pipeline.optional "method" Decode.string ""
+        |> Pipeline.optional "format" Decode.string ""
+        |> Pipeline.optional
+               "blocked"
+               (Decode.oneOf [ Decode.string, Decode.succeed "" ])
+               ""
+
+
+aiAliasEventDecoder : Decode.Decoder AiAliasEvent
+aiAliasEventDecoder =
+    Decode.succeed AiAliasEvent |> Pipeline.optional "alias" Decode.string ""
+        |> Pipeline.optional "seq" intFromFloat 0
+        |> Pipeline.optional "action" Decode.string ""
+        |> Pipeline.optional "from" intFromFloat 0
+        |> Pipeline.optional "to" intFromFloat 0
+        |> Pipeline.optional "report" Decode.string ""
+        |> Pipeline.optional "reason" Decode.string ""
+
+
+aiReportLinkDecoder : Decode.Decoder AiReportLink
+aiReportLinkDecoder =
+    Decode.succeed AiReportLink |> Pipeline.optional "suite" Decode.string ""
+        |> Pipeline.optional "number" intFromFloat 0
+        |> Pipeline.optional "digest" Decode.string ""
+        |> Pipeline.optional "passRate" Decode.float 0.0
+        |> Pipeline.optional "verdict" Decode.string ""
 
 
 aiSlotDecoder : Decode.Decoder AiSlot
@@ -381,6 +434,7 @@ initWith rawQuery =
                 { failedOnly = param "calls" == "failed"
                 , slot = param "slot"
                 , openEval = param "eval"
+                , openModel = param "model"
                 }
             }
         -- Fetch the signed-in identity on boot. Only meaningful
@@ -602,6 +656,18 @@ update msg model =
                         id
             in
                 ( { model | aiFilter = { f | openEval = next } }, Cmd.none )
+
+        AiOpenModel name ->
+            let
+                f = model.aiFilter
+                next =
+                    if f.openModel == name then
+                        ""
+
+                    else
+                        name
+            in
+                ( { model | aiFilter = { f | openModel = next } }, Cmd.none )
 
 
 -- The error bar shows the last failed read. A read's answer clears it only

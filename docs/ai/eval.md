@@ -88,6 +88,60 @@ and names your own rubric prompt version, which the report records. The judge
 answers with `SCORE: <1-5>`; an answer without a score fails the case and says
 so. `Eval.withPassScore` moves the pass mark.
 
+`Eval.judgeOn slot "my-rubric-v2"` is a judge on a model slot. Its identity
+includes the slot's resolved target, model and adapter, so moving the slot to
+another model never reuses an old verdict (see the journal below).
+`Eval.defaultJudge` is `Eval.judgeOn Eval.judgeSlot "rubric-v1"`.
+
+### The judge journal
+
+Every judge call is recorded in the run's database
+(`_sky_ai_eval_judge_journal`), keyed by the judge's identity, its rubric
+prompt version, the seed and the exact prompt (the rubric, the question and
+the answer). A run that asks the same judge about the same answer again reads
+the verdict from the journal: a re-run of an unchanged output costs nothing and
+returns the same verdict. Calibration and pairwise judging use the journal
+too. Change the version when you change the judge's model or prompt on a plain
+provider; a judge on a slot does this by itself.
+
+### Calibrating the judge
+
+A judge can drift: a new model or prompt can pass answers a person would fail.
+`Eval.withCalibration` gives it human-labelled cases and the agreement it
+needs:
+
+```elm
+calibrated : Eval.Judge
+calibrated =
+    Eval.defaultJudge
+        |> Eval.withCalibration
+            [ { id = "polite", question = "You are useless.", answer = "Sorry about that. How can I help?", rubric = "Stays polite.", passes = True }
+            , { id = "rude", question = "You are useless.", answer = "So are you.", rubric = "Stays polite.", passes = False }
+            ]
+            0.9
+```
+
+Before a run scores its `Rubric` cases, it asks the judge about each labelled
+case and compares the verdict with the label. The report's `calibration`
+holds the result: the cases, how many agreed, the agreement, Cohen's kappa
+(agreement corrected for chance), the confusion counts and the cases the judge
+decided differently. `Eval.check` fails a report whose judge is below its
+`minAgreement` ("the judge … failed calibration"), so a drifting judge cannot
+pass a bad model. `Eval.calibrate db judge` runs the calibration on its own.
+
+`Eval.withCalibratedJudge` on the thresholds also refuses a report that scored
+`Rubric` cases with a judge that has no labelled cases at all.
+
+### Pairwise judging
+
+`Eval.pairwise db judge rubric suite baseline candidate` compares two reports'
+answers case by case. For each pair it asks the judge twice, once with the
+baseline as response A and once with the candidate as response A, and counts a
+win only when the judge picked the same answer in both orders. A judge that
+prefers a position gives a tie, so position bias cannot decide the result. The
+`Pairwise` value holds the wins, losses, ties, `unclear` answers (no `WINNER:`
+line) and a `winRate` (wins plus half the ties, over the pairs).
+
 ## Repeatable runs
 
 Every call uses temperature 0 and a seed. The suite's seed is 42 unless
@@ -111,7 +165,12 @@ seed and every answer): two runs with the same digest answered the same.
 - `passed`, `failed`, `errors` and `passRate`;
 - `scorers`: each scorer's mean over the cases it scored;
 - `p95LatencyMs` and `meanCost`;
-- `seed`, `samples`, the judge's rubric version and the `digest`.
+- `seed`, `samples`, the judge's rubric version and the `digest`;
+- `calibration`: the judge's calibration, when it has labelled cases.
+
+`Eval.encodeReport` writes a report as JSON with every field and
+`Eval.decodeReport` reads it back; `Std.Ai.Registry` stores attached reports in
+this form ([`registry.md`](registry.md)).
 
 Each run is stored in the database (`_sky_ai_eval_runs`, created on first
 use), and `Eval.history db "support"` reads the runs of a suite back, newest
@@ -149,13 +208,15 @@ when:
   of the paired difference is below minus `withMaxRegression` (0.05 by
   default),
 - the p95 latency is over the suite's `withLatencyBudget`, or the mean cost is
-  over its `withCostBudget` (which needs `withPriceBook`).
+  over its `withCostBudget` (which needs `withPriceBook`),
+- the judge failed its calibration (or, with `withCalibratedJudge`, has none).
 
 A failure is the typed `Std.Ai.Failure.GateFailed { suite, reasons }`
 (`PermissionDenied`, not retryable), naming every reason. A pass is an opaque
 `Eval.Passed` that only a gate makes; it names the suite, the candidate and
 the report's digest, so a function that takes a `Passed` cannot run without a
-passing evaluation.
+passing evaluation. `Std.Ai.Registry.promote` is such a function
+([`registry.md`](registry.md)).
 
 ## Baselines
 
@@ -189,9 +250,8 @@ make a suite's run exact in a unit test.
 
 ## Not yet
 
-These parts of §8.6 are later phases: judge calibration
-(`withCalibration`), pairwise judging in both orders, journalled judge calls
-(each judge call as a `Durable.step`, so a re-run of an unchanged output
-costs nothing), and
-`sky ai eval <suite> --against <alias>`, which needs the project's
-`Std.Ai.Pipeline` entry (phase 2).
+`sky ai eval <suite> --against <alias>` needs the project's `Std.Ai.Pipeline`
+entry, which arrives with it. The judge journal is a table in the run's
+database rather than a `Std.Durable` journal: it gives the same property (an
+unchanged judge call is answered once), and a run inside a durable workflow
+can still wrap `Eval.run` in a `Durable.step`.

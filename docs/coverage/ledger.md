@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 185 |
-| covered by the new corpus (>= Asserted) | 174 |
-| verdict `stronger` | 169 |
+| surfaces | 187 |
+| covered by the new corpus (>= Asserted) | 176 |
+| verdict `stronger` | 171 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
 | corpus units | 132 |
-| stdlib modules (denominator) | 117 |
-| stdlib entries (denominator) | 2346 |
+| stdlib modules (denominator) | 119 |
+| stdlib entries (denominator) | 2418 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 7.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 800 | 34.1% |
-| symbols unreferenced under the generous rule | 705 | 30.1% |
+| stdlib modules imported by nothing | 9 | 7.6% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 836 | 34.6% |
+| symbols unreferenced under the generous rule | 739 | 30.6% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -195,6 +195,8 @@ None.
 | `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Policy` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Ai.Provider` | stdlib | Runs | Falsified | stronger |
+| `stdlib.Std.Ai.Registry` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Store` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Tool` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Trace` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Asserted | stronger |

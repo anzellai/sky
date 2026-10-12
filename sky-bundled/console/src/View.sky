@@ -487,9 +487,15 @@ encodeFilters model =
 
             else
                 "eval=" ++ Encoding.urlEncode model.aiFilter.openEval
+        modelPart =
+            if model.aiFilter.openModel == "" then
+                ""
+
+            else
+                "model=" ++ Encoding.urlEncode model.aiFilter.openModel
     in
         joinQueryParts
-            (List.filter (\p -> p /= "") [tabPart, rangePart, qPart, svcPart, callsPart, slotPart, evalPart])
+            (List.filter (\p -> p /= "") [tabPart, rangePart, qPart, svcPart, callsPart, slotPart, evalPart, modelPart])
 
 
 joinQueryParts : List String -> String

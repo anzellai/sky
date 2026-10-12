@@ -1,0 +1,908 @@
+-- | Std.Ai.Store — where the model registry keeps its artefacts: a local
+-- directory, a Google Cloud Storage bucket or an Amazon S3 bucket, with one
+-- code path.
+--
+-- ```elm
+-- import Std.Ai.Store as Store
+--
+-- store : Task Error Store.Store
+-- store =
+--     Store.configured "file://.sky/ai/registry"
+-- ```
+--
+-- Every artefact is content-addressed: it is stored under
+-- `blobs/sha256/<hex>` below the store's root, named by the SHA-256 of its
+-- bytes. A stored blob is never overwritten (an upload is a conditional
+-- create), and a fetched blob is checked against its digest before it is
+-- returned, so a damaged or swapped file is `ChecksumMismatch`, never served.
+--
+-- `configured url` takes the location from code and lets an operator override
+-- it with `SKY_AI_REGISTRY` (under the project's prefix): `file://<dir>`,
+-- `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` (add `?region=<name>`
+-- for S3, else `AWS_REGION` is read).
+--
+-- Credentials come from the platform, the way each cloud expects, and never
+-- from a Sky variable:
+--
+--   * GCS: the service-account key file named by
+--     `GOOGLE_APPLICATION_CREDENTIALS`, else the metadata server of GCE, GKE or
+--     Cloud Run (`GCE_METADATA_HOST` moves it).
+--   * S3: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`,
+--     else the instance role through IMDSv2
+--     (`AWS_EC2_METADATA_SERVICE_ENDPOINT` moves it). Requests are signed
+--     with AWS Signature Version 4 (`signV4`), written in Sky.
+--
+-- `withEndpoint` points a store at an emulator or an S3-compatible server
+-- (MinIO, a fake GCS server), and `withToken` / `withAwsKeys` give it
+-- credentials for that case. Under `sky test` in test mode every request is
+-- answered by a fixture under `tests/mocks/`.
+module Std.Ai.Store exposing
+    ( Store
+    , Blob
+    , local
+    , gcs
+    , s3
+    , fromUrl
+    , configured
+    , withEndpoint
+    , withToken
+    , withAwsKeys
+    , location
+    , put
+    , fetch
+    , SigV4
+    , Signature
+    , signV4
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.File as File
+import Sky.Core.Http as Http
+import Sky.Core.Jwt as Jwt
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+-- ── The store ───────────────────────────────────────────────────────
+-- | Where artefacts live. Build it with `local`, `gcs`, `s3`, `fromUrl` or
+-- `configured`.
+type Store
+    = Store Config
+
+type alias Config =
+    { kind : String
+    , root : String
+    , bucket : String
+    , prefix : String
+    , region : String
+    , endpoint : String
+    , token : Maybe Secret
+    , awsKeys : Maybe AwsKeys
+    }
+
+type alias AwsKeys =
+    { accessKey : String
+    , secretKey : Secret
+    , sessionToken : Maybe Secret
+    }
+
+-- | A stored artefact: the SHA-256 of its bytes (64 lower-case hex digits)
+-- and its size in bytes.
+type alias Blob =
+    { sha256 : String
+    , size : Int
+    }
+
+
+blank : String -> Config
+blank kind =
+    { kind = kind
+    , root = ""
+    , bucket = ""
+    , prefix = ""
+    , region = ""
+    , endpoint = ""
+    , token = Nothing
+    , awsKeys = Nothing
+    }
+
+
+-- | A store in a local directory (created on first use).
+local : String -> Store
+local dir =
+    let
+        c = blank "file"
+    in
+        Store { c | root = dir }
+
+
+-- | A store in a GCS bucket, below a prefix (`""` for the bucket's root).
+gcs : String -> String -> Store
+gcs bucket prefix =
+    let
+        c = blank "gs"
+    in
+        Store { c | bucket = bucket, prefix = trimSlashes prefix }
+
+
+-- | A store in an S3 bucket, below a prefix. The region is the bucket's
+-- (`""` reads `AWS_REGION`, then `AWS_DEFAULT_REGION`, then `us-east-1`).
+s3 : String -> String -> String -> Store
+s3 region bucket prefix =
+    let
+        c = blank "s3"
+    in
+        Store
+            { c
+                | region = region
+                , bucket = bucket
+                , prefix = trimSlashes prefix
+            }
+
+
+-- | A store from its location: `file://<dir>`, `gs://<bucket>/<prefix>` or
+-- `s3://<bucket>/<prefix>[?region=<name>]`.
+fromUrl : String -> Result Error Store
+fromUrl url =
+    let
+        u = String.trim url
+        bucketAndPrefix rest =
+            case String.split "/" (trimSlashes rest) of
+
+                bucket :: more ->
+                    ( bucket, String.join "/" more )
+
+                [] ->
+                    ( "", "" )
+    in
+        if String.startsWith "file://" u then
+            let
+                dir = String.dropLeft 7 u
+            in
+                if dir == "" then
+                    Err (invalid url "a file:// location needs a directory")
+
+                else
+                    Ok (local dir)
+
+        else if String.startsWith "gs://" u then
+            case bucketAndPrefix (String.dropLeft 5 u) of
+
+                ( "", _ ) ->
+                    Err (invalid url "a gs:// location needs a bucket")
+
+                ( bucket, prefix ) ->
+                    Ok (gcs bucket prefix)
+
+        else if String.startsWith "s3://" u then
+            let
+                ( path, region ) =
+                    case String.split "?region=" (String.dropLeft 5 u) of
+
+                        [p, r] ->
+                            ( p, r )
+
+                        _ ->
+                            ( String.dropLeft 5 u, "" )
+            in
+                case bucketAndPrefix path of
+
+                    ( "", _ ) ->
+                        Err (invalid url "an s3:// location needs a bucket")
+
+                    ( bucket, prefix ) ->
+                        Ok (s3 region bucket prefix)
+
+        else
+            Err
+                (invalid
+                    url
+                    "use file://<dir>, gs://<bucket>/<prefix> or s3://<bucket>/<prefix>")
+
+
+invalid : String -> String -> Error
+invalid url reason =
+    Failure.toError
+        (InvalidSetting
+            { setting = "SKY_AI_REGISTRY"
+            , reason = quote url ++ ": " ++ reason
+            })
+
+type alias Setting =
+    { key : String
+    , name : String
+    , value : String
+    , source : String
+    }
+
+
+locationRaw : String -> Task Error Setting
+locationRaw =
+    Ffi.kernel "Ai_registryLocation"
+
+
+-- | The store at the location in code, unless the operator set
+-- `SKY_AI_REGISTRY` (under the project's prefix). With neither, the local
+-- directory `.sky/ai/registry`.
+configured : String -> Task Error Store
+configured codeUrl =
+    locationRaw codeUrl
+        |> Task.andThen (\s -> Task.fromResult (fromUrl s.value))
+
+
+-- | Send the store's requests to another server: an emulator, MinIO or
+-- another S3-compatible service (path-style URLs), or a fake GCS server.
+withEndpoint : String -> Store -> Store
+withEndpoint url (Store c) =
+    Store { c | endpoint = trimTrailingSlash url }
+
+
+-- | A GCS access token to use instead of the platform's credentials.
+withToken : Secret -> Store -> Store
+withToken t (Store c) =
+    Store { c | token = Just t }
+
+
+-- | S3 keys to use instead of the platform's credentials: the access key id
+-- and the secret key.
+withAwsKeys : String -> Secret -> Store -> Store
+withAwsKeys accessKey secretKey (Store c) =
+    Store
+        { c
+            | awsKeys =
+                Just
+                    { accessKey = accessKey
+                    , secretKey = secretKey
+                    , sessionToken = Nothing
+                    }
+        }
+
+
+-- | The store's location, as `fromUrl` reads it. It holds no credential.
+location : Store -> String
+location (Store c) =
+    case c.kind of
+
+        "file" ->
+            "file://" ++ c.root
+
+        "gs" ->
+            "gs://" ++ c.bucket ++ slashPrefix c.prefix
+
+        _ ->
+            "s3://" ++ c.bucket ++ slashPrefix c.prefix
+                ++ (if c.region == "" then
+                       ""
+
+                   else
+                       "?region=" ++ c.region)
+
+
+slashPrefix : String -> String
+slashPrefix p =
+    if p == "" then
+        ""
+
+    else
+        "/" ++ p
+
+-- ── Putting and fetching ────────────────────────────────────────────
+type alias Request =
+    { method : String
+    , url : String
+    , headers : List ( String, String )
+    , timeoutMs : Int
+    }
+
+
+digestRaw : String -> Task Error Blob
+digestRaw =
+    Ffi.kernel "Ai_fileDigest"
+
+
+localPutRaw : String -> String -> Task Error Blob
+localPutRaw =
+    Ffi.kernel "Ai_storeLocalPut"
+
+
+localGetRaw : String -> String -> Task Error String
+localGetRaw =
+    Ffi.kernel "Ai_storeLocalGet"
+
+
+httpPutRaw : Request -> String -> Task Error Int
+httpPutRaw =
+    Ffi.kernel "Ai_storeHttpPut"
+
+
+httpGetRaw : Request -> String -> Task Error String
+httpGetRaw =
+    Ffi.kernel "Ai_storeHttpGet"
+
+
+cachedRaw : String -> Task Error String
+cachedRaw =
+    Ffi.kernel "Ai_storeCached"
+
+
+-- | Store the file at a path and return its digest and size. Storing bytes
+-- that are already there sends nothing more and returns the same blob.
+put : Store -> String -> Task Error Blob
+put (Store c) path =
+    case c.kind of
+
+        "file" ->
+            localPutRaw c.root path
+
+        _ ->
+            digestRaw path
+                |> Task.andThen
+                       (\blob ->
+                           putRequest c blob
+                               |> Task.andThen (\req -> httpPutRaw req path)
+                               |> Task.map (\_ -> blob))
+
+
+-- | A local path holding the blob with this digest, checked against the
+-- digest. A remote blob is downloaded once into this machine's artefact
+-- cache (under the AI home) and read from there afterwards.
+fetch : Store -> String -> Task Error String
+fetch (Store c) sha =
+    case c.kind of
+
+        "file" ->
+            localGetRaw c.root sha
+
+        _ ->
+            cachedRaw sha
+                |> Task.andThen
+                       (\cached ->
+                           if cached /= "" then
+                               Task.succeed cached
+
+                           else
+                               getRequest c sha
+                                   |> Task.andThen (\req -> httpGetRaw req sha))
+
+
+blobKey : Config -> String -> String
+blobKey c sha =
+    if c.prefix == "" then
+        "blobs/sha256/" ++ sha
+
+    else
+        c.prefix ++ "/blobs/sha256/" ++ sha
+
+
+putRequest : Config -> Blob -> Task Error Request
+putRequest c blob =
+    case c.kind of
+
+        "gs" ->
+            gcsToken c
+                |> Task.map
+                       (\token ->
+                           { method = "POST"
+                           , url =
+                               gcsBase c ++ "/upload/storage/v1/b/" ++ c.bucket
+                                   ++ "/o?uploadType=media&ifGenerationMatch=0&name="
+                                   ++ escapeName (blobKey c blob.sha256)
+                           , headers =
+                               [ ( "Authorization"
+                                 , "Bearer " ++ Secret.reveal token
+                                 )
+                               , ( "Content-Type", "application/octet-stream" )
+                               ]
+                           , timeoutMs = 0
+                           })
+
+        _ ->
+            s3Request
+                c
+                "PUT"
+                (blobKey c blob.sha256)
+                blob.sha256
+                [ ( "if-none-match", "*" ) ]
+
+
+getRequest : Config -> String -> Task Error Request
+getRequest c sha =
+    case c.kind of
+
+        "gs" ->
+            gcsToken c
+                |> Task.map
+                       (\token ->
+                           { method = "GET"
+                           , url =
+                               gcsBase c ++ "/storage/v1/b/" ++ c.bucket
+                                   ++ "/o/"
+                                   ++ escapeName (blobKey c sha)
+                                   ++ "?alt=media"
+                           , headers =
+                               [ ( "Authorization"
+                                 , "Bearer " ++ Secret.reveal token
+                                 )
+                               ]
+                           , timeoutMs = 0
+                           })
+
+        _ ->
+            s3Request c "GET" (blobKey c sha) emptyHash []
+
+
+-- ── Google Cloud Storage ────────────────────────────────────────────
+gcsBase : Config -> String
+gcsBase c =
+    if c.endpoint == "" then
+        "https://storage.googleapis.com"
+
+    else
+        c.endpoint
+
+
+-- An object name inside a URL path or query: every byte but the unreserved
+-- ones is percent-encoded, so a "/" in the name is %2F.
+escapeName : String -> String
+escapeName name =
+    String.split "/" name |> List.map Encoding.urlEncode |> String.join "%2F"
+
+
+gcsScope : String
+gcsScope =
+    "https://www.googleapis.com/auth/devstorage.read_write"
+
+
+-- The access token: the one given in code, else a service-account key file,
+-- else the metadata server.
+gcsToken : Config -> Task Error Secret
+gcsToken c =
+    case c.token of
+
+        Just t ->
+            Task.succeed t
+
+        Nothing ->
+            let
+                keyFile =
+                    System.getenvOr "GOOGLE_APPLICATION_CREDENTIALS" ""
+            in
+                if keyFile /= "" then
+                    serviceAccountToken keyFile
+
+                else
+                    metadataToken
+                        |> Task.onError
+                               (\_ ->
+                                   Task.fail
+                                       (Failure.toError
+                                           (NotConfigured
+                                               { setting =
+                                                   "GOOGLE_APPLICATION_CREDENTIALS (a service-account key file), the GCE metadata server, or Store.withToken"
+                                               })))
+
+type alias ServiceAccount =
+    { clientEmail : String
+    , privateKey : String
+    , tokenUri : String
+    }
+
+
+serviceAccountToken : String -> Task Error Secret
+serviceAccountToken keyFile =
+    File.readFileLimit keyFile 65536
+        |> Task.andThen
+               (\text ->
+                   Task.fromResult
+                       (JsonD.decodeString
+                           (JsonD.map3
+                               (\e k u ->
+                                   { clientEmail = e
+                                   , privateKey = k
+                                   , tokenUri = u
+                                   })
+                               (JsonD.field "client_email" JsonD.string)
+                               (JsonD.field "private_key" JsonD.string)
+                               (JsonD.oneOf
+                                   [ JsonD.field "token_uri" JsonD.string
+                                   , JsonD.succeed
+                                         "https://oauth2.googleapis.com/token"
+                                   ]))
+                           text))
+        |> Task.andThen
+               (\sa ->
+                   Time.unixMillis ()
+                       |> Task.andThen
+                              (\ms ->
+                                  Task.fromResult
+                                      (Jwt.encode
+                                          (Jwt.rs256
+                                              (Secret.fromString sa.privateKey))
+                                          (Jwt.claims
+                                              |> Jwt.issuer sa.clientEmail
+                                              |> Jwt.audience sa.tokenUri
+                                              |> Jwt.issuedAt (ms // 1000)
+                                              |> Jwt.expiresAt
+                                                     (ms // 1000 + 3600)
+                                              |> Jwt.withClaim
+                                                     "scope"
+                                                     (JsonE.string gcsScope)))
+                                      |> Task.map (\jwt -> ( sa.tokenUri, jwt ))))
+        |> Task.andThen
+               (\( uri, jwt ) ->
+                   Http.defaultRequest uri |> Http.withMethod "POST"
+                       |> Http.withHeader
+                              "Content-Type"
+                              "application/x-www-form-urlencoded"
+                       |> Http.withBody
+                              ("grant_type="
+                                  ++ Encoding.urlEncode
+                                         "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                                  ++ "&assertion="
+                                  ++ jwt)
+                       |> Http.withTimeout 10000
+                       |> Http.request)
+        |> Task.andThen (tokenFrom "the Google token endpoint")
+
+
+metadataToken : Task Error Secret
+metadataToken =
+    let
+        host =
+            System.getenvOr "GCE_METADATA_HOST" "metadata.google.internal"
+    in
+        Http.defaultRequest
+            ("http://" ++ host
+                ++ "/computeMetadata/v1/instance/service-accounts/default/token")
+            |> Http.withHeader "Metadata-Flavor" "Google"
+            |> Http.withTimeout 3000
+            |> Http.request
+            |> Task.andThen (tokenFrom "the metadata server")
+
+
+tokenFrom : String -> Http.HttpResponse -> Task Error Secret
+tokenFrom source resp =
+    if resp.status == 200 then
+        case JsonD.decodeString
+                 (JsonD.field "access_token" JsonD.string)
+                 resp.body of
+
+            Ok t ->
+                Task.succeed (Secret.fromString t)
+
+            Err _ ->
+                Task.fail (Error.unexpected (source ++ " gave no access_token"))
+
+    else
+        Task.fail (Failure.toError (RemoteRejected { status = resp.status }))
+
+
+-- ── Amazon S3 ───────────────────────────────────────────────────────
+emptyHash : String
+emptyHash =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
+s3Region : Config -> String
+s3Region c =
+    if c.region /= "" then
+        c.region
+
+    else
+        let
+            r = System.getenvOr "AWS_REGION" ""
+        in
+            if r /= "" then
+                r
+
+            else
+                System.getenvOr "AWS_DEFAULT_REGION" "us-east-1"
+
+
+-- The host and the canonical path of an object: virtual-hosted style on AWS,
+-- path style on another endpoint.
+s3Target : Config -> String -> ( String, String, String )
+s3Target c key =
+    if c.endpoint == "" then
+        let
+            host = c.bucket ++ ".s3." ++ s3Region c ++ ".amazonaws.com"
+        in
+            ( "https://" ++ host, host, "/" ++ key )
+
+    else
+        ( c.endpoint, hostOf c.endpoint, "/" ++ c.bucket ++ "/" ++ key )
+
+
+hostOf : String -> String
+hostOf url =
+    case String.split "://" url of
+
+        [_, rest] ->
+            String.split "/" rest |> List.head |> Maybe.withDefault rest
+
+        _ ->
+            url
+
+
+s3Request : Config -> String -> String -> String -> List ( String, String ) -> Task Error Request
+s3Request c method key payloadHash extra =
+    awsKeys c
+        |> Task.andThen
+               (\keys ->
+                   Time.unixMillis ()
+                       |> Task.map
+                              (\ms ->
+                                  let
+                                      ( base, host, path ) = s3Target c key
+                                      amzDate =
+                                          Time.format "20060102T150405Z" ms
+                                      session =
+                                          case keys.sessionToken of
+
+                                              Just t ->
+                                                  [ ( "x-amz-security-token"
+                                                    , Secret.reveal t
+                                                    )
+                                                  ]
+
+                                              Nothing ->
+                                                  []
+                                      headers =
+                                          [ ( "host", host )
+                                          , ( "x-amz-content-sha256"
+                                            , payloadHash
+                                            )
+                                          , ( "x-amz-date", amzDate )
+                                          ]
+                                              ++ extra
+                                              ++ session
+                                      sig =
+                                          signV4
+                                              { method = method
+                                              , host = host
+                                              , path = path
+                                              , query = ""
+                                              , headers = headers
+                                              , payloadHash = payloadHash
+                                              , region = s3Region c
+                                              , service = "s3"
+                                              , amzDate = amzDate
+                                              , accessKey = keys.accessKey
+                                              , secretKey = keys.secretKey
+                                              }
+                                  in
+                                      { method = method
+                                      , url = base ++ path
+                                      , headers =
+                                          headers
+                                              ++ [ ( "Authorization"
+                                                   , sig.authorization
+                                                   )
+                                                 ]
+                                      , timeoutMs = 0
+                                      }))
+
+
+-- The keys: the ones given in code, else the standard variables, else the
+-- instance role through IMDSv2.
+awsKeys : Config -> Task Error AwsKeys
+awsKeys c =
+    case c.awsKeys of
+
+        Just k ->
+            Task.succeed k
+
+        Nothing ->
+            let
+                id = System.getenvOr "AWS_ACCESS_KEY_ID" ""
+            in
+                if id /= "" then
+                    Task.succeed
+                        { accessKey = id
+                        , secretKey = Secret.fromEnv "AWS_SECRET_ACCESS_KEY"
+                        , sessionToken =
+                            if System.getenvOr "AWS_SESSION_TOKEN" "" /= "" then
+                                Just (Secret.fromEnv "AWS_SESSION_TOKEN")
+
+                            else
+                                Nothing
+                        }
+
+                else
+                    instanceRoleKeys
+                        |> Task.onError
+                               (\_ ->
+                                   Task.fail
+                                       (Failure.toError
+                                           (NotConfigured
+                                               { setting =
+                                                   "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, an instance role (IMDSv2), or Store.withAwsKeys"
+                                               })))
+
+
+instanceRoleKeys : Task Error AwsKeys
+instanceRoleKeys =
+    let
+        base =
+            trimTrailingSlash
+                (System.getenvOr
+                    "AWS_EC2_METADATA_SERVICE_ENDPOINT"
+                    "http://169.254.169.254")
+        ok resp =
+            if resp.status == 200 then
+                Task.succeed (String.trim resp.body)
+
+            else
+                Task.fail
+                    (Failure.toError (RemoteRejected { status = resp.status }))
+    in
+        Http.defaultRequest (base ++ "/latest/api/token")
+            |> Http.withMethod "PUT"
+            |> Http.withHeader "X-aws-ec2-metadata-token-ttl-seconds" "21600"
+            |> Http.withTimeout 2000
+            |> Http.request
+            |> Task.andThen ok
+            |> Task.andThen
+                   (\token ->
+                       Http.defaultRequest
+                           (base ++ "/latest/meta-data/iam/security-credentials/")
+                           |> Http.withHeader "X-aws-ec2-metadata-token" token
+                           |> Http.withTimeout 2000
+                           |> Http.request
+                           |> Task.andThen ok
+                           |> Task.andThen
+                                  (\roles ->
+                                      Http.defaultRequest
+                                          (base
+                                              ++ "/latest/meta-data/iam/security-credentials/"
+                                              ++ (String.lines roles |> List.head
+                                                     |> Maybe.withDefault ""))
+                                          |> Http.withHeader
+                                                 "X-aws-ec2-metadata-token"
+                                                 token
+                                          |> Http.withTimeout 2000
+                                          |> Http.request
+                                          |> Task.andThen ok))
+            |> Task.andThen
+                   (\body ->
+                       Task.fromResult
+                           (JsonD.decodeString
+                               (JsonD.map3
+                                   (\a s t ->
+                                       { accessKey = a
+                                       , secretKey = Secret.fromString s
+                                       , sessionToken =
+                                           Just (Secret.fromString t)
+                                       })
+                                   (JsonD.field "AccessKeyId" JsonD.string)
+                                   (JsonD.field "SecretAccessKey" JsonD.string)
+                                   (JsonD.field "Token" JsonD.string))
+                               body))
+
+-- ── AWS Signature Version 4 ─────────────────────────────────────────
+-- | What `signV4` signs. `path` is the canonical URI (already
+-- percent-encoded), `query` the canonical query string (`""` for none), and
+-- `headers` every header to sign, including `host` and `x-amz-date`.
+-- `amzDate` is `YYYYMMDDTHHMMSSZ` and `payloadHash` the hex SHA-256 of the
+-- body (`e3b0c442…b855` for an empty one).
+type alias SigV4 =
+    { method : String
+    , host : String
+    , path : String
+    , query : String
+    , headers : List ( String, String )
+    , payloadHash : String
+    , region : String
+    , service : String
+    , amzDate : String
+    , accessKey : String
+    , secretKey : Secret
+    }
+
+-- | The `Authorization` header value, and its parts.
+type alias Signature =
+    { authorization : String
+    , signedHeaders : String
+    , signature : String
+    }
+
+
+-- | Sign a request with AWS Signature Version 4. Pure: the same request,
+-- time and key always give the same signature, so it is tested against the
+-- published AWS examples.
+signV4 : SigV4 -> Signature
+signV4 r =
+    let
+        canonical =
+            r.headers
+                |> List.map
+                       (\( k, v ) ->
+                           ( String.toLower (String.trim k), String.trim v ))
+                |> List.sortBy (\( k, _ ) -> k)
+        signedHeaders =
+            canonical |> List.map (\( k, _ ) -> k) |> String.join ";"
+        canonicalRequest =
+            String.join
+                "\n"
+                [ r.method
+                , r.path
+                , r.query
+                , String.concat
+                      (List.map (\( k, v ) -> k ++ ":" ++ v ++ "\n") canonical)
+                , signedHeaders
+                , r.payloadHash
+                ]
+        date = String.left 8 r.amzDate
+        scope =
+            date ++ "/" ++ r.region ++ "/" ++ r.service ++ "/aws4_request"
+        stringToSign =
+            String.join
+                "\n"
+                [ "AWS4-HMAC-SHA256"
+                , r.amzDate
+                , scope
+                , Crypto.sha256 canonicalRequest
+                ]
+        signingKey =
+            ("AWS4" ++ Secret.reveal r.secretKey) |> (\k -> hmacRaw k date)
+                |> (\k -> hmacRaw k r.region)
+                |> (\k -> hmacRaw k r.service)
+                |> (\k -> hmacRaw k "aws4_request")
+        signature = Crypto.hmacSha256 signingKey stringToSign
+    in
+        { authorization =
+            "AWS4-HMAC-SHA256 Credential=" ++ r.accessKey ++ "/" ++ scope
+                ++ ", SignedHeaders="
+                ++ signedHeaders
+                ++ ", Signature="
+                ++ signature
+        , signedHeaders = signedHeaders
+        , signature = signature
+        }
+
+
+-- HMAC-SHA256 with the raw bytes of the result, the key of the next step.
+hmacRaw : String -> String -> String
+hmacRaw key message =
+    Encoding.hexDecode (Crypto.hmacSha256 key message) |> Result.withDefault ""
+
+
+-- ── Small helpers ───────────────────────────────────────────────────
+trimSlashes : String -> String
+trimSlashes s =
+    trimTrailingSlash (dropLeadingSlashes s)
+
+
+dropLeadingSlashes : String -> String
+dropLeadingSlashes s =
+    if String.startsWith "/" s then
+        dropLeadingSlashes (String.dropLeft 1 s)
+
+    else
+        s
+
+
+trimTrailingSlash : String -> String
+trimTrailingSlash s =
+    if String.endsWith "/" s then
+        trimTrailingSlash (String.dropRight 1 s)
+
+    else
+        s
+
+
+quote : String -> String
+quote s =
+    "\"" ++ s ++ "\""

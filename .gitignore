@@ -28,6 +28,9 @@ node_modules/
 .env
 .env.*
 !.env.example
+# An example's `.env.test` is its committed test-mode marker and holds no
+# secret (docs/tooling/testing.md); sandbox credentials go in `.env.test.local`.
+!examples/*/.env.test
 firebaseadminsdk*.json
 
 # AI agent config. Use `.claude/*` (contents), NOT `.claude/` (the dir), so the

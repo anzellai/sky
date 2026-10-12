@@ -99,7 +99,8 @@ func aiAtoi(s string) int {
 // aiLocalSpec is a resolved managed-local engine specification.
 type aiLocalSpec struct {
 	model      aiModelRef
-	context    int // 0: the default, reduced to fit
+	adapter    aiLocalAdapter // a registry LoRA adapter loaded with the model; zero when none
+	context    int            // 0: the default, reduced to fit
 	gpu        string
 	parallel   int
 	idleUnload time.Duration
@@ -272,6 +273,13 @@ type aiEndpointBuilder struct {
 	retries     int
 	hasLocal    bool
 	local       aiLocalBuilder
+	// A registry resolver (Endpoint.fromRegistry): the Sky function that turns
+	// `registry:<name>@<alias>` into a concrete adapter, and how often to ask
+	// it again.
+	hasResolver     bool
+	resolverName    string
+	resolve         any
+	adapterRefreshS int
 }
 
 func parseAiEndpointBuilder(v any) aiEndpointBuilder {
@@ -288,6 +296,13 @@ func parseAiEndpointBuilder(v any) aiEndpointBuilder {
 		queueWaitMs: aiIntField(v, "QueueWaitMs", "queueWaitMs"),
 		retries:     aiIntField(v, "Retries", "retries"),
 		hasLocal:    aiBoolField(v, "HasLocal", "hasLocal"),
+
+		hasResolver:     aiBoolField(v, "HasResolver", "hasResolver"),
+		resolverName:    aiStrField(v, "ResolverName", "resolverName"),
+		adapterRefreshS: aiIntField(v, "AdapterRefreshS", "adapterRefreshS"),
+	}
+	if b.hasResolver {
+		b.resolve = recordField(v, "Resolve", "resolve")
 	}
 	if b.hasKey {
 		b.key = aiSecretString(recordField(v, "Key", "key"))
@@ -315,9 +330,16 @@ func aiSecretString(v any) string {
 // fingerprint identifies a builder for the per-process memo. The key is
 // hashed, never stored as text.
 func (b aiEndpointBuilder) fingerprint() string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d|%v|%+v", b.slot, b.mode, b.url,
+	// A slot name names one slot in a process (its variables, its console
+	// row and its engines are keyed by it), so the resolver is identified by
+	// its name only: a function value has no stable identity to key on.
+	resolver := ""
+	if b.hasResolver {
+		resolver = "resolver:" + b.resolverName
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d|%v|%+v|%s|%d", b.slot, b.mode, b.url,
 		aiShortHash(b.key), b.model, b.adapter, b.timeoutMs, b.maxInFlight, b.queue,
-		b.queueWaitMs, b.retries, b.hasLocal, b.local)
+		b.queueWaitMs, b.retries, b.hasLocal, b.local, resolver, b.adapterRefreshS)
 }
 
 // aiSlotConfig is a fully resolved slot.
@@ -335,7 +357,13 @@ type aiSlotConfig struct {
 	queueWait   time.Duration
 	retries     int
 	local       aiLocalSpec
-	settings    []aiSetting
+	// registry is set when the adapter is `registry:<name>@<alias>`: the slot
+	// resolves it through the resolver at start and again every
+	// adapterRefresh (0: once).
+	registry       bool
+	resolve        any
+	adapterRefresh time.Duration
+	settings       []aiSetting
 }
 
 // resolveAiSlot applies the local-or-remote rule (design §8.1):
@@ -416,6 +444,22 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 	}
 	c.model, _ = layer("MODEL", b.model, nil)
 	c.adapter, _ = layer("ADAPTER", b.adapter, nil)
+	if strings.HasPrefix(c.adapter, aiRegistryScheme) {
+		if !b.hasResolver || b.resolve == nil {
+			return nil, aiFailf(aiNotConfigured,
+				"slot %q: the adapter %q is a registry reference and the slot has no registry; give it Endpoint.fromRegistry (Registry.resolver …) in code",
+				b.slot, c.adapter).with("setting", name("ADAPTER"))
+		}
+		ref := strings.TrimPrefix(c.adapter, aiRegistryScheme)
+		if n, a, ok := strings.Cut(ref, "@"); !ok || n == "" || a == "" {
+			return nil, aiFailf(aiInvalidSetting, "%s=%q: write registry:<name>@<alias>", name("ADAPTER"), c.adapter).with("setting", name("ADAPTER"))
+		}
+		c.registry, c.resolve = true, b.resolve
+		c.adapterRefresh = 30 * time.Second
+		if v, _ := layer("ADAPTER_REFRESH_S", itoaSet(b.adapterRefreshS), aiNonNegativeInt); v != "" {
+			c.adapterRefresh = time.Duration(aiAtoi(v)) * time.Second
+		}
+	}
 
 	c.timeout = 120 * time.Second
 	if v, _ := layer("TIMEOUT_MS", itoaSet(b.timeoutMs), aiPositiveInt); v != "" {

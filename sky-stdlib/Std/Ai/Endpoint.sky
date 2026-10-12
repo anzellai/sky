@@ -7,6 +7,10 @@ module Std.Ai.Endpoint exposing
     , withKey
     , withModel
     , withAdapter
+    , fromRegistry
+    , withAdapterRefresh
+    , Adapter
+    , Resolver
     , withLocal
     , withTimeout
     , withMaxInFlight
@@ -68,7 +72,7 @@ variables an app reads can be listed. See `docs/ai/local.md`.
 import Sky.Core.Prelude exposing (..)
 import Sky.Ffi as Ffi
 import Sky.Core.Task as Task
-import Sky.Core.Error exposing (Error)
+import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Secret as Secret exposing (Secret)
@@ -107,6 +111,34 @@ type alias Config =
     , retries : Int
     , hasLocal : Bool
     , local : RawLocal
+    , hasResolver : Bool
+    , resolverName : String
+    , resolve : String -> Bool -> Task Error Adapter
+    , adapterRefreshS : Int
+    }
+
+{-| A registry adapter, as a resolver hands it to the slot: the reference it
+came from (`support-lora@prod`), the version's label (`support-lora@v3`), the
+name a server knows it by, its digest, the digest of the base model it was
+trained on, its format, and a verified local file (`""` when the slot is
+remote and needs only the name). -}
+type alias Adapter =
+    { ref : String
+    , label : String
+    , servedName : String
+    , digest : String
+    , baseDigest : String
+    , format : String
+    , path : String
+    }
+
+{-| How a slot turns `registry:<name>@<alias>` into a concrete adapter.
+`resolve ref local` gets the reference without the `registry:` prefix and
+whether the slot runs a local engine (which needs the adapter's file).
+`Std.Ai.Registry.resolver` makes one. -}
+type alias Resolver =
+    { name : String
+    , resolve : String -> Bool -> Task Error Adapter
     }
 
 {-| A named slot and its code defaults. -}
@@ -142,7 +174,19 @@ endpoint slot =
             , embeddings = False
             , port = -1
             }
+        , hasResolver = False
+        , resolverName = ""
+        , resolve = noResolver
+        , adapterRefreshS = -1
         }
+
+
+noResolver : String -> Bool -> Task Error Adapter
+noResolver ref _ =
+    Task.fail
+        (Error.invalidInput
+            ("Std.Ai.Endpoint: " ++ ref
+                ++ " needs a registry; give the slot Endpoint.fromRegistry"))
 
 
 {-| Force local or remote. Env: `<PREFIX>_AI_<SLOT>_MODE` (`local` or
@@ -190,6 +234,36 @@ adapter. A call's `Provider.Options` adapter wins over this. -}
 withAdapter : String -> Endpoint -> Endpoint
 withAdapter a (Endpoint c) =
     Endpoint { c | adapter = a }
+
+
+{-| Let the slot serve registry adapters. With it, an adapter named
+`registry:<name>@<alias>` (by `withAdapter` or `<PREFIX>_AI_<SLOT>_ADAPTER`) is
+resolved through the registry when the slot starts: a remote slot sends the
+version's served name as the request's model, and a local slot loads the
+version's GGUF file into its engine, after checking that it was trained on the
+engine's base model (`AdapterMismatch` otherwise). The slot resolves the alias
+again as it moves (`withAdapterRefresh`), so serving follows promote and
+rollback.
+
+    chatSlot =
+        Endpoint.endpoint "chat"
+            |> Endpoint.withLocal (Local.model Local.devModel)
+            |> Endpoint.fromRegistry (Registry.resolver registry)
+            |> Endpoint.withAdapter "registry:support-lora@prod"
+-}
+fromRegistry : Resolver -> Endpoint -> Endpoint
+fromRegistry r (Endpoint c) =
+    Endpoint
+        { c | hasResolver = True, resolverName = r.name, resolve = r.resolve }
+
+
+{-| How often, in seconds, a slot with a registry adapter checks whether its
+alias moved: the check runs with a call that arrives after the interval, so
+an idle slot costs nothing. `0` resolves once, when the slot starts. Env:
+`<PREFIX>_AI_<SLOT>_ADAPTER_REFRESH_S`. Default: 30. -}
+withAdapterRefresh : Int -> Endpoint -> Endpoint
+withAdapterRefresh seconds (Endpoint c) =
+    Endpoint { c | adapterRefreshS = seconds }
 
 
 {-| The managed local engine this slot runs when it is not remote. Its context,

@@ -186,6 +186,11 @@ func printStartupReportConsole(port int, consoleHere bool) {
 	// clean app's startup output is byte-identical to before. None of its lines
 	// contains "listening" (the substring the supervisor + verify.sh parse).
 	lines = append(lines, legacyMigrationNotices()...)
+	// One line per Std.Ai slot the source declares (ai_startup.go): its mode,
+	// its target and which settings the environment sets. Printed in
+	// production too: it is where an operator checks that the deploy's
+	// variables reached the slots.
+	lines = append(lines, aiStartupLines()...)
 	// Deployment problems a subsystem found before the listener started
 	// (startup_warnings.go). Printed in production too.
 	lines = append(lines, startupWarningLines()...)

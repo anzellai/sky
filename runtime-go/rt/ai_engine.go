@@ -136,6 +136,24 @@ type aiEngine struct {
 	regID        string
 	idleOn       bool
 	retired      bool // forgotten by aiResetEngines: background loops end
+	// retireWhenIdle: a slot moved to another adapter while calls were still
+	// running on this engine; the last of them stops it.
+	retireWhenIdle bool
+}
+
+// aiRetireEngine stops an engine a slot no longer uses (its registry alias
+// moved to another adapter): at once when it is idle, else when its last
+// running call ends. A later call that needs it starts it again.
+func aiRetireEngine(e *aiEngine) {
+	e.mu.Lock()
+	busy := e.inflight > 0
+	if busy {
+		e.retireWhenIdle = true
+	}
+	e.mu.Unlock()
+	if !busy {
+		go e.stop()
+	}
 }
 
 var (
@@ -148,8 +166,12 @@ var (
 // aiEngineKey identifies an engine for sharing: the same model with the same
 // launch settings is one engine.
 func aiEngineKey(spec aiLocalSpec) string {
-	return fmt.Sprintf("%s|ctx=%d|gpu=%s|np=%d|emb=%v|port=%d",
+	key := fmt.Sprintf("%s|ctx=%d|gpu=%s|np=%d|emb=%v|port=%d",
 		spec.model.sha256, spec.context, spec.gpu, spec.parallel, spec.embeddings, spec.port)
+	if spec.adapter.sha256 != "" {
+		key += "|lora=" + spec.adapter.sha256
+	}
+	return key
 }
 
 // aiEngineFor returns this process's engine for spec, creating it (stopped).
@@ -284,6 +306,14 @@ func (e *aiEngine) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if a := e.spec.adapter; a.path != "" {
+		// The adapter file is hashed before each load, like a file: model,
+		// because it may have been replaced since the registry checked it.
+		if got, herr := aiFileSha256(a.path); herr != nil || got != a.sha256 {
+			return aiFailf(aiChecksumMismatch, "the adapter %s at %s does not hash to sha256 %s (got %q); nothing was loaded", a.label, a.path, a.sha256, got).
+				with("expected", a.sha256).with("actual", got)
+		}
+	}
 	port := e.spec.port
 	if port == 0 {
 		if port, err = aiFreePort(); err != nil {
@@ -312,6 +342,9 @@ func (e *aiEngine) start(ctx context.Context) error {
 	}
 	if e.spec.embeddings {
 		args = append(args, "--embeddings", "--pooling", "mean")
+	}
+	if e.spec.adapter.path != "" {
+		args = append(args, "--lora", e.spec.adapter.path)
 	}
 	var env [][2]string
 	for _, kv := range aiEngineEnv() {
@@ -629,7 +662,14 @@ func (e *aiEngine) post(ctx context.Context, timeout time.Duration, path, body s
 		e.mu.Lock()
 		e.inflight--
 		e.lastUse = time.Now()
+		retire := e.inflight == 0 && e.retireWhenIdle
+		if retire {
+			e.retireWhenIdle = false
+		}
 		e.mu.Unlock()
+		if retire {
+			go e.stop()
+		}
 	}()
 	url := fmt.Sprintf("http://127.0.0.1:%d/v1%s", port, path)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte(body)))

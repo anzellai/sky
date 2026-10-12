@@ -383,6 +383,22 @@ pub const SURFACES: &[Surface] = &[
     // answers from a table, so every expected value follows from the table
     // and the documented scorers (exact, contains, regex), the gate and the
     // exact McNemar p-value, not from a model.
+    // v0.28.0 Std.Ai.Store: the pure part of the registry's artefact store —
+    // AWS Signature Version 4 against the published AWS "GET Object" example,
+    // a location's round trip, and the typed refusal of an unknown scheme.
+    sf2(
+        "aistore",
+        "Std.Ai.Store",
+        &[
+            "Sky.Core.Secret as Secret",
+            "Sky.Core.Error as Error",
+            "Sky.Core.Crypto as Crypto",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Registry: its pure naming — a version's label (the
+    // candidate a suite runs under) and its served name (the model a server
+    // knows the adapter by).
+    sf2("airegistry", "Std.Ai.Registry", &[]),
     sf2(
         "aieval",
         "Std.Ai.Eval",
@@ -727,6 +743,10 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Ai.Failure",
     // v0.28.0: Std.Ai.Eval lands covered (`aieval` surface).
     "Std.Ai.Eval",
+    // v0.28.0: Std.Ai.Store and Std.Ai.Registry land covered (`aistore`,
+    // `airegistry` surfaces).
+    "Std.Ai.Store",
+    "Std.Ai.Registry",
     // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
     // payloads) land covered, not dark.
     "Std.Ui.Canvas",
@@ -1340,6 +1360,8 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "ailocal" => ailocal_battery(edge),
         "aifailure" => aifailure_battery(edge),
         "aieval" => aieval_battery(edge),
+        "aistore" => aistore_battery(edge),
+        "airegistry" => airegistry_battery(edge),
         "canvas" => canvas_battery(edge),
         "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
@@ -3922,6 +3944,34 @@ fn aieval_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Store ---------------------------------------------------------
+//
+// The signature is the AWS documentation's "GET Object" example (bucket
+// examplebucket, key test.txt, a Range header, 24 May 2013, us-east-1, the
+// documented example keys); its value is the documented one.
+fn aistore_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            bo(&["Store.signV4"], "aiStoreSignature == \"f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41\"", true),
+            s(&["Store.fromUrl", "Store.location"], "aiStoreLocation", "gs://models/reg"),
+        ],
+        "failure" => vec![s(&["Store.fromUrl"], "aiStoreRefused", "ai/F")],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Registry ------------------------------------------------------
+fn airegistry_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![s(
+            &["Registry.label", "Registry.servedName"],
+            "aiRegistryNames",
+            "support-lora@v3 support-lora-v3",
+        )],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -5994,6 +6044,75 @@ aiEvalJunit =
 
         Err _ ->
             "E"
+"#
+        }
+        "airegistry" => {
+            r#"aiRegistryVersion : Registry.Version
+aiRegistryVersion =
+    { name = "support-lora"
+    , number = 3
+    , digest = ""
+    , size = 0
+    , format = "gguf"
+    , method = "lora"
+    , architecture = "qwen2"
+    , base = ""
+    , baseDigest = ""
+    , dataset = ""
+    , datasetDigest = ""
+    , metadata = []
+    , blocked = Nothing
+    , createdAt = 0
+    }
+
+
+aiRegistryNames : String
+aiRegistryNames =
+    Registry.label aiRegistryVersion ++ " " ++ Registry.servedName aiRegistryVersion
+"#
+        }
+        "aistore" => {
+            r#"aiStoreSignature : String
+aiStoreSignature =
+    (Store.signV4
+        { method = "GET"
+        , host = "examplebucket.s3.amazonaws.com"
+        , path = "/test.txt"
+        , query = ""
+        , headers =
+            [ ( "Host", "examplebucket.s3.amazonaws.com" )
+            , ( "Range", "bytes=0-9" )
+            , ( "x-amz-content-sha256", Crypto.sha256 "" )
+            , ( "x-amz-date", "20130524T000000Z" )
+            ]
+        , payloadHash = Crypto.sha256 ""
+        , region = "us-east-1"
+        , service = "s3"
+        , amzDate = "20130524T000000Z"
+        , accessKey = "AKIAIOSFODNN7EXAMPLE"
+        , secretKey = Secret.fromString (String.join "" [ "wJalrXUtnFEMI/K7MDENG/", "bPxRfiCYEXAMPLEKEY" ])
+        }
+    ).signature
+
+
+aiStoreLocation : String
+aiStoreLocation =
+    case Store.fromUrl "gs://models/reg/" of
+        Ok st ->
+            Store.location st
+
+        Err _ ->
+            "E"
+
+
+aiStoreRefused : String
+aiStoreRefused =
+    case Store.fromUrl "ftp://models/reg" of
+        Ok _ ->
+            "accepted"
+
+        Err e ->
+            Maybe.withDefault "none" (Error.domain e) ++ "/" ++ (if Error.isRetryable e then "T" else "F")
 "#
         }
         "ailocal" => {
