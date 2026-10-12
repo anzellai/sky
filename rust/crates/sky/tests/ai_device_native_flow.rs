@@ -123,16 +123,19 @@ fn build(target: &str, port: u16) -> PathBuf {
         &repo_root().join("rust/crates/sky/tests/fixtures/ai-device"),
         &dir,
     );
-    let out = Command::new(SKY)
-        .args(["build", "--target", target, "src/Main.sky"])
+    let mut cmd = Command::new(SKY);
+    cmd.args(["build", "--target", target, "src/Main.sky"])
         .current_dir(&dir)
-        .env("PORT", port.to_string())
-        .env(
+        .env("PORT", port.to_string());
+    // The iOS build runs Xcode's tools. The other builds keep the caller's
+    // toolchain: Xcode's SDK headers under another C compiler break cgo.
+    if target.starts_with("mobile:ios") {
+        cmd.env(
             "DEVELOPER_DIR",
             "/Applications/Xcode.app/Contents/Developer",
-        )
-        .output()
-        .expect("sky build");
+        );
+    }
+    let out = cmd.output().expect("sky build");
     assert!(out.status.success(), "{target} build:\n{}", text(&out));
     dir
 }
@@ -188,13 +191,17 @@ impl Backend {
         false
     }
 
-    /// The probe's reports: `key -> value`.
+    /// The probe's reports: `key -> value`, the first report of each key (a
+    /// page the shell loads again reports again, from the state the first
+    /// load left). Every report line is printed, as the run's evidence.
     fn reports(&self) -> std::collections::BTreeMap<String, String> {
         let mut out = std::collections::BTreeMap::new();
         for l in self.lines.lock().unwrap().iter() {
             if let Some(rest) = l.split("SKY-PROBE ").nth(1) {
+                eprintln!("SKY-PROBE {rest}");
                 if let Some((k, v)) = rest.split_once('=') {
-                    out.insert(k.to_string(), v.trim().to_string());
+                    out.entry(k.to_string())
+                        .or_insert_with(|| v.trim().to_string());
                 }
             }
         }
@@ -210,6 +217,8 @@ impl Drop for Backend {
 }
 
 fn assert_on_device(r: &std::collections::BTreeMap<String, String>, what: &str) {
+    // The reports are the run's evidence: printed with `--nocapture`.
+    eprintln!("{what}: {r:?}");
     assert_eq!(
         r.get("status").map(String::as_str),
         Some("not-downloaded:native"),
@@ -350,6 +359,10 @@ fn android_emulator_runs_the_slot_on_the_device() {
         .expect("no .apk");
     let model = tiny_model();
     let backend = Backend::start(&split, port, &model);
+    // A fresh install: no model, no adapter and no progress of an earlier run.
+    let _ = Command::new(adb())
+        .args(["uninstall", "com.example.deviceprobe"])
+        .output();
     let install = Command::new(adb())
         .args(["install", "-r"])
         .arg(&apk)
