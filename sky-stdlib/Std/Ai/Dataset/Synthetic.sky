@@ -25,6 +25,7 @@ module Std.Ai.Dataset.Synthetic exposing
     , withDedupe
     , withFilter
     , withJudge
+    , withJournal
     , plan
     , parseRows
     , run
@@ -83,6 +84,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Result as Result
+import Sky.Core.Tuple as Tuple
 import Sky.Core.Dict as Dict exposing (Dict)
 import Sky.Core.Set as Set exposing (Set)
 import Sky.Core.Crypto as Crypto
@@ -96,6 +98,9 @@ import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
 import Std.Ai.Local as Local
 import Std.Ai.Eval as Eval
 import Std.Ai.Dataset as Dataset exposing (Dataset)
+import Std.Db as Db exposing (Db, SqlValue(..))
+import Sky.Ffi as Ffi
+import Sky.Core.Time as Time
 
 -- ── The generator ───────────────────────────────────────────────────
 -- | How to generate rows of one type.
@@ -123,6 +128,7 @@ type Generator row
       , rubric : String
       , show : row -> ( String, String )
       }
+, journal : Maybe Journal
 }
 
 
@@ -177,6 +183,7 @@ generator name codec =
         , dedupe = Nothing
         , filters = []
         , judge = Nothing
+        , journal = Nothing
         }
 
 
@@ -294,6 +301,170 @@ withFilter name keep (Generator g) =
 withJudge : Eval.Judge -> String -> (row -> ( String, String )) -> Generator row -> Generator row
 withJudge j rubric show (Generator g) =
     Generator { g | judge = Just { judge = j, rubric = rubric, show = show } }
+
+
+-- | Journal the run's model calls in a database. A teacher call is kept in
+-- `_sky_ai_synthetic_journal` keyed by the teacher's identity (a slot's
+-- resolved mode and model, or `withTeacher`'s name), the call's seed,
+-- temperature, token limit and exact messages; a judge call goes through
+-- `Std.Ai.Eval`'s judge journal. A re-run with unchanged inputs is answered
+-- from the journal and makes no model call (`report.replayed` counts the
+-- replayed teacher calls), so it costs nothing and gives the same rows. A
+-- replayed call is priced at its recorded usage, so a budget stops the re-run
+-- where it stopped the first run.
+withJournal : Db -> Generator row -> Generator row
+withJournal db (Generator g) =
+    Generator { g | journal = Just (journalOn db) }
+
+-- The journal's operations, built only by `withJournal`, so a generator that
+-- never journals carries none of this code.
+type alias Journal =
+    { setup : Task Error ()
+    , ask : String -> List String -> List Message -> Task Error Provider.ChatResponse -> Task Error ( Provider.ChatResponse, Bool )
+    , judge : Eval.Judge -> Int -> String -> String -> String -> Task Error Eval.Score
+    }
+
+
+journalOn : Db -> Journal
+journalOn db =
+    { setup = migrateRaw db journalMigrations |> Task.map (\_ -> ())
+    , ask = journalledAsk db
+    , judge = Eval.judgeAnswerWith db
+    }
+
+
+journalMigrations : String
+journalMigrations =
+    """[{"id":"_sky_ai_synthetic_0001","ops":[
+{"kind":"createTable","table":"_sky_ai_synthetic_journal","columns":[
+{"name":"entry_key","type":"text"},{"name":"generator","type":"text"},{"name":"reply","type":"text"},
+{"name":"prompt_tokens","type":"int"},{"name":"completion_tokens","type":"int"},{"name":"created_at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_synthetic_journal_key","table":"_sky_ai_synthetic_journal","indexColumns":["entry_key"],"unique":true}
+]}]"""
+
+
+migrateRaw : Db -> String -> Task Error (List String)
+migrateRaw =
+    Ffi.kernel "Ai_migrate"
+
+
+setupJournal : Maybe Journal -> Task Error ()
+setupJournal journal =
+    case journal of
+
+        Just j ->
+            j.setup
+
+        Nothing ->
+            Task.succeed ()
+
+
+-- One teacher call, through the journal when the generator has one. The Bool
+-- is True when the journal answered.
+teacherCall : Generator row -> String -> Call -> Task Error ( Provider.ChatResponse, Bool )
+teacherCall (Generator g) teacher req =
+    let
+        options =
+            { temperature = Just g.temperature
+            , seed = Just req.seed
+            , maxTokens = Just g.maxTokens
+            , adapter = Nothing
+            }
+        ask = Provider.chatWith options g.teacher req.messages
+    in
+        case g.journal of
+
+            Nothing ->
+                ask |> Task.map (\r -> ( r, False ))
+
+            Just j ->
+                j.ask
+                    g.name
+                    [ teacher
+                    , String.fromFloat g.temperature
+                    , String.fromInt req.seed
+                    , String.fromInt g.maxTokens
+                    ]
+                    req.messages
+                    ask
+
+
+-- The journal's answer to a call keyed by its identity and exact messages, or
+-- the live call, recorded.
+journalledAsk : Db -> String -> List String -> List Message -> Task Error Provider.ChatResponse -> Task Error ( Provider.ChatResponse, Bool )
+journalledAsk db name parts messages live =
+    let
+        key =
+            Crypto.sha256
+                (String.join
+                    "\n"
+                    (parts
+                        ++ [ JsonE.encode
+                                 0
+                                 (JsonE.list
+                                     (\m ->
+                                         JsonE.object
+                                             [ ( "role", JsonE.string m.role )
+                                             , ( "content"
+                                               , JsonE.string m.content
+                                               )
+                                             ])
+                                     messages)
+                           ]))
+    in
+        Db.query
+            db
+            "SELECT reply, prompt_tokens, completion_tokens FROM _sky_ai_synthetic_journal WHERE entry_key = ?"
+            [ SqlString key ]
+            |> Task.andThen
+                   (\rows ->
+                       case List.head rows of
+
+                           Just row ->
+                               Task.succeed ( replayed row, True )
+
+                           Nothing ->
+                               live
+                                   |> Task.andThen
+                                          (\r ->
+                                              rememberCall db name key r
+                                                  |> Task.map
+                                                         (\_ -> ( r, False ))))
+
+
+replayed : Dict String String -> Provider.ChatResponse
+replayed row =
+    let
+        prompt = Db.getInt "prompt_tokens" row
+        completion = Db.getInt "completion_tokens" row
+    in
+        { content = Db.getString "reply" row
+        , usage =
+            { promptTokens = prompt
+            , completionTokens = completion
+            , totalTokens = prompt + completion
+            }
+        }
+
+
+-- Two runs that race on one entry both keep the first answer written.
+rememberCall : Db -> String -> String -> Provider.ChatResponse -> Task Error ()
+rememberCall db name key r =
+    Time.now ()
+        |> Task.andThen
+               (\now ->
+                   Db.exec
+                       db
+                       "INSERT INTO _sky_ai_synthetic_journal (entry_key, generator, reply, prompt_tokens, completion_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+                       [ SqlString key
+                       , SqlString name
+                       , SqlString r.content
+                       , SqlInt r.usage.promptTokens
+                       , SqlInt r.usage.completionTokens
+                       , SqlInt now
+                       ]
+                       |> Task.map (\_ -> ())
+                       |> Task.onError (\_ -> Task.succeed ()))
 
 -- ── The plan ────────────────────────────────────────────────────────
 -- | One teacher call: its index, persona, topic, sampling seed and messages.
@@ -519,6 +690,7 @@ type alias Report =
     , teacher : String
     , seed : Int
     , calls : Int
+    , replayed : Int
     , judgeCalls : Int
     , generated : Int
     , kept : Int
@@ -548,7 +720,8 @@ type alias State row =
 -- | Run the plan until the target, the call limit or the budget stops it.
 run : Generator row -> Task Error (Generated row)
 run (Generator g) =
-    teacherLabel g.endpoint g.teacherName
+    setupJournal g.journal
+        |> Task.andThen (\_ -> teacherLabel g.endpoint g.teacherName)
         |> Task.andThen
                (\label ->
                    let
@@ -560,6 +733,7 @@ run (Generator g) =
                                , teacher = label
                                , seed = g.seed
                                , calls = 0
+                               , replayed = 0
                                , judgeCalls = 0
                                , generated = 0
                                , kept = 0
@@ -630,17 +804,11 @@ loop (Generator g) requests st =
                     Task.succeed { st | report = { report | stop = CallLimit } }
 
                 req :: rest ->
-                    Provider.chatWith
-                        { temperature = Just g.temperature
-                        , seed = Just req.seed
-                        , maxTokens = Just g.maxTokens
-                        , adapter = Nothing
-                        }
-                        g.teacher
-                        req.messages
+                    teacherCall (Generator g) report.teacher req
                         |> Task.andThen
-                               (\response ->
+                               (\answered ->
                                    let
+                                       response = Tuple.first answered
                                        ( parsed, bad ) =
                                            parseRows g.codec response.content
                                        priced =
@@ -659,6 +827,12 @@ loop (Generator g) requests st =
                                        counted =
                                            { report
                                                | calls = report.calls + 1
+                                               , replayed =
+                                                   if Tuple.second answered then
+                                                       report.replayed + 1
+
+                                                   else
+                                                       report.replayed
                                                , generated =
                                                    report.generated
                                                        + List.length parsed
@@ -752,7 +926,8 @@ admit (Generator g) req r st =
                             let
                                 ( question, answer ) = j.show r
                             in
-                                Eval.judgeAnswer
+                                judgeWith
+                                    g.journal
                                     j.judge
                                     req.seed
                                     j.rubric
@@ -787,6 +962,18 @@ admit (Generator g) req r st =
                                                                            + 1
                                                                }
                                                        })
+
+
+-- A judge call, through the eval judge journal when the run has a journal.
+judgeWith : Maybe Journal -> Eval.Judge -> Int -> String -> String -> String -> Task Error Eval.Score
+judgeWith journal j seed rubric question answer =
+    case journal of
+
+        Just jr ->
+            jr.judge j seed rubric question answer
+
+        Nothing ->
+            Eval.judgeAnswer j seed rubric question answer
 
 
 -- | The kept rows as a dataset whose lineage names the generator, the

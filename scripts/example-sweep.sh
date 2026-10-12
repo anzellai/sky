@@ -308,6 +308,13 @@ declare -a EXAMPLES=(
     # model and no network. Its stdout and its test-mode serving test are
     # pinned by rust/crates/sky/tests/ai_registry_flow.rs.
     "71-ai-registry:cli"
+    # 72 — the flagship AI app: a Sky.Live support desk (Std.Ui + SQLite)
+    # whose assistant is a model slot, with its AI lifecycle in src/Ai.sky.
+    # GET / renders the inbox with no model call (the assistant drafts only
+    # when a ticket opens). The lifecycle (dataset, eval, registry, promote,
+    # serve) is proven by rust/crates/sky/tests/ai_pipeline_flow.rs. Port 8072
+    # (App.withConfig) so the parallel sweep does not collide.
+    "72-ai-support-desk:server:8072:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

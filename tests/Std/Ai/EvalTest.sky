@@ -17,6 +17,7 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Result as Result
 import Sky.Core.Json.Encode as JsonE
 import Sky.Test as Test exposing (Test, TestResult)
+import Sky.Core.File as File
 import Std.Codec as Codec
 import Std.Db as Db exposing (Db)
 import Std.Money as Money exposing (Currency(..))
@@ -1077,4 +1078,87 @@ tests =
     , Test.test
           "a report survives encodeReport and decodeReport"
           (\_ -> Test.equal (Ok True) codecRoundTrip)
+    , Test.test
+          "judgeAnswerWith answers an unchanged call from the journal"
+          (\_ ->
+              case journalledJudge of
+
+                  Ok ( first, second ) ->
+                      Test.equal ( True, True ) ( first.passed, second.passed )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "JsonShape reads JSON in a code fence, as models often write it"
+          (\_ ->
+              case fencedJson of
+
+                  Ok ( fenced, prose ) ->
+                      Test.equal ( 1, 0 ) ( fenced, prose )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
     ]
+
+
+-- A one-case JSON suite answered in a ```json fence, and with prose around
+-- the JSON (which stays a failure).
+fencedJson : Result Error ( Int, Int )
+fencedJson =
+    let
+        jsonSuite =
+            Eval.suite
+                "fenced"
+                (\q -> [ Provider.user q ])
+                [ { id = "order"
+                  , input = "order"
+                  , expect = JsonShape orderShape
+                  , tags = []
+                  }
+                ]
+        runWith text =
+            Db.open "sqlite" ":memory:"
+                |> Task.andThen
+                       (\db ->
+                           Eval.run db (table [ ( "order", text ) ]) jsonSuite)
+                |> Task.map .passed
+    in
+        Task.map2
+            (\a b -> ( a, b ))
+            (runWith "```json\n{\"item\":\"tea\",\"qty\":2,\"note\":null}\n```")
+            (runWith
+                "Here it is: {\"item\":\"tea\",\"qty\":2,\"note\":null} as asked.")
+            |> Task.run
+
+
+-- The second judge fails every call: the journal must answer it.
+journalledJudge : Result Error ( Eval.Score, Eval.Score )
+journalledJudge =
+    File.tempDir "sky-eval-judge-journal"
+        |> Task.andThen (\dir -> Db.open "sqlite" (dir ++ "/journal.db"))
+        |> Task.andThen
+               (\db ->
+                   Eval.judgeAnswerWith
+                       db
+                       (Eval.judge fairJudge "journal-v1")
+                       7
+                       "Polite."
+                       "Hi?"
+                       "Polite and helpful."
+                       |> Task.andThen
+                              (\first ->
+                                  Eval.judgeAnswerWith
+                                      db
+                                      (Eval.judge
+                                          (Provider.custom
+                                              (\_ ->
+                                                  Task.fail
+                                                      (Error.unavailable
+                                                          "no call expected")))
+                                          "journal-v1")
+                                      7
+                                      "Polite."
+                                      "Hi?"
+                                      "Polite and helpful."
+                                      |> Task.map (\second -> ( first, second ))))
+        |> Task.run

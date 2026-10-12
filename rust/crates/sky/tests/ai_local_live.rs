@@ -173,6 +173,102 @@ fn zero_config_endpoint_chats_and_embeds_on_the_real_engine() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
+/// The flagship's pipeline on the real engine and model: `sky ai eval
+/// support` runs the suite on the chat slot, calibrates the judge (the judge
+/// slot, the same pinned model) and gates, all with no `SKY_AI_*` variable.
+/// A 0.5B model may or may not pass the suite, so the test asserts the
+/// lifecycle, not the model: one JSON outcome whose verdict the exit code
+/// carries (0 when it passed, 1 when it failed), the JUnit file, a calibrated
+/// judge, and no engine left running when the program ends.
+#[test]
+fn the_flagship_pipeline_evaluates_on_the_real_engine() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let home = ai_home();
+    let available = provisioned(&home) || (reachable("github.com") && reachable("huggingface.co"));
+    if !required(Need::AiEngine, available) {
+        return;
+    }
+    let project = std::env::temp_dir().join(format!("sky-ai-live-desk-{}", std::process::id()));
+    let data = std::env::temp_dir().join(format!("sky-ai-live-desk-data-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&project);
+    std::fs::create_dir_all(&data).unwrap();
+    let flagship =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/72-ai-support-desk");
+    for part in ["src", "sky.toml"] {
+        let from = flagship.join(part);
+        if from.is_dir() {
+            copy_dir(&from, &project.join(part));
+        } else {
+            std::fs::create_dir_all(&project).unwrap();
+            std::fs::copy(&from, project.join(part)).unwrap();
+        }
+    }
+    let mut eval = Command::new(SKY);
+    eval.args(["ai", "eval", "support", "--format", "json"])
+        .current_dir(&project)
+        .env_remove("ENV")
+        .env("SKY_DB_PATH", data.join("app.db"))
+        .env(
+            "SKY_AI_REGISTRY",
+            format!("file://{}", data.join("store").display()),
+        );
+    for (k, _) in std::env::vars() {
+        if k.starts_with("SKY_AI_") && k != "SKY_AI_REGISTRY" && k != "SKY_AI_HOME" {
+            eval.env_remove(k);
+        }
+    }
+    let child = eval
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // `sky ai` replaces itself with the pipeline program: this pid holds the
+    // engines it starts.
+    let holder = child.id();
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    eprintln!("ai_local_live: sky ai eval support\n{stdout}");
+    let outcome: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("not one JSON outcome ({e}):\n{stdout}{stderr}"));
+    let verdict = outcome["verdict"].as_str().unwrap_or("").to_string();
+    assert!(verdict == "passed" || verdict == "failed", "{outcome}");
+    assert_eq!(
+        out.status.code(),
+        Some(if verdict == "passed" { 0 } else { 1 }),
+        "the exit code carries the verdict: {stderr}"
+    );
+    assert_eq!(outcome["candidate"], "slot:chat", "{outcome}");
+    assert!(
+        outcome["markdown"]
+            .as_str()
+            .unwrap_or("")
+            .contains("calibration"),
+        "the judge was calibrated first: {outcome}"
+    );
+    assert!(project.join(".sky/ai/eval/support/junit.xml").is_file());
+
+    let ps = Command::new(SKY)
+        .args(["ai", "ps", "--format", "json"])
+        .output()
+        .unwrap();
+    let running: serde_json::Value =
+        serde_json::from_slice(&ps.stdout).unwrap_or(serde_json::Value::Null);
+    let held = running
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|e| e["holderPid"] == holder && e["state"] == "running")
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(held, 0, "engines outlived the pipeline: {running}");
+    let _ = std::fs::remove_dir_all(&project);
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for entry in std::fs::read_dir(from).unwrap() {

@@ -450,6 +450,22 @@ pub const SURFACES: &[Surface] = &[
             "Sky.Core.Dict as Dict",
         ],
     ),
+    // v0.28.0 Std.Ai.Pipeline: a pipeline's members, a suite evaluated on a
+    // `suiteWith` provider that answers by adapter (so the verdict follows
+    // from the provider, not a model), and the typed refusals of an unknown
+    // member and a bad verb.
+    sf2(
+        "aipipeline",
+        "Std.Ai.Pipeline",
+        &[
+            "Std.Ai.Provider as Provider",
+            "Std.Ai.Eval as Eval",
+            "Std.Ai.Failure as Failure",
+            "Std.Db as Db",
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+        ],
+    ),
     // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
     // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
     // every web backend draws; the terminal as the island element it renders
@@ -793,6 +809,8 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Ai.Dataset",
     "Std.Ai.Dataset.Scrub",
     "Std.Ai.Dataset.Synthetic",
+    // v0.28.0: Std.Ai.Pipeline lands covered (`aipipeline` surface).
+    "Std.Ai.Pipeline",
     // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
     // payloads) land covered, not dark.
     "Std.Ui.Canvas",
@@ -1411,6 +1429,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "aiscrub" => aiscrub_battery(edge),
         "aidataset" => aidataset_battery(edge),
         "aisynthetic" => aisynthetic_battery(edge),
+        "aipipeline" => aipipeline_battery(edge),
         "canvas" => canvas_battery(edge),
         "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
@@ -4103,6 +4122,43 @@ fn aidataset_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Pipeline -------------------------------------------------------
+//
+// A pipeline's members are its declared names; a suite on a `suiteWith`
+// provider that answers "yes" for the default candidate passes and is
+// recorded as `default`; an unknown task is the typed InvalidSetting and a
+// verb without its argument is a usage error.
+fn aipipeline_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &[
+                    "Pipeline.pipeline",
+                    "Pipeline.withSuite",
+                    "Pipeline.withTask",
+                    "Pipeline.members",
+                ],
+                "aiPipeMembers",
+                "corpus/corpus/noop",
+            ),
+            s(
+                &[
+                    "Pipeline.evaluate",
+                    "Pipeline.suiteWith",
+                    "Pipeline.evalRequest",
+                ],
+                "aiPipeVerdict",
+                "passed/default",
+            ),
+        ],
+        "failure" => vec![
+            s(&["Pipeline.runTask"], "aiPipeUnknown", "InvalidSetting"),
+            s(&["Pipeline.commandLineWith"], "aiPipeUsage", "U"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Std.Ai.Dataset.Synthetic -----------------------------------------------
 //
 // A plan is pure (call i has seed `seed + i`, the default call limit is three
@@ -6196,6 +6252,82 @@ aiMissingFile =
 
         Err e ->
             Maybe.withDefault "none" (Maybe.map Failure.code (Failure.fromError e))
+"#
+        }
+        "aipipeline" => {
+            r#"aiPipeAnswer : String -> List Provider.Message -> Task Error Provider.ChatResponse
+aiPipeAnswer adapter _ =
+    Task.succeed
+        { content =
+            if String.contains "v2" adapter then
+                "no"
+
+            else
+                "yes"
+        , usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+        }
+
+
+aiPipeSuite : Eval.Suite String
+aiPipeSuite =
+    Eval.suite "corpus"
+        (\q -> [ Provider.user q ])
+        [ { id = "a", input = "a", expect = Eval.Exact "yes", tags = [] } ]
+
+
+aiPipe : Pipeline.Pipeline
+aiPipe =
+    Pipeline.pipeline "corpus"
+        |> Pipeline.withDb (Db.open "sqlite" ":memory:")
+        |> Pipeline.withSuite "corpus" (Pipeline.suiteWith (\a -> Provider.custom (aiPipeAnswer a)) aiPipeSuite)
+        |> Pipeline.withTask "noop" (\_ -> Task.succeed ())
+
+
+aiPipeMembers : String
+aiPipeMembers =
+    let
+        m = Pipeline.members aiPipe
+    in
+    m.name ++ "/" ++ String.join "," m.suites ++ "/" ++ String.join "," m.tasks
+
+
+aiPipeVerdict : String
+aiPipeVerdict =
+    case Task.run (Pipeline.evaluate aiPipe "corpus" Pipeline.evalRequest) of
+        Ok o ->
+            case o.verdict of
+                Ok _ ->
+                    "passed/" ++ o.candidate.candidate
+
+                Err _ ->
+                    "failed/" ++ o.candidate.candidate
+
+        Err _ ->
+            "E"
+
+
+aiPipeUnknown : String
+aiPipeUnknown =
+    case Task.run (Pipeline.runTask aiPipe "nope" []) of
+        Ok _ ->
+            "ran"
+
+        Err e ->
+            Maybe.withDefault "?" (Maybe.map Failure.code (Failure.fromError e))
+
+
+aiPipeUsage : String
+aiPipeUsage =
+    case Task.run (Pipeline.commandLineWith aiPipe [ "eval" ]) of
+        Ok _ ->
+            "ran"
+
+        Err e ->
+            if String.contains "usage: " (Error.toString e) then
+                "U"
+
+            else
+                Error.toString e
 "#
         }
         "aisynthetic" => {

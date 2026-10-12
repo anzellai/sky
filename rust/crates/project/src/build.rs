@@ -1137,7 +1137,13 @@ fn build_inner(
     // startup report: a generated `ai_slots_gen.go` beside main.go, removed
     // when the project declares none (ai_slots.rs). Best-effort like the
     // migrations: a failure warns.
-    let (slots, slot_problems) = crate::ai_slots::discover_with_problems(&opts.example_dir);
+    // Scoped to what the entry imports: a slot only the AI pipeline
+    // (`src/Ai.sky`) names is not the app's (ai_slots::discover_for_entry).
+    let (slots, slot_problems) = crate::ai_slots::discover_for_entry(
+        &opts.example_dir,
+        extra_dirs,
+        entry_module.unwrap_or("Main"),
+    );
     report.warnings.extend(slot_problems);
     if let Err(e) = crate::ai_slots::write_go(&out_dir, &slots) {
         report.warnings.push(format!("ai slots: {e}"));

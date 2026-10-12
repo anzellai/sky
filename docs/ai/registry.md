@@ -112,6 +112,15 @@ transaction:
   promotion moved the alias meanwhile, the comparison is stale and the call
   fails with `PromotionConflict`. Of two promotions that start from the same
   state, at most one wins.
+- `promoteCompared reg alias v thresholdsFor` re-gates the version's attached
+  evidence against the version the alias serves now and moves the alias only
+  while it still serves that version. For each attached report (newest first)
+  the newest report of the same suite attached to the alias's current version
+  is the baseline: the two are compared case by case (`Eval.compare`) and
+  gated with that suite's thresholds (`thresholdsFor suiteName`). A suite the
+  current version has no report for, or an alias that does not exist yet, is
+  gated on its own. `evidenceAgainst` gives the `Passed` and the version it was
+  compared with, without moving anything.
 - `forcePromote reg alias v reason` moves it without eval evidence. The reason
   is required and recorded.
 - `rollback reg "support-lora@prod"` returns the alias to the version before
@@ -135,11 +144,23 @@ ambiguous.
 | `history reg name alias` | the alias's moves, newest first |
 | `reports reg v`, `evalHistory reg name` | the reports of a version, of every version |
 | `lineage reg ref` | the version, the aliases on it now, its reports and the moves to or from it |
-| `trainedOn reg datasetDigest` | every version trained on a dataset (the ones to retrain after an erasure) |
+| `trainedOn reg dataset` | every version trained on a dataset, named by its digest or as `<name>@<n>` (the ones to retrain after an erasure) |
+| `datasetVersion reg "support@3"`, `datasetVersions reg name` | a registered dataset version, every version of a dataset |
+| `fetchDataset reg d` | a verified local path of a dataset version's JSONL |
 | `fetch reg v` | a verified local path of the adapter |
 
 `versionValue`, `lineageValue`, `eventValue` and `reportLinkValue` give the
 same records as JSON.
+
+## Dataset versions
+
+`registerDataset reg manifest dataPath` registers a frozen dataset version
+(`Std.Ai.Dataset.freeze`, [`dataset.md`](dataset.md)): the data file goes into
+the store under its digest (it must match the manifest's, `ChecksumMismatch`
+otherwise), and the version is a row of `_sky_ai_registry_datasets` named
+`<name>@<n>` with its manifest. Registering the same digest again returns the
+version already there. A training lineage records `datasetLabel d` and
+`d.digest`, which is what `trainedOn` and `sky ai lineage --dataset` search.
 
 ## Serving follows the aliases
 
@@ -206,8 +227,8 @@ examples).
 
 The registry verbs open the registry on the app's database (`--db <dsn>`,
 else `SKY_DB_PATH`, else `DATABASE_URL`, else the project's `[database]`
-`url` or `path`), with the store at `--registry <url>`, else
-`SKY_AI_REGISTRY`. Each takes `--format json`.
+`url` or `path`), with the store at `--registry <url>` (which wins over the
+variable), else `SKY_AI_REGISTRY`. Each takes `--format json`.
 
 ```bash
 sky ai promote support-lora 3 --to prod                 # on the attached evidence
@@ -217,12 +238,23 @@ sky ai promote support-lora 3 --to qa --force --reason "manual QA build"
 sky ai rollback support-lora@prod
 sky ai lineage support-lora@prod
 sky ai lineage --dataset <sha256>                       # versions trained on a dataset
+sky ai lineage --dataset support@3                      # the same, by registered version
 ```
+
+`sky ai promote` runs `promoteCompared`: the attached evidence is compared
+against the version the alias serves now, so a regression against production
+is refused even when the candidate's own pass rate clears the floor, and a
+promotion that raced it fails with `PromotionConflict` instead of overwriting
+it. In a project with an AI pipeline ([`pipeline.md`](pipeline.md)) each
+suite's report is gated with that suite's thresholds from the pipeline.
+`sky ai eval … --candidate <model>@v<n> --against <alias> --promote-to <alias>`
+evaluates, compares and promotes in one verb.
 
 A refused promotion exits non-zero with the typed failure:
 `NotPromotable` (no attached report, a report for another version, a blocked
-version), `GateFailed` (the attached reports do not pass the thresholds), or
-`PromotionConflict` (`--expect` did not match).
+version), `GateFailed` (the attached reports do not pass the thresholds, or
+regress against the alias's version), or `PromotionConflict` (`--expect` did
+not match, or the alias moved).
 
 ## Failures
 

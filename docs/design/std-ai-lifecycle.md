@@ -787,6 +787,12 @@ seed, so the result is reproducible. `gate` fails when:
 - p95 latency or mean cost exceeds its budget, or
 - the judge failed calibration.
 
+*(Phase 2 part C ships `sky ai eval` through the project's pipeline: the
+candidate and the alias's version on the suite's slot, `compare`, `gate`,
+JUnit and Markdown, exit 1 on failure, and `--promote-to` with the `Passed`
+it gave. Eval runs another process wrote to the app's database appear in the
+console. `judgeAnswerWith` journals a judge call outside a suite.)*
+
 *(Phase 2 ships `withCalibration` (with `calibrate`, Cohen's kappa and a
 gate refusal below the agreement, plus `withCalibratedJudge`), `pairwise`
 in both orders, and the judge journal. The journal is a table in the run's
@@ -949,6 +955,19 @@ pipeline =
 The build discovers `pipeline` in `src/Ai.sky` the way it discovers `main` and
 `config`. The `sky ai` verbs compile that module and call the named member.
 
+*(Implemented in phase 2 part C. A member is added with `withSlot`,
+`withDataset` (`datasetOf codec build`, `withFolder`, `withRegistered`),
+`withSuite` (`suiteOn slot suite`, `suiteWith`, `forModel`,
+`withThresholds`) and `withTask` (a `Context -> Task Error ()`), the seam
+phase 3's `withJob` follows; `withDb` and `withRegistry` choose the database
+and the store. The CLI synthesises an entry whose `main` is
+`Pipeline.commandLine Ai.pipeline`, builds it with only `Ai` and its imports
+checked, caches it under `.sky/ai/cli/<key>/` and runs it in the project
+directory. The app's build is not affected: slots only the pipeline uses stay
+out of the app's binary and startup report. When the app's entry exposes a
+`Sky.Config` `config`, the pipeline applies it too. See
+[`../ai/pipeline.md`](../ai/pipeline.md).)*
+
 ### 8.10 Console and Trace
 
 `Trace` rows gain: slot, tier (`local` or `remote`), adapter, latency, time to
@@ -998,6 +1017,14 @@ The CLI holds no hidden logic. Engine verbs run a bundled Sky program (in
 | `sky ai lineage <name>@<alias>` | project program | `Registry.resolve` and the manifest |
 
 Every verb accepts `--format json` for machine output, as the other verbs do.
+
+*Phase 2 part C:* `eval`, `data freeze <dataset>`, `run <task>`, `members`,
+`promote` and `start` for a slot the pipeline names run the project's program
+(`src/Ai.sky`). `stop` stays in the bundled program: it stops engines by slot
+name through the machine's engine registry, which needs no project. `promote`
+in either program compares the attached evidence against the version the
+alias serves (`Registry.promoteCompared`). `--test-mode` answers model calls
+from `tests/mocks/`, as `sky test` does.
 
 *Phase 1 part A:* `start` and `stop` run the bundled program too, because the
 project's `src/Ai.sky` entry arrives with `Std.Ai.Pipeline` in phase 2. The
@@ -1297,7 +1324,20 @@ registry view in the console.
 Exit criteria: a dataset frozen twice from the same source has the same digest.
 A split assignment is stable across versions. Promotion without `Passed` does
 not compile, `forcePromote` is logged, and two concurrent promotions cannot
-both win on GCS and on S3 (fixture tests plus one manual cloud run).
+both win.
+
+*(As shipped: the user's decision moved the registry's records into the app's
+database (§8.7), so an alias move is a compare-and-swap in one database
+transaction, the same on SQLite and PostgreSQL, and the object store holds
+only content-addressed artefacts that are never overwritten. The concurrent
+promotion criterion is therefore proven on the database (`promoteIf`, and
+`RegistryTest` / `ai_registry_flow` racing two promotions from one state),
+not by GCS generation or S3 `If-Match` preconditions on alias objects, which
+no longer exist. "Promotion without `Passed` does not compile" is the reject
+corpus case `ai_eval_passed_is_opaque`. Phase 2 part C adds
+`Std.Ai.Pipeline`, `sky ai eval`, the project-mode verbs, dataset versions in
+the registry, the synthetic generation journal, the compared promotion and
+`examples/72-ai-support-desk`.)*
 
 ### P3: local training and GGUF export (estimate 8 to 12 weeks)
 

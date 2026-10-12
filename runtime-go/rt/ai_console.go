@@ -13,7 +13,9 @@ package rt
 //   - engines: the managed llama-server engines this process holds;
 //   - recent calls: the last aiCallRingSize model calls, each with its slot,
 //     latency, token counts and outcome (`ok` or the Std.Ai.Failure code);
-//   - eval runs: the last aiEvalRingSize Std.Ai.Eval reports;
+//   - eval runs: the last aiEvalRingSize Std.Ai.Eval reports, this
+//     process's and the ones in the app's database (ai_eval_history.go), so
+//     a `sky ai eval` run in another process appears too;
 //   - the model registry: each Std.Ai.Registry model this process read or
 //     changed, with its aliases, newest versions, alias log and attached eval
 //     reports (ai_model_registry.go).
@@ -76,6 +78,10 @@ type aiEvalRecord struct {
 	Verdict      string             `json:"verdict"` // passed or failed
 	Failures     []string           `json:"failures"`
 	CaseResults  []aiEvalCase       `json:"caseResults"`
+	// Source is "process" for a run this process made, "database" for one
+	// read from the app's database (another process's, such as
+	// `sky ai eval`).
+	Source string `json:"source,omitempty"`
 }
 
 var (
@@ -109,6 +115,7 @@ func aiResetConsole() {
 	aiConsoleMu.Lock()
 	aiCallRing, aiEvalRing = nil, nil
 	aiConsoleMu.Unlock()
+	aiForgetEvalDbs()
 }
 
 // aiCallOutcome is a call's outcome label: "ok" or the failure code.
@@ -124,8 +131,11 @@ func aiCallOutcome(err error) string {
 
 // aiCallKind names a request path for the panel.
 func aiCallKind(path string) string {
-	if strings.Contains(path, "embeddings") {
+	switch {
+	case strings.Contains(path, "embeddings"):
 		return "embed"
+	case strings.HasSuffix(path, "/tokenize"):
+		return "tokenize"
 	}
 	return "chat"
 }
@@ -266,8 +276,13 @@ func aiConsoleSnapshot(outcome, slot string) AiConsoleResponse {
 		}
 		resp.Calls = append(resp.Calls, c)
 	}
+	ring := make([]aiEvalRecord, 0, len(evals))
 	for i := len(evals) - 1; i >= 0; i-- {
-		resp.Evals = append(resp.Evals, evals[i])
+		ring = append(ring, evals[i])
+	}
+	resp.Evals = aiMergeEvals(ring, aiStoredEvals(aiEvalRingSize), aiEvalRingSize)
+	if resp.Evals == nil {
+		resp.Evals = []aiEvalRecord{}
 	}
 	return resp
 }

@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 691
+n_min = 693
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 690
+class_v = 692
 class_d = 1
-family_S = 185
+family_S = 187
 family_L = 361
 family_E = 10
 family_R = 135
@@ -4618,6 +4618,32 @@ axes       = { edge = "failure", surface = "aisynthetic" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "0/2/calls|Unavailable"
+
+[[case]]
+id         = "stdlib_edge/nominal-aipipeline"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aipipeline" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "corpus/corpus/noop|passed/default"
+
+[[case]]
+id         = "stdlib_edge/failure-aipipeline"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aipipeline" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "InvalidSetting|U"
 
 [[case]]
 id         = "stdlib_edge/nominal-canvas"

@@ -2443,7 +2443,7 @@ to the local engine.
 
 | Module | Main functions |
 |---|---|
-| `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe` |
+| `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe`, `inspect`, `tokenize`, `slotName` |
 | `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
 | `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire` |
 
@@ -2473,7 +2473,7 @@ both orders.
 | Module | Main functions |
 |---|---|
 | `Std.Ai.Failure` | `Failure(..)`, `fromError`, `toError`, `code`, `kind`, `retryable` |
-| `Std.Ai.Eval` | `suite`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `judgeOn`, `withPassScore`, `withCalibration`, `calibrate`, `pairwise`, `judgeSlot`, `defaultJudge`, `judgeAnswer`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `withCalibratedJudge`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown`, `encodeReport`, `decodeReport` |
+| `Std.Ai.Eval` | `suite`, `suiteName`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `judgeOn`, `withPassScore`, `withCalibration`, `calibrate`, `pairwise`, `judgeSlot`, `defaultJudge`, `judgeAnswer`, `judgeAnswerWith`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `withCalibratedJudge`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown`, `encodeReport`, `decodeReport` |
 
 Guides: [`ai/local.md`](ai/local.md#failures) and [`ai/eval.md`](ai/eval.md).
 
@@ -2492,7 +2492,7 @@ with `Endpoint.fromRegistry (Registry.resolver registry)` and
 
 | Module | Main functions |
 |---|---|
-| `Std.Ai.Registry` | `open`, `openConfigured`, `store`, `database`, `register`, `attachReport`, `reports`, `evalHistory`, `promote`, `promoteIf`, `promoteChecked`, `evidence`, `forcePromote`, `rollback`, `resolve`, `version`, `versions`, `aliases`, `history`, `lineage`, `trainedOn`, `block`, `fetch`, `label`, `servedName`, `resolver`, `versionValue`, `eventValue`, `reportLinkValue`, `lineageValue` |
+| `Std.Ai.Registry` | `open`, `openConfigured`, `store`, `database`, `register`, `attachReport`, `reports`, `evalHistory`, `promote`, `promoteIf`, `promoteChecked`, `promoteCompared`, `evidence`, `evidenceAgainst`, `forcePromote`, `rollback`, `resolve`, `version`, `versions`, `aliases`, `history`, `lineage`, `trainedOn`, `registerDataset`, `datasetVersion`, `datasetVersions`, `datasetLabel`, `fetchDataset`, `datasetValue`, `block`, `fetch`, `label`, `servedName`, `resolver`, `versionValue`, `eventValue`, `reportLinkValue`, `lineageValue` |
 | `Std.Ai.Store` | `local`, `gcs`, `s3`, `fromUrl`, `configured`, `withEndpoint`, `withToken`, `withAwsKeys`, `location`, `put`, `fetch`, `signV4` |
 
 Guide: [`ai/registry.md`](ai/registry.md). CLI: `sky ai promote | rollback |
@@ -2522,11 +2522,30 @@ of what was kept and dropped.
 
 | Module | Main functions |
 |---|---|
-| `Std.Ai.Dataset` | `fromJsonl`, `fromJsonLines`, `fromCsv`, `fromStore`, `fromList`, `withSource`, `map`, `filter`, `filterMap`, `dedupeBy`, `scrub`, `upTo`, `toChat`, `toInstruction`, `rows`, `countRows`, `toJsonl`, `writeJsonl`, `split`, `unsplit`, `splitOf`, `part`, `limits`, `inspect`, `validate`, `folder`, `withConsentBasis`, `withRetention`, `freeze`, `freezeJson`, `load`, `loadJson`, `versions`, `manifest`, `digest`, `versionRows`, `versionPart`, `fromVersion`, `manifestJson`, `manifestFromJson` |
+| `Std.Ai.Dataset` | `fromJsonl`, `fromJsonLines`, `fromCsv`, `fromStore`, `fromList`, `withSource`, `map`, `filter`, `filterMap`, `dedupeBy`, `dedupeBounded`, `dedupeMemoryKeys`, `scrub`, `upTo`, `toChat`, `toInstruction`, `rows`, `countRows`, `toJsonl`, `writeJsonl`, `split`, `unsplit`, `splitOf`, `part`, `limits`, `withEngineTokenizer`, `inspect`, `validate`, `folder`, `withConsentBasis`, `withRetention`, `freeze`, `freezeJson`, `load`, `loadJson`, `versions`, `manifest`, `digest`, `versionRows`, `versionPart`, `fromVersion`, `manifestJson`, `manifestFromJson` |
 | `Std.Ai.Dataset.Scrub` | `email`, `phone`, `cardNumber`, `iban`, `usSsn`, `ukNino`, `secrets`, `pattern`, `custom`, `defaults`, `scrubText`, `scrubber`, `forString`, `forInstruction`, `forChat`, `forPreference`, `dropIf`, `scrubRow`, `scrubRows`, `merge`, `total`, `countOf`, `isCardNumber`, `isIban` |
-| `Std.Ai.Dataset.Synthetic` | `generator`, `teacherSlot`, `withTeacher`, `withTeacherSlot`, `withTemplate`, `withSystemPrompt`, `withPersonas`, `withTopics`, `withExamples`, `withPerCall`, `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`, `withMaxCalls`, `withCostBudget`, `withDedupe`, `withFilter`, `withJudge`, `plan`, `parseRows`, `run`, `toDataset` |
+| `Std.Ai.Dataset.Synthetic` | `generator`, `teacherSlot`, `withTeacher`, `withTeacherSlot`, `withTemplate`, `withSystemPrompt`, `withPersonas`, `withTopics`, `withExamples`, `withPerCall`, `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`, `withMaxCalls`, `withCostBudget`, `withDedupe`, `withFilter`, `withJudge`, `withJournal`, `plan`, `parseRows`, `run`, `toDataset` |
 
 Guide: [`ai/dataset.md`](ai/dataset.md).
+
+### `Std.Ai.Pipeline` — the project's AI lifecycle (v0.28.0)
+
+A project declares its datasets, eval suites, model slots and tasks as one
+value, `pipeline` in `src/Ai.sky` (`module Ai exposing (pipeline)`), and the
+`sky ai` verbs build and run it: `sky ai eval <suite>` (against an alias with
+`--against`, a registry candidate with `--candidate`, JUnit and Markdown, exit
+1 on a failed gate, `--promote-to` only on a pass), `sky ai data freeze
+<dataset>`, `sky ai run <task>`, `sky ai start <slot>` and the compared
+`sky ai promote`. A dataset build or a task gets a `Context` (the pipeline's
+name, its database, its registry and the arguments). Inside `sky test`,
+`evalSuite` and `evalAgainst` make a suite a test.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Pipeline` | `pipeline`, `withDb`, `withRegistry`, `withSlot`, `withDataset`, `withSuite`, `withTask`, `datasetOf`, `datasetJson`, `withFolder`, `withRegistered`, `suiteOn`, `suiteWith`, `forModel`, `withThresholds`, `evalRequest`, `context`, `evaluate`, `evalSuite`, `evalAgainst`, `freezeDataset`, `warmSlot`, `runTask`, `promote`, `members`, `outcomeValue`, `commandLine`, `commandLineWith` |
+
+Guide: [`ai/pipeline.md`](ai/pipeline.md); example
+`examples/72-ai-support-desk`.
 
 ## The Prelude
 

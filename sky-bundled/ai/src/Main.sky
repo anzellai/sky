@@ -13,11 +13,11 @@ each verb is a call to the Std.Ai API a user's own program can make.
     sky ai stop <slot> | --all                   Local.stopSlot
     sky ai promote <name> <version> --to <alias> [--min-pass-rate <x>]
                    [--expect <n>|none] [--force --reason <text>]
-                                                 Registry.promoteChecked,
+                                                 Registry.promoteCompared,
                                                  promoteIf, forcePromote
     sky ai rollback <name>@<alias>               Registry.rollback
     sky ai lineage <name>@<alias>|<name>@v<n>    Registry.lineage
-    sky ai lineage --dataset <sha256>            Registry.trainedOn
+    sky ai lineage --dataset <sha256>|<name>@<n> Registry.trainedOn
     sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>]
                 [--split <train>/<eval>/<test>] [--seed <n>]
                 [--consent <basis>] [--retention <period>]
@@ -26,8 +26,8 @@ each verb is a call to the Std.Ai API a user's own program can make.
 The registry verbs open the registry on the database `--db <dsn>` names, else
 the app's own (`SKY_DB_PATH`, else `DATABASE_URL`; the CLI passes the
 project's `[database]` path or url when neither is set), with the artefact
-store at `--registry <url>`, else `SKY_AI_REGISTRY`, else
-`file://.sky/ai/registry`.
+store at `--registry <url>` (it wins over the variable), else
+`SKY_AI_REGISTRY`, else `file://.sky/ai/registry`.
 
 Every verb takes `--format json`.
 -}
@@ -46,6 +46,7 @@ import Std.Ai.Endpoint as Endpoint
 import Std.Ai.Local as Local
 import Std.Ai.Eval as Eval
 import Std.Ai.Registry as Registry
+import Std.Ai.Store as Store
 import Std.Db as Db exposing (Db)
 import Std.Ai.Dataset as Dataset
 import Sky.Core.Json.Decode as JsonD
@@ -104,7 +105,7 @@ run args =
 
 usage : String
 usage =
-    "usage: sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>] | pull <org>/<repo> <file> | ps [--all] | start <slot> [--model <ref>] [--context <n>] [--embeddings] | stop <slot>|--all | promote <name> <version> --to <alias> | rollback <name>@<alias> | lineage <name>@<alias> | lineage --dataset <sha256> | data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split 80/10/10] [--seed <n>] [--consent <basis>] [--retention <period>]  (each takes --format json; the registry verbs take --db <dsn> and --registry <url>)"
+    "usage: sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>] | pull <org>/<repo> <file> | ps [--all] | start <slot> [--model <ref>] [--context <n>] [--embeddings] | stop <slot>|--all | promote <name> <version> --to <alias> | rollback <name>@<alias> | lineage <name>@<alias> | lineage --dataset <sha256>|<name>@<n> | data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split 80/10/10] [--seed <n>] [--consent <basis>] [--retention <period>]  (each takes --format json; the registry verbs take --db <dsn> and --registry <url>)"
 
 
 -- The value after a flag, if the flag is there.
@@ -384,9 +385,14 @@ openRegistry opts =
         db
             |> Task.andThen
                    (\conn ->
-                       Registry.openConfigured
-                           conn
-                           (Maybe.withDefault "" (flag "--registry" opts)))
+                       case flag "--registry" opts of
+
+                           Just url ->
+                               Task.fromResult (Store.fromUrl url)
+                                   |> Task.andThen (Registry.open conn)
+
+                           Nothing ->
+                               Registry.openConfigured conn "")
 
 
 versionNumber : String -> Task Error Int
@@ -487,16 +493,21 @@ promoteHow reg aliasName v t opts =
                                    t)
 
             Nothing ->
-                Registry.promoteChecked reg aliasName v t
+                Registry.promoteCompared reg aliasName v (\_ -> t)
 
 
 -- `--expect`: promote only while the alias still points where the caller
--- saw it (`promoteIf`), on the attached evidence.
+-- saw it (`promoteIf`), on the attached evidence compared against the
+-- version the alias serves now.
 promoteExpecting : Registry.Registry -> String -> Maybe Registry.Version -> Registry.Version -> Eval.Thresholds -> Task Error Registry.AliasEvent
 promoteExpecting reg aliasName expected v t =
-    Registry.evidence reg v t
+    Registry.evidenceAgainst reg aliasName v (\_ -> t)
         |> Task.andThen
-               (\passed -> Registry.promoteIf reg aliasName expected v passed)
+               (\found ->
+                   case found of
+
+                       ( passed, _ ) ->
+                           Registry.promoteIf reg aliasName expected v passed)
 
 
 eventText : String -> Registry.AliasEvent -> String
@@ -602,7 +613,12 @@ trainedOn json digest opts =
                        json
                        (JsonE.list Registry.versionValue vs)
                        (if List.isEmpty vs then
-                           "no version was trained on sha256:" ++ digest
+                           "no version was trained on "
+                               ++ (if String.contains "@" digest then
+                                      digest
+
+                                  else
+                                      "sha256:" ++ digest)
 
                        else
                            String.join

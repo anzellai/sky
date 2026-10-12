@@ -1,0 +1,133 @@
+module Assist exposing
+    ( systemPrompt
+    , messagesFor
+    , registryUrl
+    , openRegistry
+    , adapterModel
+    , chatSlot
+    , servingSlot
+    , draft
+    , Status
+    , status
+    )
+
+{-| The assistant: the `"chat"` model slot the app drafts replies with, and
+the registry it serves fine-tuned adapters from.
+
+The slot's code default is the managed local engine on the pinned development
+model, so a fresh clone runs with no configuration. An operator moves it to a
+remote server with `SKY_AI_CHAT_URL` (and `SKY_AI_CHAT_KEY`), or to another
+local model with `SKY_AI_CHAT_MODEL`.
+
+The app serves the adapter `support-lora@prod` once that alias exists in the
+registry (`sky ai eval … --promote-to prod`), and the base model before. The
+slot resolves the alias again every 30 seconds, so a promotion or a rollback
+reaches the running app without a restart.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Std.Db as Db
+import Std.Ai.Provider as Provider exposing (Message)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Registry as Registry
+
+
+-- | What the assistant is told before every ticket.
+systemPrompt : String
+systemPrompt =
+    "You are the support assistant of an online shop. Answer the customer in one or two polite sentences. Never share another customer's data."
+
+
+-- | The messages for one customer message.
+messagesFor : String -> List Message
+messagesFor body =
+    [ Provider.system systemPrompt, Provider.user body ]
+
+
+-- | Where the registry keeps the adapter files in development.
+-- `SKY_AI_REGISTRY` moves it (`gs://…`, `s3://…`) for a team.
+registryUrl : String
+registryUrl =
+    "file://.sky/ai/registry"
+
+
+-- | The registry on the app's own database: the same file the tickets are
+-- in, so the CLI and the app read one set of versions and aliases.
+openRegistry : Task Error Registry.Registry
+openRegistry =
+    Db.connect ()
+        |> Task.andThen (\db -> Registry.openConfigured db registryUrl)
+
+
+-- | The registry model the fine-tuned adapters are versions of.
+adapterModel : String
+adapterModel =
+    "support-lora"
+
+
+-- | The chat slot with its code defaults.
+chatSlot : Endpoint
+chatSlot =
+    Endpoint.endpoint "chat"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 4096)
+        |> Endpoint.fromRegistry (Registry.resolver openRegistry)
+        |> Endpoint.withAdapterRefresh 30
+        |> Endpoint.withMaxInFlight 2
+
+
+-- | The slot the app serves: with the `prod` adapter once the alias
+-- exists, else the base model. An operator's `SKY_AI_CHAT_ADAPTER` wins over
+-- both.
+servingSlot : Task Error Endpoint
+servingSlot =
+    openRegistry |> Task.andThen (\reg -> Registry.aliases reg adapterModel)
+        |> Task.map
+               (\als ->
+                   if List.any (\a -> a.aliasName == "prod") als then
+                       chatSlot
+                           |> Endpoint.withAdapter
+                                  ("registry:" ++ adapterModel ++ "@prod")
+
+                   else
+                       chatSlot)
+
+
+-- | Draft a reply to a customer's message.
+draft : String -> Task Error String
+draft body =
+    servingSlot
+        |> Task.andThen
+               (\slot ->
+                   Provider.chat (Endpoint.provider slot) (messagesFor body))
+        |> Task.map (\r -> String.trim r.content)
+
+-- | What the status strip shows: where the slot's calls go and which adapter
+-- it serves. It holds no secret and no URL path.
+type alias Status =
+    { mode : String
+    , target : String
+    , adapter : String
+    }
+
+
+-- | The serving slot's status.
+status : Task Error Status
+status =
+    servingSlot |> Task.andThen Endpoint.describe
+        |> Task.map
+               (\d ->
+                   { mode = d.mode
+                   , target = d.target
+                   , adapter =
+                       d.settings |> List.filter (\s -> s.key == "ADAPTER")
+                           |> List.head
+                           |> Maybe.map .value
+                           |> Maybe.withDefault "base model, no adapter"
+                   })

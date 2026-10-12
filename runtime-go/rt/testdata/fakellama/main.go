@@ -7,7 +7,16 @@
 // answer without a real model:
 //
 //	{"healthDelayMs": 500, "crashOnRequest": 1, "exitOnStart": 3,
-//	 "slowMs": 2000, "firstLaunchOnly": true}
+//	 "slowMs": 2000, "firstLaunchOnly": true,
+//	 "replies": [{"model": "support-lora-v2", "contains": "refund", "content": "..."}]}
+//
+// A chat answer is `fake[<model>]: <last message>` unless a `replies` entry
+// matches: the first whose model is empty or the request's model, and whose
+// `contains` is in the last message, answers with its content. That lets a
+// test script a candidate that regresses and a judge that scores.
+//
+// `/tokenize` answers `{"tokens": [...]}` with one token per word of
+// `content`, as llama-server's route does (with real token ids).
 //
 // `fakellama --write-test-model <path>` writes a small valid GGUF file (the
 // shape of Qwen2.5 0.5B, no tensors) and prints its SHA-256, for tests that
@@ -34,11 +43,18 @@ import (
 )
 
 type knobs struct {
-	HealthDelayMs   int  `json:"healthDelayMs"`
-	CrashOnRequest  int  `json:"crashOnRequest"`
-	ExitOnStart     int  `json:"exitOnStart"`
-	SlowMs          int  `json:"slowMs"`
-	FirstLaunchOnly bool `json:"firstLaunchOnly"`
+	HealthDelayMs   int     `json:"healthDelayMs"`
+	CrashOnRequest  int     `json:"crashOnRequest"`
+	ExitOnStart     int     `json:"exitOnStart"`
+	SlowMs          int     `json:"slowMs"`
+	FirstLaunchOnly bool    `json:"firstLaunchOnly"`
+	Replies         []reply `json:"replies"`
+}
+
+type reply struct {
+	Model    string `json:"model"`
+	Contains string `json:"contains"`
+	Content  string `json:"content"`
 }
 
 func main() {
@@ -159,10 +175,33 @@ func main() {
 			extra += fmt.Sprintf(" temp=%g", *req.Temperature)
 		}
 		content := fmt.Sprintf("fake[%s]: %s%s", req.Model, last, extra)
+		for _, rp := range k.Replies {
+			if (rp.Model == "" || rp.Model == req.Model) && strings.Contains(last, rp.Contains) {
+				content = rp.Content
+				break
+			}
+		}
 		b, _ := json.Marshal(map[string]any{
 			"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": content}}},
 			"usage":   map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
 		})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(b)
+	})
+	mux.HandleFunc("/tokenize", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(r) {
+			w.WriteHeader(401)
+			return
+		}
+		var req struct {
+			Content string `json:"content"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		tokens := []int{}
+		for i := range strings.Fields(req.Content) {
+			tokens = append(tokens, 100+i)
+		}
+		b, _ := json.Marshal(map[string]any{"tokens": tokens})
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(b)
 	})

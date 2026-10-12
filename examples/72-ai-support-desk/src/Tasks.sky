@@ -1,0 +1,191 @@
+module Tasks exposing (importAdapter, demoAdapter)
+
+{-| `sky ai run import-adapter -- <file.gguf>` registers a LoRA adapter
+trained elsewhere as the next version of `support-lora`, with its lineage:
+the base model the chat slot runs and the newest registered version of the
+`support` dataset.
+
+`sky ai run import-adapter -- --demo <tag>` writes a small GGUF LoRA file
+(a header with the adapter's metadata and no weights) and registers it, so
+the lifecycle can be tried end to end on any machine. Phase 3 of the AI
+lifecycle replaces this task with training in Sky (`sky ai train`).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Result as Result
+import Sky.Core.Encoding as Encoding
+import Sky.Core.File as File
+import Std.Log exposing (println)
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Local as Local
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+import Std.Ai.Pipeline as Pipeline
+import Assist
+
+
+-- | Register an adapter file, or a demo adapter.
+importAdapter : Pipeline.Context -> Task Error ()
+importAdapter ctx =
+    ctx.registry
+        |> Task.andThen
+               (\reg ->
+                   Task.map3
+                       (\path base dataset ->
+                           { path = path, base = base, dataset = dataset })
+                       (adapterPath ctx.args)
+                       baseModel
+                       (latestDataset reg)
+                       |> Task.andThen
+                              (\found ->
+                                  Registry.register
+                                      reg
+                                      Assist.adapterModel
+                                      { path = found.path
+                                      , format = Gguf
+                                      , method = Lora
+                                      }
+                                      { base = found.base
+                                      , dataset =
+                                          Registry.datasetLabel found.dataset
+                                      , datasetDigest = found.dataset.digest
+                                      , metadata =
+                                          [ ( "source", "import-adapter" ) ]
+                                      }))
+        |> Task.andThen
+               (\v ->
+                   println
+                       ("registered " ++ Registry.label v ++ " (sha256:"
+                           ++ String.left 12 v.digest
+                           ++ ", trained on "
+                           ++ v.dataset
+                           ++ ")"))
+
+
+adapterPath : List String -> Task Error String
+adapterPath args =
+    case args of
+
+        ["--demo", tag] ->
+            demoAdapter tag
+
+        [path] ->
+            Task.succeed path
+
+        _ ->
+            Task.fail
+                (Failure.toError
+                    (InvalidSetting
+                        { setting = "import-adapter"
+                        , reason =
+                            "give the adapter file (-- <file.gguf>) or a demo tag (-- --demo <tag>)"
+                        }))
+
+
+-- The model the chat slot runs: the operator's `SKY_AI_CHAT_MODEL` or the
+-- code default. An adapter is pinned to it, and an engine on another base
+-- refuses the adapter.
+baseModel : Task Error Local.ModelRef
+baseModel =
+    Endpoint.inspect Assist.chatSlot
+        |> Task.map
+               (\d ->
+                   d.settings
+                       |> List.filter
+                              (\s ->
+                                  s.key == "MODEL"
+                                      && String.contains "#sha256=" s.value)
+                       |> List.head
+                       |> Maybe.map (\s -> Local.fromReference s.value)
+                       |> Maybe.withDefault Local.devModel)
+
+
+-- The newest registered version of the support dataset.
+latestDataset : Registry.Registry -> Task Error Registry.DatasetVersion
+latestDataset reg =
+    Registry.datasetVersions reg "support"
+        |> Task.andThen
+               (\dvs ->
+                   case dvs of
+
+                       newest :: _ ->
+                           Task.succeed newest
+
+                       [] ->
+                           Task.fail
+                               (Failure.toError
+                                   (InvalidSetting
+                                       { setting = "dataset"
+                                       , reason =
+                                           "no version of the support dataset is registered: run `sky ai data freeze support` first"
+                                       })))
+
+
+-- ── A demo adapter ──────────────────────────────────────────────────
+-- | Write a GGUF LoRA adapter with no weights under `.sky/ai/import/` and
+-- return its path. GGUF is a header and metadata entries; a LoRA adapter
+-- says so in its metadata, which is what the registry checks.
+demoAdapter : String -> Task Error String
+demoAdapter tag =
+    let
+        dir = ".sky/ai/import"
+        path = dir ++ "/" ++ tag ++ ".gguf"
+    in
+        File.mkdirAll dir
+            |> Task.andThen (\_ -> File.writeFile path (ggufLora tag))
+            |> Task.map (\_ -> path)
+
+
+ggufLora : String -> String
+ggufLora name =
+    let
+        entries =
+            [ ( "general.architecture", "qwen2" )
+            , ( "general.type", "adapter" )
+            , ( "adapter.type", "lora" )
+            , ( "general.name", "support-lora-" ++ name )
+            ]
+    in
+        "GGUF" ++ le32 3 ++ le64 0 ++ le64 (List.length entries)
+            ++ String.concat (List.map entry entries)
+
+
+entry : ( String, String ) -> String
+entry kv =
+    case kv of
+
+        ( key, value ) ->
+            ggufString key ++ le32 8 ++ ggufString value
+
+
+ggufString : String -> String
+ggufString s =
+    le64 (String.length s) ++ s
+
+
+le32 : Int -> String
+le32 n =
+    raw (hexByte n ++ "000000")
+
+
+le64 : Int -> String
+le64 n =
+    raw (hexByte n ++ "00000000000000")
+
+
+hexByte : Int -> String
+hexByte n =
+    let
+        digit d = String.slice d (d + 1) "0123456789abcdef"
+    in
+        digit (n // 16) ++ digit (modBy 16 n)
+
+
+raw : String -> String
+raw hex =
+    Encoding.hexDecode hex |> Result.withDefault ""

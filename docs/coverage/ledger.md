@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 190 |
-| covered by the new corpus (>= Asserted) | 179 |
-| verdict `stronger` | 174 |
+| surfaces | 191 |
+| covered by the new corpus (>= Asserted) | 180 |
+| verdict `stronger` | 175 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 137 |
-| stdlib modules (denominator) | 122 |
-| stdlib entries (denominator) | 2549 |
+| corpus units | 138 |
+| stdlib modules (denominator) | 123 |
+| stdlib entries (denominator) | 2603 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 7.4% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 843 | 33.1% |
-| symbols unreferenced under the generous rule | 740 | 29.0% |
+| stdlib modules imported by nothing | 9 | 7.3% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 845 | 32.5% |
+| symbols unreferenced under the generous rule | 742 | 28.5% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -57,7 +57,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 29 |
+| stdlib modules owned by exactly one `examples/*` | 25 |
 | stdlib modules owned by exactly one unit of any role | 12 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
@@ -196,6 +196,7 @@ None.
 | `stdlib.Std.Ai.Failure` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Local` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Asserted | stronger |
+| `stdlib.Std.Ai.Pipeline` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Policy` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Ai.Provider` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Registry` | stdlib | Asserted | Falsified | stronger |

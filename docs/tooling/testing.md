@@ -283,6 +283,23 @@ code and asserts the account is active. The only thing that stays mocked is a
 real message actually delivered by a third party — automated tests prove the
 app's handling of the flow, never a provider's delivery.
 
+### AI models in test mode, and `sky ai --test-mode`
+
+A model slot (`Std.Ai.Endpoint`) is mocked like any other outbound call: in
+test mode a local slot's calls go to `http://sky-ai-local.invalid/<slot>/v1/…`
+and are answered by `tests/mocks/` fixtures (`match.bodyContains` picks the
+answer per question, model or topic), so no engine starts and nothing is
+downloaded. An eval suite is then an ordinary test:
+`Pipeline.evalSuite Ai.pipeline "support" |> Task.run |> Test.ok`
+([`../ai/pipeline.md`](../ai/pipeline.md)).
+
+The project-mode `sky ai` verbs take `--test-mode`: they load `.env.test` and
+answer model calls from the same fixtures, so CI can run `sky ai eval <suite>
+--test-mode` and `sky ai data freeze <dataset> --test-mode` with no engine.
+Unlike `sky test`, a `sky ai` verb keeps the project's own database (it acts on
+the project's data), unless `--db` names another.
+`examples/72-ai-support-desk` runs its whole lifecycle this way.
+
 ## Property-based fuzzing — `sky fuzz [--target <t>]`
 
 One command derives its inputs from the app's own types, so it needs no

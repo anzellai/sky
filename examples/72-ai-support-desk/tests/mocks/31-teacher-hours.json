@@ -1,0 +1,9 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/teacher/",
+    "bodyContains": "Topic: opening hours"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"```json\\n[\\n {\\n  \\\"prompt\\\": \\\"When does the shop open on Saturday?\\\",\\n  \\\"completion\\\": \\\"On Saturday we open from 10 to 4. Orders placed before noon are ready the same day.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"Are you open on bank holidays?\\\",\\n  \\\"completion\\\": \\\"We are closed on bank holidays. Write to help@shop.example and we answer the next working day.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"When do you close?\\\",\\n  \\\"completion\\\": \\\"At 5.\\\"\\n }\\n]\\n```\"}}], \"usage\": {\"prompt_tokens\": 300, \"completion_tokens\": 260, \"total_tokens\": 560}}"
+}

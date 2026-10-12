@@ -15,7 +15,8 @@
 //! - `sky doctor` checks each slot's variables.
 //!
 //! A project that imports `Std.Ai.Eval` also has the eval judge's slot,
-//! `"judge"`, which the stdlib declares.
+//! `"judge"`, and one that imports `Std.Ai.Dataset.Synthetic` the teacher's,
+//! `"teacher"`, which the stdlib declares.
 //!
 //! The scan is textual over each module's import list and call sites, with
 //! the argument evaluated by [`crate::app_entry::static_string`], the same
@@ -33,6 +34,111 @@ pub const SLOTS_GO_FILE: &str = "ai_slots_gen.go";
 /// sorted and without duplicates.
 pub fn discover(project_dir: &Path) -> Vec<String> {
     discover_with_problems(project_dir).0
+}
+
+/// The slots of the modules an entry reaches through `import`, itself
+/// included: the program a build makes can only use those. An app's build
+/// (entry `Main`) does not list the slots only its AI pipeline
+/// (`src/Ai.sky`) names, such as a synthetic teacher or a judge, unless the
+/// app imports that module; the pipeline's own program (entry
+/// `SkyAiEntry__`, which imports `Ai`) lists them. `extra_roots` are further
+/// source roots (`tests/`, a synthesised entry's scratch directory). The
+/// entry `Main` also matches a module named `<X>.Main` or `main`, as the
+/// build's entry detection does.
+pub fn discover_for_entry(
+    project_dir: &Path,
+    extra_roots: &[PathBuf],
+    entry: &str,
+) -> (Vec<String>, Vec<String>) {
+    let root = project_dir.join(crate::build::configured_source_root(project_dir));
+    let mut files = Vec::new();
+    collect_sky_files(&root, &mut files);
+    for r in extra_roots {
+        collect_sky_files(r, &mut files);
+    }
+    let mut by_name: std::collections::HashMap<String, Vec<(PathBuf, String)>> =
+        std::collections::HashMap::new();
+    for f in files {
+        let Ok(src) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let Some(name) = module_name_of(&src) else {
+            continue;
+        };
+        by_name.entry(name).or_default().push((f, src));
+    }
+    let mut stack: Vec<String> = by_name
+        .keys()
+        .filter(|n| {
+            n.as_str() == entry
+                || (entry == "Main" && (n.ends_with(".Main") || n.as_str() == "main"))
+        })
+        .cloned()
+        .collect();
+    if stack.is_empty() {
+        // No module is the entry (a generated project that names its entry
+        // otherwise): every module's slots, as before scoping.
+        return discover_with_problems(project_dir);
+    }
+    let mut reached = BTreeSet::new();
+    let mut out = BTreeSet::new();
+    let mut problems = BTreeSet::new();
+    while let Some(name) = stack.pop() {
+        if !reached.insert(name.clone()) {
+            continue;
+        }
+        let Some(mods) = by_name.get(&name) else {
+            continue;
+        };
+        for (f, src) in mods {
+            let (ok, bad) = scan(src);
+            out.extend(ok);
+            for b in bad {
+                problems.insert(format!(
+                    "{}: Endpoint.endpoint {b:?}: {}",
+                    f.strip_prefix(project_dir).unwrap_or(f).display(),
+                    slot_problem(&b)
+                ));
+            }
+            for imported in imports_of(src) {
+                if !reached.contains(&imported) {
+                    stack.push(imported);
+                }
+            }
+        }
+    }
+    (out.into_iter().collect(), problems.into_iter().collect())
+}
+
+/// The name a module declares (`module A.B exposing ...`), read from the
+/// first non-comment line that starts the header.
+fn module_name_of(src: &str) -> Option<String> {
+    for line in src.lines() {
+        let l = line.trim_start();
+        if let Some(rest) = l.strip_prefix("module ") {
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
+                .collect();
+            return (!name.is_empty()).then_some(name);
+        }
+    }
+    None
+}
+
+/// The modules a source imports.
+fn imports_of(src: &str) -> Vec<String> {
+    src.lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("import ")?;
+            let name: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
+                .collect();
+            (!name.is_empty()).then_some(name)
+        })
+        .collect()
 }
 
 /// [`discover`], with a warning for each literal slot name the runtime would
@@ -140,11 +246,20 @@ pub fn slots_in_source(src: &str) -> Vec<String> {
 fn scan(src: &str) -> (Vec<String>, Vec<String>) {
     let mut out = Vec::new();
     let mut bad = Vec::new();
-    if src.lines().any(|l| {
-        let l = l.trim();
-        l == "import Std.Ai.Eval" || l.starts_with("import Std.Ai.Eval ")
-    }) {
+    // The slots the stdlib declares: Std.Ai.Eval's judge and
+    // Std.Ai.Dataset.Synthetic's teacher (`Eval.judgeSlot`,
+    // `Synthetic.teacherSlot`), which a module uses by importing it.
+    let imports = |m: &str| {
+        src.lines().any(|l| {
+            let l = l.trim();
+            l == format!("import {m}") || l.starts_with(&format!("import {m} "))
+        })
+    };
+    if imports("Std.Ai.Eval") {
         out.push("judge".to_string());
+    }
+    if imports("Std.Ai.Dataset.Synthetic") {
+        out.push("teacher".to_string());
     }
     let names = endpoint_names(src);
     if names.is_empty() {
@@ -290,6 +405,14 @@ support =
         assert_eq!(slots_in_source(src), vec!["judge", "support"]);
     }
 
+    /// A synthetic generator's default teacher is the stdlib's
+    /// `"teacher"` slot: a module that imports the generator uses it.
+    #[test]
+    fn the_synthetic_teacher_is_found() {
+        let src = "module Data exposing (..)\n\nimport Std.Ai.Dataset.Synthetic as Synthetic\n\ng = Synthetic.generator \"x\"\n";
+        assert_eq!(slots_in_source(src), vec!["teacher"]);
+    }
+
     #[test]
     fn a_module_without_the_import_declares_nothing() {
         let src = "module M exposing (..)\n\nendpoint = \"x\"\n\nf = endpoint \"chat\"\n";
@@ -321,6 +444,62 @@ support =
             .collect();
         words.sort();
         assert_eq!(words, RESERVED_SLOTS);
+    }
+
+    /// An app's build lists the slots its entry reaches, not the ones only
+    /// the AI pipeline names; the pipeline's entry lists both.
+    #[test]
+    fn slots_are_scoped_to_the_entry_closure() {
+        let dir = std::env::temp_dir().join(format!(
+            "sky-ai-slots-scope-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"x\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("Main.sky"),
+            "module Main exposing (main)\n\nimport Assist\n\nmain = Assist.reply\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("Assist.sky"),
+            "module Assist exposing (chatSlot)\n\nimport Std.Ai.Endpoint as Endpoint\n\nchatSlot = Endpoint.endpoint \"chat\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("Ai.sky"),
+            "module Ai exposing (pipeline)\n\nimport Assist\nimport Data\nimport Std.Ai.Eval as Eval\n\npipeline = 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("Data.sky"),
+            "module Data exposing (teacher)\n\nimport Std.Ai.Endpoint as E\n\nteacher = E.endpoint \"teacher\"\n",
+        )
+        .unwrap();
+        let scratch = dir.join("scratch");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(
+            scratch.join("SkyAiEntry__.sky"),
+            "module SkyAiEntry__ exposing (main)\n\nimport Std.Ai.Pipeline as Pipeline\nimport Ai\n\nmain = Pipeline.commandLine Ai.pipeline\n",
+        )
+        .unwrap();
+        assert_eq!(discover_for_entry(&dir, &[], "Main").0, vec!["chat"]);
+        assert_eq!(
+            discover_for_entry(&dir, &[scratch], "SkyAiEntry__").0,
+            vec!["chat", "judge", "teacher"]
+        );
+        // Every module (the unscoped scan `sky doctor` used) still has all.
+        assert_eq!(discover(&dir), vec!["chat", "judge", "teacher"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

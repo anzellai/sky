@@ -671,7 +671,7 @@ func (e *aiEngine) post(ctx context.Context, timeout time.Duration, path, body s
 			go e.stop()
 		}
 	}()
-	url := fmt.Sprintf("http://127.0.0.1:%d/v1%s", port, path)
+	url := aiJoinPath(fmt.Sprintf("http://127.0.0.1:%d/v1", port), path)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte(body)))
 	if err != nil {
 		return "", aiFailf(aiEngineFailed, "bad engine request: %v", err)

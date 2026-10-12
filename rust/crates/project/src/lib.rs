@@ -10,6 +10,9 @@
 // partial application. A private copy of that scan in the test would be a
 // second definition of "the runtime's arity", and second definitions drift.
 pub mod abi_guard;
+/// The project's AI pipeline entry (`src/Ai.sky`) for the project-mode
+/// `sky ai` verbs.
+pub mod ai_entry;
 pub mod ai_slots;
 pub mod app_entry;
 mod build;

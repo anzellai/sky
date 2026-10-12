@@ -54,6 +54,7 @@ module Std.Ai.Registry exposing
     , AliasEvent
     , ReportLink
     , LineageReport
+    , DatasetVersion
     , open
     , openConfigured
     , store
@@ -65,7 +66,9 @@ module Std.Ai.Registry exposing
     , promote
     , promoteIf
     , promoteChecked
+    , promoteCompared
     , evidence
+    , evidenceAgainst
     , forcePromote
     , rollback
     , resolve
@@ -75,6 +78,12 @@ module Std.Ai.Registry exposing
     , history
     , lineage
     , trainedOn
+    , registerDataset
+    , datasetVersion
+    , datasetVersions
+    , datasetLabel
+    , fetchDataset
+    , datasetValue
     , block
     , fetch
     , label
@@ -104,6 +113,7 @@ import Std.Ai.Store as Store exposing (Store)
 import Std.Ai.Local as Local
 import Std.Ai.Endpoint as Endpoint
 import Std.Ai.Eval as Eval
+import Std.Ai.Dataset as Dataset
 import Std.Ai.Failure as Failure exposing (Failure(..))
 
 -- ── Types ───────────────────────────────────────────────────────────
@@ -213,6 +223,19 @@ type alias LineageReport =
     , events : List AliasEvent
     }
 
+-- | A registered dataset version: the frozen data (`Std.Ai.Dataset.freeze`)
+-- under a name and a number, with its manifest. `datasetLabel` is
+-- `<name>@<number>`, the reference a training run's lineage records.
+type alias DatasetVersion =
+    { name : String
+    , number : Int
+    , digest : String
+    , rows : Int
+    , manifest : Dataset.Manifest
+    , blocked : Maybe String
+    , createdAt : Int
+    }
+
 
 -- ── Opening ─────────────────────────────────────────────────────────
 -- The schema, in the format of `db/migrations/*.json`: dialect-neutral ops
@@ -245,6 +268,14 @@ migrations =
 {"name":"failed","type":"int"},{"name":"errors","type":"int"},{"name":"pass_rate","type":"text"},
 {"name":"verdict","type":"text"},{"name":"report","type":"text"},{"name":"created_at","type":"int"}]},
 {"kind":"addIndex","name":"_sky_ai_registry_reports_key","table":"_sky_ai_registry_reports","indexColumns":["name","number","digest"],"unique":true}
+]},
+{"id":"_sky_ai_registry_0002","ops":[
+{"kind":"createTable","table":"_sky_ai_registry_datasets","columns":[
+{"name":"name","type":"text"},{"name":"number","type":"int"},{"name":"digest","type":"text"},
+{"name":"rows","type":"int"},{"name":"manifest","type":"text"},{"name":"blocked","type":"text"},
+{"name":"created_at","type":"int"}]},
+{"kind":"addIndex","name":"_sky_ai_registry_datasets_number","table":"_sky_ai_registry_datasets","indexColumns":["name","number"],"unique":true},
+{"kind":"addIndex","name":"_sky_ai_registry_datasets_digest","table":"_sky_ai_registry_datasets","indexColumns":["name","digest"],"unique":true}
 ]}]"""
 
 
@@ -796,11 +827,116 @@ evidence reg v t =
                                            "no eval report is attached; run the suite with Eval.runAs (Registry.label version) and Registry.attachReport"))
 
 
--- | Promote on the evidence already attached (`evidence`). This is what
--- `sky ai promote` runs.
+-- | Promote on the evidence already attached (`evidence`), each report gated
+-- on its own. `promoteCompared` also compares it against the version the
+-- alias serves now.
 promoteChecked : Registry -> String -> Version -> Eval.Thresholds -> Task Error AliasEvent
 promoteChecked reg aliasName v t =
     evidence reg v t |> Task.andThen (\passed -> promote reg aliasName v passed)
+
+
+-- | The evidence for moving an alias to a version, compared against the
+-- version the alias serves now. For each report attached to the candidate,
+-- newest first, the newest report of the same suite attached to the alias's
+-- current version is the baseline: the two are compared case by case
+-- (`Eval.compare`) and gated with that suite's thresholds (the function gets
+-- the suite's name). The first report that passes gives the `Passed` and the
+-- version the comparison was made against. A suite the current version has
+-- no report for is gated on its own (`Eval.alone`), as is every suite when
+-- the alias does not exist yet. With no attached report it is
+-- `NotPromotable`; when none passes it is `GateFailed` with the newest
+-- report's reasons.
+evidenceAgainst : Registry -> String -> Version -> (String -> Eval.Thresholds) -> Task Error ( Eval.Passed, Maybe Version )
+evidenceAgainst (Registry r) aliasName v thresholdsFor =
+    Task.fromResult (validAlias aliasName)
+        |> Task.andThen (\_ -> readAlias r.db v.name aliasName)
+        |> Task.andThen
+               (\st ->
+                   case st of
+
+                       Just a ->
+                           version (Registry r) v.name a.number |> Task.map Just
+
+                       Nothing ->
+                           Task.succeed Nothing)
+        |> Task.andThen
+               (\current ->
+                   Task.map2
+                       (\candidates baselines ->
+                           ( current, candidates, baselines ))
+                       (storedReports (Registry r) v)
+                       (case current of
+
+                           Just c ->
+                               if c.number == v.number then
+                                   Task.succeed []
+
+                               else
+                                   storedReports (Registry r) c
+
+                           Nothing ->
+                               Task.succeed []))
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       ( current, candidates, baselines ) ->
+                           let
+                               verdicts =
+                                   List.map
+                                       (\report ->
+                                           Eval.gate
+                                               (thresholdsFor report.suite)
+                                               (comparedWith baselines report))
+                                       candidates
+                           in
+                               case List.filterMap Result.toMaybe verdicts of
+
+                                   passed :: _ ->
+                                       Task.succeed ( passed, current )
+
+                                   [] ->
+                                       case verdicts of
+
+                                           newest :: _ ->
+                                               Task.fromResult newest
+                                                   |> Task.map
+                                                          (\p -> ( p, current ))
+
+                                           [] ->
+                                               Task.fail
+                                                   (notPromotable
+                                                       (label v)
+                                                       "no eval report is attached; run the suite with Eval.runAs (Registry.label version) and Registry.attachReport"))
+
+
+-- The comparison for one candidate report: against the newest baseline
+-- report of the same suite, or alone.
+comparedWith : List Eval.Report -> Eval.Report -> Eval.Comparison
+comparedWith baselines report =
+    case List.filter (\b -> b.suite == report.suite) baselines of
+
+        b :: _ ->
+            Eval.compare b report
+
+        [] ->
+            Eval.alone report
+
+
+-- | Promote on the attached evidence compared against the version the alias
+-- serves now (`evidenceAgainst`), and only while the alias still points
+-- there (`promoteIf`): a regression against production cannot be promoted,
+-- and a promotion that raced this one makes it fail with `PromotionConflict`
+-- instead of overwriting it. This is what `sky ai promote` runs.
+promoteCompared : Registry -> String -> Version -> (String -> Eval.Thresholds) -> Task Error AliasEvent
+promoteCompared reg aliasName v thresholdsFor =
+    evidenceAgainst reg aliasName v thresholdsFor
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       ( passed, current ) ->
+                           promoteIf reg aliasName current v passed)
 
 
 -- | Point an alias at a version without eval evidence. The reason is required
@@ -1253,15 +1389,269 @@ lineage reg ref =
                        (allEvents reg v.name))
 
 
--- | Every version trained on a dataset, by the dataset's digest: the
--- versions to retrain (and `block`) when a record must be erased from it.
+-- | Every version trained on a dataset: the versions to retrain (and `block`)
+-- when a record must be erased from it. The dataset is named by its digest
+-- (64 hex digits) or by a registered version, `<name>@<number>`.
 trainedOn : Registry -> String -> Task Error (List Version)
-trainedOn (Registry r) datasetDigest =
+trainedOn (Registry r) ref =
+    (if String.contains "@" ref then
+        datasetDigestOf r.db ref
+
+    else
+        Task.succeed ref)
+        |> Task.andThen
+               (\digest ->
+                   Db.query
+                       r.db
+                       "SELECT * FROM _sky_ai_registry_versions WHERE dataset_digest = ? ORDER BY name, number"
+                       [ SqlString digest ]
+                       |> Task.map (List.map versionOf))
+
+
+-- The digest of a registered dataset version, by reference (no manifest
+-- is decoded).
+datasetDigestOf : Db -> String -> Task Error String
+datasetDigestOf db ref =
+    Task.fromResult (datasetRefParts ref)
+        |> Task.andThen
+               (\parts ->
+                   case parts of
+
+                       ( name, number ) ->
+                           Db.query
+                               db
+                               "SELECT digest FROM _sky_ai_registry_datasets WHERE name = ? AND number = ?"
+                               [ SqlString name, SqlInt number ]
+                               |> Task.andThen
+                                      (\rows ->
+                                          case List.head rows of
+
+                                              Just row ->
+                                                  Task.succeed
+                                                      (Db.getString "digest" row)
+
+                                              Nothing ->
+                                                  Task.fail (notRegistered ref)))
+
+
+-- `<name>@<number>` or `<name>@v<number>`.
+datasetRefParts : String -> Result Error ( String, Int )
+datasetRefParts ref =
+    case String.split "@" ref of
+
+        [name, which] ->
+            case String.toInt
+                     (if String.startsWith "v" which then
+                         String.dropLeft 1 which
+
+                     else
+                         which) of
+
+                Just number ->
+                    Ok ( name, number )
+
+                Nothing ->
+                    Err (badDatasetRef ref)
+
+        _ ->
+            Err (badDatasetRef ref)
+
+
+-- ── Datasets ────────────────────────────────────────────────────────
+-- | Register a frozen dataset version (`Std.Ai.Dataset.freeze`): its data
+-- file is stored by digest (the manifest's), and the version is recorded
+-- under the manifest's name as the next number, with the manifest. The data
+-- file's bytes must match the manifest's digest (`ChecksumMismatch`
+-- otherwise). Registering the same digest again returns the version already
+-- there, so freezing unchanged data twice does not add a version.
+--
+--     Dataset.freeze folder codec splits
+--         |> Task.andThen (\v -> Registry.registerDataset reg (Dataset.manifest v) (Dataset.blobPath v))
+registerDataset : Registry -> Dataset.Manifest -> String -> Task Error DatasetVersion
+registerDataset (Registry r) m path =
+    Task.fromResult (validName m.name)
+        |> Task.andThen (\_ -> Store.put r.store path)
+        |> Task.andThen
+               (\blob ->
+                   if blob.sha256 /= m.digest then
+                       Task.fail
+                           (Failure.toError
+                               (ChecksumMismatch
+                                   { expected = m.digest, actual = blob.sha256 }))
+
+                   else
+                       insertDataset (Registry r) m)
+
+
+insertDataset : Registry -> Dataset.Manifest -> Task Error DatasetVersion
+insertDataset (Registry r) m =
+    Db.withTransaction
+        r.db
+        (\tx ->
+            Db.query
+                tx
+                "SELECT * FROM _sky_ai_registry_datasets WHERE name = ? AND digest = ?"
+                [ SqlString m.name, SqlString m.digest ]
+                |> Task.andThen
+                       (\rows ->
+                           case List.head rows of
+
+                               Just row ->
+                                   Task.fromResult (datasetOf row)
+
+                               Nothing ->
+                                   Task.map2
+                                       (\nrows now -> ( nrows, now ))
+                                       (Db.query
+                                           tx
+                                           "SELECT COALESCE(MAX(number), 0) AS n FROM _sky_ai_registry_datasets WHERE name = ?"
+                                           [ SqlString m.name ])
+                                       (Time.unixMillis ())
+                                       |> Task.andThen
+                                              (\found ->
+                                                  case found of
+
+                                                      ( nrows, now ) ->
+                                                          let
+                                                              number =
+                                                                  1
+                                                                      + (List.head
+                                                                            nrows
+                                                                            |> Maybe.map
+                                                                                   (Db.getInt
+                                                                                       "n")
+                                                                            |> Maybe.withDefault
+                                                                                   0)
+                                                          in
+                                                              Db.exec
+                                                                  tx
+                                                                  ("INSERT INTO _sky_ai_registry_datasets "
+                                                                      ++ "(name, number, digest, rows, manifest, blocked, created_at) "
+                                                                      ++ "VALUES (?, ?, ?, ?, ?, ?, ?)")
+                                                                  [ SqlString
+                                                                        m.name
+                                                                  , SqlInt
+                                                                        number
+                                                                  , SqlString
+                                                                        m.digest
+                                                                  , SqlInt
+                                                                        m.rows
+                                                                  , SqlString
+                                                                        (Dataset.manifestJson
+                                                                            m)
+                                                                  , SqlString ""
+                                                                  , SqlInt now
+                                                                  ]
+                                                                  |> Task.map
+                                                                         (\_ ->
+                                                                             { name =
+                                                                                 m.name
+                                                                             , number =
+                                                                                 number
+                                                                             , digest =
+                                                                                 m.digest
+                                                                             , rows =
+                                                                                 m.rows
+                                                                             , manifest =
+                                                                                 m
+                                                                             , blocked =
+                                                                                 Nothing
+                                                                             , createdAt =
+                                                                                 now
+                                                                             }))))
+
+
+-- | A registered dataset version by reference: `<name>@<number>` or
+-- `<name>@v<number>` (`support@3`).
+datasetVersion : Registry -> String -> Task Error DatasetVersion
+datasetVersion (Registry r) ref =
+    Task.fromResult (datasetRefParts ref)
+        |> Task.andThen
+               (\parts ->
+                   case parts of
+
+                       ( name, number ) ->
+                           Db.query
+                               r.db
+                               "SELECT * FROM _sky_ai_registry_datasets WHERE name = ? AND number = ?"
+                               [ SqlString name, SqlInt number ]
+                               |> Task.andThen
+                                      (\rows ->
+                                          case List.head rows of
+
+                                              Just row ->
+                                                  Task.fromResult
+                                                      (datasetOf row)
+
+                                              Nothing ->
+                                                  Task.fail (notRegistered ref)))
+
+
+badDatasetRef : String -> Error
+badDatasetRef ref =
+    invalidSetting
+        "dataset"
+        (quote ref
+            ++ " is not a dataset reference; write <name>@<number>, for example support@3")
+
+
+-- | Every registered version of a dataset, newest first.
+datasetVersions : Registry -> String -> Task Error (List DatasetVersion)
+datasetVersions (Registry r) name =
     Db.query
         r.db
-        "SELECT * FROM _sky_ai_registry_versions WHERE dataset_digest = ? ORDER BY name, number"
-        [ SqlString datasetDigest ]
-        |> Task.map (List.map versionOf)
+        "SELECT * FROM _sky_ai_registry_datasets WHERE name = ? ORDER BY number DESC"
+        [ SqlString name ]
+        |> Task.map (List.filterMap (\row -> datasetOf row |> Result.toMaybe))
+
+
+-- | `<name>@<number>`: the reference a training lineage records.
+datasetLabel : DatasetVersion -> String
+datasetLabel d =
+    d.name ++ "@" ++ String.fromInt d.number
+
+
+-- | A local path holding the dataset version's JSONL, checked against its
+-- digest (a training job reads it).
+fetchDataset : Registry -> DatasetVersion -> Task Error String
+fetchDataset (Registry r) d =
+    Store.fetch r.store d.digest
+
+
+datasetOf : Dict String String -> Result Error DatasetVersion
+datasetOf row =
+    Dataset.manifestFromJson (Db.getString "manifest" row)
+        |> Result.map
+               (\m ->
+                   { name = Db.getString "name" row
+                   , number = Db.getInt "number" row
+                   , digest = Db.getString "digest" row
+                   , rows = Db.getInt "rows" row
+                   , manifest = m
+                   , blocked =
+                       if Db.getString "blocked" row == "" then
+                           Nothing
+
+                       else
+                           Just (Db.getString "blocked" row)
+                   , createdAt = Db.getInt "created_at" row
+                   })
+
+
+-- | A dataset version as JSON (`sky ai data freeze --format json`).
+datasetValue : DatasetVersion -> JsonE.Value
+datasetValue d =
+    JsonE.object
+        [ ( "name", JsonE.string d.name )
+        , ( "number", JsonE.int d.number )
+        , ( "label", JsonE.string (datasetLabel d) )
+        , ( "digest", JsonE.string d.digest )
+        , ( "rows", JsonE.int d.rows )
+        , ( "train", JsonE.int d.manifest.train )
+        , ( "eval", JsonE.int d.manifest.eval )
+        , ( "test", JsonE.int d.manifest.test )
+        , ( "createdAt", JsonE.int d.createdAt )
+        ]
 
 
 -- | Mark a version so it can never be promoted again (a forced promotion and a

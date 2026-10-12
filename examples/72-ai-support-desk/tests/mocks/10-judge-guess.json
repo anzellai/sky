@@ -1,0 +1,9 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/judge/",
+    "bodyContains": "guess"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"SCORE: 1 - a guess is not an answer\"}}], \"usage\": {\"prompt_tokens\": 180, \"completion_tokens\": 12, \"total_tokens\": 192}}"
+}
