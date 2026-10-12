@@ -530,6 +530,12 @@ var csrfBuiltinExemptions = []csrfBuiltinExemption{
 	// (HandleObservabilityIngest). No browser is involved; without this
 	// exemption every child push hits 403 and federation breaks.
 	{methods: []string{http.MethodPost}, path: "/_sky/observability/ingest"},
+	// The Std.Ai.Device fallback call (POST /_sky/ai/device/<slot>/call),
+	// sent by the Sky.Spa client with fetch. Like a Server.rpc route it
+	// carries its own guard in place of the double-submit token: same origin
+	// (sameOriginGuard), application/json only, 64 KiB, 30 a minute per
+	// session (ai_device_serve.go).
+	{methods: []string{http.MethodPost}, path: "/_sky/ai/device/", prefix: true},
 }
 
 // isBuiltinCsrfExempt reports whether method + path match one of the

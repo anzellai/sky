@@ -1162,11 +1162,20 @@ fn build_inner(
     // migrations: a failure warns.
     // Scoped to what the entry imports: a slot only the AI pipeline
     // (`src/Ai.sky`) names is not the app's (ai_slots::discover_for_entry).
-    let (slots, slot_problems) = crate::ai_slots::discover_for_entry(
+    let (mut slots, slot_problems) = crate::ai_slots::discover_for_entry(
         &opts.example_dir,
         extra_dirs,
         entry_module.unwrap_or("Main"),
     );
+    // The client half of a Sky.Spa split runs in the browser, where no slot
+    // is resolved (the Std.Ai kernels are server-side): it declares none, so
+    // a client that shares a module with a slot still builds for wasm.
+    if opts.wasm
+        || (is_spa_generated_project(&opts.example_dir)
+            && spa_role(&opts.example_dir).as_deref() != Some("backend"))
+    {
+        slots.clear();
+    }
     report.warnings.extend(slot_problems);
     if let Err(e) = crate::ai_slots::write_go(&out_dir, &slots) {
         report.warnings.push(format!("ai slots: {e}"));

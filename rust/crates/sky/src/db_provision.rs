@@ -315,6 +315,12 @@ fn fetch(url: &str, dest: &Path, quiet: bool) -> Result<(), String> {
     Err(curl_failure_message(url, status.code()))
 }
 
+/// Fetch `url` to `dest` with progress, for the other provisioners
+/// (`ai_device`).
+pub fn fetch_url(url: &str, dest: &Path) -> Result<(), String> {
+    fetch(url, dest, false)
+}
+
 /// curl's exit codes separate "the network is not there" from "the server said
 /// no", and those are different problems with different ways out.
 pub fn curl_failure_message(url: &str, code: Option<i32>) -> String {

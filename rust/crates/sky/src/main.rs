@@ -43,6 +43,7 @@ use project::{
 };
 use testrunner::run_test;
 
+mod ai_device;
 mod ai_doctor;
 mod ai_project;
 mod app_url;
@@ -4044,6 +4045,9 @@ fn spa_split_and_build(
         if !precompress {
             c.arg("--no-precompress");
         }
+        if let Some(v) = ai_web_engine_arg() {
+            c.args(["--ai-web-engine", v]);
+        }
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
@@ -4582,6 +4586,24 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
     let embed = args.iter().any(|a| a == "--embed");
+    // `--ai-web-engine webgpu|cpu|both|none`: the Std.Ai.Device browser
+    // engines a web client stages (stage_ai_device). Forwarded to the
+    // frontend leg of a split.
+    if let Some(i) = args.iter().position(|a| a == "--ai-web-engine") {
+        let v = args.get(i + 1).map(String::as_str).unwrap_or("");
+        let engine = if v == "none" {
+            None
+        } else {
+            match ai_device::WebEngine::parse(v) {
+                Ok(e) => Some(e),
+                Err(msg) => {
+                    eprintln!("sky build: {msg} (or none)");
+                    return ExitCode::FAILURE;
+                }
+            }
+        };
+        let _ = AI_WEB_ENGINE.set(engine);
+    }
     // Sky.Spa client build: `--wasm` compiles the emitted Go for the browser
     // (GOOS=js GOARCH=wasm) + drops wasm_exec.js; `--target <t>` bundles that
     // client for a delivery surface (web / desktop / ios / android). See
@@ -5226,6 +5248,14 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
             1,
         );
     }
+    let ai_meta = stage_ai_device(dist)?;
+    if !ai_meta.is_empty() {
+        index = index.replacen(
+            "<meta charset=\"utf-8\" />",
+            &format!("<meta charset=\"utf-8\" />{ai_meta}"),
+            1,
+        );
+    }
     std::fs::write(dist.join("index.html"), index).map_err(|e| format!("write index.html: {e}"))?;
     t_stage.end();
 
@@ -5240,6 +5270,14 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
         precompress_web_asset(&dist.join(&wasm_name), cache.as_deref());
         precompress_web_asset(&dist.join("wasm_exec.js"), cache.as_deref());
         precompress_web_asset(&dist.join(&boot_name), cache.as_deref());
+        for e in std::fs::read_dir(dist).into_iter().flatten().flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("sky-ai-")
+                && (n.ends_with(".wasm") || n.ends_with(".mjs") || n.ends_with(".js"))
+            {
+                precompress_web_asset(&e.path(), cache.as_deref());
+            }
+        }
     }
     Ok(())
 }
@@ -9068,6 +9106,104 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
 /// The Go runtime sources the Sky.Spa boot loader is read from, at compile time.
 const ISLAND_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/island_client.go");
 const SPA_BOOT_GO: &str = include_str!("../../../../runtime-go/rt/spa_boot.go");
+const AI_DEVICE_WORKER_GO: &str = include_str!("../../../../runtime-go/rt/ai_device_worker.go");
+
+/// The Std.Ai.Device browser worker, `AiDeviceWorkerJS` in
+/// `runtime-go/rt/ai_device_worker.go` byte for byte, staged as
+/// `sky-ai-worker.<sha256[:12]>.js` (the name the Go client computes with
+/// `assetHash`; `ai_device_worker_matches_the_runtime` checks the extraction).
+fn ai_device_worker_js() -> &'static str {
+    go_raw_const(AI_DEVICE_WORKER_GO, "AiDeviceWorkerJS")
+        .expect("runtime-go/rt/ai_device_worker.go defines AiDeviceWorkerJS as a raw string")
+}
+
+fn ai_device_worker_name() -> String {
+    format!(
+        "sky-ai-worker.{}.js",
+        &db_provision::sha256_hex(ai_device_worker_js().as_bytes())[..12]
+    )
+}
+
+/// `sky build --ai-web-engine webgpu|cpu|both|none`, set once by the CLI.
+/// Unset: a client that imports `Std.Ai.Device` gets both engines when they
+/// are installed (`sky ai provision --device web`), and a note otherwise.
+static AI_WEB_ENGINE: std::sync::OnceLock<Option<ai_device::WebEngine>> =
+    std::sync::OnceLock::new();
+
+/// The `--ai-web-engine` value to forward to a child build, when one was given.
+fn ai_web_engine_arg() -> Option<&'static str> {
+    AI_WEB_ENGINE.get().map(|e| match e {
+        None => "none",
+        Some(ai_device::WebEngine::WebGpu) => "webgpu",
+        Some(ai_device::WebEngine::Cpu) => "cpu",
+        Some(ai_device::WebEngine::Both) => "both",
+    })
+}
+
+/// Whether a project's sources import `Std.Ai.Device`.
+fn project_uses_ai_device(project: &Path) -> bool {
+    fn walk(d: &Path) -> bool {
+        let Ok(rd) = std::fs::read_dir(d) else {
+            return false;
+        };
+        rd.flatten().any(|e| {
+            let p = e.path();
+            if p.is_dir() {
+                return !e.file_name().to_string_lossy().starts_with('.') && walk(&p);
+            }
+            p.extension().is_some_and(|x| x == "sky")
+                && std::fs::read_to_string(&p)
+                    .map(|s| {
+                        s.lines()
+                            .any(|l| l.trim_start().starts_with("import Std.Ai.Device"))
+                    })
+                    .unwrap_or(false)
+        })
+    }
+    walk(&project.join("src"))
+}
+
+/// Stage the Std.Ai.Device worker and browser engines into a frontend dist
+/// and return the `<meta>` lines the page carries, or "" for a client that
+/// does not use device slots.
+fn stage_ai_device(dist: &Path) -> Result<String, String> {
+    for e in std::fs::read_dir(dist).into_iter().flatten().flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.starts_with("sky-ai-") {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    let uses = dist.parent().is_some_and(project_uses_ai_device);
+    let engine = match AI_WEB_ENGINE.get().copied().flatten() {
+        Some(e) => Some(e),
+        None if AI_WEB_ENGINE.get().is_some() => None, // --ai-web-engine none
+        None if uses && ai_device::installed("web") => Some(ai_device::WebEngine::Both),
+        None => {
+            if uses {
+                eprintln!(
+                    "note: Std.Ai.Device: no browser engine is staged, so device slots answer from the \
+                     server in a browser; {}",
+                    ai_device::not_provisioned("web")
+                );
+            }
+            None
+        }
+    };
+    if !uses && engine.is_none() {
+        return Ok(String::new());
+    }
+    let worker = ai_device_worker_name();
+    std::fs::write(dist.join(&worker), ai_device_worker_js())
+        .map_err(|e| format!("write {worker}: {e}"))?;
+    let Some(engine) = engine else {
+        return Ok(String::new());
+    };
+    let meta = ai_device::stage_web_engines(dist, engine)?;
+    Ok(format!(
+        "\n    <meta name=\"sky-ai-engine\" content=\"{}\" />",
+        meta.replace('"', "&quot;")
+    ))
+}
 const SCENE_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/scene_client.go");
 const TERMINAL_WIDGET_GO: &str = include_str!("../../../../runtime-go/rt/island_terminal.go");
 
@@ -11550,6 +11686,8 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
 const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
   provision [--variant cpu|metal] [--dev-model] [--model <ref>]
                      install the pinned llama-server for this host (and models)
+  provision --device web|ios|android|all [--from <dir|archive>]
+                     install the Std.Ai.Device engines a build stages (llama.cpp b11200)
   pull <org>/<repo> <file>
                      download a GGUF file and print its pinned Local.huggingFace value
   ps [--all]         list the engines running on this machine
@@ -11633,6 +11771,11 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         .filter(|a| *a != "--format" && *a != "json")
         .collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // The device engines are installed by the compiler itself: a build reads
+    // them (ai_device.rs), no Sky program does.
+    if positional.first() == Some(&"provision") && positional.contains(&"--device") {
+        return ai_device::cmd_provision_device(&args);
+    }
     let mode = match positional.as_slice() {
         ["provision", ..] | ["ps", ..] => Some(AiMode::Bundled),
         ["pull", repo, file] if repo.contains('/') && !file.is_empty() => Some(AiMode::Bundled),
@@ -15292,6 +15435,11 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
             // `--upload <destination>` / `--ipa <file>` (sky package): consume
             // the value. cmd_package reads both from `args`.
             "--upload" | "--ipa" => {
+                it.next();
+            }
+            // `--ai-web-engine <engine>` / `--ai-embed <slot>` (sky build): the
+            // Std.Ai.Device build options; cmd_build reads them from `args`.
+            "--ai-web-engine" | "--ai-embed" => {
                 it.next();
             }
             s if s.starts_with('-') => { /* ignore unknown flags for forward-compat */ }

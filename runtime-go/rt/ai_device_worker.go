@@ -107,12 +107,28 @@ async function digestHex(buf) {
   return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// The device store: the origin-private file system. A browser without one,
+// or one that refuses it (a private window), stores nothing: StorageDenied.
 async function storeDir() {
-  if (!navigator.storage || !navigator.storage.getDirectory) {
-    throw fail('StorageDenied', 'this browser has no origin-private file system', [['needBytes', '0'], ['availableBytes', '0']]);
+  const denied = (why) => fail('StorageDenied', 'this browser keeps no device storage: ' + why, [['needBytes', '0'], ['availableBytes', '0']]);
+  if (!navigator.storage || !navigator.storage.getDirectory) throw denied('no origin-private file system');
+  try {
+    const root = await navigator.storage.getDirectory();
+    return await root.getDirectoryHandle('sky-ai', { create: true });
+  } catch (e) {
+    throw denied(String(e && e.message || e));
   }
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle('sky-ai', { create: true });
+}
+// Whether the store accepts a write (a private window may list the store and
+// refuse every write).
+async function storeWritable() {
+  try {
+    const dir = await storeDir();
+    const fh = await dir.getFileHandle('.probe', { create: true });
+    await writeAt(fh, 0, new Uint8Array([1]));
+    await dir.removeEntry('.probe');
+    return true;
+  } catch (e) { return false; }
 }
 async function exists(dir, name) {
   try { await dir.getFileHandle(name); return true; } catch (e) { return false; }
@@ -158,6 +174,7 @@ async function caps(engines) {
     const est = await navigator.storage.estimate();
     out.storageAvailableBytes = Math.max(0, Math.floor((est.quota || 0) - (est.usage || 0)));
   } catch (e) { out.storageAvailableBytes = 0; }
+  if (!(await storeWritable())) out.storageAvailableBytes = 0;
   const c = navigator.connection;
   out.metered = !!(c && (c.saveData || c.type === 'cellular'));
   out.ready = await readyList();
