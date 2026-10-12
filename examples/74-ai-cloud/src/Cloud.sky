@@ -1,0 +1,96 @@
+module Cloud exposing (World, openIn, freeze, prices, trainJob)
+
+{-| The cloud half of the example: the training job that runs on Vertex AI.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Std.Db as Db exposing (Db)
+import Std.Money as Money exposing (Money)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Registry as Registry
+import Std.Ai.Store as Store exposing (Store)
+import Std.Ai.Train as Train
+
+type alias World =
+    { db : Db
+    , reg : Registry.Registry
+    , version : Dataset.Version Dataset.Chat
+    , dir : String
+    }
+
+
+freeze : String -> Task Error (Dataset.Version Dataset.Chat)
+freeze dir =
+    Dataset.fromJsonl Dataset.chatCodec "data/support.jsonl"
+        |> Dataset.split { train = 80, eval = 20, test = 0, seed = 7 } question
+        |> Dataset.freeze
+               (Dataset.folder (dir ++ "/datasets") "support")
+               Dataset.chatCodec
+
+
+question : Dataset.Chat -> String
+question row =
+    row.messages |> List.filter (\m -> m.role == "user") |> List.map .content
+        |> String.join "\n"
+
+
+openIn : String -> Task Error World
+openIn dir =
+    Db.open "sqlite" (dir ++ "/app.db")
+        |> Task.andThen
+               (\db ->
+                   Registry.open db (Store.local (dir ++ "/registry"))
+                       |> Task.andThen
+                              (\reg ->
+                                  freeze dir
+                                      |> Task.map
+                                             (\v ->
+                                                 { db = db
+                                                 , reg = reg
+                                                 , version = v
+                                                 , dir = dir
+                                                 })))
+
+
+prices : Train.MachinePriceBook
+prices =
+    Train.machinePrices
+        Money.USD
+        "2026-10-12"
+        [ { machine = "g2-standard-4"
+          , region = "us-central1"
+          , perHour = "1.00"
+          }
+        , { machine = "n2-standard-4"
+          , region = "us-central1"
+          , perHour = "0.30"
+          }
+        ]
+
+
+trainJob : World -> Train.Job
+trainJob w =
+    Train.lora Train.devBase w.version |> Train.withName "support"
+        |> Train.withRank 8
+        |> Train.withLayers 8
+        |> Train.withMaxSteps 30
+        |> Train.withBatch { perDevice = 4, accumulate = 1 }
+        |> Train.withSequenceLength 512
+        |> Train.withSeed 7
+        |> Train.withCheckpointEvery 10
+        |> Train.withBackend Train.Vertex
+        |> Train.withCloud
+               { project = ""
+               , region = "us-central1"
+               , machine = "g2-standard-4"
+               , staging = ""
+               }
+        |> Train.withBudget (Money.fromMajor Money.USD 3)
+        |> Train.withMachinePrices prices
+        |> Train.withWorkDir (w.dir ++ "/runs")
+        |> Train.withRegistry w.reg

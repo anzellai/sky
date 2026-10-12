@@ -1,0 +1,1452 @@
+-- | Std.Ai.Cloud.Google — the Google Cloud calls the AI lifecycle makes, in
+-- Sky over `Sky.Core.Http`, with no SDK.
+--
+-- ```elm
+-- import Std.Ai.Cloud.Google as Google
+--
+-- jobs : Task Error (List Google.CustomJob)
+-- jobs =
+--     Google.listCustomJobs "my-project" "us-central1" "labels.sky-managed=true"
+-- ```
+--
+-- `Std.Ai.Train`'s `Vertex` backend, `Std.Ai.Serve`'s Cloud Run target,
+-- `Std.Ai.Store`'s GCS transfers and `Std.Ai.Endpoint.withGoogleAuth` use this
+-- module. A program calls it directly only to inspect or clean up what those
+-- created (`sky ai cloud ls` and `sky ai teardown` do).
+--
+-- **Credentials come from the platform**, the way Google's own libraries find
+-- them, and never from a Sky variable:
+--
+--   * the service-account key file named by `GOOGLE_APPLICATION_CREDENTIALS`;
+--   * else the metadata server of GCE, GKE, Cloud Run or Vertex AI
+--     (`GCE_METADATA_HOST` moves it).
+--
+-- A user's own login (an `authorized_user` file from `gcloud auth
+-- application-default login`) is `NotConfigured`: a deployed program runs as a
+-- service account, so the development machine does too.
+--
+-- Tokens are `Secret` values. They are sent only in an `Authorization`
+-- header and never reach a log line or an error message.
+--
+-- **Errors are typed.** A refusal is `RemoteRejected { status }` with Google's
+-- own message in the error text (it names the API and the permission, never a
+-- token). HTTP 429 and 503 are retried with backoff and then `Overloaded`. A
+-- quota error is `QuotaExceeded` and a stockout `CapacityUnavailable`.
+--
+-- **An emulator.** `SKY_AI_GCP_ENDPOINT` (under the project's prefix) sends
+-- every call to one server, under fixed path prefixes: `/aiplatform`, `/run`,
+-- `/storage`, `/artifactregistry`, `/cloudquotas`, `/logging`, `/oauth2` and
+-- `/metadata`. Under `sky test`, `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid`
+-- is answered by the runtime's built-in emulator, so a program's tests run a
+-- whole Vertex training run or a Cloud Run deployment offline.
+module Std.Ai.Cloud.Google exposing
+    ( cloudPlatform
+    , storageReadWrite
+    , accessToken
+    , idToken
+    , endpointOverride
+    , serviceBase
+    , Response
+    , call
+    , ok
+    , refused
+    , accelerator
+    , validLabel
+    , JobSpec
+    , customJobJson
+    , CustomJob
+    , customJobDecoder
+    , createCustomJob
+    , getCustomJob
+    , listCustomJobs
+    , cancelCustomJob
+    , deleteCustomJob
+    , jobFailure
+    , Service
+    , createService
+    , getService
+    , patchService
+    , deleteService
+    , listServices
+    , Operation
+    , getOperation
+    , grantInvoker
+    , bucketLocation
+    , artifactExists
+    , QuotaReading
+    , quota
+    , logTail
+    )
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Secret as Secret exposing (Secret)
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.File as File
+import Sky.Core.Http as Http
+import Sky.Core.Jwt as Jwt
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+
+-- ── Scopes ──────────────────────────────────────────────────────────
+-- | The scope every Vertex AI, Cloud Run and Artifact Registry call needs.
+cloudPlatform : String
+cloudPlatform =
+    "https://www.googleapis.com/auth/cloud-platform"
+
+
+-- | The scope a GCS read and write needs (what `Std.Ai.Store` asks for).
+storageReadWrite : String
+storageReadWrite =
+    "https://www.googleapis.com/auth/devstorage.read_write"
+
+
+-- ── The emulator seam ───────────────────────────────────────────────
+endpointRaw : () -> Task Error String
+endpointRaw =
+    Ffi.kernel "Ai_gcpEndpoint"
+
+
+-- | The emulator's base URL from `SKY_AI_GCP_ENDPOINT` (under the project's
+-- prefix), or `""` for Google itself.
+endpointOverride : () -> Task Error String
+endpointOverride _ =
+    endpointRaw ()
+
+
+-- | The base URL of one Google service: `aiplatform` (for a region),
+-- `run`, `storage`, `artifactregistry`, `cloudquotas` or `logging`. With
+-- the emulator it is `<endpoint>/<service>`.
+serviceBase : String -> String -> Task Error String
+serviceBase service region =
+    endpointRaw ()
+        |> Task.map
+               (\ep ->
+                   if ep /= "" then
+                       trimTrailingSlash ep ++ "/" ++ service
+
+                   else if service == "aiplatform" then
+                       "https://" ++ region ++ "-aiplatform.googleapis.com"
+
+                   else
+                       "https://" ++ service ++ ".googleapis.com")
+
+-- ── Credentials ─────────────────────────────────────────────────────
+type alias KeyFile =
+    { kind : String
+    , clientEmail : String
+    , privateKey : String
+    , tokenUri : String
+    }
+
+
+keyFileDecoder : JsonD.Decoder KeyFile
+keyFileDecoder =
+    JsonD.map4
+        (\t e k u -> { kind = t, clientEmail = e, privateKey = k, tokenUri = u })
+        (JsonD.oneOf [ JsonD.field "type" JsonD.string, JsonD.succeed "" ])
+        (JsonD.oneOf
+            [ JsonD.field "client_email" JsonD.string, JsonD.succeed "" ])
+        (JsonD.oneOf [ JsonD.field "private_key" JsonD.string, JsonD.succeed "" ])
+        (JsonD.oneOf
+            [ JsonD.field "token_uri" JsonD.string
+            , JsonD.succeed "https://oauth2.googleapis.com/token"
+            ])
+
+
+notConfigured : Error
+notConfigured =
+    Failure.toError
+        (NotConfigured
+            { setting =
+                "GOOGLE_APPLICATION_CREDENTIALS (a service-account key file), or the metadata server of GCE, GKE, Cloud Run or Vertex AI"
+            })
+
+
+-- The key file named by GOOGLE_APPLICATION_CREDENTIALS, if any. A user's
+-- own login (`authorized_user`) is NotConfigured: Sky signs as a service
+-- account only.
+keyFile : () -> Task Error (Maybe KeyFile)
+keyFile _ =
+    let
+        path = System.getenvOr "GOOGLE_APPLICATION_CREDENTIALS" ""
+    in
+        if path == "" then
+            Task.succeed Nothing
+
+        else
+            File.readFileLimit path 65536
+                |> Task.andThen
+                       (\text ->
+                           case JsonD.decodeString keyFileDecoder text of
+
+                               Ok k ->
+                                   if k.kind == "service_account" && k.clientEmail
+                                       /= ""
+                                       && k.privateKey
+                                       /= "" then
+                                       Task.succeed (Just k)
+
+                                   else
+                                       Task.fail notConfigured
+
+                               Err _ ->
+                                   Task.fail notConfigured)
+
+
+-- The token endpoint: the key's own, or the emulator's.
+tokenUri : KeyFile -> Task Error String
+tokenUri k =
+    endpointRaw ()
+        |> Task.map
+               (\ep ->
+                   if ep /= "" then
+                       trimTrailingSlash ep ++ "/oauth2/token"
+
+                   else
+                       k.tokenUri)
+
+
+metadataBase : () -> Task Error String
+metadataBase _ =
+    endpointRaw ()
+        |> Task.map
+               (\ep ->
+                   if ep /= "" then
+                       trimTrailingSlash ep ++ "/metadata"
+
+                   else
+                       "http://"
+                           ++ System.getenvOr
+                                  "GCE_METADATA_HOST"
+                                  "metadata.google.internal")
+
+
+-- A signed JWT bearer assertion for the key, with one extra claim: `scope`
+-- for an access token, `target_audience` for an ID token.
+assertion : KeyFile -> String -> String -> String -> Task Error String
+assertion k uri claim value =
+    Time.unixMillis ()
+        |> Task.andThen
+               (\ms ->
+                   Task.fromResult
+                       (Jwt.encode
+                           (Jwt.rs256 (Secret.fromString k.privateKey))
+                           (Jwt.claims |> Jwt.issuer k.clientEmail
+                               |> Jwt.subject k.clientEmail
+                               |> Jwt.audience uri
+                               |> Jwt.issuedAt (ms // 1000)
+                               |> Jwt.expiresAt (ms // 1000 + 3600)
+                               |> Jwt.withClaim claim (JsonE.string value))))
+
+
+exchange : String -> String -> String -> Task Error Secret
+exchange uri jwt field =
+    Http.defaultRequest uri |> Http.withMethod "POST"
+        |> Http.withHeader "Content-Type" "application/x-www-form-urlencoded"
+        |> Http.withBody
+               ("grant_type="
+                   ++ Encoding.urlEncode
+                          "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                   ++ "&assertion="
+                   ++ jwt)
+        |> Http.withTimeout 15000
+        |> Http.request
+        |> Task.andThen (tokenField "the Google token endpoint" field)
+
+
+tokenField : String -> String -> Http.HttpResponse -> Task Error Secret
+tokenField source field resp =
+    if resp.status == 200 then
+        case JsonD.decodeString (JsonD.field field JsonD.string) resp.body of
+
+            Ok t ->
+                Task.succeed (Secret.fromString t)
+
+            Err _ ->
+                Task.fail (Error.unexpected (source ++ " gave no " ++ field))
+
+    else
+        Task.fail
+            (Failure.toErrorWith
+                (source ++ ": " ++ googleMessage resp.body)
+                (RemoteRejected { status = resp.status }))
+
+
+-- | An access token for these scopes: from the service-account key file, else
+-- the metadata server. A missing credential is `NotConfigured`.
+accessToken : List String -> Task Error Secret
+accessToken scopes =
+    keyFile ()
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Just k ->
+                           tokenUri k
+                               |> Task.andThen
+                                      (\uri ->
+                                          assertion
+                                              k
+                                              uri
+                                              "scope"
+                                              (String.join " " scopes)
+                                              |> Task.andThen
+                                                     (\jwt ->
+                                                         exchange
+                                                             uri
+                                                             jwt
+                                                             "access_token"))
+
+                       Nothing ->
+                           metadataBase ()
+                               |> Task.andThen
+                                      (\base ->
+                                          Http.defaultRequest
+                                              (base
+                                                  ++ "/computeMetadata/v1/instance/service-accounts/default/token?scopes="
+                                                  ++ Encoding.urlEncode
+                                                         (String.join "," scopes))
+                                              |> Http.withHeader
+                                                     "Metadata-Flavor"
+                                                     "Google"
+                                              |> Http.withTimeout 3000
+                                              |> Http.request
+                                              |> Task.onError
+                                                     (\_ ->
+                                                         Task.fail notConfigured)
+                                              |> Task.andThen
+                                                     (tokenField
+                                                         "the metadata server"
+                                                         "access_token")))
+
+
+-- | An ID token for an audience (a Cloud Run service's URL): a signed
+-- assertion with a `target_audience` claim for a key file, the metadata
+-- server's identity endpoint otherwise. Cloud Run checks it before a request
+-- reaches the service (`X-Serverless-Authorization`).
+idToken : String -> Task Error Secret
+idToken audience =
+    keyFile ()
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Just k ->
+                           tokenUri k
+                               |> Task.andThen
+                                      (\uri ->
+                                          assertion
+                                              k
+                                              uri
+                                              "target_audience"
+                                              audience
+                                              |> Task.andThen
+                                                     (\jwt ->
+                                                         exchange
+                                                             uri
+                                                             jwt
+                                                             "id_token"))
+
+                       Nothing ->
+                           metadataBase ()
+                               |> Task.andThen
+                                      (\base ->
+                                          Http.defaultRequest
+                                              (base
+                                                  ++ "/computeMetadata/v1/instance/service-accounts/default/identity?format=full&audience="
+                                                  ++ Encoding.urlEncode audience)
+                                              |> Http.withHeader
+                                                     "Metadata-Flavor"
+                                                     "Google"
+                                              |> Http.withTimeout 3000
+                                              |> Http.request
+                                              |> Task.onError
+                                                     (\_ ->
+                                                         Task.fail notConfigured)
+                                              |> Task.andThen
+                                                     (\resp ->
+                                                         if resp.status == 200 then
+                                                             Task.succeed
+                                                                 (Secret.fromString
+                                                                     (String.trim
+                                                                         resp.body))
+
+                                                         else
+                                                             Task.fail
+                                                                 (Failure.toError
+                                                                     (RemoteRejected
+                                                                         { status =
+                                                                             resp.status
+                                                                         })))))
+
+-- ── One authorised call ─────────────────────────────────────────────
+-- | A Google API's answer: its status and its body.
+type alias Response =
+    { status : Int
+    , body : String
+    }
+
+
+-- | One call to a Google API with a `cloud-platform` token: `call method url
+-- body` (`""` for no body). HTTP 429 and 503 are retried up to four times
+-- with backoff and then fail `Overloaded`. Every other status is returned,
+-- so a caller decides what a 404 or a 409 means; `ok` turns a non-2xx
+-- answer into a typed failure.
+call : String -> String -> String -> Task Error Response
+call method url body =
+    accessToken [ cloudPlatform ]
+        |> Task.andThen (\token -> attempt token method url body 0)
+
+
+attempt : Secret -> String -> String -> String -> Int -> Task Error Response
+attempt token method url body n =
+    let
+        base =
+            Http.defaultRequest url |> Http.withMethod method
+                |> Http.withBearer token
+                |> Http.withTimeout 60000
+        req =
+            if body == "" then
+                base
+
+            else
+                base |> Http.withHeader "Content-Type" "application/json"
+                    |> Http.withBody body
+    in
+        Http.request req
+            |> Task.andThen
+                   (\resp ->
+                       if (resp.status == 429 || resp.status == 503) && n < 4 then
+                           Time.sleep (500 * (n + 1) * (n + 1))
+                               |> Task.andThen
+                                      (\_ ->
+                                          attempt token method url body (n + 1))
+
+                       else if resp.status == 429 || resp.status == 503 then
+                           Task.fail
+                               (Failure.toErrorWith
+                                   (googleMessage resp.body)
+                                   (Overloaded
+                                       { retryAfterMs = Nothing
+                                       , status = Just resp.status
+                                       }))
+
+                       else
+                           Task.succeed
+                               { status = resp.status, body = resp.body })
+
+
+-- | A 2xx answer's body; any other answer as its typed failure: a quota
+-- error is `QuotaExceeded` for `resource` in `region`, a stockout
+-- `CapacityUnavailable`, anything else `RemoteRejected` with Google's message.
+ok : String -> String -> Response -> Task Error String
+ok resource region resp =
+    if resp.status >= 200 && resp.status < 300 then
+        Task.succeed resp.body
+
+    else
+        Task.fail (refused resource region resp)
+
+
+-- | The typed failure for a non-2xx answer (see `ok`).
+refused : String -> String -> Response -> Error
+refused resource region resp =
+    let
+        message = googleMessage resp.body
+        lower = String.toLower message
+    in
+        if String.contains "stockout" lower
+            || String.contains "resources are insufficient" lower
+            || String.contains "zone_resource_pool_exhausted" lower then
+            Failure.toErrorWith
+                message
+                (CapacityUnavailable { resource = resource, region = region })
+
+        else if String.contains "quota" lower
+            && (resp.status == 429 || resp.status == 400 || resp.status == 403) then
+            Failure.toErrorWith
+                message
+                (QuotaExceeded
+                    { resource = resource, region = region, limit = 0 })
+
+        else
+            Failure.toErrorWith
+                message
+                (RemoteRejected { status = resp.status })
+
+
+-- Google's error message (`error.message`), else the start of the body.
+googleMessage : String -> String
+googleMessage body =
+    case JsonD.decodeString (JsonD.at [ "error", "message" ] JsonD.string) body of
+
+        Ok m ->
+            m
+
+        Err _ ->
+            case JsonD.decodeString
+                     (JsonD.field "error_description" JsonD.string)
+                     body of
+
+                Ok m ->
+                    m
+
+                Err _ ->
+                    String.left 300 body
+
+
+-- ── Machines and labels ─────────────────────────────────────────────
+-- | The accelerator a Vertex machine type carries: `( "NVIDIA_L4", n )` for
+-- the G2 family, `( "", 0 )` for a CPU machine (`n1`, `n2`, `e2`, `c3`).
+-- Each G2 machine has its GPUs built in, so the count follows the type.
+accelerator : String -> ( String, Int )
+accelerator machine =
+    case machine of
+
+        "g2-standard-4" ->
+            ( "NVIDIA_L4", 1 )
+
+        "g2-standard-8" ->
+            ( "NVIDIA_L4", 1 )
+
+        "g2-standard-12" ->
+            ( "NVIDIA_L4", 1 )
+
+        "g2-standard-16" ->
+            ( "NVIDIA_L4", 1 )
+
+        "g2-standard-32" ->
+            ( "NVIDIA_L4", 1 )
+
+        "g2-standard-24" ->
+            ( "NVIDIA_L4", 2 )
+
+        "g2-standard-48" ->
+            ( "NVIDIA_L4", 4 )
+
+        "g2-standard-96" ->
+            ( "NVIDIA_L4", 8 )
+
+        _ ->
+            ( "", 0 )
+
+
+-- | A label key or value Google accepts: 1 to 63 characters of lower-case
+-- letters, digits, `-` and `_`.
+validLabel : String -> Bool
+validLabel s =
+    String.length s >= 1 && String.length s <= 63
+        && List.all
+               (\c ->
+                   (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
+                       || c
+                       == '_')
+               (String.toList s)
+
+-- ── Vertex AI custom jobs ───────────────────────────────────────────
+-- | A custom training job: one worker on `machine` (with the accelerator its
+-- type carries), the container `image` (pinned by digest) with its `args`,
+-- the service account it runs as (`""` for the project's default), the hard
+-- `timeoutSeconds` Vertex stops it at, Spot scheduling, and its labels.
+type alias JobSpec =
+    { displayName : String
+    , machine : String
+    , image : String
+    , args : List String
+    , env : List ( String, String )
+    , serviceAccount : String
+    , timeoutSeconds : Int
+    , spot : Bool
+    , bootDiskGb : Int
+    , labels : List ( String, String )
+    }
+
+
+-- | The `CustomJob` resource for a spec (Vertex AI v1). Pure: the same spec
+-- is the same JSON, keys in a fixed order.
+customJobJson : JobSpec -> String
+customJobJson spec =
+    let
+        ( acc, count ) = accelerator spec.machine
+        machineSpec =
+            if count > 0 then
+                [ ( "machineType", JsonE.string spec.machine )
+                , ( "acceleratorType", JsonE.string acc )
+                , ( "acceleratorCount", JsonE.int count )
+                ]
+
+            else
+                [ ( "machineType", JsonE.string spec.machine ) ]
+        scheduling =
+            [ ( "timeout"
+              , JsonE.string (String.fromInt spec.timeoutSeconds ++ "s")
+              )
+            , ( "restartJobOnWorkerRestart", JsonE.bool False )
+            ]
+                ++ (if spec.spot then
+                       [ ( "strategy", JsonE.string "SPOT" ) ]
+
+                   else
+                       [])
+        account =
+            if spec.serviceAccount == "" then
+                []
+
+            else
+                [ ( "serviceAccount", JsonE.string spec.serviceAccount ) ]
+    in
+        JsonE.encode
+            0
+            (JsonE.object
+                [ ( "displayName", JsonE.string spec.displayName )
+                , ( "labels"
+                  , JsonE.object
+                        (List.map
+                            (\( k, v ) -> ( k, JsonE.string v ))
+                            spec.labels)
+                  )
+                , ( "jobSpec"
+                  , JsonE.object
+                        ([ ( "workerPoolSpecs"
+                          , JsonE.list
+                                identity
+                                [ JsonE.object
+                                      [ ( "machineSpec"
+                                        , JsonE.object machineSpec
+                                        )
+                                      , ( "replicaCount", JsonE.string "1" )
+                                      , ( "diskSpec"
+                                        , JsonE.object
+                                              [ ( "bootDiskType"
+                                                , JsonE.string "pd-ssd"
+                                                )
+                                              , ( "bootDiskSizeGb"
+                                                , JsonE.int spec.bootDiskGb
+                                                )
+                                              ]
+                                        )
+                                      , ( "containerSpec"
+                                        , JsonE.object
+                                              [ ( "imageUri"
+                                                , JsonE.string spec.image
+                                                )
+                                              , ( "args"
+                                                , JsonE.list
+                                                      JsonE.string
+                                                      spec.args
+                                                )
+                                              , ( "env"
+                                                , JsonE.list
+                                                      (\( k, v ) ->
+                                                          JsonE.object
+                                                              [ ( "name"
+                                                                , JsonE.string k
+                                                                )
+                                                              , ( "value"
+                                                                , JsonE.string v
+                                                                )
+                                                              ])
+                                                      spec.env
+                                                )
+                                              ]
+                                        )
+                                      ]
+                                ]
+                          )
+                        ]
+                            ++ account
+                            ++ [ ( "scheduling", JsonE.object scheduling ) ])
+                  )
+                ])
+
+-- | A custom job as Vertex reports it. Times are Unix milliseconds, 0 when
+-- not reached yet. `errorCode` and `errorMessage` are set on failure.
+type alias CustomJob =
+    { name : String
+    , displayName : String
+    , state : String
+    , createMs : Int
+    , startMs : Int
+    , endMs : Int
+    , labels : List ( String, String )
+    , errorCode : Int
+    , errorMessage : String
+    }
+
+
+timeField : String -> JsonD.Decoder Int
+timeField key =
+    JsonD.oneOf
+        [ JsonD.field key JsonD.string
+              |> JsonD.map (\s -> Result.withDefault 0 (Time.parseISO8601 s))
+        , JsonD.succeed 0
+        ]
+
+
+-- | Decode a `CustomJob` resource.
+customJobDecoder : JsonD.Decoder CustomJob
+customJobDecoder =
+    JsonD.map2
+        (\( name, display, state ) ( times, labels, err ) ->
+            case ( times, err ) of
+
+                ( ( c, s, e ), ( code, message ) ) ->
+                    { name = name
+                    , displayName = display
+                    , state = state
+                    , createMs = c
+                    , startMs = s
+                    , endMs = e
+                    , labels = labels
+                    , errorCode = code
+                    , errorMessage = message
+                    })
+        (JsonD.map3
+            (\n d s -> ( n, d, s ))
+            (JsonD.field "name" JsonD.string)
+            (JsonD.oneOf
+                [ JsonD.field "displayName" JsonD.string, JsonD.succeed "" ])
+            (JsonD.oneOf [ JsonD.field "state" JsonD.string, JsonD.succeed "" ]))
+        (JsonD.map3
+            (\t l e -> ( t, l, e ))
+            (JsonD.map3
+                (\c s e -> ( c, s, e ))
+                (timeField "createTime")
+                (timeField "startTime")
+                (timeField "endTime"))
+            skyLabels
+            (JsonD.oneOf
+                [ JsonD.field
+                      "error"
+                      (JsonD.map2
+                          (\c m -> ( c, m ))
+                          (JsonD.oneOf
+                              [ JsonD.field "code" JsonD.int, JsonD.succeed 0 ])
+                          (JsonD.oneOf
+                              [ JsonD.field "message" JsonD.string
+                              , JsonD.succeed ""
+                              ]))
+                , JsonD.succeed ( 0, "" )
+                ]))
+
+
+-- The `sky-*` labels a resource carries (the ones Sky sets), in a fixed
+-- order. Other labels are not read: Sky never filters on them.
+skyLabels : JsonD.Decoder (List ( String, String ))
+skyLabels =
+    let
+        one key =
+            JsonD.oneOf
+                [ JsonD.at [ "labels", key ] JsonD.string
+                      |> JsonD.map (\v -> [ ( key, v ) ])
+                , JsonD.succeed []
+                ]
+    in
+        JsonD.map5
+            (\a b c d e -> a ++ b ++ c ++ d ++ e)
+            (one "sky-managed")
+            (one "sky-run")
+            (one "sky-attempt")
+            (one "sky-kind")
+            (one "sky-deployment")
+
+
+decodeJob : String -> Task Error CustomJob
+decodeJob body =
+    Task.fromResult (JsonD.decodeString customJobDecoder body)
+
+
+jobsUrl : String -> String -> Task Error String
+jobsUrl project region =
+    serviceBase "aiplatform" region
+        |> Task.map
+               (\base ->
+                   base ++ "/v1/projects/" ++ project ++ "/locations/" ++ region
+                       ++ "/customJobs")
+
+
+-- The region of a resource name `projects/<p>/locations/<r>/…`.
+regionOf : String -> String
+regionOf name =
+    case String.split "/locations/" name of
+
+        [_, rest] ->
+            String.split "/" rest |> List.head |> Maybe.withDefault ""
+
+        _ ->
+            ""
+
+
+resourceUrl : String -> String -> Task Error String
+resourceUrl service name =
+    serviceBase service (regionOf name)
+        |> Task.map (\base -> base ++ "/v1/" ++ name)
+
+
+-- | Create a custom job from its JSON (`customJobJson`) and return it.
+createCustomJob : String -> String -> String -> Task Error CustomJob
+createCustomJob project region json =
+    jobsUrl project region |> Task.andThen (\url -> call "POST" url json)
+        |> Task.andThen (ok "NVIDIA_L4 custom training" region)
+        |> Task.andThen decodeJob
+
+
+-- | A custom job by its resource name.
+getCustomJob : String -> Task Error CustomJob
+getCustomJob name =
+    resourceUrl "aiplatform" name |> Task.andThen (\url -> call "GET" url "")
+        |> Task.andThen (ok "custom job" (regionOf name))
+        |> Task.andThen decodeJob
+
+
+-- | The custom jobs that match a filter (`labels.sky-run="<key>"`), newest
+-- first, every page.
+listCustomJobs : String -> String -> String -> Task Error (List CustomJob)
+listCustomJobs project region filter =
+    jobsUrl project region |> Task.andThen (\url -> listPages url filter "" [])
+
+
+listPages : String -> String -> String -> List CustomJob -> Task Error (List CustomJob)
+listPages url filter pageToken acc =
+    call
+        "GET"
+        (url ++ "?pageSize=100&filter=" ++ Encoding.urlEncode filter
+            ++ (if pageToken == "" then
+                   ""
+
+               else
+                   "&pageToken=" ++ Encoding.urlEncode pageToken))
+        ""
+        |> Task.andThen (ok "custom jobs" (regionOf url))
+        |> Task.andThen
+               (\body ->
+                   case JsonD.decodeString
+                            (JsonD.map2
+                                (\jobs next -> ( jobs, next ))
+                                (JsonD.oneOf
+                                    [ JsonD.field
+                                          "customJobs"
+                                          (JsonD.list customJobDecoder)
+                                    , JsonD.succeed []
+                                    ])
+                                (JsonD.oneOf
+                                    [ JsonD.field "nextPageToken" JsonD.string
+                                    , JsonD.succeed ""
+                                    ]))
+                            body of
+
+                       Ok ( jobs, "" ) ->
+                           Task.succeed (acc ++ jobs)
+
+                       Ok ( jobs, next ) ->
+                           listPages url filter next (acc ++ jobs)
+
+                       Err e ->
+                           Task.fail e)
+
+
+-- | Ask Vertex to cancel a job. The job's container gets SIGTERM; the job
+-- ends `JOB_STATE_CANCELLED`. A job that already ended is left alone.
+cancelCustomJob : String -> Task Error ()
+cancelCustomJob name =
+    resourceUrl "aiplatform" name
+        |> Task.andThen (\url -> call "POST" (url ++ ":cancel") "{}")
+        |> Task.andThen
+               (\resp ->
+                   if resp.status == 400 || resp.status == 404 || resp.status
+                       == 409 then
+                       Task.succeed ()
+
+                   else
+                       -- Already ended, or gone: nothing to cancel.
+                       ok "custom job" (regionOf name) resp
+                           |> Task.map (\_ -> ()))
+
+
+-- | Delete a job's record (only an ended job can be deleted). A job that is
+-- already gone counts as deleted.
+deleteCustomJob : String -> Task Error ()
+deleteCustomJob name =
+    resourceUrl "aiplatform" name |> Task.andThen (\url -> call "DELETE" url "")
+        |> Task.andThen
+               (\resp ->
+                   if resp.status == 404 then
+                       Task.succeed ()
+
+                   else
+                       ok "custom job" (regionOf name) resp
+                           |> Task.map (\_ -> ()))
+
+
+-- | A failed job's typed failure: a stockout is `CapacityUnavailable`, a
+-- quota error `QuotaExceeded`, anything else `Nothing` (the caller decides).
+jobFailure : String -> CustomJob -> Maybe Error
+jobFailure region job =
+    let
+        lower = String.toLower job.errorMessage
+    in
+        if job.errorCode == 8 || String.contains "stockout" lower
+            || String.contains "resources are insufficient" lower
+            || String.contains "resource_exhausted" lower then
+            if String.contains "quota" lower then
+                Just
+                    (Failure.toErrorWith
+                        job.errorMessage
+                        (QuotaExceeded
+                            { resource = "NVIDIA_L4 custom training"
+                            , region = region
+                            , limit = 0
+                            }))
+
+            else
+                Just
+                    (Failure.toErrorWith
+                        job.errorMessage
+                        (CapacityUnavailable
+                            { resource = "NVIDIA_L4", region = region }))
+
+        else
+            Nothing
+
+-- ── Cloud Run (Admin API v2) ────────────────────────────────────────
+-- | A Cloud Run service as the Admin API reports it: its URL, the newest
+-- ready revision, whether it is still reconciling, its `Ready` condition
+-- (`CONDITION_SUCCEEDED`, `CONDITION_FAILED`, …) with its message, and its
+-- etag (for `patchService`).
+type alias Service =
+    { name : String
+    , uri : String
+    , latestReady : String
+    , latestCreated : String
+    , reconciling : Bool
+    , ready : String
+    , message : String
+    , etag : String
+    , labels : List ( String, String )
+    }
+
+
+serviceDecoder : JsonD.Decoder Service
+serviceDecoder =
+    JsonD.map3
+        (\( name, uri, etag ) ( ready, created, reconciling ) ( cond, labels ) ->
+            case cond of
+
+                ( state, message ) ->
+                    { name = name
+                    , uri = uri
+                    , latestReady = ready
+                    , latestCreated = created
+                    , reconciling = reconciling
+                    , ready = state
+                    , message = message
+                    , etag = etag
+                    , labels = labels
+                    })
+        (JsonD.map3
+            (\n u e -> ( n, u, e ))
+            (JsonD.field "name" JsonD.string)
+            (JsonD.oneOf [ JsonD.field "uri" JsonD.string, JsonD.succeed "" ])
+            (JsonD.oneOf [ JsonD.field "etag" JsonD.string, JsonD.succeed "" ]))
+        (JsonD.map3
+            (\r c x -> ( r, c, x ))
+            (JsonD.oneOf
+                [ JsonD.field "latestReadyRevision" JsonD.string
+                , JsonD.succeed ""
+                ])
+            (JsonD.oneOf
+                [ JsonD.field "latestCreatedRevision" JsonD.string
+                , JsonD.succeed ""
+                ])
+            (JsonD.oneOf
+                [ JsonD.field "reconciling" JsonD.bool, JsonD.succeed False ]))
+        (JsonD.map2
+            (\c l -> ( c, l ))
+            (JsonD.oneOf
+                [ JsonD.field
+                      "terminalCondition"
+                      (JsonD.map2
+                          (\s m -> ( s, m ))
+                          (JsonD.oneOf
+                              [ JsonD.field "state" JsonD.string
+                              , JsonD.succeed ""
+                              ])
+                          (JsonD.oneOf
+                              [ JsonD.field "message" JsonD.string
+                              , JsonD.succeed ""
+                              ]))
+                , JsonD.succeed ( "", "" )
+                ])
+            skyLabels)
+
+
+servicesUrl : String -> String -> Task Error String
+servicesUrl project region =
+    serviceBase "run" region
+        |> Task.map
+               (\base ->
+                   base ++ "/v2/projects/" ++ project ++ "/locations/" ++ region
+                       ++ "/services")
+
+
+runUrl : String -> Task Error String
+runUrl name =
+    serviceBase "run" (regionOf name)
+        |> Task.map (\base -> base ++ "/v2/" ++ name)
+
+-- | A long-running operation: its name, whether it is done, and its error.
+type alias Operation =
+    { name : String
+    , done : Bool
+    , errorMessage : String
+    }
+
+
+operationDecoder : JsonD.Decoder Operation
+operationDecoder =
+    JsonD.map3
+        (\n d e -> { name = n, done = d, errorMessage = e })
+        (JsonD.oneOf [ JsonD.field "name" JsonD.string, JsonD.succeed "" ])
+        (JsonD.oneOf [ JsonD.field "done" JsonD.bool, JsonD.succeed False ])
+        (JsonD.oneOf
+            [ JsonD.at [ "error", "message" ] JsonD.string, JsonD.succeed "" ])
+
+
+-- | Create a service (`serviceId` is its short name) from its JSON. A 409
+-- (the service exists) is `Nothing`: the caller reads it and patches it.
+createService : String -> String -> String -> String -> Task Error (Maybe Operation)
+createService project region serviceId json =
+    servicesUrl project region
+        |> Task.andThen
+               (\url ->
+                   call
+                       "POST"
+                       (url ++ "?serviceId=" ++ Encoding.urlEncode serviceId)
+                       json)
+        |> Task.andThen
+               (\resp ->
+                   if resp.status == 409 then
+                       Task.succeed Nothing
+
+                   else
+                       ok "NVIDIA_L4 Cloud Run" region resp
+                           |> Task.andThen
+                                  (\body ->
+                                      Task.fromResult
+                                          (JsonD.decodeString
+                                              operationDecoder
+                                              body))
+                           |> Task.map Just)
+
+
+-- | A service by its resource name, `Nothing` when it does not exist.
+getService : String -> Task Error (Maybe Service)
+getService name =
+    runUrl name |> Task.andThen (\url -> call "GET" url "")
+        |> Task.andThen
+               (\resp ->
+                   if resp.status == 404 then
+                       Task.succeed Nothing
+
+                   else
+                       ok "Cloud Run service" (regionOf name) resp
+                           |> Task.andThen
+                                  (\body ->
+                                      Task.fromResult
+                                          (JsonD.decodeString serviceDecoder body))
+                           |> Task.map Just)
+
+
+-- | Replace a service's spec, guarded by its etag (the JSON carries it).
+patchService : String -> String -> Task Error Operation
+patchService name json =
+    runUrl name |> Task.andThen (\url -> call "PATCH" url json)
+        |> Task.andThen (ok "NVIDIA_L4 Cloud Run" (regionOf name))
+        |> Task.andThen
+               (\body ->
+                   Task.fromResult (JsonD.decodeString operationDecoder body))
+
+
+-- | Delete a service. One that is already gone counts as deleted.
+deleteService : String -> Task Error ()
+deleteService name =
+    runUrl name |> Task.andThen (\url -> call "DELETE" url "")
+        |> Task.andThen
+               (\resp ->
+                   if resp.status == 404 then
+                       Task.succeed ()
+
+                   else
+                       ok "Cloud Run service" (regionOf name) resp
+                           |> Task.map (\_ -> ()))
+
+
+-- | The services in a region.
+listServices : String -> String -> Task Error (List Service)
+listServices project region =
+    servicesUrl project region
+        |> Task.andThen (\url -> call "GET" (url ++ "?pageSize=100") "")
+        |> Task.andThen (ok "Cloud Run services" region)
+        |> Task.andThen
+               (\body ->
+                   Task.fromResult
+                       (JsonD.decodeString
+                           (JsonD.oneOf
+                               [ JsonD.field
+                                     "services"
+                                     (JsonD.list serviceDecoder)
+                               , JsonD.succeed []
+                               ])
+                           body))
+
+
+-- | A long-running operation by name (`projects/…/operations/…`).
+getOperation : String -> Task Error Operation
+getOperation name =
+    runUrl name |> Task.andThen (\url -> call "GET" url "")
+        |> Task.andThen (ok "operation" (regionOf name))
+        |> Task.andThen
+               (\body ->
+                   Task.fromResult (JsonD.decodeString operationDecoder body))
+
+
+-- | Give these members (`serviceAccount:a@p.iam.gserviceaccount.com`,
+-- `user:…`, `group:…`) `roles/run.invoker` on a service: read its policy, add
+-- the members, write it back with the read etag, again on a conflict.
+grantInvoker : String -> List String -> Task Error ()
+grantInvoker name members =
+    if List.isEmpty members then
+        Task.succeed ()
+
+    else
+        grantAttempt name members 0
+
+
+grantAttempt : String -> List String -> Int -> Task Error ()
+grantAttempt name members n =
+    runUrl name
+        |> Task.andThen
+               (\url ->
+                   call "POST" (url ++ ":getIamPolicy") "{}"
+                       |> Task.andThen (ok "IAM policy" (regionOf name))
+                       |> Task.andThen
+                              (\body ->
+                                  call
+                                      "POST"
+                                      (url ++ ":setIamPolicy")
+                                      (JsonE.encode
+                                          0
+                                          (JsonE.object
+                                              [ ( "policy"
+                                                , withInvokers body members
+                                                )
+                                              ]))))
+        |> Task.andThen
+               (\resp ->
+                   if (resp.status == 409 || resp.status == 412) && n < 4 then
+                       Time.sleep 300
+                           |> Task.andThen
+                                  (\_ -> grantAttempt name members (n + 1))
+
+                   else
+                       ok "IAM policy" (regionOf name) resp
+                           |> Task.map (\_ -> ()))
+
+type alias Binding =
+    { role : String
+    , members : List String
+    }
+
+
+-- The policy with `roles/run.invoker` holding these members too, keeping
+-- every other binding and the etag.
+withInvokers : String -> List String -> JsonE.Value
+withInvokers body members =
+    let
+        decoded =
+            JsonD.decodeString
+                (JsonD.map2
+                    (\bs etag -> ( bs, etag ))
+                    (JsonD.oneOf
+                        [ JsonD.field
+                              "bindings"
+                              (JsonD.list
+                                  (JsonD.map2
+                                      (\r m -> { role = r, members = m })
+                                      (JsonD.field "role" JsonD.string)
+                                      (JsonD.oneOf
+                                          [ JsonD.field
+                                                "members"
+                                                (JsonD.list JsonD.string)
+                                          , JsonD.succeed []
+                                          ])))
+                        , JsonD.succeed []
+                        ])
+                    (JsonD.oneOf
+                        [ JsonD.field "etag" JsonD.string, JsonD.succeed "" ]))
+                body
+        ( bindings, etag ) = Result.withDefault ( [], "" ) decoded
+        role = "roles/run.invoker"
+        others = List.filter (\b -> b.role /= role) bindings
+        current =
+            List.filter (\b -> b.role == role) bindings
+                |> List.concatMap .members
+        merged =
+            current ++ List.filter (\m -> not (List.member m current)) members
+        bindingValue b =
+            JsonE.object
+                [ ( "role", JsonE.string b.role )
+                , ( "members", JsonE.list JsonE.string b.members )
+                ]
+    in
+        JsonE.object
+            ([ ( "bindings"
+              , JsonE.list
+                    bindingValue
+                    (others ++ [ { role = role, members = merged } ])
+              )
+            ]
+                ++ (if etag == "" then
+                       []
+
+                   else
+                       [ ( "etag", JsonE.string etag ) ]))
+
+
+-- ── Storage, Artifact Registry, quotas and logs ─────────────────────
+-- | A bucket's location, upper case as Google reports it (`US-CENTRAL1`, or
+-- a multi-region such as `US`).
+bucketLocation : String -> Task Error String
+bucketLocation bucket =
+    serviceBase "storage" ""
+        |> Task.andThen
+               (\base ->
+                   call
+                       "GET"
+                       (base ++ "/storage/v1/b/" ++ Encoding.urlEncode bucket
+                           ++ "?fields=location")
+                       "")
+        |> Task.andThen (ok "bucket" "")
+        |> Task.andThen
+               (\body ->
+                   Task.fromResult
+                       (JsonD.decodeString
+                           (JsonD.field "location" JsonD.string)
+                           body))
+
+
+-- | Whether an Artifact Registry image exists, by its reference
+-- `<region>-docker.pkg.dev/<project>/<repo>/<image>@sha256:<hex>`. A
+-- reference outside Artifact Registry (Docker Hub) is not checked and counts
+-- as present: the platform pulls it and reports its own error.
+artifactExists : String -> Task Error Bool
+artifactExists ref =
+    case String.split "/" ref of
+
+        host :: project :: repo :: rest ->
+            if String.endsWith "-docker.pkg.dev" host then
+                let
+                    location = String.dropRight 15 host
+                    image = String.join "/" rest
+                in
+                    case String.split "@" image of
+
+                        [path, digest] ->
+                            serviceBase "artifactregistry" location
+                                |> Task.andThen
+                                       (\base ->
+                                           call
+                                               "GET"
+                                               (base ++ "/v1/projects/"
+                                                   ++ project
+                                                   ++ "/locations/"
+                                                   ++ location
+                                                   ++ "/repositories/"
+                                                   ++ repo
+                                                   ++ "/dockerImages/"
+                                                   ++ Encoding.urlEncode
+                                                          (path ++ "@" ++ digest))
+                                               "")
+                                |> Task.andThen
+                                       (\resp ->
+                                           if resp.status == 404 then
+                                               Task.succeed False
+
+                                           else
+                                               ok "image" location resp
+                                                   |> Task.map (\_ -> True))
+
+                        _ ->
+                            Task.succeed False
+
+            else
+                Task.succeed True
+
+        _ ->
+            Task.succeed False
+
+-- | A quota as Cloud Quotas reports it for one region: the limit, or
+-- `Nothing` when it could not be read (the API is off, or no permission).
+type alias QuotaReading =
+    { quotaId : String
+    , region : String
+    , limit : Maybe Int
+    , note : String
+    }
+
+
+-- | Read a quota for a region: `quota project service quotaId region`
+-- (service `aiplatform.googleapis.com`, quota id
+-- `CustomModelTrainingNvidiaL4GPUsPerProjectPerRegion`). An API that is off
+-- or refuses is a reading with no limit and a note, never a failure: the
+-- launch itself is the final check.
+quota : String -> String -> String -> String -> Task Error QuotaReading
+quota project service quotaId region =
+    serviceBase "cloudquotas" region
+        |> Task.andThen
+               (\base ->
+                   call
+                       "GET"
+                       (base ++ "/v1/projects/" ++ project
+                           ++ "/locations/global/services/"
+                           ++ service
+                           ++ "/quotaInfos/"
+                           ++ quotaId)
+                       "")
+        |> Task.map
+               (\resp ->
+                   if resp.status /= 200 then
+                       { quotaId = quotaId
+                       , region = region
+                       , limit = Nothing
+                       , note =
+                           "cannot read the quota (HTTP "
+                               ++ String.fromInt resp.status
+                               ++ "): "
+                               ++ googleMessage resp.body
+                       }
+
+                   else
+                       { quotaId = quotaId
+                       , region = region
+                       , limit = regionLimit region resp.body
+                       , note = ""
+                       })
+
+
+regionLimit : String -> String -> Maybe Int
+regionLimit region body =
+    let
+        infos =
+            JsonD.decodeString
+                (JsonD.oneOf
+                    [ JsonD.field
+                          "dimensionsInfos"
+                          (JsonD.list
+                              (JsonD.map2
+                                  (\r v -> ( r, v ))
+                                  (JsonD.oneOf
+                                      [ JsonD.at
+                                            [ "dimensions", "region" ]
+                                            JsonD.string
+                                      , JsonD.succeed ""
+                                      ])
+                                  (JsonD.oneOf
+                                      [ JsonD.at
+                                            [ "details", "value" ]
+                                            JsonD.string
+                                      , JsonD.at
+                                            [ "details", "value" ]
+                                            (JsonD.map String.fromInt JsonD.int)
+                                      , JsonD.succeed "0"
+                                      ])))
+                    , JsonD.succeed []
+                    ])
+                body
+                |> Result.withDefault []
+        exact = List.filter (\( r, _ ) -> r == region) infos
+        fallback = List.filter (\( r, _ ) -> r == "") infos
+    in
+        case exact ++ fallback of
+
+            ( _, v ) :: _ ->
+                String.toInt v
+
+            [] ->
+                Nothing
+
+
+-- | The last `n` log lines of a Vertex custom job (Cloud Logging), oldest
+-- first, for a failure's `logTail`. Empty when the logs cannot be read.
+logTail : String -> String -> Int -> Task Error String
+logTail project jobId n =
+    serviceBase "logging" ""
+        |> Task.andThen
+               (\base ->
+                   call
+                       "POST"
+                       (base ++ "/v2/entries:list")
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "resourceNames"
+                                 , JsonE.list
+                                       JsonE.string
+                                       [ "projects/" ++ project ]
+                                 )
+                               , ( "filter"
+                                 , JsonE.string
+                                       ("resource.labels.job_id=\"" ++ jobId
+                                           ++ "\"")
+                                 )
+                               , ( "orderBy", JsonE.string "timestamp desc" )
+                               , ( "pageSize", JsonE.int n )
+                               ])))
+        |> Task.map
+               (\resp ->
+                   if resp.status /= 200 then
+                       ""
+
+                   else
+                       JsonD.decodeString
+                           (JsonD.oneOf
+                               [ JsonD.field
+                                     "entries"
+                                     (JsonD.list
+                                         (JsonD.oneOf
+                                             [ JsonD.field
+                                                   "textPayload"
+                                                   JsonD.string
+                                             , JsonD.at
+                                                   [ "jsonPayload", "message" ]
+                                                   JsonD.string
+                                             , JsonD.succeed ""
+                                             ]))
+                               , JsonD.succeed []
+                               ])
+                           resp.body
+                           |> Result.withDefault []
+                           |> List.reverse
+                           |> String.join "\n")
+        |> Task.onError (\_ -> Task.succeed "")
+
+
+-- ── Small helpers ───────────────────────────────────────────────────
+trimTrailingSlash : String -> String
+trimTrailingSlash s =
+    if String.endsWith "/" s then
+        trimTrailingSlash (String.dropRight 1 s)
+
+    else
+        s

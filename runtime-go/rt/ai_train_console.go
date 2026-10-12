@@ -41,6 +41,12 @@ type aiTrainRun struct {
 	UpdatedMs      int64        `json:"updatedMs"`
 	Losses         [][2]float64 `json:"losses"`
 	ValLosses      [][2]float64 `json:"valLosses"`
+	// A Vertex run: where it runs, the job's state and the spend so far
+	// against the job's budget (exact money as text, "USD 0.31").
+	Cloud      string `json:"cloud,omitempty"`
+	CloudState string `json:"cloudState,omitempty"`
+	Spent      string `json:"spent,omitempty"`
+	Budget     string `json:"budget,omitempty"`
 }
 
 func aiThin(pts [][2]float64) [][2]float64 {
@@ -147,7 +153,14 @@ func aiTrainConsoleRun(dir string) aiTrainRun {
 			}
 		}
 	}
-	for _, f := range []string{aiTrainResultFile, aiTrainEventsFile, aiTrainJobFile} {
+	if c := aiTrainReadCloud(dir); c.Job != "" {
+		r.Cloud = "vertex " + c.Region + " " + c.Machine
+		r.CloudState, r.Spent, r.Budget = c.State, c.Spent, c.Budget
+		if r.Backend == "" {
+			r.Backend = "vertex"
+		}
+	}
+	for _, f := range []string{aiTrainResultFile, aiTrainEventsFile, aiTrainJobFile, aiTrainCloudFile} {
 		if st, err := os.Stat(filepath.Join(dir, f)); err == nil && st.ModTime().UnixMilli() > r.UpdatedMs {
 			r.UpdatedMs = st.ModTime().UnixMilli()
 		}

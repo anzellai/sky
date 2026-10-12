@@ -40,13 +40,16 @@
 -- | `BudgetExceeded`, `GateFailed`, `NotPromotable` | `PermissionDenied` | no |
 -- | `NotRegistered` | `NotFound` | no |
 -- | `TrainingCancelled` | `Conflict` | no |
+-- | `QuotaExceeded` | `PermissionDenied` | no |
+-- | `CapacityUnavailable` | `Unavailable` | yes |
+-- | `DeploymentFailed` | `Unavailable` | no |
 -- | `PromotionConflict` | `Conflict` | no |
 -- | `AdapterMismatch` | `InvalidInput` | no |
 -- | `RemoteRejected` | by status: 400 / 422 `InvalidInput`, 401 / 403 `PermissionDenied`, 404 `NotFound`, 5xx `Unavailable`, else `Unexpected` | 5xx only |
 --
 -- An engine crash is not retryable: the engine's supervisor restarts it, and a
 -- crash loop must not be retried blindly.
-module Std.Ai.Failure exposing (Failure(..), fromError, toError, code, kind, retryable)
+module Std.Ai.Failure exposing (Failure(..), fromError, toError, toErrorWith, code, kind, retryable)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Error as Error exposing (Error, ErrorKind(..), DomainFailure)
@@ -114,6 +117,17 @@ type Failure
 }
     | TrainingCancelled { runId : String
 , step : Int
+}
+    | QuotaExceeded { resource : String
+, region : String
+, limit : Int
+}
+    | CapacityUnavailable { resource : String
+, region : String
+}
+    | DeploymentFailed { target : String
+, reason : String
+, logTail : String
 }
 
 
@@ -195,6 +209,15 @@ code f =
         TrainingCancelled _ ->
             "TrainingCancelled"
 
+        QuotaExceeded _ ->
+            "QuotaExceeded"
+
+        CapacityUnavailable _ ->
+            "CapacityUnavailable"
+
+        DeploymentFailed _ ->
+            "DeploymentFailed"
+
 
 -- | The `ErrorKind` a failure sets.
 kind : Failure -> ErrorKind
@@ -236,6 +259,15 @@ kind f =
 
         TrainingCancelled _ ->
             Conflict
+
+        QuotaExceeded _ ->
+            PermissionDenied
+
+        CapacityUnavailable _ ->
+            Unavailable
+
+        DeploymentFailed _ ->
+            Unavailable
 
         TimedOut _ ->
             Timeout
@@ -300,6 +332,9 @@ retryable f =
         TimedOut _ ->
             True
 
+        CapacityUnavailable _ ->
+            True
+
         RemoteRejected r ->
             r.status >= 500
 
@@ -339,6 +374,33 @@ toError f =
                         (\( k, v ) acc -> Error.withAttr k v acc)
                         withAfter
                         attrs)
+
+
+-- | `toError` with more detail in the message: `"Std.Ai <code>: <text>
+-- (<detail>)"`. A cloud call adds the provider's own message this way. The
+-- typed view is the same as `toError`'s; an empty detail adds nothing.
+toErrorWith : String -> Failure -> Error
+toErrorWith detail f =
+    if String.isEmpty (String.trim detail) then
+        toError f
+
+    else
+        let
+            base =
+                Error.failure aiDomain (code f)
+                    |> Error.withRetryable (retryable f)
+        in
+            case facts f of
+
+                ( text, attrs ) ->
+                    Error.fromDomain
+                        (kind f)
+                        ("Std.Ai " ++ code f ++ ": " ++ text ++ " (" ++ detail
+                            ++ ")")
+                        (List.foldl
+                            (\( k, v ) acc -> Error.withAttr k v acc)
+                            base
+                            attrs)
 
 
 -- | The typed failure an error carries, or `Nothing` for an error from
@@ -482,8 +544,9 @@ facts f =
             let
                 step = String.fromInt r.step
             in
-                ( "the training run " ++ r.runId ++ " failed at step " ++ step ++ ": "
-                    ++ r.reason
+                ( "the training run " ++ r.runId ++ " failed at step " ++ step
+                      ++ ": "
+                      ++ r.reason
                 , [ ( "runId", r.runId )
                   , ( "step", step )
                   , ( "reason", r.reason )
@@ -495,9 +558,37 @@ facts f =
             let
                 step = String.fromInt r.step
             in
-                ( "the training run " ++ r.runId ++ " was cancelled at step " ++ step
+                ( "the training run " ++ r.runId ++ " was cancelled at step "
+                      ++ step
                 , [ ( "runId", r.runId ), ( "step", step ) ]
                 )
+
+        QuotaExceeded r ->
+            let
+                limit = String.fromInt r.limit
+            in
+                ( "the quota for " ++ r.resource ++ " in " ++ r.region ++ " is "
+                      ++ limit
+                      ++ "; ask for more on the console's Quotas page"
+                , [ ( "resource", r.resource )
+                  , ( "region", r.region )
+                  , ( "limit", limit )
+                  ]
+                )
+
+        CapacityUnavailable r ->
+            ( "no " ++ r.resource ++ " is free in " ++ r.region
+                  ++ " now; try again later"
+            , [ ( "resource", r.resource ), ( "region", r.region ) ]
+            )
+
+        DeploymentFailed r ->
+            ( "the deployment to " ++ r.target ++ " failed: " ++ r.reason
+            , [ ( "target", r.target )
+              , ( "reason", r.reason )
+              , ( "logTail", r.logTail )
+              ]
+            )
 
 
 optInt : String -> Maybe Int -> List ( String, String )
@@ -692,10 +783,14 @@ decode df =
                 (str df "reasons")
 
         "TrainingFailed" ->
-            case ( ( str df "runId", int df "step" ), ( str df "reason", str df "logTail" ) ) of
+            case ( ( str df "runId", int df "step" )
+                 , ( str df "reason", str df "logTail" )
+                 ) of
 
                 ( ( Just r, Just st ), ( Just why, Just l ) ) ->
-                    Just (TrainingFailed { runId = r, step = st, reason = why, logTail = l })
+                    Just
+                        (TrainingFailed
+                            { runId = r, step = st, reason = why, logTail = l })
 
                 _ ->
                     Nothing
@@ -708,6 +803,29 @@ decode df =
 
                 _ ->
                     Nothing
+
+        "QuotaExceeded" ->
+            case ( str df "resource", str df "region", int df "limit" ) of
+
+                ( Just r, Just g, Just l ) ->
+                    Just (QuotaExceeded { resource = r, region = g, limit = l })
+
+                _ ->
+                    Nothing
+
+        "CapacityUnavailable" ->
+            two
+                (\r g -> CapacityUnavailable { resource = r, region = g })
+                (str df "resource")
+                (str df "region")
+
+        "DeploymentFailed" ->
+            three
+                (\t r l ->
+                    DeploymentFailed { target = t, reason = r, logTail = l })
+                (str df "target")
+                (str df "reason")
+                (str df "logTail")
 
         _ ->
             Nothing

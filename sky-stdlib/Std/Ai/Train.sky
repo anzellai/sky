@@ -38,6 +38,27 @@ module Std.Ai.Train exposing
     , withWatchWindow
     , fakeCrashAt
     , fakeStepMs
+    , Cloud
+    , withCloud
+    , withBudget
+    , MachineRate
+    , MachinePriceBook
+    , machinePrices
+    , priceBookVersion
+    , withMachinePrices
+    , withImage
+    , withServiceAccount
+    , withMaxRuntimeMinutes
+    , withSpot
+    , withKeepStaging
+    , CloudSettings
+    , CloudPlan
+    , cloudSettings
+    , cloudEstimate
+    , planCloud
+    , runKey
+    , cloudJobSpec
+    , inputsJson
     , Settings
     , settings
     , jobJson
@@ -158,6 +179,10 @@ import Std.Ai.Local as Local
 import Std.Ai.Dataset as Dataset
 import Std.Ai.Registry as Registry
 import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Store as Store exposing (Store)
+import Std.Ai.Cloud.Google as Google
+import Std.Money as Money exposing (Money)
+import Std.Decimal as Decimal
 
 -- ── Base models ─────────────────────────────────────────────────────
 -- | One file of a pinned snapshot: its path in the repository and its
@@ -205,6 +230,10 @@ withWeights backend snap (BaseModel b) =
             BaseModel { b | mlx = Just snap }
 
         Unsloth ->
+            BaseModel { b | unsloth = Just snap }
+
+        Vertex ->
+            -- A Vertex job runs the Unsloth driver: it trains these weights.
             BaseModel { b | unsloth = Just snap }
 
         Fake ->
@@ -339,15 +368,21 @@ baseWeights backend (BaseModel b) =
         Unsloth ->
             b.unsloth
 
+        Vertex ->
+            b.unsloth
+
         Fake ->
             Nothing
 
 -- ── Jobs ────────────────────────────────────────────────────────────
--- | Where a job trains. `Fake` runs the scripted trainer (tests, CI, a
--- machine with no accelerator). Cloud backends arrive in a later phase.
+-- | Where a job trains. `Mlx` and `Unsloth` run on this machine, `Vertex`
+-- runs the same driver in a pinned container as a Vertex AI custom job on
+-- Google Cloud (`withCloud`, `withBudget`), and `Fake` runs the scripted
+-- trainer (tests, CI, a machine with no accelerator).
 type Backend
     = Mlx
     | Unsloth
+    | Vertex
     | Fake
 
 
@@ -361,6 +396,9 @@ backendName b =
 
         Unsloth ->
             "unsloth"
+
+        Vertex ->
+            "vertex"
 
         Fake ->
             "fake"
@@ -404,6 +442,14 @@ type alias Settings =
     , watchWindowMs : Int
     , fakeCrashAt : Int
     , fakeStepMs : Int
+    , cloud : Cloud
+    , budget : Maybe Money
+    , prices : Maybe MachinePriceBook
+    , image : String
+    , serviceAccount : String
+    , maxRuntimeMinutes : Int
+    , spot : Bool
+    , keepStaging : Bool
     }
 
 -- | A training job: a base, a frozen dataset version and the settings.
@@ -466,6 +512,14 @@ newJob base format m file =
             , watchWindowMs = 300000
             , fakeCrashAt = 0
             , fakeStepMs = 20
+            , cloud = { project = "", region = "", machine = "", staging = "" }
+            , budget = Nothing
+            , prices = Nothing
+            , image = ""
+            , serviceAccount = ""
+            , maxRuntimeMinutes = 0
+            , spot = False
+            , keepStaging = False
             }
         , base = base
         , registry = Nothing
@@ -644,6 +698,193 @@ fakeCrashAt n =
 fakeStepMs : Int -> Job -> Job
 fakeStepMs n =
     update (\s -> { s | fakeStepMs = n })
+
+-- ── Cloud settings (the Vertex backend) ─────────────────────────────
+-- | Where a `Vertex` job runs: the Google Cloud project, the region (Vertex
+-- AI's, and the staging bucket's: they must match), the machine type
+-- (`g2-standard-4` carries one NVIDIA L4; `n2-standard-4` has no GPU and runs
+-- the Fake driver) and the staging location `gs://<bucket>/<prefix>` the run's
+-- data, checkpoints and adapter pass through. Each field falls back to
+-- `SKY_AI_TRAIN_PROJECT`, `_REGION`, `_MACHINE` and `_STAGING`; an operator's
+-- variable wins over the code. Default machine: `g2-standard-4`.
+type alias Cloud =
+    { project : String
+    , region : String
+    , machine : String
+    , staging : String
+    }
+
+
+-- | Set where a `Vertex` job runs. An empty field is left to its variable.
+withCloud : Cloud -> Job -> Job
+withCloud c =
+    update (\s -> { s | cloud = c })
+
+
+-- | The most a `Vertex` job may cost. A cloud job without a budget never
+-- starts: `plan` refuses it (`InvalidSetting`), and an estimate above it is
+-- `BudgetExceeded` before anything launches. The budget also sets the job's
+-- hard runtime ceiling, so Vertex itself stops the job even when no Sky
+-- worker is left, and a watch that measures the spend at the budget cancels
+-- the job. Env: `SKY_AI_TRAIN_BUDGET` (`USD 5.00`).
+withBudget : Money -> Job -> Job
+withBudget m =
+    update (\s -> { s | budget = Just m })
+
+-- | One machine's price per hour in a region, as text in the book's
+-- currency (`"1.10"`): the machine and the accelerators its type carries.
+type alias MachineRate =
+    { machine : String
+    , region : String
+    , perHour : String
+    }
+
+-- | The prices a cloud job is estimated and watched with: a currency, a
+-- version (a date, so a stale book is visible), and a rate per machine and
+-- region. The stdlib ships none: prices change, and the program states the
+-- ones it trusts (`machinePrices`).
+type MachinePriceBook
+    = MachinePriceBook PriceBook
+
+type alias PriceBook =
+    { currency : Money.Currency
+    , version : String
+    , rates : List PricedRate
+    , problems : List String
+    }
+
+type alias PricedRate =
+    { machine : String
+    , region : String
+    , perHour : Money
+    }
+
+
+-- | A price book from its rates. A rate that does not parse as an amount of
+-- at least 0, a machine and region given twice, or a book without a version
+-- is refused when a job that uses the book starts (`InvalidSetting`), so a
+-- book can be a plain top-level value.
+machinePrices : Money.Currency -> String -> List MachineRate -> MachinePriceBook
+machinePrices currency version rates =
+    let
+        parsed =
+            List.map
+                (\r ->
+                    case Money.fromString currency (String.trim r.perHour) of
+
+                        Ok m ->
+                            if Money.isNegative m then
+                                Err
+                                    (r.machine ++ " in " ++ r.region
+                                        ++ ": a price is 0 or more")
+
+                            else
+                                Ok
+                                    { machine = r.machine
+                                    , region = r.region
+                                    , perHour = m
+                                    }
+
+                        Err _ ->
+                            Err
+                                (r.machine ++ " in " ++ r.region ++ ": "
+                                    ++ quoteText r.perHour
+                                    ++ " is not an amount"))
+                rates
+        bad =
+            List.filterMap
+                (\x ->
+                    case x of
+
+                        Err e ->
+                            Just e
+
+                        Ok _ ->
+                            Nothing)
+                parsed
+        good =
+            List.filterMap
+                (\x ->
+                    case x of
+
+                        Ok r ->
+                            Just r
+
+                        Err _ ->
+                            Nothing)
+                parsed
+        keys = List.map (\r -> r.machine ++ "@" ++ r.region) good
+        duplicate =
+            List.filter
+                (\k -> List.length (List.filter (\x -> x == k) keys) > 1)
+                keys
+                |> List.map (\k -> k ++ " is in the book twice")
+        unversioned =
+            if String.isEmpty (String.trim version) then
+                [ "a price book needs a version (the date its rates were read)"
+                ]
+
+            else
+                []
+    in
+        MachinePriceBook
+            { currency = currency
+            , version = version
+            , rates = good
+            , problems = unversioned ++ bad ++ duplicate
+            }
+
+
+-- | The price book's version.
+priceBookVersion : MachinePriceBook -> String
+priceBookVersion (MachinePriceBook b) =
+    b.version
+
+
+-- | The prices a `Vertex` job's estimate and spend use.
+withMachinePrices : MachinePriceBook -> Job -> Job
+withMachinePrices book =
+    update (\s -> { s | prices = Just book })
+
+
+-- | The trainer image a `Vertex` job runs, pinned by digest
+-- (`<region>-docker.pkg.dev/<project>/<repo>/sky-ai-trainer@sha256:<hex>`; a
+-- tag alone is refused). `sky ai image build --train` builds it in your own
+-- project with Cloud Build and prints the reference. Env:
+-- `SKY_AI_TRAIN_IMAGE`.
+withImage : String -> Job -> Job
+withImage ref =
+    update (\s -> { s | image = ref })
+
+
+-- | The service account the job runs as (it needs only the staging bucket).
+-- Default: the project's Vertex AI service agent. Env:
+-- `SKY_AI_TRAIN_SERVICE_ACCOUNT`.
+withServiceAccount : String -> Job -> Job
+withServiceAccount email =
+    update (\s -> { s | serviceAccount = email })
+
+
+-- | A runtime ceiling in minutes, below the one the budget sets.
+withMaxRuntimeMinutes : Int -> Job -> Job
+withMaxRuntimeMinutes n =
+    update (\s -> { s | maxRuntimeMinutes = n })
+
+
+-- | Run on Spot capacity: cheaper, and pre-emptible. A pre-empted attempt is
+-- relaunched from its newest checkpoint like any other lost attempt (up to
+-- `withMaxRelaunches`). Price the book's rate as the Spot rate.
+withSpot : Job -> Job
+withSpot =
+    update (\s -> { s | spot = True })
+
+
+-- | Keep the run's staging prefix (data, checkpoints, adapter) and its
+-- Vertex job records after the adapter is registered. By default they are
+-- deleted, so nothing stays behind in the cloud.
+withKeepStaging : Job -> Job
+withKeepStaging =
+    update (\s -> { s | keepStaging = True })
 
 
 -- | What a job holds.
@@ -978,6 +1219,7 @@ type alias Plan =
     , evalRows : Int
     , estimateBytes : Int
     , availableBytes : Int
+    , cloud : Maybe CloudPlan
     }
 
 type alias RawSetting =
@@ -1027,7 +1269,24 @@ plan job =
                                   (\h ->
                                       shapeOf (baseOf job)
                                           |> Task.andThen
-                                                 (\shape -> fitPlan job b h shape)))
+                                                 (\shape ->
+                                                     if b.value == "vertex" then
+                                                         fitPlan job b h shape
+                                                             |> Task.andThen
+                                                                    (\p ->
+                                                                        planCloudWith
+                                                                            job
+                                                                            shape
+                                                                            |> Task.map
+                                                                                   (\c ->
+                                                                                       { p
+                                                                                           | cloud =
+                                                                                               Just
+                                                                                                   c
+                                                                                       }))
+
+                                                     else
+                                                         fitPlan job b h shape)))
 
 
 fitPlan : Job -> RawSetting -> Host -> ModelShape -> Task Error Plan
@@ -1047,9 +1306,10 @@ fitPlan job b h shape =
             , evalRows = s.evalRows
             , estimateBytes = need
             , availableBytes = avail
+            , cloud = Nothing
             }
     in
-        if b.value /= "fake" && need > avail then
+        if b.value /= "fake" && b.value /= "vertex" && need > avail then
             Task.fail
                 (Failure.toError
                     (ModelTooLarge { needBytes = need, availableBytes = avail }))
@@ -2040,6 +2300,18 @@ start : Db -> Job -> Task Error String
 start db job =
     Task.fromResult (check job)
         |> Task.andThen (\_ -> resolveRaw (backendCode (settings job)))
+        |> Task.andThen
+               (\b ->
+                   if b.value == "vertex" then
+                       cloudSettings job
+                           |> Task.map
+                                  (\_ ->
+                                      -- A cloud job's settings are checked before a run
+                                      -- exists: no project, no budget, an unpinned image.
+                                      ())
+
+                   else
+                       Task.succeed ())
         |> Task.andThen (\_ -> Durable.setup db)
         |> Task.andThen (\_ -> readRaw (runDir job))
         |> Task.andThen
@@ -2193,10 +2465,25 @@ cancel job =
     cancelAt (runDir job)
 
 
--- | Cancel the run in a run directory.
+-- | Cancel the run in a run directory. A Vertex run is cancelled in the
+-- cloud: a `cancel` marker in its staging prefix (the container's shim
+-- checkpoints and stops) and Vertex's own cancel.
 cancelAt : String -> Task Error Bool
 cancelAt dir =
-    cancelRaw dir
+    readCloudFile dir
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Just c ->
+                           if c.job == "" then
+                               cancelRaw dir
+
+                           else
+                               cancelCloud c
+
+                       Nothing ->
+                           cancelRaw dir)
 
 
 -- | The job's run's progress, from its run directory (no database needed).
@@ -2325,8 +2612,29 @@ body job ctx req =
                         ++ "; the job changed after the run started (a new job is a new run)"))
 
         else
-            setup ctx job |> Task.andThen (\st -> train ctx job st)
-                |> Task.andThen (\done -> finish ctx job done))
+            resolveStep ctx job
+                |> Task.andThen
+                       (\backend ->
+                           if backend == "vertex" then
+                               cloudTrain ctx job
+                                   |> Task.andThen
+                                          (\( st, seen, cloud ) ->
+                                              finish
+                                                  ctx
+                                                  job
+                                                  (cloudCleanup ctx job cloud)
+                                                  ( st, seen ))
+
+                           else
+                               setupFrom ctx job backend
+                                   |> Task.andThen (\st -> train ctx job st)
+                                   |> Task.andThen
+                                          (\done ->
+                                              finish
+                                                  ctx
+                                                  job
+                                                  (\a -> Task.succeed a)
+                                                  done)))
             |> Task.onError (\e -> recordFailure dir e)
 
 
@@ -2352,8 +2660,8 @@ recordFailure dir e =
             |> Task.andThen (\_ -> Task.fail e)
 
 
-setup : Durable.Ctx -> Job -> Task Error Setup
-setup ctx job =
+resolveStep : Durable.Ctx -> Job -> Task Error String
+resolveStep ctx job =
     Durable.step
         ctx
         settingCodec
@@ -2361,8 +2669,11 @@ setup ctx job =
         (resolveRaw (backendCode (settings job)))
         |> Task.andThen
                (\b -> Task.fromResult (check job) |> Task.map (\_ -> b.value))
-        |> Task.andThen (stageStep ctx job)
-        |> Task.andThen (toolchainStep ctx)
+
+
+setupFrom : Durable.Ctx -> Job -> String -> Task Error Setup
+setupFrom ctx job backend =
+    stageStep ctx job backend |> Task.andThen (toolchainStep ctx)
         |> Task.andThen (baseStep ctx job)
         |> Task.andThen (shapeStep ctx job)
 
@@ -2436,6 +2747,10 @@ toolOf t =
 weightsFor : String -> Job -> Task Error String
 weightsFor backend job =
     case backend of
+
+        "vertex" ->
+            -- The container fetches and verifies its own weights.
+            Task.succeed ""
 
         "mlx" ->
             provisionBase Mlx (baseOf job)
@@ -2828,8 +3143,8 @@ driverFailure job seen =
 
 
 -- Collect, convert, merge, register, and write the result.
-finish : Durable.Ctx -> Job -> ( Setup, Seen ) -> Task Error Adapter
-finish ctx job ( st, seen ) =
+finish : Durable.Ctx -> Job -> (Adapter -> Task Error Adapter) -> ( Setup, Seen ) -> Task Error Adapter
+finish ctx job after ( st, seen ) =
     -- The checkpoint the last attempt resumed from, read from every protocol
     -- line of the run: the watch that saw `done` may not have seen that
     -- attempt's `hello`, which came in an earlier watch window.
@@ -2842,11 +3157,11 @@ finish ctx job ( st, seen ) =
                    (\state ->
                        (foldLines state.lines (emptyProgress "")).resumedFrom))
         |> Task.andThen
-               (\r -> finishWith ctx job ( st, { seen | resumedFrom = r } ))
+               (\r -> finishWith ctx job after ( st, { seen | resumedFrom = r } ))
 
 
-finishWith : Durable.Ctx -> Job -> ( Setup, Seen ) -> Task Error Adapter
-finishWith ctx job ( st, seen ) =
+finishWith : Durable.Ctx -> Job -> (Adapter -> Task Error Adapter) -> ( Setup, Seen ) -> Task Error Adapter
+finishWith ctx job after ( st, seen ) =
     let
         s = settings job
         dir = runDir job
@@ -2895,6 +3210,7 @@ finishWith ctx job ( st, seen ) =
                                                          gguf
                                                          merged)))
             |> Task.andThen (\a -> registerStep ctx job a)
+            |> Task.andThen after
             |> Task.andThen
                    (\a ->
                        finishRaw
@@ -2979,3 +3295,1931 @@ registerStep ctx job a =
                     (lineage a)
                     |> Task.map Registry.label)
                 |> Task.map (\label -> { a | registered = Just label })
+
+-- ── The Vertex backend ──────────────────────────────────────────────
+-- A `Vertex` job runs the same driver as `Unsloth` (or, on a machine with no
+-- GPU, the Fake driver) in a pinned container, as a Vertex AI custom job.
+-- The workflow stages the frozen data as content-addressed blobs in the
+-- staging bucket, launches the job exactly once, watches it through the
+-- protocol segments the container writes next to its checkpoints, stops it at
+-- the budget, relaunches a lost attempt from its newest checkpoint, downloads
+-- the adapter, and from there finishes like a local run (convert, register).
+--
+-- The run's objects, below the staging location:
+--
+--     runs/<key>/inputs.json                   what every attempt trains on
+--     runs/<key>/launch-<a>.intent             the exactly-once launch marker
+--     runs/<key>/attempt-<a>/hello.json        the job that runs attempt a
+--     runs/<key>/attempt-<a>/events/<seq>.jsonl  protocol segments
+--     runs/<key>/checkpoints/<step>/…          manifest.json written last
+--     runs/<key>/adapter/…                     the PEFT adapter, manifest last
+--     runs/<key>/done.json, cancel             the end; a cancel request
+--
+-- `<key>` is `runKey (runId job)`. The run directory on this machine mirrors
+-- the protocol (`events.jsonl`) and the job's state (`cloud.json`), so
+-- `progress`, `runs`, the console and `cancel` work as they do locally.
+-- | A `Vertex` job's resolved settings: each from the operator's variable,
+-- else the job's `withX` value, else the default; the machine's
+-- accelerator; the rate the price book gives it; and where each setting came
+-- from.
+type alias CloudSettings =
+    { project : String
+    , region : String
+    , machine : String
+    , staging : String
+    , image : String
+    , serviceAccount : String
+    , budget : Money
+    , perHour : Money
+    , priceBook : String
+    , accelerator : String
+    , acceleratorCount : Int
+    , sources : List RawSetting
+    }
+
+-- | What `plan` (and the workflow's `cloud-plan` step) found for a `Vertex`
+-- job: the machine, its rate, the estimate against the budget, the hard
+-- runtime ceiling the job is created with, the staging bucket's location,
+-- and the accelerator quota when Cloud Quotas could be read.
+type alias CloudPlan =
+    { project : String
+    , region : String
+    , machine : String
+    , accelerator : String
+    , acceleratorCount : Int
+    , image : String
+    , staging : String
+    , steps : Int
+    , estimateMinutes : Int
+    , timeoutSeconds : Int
+    , perHour : Money
+    , estimate : Money
+    , budget : Money
+    , priceBook : String
+    , bucketLocation : String
+    , quotaLimit : Maybe Int
+    , quotaNote : String
+    }
+
+type alias RawCloudCode =
+    { project : String
+    , region : String
+    , machine : String
+    , staging : String
+    , budget : String
+    , image : String
+    , serviceAccount : String
+    }
+
+
+cloudResolveRaw : RawCloudCode -> Task Error (List RawSetting)
+cloudResolveRaw =
+    Ffi.kernel "Ai_trainCloudResolve"
+
+
+-- Money as "<ISO code> <exact decimal>" ("USD 5.00"), the form a variable
+-- holds and a failure records.
+moneyText : Money -> String
+moneyText m =
+    Money.currencyCode (Money.currency m) ++ " "
+        ++ Decimal.toString (Money.amount m)
+
+
+parseMoney : String -> Maybe Money
+parseMoney text =
+    case String.split " " (String.trim text) of
+
+        [c, amount] ->
+            if Money.isKnownCode c then
+                Result.toMaybe (Money.fromString (Money.parseCurrency c) amount)
+
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+moneyCodec : Codec Money
+moneyCodec =
+    Codec.map
+        (\t -> Maybe.withDefault (Money.zero Money.USD) (parseMoney t))
+        moneyText
+        Codec.string
+
+
+-- | Resolve and check a `Vertex` job's settings without touching the cloud:
+-- a project, a region and a staging location (`gs://…`) are set, the image is
+-- pinned by digest, the budget is set and above zero, and the price book has
+-- the machine in the region, in the budget's currency.
+cloudSettings : Job -> Task Error CloudSettings
+cloudSettings job =
+    let
+        s = settings job
+        code =
+            { project = s.cloud.project
+            , region = s.cloud.region
+            , machine = s.cloud.machine
+            , staging = s.cloud.staging
+            , budget = Maybe.withDefault "" (Maybe.map moneyText s.budget)
+            , image = s.image
+            , serviceAccount = s.serviceAccount
+            }
+    in
+        cloudResolveRaw code
+            |> Task.andThen (\found -> Task.fromResult (checkCloud s found))
+
+
+settingValue : String -> List RawSetting -> RawSetting
+settingValue key found =
+    List.filter (\x -> x.key == key) found |> List.head
+        |> Maybe.withDefault
+               { key = key
+               , name = "SKY_AI_TRAIN_" ++ key
+               , value = ""
+               , source = "default"
+               }
+
+
+notSet : RawSetting -> String -> Error
+notSet r builder =
+    Failure.toError
+        (NotConfigured
+            { setting = r.name ++ " (or Train." ++ builder ++ " in code)" })
+
+
+checkCloud : Settings -> List RawSetting -> Result Error CloudSettings
+checkCloud s found =
+    let
+        project = settingValue "PROJECT" found
+        region = settingValue "REGION" found
+        machineR = settingValue "MACHINE" found
+        staging = settingValue "STAGING" found
+        budgetR = settingValue "BUDGET" found
+        image = settingValue "IMAGE" found
+        account = settingValue "SERVICE_ACCOUNT" found
+        machine =
+            if machineR.value == "" then
+                "g2-standard-4"
+
+            else
+                machineR.value
+        ( acc, count ) = Google.accelerator machine
+        pinned =
+            case String.split "@sha256:" image.value of
+
+                [_, hex] ->
+                    String.length hex == 64
+                        && List.all
+                               (\c ->
+                                   (c >= '0' && c <= '9')
+                                       || (c >= 'a' && c <= 'f'))
+                               (String.toList hex)
+
+                _ ->
+                    False
+    in
+        if project.value == "" then
+            Err (notSet project "withCloud")
+
+        else if region.value == "" then
+            Err (notSet region "withCloud")
+
+        else if staging.value == "" then
+            Err (notSet staging "withCloud")
+
+        else if not (String.startsWith "gs://" staging.value)
+            || String.length staging.value
+            <= 5 then
+            Err
+                (invalid
+                    staging.name
+                    (quoteText staging.value
+                        ++ " is not a staging location; use gs://<bucket>/<prefix>"))
+
+        else if image.value == "" then
+            Err
+                (Failure.toError
+                    (NotConfigured
+                        { setting =
+                            image.name
+                                ++ " (or Train.withImage in code); `sky ai image build --train` builds the trainer image in your project"
+                        }))
+
+        else if not pinned then
+            Err
+                (invalid
+                    image.name
+                    (quoteText image.value
+                        ++ " is not pinned: use <image>@sha256:<64 hex digits>, the reference `sky ai image build --train` prints"))
+
+        else if budgetR.value == "" then
+            Err
+                (invalid
+                    budgetR.name
+                    "a cloud job needs a budget: Train.withBudget (Money.fromMajor Money.USD 5) or SKY_AI_TRAIN_BUDGET=\"USD 5.00\"")
+
+        else
+            case parseMoney budgetR.value of
+
+                Nothing ->
+                    Err
+                        (invalid
+                            budgetR.name
+                            (quoteText budgetR.value
+                                ++ " is not an amount; write it as \"USD 5.00\""))
+
+                Just budget ->
+                    if not (Money.isPositive budget) then
+                        Err (invalid budgetR.name "the budget must be above 0")
+
+                    else
+                        case s.prices of
+
+                            Nothing ->
+                                Err
+                                    (invalid
+                                        "prices"
+                                        "a cloud job needs a price book: Train.withMachinePrices (Train.machinePrices …), with the rates you checked")
+
+                            Just (MachinePriceBook book) ->
+                                case book.problems of
+
+                                    problem :: _ ->
+                                        Err
+                                            (invalid
+                                                "prices"
+                                                ("the price book "
+                                                    ++ book.version
+                                                    ++ ": "
+                                                    ++ problem))
+
+                                    [] ->
+                                        case List.filter
+                                                 (\r ->
+                                                     r.machine == machine
+                                                         && r.region
+                                                         == region.value)
+                                                 book.rates of
+
+                                            rate :: _ ->
+                                                if Money.currencyCode book.currency
+                                                    /= Money.currencyCode
+                                                           (Money.currency budget) then
+                                                    Err
+                                                        (invalid
+                                                            "prices"
+                                                            ("the price book "
+                                                                ++ book.version
+                                                                ++ " is in "
+                                                                ++ Money.currencyCode
+                                                                       book.currency
+                                                                ++ " and the budget in "
+                                                                ++ Money.currencyCode
+                                                                       (Money.currency
+                                                                           budget)))
+
+                                                else
+                                                    Ok
+                                                        { project =
+                                                            project.value
+                                                        , region = region.value
+                                                        , machine = machine
+                                                        , staging =
+                                                            staging.value
+                                                        , image = image.value
+                                                        , serviceAccount =
+                                                            account.value
+                                                        , budget = budget
+                                                        , perHour = rate.perHour
+                                                        , priceBook =
+                                                            book.version
+                                                        , accelerator = acc
+                                                        , acceleratorCount =
+                                                            count
+                                                        , sources = found
+                                                        }
+
+                                            [] ->
+                                                Err
+                                                    (invalid
+                                                        "prices"
+                                                        ("the price book "
+                                                            ++ book.version
+                                                            ++ " has no rate for "
+                                                            ++ machine
+                                                            ++ " in "
+                                                            ++ region.value
+                                                            ++ "; without a price there is no estimate"))
+
+
+-- | The estimate for a `Vertex` job, pure: `( minutes, estimate,
+-- timeoutSeconds )` for a base of `parameters` parameters. Documented and
+-- deliberately high:
+--
+--   * 15 minutes to provision the machine and pull the image, 5 to export and
+--     upload the adapter;
+--   * seconds per step: on a CPU machine (the Fake driver) the job's
+--     `fakeStepMs` plus 50 ms; on an L4, the larger of 0.25 s and
+--     parameters / 10⁹ × tokens per step / 4000;
+--   * the estimate is the minutes at the book's rate per hour, and the
+--     runtime ceiling the smaller of what the budget buys and
+--     `withMaxRuntimeMinutes`.
+cloudEstimate : Job -> CloudSettings -> Int -> ( Int, Money, Int )
+cloudEstimate job cs parameters =
+    let
+        s = settings job
+        steps = totalSteps job
+        tokens = s.batch.perDevice * s.batch.accumulate * s.sequenceLength
+        perStepMs =
+            if cs.acceleratorCount == 0 then
+                s.fakeStepMs + 50
+
+            else
+                Math.max 250 (parameters // 1000000 * tokens // 4000)
+        minutes = 15 + (steps * perStepMs + 59999) // 60000 + 5
+        estimate = perMinutes cs.perHour minutes
+        affordable =
+            case Decimal.div (Money.amount cs.budget) (Money.amount cs.perHour) of
+
+                Ok hours ->
+                    Decimal.toInt
+                        (Decimal.floor (Decimal.mul hours (Decimal.fromInt 3600)))
+
+                Err _ ->
+                    -- A free machine: only the ceiling bounds it.
+                    86400
+        ceiling =
+            if s.maxRuntimeMinutes > 0 then
+                Math.min affordable (s.maxRuntimeMinutes * 60)
+
+            else
+                affordable
+    in
+        ( minutes, estimate, Math.max 60 ceiling )
+
+
+-- A rate per hour for some minutes.
+perMinutes : Money -> Int -> Money
+perMinutes rate minutes =
+    Money.mul (Decimal.fromMinor 4 (minutes * 10000 // 60)) rate
+
+
+-- A rate per hour for some milliseconds.
+perMillis : Money -> Int -> Money
+perMillis rate ms =
+    case Decimal.div (Decimal.fromInt ms) (Decimal.fromInt 3600000) of
+
+        Ok hours ->
+            Money.mul hours rate
+
+        Err _ ->
+            Money.zeroOf rate
+
+
+-- | Plan a `Vertex` job: its settings, the estimate against the budget
+-- (`BudgetExceeded`), the staging bucket in the job's region (a bucket
+-- elsewhere, or a multi-region one, is `InvalidSetting`: the data stays in
+-- the region), and the L4 quota when Cloud Quotas can be read (a quota below
+-- the machine's GPUs is `QuotaExceeded`).
+planCloud : Job -> Task Error CloudPlan
+planCloud job =
+    Task.fromResult (check job) |> Task.andThen (\_ -> shapeOf (baseOf job))
+        |> Task.andThen (planCloudWith job)
+
+
+-- The Cloud Quotas id of Vertex AI's L4 custom-training quota (listed with
+-- the Cloud Quotas API on 2026-10-12).
+l4TrainingQuota : String
+l4TrainingQuota =
+    "CustomModelTrainingNvidiaL4GPUsPerProjectPerRegion"
+
+
+planCloudWith : Job -> ModelShape -> Task Error CloudPlan
+planCloudWith job shape =
+    cloudSettings job
+        |> Task.andThen
+               (\cs ->
+                   let
+                       ( minutes, estimate, timeout ) =
+                           cloudEstimate job cs shape.parameters
+                   in
+                       if Money.gt estimate cs.budget then
+                           Task.fail
+                               (Failure.toError
+                                   (BudgetExceeded
+                                       { budget = cs.budget
+                                       , estimate = estimate
+                                       }))
+
+                       else
+                           Task.fromResult (Store.fromUrl cs.staging)
+                               |> Task.andThen Store.bucketLocation
+                               |> Task.andThen
+                                      (\location ->
+                                          if location /= cs.region then
+                                              Task.fail
+                                                  (invalid
+                                                      "SKY_AI_TRAIN_STAGING"
+                                                      (cs.staging ++ " is in "
+                                                          ++ location
+                                                          ++ ", not in the job's region "
+                                                          ++ cs.region
+                                                          ++ "; training data stays in the job's region, so use a bucket there"))
+
+                                          else
+                                              quotaFor cs
+                                                  |> Task.andThen
+                                                         (\q ->
+                                                             case q.limit of
+
+                                                                 Just n ->
+                                                                     if n
+                                                                         < cs.acceleratorCount then
+                                                                         Task.fail
+                                                                             (Failure.toError
+                                                                                 (QuotaExceeded
+                                                                                     { resource =
+                                                                                         "aiplatform.googleapis.com/custom_model_training_nvidia_l4_gpus"
+                                                                                     , region =
+                                                                                         cs.region
+                                                                                     , limit =
+                                                                                         n
+                                                                                     }))
+
+                                                                     else
+                                                                         Task.succeed
+                                                                             q
+
+                                                                 Nothing ->
+                                                                     Task.succeed
+                                                                         q)
+                                                  |> Task.map
+                                                         (\q ->
+                                                             { project =
+                                                                 cs.project
+                                                             , region =
+                                                                 cs.region
+                                                             , machine =
+                                                                 cs.machine
+                                                             , accelerator =
+                                                                 cs.accelerator
+                                                             , acceleratorCount =
+                                                                 cs.acceleratorCount
+                                                             , image = cs.image
+                                                             , staging =
+                                                                 cs.staging
+                                                             , steps =
+                                                                 totalSteps job
+                                                             , estimateMinutes =
+                                                                 minutes
+                                                             , timeoutSeconds =
+                                                                 timeout
+                                                             , perHour =
+                                                                 cs.perHour
+                                                             , estimate =
+                                                                 estimate
+                                                             , budget =
+                                                                 cs.budget
+                                                             , priceBook =
+                                                                 cs.priceBook
+                                                             , bucketLocation =
+                                                                 location
+                                                             , quotaLimit =
+                                                                 q.limit
+                                                             , quotaNote =
+                                                                 q.note
+                                                             })))
+
+
+quotaFor : CloudSettings -> Task Error Google.QuotaReading
+quotaFor cs =
+    if cs.acceleratorCount == 0 then
+        Task.succeed
+            { quotaId = "", region = cs.region, limit = Nothing, note = "" }
+
+    else
+        Google.quota
+            cs.project
+            "aiplatform.googleapis.com"
+            l4TrainingQuota
+            cs.region
+
+
+-- | The key of a run's objects in the staging bucket and of its Vertex
+-- labels: `sky-` and the first 20 hex digits of the SHA-256 of the run's id.
+-- The same job is the same key, so a resumed run finds its checkpoints.
+runKey : String -> String
+runKey id =
+    "sky-" ++ String.left 20 (Crypto.sha256 id)
+
+
+runPath : String -> String
+runPath key =
+    "runs/" ++ key
+
+
+-- The staging location below which a run's objects live, as a URL.
+stagingUrl : CloudSettings -> String -> String
+stagingUrl cs path =
+    trimSlash cs.staging ++ "/" ++ path
+
+
+trimSlash : String -> String
+trimSlash s =
+    if String.endsWith "/" s then
+        trimSlash (String.dropRight 1 s)
+
+    else
+        s
+
+
+-- | The custom job for one attempt: the container runs the shim
+-- (`sky_cloud.py`) with the run's inputs, its staging prefix, the attempt
+-- and the step it resumes from. Labelled `sky-managed=true`,
+-- `sky-run=<key>`, `sky-attempt=<a>` and `sky-kind=train`, so the attempt
+-- is found again by its labels and `sky ai cloud ls` lists it.
+cloudJobSpec : CloudSettings -> CloudPlan -> String -> Int -> Int -> Google.JobSpec
+cloudJobSpec cs p key attempt resumeFrom =
+    { displayName = key ++ "-a" ++ String.fromInt attempt
+    , machine = cs.machine
+    , image = cs.image
+    , args =
+        [ "--inputs"
+        , stagingUrl cs (runPath key ++ "/inputs.json")
+        , "--run"
+        , stagingUrl cs (runPath key)
+        , "--attempt"
+        , String.fromInt attempt
+        , "--resume-from"
+        , String.fromInt resumeFrom
+        ]
+    , env = []
+    , serviceAccount = cs.serviceAccount
+    , timeoutSeconds = p.timeoutSeconds
+    , spot = False
+    , bootDiskGb = 100
+    , labels =
+        [ ( "sky-managed", "true" )
+        , ( "sky-run", key )
+        , ( "sky-attempt", String.fromInt attempt )
+        , ( "sky-kind", "train" )
+        ]
+    }
+
+
+-- The driver the container runs: Unsloth on a GPU, the Fake driver on a CPU
+-- machine.
+containerBackend : CloudSettings -> String
+containerBackend cs =
+    if cs.acceleratorCount > 0 then
+        "unsloth"
+
+    else
+        "fake"
+
+
+-- | The run's `inputs.json`: the staging location, the driver's settings for
+-- an attempt (the shim fills in the attempt, the resume step and the local
+-- paths), the digests of the train and eval rows, and the base's pinned
+-- snapshot (the container fetches it and checks every file). The same job is
+-- the same text, so it is written once.
+inputsJson : Job -> CloudSettings -> ModelShape -> String -> Store.Blob -> Store.Blob -> Result Error String
+inputsJson job cs shape key train valid =
+    let
+        backend = containerBackend cs
+        st =
+            { backend = backend
+            , shape = shape
+            , tool =
+                { name = "vertex", id = cs.image, python = "", driverDir = "" }
+            , weights = ""
+            }
+        blobValue b =
+            JsonE.object
+                [ ( "sha256", JsonE.string b.sha256 )
+                , ( "size", JsonE.int b.size )
+                ]
+        base =
+            if backend == "unsloth" then
+                case baseWeights Unsloth (baseOf job) of
+
+                    Just snap ->
+                        Result.map Just (JsonE.raw (snapshotJson snap))
+
+                    Nothing ->
+                        Err
+                            (invalid
+                                "base"
+                                (baseId (baseOf job)
+                                    ++ " has no Unsloth weights for a GPU job; give the base Train.withWeights Vertex"))
+
+            else
+                Ok Nothing
+    in
+        Result.map2
+            (\driver b ->
+                JsonE.encode
+                    0
+                    (JsonE.object
+                        [ ( "base", Maybe.withDefault JsonE.null b )
+                        , ( "data"
+                          , JsonE.object
+                                [ ( "train", blobValue train )
+                                , ( "valid", blobValue valid )
+                                ]
+                          )
+                        , ( "driver", driver )
+                        , ( "run", JsonE.string (runPath key) )
+                        , ( "runKey", JsonE.string key )
+                        , ( "store", JsonE.string cs.staging )
+                        , ( "v", JsonE.int 1 )
+                        ]))
+            (JsonE.raw (driverJson job st 0 Nothing))
+            base
+
+-- ── The cloud workflow ──────────────────────────────────────────────
+-- What the cloud part of a run hands to its cleanup.
+type alias CloudRun =
+    { settings : CloudSettings
+    , key : String
+    }
+
+-- The journalled settings (money as text).
+type alias RawCloud =
+    { project : String
+    , region : String
+    , machine : String
+    , staging : String
+    , image : String
+    , serviceAccount : String
+    , budget : String
+    , perHour : String
+    , priceBook : String
+    , accelerator : String
+    , acceleratorCount : Int
+    }
+
+
+rawCloudCodec : Codec RawCloud
+rawCloudCodec =
+    Codec.object
+        (\p r m st i sa b ph pb a ac ->
+            { project = p
+            , region = r
+            , machine = m
+            , staging = st
+            , image = i
+            , serviceAccount = sa
+            , budget = b
+            , perHour = ph
+            , priceBook = pb
+            , accelerator = a
+            , acceleratorCount = ac
+            })
+        |> Codec.field "project" .project Codec.string
+        |> Codec.field "region" .region Codec.string
+        |> Codec.field "machine" .machine Codec.string
+        |> Codec.field "staging" .staging Codec.string
+        |> Codec.field "image" .image Codec.string
+        |> Codec.field "serviceAccount" .serviceAccount Codec.string
+        |> Codec.field "budget" .budget Codec.string
+        |> Codec.field "perHour" .perHour Codec.string
+        |> Codec.field "priceBook" .priceBook Codec.string
+        |> Codec.field "accelerator" .accelerator Codec.string
+        |> Codec.field "acceleratorCount" .acceleratorCount Codec.int
+        |> Codec.buildObject
+
+
+toRawCloud : CloudSettings -> RawCloud
+toRawCloud cs =
+    { project = cs.project
+    , region = cs.region
+    , machine = cs.machine
+    , staging = cs.staging
+    , image = cs.image
+    , serviceAccount = cs.serviceAccount
+    , budget = moneyText cs.budget
+    , perHour = moneyText cs.perHour
+    , priceBook = cs.priceBook
+    , accelerator = cs.accelerator
+    , acceleratorCount = cs.acceleratorCount
+    }
+
+
+fromRawCloud : RawCloud -> CloudSettings
+fromRawCloud r =
+    { project = r.project
+    , region = r.region
+    , machine = r.machine
+    , staging = r.staging
+    , image = r.image
+    , serviceAccount = r.serviceAccount
+    , budget = Maybe.withDefault (Money.zero Money.USD) (parseMoney r.budget)
+    , perHour = Maybe.withDefault (Money.zero Money.USD) (parseMoney r.perHour)
+    , priceBook = r.priceBook
+    , accelerator = r.accelerator
+    , acceleratorCount = r.acceleratorCount
+    , sources = []
+    }
+
+
+planCodec : Codec CloudPlan
+planCodec =
+    Codec.object
+        (\pr rg mc ac acn im st sp em ts ph es bu pb bl ql qn ->
+            { project = pr
+            , region = rg
+            , machine = mc
+            , accelerator = ac
+            , acceleratorCount = acn
+            , image = im
+            , staging = st
+            , steps = sp
+            , estimateMinutes = em
+            , timeoutSeconds = ts
+            , perHour = ph
+            , estimate = es
+            , budget = bu
+            , priceBook = pb
+            , bucketLocation = bl
+            , quotaLimit = ql
+            , quotaNote = qn
+            })
+        |> Codec.field "project" .project Codec.string
+        |> Codec.field "region" .region Codec.string
+        |> Codec.field "machine" .machine Codec.string
+        |> Codec.field "accelerator" .accelerator Codec.string
+        |> Codec.field "acceleratorCount" .acceleratorCount Codec.int
+        |> Codec.field "image" .image Codec.string
+        |> Codec.field "staging" .staging Codec.string
+        |> Codec.field "steps" .steps Codec.int
+        |> Codec.field "estimateMinutes" .estimateMinutes Codec.int
+        |> Codec.field "timeoutSeconds" .timeoutSeconds Codec.int
+        |> Codec.field "perHour" .perHour moneyCodec
+        |> Codec.field "estimate" .estimate moneyCodec
+        |> Codec.field "budget" .budget moneyCodec
+        |> Codec.field "priceBook" .priceBook Codec.string
+        |> Codec.field "bucketLocation" .bucketLocation Codec.string
+        |> Codec.field "quotaLimit" .quotaLimit (Codec.maybe Codec.int)
+        |> Codec.field "quotaNote" .quotaNote Codec.string
+        |> Codec.buildObject
+
+-- One watch of a cloud attempt, as journalled.
+type alias CloudWatch =
+    { segment : String
+    , state : String
+    , outcome : String
+    , step : Int
+    , code : String
+    , message : String
+    , trainLoss : Float
+    , valLoss : Float
+    , peft : String
+    , resumedFrom : Int
+    , spentMinor : Int
+    , errorCode : Int
+    , errorMessage : String
+    , relaunches : Int
+    }
+
+
+cloudWatchCodec : Codec CloudWatch
+cloudWatchCodec =
+    Codec.object
+        (\sg st oc sp cd ms tl vl pf rf sm ec em rl ->
+            { segment = sg
+            , state = st
+            , outcome = oc
+            , step = sp
+            , code = cd
+            , message = ms
+            , trainLoss = tl
+            , valLoss = vl
+            , peft = pf
+            , resumedFrom = rf
+            , spentMinor = sm
+            , errorCode = ec
+            , errorMessage = em
+            , relaunches = rl
+            })
+        |> Codec.field "segment" .segment Codec.string
+        |> Codec.field "state" .state Codec.string
+        |> Codec.field "outcome" .outcome Codec.string
+        |> Codec.field "step" .step Codec.int
+        |> Codec.field "code" .code Codec.string
+        |> Codec.field "message" .message Codec.string
+        |> Codec.field "trainLoss" .trainLoss Codec.float
+        |> Codec.field "valLoss" .valLoss Codec.float
+        |> Codec.field "peft" .peft Codec.string
+        |> Codec.field "resumedFrom" .resumedFrom Codec.int
+        |> Codec.field "spentMinor" .spentMinor Codec.int
+        |> Codec.field "errorCode" .errorCode Codec.int
+        |> Codec.field "errorMessage" .errorMessage Codec.string
+        |> Codec.field "relaunches" .relaunches Codec.int
+        |> Codec.buildObject
+
+-- Where a cloud run stands when the workflow takes it up: the last attempt
+-- this machine recorded (cloud.json), its job, and whether it finished.
+type alias CloudOrigin =
+    { attempt : Int
+    , job : String
+    , live : Bool
+    , finished : Bool
+    , spentMinor : Int
+    }
+
+
+cloudOriginCodec : Codec CloudOrigin
+cloudOriginCodec =
+    Codec.object
+        (\a j l f sm ->
+            { attempt = a, job = j, live = l, finished = f, spentMinor = sm })
+        |> Codec.field "attempt" .attempt Codec.int
+        |> Codec.field "job" .job Codec.string
+        |> Codec.field "live" .live Codec.bool
+        |> Codec.field "finished" .finished Codec.bool
+        |> Codec.field "spentMinor" .spentMinor Codec.int
+        |> Codec.buildObject
+
+-- The cloud.json a watch writes in the run directory.
+type alias CloudFile =
+    { job : String
+    , state : String
+    , attempt : Int
+    , staging : String
+    , runKey : String
+    , spentMinor : Int
+    }
+
+
+readCloudFile : String -> Task Error (Maybe CloudFile)
+readCloudFile dir =
+    let
+        path = dir ++ "/cloud.json"
+    in
+        File.exists path
+            |> Task.andThen
+                   (\there ->
+                       if not there then
+                           Task.succeed Nothing
+
+                       else
+                           File.readFile path
+                               |> Task.map
+                                      (\text ->
+                                          JsonD.decodeString
+                                              (JsonD.map2
+                                                  (\( j, s, a ) ( st, k, sm ) ->
+                                                      { job = j
+                                                      , state = s
+                                                      , attempt = a
+                                                      , staging = st
+                                                      , runKey = k
+                                                      , spentMinor = sm
+                                                      })
+                                                  (JsonD.map3
+                                                      (\j s a -> ( j, s, a ))
+                                                      (JsonD.field
+                                                          "job"
+                                                          JsonD.string)
+                                                      (JsonD.field
+                                                          "state"
+                                                          JsonD.string)
+                                                      (JsonD.field
+                                                          "attempt"
+                                                          JsonD.int))
+                                                  (JsonD.map3
+                                                      (\st k sm -> ( st, k, sm ))
+                                                      (JsonD.field
+                                                          "staging"
+                                                          JsonD.string)
+                                                      (JsonD.field
+                                                          "runKey"
+                                                          JsonD.string)
+                                                      (JsonD.oneOf
+                                                          [ JsonD.field
+                                                                "spentMinor"
+                                                                JsonD.int
+                                                          , JsonD.succeed 0
+                                                          ])))
+                                              text
+                                              |> Result.toMaybe))
+
+
+writeCloudFile : String -> CloudSettings -> String -> String -> String -> Int -> Int -> Task Error ()
+writeCloudFile dir cs key jobName state attempt spentMinor =
+    Time.unixMillis ()
+        |> Task.andThen
+               (\now ->
+                   File.writeFile
+                       (dir ++ "/cloud.json.partial")
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "attempt", JsonE.int attempt )
+                               , ( "backend", JsonE.string "vertex" )
+                               , ( "budget"
+                                 , JsonE.string (moneyText cs.budget)
+                                 )
+                               , ( "job", JsonE.string jobName )
+                               , ( "machine", JsonE.string cs.machine )
+                               , ( "project", JsonE.string cs.project )
+                               , ( "region", JsonE.string cs.region )
+                               , ( "runKey", JsonE.string key )
+                               , ( "spent"
+                                 , JsonE.string
+                                       (moneyText
+                                           (Money.fromMinor
+                                               (Money.currency cs.budget)
+                                               spentMinor))
+                                 )
+                               , ( "spentMinor", JsonE.int spentMinor )
+                               , ( "staging", JsonE.string cs.staging )
+                               , ( "state", JsonE.string state )
+                               , ( "updatedMs", JsonE.int now )
+                               ])))
+        |> Task.andThen
+               (\_ ->
+                   File.rename
+                       (dir ++ "/cloud.json.partial")
+                       (dir ++ "/cloud.json"))
+
+
+-- Cancel a cloud run from its cloud.json: the cancel marker (the container's
+-- shim checkpoints and stops at the next step) and Vertex's own cancel.
+cancelCloud : CloudFile -> Task Error Bool
+cancelCloud c =
+    Task.fromResult (Store.fromUrl c.staging)
+        |> Task.andThen
+               (\store -> Store.putAt store (runPath c.runKey ++ "/cancel") "{}")
+        |> Task.andThen (\_ -> Google.cancelCustomJob c.job)
+        |> Task.map
+               (\_ ->
+                   c.state == "JOB_STATE_RUNNING" || c.state
+                       == "JOB_STATE_PENDING"
+                       || c.state
+                       == "JOB_STATE_QUEUED")
+
+
+cloudTrain : Durable.Ctx -> Job -> Task Error ( Setup, Seen, CloudRun )
+cloudTrain ctx job =
+    let
+        s = settings job
+        dir = runDir job
+        key = runKey (runId job)
+    in
+        Durable.step
+            ctx
+            rawCloudCodec
+            "cloud"
+            (cloudSettings job |> Task.map toRawCloud)
+            |> Task.map fromRawCloud
+            |> Task.andThen
+                   (\cs ->
+                       Durable.step
+                           ctx
+                           Codec.int
+                           "stage"
+                           (stageRaw dir s.dataFile s.datasetDigest (jobJson job)
+                               |> Task.map (\st -> st.train))
+                           |> Task.andThen
+                                  (\_ ->
+                                      Durable.step
+                                          ctx
+                                          shapeCodec
+                                          "shape"
+                                          (shapeOf (baseOf job)))
+                           |> Task.andThen
+                                  (\shape ->
+                                      Durable.step
+                                          ctx
+                                          planCodec
+                                          "cloud-plan"
+                                          (planCloudWith job shape)
+                                          |> Task.andThen
+                                                 (\p ->
+                                                     cloudLaunchAndWatch
+                                                         ctx
+                                                         job
+                                                         cs
+                                                         p
+                                                         shape
+                                                         key)))
+
+
+cloudLaunchAndWatch : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> ModelShape -> String -> Task Error ( Setup, Seen, CloudRun )
+cloudLaunchAndWatch ctx job cs p shape key =
+    let
+        dir = runDir job
+        st =
+            { backend = "vertex"
+            , shape = shape
+            , tool =
+                { name = "vertex", id = cs.image, python = "", driverDir = "" }
+            , weights = ""
+            }
+    in
+        Task.fromResult (Store.fromUrl cs.staging)
+            |> Task.andThen
+                   (\store ->
+                       Durable.step
+                           ctx
+                           Codec.string
+                           "upload"
+                           (uploadInputs job cs shape store key)
+                           |> Task.andThen
+                                  (\_ ->
+                                      Durable.step
+                                          ctx
+                                          cloudOriginCodec
+                                          "origin"
+                                          (cloudOrigin dir)
+                                          |> Task.andThen
+                                                 (\o ->
+                                                     if o.finished then
+                                                         Task.succeed
+                                                             { segment = ""
+                                                             , state =
+                                                                 "JOB_STATE_SUCCEEDED"
+                                                             , outcome = "done"
+                                                             , step = 0
+                                                             , code = ""
+                                                             , message = ""
+                                                             , trainLoss = 0.0
+                                                             , valLoss = 0.0
+                                                             , peft = ""
+                                                             , resumedFrom = 0
+                                                             , spentMinor =
+                                                                 o.spentMinor
+                                                             , errorCode = 0
+                                                             , errorMessage = ""
+                                                             , relaunches = 0
+                                                             }
+
+                                                     else if o.live then
+                                                         cloudWatchLoop
+                                                             ctx
+                                                             job
+                                                             cs
+                                                             p
+                                                             store
+                                                             key
+                                                             o.attempt
+                                                             o.job
+                                                             0
+                                                             ""
+                                                             0
+                                                             o.spentMinor
+
+                                                     else
+                                                         cloudRelaunch
+                                                             ctx
+                                                             job
+                                                             cs
+                                                             p
+                                                             store
+                                                             key
+                                                             (o.attempt + 1)
+                                                             0
+                                                             o.spentMinor)
+                                          |> Task.andThen
+                                                 (\w ->
+                                                     Durable.step
+                                                         ctx
+                                                         Codec.string
+                                                         "download"
+                                                         (downloadAdapter
+                                                             dir
+                                                             store
+                                                             key)
+                                                         |> Task.map
+                                                                (\_ ->
+                                                                    ( st
+                                                                    , { offset =
+                                                                          0
+                                                                      , outcome =
+                                                                          "done"
+                                                                      , step =
+                                                                          w.step
+                                                                      , code =
+                                                                          ""
+                                                                      , message =
+                                                                          ""
+                                                                      , trainLoss =
+                                                                          w.trainLoss
+                                                                      , valLoss =
+                                                                          w.valLoss
+                                                                      , peft =
+                                                                          w.peft
+                                                                      , relaunches =
+                                                                          w.relaunches
+                                                                      , resumedFrom =
+                                                                          w.resumedFrom
+                                                                      }
+                                                                    , { settings =
+                                                                          cs
+                                                                      , key =
+                                                                          key
+                                                                      }
+                                                                    )))))
+
+
+uploadInputs : Job -> CloudSettings -> ModelShape -> Store -> String -> Task Error String
+uploadInputs job cs shape store key =
+    let
+        dir = runDir job
+    in
+        Store.put store (dir ++ "/data/train.jsonl")
+            |> Task.andThen
+                   (\train ->
+                       Store.put store (dir ++ "/data/valid.jsonl")
+                           |> Task.andThen
+                                  (\valid ->
+                                      Task.fromResult
+                                          (inputsJson
+                                              job
+                                              cs
+                                              shape
+                                              key
+                                              train
+                                              valid)))
+            |> Task.andThen
+                   (\text ->
+                       Store.putIf store (runPath key ++ "/inputs.json") "" text
+                           |> Task.andThen
+                                  (\created ->
+                                      if created then
+                                          Task.succeed (Crypto.sha256 text)
+
+                                      else
+                                          Store.getAt
+                                              store
+                                              (runPath key ++ "/inputs.json")
+                                              |> Task.andThen
+                                                     (\existing ->
+                                                         if existing == Just text then
+                                                             Task.succeed
+                                                                 (Crypto.sha256
+                                                                     text)
+
+                                                         else
+                                                             Task.fail
+                                                                 (invalid
+                                                                     "job"
+                                                                     (stagingUrl
+                                                                         cs
+                                                                         (runPath
+                                                                             key
+                                                                             ++ "/inputs.json")
+                                                                         ++ " holds other inputs for this run; delete the run's staging prefix or change the job")))))
+
+
+-- The run's last recorded attempt, from cloud.json and the mirrored lines.
+cloudOrigin : String -> Task Error CloudOrigin
+cloudOrigin dir =
+    readCloudFile dir
+        |> Task.andThen
+               (\found ->
+                   readRaw dir
+                       |> Task.map
+                              (\state ->
+                                  let
+                                      folded =
+                                          foldLines
+                                              state.lines
+                                              (emptyProgress "")
+                                  in
+                                      case found of
+
+                                          Just c ->
+                                              { attempt = c.attempt
+                                              , job = c.job
+                                              , live =
+                                                  List.member
+                                                      c.state
+                                                      [ "JOB_STATE_QUEUED"
+                                                      , "JOB_STATE_PENDING"
+                                                      , "JOB_STATE_RUNNING"
+                                                      , "JOB_STATE_CANCELLING"
+                                                      ]
+                                              , finished =
+                                                  folded.status == Converting
+                                              , spentMinor = c.spentMinor
+                                              }
+
+                                          Nothing ->
+                                              { attempt = -1
+                                              , job = ""
+                                              , live = False
+                                              , finished = False
+                                              , spentMinor = 0
+                                              }))
+
+
+-- Launch attempt `attempt` (from the newest verified checkpoint for a
+-- relaunch) and watch it.
+cloudRelaunch : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Int -> Task Error CloudWatch
+cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
+    let
+        tag = String.fromInt attempt
+    in
+        Durable.step
+            ctx
+            Codec.int
+            ("resume-" ++ tag)
+            (if attempt == 0 then
+                Task.succeed 0
+
+            else
+                newestCheckpoint store key)
+            |> Task.andThen
+                   (\from ->
+                       Durable.step
+                           ctx
+                           Codec.string
+                           ("launch-" ++ tag)
+                           (launchOnce job cs p store key attempt from)
+                           |> Task.andThen
+                                  (\name ->
+                                      writeCloudFile
+                                          (runDir job)
+                                          cs
+                                          key
+                                          name
+                                          "JOB_STATE_QUEUED"
+                                          attempt
+                                          spentMinor
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     cloudWatchLoop
+                                                         ctx
+                                                         job
+                                                         cs
+                                                         p
+                                                         store
+                                                         key
+                                                         attempt
+                                                         name
+                                                         0
+                                                         ""
+                                                         relaunched
+                                                         spentMinor)))
+
+
+-- The newest checkpoint whose manifest is in the bucket (the manifest is
+-- written last, so its presence means every file of the checkpoint is
+-- there; the container checks each file's digest when it resumes).
+newestCheckpoint : Store -> String -> Task Error Int
+newestCheckpoint store key =
+    Store.list store (runPath key ++ "/checkpoints/") ""
+        |> Task.map
+               (\keys ->
+                   keys
+                       |> List.filter (\k -> String.endsWith "/manifest.json" k)
+                       |> List.filterMap
+                              (\k ->
+                                  String.split "/" k |> List.reverse
+                                      |> List.drop 1
+                                      |> List.head
+                                      |> Maybe.andThen String.toInt)
+                       |> List.foldl Math.max 0)
+
+
+-- Create the attempt's custom job exactly once. The intent object is
+-- written first, with a create-only precondition: whoever writes it creates
+-- the job; anyone who finds it there (another worker, or this workflow
+-- resumed after a crash between the create and its journal row) attaches to
+-- the job its labels name instead. A create is never made twice.
+launchOnce : Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Task Error String
+launchOnce job cs p store key attempt from =
+    let
+        intentKey =
+            runPath key ++ "/launch-" ++ String.fromInt attempt ++ ".intent"
+        spec = cloudJobSpec cs p key attempt from
+        jobSpec = { spec | spot = (settings job).spot }
+    in
+        Time.unixMillis ()
+            |> Task.andThen
+                   (\now ->
+                       Store.putIf
+                           store
+                           intentKey
+                           ""
+                           (JsonE.encode
+                               0
+                               (JsonE.object
+                                   [ ( "attempt", JsonE.int attempt )
+                                   , ( "at", JsonE.int now )
+                                   , ( "resumeFrom", JsonE.int from )
+                                   ]))
+                           |> Task.andThen
+                                  (\mine ->
+                                      if mine then
+                                          Google.createCustomJob
+                                              cs.project
+                                              cs.region
+                                              (Google.customJobJson jobSpec)
+                                              |> Task.map .name
+
+                                      else
+                                          attach
+                                              job
+                                              cs
+                                              store
+                                              key
+                                              attempt
+                                              intentKey
+                                              0))
+
+
+-- Find the attempt's job by its labels (the list can lag the create), else
+-- by the hello.json its container writes first. Up to ten minutes after the
+-- intent; after that the intent has no job and the run fails instead of
+-- paying for a second one.
+attach : Job -> CloudSettings -> Store -> String -> Int -> String -> Int -> Task Error String
+attach job cs store key attempt intentKey tries =
+    Google.listCustomJobs
+        cs.project
+        cs.region
+        ("labels.sky-run=\"" ++ key ++ "\" AND labels.sky-attempt=\""
+            ++ String.fromInt attempt
+            ++ "\"")
+        |> Task.andThen
+               (\jobs ->
+                   case jobs of
+
+                       found :: _ ->
+                           Task.succeed found.name
+
+                       [] ->
+                           Store.getAt
+                               store
+                               (runPath key ++ "/attempt-"
+                                   ++ String.fromInt attempt
+                                   ++ "/hello.json")
+                               |> Task.andThen
+                                      (\hello ->
+                                          case Maybe.andThen (helloJob cs) hello of
+
+                                              Just name ->
+                                                  Task.succeed name
+
+                                              Nothing ->
+                                                  Store.getAt store intentKey
+                                                      |> Task.andThen
+                                                             (\intent ->
+                                                                 Time.unixMillis
+                                                                     ()
+                                                                     |> Task.andThen
+                                                                            (\now ->
+                                                                                let
+                                                                                    at =
+                                                                                        Maybe.withDefault
+                                                                                            now
+                                                                                            (Maybe.andThen
+                                                                                                (\t ->
+                                                                                                    Result.toMaybe
+                                                                                                        (JsonD.decodeString
+                                                                                                            (JsonD.field
+                                                                                                                "at"
+                                                                                                                JsonD.int)
+                                                                                                            t))
+                                                                                                intent)
+                                                                                in
+                                                                                    if now
+                                                                                        - at
+                                                                                        > 600000 then
+                                                                                        Task.fail
+                                                                                            (Failure.toError
+                                                                                                (TrainingFailed
+                                                                                                    { runId =
+                                                                                                        runId
+                                                                                                            job
+                                                                                                    , step =
+                                                                                                        0
+                                                                                                    , reason =
+                                                                                                        "launch intent without a job: attempt "
+                                                                                                            ++ String.fromInt
+                                                                                                                   attempt
+                                                                                                            ++ " was claimed more than ten minutes ago and no job carries its labels; no second job was created"
+                                                                                                    , logTail =
+                                                                                                        ""
+                                                                                                    }))
+
+                                                                                    else
+                                                                                        Time.sleep
+                                                                                            (Math.min
+                                                                                                5000
+                                                                                                (500
+                                                                                                    + tries
+                                                                                                    * 500))
+                                                                                            |> Task.andThen
+                                                                                                   (\_ ->
+                                                                                                       attach
+                                                                                                           job
+                                                                                                           cs
+                                                                                                           store
+                                                                                                           key
+                                                                                                           attempt
+                                                                                                           intentKey
+                                                                                                           (tries
+                                                                                                               + 1))))))
+
+
+-- The job a container's hello.json names: its full resource name, or the
+-- numeric id Vertex gives the container.
+helloJob : CloudSettings -> String -> Maybe String
+helloJob cs text =
+    case JsonD.decodeString (JsonD.field "job" JsonD.string) text of
+
+        Ok name ->
+            if String.isEmpty name then
+                Nothing
+
+            else
+                Just name
+
+        Err _ ->
+            case JsonD.decodeString (JsonD.field "jobId" JsonD.string) text of
+
+                Ok id ->
+                    if String.isEmpty id then
+                        Nothing
+
+                    else
+                        Just
+                            ("projects/" ++ cs.project ++ "/locations/"
+                                ++ cs.region
+                                ++ "/customJobs/"
+                                ++ id)
+
+                Err _ ->
+                    Nothing
+
+
+cloudWatchLoop : Durable.Ctx -> Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> String -> Int -> String -> Int -> Int -> Task Error CloudWatch
+cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBefore =
+    let
+        s = settings job
+        tag = String.fromInt attempt ++ "-" ++ String.fromInt n
+        tick = Math.max 100 (Math.min 30000 s.watchWindowMs)
+    in
+        Durable.step
+            ctx
+            cloudWatchCodec
+            ("watch-" ++ tag)
+            (watchCloud job cs store key attempt name segment spentBefore)
+            |> Task.andThen
+                   (\w ->
+                       let
+                           spent =
+                               Money.fromMinor
+                                   (Money.currency cs.budget)
+                                   w.spentMinor
+                           job0 =
+                               { name = name
+                               , displayName = ""
+                               , state = w.state
+                               , createMs = 0
+                               , startMs = 0
+                               , endMs = 0
+                               , labels = []
+                               , errorCode = w.errorCode
+                               , errorMessage = w.errorMessage
+                               }
+                       in
+                           case w.outcome of
+
+                               "done" ->
+                                   Task.succeed { w | relaunches = relaunched }
+
+                               "error" ->
+                                   Task.fail
+                                       (driverFailure
+                                           job
+                                           { offset = 0
+                                           , outcome = "error"
+                                           , step = w.step
+                                           , code = w.code
+                                           , message = w.message
+                                           , trainLoss = w.trainLoss
+                                           , valLoss = w.valLoss
+                                           , peft = ""
+                                           , relaunches = relaunched
+                                           , resumedFrom = w.resumedFrom
+                                           })
+
+                               "cancelled" ->
+                                   Task.fail (cancelled job w.step)
+
+                               "dead" ->
+                                   case Google.jobFailure cs.region job0 of
+
+                                       Just e ->
+                                           Task.fail e
+
+                                       Nothing ->
+                                           if relaunched >= s.maxRelaunches then
+                                               Google.logTail
+                                                   cs.project
+                                                   (lastSegment name)
+                                                   50
+                                                   |> Task.andThen
+                                                          (\tail ->
+                                                              Task.fail
+                                                                  (Failure.toError
+                                                                      (TrainingFailed
+                                                                          { runId =
+                                                                              runId
+                                                                                  job
+                                                                          , step =
+                                                                              w.step
+                                                                          , reason =
+                                                                              "the Vertex job ended without finishing "
+                                                                                  ++ String.fromInt
+                                                                                         (relaunched
+                                                                                             + 1)
+                                                                                  ++ " times (withMaxRelaunches "
+                                                                                  ++ String.fromInt
+                                                                                         s.maxRelaunches
+                                                                                  ++ "): "
+                                                                                  ++ w.errorMessage
+                                                                          , logTail =
+                                                                              tail
+                                                                          })))
+
+                                           else
+                                               cloudRelaunch
+                                                   ctx
+                                                   job
+                                                   cs
+                                                   p
+                                                   store
+                                                   key
+                                                   (attempt + 1)
+                                                   (relaunched + 1)
+                                                   w.spentMinor
+
+                               _ ->
+                                   if Money.gte spent cs.budget then
+                                       Durable.step
+                                           ctx
+                                           Codec.int
+                                           ("budget-stop-" ++ tag)
+                                           (Store.putAt
+                                               store
+                                               (runPath key ++ "/cancel")
+                                               "{\"reason\":\"budget\"}"
+                                               |> Task.andThen
+                                                      (\_ ->
+                                                          Google.cancelCustomJob
+                                                              name)
+                                               |> Task.map (\_ -> w.spentMinor))
+                                           |> Task.andThen
+                                                  (\_ ->
+                                                      Task.fail
+                                                          (Failure.toError
+                                                              (BudgetExceeded
+                                                                  { budget =
+                                                                      cs.budget
+                                                                  , estimate =
+                                                                      spent
+                                                                  })))
+
+                                   else
+                                       Durable.sleep ctx ("tick-" ++ tag) tick
+                                           |> Task.andThen
+                                                  (\_ ->
+                                                      cloudWatchLoop
+                                                          ctx
+                                                          job
+                                                          cs
+                                                          p
+                                                          store
+                                                          key
+                                                          attempt
+                                                          name
+                                                          (n + 1)
+                                                          w.segment
+                                                          relaunched
+                                                          spentBefore))
+
+
+-- One watch: the job's state, the protocol segments written since the last
+-- watch (mirrored into the run directory), what they say, and the spend so
+-- far (earlier attempts plus this one's running time, from its start, or
+-- from its creation while it waits).
+watchCloud : Job -> CloudSettings -> Store -> String -> Int -> String -> String -> Int -> Task Error CloudWatch
+watchCloud job cs store key attempt name after spentBefore =
+    let
+        dir = runDir job
+        prefix =
+            runPath key ++ "/attempt-" ++ String.fromInt attempt ++ "/events/"
+    in
+        Google.getCustomJob name
+            |> Task.andThen
+                   (\cj ->
+                       Store.list store prefix after
+                           |> Task.andThen
+                                  (\keys ->
+                                      Task.sequence
+                                          (List.map
+                                              (\k ->
+                                                  Store.getAt store k
+                                                      |> Task.andThen
+                                                             (\body ->
+                                                                 let
+                                                                     text =
+                                                                         Maybe.withDefault
+                                                                             ""
+                                                                             body
+                                                                 in
+                                                                     mirrorSegment
+                                                                         dir
+                                                                         attempt
+                                                                         k
+                                                                         text
+                                                                         |> Task.map
+                                                                                (\_ ->
+                                                                                    text)))
+                                              keys)
+                                          |> Task.andThen
+                                                 (\texts ->
+                                                     rebuildEvents dir
+                                                         |> Task.map
+                                                                (\_ -> texts))
+                                          |> Task.andThen
+                                                 (\texts ->
+                                                     Time.unixMillis ()
+                                                         |> Task.andThen
+                                                                (\now ->
+                                                                    let
+                                                                        from =
+                                                                            if cj.startMs
+                                                                                > 0 then
+                                                                                cj.startMs
+
+                                                                            else
+                                                                                cj.createMs
+                                                                        until =
+                                                                            if cj.endMs
+                                                                                > 0 then
+                                                                                cj.endMs
+
+                                                                            else
+                                                                                now
+                                                                        ran =
+                                                                            if from
+                                                                                > 0 then
+                                                                                Math.max
+                                                                                    0
+                                                                                    (until
+                                                                                        - from)
+
+                                                                            else
+                                                                                0
+                                                                        spentMinor =
+                                                                            spentBefore
+                                                                                + Money.toMinor
+                                                                                      (perMillis
+                                                                                          cs.perHour
+                                                                                          ran)
+                                                                        lines =
+                                                                            List.concatMap
+                                                                                (\t ->
+                                                                                    List.filter
+                                                                                        (\l ->
+                                                                                            not
+                                                                                                (String.isEmpty
+                                                                                                    (String.trim
+                                                                                                        l)))
+                                                                                        (String.lines
+                                                                                            t))
+                                                                                texts
+                                                                        live =
+                                                                            List.member
+                                                                                cj.state
+                                                                                [ "JOB_STATE_QUEUED"
+                                                                                , "JOB_STATE_PENDING"
+                                                                                , "JOB_STATE_RUNNING"
+                                                                                , "JOB_STATE_CANCELLING"
+                                                                                , "JOB_STATE_UPDATING"
+                                                                                ]
+                                                                        seen =
+                                                                            seenOf
+                                                                                0
+                                                                                { offset =
+                                                                                    0
+                                                                                , lines =
+                                                                                    lines
+                                                                                , alive =
+                                                                                    live
+                                                                                , cancelRequested =
+                                                                                    cj.state
+                                                                                        == "JOB_STATE_CANCELLED"
+                                                                                , stderrTail =
+                                                                                    cj.errorMessage
+                                                                                }
+                                                                        outcome =
+                                                                            if seen.outcome
+                                                                                == "cancelling" then
+                                                                                "cancelled"
+
+                                                                            else
+                                                                                seen.outcome
+                                                                    in
+                                                                        writeCloudFile
+                                                                            dir
+                                                                            cs
+                                                                            key
+                                                                            name
+                                                                            cj.state
+                                                                            attempt
+                                                                            spentMinor
+                                                                            |> Task.map
+                                                                                   (\_ ->
+                                                                                       { segment =
+                                                                                           List.reverse
+                                                                                               keys
+                                                                                               |> List.head
+                                                                                               |> Maybe.withDefault
+                                                                                                      after
+                                                                                       , state =
+                                                                                           cj.state
+                                                                                       , outcome =
+                                                                                           outcome
+                                                                                       , step =
+                                                                                           seen.step
+                                                                                       , code =
+                                                                                           seen.code
+                                                                                       , message =
+                                                                                           seen.message
+                                                                                       , trainLoss =
+                                                                                           seen.trainLoss
+                                                                                       , valLoss =
+                                                                                           seen.valLoss
+                                                                                       , peft =
+                                                                                           seen.peft
+                                                                                       , resumedFrom =
+                                                                                           seen.resumedFrom
+                                                                                       , spentMinor =
+                                                                                           spentMinor
+                                                                                       , errorCode =
+                                                                                           cj.errorCode
+                                                                                       , errorMessage =
+                                                                                           cj.errorMessage
+                                                                                       , relaunches =
+                                                                                           0
+                                                                                       })))))
+
+
+-- A segment's local copy: `cloud-events/<attempt>-<seq>.jsonl`, the same
+-- bytes each time, so a replayed watch writes nothing new.
+mirrorSegment : String -> Int -> String -> String -> Task Error ()
+mirrorSegment dir attempt key text =
+    let
+        seq = lastSegment key
+        name = String.padLeft 6 '0' (String.fromInt attempt) ++ "-" ++ seq
+    in
+        File.mkdirAll (dir ++ "/cloud-events")
+            |> Task.andThen
+                   (\_ -> File.writeFile (dir ++ "/cloud-events/" ++ name) text)
+
+
+-- events.jsonl is every mirrored segment in order, so the local readers
+-- (progress, the console, `runs`) see a cloud run as a local one.
+rebuildEvents : String -> Task Error ()
+rebuildEvents dir =
+    File.readDir (dir ++ "/cloud-events")
+        |> Task.onError (\_ -> Task.succeed [])
+        |> Task.andThen
+               (\names ->
+                   Task.sequence
+                       (List.map
+                           (\n -> File.readFile (dir ++ "/cloud-events/" ++ n))
+                           (List.sort
+                               (List.filter
+                                   (\n -> String.endsWith ".jsonl" n)
+                                   names)))
+                       |> Task.andThen
+                              (\texts ->
+                                  File.writeFile
+                                      (dir ++ "/events.jsonl.partial")
+                                      (String.concat texts)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 File.rename
+                                                     (dir
+                                                         ++ "/events.jsonl.partial")
+                                                     (dir ++ "/events.jsonl"))))
+
+
+-- Download the adapter the container uploaded, each file checked against
+-- the adapter's manifest, into the run directory's adapter/ (where a local
+-- run leaves it). Returns the PEFT weights' digest.
+downloadAdapter : String -> Store -> String -> Task Error String
+downloadAdapter dir store key =
+    Store.getAt store (runPath key ++ "/adapter/manifest.json")
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Nothing ->
+                           Task.fail
+                               (Failure.toError
+                                   (TrainingFailed
+                                       { runId = key
+                                       , step = 0
+                                       , reason =
+                                           "the job finished but its adapter has no manifest in the staging bucket"
+                                       , logTail = ""
+                                       }))
+
+                       Just text ->
+                           Task.fromResult
+                               (JsonD.decodeString
+                                   (JsonD.field
+                                       "files"
+                                       (JsonD.list
+                                           (JsonD.map2
+                                               (\n h -> ( n, h ))
+                                               (JsonD.field "name" JsonD.string)
+                                               (JsonD.field "sha256" JsonD.string))))
+                                   text))
+        |> Task.andThen
+               (\files ->
+                   File.mkdirAll (dir ++ "/adapter")
+                       |> Task.andThen
+                              (\_ ->
+                                  Task.sequence
+                                      (List.map
+                                          (\( n, h ) ->
+                                              Store.fetchAt
+                                                  store
+                                                  (runPath key ++ "/adapter/"
+                                                      ++ n)
+                                                  h
+                                                  |> Task.andThen
+                                                         (\path ->
+                                                             File.copy
+                                                                 path
+                                                                 (dir
+                                                                     ++ "/adapter/"
+                                                                     ++ n)))
+                                          files))
+                       |> Task.map
+                              (\_ ->
+                                  List.filter
+                                      (\( n, _ ) ->
+                                          n == "adapter_model.safetensors")
+                                      files
+                                      |> List.head
+                                      |> Maybe.map (\( _, h ) -> h)
+                                      |> Maybe.withDefault ""))
+
+
+-- After the adapter is registered: delete the run's Vertex job records and
+-- its staging prefix, unless the job keeps them (`withKeepStaging`). A job
+-- that has not ended is left alone (it cannot be deleted, and it ends by its
+-- own runtime ceiling).
+cloudCleanup : Durable.Ctx -> Job -> CloudRun -> Adapter -> Task Error Adapter
+cloudCleanup ctx job cloud a =
+    if (settings job).keepStaging then
+        Task.succeed a
+
+    else
+        Durable.step
+            ctx
+            Codec.int
+            "cleanup"
+            (Google.listCustomJobs
+                cloud.settings.project
+                cloud.settings.region
+                ("labels.sky-run=\"" ++ cloud.key ++ "\"")
+                |> Task.andThen
+                       (\jobs ->
+                           Task.sequence
+                               (List.map
+                                   (\j ->
+                                       if List.member
+                                           j.state
+                                           [ "JOB_STATE_SUCCEEDED"
+                                           , "JOB_STATE_FAILED"
+                                           , "JOB_STATE_CANCELLED"
+                                           ] then
+                                           Google.deleteCustomJob j.name
+
+                                       else
+                                           Task.succeed ())
+                                   jobs))
+                |> Task.andThen
+                       (\_ ->
+                           Task.fromResult
+                               (Store.fromUrl cloud.settings.staging)
+                               |> Task.andThen
+                                      (\store ->
+                                          Store.deletePrefix
+                                              store
+                                              (runPath cloud.key ++ "/"))))
+            |> Task.map (\_ -> a)

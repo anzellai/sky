@@ -1,0 +1,430 @@
+module CloudWorkflowTest exposing (tests)
+
+-- Std.Ai.Train's Vertex backend against the runtime's Google Cloud emulator
+-- (SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid in .env.test): the durable
+-- workflow runs for real on SQLite, and the emulated custom job writes the
+-- object layout the real container's shim writes. Each case uses its own job
+-- name, so its own run key and its own staging prefix.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Sky.Core.Http as Http
+import Sky.Core.Json.Decode as JsonD
+import Sky.Test as Test exposing (Test)
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Money as Money
+import Std.Ai.Train as Train exposing (Status(..))
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Fixture
+
+
+fresh : String -> Task Error Fixture.World
+fresh tag =
+    File.tempDir ("ai-cloud-" ++ tag) |> Task.andThen Fixture.openIn
+
+
+failureOf : Result Error a -> Maybe Failure
+failureOf r =
+    case r of
+
+        Err e ->
+            Failure.fromError e
+
+        Ok _ ->
+            Nothing
+
+
+codeOf : Result Error a -> String
+codeOf r =
+    case r of
+
+        Err e ->
+            case Failure.fromError e of
+
+                Just f ->
+                    Failure.code f
+
+                Nothing ->
+                    "not an AI failure: " ++ Error.toString e
+
+        Ok _ ->
+            "Ok"
+
+
+-- The objects left below a run's staging prefix.
+leftUnder : String -> Task Error Int
+leftUnder prefix =
+    Http.get
+        (Fixture.emulator ++ "/_fake/objects?prefix=bkt/sky/runs/" ++ prefix)
+        |> Task.andThen
+               (\resp ->
+                   Task.fromResult
+                       (JsonD.decodeString
+                           (JsonD.oneOf
+                               [ JsonD.field "objects" (JsonD.list JsonD.string)
+                                     |> JsonD.map List.length
+                               , JsonD.succeed 0
+                               ])
+                           resp.body))
+
+
+-- ── A run, start to finish ──────────────────────────────────────────
+basic : Result Error ( Train.Adapter, Train.Progress, Int )
+basic =
+    fresh "basic"
+        |> Task.andThen
+               (\w ->
+                   let
+                       job = Fixture.job "basic" w
+                   in
+                       Train.drive w.db job
+                           |> Task.andThen
+                                  (\a ->
+                                      Train.progress job
+                                          |> Task.andThen
+                                                 (\p ->
+                                                     leftUnder
+                                                         (Train.runKey
+                                                             (Train.runId job))
+                                                         |> Task.map
+                                                                (\n ->
+                                                                    ( a, p, n )))))
+        |> Task.run
+
+
+-- ── Exactly-once: the launch's journal row is lost ──────────────────
+-- The first poll launches attempt 0 and journals the job's name. The row is
+-- then deleted, as if the worker died between the create and the journal
+-- write, and the list of jobs is made to lag. The resumed run finds the
+-- launch intent, attaches to the job by its labels or its hello.json, and
+-- the emulator counts one create for the run.
+once : Result Error ( Int, Train.Adapter )
+once =
+    fresh "once"
+        |> Task.andThen
+               (\w ->
+                   let
+                       job = Fixture.job "once" w
+                   in
+                       Fixture.stats ()
+                           |> Task.andThen
+                                  (\before ->
+                                      Train.start w.db job
+                                          |> Task.andThen
+                                                 (\_ -> Train.poll w.db [ job ])
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     Db.query
+                                                         w.db
+                                                         "SELECT step_id FROM _sky_durable_journal WHERE run_id = ? AND step_id = 'launch-0'"
+                                                         [ SqlString
+                                                               (Train.runId job)
+                                                         ])
+                                          |> Task.andThen
+                                                 (\rows ->
+                                                     if List.length rows /= 1 then
+                                                         Task.fail
+                                                             (Error.unexpected
+                                                                 "the first poll did not journal launch-0")
+
+                                                     else
+                                                         Db.exec
+                                                             w.db
+                                                             "DELETE FROM _sky_durable_journal WHERE run_id = ? AND step_id = 'launch-0'"
+                                                             [ SqlString
+                                                                   (Train.runId
+                                                                       job)
+                                                             ])
+                                          |> Task.andThen
+                                                 (\_ ->
+                                                     Fixture.control
+                                                         "listlag?ms=300")
+                                          |> Task.andThen
+                                                 (\_ -> Train.drive w.db job)
+                                          |> Task.andThen
+                                                 (\a ->
+                                                     Fixture.control
+                                                         "listlag?ms=0"
+                                                         |> Task.andThen
+                                                                (\_ ->
+                                                                    Fixture.stats
+                                                                        ())
+                                                         |> Task.map
+                                                                (\after ->
+                                                                    ( after.creates
+                                                                          - before.creates
+                                                                    , a
+                                                                    )))))
+        |> Task.run
+
+
+-- ── A lost attempt is relaunched from its newest checkpoint ─────────
+crashed : Result Error Train.Adapter
+crashed =
+    fresh "crash"
+        |> Task.andThen
+               (\w ->
+                   Train.drive
+                       w.db
+                       (Fixture.job "crashy" w |> Train.fakeCrashAt 3))
+        |> Task.run
+
+
+-- ── Cancel ──────────────────────────────────────────────────────────
+cancelled : Result Error Train.Adapter
+cancelled =
+    fresh "cancel"
+        |> Task.andThen
+               (\w ->
+                   let
+                       job =
+                           Fixture.job "cancelme" w |> Train.withMaxSteps 400
+                               |> Train.fakeStepMs 50
+                   in
+                       Train.start w.db job
+                           |> Task.andThen (\_ -> Train.poll w.db [ job ])
+                           |> Task.andThen (\_ -> Train.cancel job)
+                           |> Task.andThen (\_ -> Train.drive w.db job))
+        |> Task.run
+
+
+-- ── Budget: refused before launch, and stopped at the budget ────────
+refused : Result Error Int
+refused =
+    fresh "refused"
+        |> Task.andThen
+               (\w ->
+                   Fixture.stats ()
+                       |> Task.andThen
+                              (\before ->
+                                  Train.drive
+                                      w.db
+                                      (Fixture.job "tight" w
+                                          |> Train.withBudget
+                                                 (Money.fromMinor Money.USD 1))
+                                      |> Task.map (\_ -> -1)
+                                      |> Task.onError
+                                             (\e ->
+                                                 Fixture.stats ()
+                                                     |> Task.andThen
+                                                            (\after ->
+                                                                if after.creates
+                                                                    == before.creates then
+                                                                    Task.fail e
+
+                                                                else
+                                                                    Task.fail
+                                                                        (Error.unexpected
+                                                                            "a job was created")))))
+        |> Task.run
+
+
+-- The emulator reports job time 100000 times faster than the clock, so a
+-- running job passes its USD 0.15 budget at its first watch.
+stopped : Result Error Train.Adapter
+stopped =
+    fresh "stopped"
+        |> Task.andThen
+               (\w ->
+                   Fixture.control "clockscale?x=100000"
+                       |> Task.andThen
+                              (\_ ->
+                                  Train.drive
+                                      w.db
+                                      (Fixture.job "spender" w
+                                          |> Train.withMaxSteps 200
+                                          |> Train.fakeStepMs 50
+                                          |> Train.withBudget
+                                                 (Money.fromMinor Money.USD 15))
+                                      |> Task.onError
+                                             (\e ->
+                                                 Fixture.control
+                                                     "clockscale?x=1"
+                                                     |> Task.andThen
+                                                            (\_ -> Task.fail e))
+                                      |> Task.andThen
+                                             (\a ->
+                                                 Fixture.control
+                                                     "clockscale?x=1"
+                                                     |> Task.map (\_ -> a))))
+        |> Task.run
+
+
+-- ── Typed cloud failures ────────────────────────────────────────────
+stockout : Result Error Train.Adapter
+stockout =
+    fresh "stockout"
+        |> Task.andThen
+               (\w ->
+                   Fixture.control "stockout"
+                       |> Task.andThen
+                              (\_ -> Train.drive w.db (Fixture.job "stock" w)))
+        |> Task.run
+
+
+noQuota : Result Error Train.Plan
+noQuota =
+    fresh "quota"
+        |> Task.andThen
+               (\w ->
+                   Fixture.control "quota?region=us-central1&limit=0"
+                       |> Task.andThen
+                              (\_ ->
+                                  Train.plan
+                                      (Fixture.job "gpu" w
+                                          |> Train.withCloud
+                                                 { project = "p"
+                                                 , region = "us-central1"
+                                                 , machine = "g2-standard-4"
+                                                 , staging = "gs://bkt/sky"
+                                                 })))
+        |> Task.run
+
+
+elsewhere : Result Error Train.Plan
+elsewhere =
+    fresh "region"
+        |> Task.andThen
+               (\w ->
+                   Fixture.control "bucket?name=eubkt&location=EUROPE-WEST4"
+                       |> Task.andThen
+                              (\_ ->
+                                  Train.plan
+                                      (Fixture.job "far" w
+                                          |> Train.withCloud
+                                                 { project = "p"
+                                                 , region = "us-central1"
+                                                 , machine = "n2-standard-4"
+                                                 , staging = "gs://eubkt/sky"
+                                                 })))
+        |> Task.run
+
+
+unconfigured : Result Error String
+unconfigured =
+    fresh "noproject"
+        |> Task.andThen
+               (\w ->
+                   Train.start
+                       w.db
+                       (Fixture.job "noproject" w
+                           |> Train.withCloud
+                                  { project = ""
+                                  , region = "us-central1"
+                                  , machine = "n2-standard-4"
+                                  , staging = "gs://bkt/sky"
+                                  }))
+        |> Task.run
+
+
+unpinned : Result Error String
+unpinned =
+    fresh "unpinned"
+        |> Task.andThen
+               (\w ->
+                   Train.start
+                       w.db
+                       (Fixture.job "unpinned" w
+                           |> Train.withImage
+                                  "us-central1-docker.pkg.dev/p/sky/sky-ai-trainer:latest"))
+        |> Task.run
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a Vertex run trains, mirrors its protocol, is registered and cleans up after itself"
+          (\_ ->
+              case basic of
+
+                  Ok ( a, p, left ) ->
+                      Test.equal
+                          ( ( a.backend, a.steps, a.registered )
+                          , ( p.status, p.step, p.totalSteps )
+                          , left
+                          )
+                          ( ( "vertex", 6, Just "basic@v1" )
+                          , ( Done, 6, 6 )
+                          , 0
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a launch whose journal row was lost attaches to its job: one create"
+          (\_ ->
+              case once of
+
+                  Ok ( creates, a ) ->
+                      Test.equal ( creates, a.steps ) ( 1, 6 )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a lost attempt is relaunched from the newest checkpoint"
+          (\_ ->
+              case crashed of
+
+                  Ok a ->
+                      Test.equal
+                          ( a.steps, a.relaunches, a.resumedFrom )
+                          ( 6, 1, 2 )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "cancel stops the cloud job and the run ends TrainingCancelled"
+          (\_ -> Test.equal "TrainingCancelled" (codeOf cancelled))
+    , Test.test
+          "an estimate above the budget is BudgetExceeded and creates no job"
+          (\_ -> Test.equal "BudgetExceeded" (codeOf refused))
+    , Test.test
+          "a run that spends its budget is cancelled with BudgetExceeded"
+          (\_ ->
+              case failureOf stopped of
+
+                  Just (BudgetExceeded b) ->
+                      Test.equal
+                          ( Money.toMinor b.budget
+                          , Money.toMinor b.estimate >= 15
+                          )
+                          ( 15, True )
+
+                  _ ->
+                      Test.fail ("not BudgetExceeded: " ++ codeOf stopped))
+    , Test.test
+          "a stockout is CapacityUnavailable"
+          (\_ -> Test.equal "CapacityUnavailable" (codeOf stockout))
+    , Test.test
+          "an L4 quota of 0 is QuotaExceeded at plan time"
+          (\_ ->
+              case failureOf noQuota of
+
+                  Just (QuotaExceeded q) ->
+                      Test.equal ( q.region, q.limit ) ( "us-central1", 0 )
+
+                  _ ->
+                      Test.fail ("not QuotaExceeded: " ++ codeOf noQuota))
+    , Test.test
+          "a staging bucket in another region is refused"
+          (\_ ->
+              case failureOf elsewhere of
+
+                  Just (InvalidSetting s) ->
+                      Test.equal s.setting "SKY_AI_TRAIN_STAGING"
+
+                  _ ->
+                      Test.fail ("not InvalidSetting: " ++ codeOf elsewhere))
+    , Test.test
+          "a job with no project is NotConfigured and starts no run"
+          (\_ -> Test.equal "NotConfigured" (codeOf unconfigured))
+    , Test.test
+          "an image without a digest is refused"
+          (\_ -> Test.equal "InvalidSetting" (codeOf unpinned))
+    ]

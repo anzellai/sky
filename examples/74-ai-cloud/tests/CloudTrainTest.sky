@@ -1,0 +1,68 @@
+module CloudTrainTest exposing (tests)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test)
+import Std.Ai.Train as Train exposing (Status(..))
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Cloud
+
+
+dir : String
+dir =
+    File.tempDir "ai-cloud-test" |> Task.run |> Result.withDefault "/tmp"
+
+
+cpuJob : Cloud.World -> Train.Job
+cpuJob w =
+    Cloud.trainJob w
+        |> Train.withCloud
+               { project = "p"
+               , region = "us-central1"
+               , machine = "n2-standard-4"
+               , staging = "gs://bkt/sky"
+               }
+        |> Train.withImage
+               "us-central1-docker.pkg.dev/p/sky/sky-ai-trainer@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        |> Train.withMaxSteps 6
+        |> Train.withCheckpointEvery 2
+        |> Train.fakeStepMs 10
+        |> Train.withWatchWindow 100
+
+
+trained : Result Error ( Train.Adapter, Train.Progress )
+trained =
+    Cloud.openIn dir
+        |> Task.andThen
+               (\w ->
+                   Train.drive w.db (cpuJob w)
+                       |> Task.andThen
+                              (\a ->
+                                  Train.progress (cpuJob w)
+                                      |> Task.map (\p -> ( a, p ))))
+        |> Task.run
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "a Vertex run trains in the emulated cloud and is registered"
+          (\_ ->
+              case trained of
+
+                  Ok ( a, p ) ->
+                      Test.equal
+                          ( ( a.backend, a.steps, a.registered )
+                          , ( p.status, p.step )
+                          )
+                          ( ( "vertex", 6, Just "support@v1" ), ( Done, 6 ) )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    ]

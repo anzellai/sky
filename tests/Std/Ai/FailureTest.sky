@@ -58,6 +58,17 @@ every =
           , logTail = "Killed"
           }
     , TrainingCancelled { runId = "support-0123456789ab", step = 40 }
+    , QuotaExceeded
+          { resource = "custom_model_training_nvidia_l4_gpus"
+          , region = "us-central1"
+          , limit = 0
+          }
+    , CapacityUnavailable { resource = "NVIDIA_L4", region = "us-central1" }
+    , DeploymentFailed
+          { target = "cloudrun:support-tier"
+          , reason = "the revision never became ready"
+          , logTail = "engine: CUDA error"
+          }
     ]
 
 
@@ -179,6 +190,18 @@ tests =
                  (TrainingCancelled { runId = "r", step = 1 })
                  Conflict
            , kindCase
+                 "QuotaExceeded"
+                 (QuotaExceeded { resource = "r", region = "g", limit = 0 })
+                 PermissionDenied
+           , kindCase
+                 "CapacityUnavailable"
+                 (CapacityUnavailable { resource = "r", region = "g" })
+                 Unavailable
+           , kindCase
+                 "DeploymentFailed"
+                 (DeploymentFailed { target = "t", reason = "r", logTail = "" })
+                 Unavailable
+           , kindCase
                  "RemoteRejected 400"
                  (RemoteRejected { status = 400 })
                  InvalidInput
@@ -225,6 +248,14 @@ tests =
                  (EngineCrashed { exitCode = Just 1, logTail = "" })
                  False
            , retryCase "NoAccelerator" (NoAccelerator { wanted = "all" }) False
+           , retryCase
+                 "CapacityUnavailable"
+                 (CapacityUnavailable { resource = "NVIDIA_L4", region = "g" })
+                 True
+           , retryCase
+                 "QuotaExceeded"
+                 (QuotaExceeded { resource = "r", region = "g", limit = 0 })
+                 False
            , retryCase
                  "ModelTooLarge"
                  (ModelTooLarge { needBytes = 2, availableBytes = 1 })

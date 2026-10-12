@@ -389,6 +389,8 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Ai", "trainMerge", "rt.Ai_trainMerge"),
     ("Ai", "toolchainEnsure", "rt.Ai_toolchainEnsure"),
     ("Ai", "toolchainStatus", "rt.Ai_toolchainStatus"),
+    ("Ai", "gcpEndpoint", "rt.Ai_gcpEndpoint"),
+    ("Ai", "trainCloudResolve", "rt.Ai_trainCloudResolve"),
     ("File", "readFile", "rt.File_readFile"),
     ("File", "readFileLimit", "rt.File_readFileLimit"),
     ("File", "readFileBytes", "rt.File_readFileBytes"),

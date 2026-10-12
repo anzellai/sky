@@ -52,6 +52,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -233,17 +235,17 @@ func aiTrainResolveBackend(code string) (backend, source string, err error) {
 	name := skyEnvName("AI_TRAIN_BACKEND")
 	valid := func(s string) bool {
 		switch strings.ToLower(strings.TrimSpace(s)) {
-		case "mlx", "unsloth", "fake":
+		case "mlx", "unsloth", "vertex", "fake":
 			return true
 		}
 		return false
 	}
 	if raw, ok := lookupEnvRaw(name); ok && strings.TrimSpace(raw) != "" && !valid(raw) {
 		v := strings.ToLower(strings.TrimSpace(raw))
-		if v == "vertex" || v == "sagemaker" {
-			return "", "", aiFailf(aiInvalidSetting, "%s=%q: cloud training arrives in phase 4; use mlx, unsloth or fake", name, raw).with("setting", name)
+		if v == "sagemaker" {
+			return "", "", aiFailf(aiInvalidSetting, "%s=%q: the SageMaker backend is not shipped yet; use vertex (Google Cloud), mlx, unsloth or fake", name, raw).with("setting", name)
 		}
-		return "", "", aiFailf(aiInvalidSetting, "%s=%q: use mlx, unsloth or fake", name, raw).with("setting", name)
+		return "", "", aiFailf(aiInvalidSetting, "%s=%q: use mlx, unsloth, vertex or fake", name, raw).with("setting", name)
 	}
 	for i, v := range configLayers("AI_TRAIN_BACKEND", code) {
 		if !valid(v) {
@@ -973,6 +975,14 @@ func aiTrainReadState(runDir string) map[string]any {
 	}
 	result, _ := os.ReadFile(filepath.Join(runDir, aiTrainResultFile))
 	_, launched := aiReadTrainer(runDir)
+	alive := aiTrainerAlive(t)
+	attempt := t.Attempt
+	cloud := aiTrainReadCloud(runDir)
+	if cloud.Job != "" {
+		// A Vertex run: the job's state, as the last watch saw it, stands in
+		// for the local trainer process.
+		launched, alive, attempt = true, aiTrainCloudLive(cloud.State), cloud.Attempt
+	}
 	var size int64
 	if st, err := os.Stat(filepath.Join(runDir, aiTrainEventsFile)); err == nil {
 		size = st.Size()
@@ -985,8 +995,8 @@ func aiTrainReadState(runDir string) map[string]any {
 		"attemptOffset":   int(aiTrainAttemptOffset(runDir)),
 		"generation":      aiTrainGeneration(runDir),
 		"lines":           out,
-		"alive":           aiTrainerAlive(t),
-		"attempt":         t.Attempt,
+		"alive":           alive,
+		"attempt":         attempt,
 		"pid":             t.Pid,
 		"cancelRequested": fileExists(filepath.Join(runDir, aiTrainCancelFile)),
 		"result":          string(bytes.TrimSpace(result)),
@@ -1048,6 +1058,9 @@ func aiTrainResume(runDir string) (int, error) {
 	}
 	if t, ok := aiReadTrainer(runDir); ok && aiTrainerAlive(t) {
 		return 0, aiFailf(aiInvalidSetting, "the run at %s is still training (pid %d); cancel it first, or wait", runDir, t.Pid).with("setting", "run")
+	}
+	if c := aiTrainReadCloud(runDir); c.Job != "" && aiTrainCloudLive(c.State) {
+		return 0, aiFailf(aiInvalidSetting, "the run at %s is still training on Vertex AI (%s); cancel it first, or wait", runDir, c.State).with("setting", "run")
 	}
 	n := aiTrainGeneration(runDir) + 1
 	if err := aiWriteFileAtomic(filepath.Join(runDir, aiTrainGenerationFile), []byte(strconv.Itoa(n)+"\n")); err != nil {
@@ -1226,20 +1239,33 @@ func aiTrainSimCheckpoint(runDir string, step int) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return aiTrainFail("cannot write a checkpoint: %v", err)
 	}
+	for name, data := range aiTrainSimCheckpointFiles(step) {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			return aiTrainFail("cannot write a checkpoint: %v", err)
+		}
+	}
+	return nil
+}
+
+// aiTrainSimCheckpointFiles is a Fake checkpoint's files, manifest.json
+// included (the digests of the other three).
+func aiTrainSimCheckpointFiles(step int) map[string][]byte {
 	files := map[string][]byte{}
 	files["adapter.safetensors"] = aiSafetensorsBytes(map[string]aiTensor{"fake.step": {shape: []int{1}, data: []float32{float32(step)}}}, nil)
 	files["optimizer.safetensors"] = aiSafetensorsBytes(map[string]aiTensor{"fake.m": {shape: []int{1}, data: []float32{0.5}}}, nil)
 	files["state.json"] = []byte(fmt.Sprintf(`{"step":%d}`, step))
 	sums := map[string]string{}
 	for name, data := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
-			return aiTrainFail("cannot write a checkpoint: %v", err)
-		}
-		s, _ := aiFileSha256(filepath.Join(dir, name))
-		sums[name] = s
+		sums[name] = aiSha256Hex(data)
 	}
 	m, _ := json.Marshal(map[string]any{"step": step, "files": sums})
-	return os.WriteFile(filepath.Join(dir, "manifest.json"), m, 0o644)
+	files["manifest.json"] = m
+	return files
+}
+
+func aiSha256Hex(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }
 
 // aiTrainSimAdapter writes the Fake backend's adapter: rank `rank` A matrices
@@ -1250,6 +1276,19 @@ func aiTrainSimAdapter(runDir string, cfg map[string]any) (string, error) {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return "", aiTrainFail("cannot write the adapter: %v", err)
 	}
+	weights, conf := aiTrainSimAdapterFiles(cfg)
+	if err := os.WriteFile(filepath.Join(out, "adapter_model.safetensors"), weights, 0o644); err != nil {
+		return "", aiTrainFail("cannot write the adapter: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "adapter_config.json"), conf, 0o644); err != nil {
+		return "", aiTrainFail("cannot write the adapter: %v", err)
+	}
+	return aiSha256Hex(weights), nil
+}
+
+// aiTrainSimAdapterFiles is the Fake adapter's two files: the PEFT weights
+// and adapter_config.json.
+func aiTrainSimAdapterFiles(cfg map[string]any) ([]byte, []byte) {
 	shapes := aiJMap(cfg, "shapes")
 	s := aiTrainShape{layers: aiJNum(shapes, "layers", 2), hidden: aiJNum(shapes, "hidden", 8), intermediate: aiJNum(shapes, "intermediate", 16),
 		qDim: aiJNum(shapes, "qDim", 8), kv: aiJNum(shapes, "kvDim", 8)}
@@ -1282,16 +1321,9 @@ func aiTrainSimAdapter(runDir string, cfg map[string]any) (string, error) {
 			tensors[base+".lora_B.weight"] = aiTensor{shape: []int{outDim, rank}, data: make([]float32, outDim*rank)}
 		}
 	}
-	weights := filepath.Join(out, "adapter_model.safetensors")
-	if err := os.WriteFile(weights, aiSafetensorsBytes(tensors, map[string]string{"format": "pt"}), 0o644); err != nil {
-		return "", aiTrainFail("cannot write the adapter: %v", err)
-	}
 	conf, _ := json.Marshal(map[string]any{"peft_type": "LORA", "r": rank, "lora_alpha": aiJNum(cfg, "alpha", 2*rank),
 		"target_modules": targets, "base_model_name_or_path": aiJStr(aiJMap(cfg, "base"), "id"), "task_type": "CAUSAL_LM", "bias": "none"})
-	if err := os.WriteFile(filepath.Join(out, "adapter_config.json"), conf, 0o644); err != nil {
-		return "", aiTrainFail("cannot write the adapter: %v", err)
-	}
-	return aiFileSha256(weights)
+	return aiSafetensorsBytes(tensors, map[string]string{"format": "pt"}), conf
 }
 
 // aiTargetDims is a projection's (in, out) from the base's shape.
@@ -1313,4 +1345,93 @@ func aiTargetDims(target string, s aiTrainShape) (int, int, bool) {
 		return s.intermediate, s.hidden, true
 	}
 	return 0, 0, false
+}
+
+// ─── cloud runs ─────────────────────────────────────────────────────────
+
+// aiTrainCloudFile is a Vertex run's state as its last watch saw it, written
+// by Train.sky: the job, its state, the attempt, the staging location and the
+// spend so far. Its presence makes the run a cloud run for progress, the
+// console, cancel and resume.
+const aiTrainCloudFile = "cloud.json"
+
+type aiTrainCloud struct {
+	Backend    string `json:"backend"`
+	Job        string `json:"job"`
+	State      string `json:"state"`
+	Attempt    int    `json:"attempt"`
+	Staging    string `json:"staging"`
+	RunKey     string `json:"runKey"`
+	Project    string `json:"project"`
+	Region     string `json:"region"`
+	Machine    string `json:"machine"`
+	Spent      string `json:"spent"`
+	Budget     string `json:"budget"`
+	UpdatedMs  int64  `json:"updatedMs"`
+	SpentMinor int    `json:"spentMinor"`
+}
+
+func aiTrainReadCloud(runDir string) aiTrainCloud {
+	var c aiTrainCloud
+	if b, err := os.ReadFile(filepath.Join(runDir, aiTrainCloudFile)); err == nil {
+		json.Unmarshal(b, &c)
+	}
+	return c
+}
+
+// aiTrainCloudLive: a Vertex job in one of these states may still train (and
+// cost money).
+func aiTrainCloudLive(state string) bool {
+	switch state {
+	case "JOB_STATE_QUEUED", "JOB_STATE_PENDING", "JOB_STATE_RUNNING", "JOB_STATE_CANCELLING", "JOB_STATE_UPDATING", "JOB_STATE_PAUSED":
+		return true
+	}
+	return false
+}
+
+// Ai_trainCloudResolve : Code -> Task Error (List Setting) — the Vertex
+// settings, each through the shared resolver (operator env > the job's
+// `withX` value > default), in a fixed order: PROJECT, REGION, MACHINE,
+// STAGING, BUDGET, IMAGE, SERVICE_ACCOUNT. A setting nobody set is "" with
+// source "default"; Train.sky names the builder and the variable it needs.
+func Ai_trainCloudResolve(codeArg any) any {
+	code := map[string]string{
+		"PROJECT":         aiStrField(codeArg, "Project", "project"),
+		"REGION":          aiStrField(codeArg, "Region", "region"),
+		"MACHINE":         aiStrField(codeArg, "Machine", "machine"),
+		"STAGING":         aiStrField(codeArg, "Staging", "staging"),
+		"BUDGET":          aiStrField(codeArg, "Budget", "budget"),
+		"IMAGE":           aiStrField(codeArg, "Image", "image"),
+		"SERVICE_ACCOUNT": aiStrField(codeArg, "ServiceAccount", "serviceAccount"),
+	}
+	return func() any {
+		out := []any{}
+		for _, key := range []string{"PROJECT", "REGION", "MACHINE", "STAGING", "BUDGET", "IMAGE", "SERVICE_ACCOUNT"} {
+			v, src := aiTrainCloudLayer(key, code[key])
+			out = append(out, map[string]any{"key": key, "name": skyEnvName("AI_TRAIN_" + key), "value": strings.TrimSpace(v), "source": src})
+		}
+		return Ok[any, any](out)
+	}
+}
+
+// aiTrainCloudLayer resolves one SKY_AI_TRAIN_* setting. Each suffix is a
+// literal, so the configuration census sees every variable.
+func aiTrainCloudLayer(key, code string) (string, string) {
+	switch key {
+	case "PROJECT":
+		return aiLayer("AI_TRAIN_PROJECT", code, nil)
+	case "REGION":
+		return aiLayer("AI_TRAIN_REGION", code, nil)
+	case "MACHINE":
+		return aiLayer("AI_TRAIN_MACHINE", code, nil)
+	case "STAGING":
+		return aiLayer("AI_TRAIN_STAGING", code, nil)
+	case "BUDGET":
+		return aiLayer("AI_TRAIN_BUDGET", code, nil)
+	case "IMAGE":
+		return aiLayer("AI_TRAIN_IMAGE", code, nil)
+	case "SERVICE_ACCOUNT":
+		return aiLayer("AI_TRAIN_SERVICE_ACCOUNT", code, nil)
+	}
+	return "", "default"
 }
