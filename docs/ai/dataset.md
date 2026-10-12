@@ -91,7 +91,11 @@ hold personal data.
 `map`, `filter`, `filterMap`, `dedupeBy key`, `scrub scrubber`, `upTo n`,
 `toChat` and `toInstruction` run in order, chunk by chunk. `dedupeBy` keeps
 the first row for each key and holds one SHA-256 per distinct key, not the
-key. `steps dataset` lists the steps and `sources dataset` the sources; both go
+key. It keeps at most `dedupeMemoryKeys` (250000, about 20 MB) of them in
+memory; past that it writes them, sorted, to files under
+`.sky/ai/work/dedupe/` in the working directory and looks them up there, so a
+dataset larger than memory dedupes in bounded memory. The files are removed
+when the rows have been read. `dedupeBounded n key` sets the bound. `steps dataset` lists the steps and `sources dataset` the sources; both go
 into the manifest. `withSource` replaces the source description (for example,
 for generated data).
 
@@ -132,7 +136,13 @@ broken) when the dataset breaks a limit. The issues:
 
 The limits are `withMaxIssues` (default 0), `withMaxDuplicateRate` (0.05) and
 `withMinRows` (1). Tokens are estimated as a quarter of the characters plus 4
-per message (`estimateTokens`); `withTokenizer` gives the model's own count.
+per message (`estimateTokens`). `withEngineTokenizer slot` counts with the
+model's own tokenizer: each message goes to the slot's engine `/tokenize`
+route (`Endpoint.tokenize`; llama-server and vLLM serve it). When the engine
+does not answer (offline, fetching off, a server without the route), the run
+falls back to the `withTokenizer` function if one is given, else to the
+estimate, so a check still runs offline. `withTokenizer` alone gives your own
+count.
 `describeIssue` prints an issue with its row number and never the text.
 
 ## Frozen versions
@@ -179,6 +189,21 @@ row), and the version goes to `--out` (default `.sky/ai/datasets`) under
 `--name` (default the file name). `--consent` and `--retention` go into the
 manifest. It prints the digest, the counts per split and the paths, and exits
 non-zero with the typed failure when a line is not JSON.
+
+In a project with an AI pipeline, `sky ai data freeze <name>` (a plain name,
+not a file) freezes one of the pipeline's datasets instead, and registers it
+when the dataset is `withRegistered` ([`pipeline.md`](pipeline.md)).
+
+### Registered versions
+
+`Registry.registerDataset registry (Dataset.manifest v) (Dataset.blobPath v)`
+stores a frozen version's data file in the registry's store (by digest, the
+manifest's) and records it as `<name>@<n>` with its manifest. The same digest
+registered again is the same version. `Registry.datasetVersion registry
+"support@3"` reads one back, `Registry.fetchDataset` gives a local path checked
+against its digest, and a training lineage records `Registry.datasetLabel`
+and the digest, so `sky ai lineage --dataset support@3` lists every model
+trained on it ([`registry.md`](registry.md)).
 
 ## Scrubbing personal data
 
@@ -288,6 +313,19 @@ retries an overloaded or unreachable server.
 generator, the teacher, the seed and the counts, so the frozen version's
 lineage says the data is synthetic and where it came from.
 
+### The journal
+
+`Synthetic.withJournal db` records every teacher answer in
+`_sky_ai_synthetic_journal`, keyed by the teacher's identity (the slot's
+resolved mode and model, or the `withTeacher` name), the call's seed,
+temperature, token limit and exact messages, and every judge call in the eval
+judge journal (`Eval.judgeAnswerWith`). A re-run with unchanged inputs is
+answered from the journal: it makes no model call, `report.replayed` counts
+the replayed teacher calls, and it gives the same rows (and so the same frozen
+digest). A replayed call is priced at its recorded usage, so a budget stops
+the re-run where it stopped the first. Another teacher, seed or prompt is a
+new entry and is asked.
+
 ## Tests and test mode
 
 An offline test of a generator needs no model. Under `sky test` in test mode
@@ -311,9 +349,8 @@ per topic and two judge fixtures. In a unit test, `withTeacher name
 
 ## Not yet
 
-These parts of §8.4 are later work: the registry (`Std.Ai.Registry`) that
-stores versions in a file store, GCS or S3 and records their lineage next to
-the models trained on them; counting tokens through the local engine's
-tokenizer route (use `withTokenizer` for exact counts until then); spilling the
-dedupe key set to disk past a bound; and journalling each teacher and judge
-call as a `Std.Durable` step so a resumed generation does not pay twice.
+The journal is a table in the database rather than a `Std.Durable` step per
+call: a re-run (or a resumed one) pays for no call it already made, which is
+the property a durable step gives. `inspect` and `validate` keep their
+duplicate-row index (one digest and row number per distinct conversation) in
+memory.

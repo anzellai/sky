@@ -1,0 +1,54 @@
+module Ai exposing (pipeline)
+
+{-| The support desk's AI pipeline: what the `sky ai` verbs run.
+
+    sky ai data freeze support          the synthetic dataset, frozen and registered
+    sky ai data freeze accepted         the replies agents sent, frozen and registered
+    sky ai eval support                 the suite on the chat slot as configured
+    sky ai run import-adapter -- <file> register an adapter as support-lora@v<n>
+    sky ai eval support --candidate support-lora@v2 --against prod --promote-to prod
+                                        gate a version against production, then promote it
+    sky ai start chat                   start the chat slot's engine with its code defaults
+
+The app (src/Main.sky) does not import this module, so its build and its
+startup report carry only the chat slot.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ai.Pipeline as Pipeline exposing (Pipeline)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Dataset.Synthetic as Synthetic
+import Std.Ai.Eval as Eval
+import Assist
+import Data
+import Suites
+import Tasks
+
+
+pipeline : Pipeline
+pipeline =
+    Pipeline.pipeline "support-desk" |> Pipeline.withRegistry Assist.registryUrl
+        |> Pipeline.withSlot Assist.chatSlot
+        |> Pipeline.withSlot Synthetic.teacherSlot
+        |> Pipeline.withSlot Eval.judgeSlot
+        |> Pipeline.withDataset
+               "support"
+               (Pipeline.datasetOf Dataset.chatCodec Data.support
+                   |> Pipeline.withFolder (Dataset.withConsentBasis "synthetic")
+                   |> Pipeline.withRegistered)
+        |> Pipeline.withDataset
+               "accepted"
+               (Pipeline.datasetOf Dataset.chatCodec Data.accepted
+                   |> Pipeline.withFolder
+                          (\f ->
+                              f
+                                  |> Dataset.withConsentBasis
+                                         "contract: support replies"
+                                  |> Dataset.withRetention "P2Y")
+                   |> Pipeline.withRegistered)
+        |> Pipeline.withSuite
+               "support"
+               (Pipeline.suiteOn Assist.chatSlot Suites.support
+                   |> Pipeline.forModel Assist.adapterModel
+                   |> Pipeline.withThresholds Suites.thresholds)
+        |> Pipeline.withTask "import-adapter" Tasks.importAdapter

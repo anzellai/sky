@@ -1,0 +1,1481 @@
+module Std.Ai.Pipeline exposing
+    ( Pipeline
+    , SuiteSpec
+    , DatasetSpec
+    , Context
+    , EvalRequest
+    , EvalOutcome
+    , Frozen
+    , Members
+    , pipeline
+    , withDb
+    , withRegistry
+    , withSlot
+    , withDataset
+    , withSuite
+    , withTask
+    , datasetOf
+    , datasetJson
+    , withFolder
+    , withRegistered
+    , suiteOn
+    , suiteWith
+    , forModel
+    , withThresholds
+    , evalRequest
+    , context
+    , evaluate
+    , evalSuite
+    , evalAgainst
+    , freezeDataset
+    , warmSlot
+    , runTask
+    , promote
+    , members
+    , outcomeValue
+    , commandLine
+    , commandLineWith
+    )
+
+{-| `Std.Ai.Pipeline` — a project's AI lifecycle in one value: the database
+and registry it uses, its model slots, the datasets it freezes, the eval
+suites that gate a model and the tasks it runs. The `sky ai` verbs build and
+run it, so the lifecycle is driven from code, not from configuration.
+
+    -- src/Ai.sky
+    module Ai exposing (pipeline)
+
+    pipeline : Pipeline.Pipeline
+    pipeline =
+        Pipeline.pipeline "support-desk"
+            |> Pipeline.withRegistry "file://.sky/ai/registry"
+            |> Pipeline.withSlot Assist.chatSlot
+            |> Pipeline.withDataset "support" (Pipeline.datasetOf Dataset.chatCodec Data.support |> Pipeline.withRegistered)
+            |> Pipeline.withSuite "support" (Pipeline.suiteOn Assist.chatSlot Suites.support |> Pipeline.forModel "support-lora")
+            |> Pipeline.withTask "import-adapter" Tasks.importAdapter
+
+A project declares its pipeline in `src/Ai.sky` (`module Ai exposing
+(pipeline)`), the way it declares `main`. The verbs:
+
+    sky ai eval <suite> [--against <alias>] [--candidate <model>@v<n>]
+                        [--promote-to <alias>] [--junit <file>] [--markdown <file>]
+                        [--min-pass-rate <x>] [--max-regression <x>]
+    sky ai data freeze <dataset>
+    sky ai run <task> [-- <args>]
+    sky ai start <slot>
+    sky ai promote <name> <version> --to <alias>
+
+Each takes `--db <dsn>` (else the pipeline's `withDb`, by default the app's
+own database), `--registry <url>` (else `SKY_AI_REGISTRY`, else the
+pipeline's `withRegistry`), and `--format json`. Inside `sky test` a suite is
+an ordinary test (`evalSuite`, `evalAgainst`), and test mode answers every
+model call from `tests/mocks/`.
+
+**Eval against production.** `evaluate` runs the suite on the candidate (the
+slot as configured, or a registry version named by `--candidate`) and, with
+`--against <alias>`, on the version the alias serves, compares the two case
+by case (`Eval.compare`) and gates the comparison with the suite's
+thresholds. The candidate's report is attached to its registry version, so
+`--promote-to` (or a later `sky ai promote`) moves the alias only on that
+evidence. A registry candidate or baseline is served through the suite's slot
+with that version's adapter, so it is evaluated exactly as it will serve.
+
+A suite's model calls go through its slot, so the slot's operator variables
+apply. One exception: while `<PREFIX>_AI_<SLOT>_ADAPTER` pins the slot's
+adapter, `--candidate` and `--against` cannot choose another one, and
+`evaluate` refuses with `InvalidSetting` naming the variable (never its
+value) rather than evaluate the wrong adapter.
+
+**Phase 3.** Training adds a member the same way (`withJob`), with its own
+verb (`sky ai train`). Until then a pipeline task (`withTask`) imports an
+adapter trained elsewhere. See `docs/ai/pipeline.md`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error(..))
+import Sky.Core.Tuple as Tuple
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Sky.Core.Io as Io
+import Sky.Core.System as System
+import Sky.Core.Time as Time
+import Sky.Core.Json.Encode as JsonE
+import Std.Log exposing (println)
+import Std.Codec exposing (Codec)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Provider exposing (Provider)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Eval as Eval
+import Std.Ai.Registry as Registry
+import Std.Ai.Store as Store
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+-- ── Types ───────────────────────────────────────────────────────────
+-- | A project's AI pipeline. Build it with `pipeline` and the `with…`
+-- builders.
+type Pipeline
+    = Pipeline { name : String
+, db : Task Error Db
+, registryUrl : String
+, registryPinned : Bool
+, slots : List Endpoint
+, datasets : List ( String, DatasetSpec )
+, suites : List ( String, SuiteSpec )
+, tasks : List ( String, Context -> Task Error () )
+}
+
+-- | What a dataset, a task or a suite gets: the pipeline's name, its open
+-- database, its registry (opened when the task runs it) and the arguments
+-- after `--` (`sky ai run <task> -- <args>`).
+type alias Context =
+    { name : String
+    , db : Db
+    , registry : Task Error Registry.Registry
+    , args : List String
+    }
+
+-- | How a dataset is built and frozen. Its row type is fixed by `datasetOf`.
+type DatasetSpec
+    = DatasetSpec { freeze : Context -> Dataset.Folder -> Task Error ( Dataset.Manifest, String )
+, folder : Dataset.Folder -> Dataset.Folder
+, registered : Bool
+}
+
+-- Where a suite's model calls go.
+type Target
+    = OnSlot Endpoint
+    | Via (String -> Provider)
+
+-- | How a suite runs: its model target, the registry model it gates and its
+-- thresholds. Its input type is fixed by `suiteOn`.
+type SuiteSpec
+    = SuiteSpec { target : Target
+, suiteName : String
+, model : String
+, thresholds : Eval.Thresholds
+, runAs : String -> Db -> Provider -> Task Error Eval.Report
+}
+
+-- | What to evaluate: the candidate (`Nothing`: the suite's slot as
+-- configured; `Just "support-lora@v3"`: a registry version or alias), the
+-- baseline alias (`Just "prod"`), and threshold overrides.
+type alias EvalRequest =
+    { candidate : Maybe String
+    , against : Maybe String
+    , minPassRate : Maybe Float
+    , maxRegression : Maybe Float
+    }
+
+-- | The result of `evaluate`: both reports, the comparison, the gate's
+-- verdict (`Ok` holds the `Passed` that `Registry.promote` needs) and the
+-- registry versions the candidate and the baseline were.
+type alias EvalOutcome =
+    { suite : String
+    , candidate : Eval.Report
+    , baseline : Maybe Eval.Report
+    , comparison : Eval.Comparison
+    , verdict : Result Error Eval.Passed
+    , version : Maybe Registry.Version
+    , baselineVersion : Maybe Registry.Version
+    }
+
+-- | A frozen dataset: its manifest, its data file, and its registry version
+-- when the dataset is registered (`withRegistered`).
+type alias Frozen =
+    { manifest : Dataset.Manifest
+    , path : String
+    , registered : Maybe Registry.DatasetVersion
+    }
+
+-- | The names of a pipeline's members.
+type alias Members =
+    { name : String
+    , datasets : List String
+    , suites : List String
+    , slots : List String
+    , tasks : List String
+    }
+
+
+-- ── Building ────────────────────────────────────────────────────────
+-- | A pipeline named `name`, on the app's own database (`Db.connect ()`) and
+-- the default registry location (`SKY_AI_REGISTRY`, else
+-- `file://.sky/ai/registry`).
+pipeline : String -> Pipeline
+pipeline name =
+    Pipeline
+        { name = name
+        , db = Db.connect ()
+        , registryUrl = ""
+        , registryPinned = False
+        , slots = []
+        , datasets = []
+        , suites = []
+        , tasks = []
+        }
+
+
+-- | The database the eval runs, the judge journal and the registry records
+-- use. Default: `Db.connect ()`, the app's own. `--db <dsn>` overrides it.
+withDb : Task Error Db -> Pipeline -> Pipeline
+withDb db (Pipeline p) =
+    Pipeline { p | db = db }
+
+
+-- | The registry's artefact store in code (`file://`, `gs://`, `s3://`).
+-- `SKY_AI_REGISTRY` wins over it, and `--registry <url>` over both.
+withRegistry : String -> Pipeline -> Pipeline
+withRegistry url (Pipeline p) =
+    Pipeline { p | registryUrl = url }
+
+
+-- | A model slot the pipeline names: `sky ai start <slot>` warms it with its
+-- code defaults (its own `withLocal` spec and model).
+withSlot : Endpoint -> Pipeline -> Pipeline
+withSlot slot (Pipeline p) =
+    Pipeline { p | slots = p.slots ++ [ slot ] }
+
+
+-- | A dataset `sky ai data freeze <name>` freezes.
+withDataset : String -> DatasetSpec -> Pipeline -> Pipeline
+withDataset name spec (Pipeline p) =
+    Pipeline { p | datasets = replaceNamed name spec p.datasets }
+
+
+-- | An eval suite `sky ai eval <name>` runs.
+withSuite : String -> SuiteSpec -> Pipeline -> Pipeline
+withSuite name spec (Pipeline p) =
+    Pipeline { p | suites = replaceNamed name spec p.suites }
+
+
+-- | A task `sky ai run <name> -- <args>` runs: importing an adapter,
+-- seeding data, a nightly report. It gets the pipeline's context.
+withTask : String -> (Context -> Task Error ()) -> Pipeline -> Pipeline
+withTask name f (Pipeline p) =
+    Pipeline { p | tasks = replaceNamed name f p.tasks }
+
+
+replaceNamed : String -> a -> List ( String, a ) -> List ( String, a )
+replaceNamed name value xs =
+    List.filter (\entry -> Tuple.first entry /= name) xs ++ [ ( name, value ) ]
+
+
+-- | A dataset of typed rows: the task builds its split rows (from files,
+-- the app's database, a synthetic generator), and freezing writes them as a
+-- content-addressed version under `.sky/ai/datasets/<name>`.
+datasetOf : Codec row -> (Context -> Task Error (Dataset.Splits row)) -> DatasetSpec
+datasetOf codec build =
+    DatasetSpec
+        { freeze =
+            \ctx tgt ->
+                build ctx |> Task.andThen (Dataset.freeze tgt codec)
+                    |> Task.map
+                           (\v -> ( Dataset.manifest v, Dataset.blobPath v ))
+        , folder = identity
+        , registered = False
+        }
+
+
+-- | A dataset of JSON rows (as `Dataset.fromJsonLines` reads them).
+datasetJson : (Context -> Task Error (Dataset.Splits String)) -> DatasetSpec
+datasetJson build =
+    DatasetSpec
+        { freeze =
+            \ctx tgt ->
+                build ctx |> Task.andThen (Dataset.freezeJson tgt)
+                    |> Task.map
+                           (\v -> ( Dataset.manifest v, Dataset.blobPath v ))
+        , folder = identity
+        , registered = False
+        }
+
+
+-- | Change where the dataset is frozen and what its manifest records:
+-- `withFolder (Dataset.withConsentBasis "contract")`, or a whole other
+-- folder.
+withFolder : (Dataset.Folder -> Dataset.Folder) -> DatasetSpec -> DatasetSpec
+withFolder f (DatasetSpec d) =
+    DatasetSpec { d | folder = \tgt -> f (d.folder tgt) }
+
+
+-- | Register each frozen version in the registry
+-- (`Registry.registerDataset`), so a training lineage can name it
+-- (`support@3`) and `sky ai lineage --dataset support@3` finds what was
+-- trained on it.
+withRegistered : DatasetSpec -> DatasetSpec
+withRegistered (DatasetSpec d) =
+    DatasetSpec { d | registered = True }
+
+
+-- | A suite that runs on a slot. A registry candidate or baseline runs on
+-- the same slot with that version's adapter.
+suiteOn : Endpoint -> Eval.Suite input -> SuiteSpec
+suiteOn slot s =
+    SuiteSpec
+        { target = OnSlot slot
+        , suiteName = Eval.suiteName s
+        , model = ""
+        , thresholds = Eval.thresholds
+        , runAs = \label db p -> Eval.runAs label db p s
+        }
+
+
+-- | A suite whose provider you give for each adapter: the function gets
+-- `""` for the default candidate and `registry:<name>@v<n>` for a registry
+-- version. For a fixed provider (a gateway, a stand-in in a test).
+suiteWith : (String -> Provider) -> Eval.Suite input -> SuiteSpec
+suiteWith providerFor s =
+    SuiteSpec
+        { target = Via providerFor
+        , suiteName = Eval.suiteName s
+        , model = ""
+        , thresholds = Eval.thresholds
+        , runAs = \label db p -> Eval.runAs label db p s
+        }
+
+
+-- | The registry model the suite gates: `--against prod` compares with
+-- `<model>@prod`.
+forModel : String -> SuiteSpec -> SuiteSpec
+forModel model (SuiteSpec s) =
+    SuiteSpec { s | model = model }
+
+
+-- | The suite's gate (default `Eval.thresholds`). `--min-pass-rate` and
+-- `--max-regression` override parts of it for one run.
+withThresholds : Eval.Thresholds -> SuiteSpec -> SuiteSpec
+withThresholds t (SuiteSpec s) =
+    SuiteSpec { s | thresholds = t }
+
+
+-- | The default request: the slot as configured, alone.
+evalRequest : EvalRequest
+evalRequest =
+    { candidate = Nothing
+    , against = Nothing
+    , minPassRate = Nothing
+    , maxRegression = Nothing
+    }
+
+
+-- | The names of the pipeline's members.
+members : Pipeline -> Members
+members (Pipeline p) =
+    { name = p.name
+    , datasets = List.map Tuple.first p.datasets
+    , suites = List.map Tuple.first p.suites
+    , slots = List.map Endpoint.slotName p.slots
+    , tasks = List.map Tuple.first p.tasks
+    }
+
+
+-- ── Running ─────────────────────────────────────────────────────────
+-- | Open the pipeline's database and make the context its members get.
+context : Pipeline -> List String -> Task Error Context
+context (Pipeline p) args =
+    p.db
+        |> Task.map
+               (\db ->
+                   { name = p.name
+                   , db = db
+                   , registry =
+                       if p.registryPinned then
+                           Task.fromResult (Store.fromUrl p.registryUrl)
+                               |> Task.andThen (Registry.open db)
+
+                       else
+                           Registry.openConfigured db p.registryUrl
+                   , args = args
+                   })
+
+
+unknown : String -> String -> List String -> Error
+unknown kind name known =
+    Failure.toError
+        (InvalidSetting
+            { setting = kind
+            , reason =
+                "the pipeline has no " ++ kind ++ " named " ++ quote name
+                    ++ (if List.isEmpty known then
+                           "; it declares none"
+
+                       else
+                           "; it has "
+                               ++ String.join ", " (List.map quote known))
+            })
+
+
+find : String -> String -> List ( String, a ) -> Task Error a
+find kind name xs =
+    case List.filter (\entry -> Tuple.first entry == name) xs of
+
+        found :: _ ->
+            Task.succeed (Tuple.second found)
+
+        [] ->
+            Task.fail (unknown kind name (List.map Tuple.first xs))
+
+
+-- | Evaluate a suite: the candidate, and with `against` the alias's version
+-- as the baseline, compared and gated. A registry candidate's report is
+-- attached to its version. A failed gate is not a failed task: the verdict
+-- is in the outcome (`evalSuite` fails on it).
+evaluate : Pipeline -> String -> EvalRequest -> Task Error EvalOutcome
+evaluate (Pipeline p) name req =
+    find "suite" name p.suites
+        |> Task.andThen
+               (\spec ->
+                   context (Pipeline p) []
+                       |> Task.andThen (\ctx -> evaluateIn ctx spec req))
+
+type alias Run =
+    { label : String
+    , provider : Provider
+    , version : Maybe Registry.Version
+    }
+
+
+evaluateIn : Context -> SuiteSpec -> EvalRequest -> Task Error EvalOutcome
+evaluateIn ctx (SuiteSpec s) req =
+    refuseEnvAdapter s.target req
+        |> Task.andThen (\_ -> candidateRun ctx (SuiteSpec s) req.candidate)
+        |> Task.andThen
+               (\cand ->
+                   baselineRun ctx (SuiteSpec s) cand req.against
+                       |> Task.andThen
+                              (\base ->
+                                  runBaseline ctx (SuiteSpec s) base
+                                      |> Task.andThen
+                                             (\baseReport ->
+                                                 s.runAs
+                                                     cand.label
+                                                     ctx.db
+                                                     cand.provider
+                                                     |> Task.andThen
+                                                            (\report ->
+                                                                attachTo
+                                                                    ctx
+                                                                    cand.version
+                                                                    report
+                                                                    |> Task.map
+                                                                           (\_ ->
+                                                                               outcomeOf
+                                                                                   (SuiteSpec
+                                                                                       s)
+                                                                                   req
+                                                                                   cand
+                                                                                   base
+                                                                                   baseReport
+                                                                                   report)))))
+
+
+runBaseline : Context -> SuiteSpec -> Maybe Run -> Task Error (Maybe Eval.Report)
+runBaseline ctx (SuiteSpec s) base =
+    case base of
+
+        Just b ->
+            s.runAs b.label ctx.db b.provider |> Task.map Just
+
+        Nothing ->
+            Task.succeed Nothing
+
+
+attachTo : Context -> Maybe Registry.Version -> Eval.Report -> Task Error ()
+attachTo ctx version report =
+    case version of
+
+        Just v ->
+            ctx.registry
+                |> Task.andThen (\reg -> Registry.attachReport reg v report)
+
+        Nothing ->
+            Task.succeed ()
+
+
+outcomeOf : SuiteSpec -> EvalRequest -> Run -> Maybe Run -> Maybe Eval.Report -> Eval.Report -> EvalOutcome
+outcomeOf (SuiteSpec s) req cand base baseReport report =
+    let
+        comparison =
+            case baseReport of
+
+                Just b ->
+                    Eval.compare b report
+
+                Nothing ->
+                    Eval.alone report
+    in
+        { suite = report.suite
+        , candidate = report
+        , baseline = baseReport
+        , comparison = comparison
+        , verdict = Eval.gate (adjusted req s.thresholds) comparison
+        , version = cand.version
+        , baselineVersion = Maybe.andThen .version base
+        }
+
+
+adjusted : EvalRequest -> Eval.Thresholds -> Eval.Thresholds
+adjusted req t =
+    let
+        withRate =
+            case req.minPassRate of
+
+                Just x ->
+                    Eval.withMinPassRate x t
+
+                Nothing ->
+                    t
+    in
+        case req.maxRegression of
+
+            Just x ->
+                Eval.withMaxRegression x withRate
+
+            Nothing ->
+                withRate
+
+
+-- While an operator variable pins the slot's adapter, every model call of
+-- the slot uses it, whatever the request names: evaluating "the candidate"
+-- would evaluate the pinned adapter instead. Refuse, naming the variable.
+refuseEnvAdapter : Target -> EvalRequest -> Task Error ()
+refuseEnvAdapter target req =
+    case target of
+
+        OnSlot slot ->
+            if req.candidate == Nothing && req.against == Nothing then
+                Task.succeed ()
+
+            else
+                Endpoint.inspect slot
+                    |> Task.andThen
+                           (\d ->
+                               case List.filter
+                                        (\st ->
+                                            st.key == "ADAPTER" && st.source
+                                                == "env")
+                                        d.settings of
+
+                                   st :: _ ->
+                                       Task.fail
+                                           (Failure.toError
+                                               (InvalidSetting
+                                                   { setting = st.name
+                                                   , reason =
+                                                       st.name
+                                                           ++ " pins the adapter of slot "
+                                                           ++ d.slot
+                                                           ++ ", so --candidate and --against cannot choose one; unset it for this run"
+                                                   }))
+
+                                   [] ->
+                                       Task.succeed ())
+
+        Via _ ->
+            Task.succeed ()
+
+
+-- The provider for an adapter reference (`""`: the slot as configured).
+providerFor : Context -> Target -> String -> Provider
+providerFor ctx target adapter =
+    case target of
+
+        OnSlot slot ->
+            if adapter == "" then
+                Endpoint.provider slot
+
+            else
+                Endpoint.provider
+                    (slot
+                        |> Endpoint.fromRegistry
+                               (Registry.resolver ctx.registry)
+                        |> Endpoint.withAdapter adapter)
+
+        Via f ->
+            f adapter
+
+
+slotLabel : Target -> String
+slotLabel target =
+    case target of
+
+        OnSlot slot ->
+            "slot:" ++ Endpoint.slotName slot
+
+        Via _ ->
+            "default"
+
+
+candidateRun : Context -> SuiteSpec -> Maybe String -> Task Error Run
+candidateRun ctx (SuiteSpec s) candidate =
+    case candidate of
+
+        Nothing ->
+            Task.succeed
+                { label = slotLabel s.target
+                , provider = providerFor ctx s.target ""
+                , version = Nothing
+                }
+
+        Just ref ->
+            versionRun ctx s.target ref
+
+
+versionRun : Context -> Target -> String -> Task Error Run
+versionRun ctx target ref =
+    ctx.registry |> Task.andThen (\reg -> Registry.resolve reg ref)
+        |> Task.map
+               (\v ->
+                   { label = Registry.label v
+                   , provider =
+                       providerFor ctx target ("registry:" ++ Registry.label v)
+                   , version = Just v
+                   })
+
+
+baselineRun : Context -> SuiteSpec -> Run -> Maybe String -> Task Error (Maybe Run)
+baselineRun ctx (SuiteSpec s) cand against =
+    case against of
+
+        Nothing ->
+            Task.succeed Nothing
+
+        Just aliasName ->
+            let
+                model =
+                    if s.model /= "" then
+                        s.model
+
+                    else
+                        Maybe.map .name cand.version |> Maybe.withDefault ""
+            in
+                if String.contains "@" aliasName then
+                    versionRun ctx s.target aliasName |> Task.map Just
+
+                else if model == "" then
+                    Task.fail
+                        (Failure.toError
+                            (InvalidSetting
+                                { setting = "against"
+                                , reason =
+                                    "--against " ++ aliasName
+                                        ++ " needs the registry model: give the suite Pipeline.forModel, or name the candidate as <model>@v<n>"
+                                }))
+
+                else
+                    versionRun ctx s.target (model ++ "@" ++ aliasName)
+                        |> Task.map Just
+
+
+-- | Evaluate a suite on its own and fail with `GateFailed` when the gate
+-- fails. Inside `sky test`, a suite is then an ordinary test:
+--
+--     Test.test "support passes" (\_ -> Pipeline.evalSuite Ai.pipeline "support" |> Task.run |> Test.ok)
+evalSuite : Pipeline -> String -> Task Error Eval.Passed
+evalSuite p name =
+    evaluate p name evalRequest
+        |> Task.andThen (\o -> Task.fromResult o.verdict)
+
+
+-- | Evaluate a suite against an alias's version (`"prod"`) and fail with
+-- `GateFailed` when the candidate regresses.
+evalAgainst : Pipeline -> String -> String -> Task Error Eval.Passed
+evalAgainst p name aliasName =
+    evaluate p name { evalRequest | against = Just aliasName }
+        |> Task.andThen (\o -> Task.fromResult o.verdict)
+
+
+-- | Freeze a dataset under `.sky/ai/datasets/<name>` (or its `withFolder`)
+-- and register the version when it is `withRegistered`. Freezing unchanged
+-- rows gives the same digest and, registered, the same version number.
+freezeDataset : Pipeline -> String -> Task Error Frozen
+freezeDataset (Pipeline p) name =
+    find "dataset" name p.datasets
+        |> Task.andThen
+               (\spec ->
+                   context (Pipeline p) []
+                       |> Task.andThen (\ctx -> freezeIn ctx name spec))
+
+
+freezeIn : Context -> String -> DatasetSpec -> Task Error Frozen
+freezeIn ctx name (DatasetSpec d) =
+    d.freeze ctx (d.folder (Dataset.folder ".sky/ai/datasets" name))
+        |> Task.andThen
+               (\frozen ->
+                   case frozen of
+
+                       ( m, path ) ->
+                           if d.registered then
+                               ctx.registry
+                                   |> Task.andThen
+                                          (\reg ->
+                                              Registry.registerDataset
+                                                  reg
+                                                  m
+                                                  path)
+                                   |> Task.map
+                                          (\dv ->
+                                              { manifest = m
+                                              , path = path
+                                              , registered = Just dv
+                                              })
+
+                           else
+                               Task.succeed
+                                   { manifest = m
+                                   , path = path
+                                   , registered = Nothing
+                                   })
+
+
+-- | Start a pipeline slot's engine with its code defaults and return its
+-- description (`sky ai start <slot>` then holds it).
+warmSlot : Pipeline -> String -> Task Error Endpoint.Description
+warmSlot (Pipeline p) name =
+    find "slot" name (List.map (\e -> ( Endpoint.slotName e, e )) p.slots)
+        |> Task.andThen Endpoint.warm
+
+
+-- | Run a pipeline task with arguments.
+runTask : Pipeline -> String -> List String -> Task Error ()
+runTask (Pipeline p) name args =
+    find "task" name p.tasks
+        |> Task.andThen (\f -> context (Pipeline p) args |> Task.andThen f)
+
+
+-- | Move an alias to a registry version on its attached evidence, compared
+-- against the version the alias serves now (`Registry.promoteCompared`),
+-- gating each report with its suite's thresholds from the pipeline.
+promote : Pipeline -> String -> Int -> String -> Task Error Registry.AliasEvent
+promote p name number aliasName =
+    promoteWith p evalRequest name number aliasName
+
+
+promoteWith : Pipeline -> EvalRequest -> String -> Int -> String -> Task Error Registry.AliasEvent
+promoteWith (Pipeline p) req name number aliasName =
+    context (Pipeline p) [] |> Task.andThen (\ctx -> ctx.registry)
+        |> Task.andThen
+               (\reg ->
+                   Registry.version reg name number
+                       |> Task.andThen
+                              (\v ->
+                                  Registry.promoteCompared
+                                      reg
+                                      aliasName
+                                      v
+                                      (suiteThresholds (Pipeline p) req)))
+
+
+-- A suite's thresholds by the suite's report name, with the request's
+-- overrides. A report of a suite the pipeline does not declare gets the
+-- default thresholds.
+suiteThresholds : Pipeline -> EvalRequest -> String -> Eval.Thresholds
+suiteThresholds (Pipeline p) req reportSuite =
+    case List.filter
+             (\entry ->
+                 case Tuple.second entry of
+
+                     SuiteSpec s ->
+                         s.suiteName == reportSuite)
+             p.suites of
+
+        found :: _ ->
+            case Tuple.second found of
+
+                SuiteSpec s ->
+                    adjusted req s.thresholds
+
+        [] ->
+            adjusted req Eval.thresholds
+
+
+-- ── Output ──────────────────────────────────────────────────────────
+-- | An outcome as the one JSON object `sky ai eval --format json` prints.
+outcomeValue : EvalOutcome -> JsonE.Value
+outcomeValue o =
+    JsonE.object
+        [ ( "suite", JsonE.string o.suite )
+        , ( "candidate", JsonE.string o.candidate.candidate )
+        , ( "baseline"
+          , case o.baseline of
+
+                Just b ->
+                    JsonE.string b.candidate
+
+                Nothing ->
+                    JsonE.null
+          )
+        , ( "verdict"
+          , JsonE.string
+                (case o.verdict of
+
+                    Ok _ ->
+                        "passed"
+
+                    Err _ ->
+                        "failed")
+          )
+        , ( "reasons"
+          , case o.verdict of
+
+                Ok _ ->
+                    JsonE.list JsonE.string []
+
+                Err e ->
+                    JsonE.list JsonE.string (gateReasons e)
+          )
+        , ( "passRate", JsonE.float o.candidate.passRate )
+        , ( "passed", JsonE.int o.candidate.passed )
+        , ( "failed", JsonE.int o.candidate.failed )
+        , ( "errors", JsonE.int o.candidate.errors )
+        , ( "regressions", JsonE.int o.comparison.regressions )
+        , ( "improvements", JsonE.int o.comparison.improvements )
+        , ( "reportDigest", JsonE.string o.candidate.digest )
+        , ( "version"
+          , case o.version of
+
+                Just v ->
+                    JsonE.string (Registry.label v)
+
+                Nothing ->
+                    JsonE.null
+          )
+        , ( "markdown", JsonE.string (Eval.toMarkdown o.comparison) )
+        , ( "junit", JsonE.string (Eval.toJunit o.candidate) )
+        ]
+
+
+gateReasons : Error -> List String
+gateReasons e =
+    case Failure.fromError e of
+
+        Just (GateFailed g) ->
+            String.split "; " g.reasons
+
+        _ ->
+            [ Error.toString e ]
+
+
+quote : String -> String
+quote s =
+    "\"" ++ s ++ "\""
+
+
+-- ── The command line ────────────────────────────────────────────────
+-- | The program behind the project-mode `sky ai` verbs: `main` of the
+-- entry the CLI synthesises (`main = Pipeline.commandLine Ai.pipeline`).
+-- A usage error prints the usage and exits 2; a failed gate prints the
+-- outcome and exits 1.
+commandLine : Pipeline -> Task Error ()
+commandLine p =
+    System.args () |> Task.andThen (commandLineWith p)
+        |> Task.onError
+               (\e ->
+                   if isUsage e then
+                       Io.writeStderr (messageOf e ++ "\n")
+                           |> Task.andThen (\_ -> System.exit 2)
+
+                   else
+                       Task.fail e)
+
+
+usage : String
+usage =
+    "usage: sky ai eval <suite> [--against <alias>] [--candidate <model>@v<n>] [--promote-to <alias>] [--junit <file>] [--markdown <file>] [--min-pass-rate <x>] [--max-regression <x>] | data freeze <dataset> | run <task> [-- <args>] | start <slot> | promote <name> <version> --to <alias> [--min-pass-rate <x>] [--expect <n>|none] [--force --reason <text>] | members  (each takes --db <dsn>, --registry <url> and --format json)"
+
+
+usageError : String -> Error
+usageError detail =
+    Error.invalidInput ("usage: " ++ detail ++ "\n" ++ usage)
+
+
+isUsage : Error -> Bool
+isUsage e =
+    String.startsWith "usage: " (messageOf e)
+
+
+messageOf : Error -> String
+messageOf e =
+    case e of
+
+        Error _ info ->
+            info.message
+
+
+-- | `commandLine` with the arguments given (a test drives it this way).
+commandLineWith : Pipeline -> List String -> Task Error ()
+commandLineWith p args =
+    let
+        json = List.member "--format" args && List.member "json" args
+        rest = List.filter (\a -> a /= "--format" && a /= "json") args
+    in
+        case rest of
+
+            "eval" :: suiteName :: opts ->
+                if String.startsWith "-" suiteName then
+                    Task.fail (usageError "sky ai eval needs a suite name")
+
+                else
+                    withFlags p opts (\q -> evalVerb json q suiteName opts)
+
+            "data" :: "freeze" :: dataset :: opts ->
+                withFlags p opts (\q -> freezeVerb json q dataset)
+
+            "run" :: taskName :: opts ->
+                withFlags
+                    p
+                    (beforeDashes opts)
+                    (\q -> runTask q taskName (afterDashes opts))
+
+            "start" :: slot :: opts ->
+                if List.member "--model" opts || List.member "--context" opts then
+                    Task.fail
+                        (usageError
+                            ("slot " ++ slot
+                                ++ " is declared by the pipeline (src/Ai.sky): its model and context come from the code and its SKY_AI_"
+                                ++ String.toUpper slot
+                                ++ "_* variables, so --model and --context do not apply"))
+
+                else
+                    startVerb json p slot
+
+            "promote" :: name :: number :: opts ->
+                withFlags p opts (\q -> promoteVerb json q name number opts)
+
+            ["members"] ->
+                membersVerb json p
+
+            _ ->
+                Task.fail (usageError "unknown or incomplete sky ai verb")
+
+
+-- The arguments before `--`, and after it (`sky ai run <task> -- <args>`).
+beforeDashes : List String -> List String
+beforeDashes opts =
+    case opts of
+
+        "--" :: _ ->
+            []
+
+        a :: more ->
+            a :: beforeDashes more
+
+        [] ->
+            []
+
+
+afterDashes : List String -> List String
+afterDashes opts =
+    case opts of
+
+        "--" :: more ->
+            more
+
+        _ :: more ->
+            afterDashes more
+
+        [] ->
+            []
+
+
+flag : String -> List String -> Maybe String
+flag name opts =
+    case opts of
+
+        a :: b :: more ->
+            if a == name then
+                Just b
+
+            else
+                flag name (b :: more)
+
+        _ ->
+            Nothing
+
+
+-- Apply `--db` and `--registry` to the pipeline.
+withFlags : Pipeline -> List String -> (Pipeline -> Task Error ()) -> Task Error ()
+withFlags (Pipeline p) opts k =
+    let
+        db =
+            case flag "--db" opts of
+
+                Just dsn ->
+                    if String.startsWith "postgres://" dsn
+                        || String.startsWith "postgresql://" dsn then
+                        Db.open "postgres" dsn
+
+                    else
+                        Db.open "sqlite" dsn
+
+                Nothing ->
+                    p.db
+    in
+        case flag "--registry" opts of
+
+            Just url ->
+                case Store.fromUrl url of
+
+                    Ok _ ->
+                        k
+                            (Pipeline
+                                { p
+                                    | db = db
+                                    , registryUrl = url
+                                    , registryPinned = True
+                                })
+
+                    Err e ->
+                        Task.fail e
+
+            Nothing ->
+                k (Pipeline { p | db = db })
+
+
+floatFlag : String -> List String -> Result Error (Maybe Float)
+floatFlag name opts =
+    case flag name opts of
+
+        Just text ->
+            case String.toFloat text of
+
+                Just x ->
+                    Ok (Just x)
+
+                Nothing ->
+                    Err (usageError (name ++ " " ++ text ++ " is not a number"))
+
+        Nothing ->
+            Ok Nothing
+
+
+evalVerb : Bool -> Pipeline -> String -> List String -> Task Error ()
+evalVerb json p suiteName opts =
+    Task.fromResult
+        (Result.map2
+            (\rate regression ->
+                { candidate = flag "--candidate" opts
+                , against = flag "--against" opts
+                , minPassRate = rate
+                , maxRegression = regression
+                })
+            (floatFlag "--min-pass-rate" opts)
+            (floatFlag "--max-regression" opts))
+        |> Task.andThen
+               (\req ->
+                   evaluate p suiteName req
+                       |> Task.andThen
+                              (\o ->
+                                  writeReports o opts
+                                      |> Task.andThen (\_ -> report json o)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 promoteOnPass json p req o opts)))
+
+
+-- The JUnit XML (by default under `.sky/ai/eval/<suite>/`, where CI picks it
+-- up) and, when asked, the Markdown comparison.
+writeReports : EvalOutcome -> List String -> Task Error ()
+writeReports o opts =
+    let
+        junit =
+            Maybe.withDefault
+                (".sky/ai/eval/" ++ o.suite ++ "/junit.xml")
+                (flag "--junit" opts)
+        markdown = flag "--markdown" opts
+    in
+        writeWithDir junit (Eval.toJunit o.candidate)
+            |> Task.andThen
+                   (\_ ->
+                       case markdown of
+
+                           Just path ->
+                               writeWithDir path (Eval.toMarkdown o.comparison)
+
+                           Nothing ->
+                               Task.succeed ())
+
+
+writeWithDir : String -> String -> Task Error ()
+writeWithDir path text =
+    let
+        parts = String.split "/" path
+        dir = String.join "/" (List.take (List.length parts - 1) parts)
+    in
+        (if dir == "" then
+            Task.succeed ()
+
+        else
+            File.mkdirAll dir)
+            |> Task.andThen (\_ -> File.writeFile path text)
+            |> Task.map (\_ -> ())
+
+
+report : Bool -> EvalOutcome -> Task Error ()
+report json o =
+    if json then
+        println (JsonE.encode 0 (outcomeValue o))
+
+    else
+        println
+            (Eval.toMarkdown o.comparison ++ "\n"
+                ++ (case o.verdict of
+
+                       Ok _ ->
+                           "PASSED " ++ o.candidate.candidate
+
+                       Err e ->
+                           "FAILED " ++ o.candidate.candidate ++ ": "
+                               ++ String.join "; " (gateReasons e)))
+
+
+-- `--promote-to <alias>`: on a passing gate, move the alias to the
+-- candidate's version with the `Passed` the gate just gave. An alias that
+-- serves a version already moves only when the gate compared against it
+-- (`--against <alias>`), and only while it still serves that version
+-- (`Registry.promoteIf`): of two runs that promote from the same state, at
+-- most one wins. A failed gate fails the verb (exit 1) and moves nothing.
+promoteOnPass : Bool -> Pipeline -> EvalRequest -> EvalOutcome -> List String -> Task Error ()
+promoteOnPass json p req o opts =
+    case o.verdict of
+
+        Err e ->
+            Task.fail e
+
+        Ok passed ->
+            case ( flag "--promote-to" opts, o.version ) of
+
+                ( Nothing, _ ) ->
+                    Task.succeed ()
+
+                ( Just _, Nothing ) ->
+                    Task.fail
+                        (Failure.toError
+                            (InvalidSetting
+                                { setting = "promote-to"
+                                , reason =
+                                    "--promote-to needs a registry candidate: name it with --candidate <model>@v<n>"
+                                }))
+
+                ( Just aliasName, Just v ) ->
+                    context p [] |> Task.andThen (\ctx -> ctx.registry)
+                        |> Task.andThen
+                               (\reg ->
+                                   expectedState reg req o v aliasName
+                                       |> Task.andThen
+                                              (\expected ->
+                                                  Registry.promoteIf
+                                                      reg
+                                                      aliasName
+                                                      expected
+                                                      v
+                                                      passed))
+                        |> Task.andThen (\ev -> eventOut json v.name ev)
+
+
+-- The alias state the promotion expects: the baseline's version when the
+-- gate compared against this alias; no version when the alias does not
+-- exist yet; a refusal when it exists and the gate did not compare with it.
+expectedState : Registry.Registry -> EvalRequest -> EvalOutcome -> Registry.Version -> String -> Task Error (Maybe Registry.Version)
+expectedState reg req o v aliasName =
+    if req.against == Just aliasName then
+        Task.succeed o.baselineVersion
+
+    else
+        Registry.aliases reg v.name
+            |> Task.andThen
+                   (\als ->
+                       case List.filter (\a -> a.aliasName == aliasName) als of
+
+                           a :: _ ->
+                               Task.fail
+                                   (Failure.toError
+                                       (InvalidSetting
+                                           { setting = "promote-to"
+                                           , reason =
+                                               v.name ++ "@" ++ aliasName
+                                                   ++ " serves v"
+                                                   ++ String.fromInt a.number
+                                                   ++ "; compare against it before moving it: add --against "
+                                                   ++ aliasName
+                                           }))
+
+                           [] ->
+                               Task.succeed Nothing)
+
+
+-- The event after `--promote-to`: on stderr in JSON mode, where stdout
+-- holds the outcome's one JSON object.
+eventOut : Bool -> String -> Registry.AliasEvent -> Task Error ()
+eventOut json name ev =
+    if json then
+        Io.writeStderr (JsonE.encode 0 (Registry.eventValue ev) ++ "\n")
+
+    else
+        println (eventText name ev)
+
+
+eventText : String -> Registry.AliasEvent -> String
+eventText name ev =
+    name ++ "@" ++ ev.aliasName ++ ": " ++ ev.action ++ " "
+        ++ numberText ev.from
+        ++ " -> "
+        ++ numberText ev.to
+        ++ (if ev.report == "" then
+               ""
+
+           else
+               " (report " ++ ev.report ++ ")")
+        ++ (if ev.reason == "" then
+               ""
+
+           else
+               " (reason: " ++ ev.reason ++ ")")
+
+
+numberText : Int -> String
+numberText n =
+    if n == 0 then
+        "(none)"
+
+    else
+        "v" ++ String.fromInt n
+
+
+freezeVerb : Bool -> Pipeline -> String -> Task Error ()
+freezeVerb json p name =
+    freezeDataset p name
+        |> Task.andThen
+               (\f ->
+                   let
+                       m = f.manifest
+                   in
+                       if json then
+                           println
+                               (JsonE.encode
+                                   0
+                                   (JsonE.object
+                                       [ ( "name", JsonE.string m.name )
+                                       , ( "digest", JsonE.string m.digest )
+                                       , ( "rows", JsonE.int m.rows )
+                                       , ( "train", JsonE.int m.train )
+                                       , ( "eval", JsonE.int m.eval )
+                                       , ( "test", JsonE.int m.test )
+                                       , ( "data", JsonE.string f.path )
+                                       , ( "registered"
+                                         , case f.registered of
+
+                                               Just dv ->
+                                                   Registry.datasetValue dv
+
+                                               Nothing ->
+                                                   JsonE.null
+                                         )
+                                       ]))
+
+                       else
+                           println
+                               (String.join
+                                   "\n"
+                                   ([ "froze " ++ m.name ++ ": "
+                                         ++ String.fromInt m.rows
+                                         ++ " rows (train "
+                                         ++ String.fromInt m.train
+                                         ++ ", eval "
+                                         ++ String.fromInt m.eval
+                                         ++ ", test "
+                                         ++ String.fromInt m.test
+                                         ++ ")"
+                                   , "sha256:" ++ m.digest
+                                   , "data     " ++ f.path
+                                   ]
+                                       ++ (case f.registered of
+
+                                              Just dv ->
+                                                  [ "registry "
+                                                        ++ Registry.datasetLabel
+                                                               dv
+                                                  ]
+
+                                              Nothing ->
+                                                  []))))
+
+
+startVerb : Bool -> Pipeline -> String -> Task Error ()
+startVerb json p slot =
+    warmSlot p slot
+        |> Task.andThen
+               (\d ->
+                   (if json then
+                       println
+                           (JsonE.encode
+                               0
+                               (JsonE.object
+                                   [ ( "slot", JsonE.string d.slot )
+                                   , ( "mode", JsonE.string d.mode )
+                                   , ( "target", JsonE.string d.target )
+                                   , ( "state", JsonE.string "ready" )
+                                   , ( "source", JsonE.string "pipeline" )
+                                   ]))
+
+                   else
+                       println
+                           ("slot " ++ d.slot ++ " ready (" ++ d.mode ++ ", "
+                               ++ d.target
+                               ++ ", from the pipeline's code defaults). Stop it with `sky ai stop "
+                               ++ d.slot
+                               ++ "` or Ctrl-C."))
+                       |> Task.andThen (\_ -> Task.forever (Time.sleep 3600000)))
+
+
+promoteVerb : Bool -> Pipeline -> String -> String -> List String -> Task Error ()
+promoteVerb json p name number opts =
+    case ( flag "--to" opts
+         , String.toInt
+               (if String.startsWith "v" number then
+                   String.dropLeft 1 number
+
+               else
+                   number)
+         ) of
+
+        ( Nothing, _ ) ->
+            Task.fail (usageError "name the alias with --to <alias>")
+
+        ( _, Nothing ) ->
+            Task.fail
+                (usageError
+                    (number ++ " is not a version number (write 3 or v3)"))
+
+        ( Just aliasName, Just n ) ->
+            Task.fromResult (floatFlag "--min-pass-rate" opts)
+                |> Task.andThen
+                       (\rate ->
+                           if List.member "--force" opts then
+                               forceVerb
+                                   p
+                                   name
+                                   n
+                                   aliasName
+                                   (Maybe.withDefault "" (flag "--reason" opts))
+
+                           else
+                               case flag "--expect" opts of
+
+                                   Just expect ->
+                                       promoteExpecting
+                                           p
+                                           { evalRequest | minPassRate = rate }
+                                           name
+                                           n
+                                           aliasName
+                                           expect
+
+                                   Nothing ->
+                                       promoteWith
+                                           p
+                                           { evalRequest | minPassRate = rate }
+                                           name
+                                           n
+                                           aliasName)
+                |> Task.andThen
+                       (\ev ->
+                           if json then
+                               println (JsonE.encode 0 (Registry.eventValue ev))
+
+                           else
+                               println (eventText name ev))
+
+
+-- `--expect <n>|none`: promote only while the alias still points at version
+-- n (or does not exist), on the evidence compared against the version it
+-- serves now.
+promoteExpecting : Pipeline -> EvalRequest -> String -> Int -> String -> String -> Task Error Registry.AliasEvent
+promoteExpecting p req name n aliasName expect =
+    context p [] |> Task.andThen (\ctx -> ctx.registry)
+        |> Task.andThen
+               (\reg ->
+                   Task.map2
+                       (\v expected -> { v = v, expected = expected })
+                       (Registry.version reg name n)
+                       (if expect == "none" then
+                           Task.succeed Nothing
+
+                       else
+                           case String.toInt
+                                    (if String.startsWith "v" expect then
+                                        String.dropLeft 1 expect
+
+                                    else
+                                        expect) of
+
+                               Just e ->
+                                   Registry.version reg name e |> Task.map Just
+
+                               Nothing ->
+                                   Task.fail
+                                       (usageError
+                                           ("--expect " ++ expect
+                                               ++ " is not a version number or none")))
+                       |> Task.andThen
+                              (\found ->
+                                  Registry.evidenceAgainst
+                                      reg
+                                      aliasName
+                                      found.v
+                                      (suiteThresholds p req)
+                                      |> Task.andThen
+                                             (\evidence ->
+                                                 case evidence of
+
+                                                     ( passed, _ ) ->
+                                                         Registry.promoteIf
+                                                             reg
+                                                             aliasName
+                                                             found.expected
+                                                             found.v
+                                                             passed)))
+
+
+forceVerb : Pipeline -> String -> Int -> String -> String -> Task Error Registry.AliasEvent
+forceVerb p name n aliasName reason =
+    context p [] |> Task.andThen (\ctx -> ctx.registry)
+        |> Task.andThen
+               (\reg ->
+                   Registry.version reg name n
+                       |> Task.andThen
+                              (\v -> Registry.forcePromote reg aliasName v reason))
+
+
+membersVerb : Bool -> Pipeline -> Task Error ()
+membersVerb json p =
+    let
+        m = members p
+    in
+        if json then
+            println
+                (JsonE.encode
+                    0
+                    (JsonE.object
+                        [ ( "name", JsonE.string m.name )
+                        , ( "datasets", JsonE.list JsonE.string m.datasets )
+                        , ( "suites", JsonE.list JsonE.string m.suites )
+                        , ( "slots", JsonE.list JsonE.string m.slots )
+                        , ( "tasks", JsonE.list JsonE.string m.tasks )
+                        ]))
+
+        else
+            println
+                (String.join
+                    "\n"
+                    [ "pipeline " ++ m.name
+                    , "  datasets  " ++ String.join ", " m.datasets
+                    , "  suites    " ++ String.join ", " m.suites
+                    , "  slots     " ++ String.join ", " m.slots
+                    , "  tasks     " ++ String.join ", " m.tasks
+                    ])

@@ -1420,21 +1420,58 @@ sky ai promote <name> <version> --to <alias> [--min-pass-rate <x>] [--expect <n>
 sky ai promote <name> <version> --to <alias> --force --reason <text>
 sky ai rollback <name>@<alias>
 sky ai lineage <name>@<alias> | <name>@v<n>
-sky ai lineage --dataset <sha256>
+sky ai lineage --dataset <sha256> | <name>@<n>
 ```
 
-- `promote` re-applies the eval gate to the version's attached reports and
-  moves the alias on the first that passes (`Registry.promoteChecked`).
-  `--expect` moves it only while it still points at that version
-  (`PromotionConflict` otherwise). `--force --reason` moves it without eval
+- `promote` re-applies the eval gate to the version's attached reports,
+  compared with the newest report of the same suite on the version the alias
+  serves now, and moves the alias on the first that passes, only while the
+  alias still serves the version compared against
+  (`Registry.promoteCompared`). `--expect` moves it only while it still points
+  at that version (`PromotionConflict` otherwise). `--force --reason` moves it without eval
   evidence and records the reason. A refused promotion exits non-zero with the
   typed failure (`NotPromotable`, `GateFailed`, `PromotionConflict`).
 - `rollback` returns the alias to the version before the current one.
 - `lineage` prints the version, its base model, dataset, metadata, aliases,
   attached reports and alias moves; `--dataset` lists every version trained on
-  a dataset digest.
+  a dataset, named by its digest or by its registered version (`support@3`).
+- `--registry <url>` wins over `SKY_AI_REGISTRY`.
 
 See [`../ai/registry.md`](../ai/registry.md).
+
+### `sky ai eval | data freeze <dataset> | run | members` *(v0.28.0)*
+
+The project-mode verbs. A project declares its AI pipeline in `src/Ai.sky`
+(`module Ai exposing (pipeline)`, `Std.Ai.Pipeline`); the CLI builds a program
+whose `main` is `Pipeline.commandLine Ai.pipeline`, caches it under
+`.sky/ai/cli/<key>/` (rebuilt when the Sky version, `sky.toml` or a source
+file changes; progress on stderr) and runs it in the project directory.
+
+```
+sky ai eval <suite> [--against <alias>] [--candidate <model>@v<n>] [--promote-to <alias>]
+                    [--junit <file>] [--markdown <file>] [--min-pass-rate <x>] [--max-regression <x>]
+sky ai data freeze <dataset>
+sky ai run <task> [-- <args>]
+sky ai members
+```
+
+- `eval` runs the suite on the candidate (and on the alias's version with
+  `--against`), compares, gates, writes JUnit (`.sky/ai/eval/<suite>/junit.xml`
+  by default) and exits 1 when the gate fails. `--promote-to` promotes only on
+  a pass. With `--format json` stdout is one JSON object.
+- `data freeze <dataset>` (a plain name) freezes one of the pipeline's
+  datasets and registers it when it is `withRegistered`; a path or a file name
+  is the pipeline-free form above.
+- `run` runs a task with the arguments after `--`; `members` lists the
+  pipeline's datasets, suites, slots and tasks.
+- `start <slot>` for a slot the pipeline names starts it with its code
+  defaults (`--model` / `--context` are usage errors there); `promote` gates
+  each suite's report with that suite's thresholds from the pipeline.
+- Each takes `--db <dsn>`, `--registry <url>`, `--format json` and
+  `--test-mode` (model calls answered from `tests/mocks/`, as `sky test`
+  does). Without `src/Ai.sky` these verbs exit 2 and build nothing.
+
+See [`../ai/pipeline.md`](../ai/pipeline.md).
 
 A model `<ref>` is `hf:<org>/<repo>/<file>#sha256=<hex>` or
 `file:<path>#sha256=<hex>`. See [`../ai/local.md`](../ai/local.md).

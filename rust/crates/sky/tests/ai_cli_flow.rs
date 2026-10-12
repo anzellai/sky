@@ -122,6 +122,22 @@ fn sky_ai_refuses_a_bad_verb_shape_without_building_anything() {
             .output()
             .unwrap(),
         Command::new(SKY).args(["ai", "start"]).output().unwrap(),
+        // The pipeline verbs (src/Ai.sky) are shape-checked before anything
+        // is built too.
+        Command::new(SKY).args(["ai", "eval"]).output().unwrap(),
+        Command::new(SKY)
+            .args(["ai", "eval", "--candidate", "support-lora@v2"])
+            .output()
+            .unwrap(),
+        Command::new(SKY).args(["ai", "run"]).output().unwrap(),
+        Command::new(SKY)
+            .args(["ai", "members", "extra"])
+            .output()
+            .unwrap(),
+        Command::new(SKY)
+            .args(["ai", "data", "freeze"])
+            .output()
+            .unwrap(),
     ];
     for out in outs {
         assert_eq!(out.status.code(), Some(2));

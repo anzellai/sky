@@ -122,3 +122,12 @@ many calls. Bound it with `withTarget`, `withMaxCalls` and `withCostBudget`,
 and test it under `sky test` with `tests/mocks/` fixtures (`match.bodyContains`
 picks the answer for a topic). Never print scrubbed or raw dataset rows to a
 log: `Scrub` reports counts only, and so should your code.
+
+A project's AI lifecycle lives in `src/Ai.sky` (`Std.Ai.Pipeline`), and
+`sky ai eval <suite> --against prod` is the merge gate for any change to a
+model, a prompt or an adapter: run it (with `--test-mode` when there is no
+engine), read its comparison, and treat exit 1 as a red build. Never use
+`--promote-to` or `sky ai promote --force` past a red gate, and never loosen
+a suite's thresholds to turn it green, unless the user asks. `sky ai data
+freeze <dataset>` and `sky ai run <task>` can call a teacher model and write
+to the registry: run them when the task needs them, not speculatively.

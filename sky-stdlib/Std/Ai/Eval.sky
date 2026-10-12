@@ -30,7 +30,9 @@
 -- `tests/mocks/`.
 --
 -- Every run is recorded in the database (`_sky_ai_eval_runs`) and shown in the
--- Sky Console's AI panel.
+-- Sky Console's AI panel: a run in the app's own process, and one another
+-- process wrote to the app's database (`sky ai eval`), which the panel reads
+-- from the database when it opens.
 --
 -- **Judge discipline.** Every judge call is journalled in the database
 -- (`_sky_ai_eval_judge_journal`), keyed by the judge's identity, the rubric
@@ -62,6 +64,7 @@ module Std.Ai.Eval exposing
     , Pairwise
     , PairResult
     , suite
+    , suiteName
     , withSamples
     , withConcurrency
     , withJudge
@@ -80,6 +83,7 @@ module Std.Ai.Eval exposing
     , calibrate
     , pairwise
     , judgeAnswer
+    , judgeAnswerWith
     , setup
     , run
     , runAs
@@ -220,6 +224,12 @@ suite name prompt cases =
         , priceBook = Nothing
         , tools = []
         }
+
+
+-- | The suite's name: the `suite` field of its reports.
+suiteName : Suite input -> String
+suiteName (Suite s) =
+    s.name
 
 
 -- | Ask each case `n` times (at least once), with the seeds `seed` to
@@ -386,6 +396,28 @@ judgeAnswer (Judge j) seed rubric question answer =
         (judgePrompt (Judge j) [ Provider.user question ] rubric answer)
         |> Task.map (\r -> readJudge j.passAt r.content)
 
+
+-- | `judgeAnswer` through the judge journal in a database: an unchanged call
+-- (the same judge identity, rubric version, seed and prompt) is answered from
+-- the journal with no model call, so re-running a generator or a check that
+-- judges the same answers costs nothing and returns the same verdicts.
+-- `Std.Ai.Dataset.Synthetic.withJournal` uses it.
+judgeAnswerWith : Db -> Judge -> Int -> String -> String -> String -> Task Error Score
+judgeAnswerWith db (Judge j) seed rubric question answer =
+    setup db |> Task.andThen (\_ -> judgeIdentity (Judge j))
+        |> Task.andThen
+               (\identity ->
+                   journalled
+                       { judge = Judge j, db = db, identity = identity }
+                       seed
+                       64
+                       (judgePrompt
+                           (Judge j)
+                           [ Provider.user question ]
+                           rubric
+                           answer))
+        |> Task.map (\reply -> readJudge j.passAt reply)
+
 -- ── Reports ─────────────────────────────────────────────────────────
 -- | One case at one sample. `score` is the mean of its scorers; `scores`
 -- holds each scorer's value under its name (`exact`, `contains`, `regex`,
@@ -493,6 +525,9 @@ evalMigrations =
 {"name":"entry_key","type":"text"},{"name":"judge","type":"text"},{"name":"reply","type":"text"},
 {"name":"created_at","type":"int"}]},
 {"kind":"addIndex","name":"_sky_ai_eval_judge_journal_key","table":"_sky_ai_eval_judge_journal","indexColumns":["entry_key"],"unique":true}
+]},
+{"id":"_sky_ai_eval_0002","ops":[
+{"kind":"addColumn","table":"_sky_ai_eval_runs","column":"console","type":"text","nullable":true}
 ]}]"""
 
 
@@ -871,24 +906,41 @@ toolScore name accepts calls =
 
 
 jsonScore : Codec.Shape -> String -> Score
-jsonScore shape text =
-    case JsonD.decodeString JsonD.value text of
+jsonScore shape answer =
+    let
+        text = unfence answer
+    in
+        case JsonD.decodeString JsonD.value text of
 
-        Err _ ->
-            verdict False "" ("the answer is not JSON: " ++ quote (clip text))
+            Err _ ->
+                verdict
+                    False
+                    ""
+                    ("the answer is not JSON: " ++ quote (clip text))
 
-        Ok _ ->
-            case JsonD.decodeString (shapeDecoder shape) text of
+            Ok _ ->
+                case JsonD.decodeString (shapeDecoder shape) text of
 
-                Ok _ ->
-                    verdict True "the answer is JSON of the expected shape" ""
+                    Ok _ ->
+                        verdict
+                            True
+                            "the answer is JSON of the expected shape"
+                            ""
 
-                Err e ->
-                    verdict
-                        False
-                        ""
-                        ("the JSON does not have the expected shape: "
-                            ++ Error.toString e)
+                    Err e ->
+                        verdict
+                            False
+                            ""
+                            ("the JSON does not have the expected shape: "
+                                ++ Error.toString e)
+
+
+-- The JSON of an answer that is one Markdown code fence (```json … ```),
+-- as models often write it; any other answer as it is. Text around the fence
+-- is not stripped: an answer with prose around its JSON is not JSON.
+unfence : String -> String
+unfence answer =
+    Regex.replace "^\\s*```(?:json)?\\s*([\\s\\S]*?)\\s*```\\s*$" "$1" answer
 
 
 shapeDecoder : Codec.Shape -> JsonD.Decoder ()
@@ -1526,8 +1578,8 @@ store db r =
     Db.exec
         db
         ("INSERT INTO _sky_ai_eval_runs "
-            ++ "(digest, suite, candidate, passed, failed, errors, pass_rate, p95_latency_ms, report, created_at) "
-            ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            ++ "(digest, suite, candidate, passed, failed, errors, pass_rate, p95_latency_ms, report, created_at, console) "
+            ++ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
         [ SqlString r.digest
         , SqlString r.suite
         , SqlString r.candidate
@@ -1538,6 +1590,7 @@ store db r =
         , SqlInt r.p95LatencyMs
         , SqlString (JsonE.encode 0 (reportValue r))
         , SqlInt r.startedAt
+        , SqlString (JsonE.encode 0 (consoleValue r))
         ]
         |> Task.andThen (\_ -> recordConsole (JsonE.encode 0 (consoleValue r)))
 

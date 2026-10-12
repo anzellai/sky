@@ -303,9 +303,9 @@ answers both kinds.
 | `sky ai ps [--all]` | `Local.engines ()`: running and orphaned engines (`--all` adds stale entries) |
 | `sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]` | `Endpoint.warm`, then holds the engine until Ctrl-C, SIGTERM or `sky ai stop`; each stops the engine and removes its `engines.json` entry |
 | `sky ai stop <slot>` / `--all` | `Local.stopSlot` |
-| `sky ai promote <name> <version> --to <alias>` | `Registry.promoteChecked` (`--force --reason`, `--expect`, `--min-pass-rate`; [`registry.md`](registry.md)) |
+| `sky ai promote <name> <version> --to <alias>` | `Registry.promoteCompared` (`--force --reason`, `--expect`, `--min-pass-rate`; [`registry.md`](registry.md)) |
 | `sky ai rollback <name>@<alias>` | `Registry.rollback` |
-| `sky ai lineage <name>@<alias>` / `--dataset <sha256>` | `Registry.lineage` / `Registry.trainedOn` |
+| `sky ai lineage <name>@<alias>` / `--dataset <sha256>\|<name>@<n>` | `Registry.lineage` / `Registry.trainedOn` |
 | `sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split <t>/<e>/<x>] [--seed <n>] [--consent <basis>] [--retention <period>]` | `Dataset.fromJsonLines`, `split`, `freezeJson`; prints the digest and the counts per split ([`dataset.md`](dataset.md)) |
 
 Every verb takes `--format json`. The verbs hold no logic of their own: the CLI
@@ -328,6 +328,22 @@ so a 200 there proves only that something listens on the port. The engine
 must also accept the launch's fresh API key on `/props` and refuse any other
 key. Another process on the port (always possible with a fixed
 `Local.withPort`) fails the start with `EngineFailed`, naming the port.
+
+A project with an AI pipeline (`src/Ai.sky`, [`pipeline.md`](pipeline.md))
+adds `sky ai eval`, `sky ai data freeze <dataset>`, `sky ai run <task>` and
+`sky ai members`, and runs `sky ai start <slot>` for a slot the pipeline names
+with that slot's own code defaults (its model, context and adapter, so
+`--model` and `--context` do not apply).
+
+## Slot helpers
+
+`Endpoint.slotName slot` is the slot's name. `Endpoint.inspect slot` resolves
+the slot's settings and their sources like `describe`, without resolving a
+registry adapter and without starting anything: its adapter setting shows the
+reference as written, and its `source` says whether an operator variable set
+it. `Endpoint.tokenize slot text` counts tokens with the engine's own
+tokenizer (the `/tokenize` route of llama-server and vLLM); a local slot
+starts its engine for it, like a call.
 
 ## Registry adapters
 

@@ -61,7 +61,7 @@ A `Case` is a record: a stable `id` (it pairs the case across runs), the
 | `Exact s` | the answer, with surrounding white space removed, is `s` | `exact` |
 | `Contains s` | the answer contains `s` (case sensitive) | `contains` |
 | `Matches re` | the answer matches the RE2 regular expression `re` | `regex` |
-| `JsonShape shape` | the answer is JSON of the codec's shape (`Codec.shape myCodec`): every field present with its type, a `Maybe` field may be `null` | `json` |
+| `JsonShape shape` | the answer is JSON of the codec's shape (`Codec.shape myCodec`): every field present with its type, a `Maybe` field may be `null`; an answer that is one Markdown code fence (```` ```json … ``` ````) is read inside the fence, prose around the JSON is not JSON | `json` |
 | `CallsTool { name, args }` | the model asked for the tool `name` and `args` accepts its JSON arguments (advertise tools with `Eval.withTools`) | `tool` |
 | `Refuses` | the answer declines ("I can't", "I cannot", "I won't", "I'm sorry", "unable to", in any case) | `refuses` |
 | `Rubric text` | the judge scores the answer 4 or more out of 5 against `text` | `judge` |
@@ -110,6 +110,11 @@ the verdict from the journal: a re-run of an unchanged output costs nothing and
 returns the same verdict. Calibration and pairwise judging use the journal
 too. Change the version when you change the judge's model or prompt on a plain
 provider; a judge on a slot does this by itself.
+
+Outside a suite, `Eval.judgeAnswerWith db judge seed rubric question answer`
+asks the judge through the same journal (`Eval.judgeAnswer` has no database
+and asks every time). `Std.Ai.Dataset.Synthetic.withJournal` uses it, so a
+generator that judges the same rows again pays nothing.
 
 ### Calibrating the judge
 
@@ -255,10 +260,31 @@ a call through any slot, the judge's included, is answered by a fixture under
 `Eval.withJudge (Eval.judge (Provider.custom …) "test")` are the other way to
 make a suite's run exact in a unit test.
 
+## From the command line: `sky ai eval`
+
+A project that declares its AI pipeline in `src/Ai.sky`
+([`pipeline.md`](pipeline.md)) runs a suite from the command line, against a
+registry alias, with JUnit XML for CI:
+
+```
+sky ai eval support --candidate support-lora@v3 --against prod --promote-to prod
+```
+
+The candidate and the alias's version run on the suite's slot with their own
+adapters, `Eval.compare` pairs them, the suite's thresholds gate the
+comparison, and the verb exits 1 when the gate fails. `--promote-to` moves the
+alias with the `Passed` the gate gave, only on a pass.
+
+## In the Sky Console
+
+Every run is a row of `_sky_ai_eval_runs` in the run's database, with the row
+the console shows. The AI tab lists this process's runs and the newest runs in
+the app's database, read when the tab asks, so a `sky ai eval` run in CI or a
+terminal (on the app's own database) appears in the running app's console.
+
 ## Not yet
 
-`sky ai eval <suite> --against <alias>` needs the project's `Std.Ai.Pipeline`
-entry, which arrives with it. The judge journal is a table in the run's
-database rather than a `Std.Durable` journal: it gives the same property (an
-unchanged judge call is answered once), and a run inside a durable workflow
-can still wrap `Eval.run` in a `Durable.step`.
+The judge journal is a table in the run's database rather than a
+`Std.Durable` journal: it gives the same property (an unchanged judge call is
+answered once), and a run inside a durable workflow can still wrap `Eval.run`
+in a `Durable.step`.

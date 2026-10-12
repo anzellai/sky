@@ -353,6 +353,64 @@ frozenTodos =
     );
 }
 
+/// A top-level Std.Ai slot that serves registry adapters, and the provider
+/// made from it: `Endpoint.fromRegistry (Registry.resolver openRegistry)`
+/// STORES a Task that opens the registry (and reads it) when the slot first
+/// resolves an adapter. Building the slot runs nothing, so memoising it is the
+/// documented idiom (`chatSlot = Endpoint.endpoint "chat" |> …`), not a frozen
+/// read. Asserted beside the frozen read, which must still warn.
+#[test]
+fn ai_slot_descriptor_with_a_registry_resolver_is_silent() {
+    let w = stale_read_warnings(
+        "aislot",
+        &program(
+            r#"
+frozenTodos : List Todo
+frozenTodos =
+    case Task.run (Store.all db todos) of
+
+        Ok xs ->
+            xs
+
+        Err _ ->
+            []
+
+
+openRegistry : Task Error Registry.Registry
+openRegistry =
+    Db.connect () |> Task.andThen (\d -> Registry.openConfigured d "file://.sky/ai/registry")
+
+
+chatSlot : Endpoint.Endpoint
+chatSlot =
+    Endpoint.endpoint "chat"
+        |> Endpoint.fromRegistry (Registry.resolver openRegistry)
+        |> Endpoint.withAdapter "registry:support-lora@prod"
+
+
+chat : Provider.Provider
+chat =
+    Endpoint.provider chatSlot
+"#,
+            r"    println (String.fromInt (List.length frozenTodos) ++ Endpoint.slotName chatSlot)
+        |> Task.andThen (\_ -> Provider.chat chat [] |> Task.map (\_ -> ()))",
+        )
+        .replace(
+            "import Std.Log exposing (println)",
+            "import Std.Log exposing (println)\nimport Std.Ai.Endpoint as Endpoint\nimport Std.Ai.Provider as Provider\nimport Std.Ai.Registry as Registry",
+        ),
+    );
+    assert!(
+        warns_about(&w, "frozenTodos"),
+        "sanity: the frozen read must still warn. Got: {w:?}"
+    );
+    assert!(
+        !warns_about(&w, "chatSlot") && !warns_about(&w, "chat"),
+        "a slot (and its provider) holds the registry Task for later; building \
+         it reads nothing. Got: {w:?}"
+    );
+}
+
 /// Guard against the cheap way to "fix" the false positive — muting the lint.
 /// One program, both shapes: the frozen read warns, the route table does not.
 #[test]

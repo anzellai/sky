@@ -323,3 +323,63 @@ fn doctor_checks_the_ai_slots_the_source_declares() {
     );
     assert!(!text.contains("s3cret") && !text.contains("pw@"), "{text}");
 }
+
+/// A project with an AI pipeline (`src/Ai.sky`): `sky doctor` reports it,
+/// checks the slots only the pipeline uses under a `(pipeline)` label (here
+/// the synthetic teacher's), and a malformed `Ai.sky` is an error naming the
+/// fix.
+#[test]
+fn doctor_reports_the_ai_pipeline_and_its_slots() {
+    let dir = scratch_dir("ai-pipeline");
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"doctor-ai-pipeline\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src").join("Main.sky"),
+        "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.Task as Task\nimport Std.Ai.Endpoint as Endpoint exposing (Endpoint)\n\nchat : Endpoint\nchat =\n    Endpoint.endpoint \"chat\"\n\nmain : Task Error ()\nmain =\n    Task.succeed ()\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src").join("Ai.sky"),
+        "module Ai exposing (pipeline)\n\nimport Std.Ai.Pipeline as Pipeline\nimport Std.Ai.Dataset.Synthetic as Synthetic\n\npipeline : Pipeline.Pipeline\npipeline =\n    Pipeline.pipeline \"x\" |> Pipeline.withSlot Synthetic.teacherSlot\n",
+    )
+    .unwrap();
+    let doctor = || {
+        let out = Command::new(SKY)
+            .arg("doctor")
+            .current_dir(&dir)
+            .env("SKY_AI_TEACHER_MODE", "sideways")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("spawn sky doctor");
+        (
+            out.status.code(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    let (code, text) = doctor();
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("src/Ai.sky declares the AI pipeline") && text.contains("teacher (pipeline)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("slot teacher (pipeline): SKY_AI_TEACHER_MODE is neither local nor remote"),
+        "{text}"
+    );
+    std::fs::write(
+        dir.join("src").join("Ai.sky"),
+        "module Ai exposing (other)\n",
+    )
+    .unwrap();
+    let (code, text) = doctor();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(text.contains("does not expose `pipeline`"), "{text}");
+}

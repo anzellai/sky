@@ -25,6 +25,8 @@ import Std.Ai.Provider as Provider exposing (Provider, Message)
 import Std.Ai.Eval as Eval
 import Std.Ai.Dataset as Dataset exposing (Instruction)
 import Std.Ai.Dataset.Synthetic as Synthetic exposing (Stop(..))
+import Std.Db as Db exposing (Db)
+import Sky.Core.File as File
 
 
 lastUser : List Message -> String
@@ -405,4 +407,106 @@ tests =
                           [ "synthetic:faq teacher=table-teacher seed=7 calls=1 kept=2"
                           ]
                           (Dataset.sources (Synthetic.toDataset gen))))
+    , Test.test
+          "with a journal, a re-run makes no model call and gives the same rows"
+          (\_ ->
+              case journalled of
+
+                  Ok ( first, second ) ->
+                      Test.equal
+                          ( ( 3, 0, 5 ), ( 3, 3, 5 ), True )
+                          ( ( first.report.calls
+                            , first.report.replayed
+                            , first.report.judgeCalls
+                            )
+                          , ( second.report.calls
+                            , second.report.replayed
+                            , second.report.judgeCalls
+                            )
+                          , first.rows == second.rows
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a journal entry is per teacher: another teacher is asked again"
+          (\_ ->
+              case otherTeacher of
+
+                  Ok ( replayed, failed ) ->
+                      Test.equal ( 0, True ) ( replayed, failed )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
     ]
+
+
+-- A teacher and a judge that fail every call: a run that still succeeds with
+-- them made no model call.
+broken : Provider
+broken =
+    Provider.custom
+        (\_ -> Task.fail (Error.unavailable "the model must not be called"))
+
+
+judged : Eval.Judge -> Synthetic.Generator Instruction
+judged j =
+    base |> Synthetic.withTarget 3
+        |> Synthetic.withJudge
+               j
+               "A full answer."
+               (\r -> ( r.prompt, r.completion ))
+
+
+journalDb : Task Error Db
+journalDb =
+    File.tempDir "sky-synthetic-journal"
+        |> Task.andThen (\dir -> Db.open "sqlite" (dir ++ "/journal.db"))
+
+
+journalled : Result Error ( Synthetic.Generated Instruction, Synthetic.Generated Instruction )
+journalled =
+    journalDb
+        |> Task.andThen
+               (\db ->
+                   Synthetic.run (judged fullJudge |> Synthetic.withJournal db)
+                       |> Task.andThen
+                              (\first ->
+                                  Synthetic.run
+                                      (judged (Eval.judge broken "rubric-test")
+                                          |> Synthetic.withTeacher
+                                                 "table-teacher"
+                                                 broken
+                                          |> Synthetic.withJournal db)
+                                      |> Task.map (\second -> ( first, second ))))
+        |> Task.run
+
+
+otherTeacher : Result Error ( Int, Bool )
+otherTeacher =
+    journalDb
+        |> Task.andThen
+               (\db ->
+                   Synthetic.run
+                       (base |> Synthetic.withTarget 2
+                           |> Synthetic.withJournal db)
+                       |> Task.andThen
+                              (\first ->
+                                  Synthetic.run
+                                      (base |> Synthetic.withTarget 2
+                                          |> Synthetic.withTeacher
+                                                 "another-teacher"
+                                                 broken
+                                          |> Synthetic.withJournal db)
+                                      |> Task.map
+                                             (\_ ->
+                                                 ( first.report.replayed
+                                                 , False
+                                                 ))
+                                      |> Task.onError
+                                             (\_ ->
+                                                 Task.succeed
+                                                     ( first.report.replayed
+                                                     , True
+                                                     ))))
+        |> Task.run

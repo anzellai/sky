@@ -20,6 +20,9 @@ module Std.Ai.Endpoint exposing
     , provider
     , warm
     , describe
+    , inspect
+    , tokenize
+    , slotName
     , Description
     , Setting
     )
@@ -78,6 +81,9 @@ import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Secret as Secret exposing (Secret)
 import Std.Ai.Provider as Provider exposing (Provider)
 import Std.Ai.Local as LocalEngine
+import Sky.Core.List as List
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
 
 {-| `Local`: a managed local engine. `Remote`: an OpenAI-compatible server at
 the slot's URL. -}
@@ -400,3 +406,51 @@ source. -}
 describe : Endpoint -> Task Error Description
 describe (Endpoint c) =
     describeRaw c
+
+
+inspectRaw : Config -> Task Error Description
+inspectRaw =
+    Ffi.kernel "Ai_endpointInspect"
+
+
+{-| The slot's settings and where each came from, like `describe`, without
+resolving a registry adapter and without starting anything. The adapter
+setting shows the reference as written (`registry:support-lora@prod`), and its
+`source` says whether an operator variable set it. -}
+inspect : Endpoint -> Task Error Description
+inspect (Endpoint c) =
+    inspectRaw c
+
+
+{-| The slot's name: `"chat"` for `Endpoint.endpoint "chat"`. -}
+slotName : Endpoint -> String
+slotName (Endpoint c) =
+    c.slot
+
+
+{-| Count the tokens of a text with the model's own tokenizer: the engine's
+`/tokenize` route (llama-server's, and vLLM's on the same server). A local
+slot starts its engine for it, like a call. A server without the route
+fails with `RemoteRejected`; `Std.Ai.Dataset.withEngineTokenizer` then falls
+back to the estimate or to `withTokenizer`. Under `sky test` in test mode the
+request is answered by a fixture (match `urlContains "/tokenize"`). -}
+tokenize : Endpoint -> String -> Task Error Int
+tokenize (Endpoint c) text =
+    postRaw
+        c
+        "/@root/tokenize"
+        (JsonE.encode 0 (JsonE.object [ ( "content", JsonE.string text ) ]))
+        |> Task.andThen
+               (\body ->
+                   case JsonD.decodeString
+                            (JsonD.field "tokens" (JsonD.list JsonD.value))
+                            body of
+
+                       Ok tokens ->
+                           Task.succeed (List.length tokens)
+
+                       Err _ ->
+                           Task.fail
+                               (Error.invalidInput
+                                   ("Std.Ai.Endpoint.tokenize: slot " ++ c.slot
+                                       ++ ": the /tokenize answer has no token list")))

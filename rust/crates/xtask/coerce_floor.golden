@@ -222,6 +222,26 @@
 #   Std.Ai.Dataset, which carry both sides' constructors and functions after
 #   the merge. Not traced site by site. 09-live-counter 126, 66-slack-agent
 #   160 and apps/relay 179 measure at the values already recorded here.
+# ── Recorded transition, 2026-10-12 — v0.28.0 phase 2 part C
+#    (Std.Ai.Pipeline, the synthetic journal, bounded dedupe, compared
+#    promotion) ──
+#   narrow over 4 rows, adapter 0, dispatch 0, every other row unchanged (76 of
+#   80 measured; 03-tea-external, 05-mux-server, 08-notes-app and 13-skyshop
+#   UNMEASURED under SKY_LIVE_TESTS=skip). Cause (2): stdlib source that these
+#   programs reach gained code, each new line paying the ordinary kernel-ABI
+#   narrowing. 68-ai-dataset 626 -> 641: `Dataset.dedupeBy` now runs through
+#   the bounded spill set (`transformTask`, `Ai_dedupeOpen/Add/Close`,
+#   `keepFresh`); bisected by restoring the previous `Dataset.sky`, which
+#   measures 626 again. 70-ai-synthetic 769 -> 794: the journal fields of the
+#   generator and `replayed` in the report (the journal's own code was moved
+#   behind `withJournal` first, which took this row from 854 back to 794).
+#   71-ai-registry 1057 -> 1059: `Registry.trainedOn` reads a dataset digest by
+#   reference (+1), and `Eval`'s `JsonShape` reads an answer in a code fence
+#   with one `Regex.replace` (+1; a first version with eight `String` calls
+#   cost +8 and was replaced). sky-bundled/ai 734 -> 801: `promote` compares against the
+#   alias's version (`Registry.promoteCompared` / `evidenceAgainst`),
+#   `--registry` wins over SKY_AI_REGISTRY (`Store.fromUrl`), and
+#   `lineage --dataset <name>@<n>`. New row: 72-ai-support-desk 583.
 00-standard-libs	adapter=0	dispatch=0	narrow=164
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
@@ -283,10 +303,11 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=26
 66-slack-agent	adapter=0	dispatch=0	narrow=160
 67-durable-counter	adapter=0	dispatch=0	narrow=77
-68-ai-dataset	adapter=0	dispatch=0	narrow=626
+68-ai-dataset	adapter=0	dispatch=0	narrow=641
 69-ai-scrub	adapter=0	dispatch=0	narrow=99
-70-ai-synthetic	adapter=0	dispatch=0	narrow=769
-71-ai-registry	adapter=0	dispatch=0	narrow=1057
+70-ai-synthetic	adapter=0	dispatch=0	narrow=794
+71-ai-registry	adapter=0	dispatch=0	narrow=1059
+72-ai-support-desk	adapter=0	dispatch=0	narrow=583
 apps/dispatch	adapter=0	dispatch=0	narrow=399
 apps/fieldbook	adapter=0	dispatch=0	narrow=657
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
@@ -298,7 +319,7 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=260
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=211
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=734
+sky-bundled/ai	adapter=0	dispatch=0	narrow=801
 sky-bundled/console	adapter=0	dispatch=0	narrow=330
 sky-bundled/doc	adapter=0	dispatch=0	narrow=55
 test_pkg	adapter=0	dispatch=0	narrow=1

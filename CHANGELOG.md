@@ -11,14 +11,75 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets and the model registry (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry) (unreleased)
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry and the project's AI pipeline (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline) (unreleased)
 
-Phase 1 and phase 2 (the dataset part and the registry part) of the Std.Ai
-lifecycle design (`docs/design/std-ai-lifecycle.md`). The user guides are
-`docs/ai/local.md`, `docs/ai/eval.md`, `docs/ai/dataset.md` and
-`docs/ai/registry.md`.
+Phase 1 and phase 2 of the Std.Ai lifecycle design
+(`docs/design/std-ai-lifecycle.md`). The user guides are `docs/ai/local.md`,
+`docs/ai/eval.md`, `docs/ai/dataset.md`, `docs/ai/registry.md` and
+`docs/ai/pipeline.md`.
 
 ### Added
+
+- **`Std.Ai.Pipeline` and the project-mode `sky ai` verbs.** A project
+  declares its AI lifecycle as `pipeline` in `src/Ai.sky`: `withSlot`,
+  `withDataset` (`datasetOf codec build`, `datasetJson`, `withFolder`,
+  `withRegistered`), `withSuite` (`suiteOn slot suite`, `suiteWith`,
+  `forModel`, `withThresholds`), `withTask`, `withDb`, `withRegistry`. The CLI
+  builds it (only `Ai` and its imports are checked), caches the program under
+  `.sky/ai/cli/<key>/` (the SHA-256 of the Sky version, `sky.toml` and every
+  source file) and runs it in the project directory:
+  `sky ai eval <suite> [--against <alias>] [--candidate <model>@v<n>]
+  [--promote-to <alias>] [--junit f] [--markdown f] [--min-pass-rate x]
+  [--max-regression x]` (the candidate and the alias's version on the suite's
+  slot with their own adapters, `Eval.compare`, the suite's gate, JUnit at
+  `.sky/ai/eval/<suite>/junit.xml`, one JSON object with `--format json`,
+  exit 1 on a failed gate, `--promote-to` only on a pass and only while the
+  alias still serves the version compared against), `sky ai data freeze
+  <dataset>` (frozen and registered), `sky ai run <task> [-- args]`,
+  `sky ai members`, `sky ai start <slot>` for a pipeline slot (its code
+  defaults), and `sky ai promote`. Every pipeline verb takes `--test-mode`
+  (model calls answered from `tests/mocks/`). While
+  `SKY_AI_<SLOT>_ADAPTER` pins a slot's adapter, `--candidate` and
+  `--against` refuse with `InvalidSetting`, naming the variable and never its
+  value. In `sky test`, `Pipeline.evalSuite` and `evalAgainst` make a suite a
+  test. When the app's entry exposes a `Sky.Config` `config`, the pipeline
+  applies it too.
+- **Dataset versions in the registry.** `Registry.registerDataset` stores a
+  frozen version's data by digest and records it as `<name>@<n>` with its
+  manifest (`_sky_ai_registry_datasets`, migration `_sky_ai_registry_0002`);
+  `datasetVersion`, `datasetVersions`, `datasetLabel`, `fetchDataset`,
+  `datasetValue`. `trainedOn` and `sky ai lineage --dataset` take
+  `<name>@<n>` as well as a digest.
+- **Promotion compared against production.** `Registry.evidenceAgainst` and
+  `promoteCompared` compare a version's attached reports with the newest
+  report of the same suite on the version the alias serves, gate the
+  comparison with each suite's thresholds, and move the alias only while it
+  still serves that version. `sky ai promote` uses it.
+- **`Synthetic.withJournal db`**: teacher answers are journalled in
+  `_sky_ai_synthetic_journal` and judge calls in the eval judge journal
+  (`Eval.judgeAnswerWith`, new), so a re-run with unchanged inputs makes no
+  model call (`report.replayed`) and gives the same rows.
+- **Token counts from the engine.** `Endpoint.tokenize` (the engine's
+  `/tokenize` route) and `Dataset.withEngineTokenizer slot`, which falls back to
+  `withTokenizer` or the estimate when the engine does not answer.
+- **`dedupeBy` dedupes in bounded memory**: past `dedupeMemoryKeys` (250000)
+  key digests it spills them, sorted, to files under `.sky/ai/work/dedupe/`
+  and looks them up there (`dedupeBounded n` sets the bound).
+- `Endpoint.inspect` (settings and sources without resolving an adapter or
+  starting anything), `Endpoint.slotName`, `Eval.suiteName`.
+- **The console's AI tab shows eval runs from the app's database**, read when
+  the tab asks, so a `sky ai eval` run in CI or a terminal appears in the
+  running app's console (each run's console row is stored with it, migration
+  `_sky_ai_eval_0002`).
+- `sky doctor` reports the pipeline (`ai-pipeline`, `ai-pipeline-invalid`)
+  and checks the slots only the pipeline uses, marked `(pipeline)`.
+- `examples/72-ai-support-desk`: a Sky.Live support desk with Std.Ui whose
+  assistant drafts replies, and the lifecycle around it in Sky: a synthetic
+  dataset (teacher, judge, scrub, dedupe, journal), the replies agents sent as
+  a second dataset, an eval suite with a calibrated judge gated against
+  production, adapters imported and promoted through the registry, and the
+  app serving the promoted adapter (with `GET /api/assistant` and
+  `/api/draft`). Its README is a guide; its tests run the lifecycle offline.
 
 - **`Std.Ai.Dataset`: training and eval data as Sky values.** Typed rows
   (`Chat`, `Instruction`, `Preference`, with `chatCodec`, `instructionCodec`,
@@ -262,6 +323,29 @@ lifecycle design (`docs/design/std-ai-lifecycle.md`). The user guides are
 
 ### Fixed
 
+- **The memoised-binding lint warned about every top-level AI slot that serves
+  registry adapters.** `chatSlot = Endpoint.endpoint "chat" |>
+  Endpoint.fromRegistry (Registry.resolver openRegistry)` only STORES the
+  task that opens the registry, but the lint read it as a frozen database
+  read. A `Std.Ai` `Endpoint`, `Provider`, `Registry` or `Pipeline` is now a
+  descriptor like `Db` and `Store` (`caf_stale_read_lint.rs`).
+- **The startup report and `sky doctor` missed the synthetic teacher's slot.**
+  A module that imports `Std.Ai.Dataset.Synthetic` uses the stdlib's
+  `"teacher"` slot, as one that imports `Std.Ai.Eval` uses `"judge"`.
+- **The slots a build reports are the ones its entry reaches**: an app's
+  binary no longer lists a teacher or judge that only its AI pipeline uses.
+- **`sky ai promote | rollback | lineage --registry <url>` lost to
+  `SKY_AI_REGISTRY`.** The flag now wins, as the usage text said.
+- **`sky ai promote` re-gated a version's evidence on its own**, so a version
+  that regressed against the one the alias served could still be promoted on
+  an absolute floor. It now compares (`promoteCompared`).
+- **`Eval`'s `JsonShape` failed every answer a model wrapped in a code
+  fence.** Found running the flagship's suite on the real 0.5B model, which
+  answered ```` ```json {…} ``` ````. An answer that is one Markdown code fence
+  is now read inside the fence; prose around the JSON still fails.
+- **A new project's `.gitignore` did not ignore `.sky/`**, where the local
+  registry store, frozen datasets and the `sky ai` build cache live.
+  `sky init` writes `.sky/` into `.gitignore` and `.dockerignore`.
 - **A judge that answers `5` instead of `SCORE: 5` no longer fails every
   rubric case.** The pinned 0.5B development model, the default judge, drops
   the label; `Std.Ai.Eval` now also reads a reply that starts with one digit
@@ -276,6 +360,26 @@ lifecycle design (`docs/design/std-ai-lifecycle.md`). The user guides are
 
 ### Tests
 
+- Pipeline (phase 2 part C): `tests/Std/Ai/PipelineTest.sky` (members, alone
+  and against an alias, the typed gate failure, the attached report,
+  `--promote-to` on a pass only and only against a compared alias, the
+  compared promotion, `--expect`, datasets frozen and registered once, tasks
+  with arguments, unknown members, usage errors); additions to
+  `RegistryTest.sky` (dataset versions, `ChecksumMismatch`, references,
+  `trainedOn` by reference, compared evidence), `SyntheticTest.sky` (a
+  journalled re-run with a teacher and a judge that fail every call),
+  `EvalTest.sky` (`judgeAnswerWith`), `DatasetTest.sky` (spilled dedupe over
+  three chunks, the engine tokenizer's fallback);
+  `runtime-go/rt/ai_dedupe_test.go` (the set never holds more than its limit
+  in memory, the live heap does not grow with ten times the keys, merges,
+  sweeps), `ai_console_test.go` (runs read from the database, merged with the
+  ring); `rust/crates/sky/tests/ai_pipeline_flow.rs` (the flagship's suites
+  offline, the whole lifecycle through the CLI on the fake engine, the
+  adapter guard, the app serving the promoted adapter, refusals without
+  `src/Ai.sky`); `ai_cli_flow.rs` shape refusals; unit tests for
+  `ai_entry`, scoped `ai_slots`, `ai_project` (the cache key, pruning),
+  `ai_doctor`; the reject corpus case `ai_eval_passed_is_opaque` (promotion
+  without `Passed` does not compile); corpus surface `aipipeline`.
 - Registry (phase 2): `tests/Std/Ai/RegistryTest.sky` (versions, lineage,
   evidence, compare-and-swap race, rollback stack, block, force, resolver),
   `tests/Std/Ai/StoreTest.sky` (SigV4 against the AWS examples, locations,
@@ -330,6 +434,12 @@ lifecycle design (`docs/design/std-ai-lifecycle.md`). The user guides are
 
 ### Migration
 
+- **`sky ai promote` compares against the alias's version (loud).** A version
+  whose attached report regresses against the report of the same suite on
+  the version the alias serves is refused with `GateFailed` (exit 1), where it
+  used to be promoted when its own report cleared the thresholds. Evaluate the
+  candidate against the alias (`sky ai eval <suite> --against <alias>`), or
+  force it with a reason.
 - **A new `ErrorDetails` variant (loud).** A `case` over `ErrorDetails` with
   one arm per variant and no `_ ->` is `[E3001]`. Add `_ ->`, or use
   `Error.domain` / `Error.isRetryable` / `Error.retryAfter` or a domain's

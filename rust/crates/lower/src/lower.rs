@@ -1133,8 +1133,8 @@ fn is_stale_data_result(ty: &Ty) -> bool {
 }
 
 /// A long-lived config/handle DESCRIPTOR result — a resource handle (`Db` /
-/// `Pool` / `Conn` / `Connection` / `Client` / `Cache`) or a table/config value
-/// (`Store`). Its carried lambdas (a `Store.defaultWith (\_ -> nowMs ())`
+/// `Pool` / `Conn` / `Connection` / `Client` / `Cache`), a table/config value
+/// (`Store`), or a Std.Ai slot, provider, registry or pipeline. Its carried lambdas (a `Store.defaultWith (\_ -> nowMs ())`
 /// per-insert default) are STORED for later, NOT forced at memo time, so its
 /// effect must not propagate to a caller. NARROWER than `is_stale_data_result`'s
 /// suppression set: it deliberately does NOT include `Unit` / `Result _ ()` /
@@ -1146,10 +1146,19 @@ fn is_config_or_handle_result(ty: &Ty) -> bool {
         _ => return false,
     };
     let base = name.rsplit('.').next().unwrap_or(name);
-    matches!(
-        base,
-        "Db" | "Pool" | "Conn" | "Connection" | "Client" | "Cache" | "Store"
-    )
+    // The Std.Ai descriptors: a model slot (`Endpoint`, which can STORE a
+    // registry resolver's Task), the `Provider` made from it, an opened
+    // `Registry` handle and a `Pipeline`. Building one runs nothing, and a
+    // top-level `chatSlot = Endpoint.endpoint "chat" |> …` is the documented
+    // idiom (caf_stale_read_lint.rs). Matched qualified, so a user's own type
+    // of the same name is still judged as data.
+    let ai_descriptor = name.starts_with("Std.Ai.")
+        && matches!(base, "Endpoint" | "Provider" | "Registry" | "Pipeline");
+    ai_descriptor
+        || matches!(
+            base,
+            "Db" | "Pool" | "Conn" | "Connection" | "Client" | "Cache" | "Store"
+        )
 }
 
 /// Merge two effect candidates. Either suffices to fire the lint; StoreRead is

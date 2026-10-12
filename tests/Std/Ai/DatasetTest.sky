@@ -19,6 +19,8 @@ import Std.Ai.Provider as Provider
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Dataset as Dataset exposing (Instruction, Chat, Split(..), Issue(..))
 import Std.Ai.Dataset.Scrub as Scrub
+import Std.Ai.Endpoint as Endpoint
+import Sky.Core.Tuple as Tuple
 
 
 ins : String -> String -> Instruction
@@ -764,6 +766,48 @@ tests =
                       (Dataset.fromList [ good ]))
                   (\r -> Test.equal 29 r.maxTokens))
     , Test.test
+          "withEngineTokenizer falls back when the engine does not answer"
+          (\_ ->
+              let
+                  offline =
+                      Endpoint.endpoint "tok"
+                          |> Endpoint.withUrl "http://127.0.0.1:9/v1"
+                          |> Endpoint.withRetry 0
+                          |> Endpoint.withTimeout 2000
+              in
+                  case Task.run
+                           (Task.map2
+                               (\a b -> ( a.maxTokens, b.maxTokens ))
+                               (Dataset.inspect
+                                   (Dataset.limits
+                                       |> Dataset.withEngineTokenizer offline
+                                       |> Dataset.withTokenizer
+                                              (\s ->
+                                                  Task.succeed (String.length s)))
+                                   (Dataset.fromList [ good ]))
+                               (Dataset.inspect
+                                   (Dataset.limits
+                                       |> Dataset.withEngineTokenizer offline)
+                                   (Dataset.fromList [ good ]))) of
+
+                      Ok counts ->
+                          Test.equal ( 29, 18 ) counts
+
+                      Err e ->
+                          Test.fail (Error.toString e))
+    , Test.test
+          "dedupeBounded spills to disk and keeps exactly what dedupeBy keeps"
+          (\_ ->
+              case dedupedBoth of
+
+                  Ok ( small, large, leftover ) ->
+                      Test.equal
+                          ( 700, True, [] )
+                          ( List.length small, small == large, leftover )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
           "describeIssue names the row and never the message text"
           (\_ ->
               Test.equal
@@ -794,3 +838,52 @@ issueTag i =
 
         DuplicateRow r ->
             "DuplicateRow " ++ String.fromInt r.row
+
+
+-- 2500 JSONL rows over 700 keys, read in three chunks: deduped with 50 keys
+-- in memory (the rest spilled to disk) and with the default.
+dedupedBoth : Result Error ( List String, List String, List String )
+dedupedBoth =
+    File.tempDir "sky-dedupe-spill"
+        |> Task.andThen
+               (\dir ->
+                   let
+                       path = dir ++ "/rows.jsonl"
+                       line i =
+                           "{\"key\":\"k" ++ String.fromInt (modBy 700 (i * 13))
+                               ++ "\",\"n\":"
+                               ++ String.fromInt i
+                               ++ "}"
+                       body =
+                           String.join "\n" (List.map line (List.range 1 2500))
+                               ++ "\n"
+                       keyOf row =
+                           String.split "\"n\"" row |> List.head
+                               |> Maybe.withDefault row
+                   in
+                       File.writeFile path body
+                           |> Task.andThen
+                                  (\_ ->
+                                      Task.map2
+                                          (\a b -> ( a, b ))
+                                          (Dataset.fromJsonLines path
+                                              |> Dataset.dedupeBounded 50 keyOf
+                                              |> Dataset.rows)
+                                          (Dataset.fromJsonLines path
+                                              |> Dataset.dedupeBy keyOf
+                                              |> Dataset.rows))
+                           |> Task.andThen
+                                  (\pair ->
+                                      File.readDir ".sky/ai/work/dedupe"
+                                          |> Task.onError
+                                                 (\_ -> Task.succeed [])
+                                          |> Task.map
+                                                 (\names ->
+                                                     ( Tuple.first pair
+                                                     , Tuple.second pair
+                                                     , List.filter
+                                                           (String.startsWith
+                                                               "set-")
+                                                           names
+                                                     ))))
+        |> Task.run

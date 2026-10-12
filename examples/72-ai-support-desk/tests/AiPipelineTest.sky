@@ -1,0 +1,216 @@
+module AiPipelineTest exposing (tests)
+
+-- The AI lifecycle of the support desk, offline, through the same pipeline
+-- the `sky ai` verbs run (src/Ai.sky). In test mode the teacher, the judge
+-- and the chat slot are answered by tests/mocks/: the base model and
+-- support-lora@v1 answer every case, support-lora@v2 answers "We are open on
+-- weekdays." to everything, the judge fails any answer that guesses.
+--
+-- The scenario: freeze the synthetic dataset (twice: the second run is
+-- answered by the journal and gives the same version), gate the base model,
+-- import v1 and promote it to prod on its eval, import v2 and watch the gate
+-- refuse it against prod, and see the app serve v1.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Eval as Eval
+import Std.Ai.Failure as Failure
+import Std.Ai.Registry as Registry
+import Std.Ai.Pipeline as Pipeline
+import Ai
+import Assist
+
+type alias Seen =
+    { firstDigest : String
+    , secondDigest : String
+    , rows : Int
+    , datasetLabel : String
+    , baseVerdict : String
+    , baseCandidate : String
+    , prodAfterV1 : Int
+    , v2Refusal : String
+    , prodAfterV2 : Int
+    , served : String
+    , lineageDataset : String
+    }
+
+
+verdictOf : Result Error a -> String
+verdictOf r =
+    case r of
+
+        Ok _ ->
+            "passed"
+
+        Err e ->
+            Failure.fromError e |> Maybe.map Failure.code
+                |> Maybe.withDefault (Error.toString e)
+
+
+attempt : Task Error a -> Task Error String
+attempt t =
+    t |> Task.map (\_ -> "passed")
+        |> Task.onError (\e -> Task.succeed (verdictOf (Err e)))
+
+
+prod : Task Error Int
+prod =
+    Assist.openRegistry
+        |> Task.andThen (\reg -> Registry.resolve reg "support-lora@prod")
+        |> Task.map .number
+
+
+scenario : Result Error Seen
+scenario =
+    Pipeline.freezeDataset Ai.pipeline "support"
+        |> Task.andThen
+               (\first ->
+                   Pipeline.freezeDataset Ai.pipeline "support"
+                       |> Task.andThen
+                              (\second ->
+                                  Pipeline.evaluate
+                                      Ai.pipeline
+                                      "support"
+                                      Pipeline.evalRequest
+                                      |> Task.andThen
+                                             (\base ->
+                                                 Pipeline.runTask
+                                                     Ai.pipeline
+                                                     "import-adapter"
+                                                     [ "--demo", "v1" ]
+                                                     |> Task.andThen
+                                                            (\_ ->
+                                                                Pipeline.commandLineWith
+                                                                    Ai.pipeline
+                                                                    [ "eval"
+                                                                    , "support"
+                                                                    , "--candidate"
+                                                                    , "support-lora@v1"
+                                                                    , "--promote-to"
+                                                                    , "prod"
+                                                                    ])
+                                                     |> Task.andThen
+                                                            (\_ -> prod)
+                                                     |> Task.andThen
+                                                            (\afterV1 ->
+                                                                Pipeline.runTask
+                                                                    Ai.pipeline
+                                                                    "import-adapter"
+                                                                    [ "--demo"
+                                                                    , "v2"
+                                                                    ]
+                                                                    |> Task.andThen
+                                                                           (\_ ->
+                                                                               attempt
+                                                                                   (Pipeline.commandLineWith
+                                                                                       Ai.pipeline
+                                                                                       [ "eval"
+                                                                                       , "support"
+                                                                                       , "--candidate"
+                                                                                       , "support-lora@v2"
+                                                                                       , "--against"
+                                                                                       , "prod"
+                                                                                       , "--promote-to"
+                                                                                       , "prod"
+                                                                                       ]))
+                                                                    |> Task.andThen
+                                                                           (\refusal ->
+                                                                               Task.map3
+                                                                                   (\afterV2 status lin ->
+                                                                                       { firstDigest =
+                                                                                           first.manifest.digest
+                                                                                       , secondDigest =
+                                                                                           second.manifest.digest
+                                                                                       , rows =
+                                                                                           first.manifest.rows
+                                                                                       , datasetLabel =
+                                                                                           Maybe.map
+                                                                                               Registry.datasetLabel
+                                                                                               second.registered
+                                                                                               |> Maybe.withDefault
+                                                                                                      ""
+                                                                                       , baseVerdict =
+                                                                                           verdictOf
+                                                                                               base.verdict
+                                                                                       , baseCandidate =
+                                                                                           base.candidate.candidate
+                                                                                       , prodAfterV1 =
+                                                                                           afterV1
+                                                                                       , v2Refusal =
+                                                                                           refusal
+                                                                                       , prodAfterV2 =
+                                                                                           afterV2
+                                                                                       , served =
+                                                                                           status.adapter
+                                                                                       , lineageDataset =
+                                                                                           lin.version.dataset
+                                                                                       })
+                                                                                   prod
+                                                                                   Assist.status
+                                                                                   (Assist.openRegistry
+                                                                                       |> Task.andThen
+                                                                                              (\reg ->
+                                                                                                  Registry.lineage
+                                                                                                      reg
+                                                                                                      "support-lora@prod")))))))
+        |> Task.run
+
+
+seen : (Seen -> TestResult) -> TestResult
+seen f =
+    case scenario of
+
+        Ok s ->
+            f s
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "the synthetic dataset freezes to six scrubbed rows, registered as support@1"
+          (\_ ->
+              seen
+                  (\s -> Test.equal ( 6, "support@1" ) ( s.rows, s.datasetLabel )))
+    , Test.test
+          "freezing again with unchanged inputs gives the same digest"
+          (\_ -> seen (\s -> Test.equal s.firstDigest s.secondDigest))
+    , Test.test
+          "the base model passes the support suite with a calibrated judge"
+          (\_ ->
+              seen
+                  (\s ->
+                      Test.equal
+                          ( "passed", "slot:chat" )
+                          ( s.baseVerdict, s.baseCandidate )))
+    , Test.test
+          "v1 is promoted to prod on its passing eval"
+          (\_ -> seen (\s -> Test.equal 1 s.prodAfterV1))
+    , Test.test
+          "v2 regresses against prod: the gate refuses it and prod stays on v1"
+          (\_ ->
+              seen
+                  (\s ->
+                      Test.equal
+                          ( "GateFailed", 1 )
+                          ( s.v2Refusal, s.prodAfterV2 )))
+    , Test.test
+          "the app serves the promoted adapter"
+          (\_ ->
+              seen
+                  (\s ->
+                      Test.isTrue
+                          (String.startsWith
+                              "registry:support-lora@prod -> support-lora@v1"
+                              s.served)))
+    , Test.test
+          "the promoted version's lineage names the dataset version"
+          (\_ -> seen (\s -> Test.equal "support@1" s.lineageDataset))
+    ]

@@ -8,13 +8,16 @@ package rt
 // controls send, and the eval runs Std.Ai.Eval records.
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func aiCallThunk(t *testing.T, b aiEndpointBuilder) {
@@ -167,5 +170,66 @@ func TestConsoleAIShowsTheRegistry(t *testing.T) {
 	b, _ := json.Marshal(snap)
 	if !strings.Contains(string(b), `"registry":[`) || !strings.Contains(string(b), `"action":"rollback"`) {
 		t.Fatalf("the API does not carry the registry: %s", b)
+	}
+}
+
+// An eval run another process wrote to the app's database (`sky ai eval` in
+// CI or a terminal) appears in the console's AI tab, read on demand from the
+// database whose AI migrations ran in this process. A run in both places is
+// listed once, from the ring, and the newest run comes first.
+func TestConsoleAIReadsEvalRunsFromTheDatabase(t *testing.T) {
+	aiResetConsole()
+	t.Cleanup(aiResetConsole)
+	conn, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	db := &SkyDb{conn: conn, driver: "sqlite"}
+	migrations := `[{"id":"_sky_ai_eval_0001","ops":[{"kind":"createTable","table":"_sky_ai_eval_runs","columns":[
+{"name":"digest","type":"text"},{"name":"suite","type":"text"},{"name":"candidate","type":"text"},
+{"name":"passed","type":"int"},{"name":"failed","type":"int"},{"name":"errors","type":"int"},
+{"name":"pass_rate","type":"text"},{"name":"p95_latency_ms","type":"int"},{"name":"report","type":"text"},
+{"name":"created_at","type":"int"}]}]},
+{"id":"_sky_ai_eval_0002","ops":[{"kind":"addColumn","table":"_sky_ai_eval_runs","column":"console","type":"text","nullable":true}]}]`
+	if _, e := runAiTask(t, Ai_migrate(db, migrations)); e != nil {
+		t.Fatalf("migrate: %v", e)
+	}
+	insert := func(digest, model string, at int64, console string) {
+		t.Helper()
+		if _, err := conn.Exec(`INSERT INTO _sky_ai_eval_runs (digest, suite, candidate, passed, failed, errors, pass_rate, p95_latency_ms, report, created_at, console)
+			VALUES (?, 'support', ?, 3, 1, 0, '0.75', 40, '{}', ?, ?)`, digest, model, at, console); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("d-cli", "support-lora@v2", 3000, `{"id":"d-cli","suite":"support","model":"support-lora@v2","cases":4,"passed":3,"failed":1,"errors":0,"passRate":0.75,"scores":{"contains":0.75},"p95LatencyMs":40,"verdict":"failed","failures":["pass rate 75% is below 80%"],"caseResults":[]}`)
+	insert("d-old", "slot:chat", 1000, "")
+	insert("d-both", "slot:chat", 2000, `{"id":"d-both","suite":"support","model":"from-db"}`)
+	aiRecordEval(aiEvalRecord{ID: "d-both", TS: time.UnixMilli(2000).UTC(), Suite: "support", Model: "from-ring"})
+
+	snap := aiConsoleSnapshot("", "")
+	var got []string
+	for _, e := range snap.Evals {
+		got = append(got, e.ID+"/"+e.Source+"/"+e.Model)
+	}
+	want := []string{"d-cli/database/support-lora@v2", "d-both/process/from-ring", "d-old/database/slot:chat"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("evals = %v, want %v", got, want)
+	}
+	if snap.Evals[0].Verdict != "failed" || len(snap.Evals[0].Failures) != 1 {
+		t.Fatalf("the stored console row was not decoded: %+v", snap.Evals[0])
+	}
+	if snap.Evals[2].Cases != 4 || snap.Evals[2].PassRate != 0.75 {
+		t.Fatalf("a row without a console column is listed from its columns: %+v", snap.Evals[2])
+	}
+	// A database whose AI tables were never created adds nothing.
+	aiResetConsole()
+	other, _ := sql.Open("sqlite", filepath.Join(t.TempDir(), "other.db"))
+	defer other.Close()
+	if _, e := runAiTask(t, Ai_migrate(&SkyDb{conn: other, driver: "sqlite"}, `[{"id":"app_0001","ops":[{"kind":"createTable","table":"notes","columns":[{"name":"id","type":"text"}]}]}]`)); e != nil {
+		t.Fatalf("migrate: %v", e)
+	}
+	if n := len(aiConsoleSnapshot("", "").Evals); n != 0 {
+		t.Fatalf("an unrelated database added %d runs", n)
 	}
 }

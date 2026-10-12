@@ -81,10 +81,20 @@ fn a_fresh_project_is_fmt_clean_and_ignores_local_state_in_images() {
         );
         let ignore = std::fs::read_to_string(dir.join(".dockerignore"))
             .expect("sky init writes a .dockerignore");
-        for want in [".skydata/", ".env", "sky-out/"] {
+        for want in [".skydata/", ".sky/", ".env", "sky-out/"] {
             assert!(
                 ignore.lines().any(|l| l.trim() == want),
                 "{flag:?}: .dockerignore lists {want}:\n{ignore}"
+            );
+        }
+        // `.sky/` is per-machine AI state (the local registry store, frozen
+        // datasets, the `sky ai` pipeline build cache): never committed.
+        let git =
+            std::fs::read_to_string(dir.join(".gitignore")).expect("sky init writes a .gitignore");
+        for want in [".sky/", ".skydata/", ".env", "sky-out/"] {
+            assert!(
+                git.lines().any(|l| l.trim() == want),
+                "{flag:?}: .gitignore lists {want}:\n{git}"
             );
         }
         let _ = std::fs::remove_dir_all(&base);

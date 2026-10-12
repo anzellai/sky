@@ -53,6 +53,21 @@ type aiSlot struct {
 	resolveMu sync.Mutex
 }
 
+// aiRootPrefix marks a path the server answers at its root, not under its
+// OpenAI-compatible `/v1` base: llama-server's (and vLLM's) `/tokenize`.
+// `Endpoint.tokenize` posts to `/@root/tokenize`.
+const aiRootPrefix = "/@root"
+
+// aiJoinPath is the URL of a request path on a server whose OpenAI-compatible
+// base is `base` (ending `/v1`). A path under aiRootPrefix goes to the
+// server's root instead.
+func aiJoinPath(base, path string) string {
+	if rest, ok := strings.CutPrefix(path, aiRootPrefix); ok {
+		return strings.TrimSuffix(strings.TrimRight(base, "/"), "/v1") + rest
+	}
+	return base + path
+}
+
 // aiRegistryScheme marks an adapter the slot resolves through its registry.
 const aiRegistryScheme = "registry:"
 
@@ -277,9 +292,9 @@ func (s *aiSlot) post(path, body string) (string, error) {
 	body = aiPatchModel(body, model)
 
 	if s.cfg.mode == "remote" || testModeActive() {
-		url := s.cfg.baseURL + path
+		url := aiJoinPath(s.cfg.baseURL, path)
 		if s.cfg.mode == "local" {
-			url = aiTestLocalBase(s.cfg.slot) + path
+			url = aiJoinPath(aiTestLocalBase(s.cfg.slot), path)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.timeout)
 		defer cancel()
@@ -534,6 +549,21 @@ func Ai_endpointDescribe(cfgArg any) any {
 			return aiTaskErr(err)
 		}
 		if _, err := s.adapter(); err != nil {
+			return aiTaskErr(err)
+		}
+		return Ok[any, any](s.description())
+	}
+}
+
+// Ai_endpointInspect : Config -> Task Error Description — the slot's settings
+// and their sources, without resolving its registry adapter and without
+// starting anything. `Std.Ai.Pipeline` reads it to refuse a registry
+// candidate while an operator variable pins the slot's adapter.
+func Ai_endpointInspect(cfgArg any) any {
+	b := parseAiEndpointBuilder(cfgArg)
+	return func() any {
+		s, err := aiSlotFor(b)
+		if err != nil {
 			return aiTaskErr(err)
 		}
 		return Ok[any, any](s.description())

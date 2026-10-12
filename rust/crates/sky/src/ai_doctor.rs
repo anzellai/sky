@@ -37,8 +37,14 @@ pub struct AiFinding {
 pub struct Inputs<'a> {
     /// The runtime prefix (`SKY` unless `[env] prefix` changes it).
     pub prefix: String,
-    /// The slots the source declares.
+    /// The slots the app's entry reaches.
     pub slots: Vec<String>,
+    /// The slots only the AI pipeline (`src/Ai.sky`) reaches; their findings
+    /// say `(pipeline)`.
+    pub pipeline_slots: Vec<String>,
+    /// The pipeline entry: `None` without `src/Ai.sky`, `Some(Ok(()))` when
+    /// it is well formed, `Some(Err(why))` when it is not.
+    pub pipeline: Option<Result<(), String>>,
     /// An operator variable (an empty value reads as unset).
     pub env: &'a dyn Fn(&str) -> Option<String>,
     /// The AI home (engines, models, artefacts).
@@ -141,8 +147,51 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
         }
     }
 
+    let pipeline_only: Vec<&String> = i
+        .pipeline_slots
+        .iter()
+        .filter(|s| !i.slots.contains(s))
+        .collect();
+    match &i.pipeline {
+        Some(Ok(())) => out.push(finding(
+            "ai-pipeline",
+            Level::Info,
+            if pipeline_only.is_empty() {
+                "src/Ai.sky declares the AI pipeline (`sky ai eval`, `data freeze`, `run`)".to_string()
+            } else {
+                format!(
+                    "src/Ai.sky declares the AI pipeline; slots only it uses: {}",
+                    pipeline_only
+                        .iter()
+                        .map(|s| format!("{s} (pipeline)"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
+            "`sky ai members` lists its datasets, suites, slots and tasks",
+        )),
+        Some(Err(why)) => out.push(finding(
+            "ai-pipeline-invalid",
+            Level::Error,
+            why.clone(),
+            "the project-mode `sky ai` verbs need `module Ai exposing (pipeline)` with `pipeline : Std.Ai.Pipeline.Pipeline`",
+        )),
+        None => {}
+    }
+
     let mut any_local = false;
-    for slot in &i.slots {
+    let labelled: Vec<(String, String)> = i
+        .slots
+        .iter()
+        .map(|s| (s.clone(), s.clone()))
+        .chain(
+            i.pipeline_slots
+                .iter()
+                .filter(|s| !i.slots.contains(s))
+                .map(|s| (s.clone(), format!("{s} (pipeline)"))),
+        )
+        .collect();
+    for (slot, shown) in &labelled {
         let key = |k: &str| i.var(&format!("AI_{}_{k}", slot.to_ascii_uppercase()));
         let (mode_name, mode) = key("MODE");
         let (url_name, url) = key("URL");
@@ -152,7 +201,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                 out.push(finding(
                     "ai-slot-mode-invalid",
                     Level::Error,
-                    format!("slot {slot}: {mode_name} is neither local nor remote"),
+                    format!("slot {shown}: {mode_name} is neither local nor remote"),
                     "set local or remote, or unset it to let the URL decide",
                 ));
                 continue;
@@ -163,7 +212,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                 out.push(finding(
                     "ai-slot-conflict",
                     Level::Error,
-                    format!("slot {slot}: {mode_name}=local and {url_name} is set; the slot fails at its first call"),
+                    format!("slot {shown}: {mode_name}=local and {url_name} is set; the slot fails at its first call"),
                     "unset the URL, or set the mode to remote",
                 ));
                 continue;
@@ -172,7 +221,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                 out.push(finding(
                     "ai-slot-no-url",
                     Level::Error,
-                    format!("slot {slot}: {mode_name}=remote and {url_name} is not set"),
+                    format!("slot {shown}: {mode_name}=remote and {url_name} is not set"),
                     "set the URL to the OpenAI-compatible base URL (ending /v1)",
                 ));
                 continue;
@@ -185,7 +234,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                 out.push(finding(
                     "ai-slot-url-invalid",
                     Level::Error,
-                    format!("slot {slot}: {url_name} does not start with http:// or https://"),
+                    format!("slot {shown}: {url_name} does not start with http:// or https://"),
                     "write the OpenAI-compatible base URL, for example https://gpu.internal:8443/v1",
                 ));
             } else if let Some(target) = probe_target(u) {
@@ -193,7 +242,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                     out.push(finding(
                         "ai-slot-unreachable",
                         Level::Warn,
-                        format!("slot {slot}: {} does not accept a connection from this machine", redact_url(u)),
+                        format!("slot {shown}: {} does not accept a connection from this machine", redact_url(u)),
                         "check the address and the network path; a remote slot never falls back to a local model",
                     ));
                 }
@@ -212,7 +261,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                         "ai-slot-adapter-invalid",
                         Level::Error,
                         format!(
-                            "slot {slot}: {adapter_name} is a registry reference without an alias"
+                            "slot {shown}: {adapter_name} is a registry reference without an alias"
                         ),
                         "write registry:<name>@<alias>, for example registry:support-lora@prod",
                     ));
@@ -226,7 +275,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                     out.push(finding(
                         "ai-slot-model-unpinned",
                         Level::Error,
-                        format!("slot {slot}: {model_name} is not pinned by a sha256 digest"),
+                        format!("slot {shown}: {model_name} is not pinned by a sha256 digest"),
                         "write hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex> (`sky ai pull` prints one)",
                     ));
                 } else if !fetch_on && m.starts_with("hf:") {
@@ -236,7 +285,7 @@ pub fn findings(i: &Inputs) -> Vec<AiFinding> {
                         out.push(finding(
                             "ai-model-not-provisioned",
                             Level::Error,
-                            format!("slot {slot}: the model {model_name} names is not in the model store and fetching is off"),
+                            format!("slot {shown}: the model {model_name} names is not in the model store and fetching is off"),
                             "run `sky ai provision --model <the reference>` on this host first",
                         ));
                     }
@@ -338,11 +387,56 @@ mod tests {
         findings(&Inputs {
             prefix: "SKY".into(),
             slots: slots.iter().map(|s| s.to_string()).collect(),
+            pipeline_slots: vec![],
+            pipeline: None,
             env: &env,
             home: home.to_path_buf(),
             production,
             reachable: &reach,
         })
+    }
+
+    /// The pipeline is reported, its own slots are checked under a
+    /// `(pipeline)` label, and a malformed `src/Ai.sky` is an error.
+    #[test]
+    fn the_pipeline_and_its_slots_are_reported() {
+        let home = empty_home();
+        let env = |k: &str| (k == "SKY_AI_TEACHER_MODE").then(|| "sideways".to_string());
+        let reach = |_: &str| true;
+        let f = findings(&Inputs {
+            prefix: "SKY".into(),
+            slots: vec!["chat".into()],
+            pipeline_slots: vec!["chat".into(), "teacher".into()],
+            pipeline: Some(Ok(())),
+            env: &env,
+            home: home.clone(),
+            production: false,
+            reachable: &reach,
+        });
+        let info = f.iter().find(|x| x.check == "ai-pipeline").expect("{f:?}");
+        assert!(info.message.contains("teacher (pipeline)"), "{info:?}");
+        assert!(!info.message.contains("chat (pipeline)"), "{info:?}");
+        let bad = f
+            .iter()
+            .find(|x| x.check == "ai-slot-mode-invalid")
+            .expect("the pipeline slot is checked");
+        assert!(
+            bad.message.starts_with("slot teacher (pipeline):"),
+            "{bad:?}"
+        );
+        let f = findings(&Inputs {
+            prefix: "SKY".into(),
+            slots: vec![],
+            pipeline_slots: vec![],
+            pipeline: Some(Err(
+                "src/Ai.sky: `module Ai` does not expose `pipeline`".into()
+            )),
+            env: &|_: &str| None,
+            home,
+            production: false,
+            reachable: &reach,
+        });
+        assert!(checks(&f).contains(&"ai-pipeline-invalid"), "{f:?}");
     }
 
     fn checks(f: &[AiFinding]) -> Vec<&'static str> {

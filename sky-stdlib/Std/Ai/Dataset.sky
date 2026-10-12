@@ -19,6 +19,8 @@ module Std.Ai.Dataset exposing
     , filter
     , filterMap
     , dedupeBy
+    , dedupeBounded
+    , dedupeMemoryKeys
     , scrub
     , upTo
     , toChat
@@ -44,6 +46,7 @@ module Std.Ai.Dataset exposing
     , withMinRows
     , withMaxIssues
     , withTokenizer
+    , withEngineTokenizer
     , estimateTokens
     , Issue(..)
     , describeIssue
@@ -137,6 +140,7 @@ import Std.Csv as Csv
 import Std.Db exposing (Db)
 import Std.Db.Store as Store exposing (Store)
 import Std.Ai.Provider as Provider exposing (Message)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Dataset.Scrub as Scrub exposing (Scrubber)
 
@@ -543,6 +547,55 @@ transformChunks st f chunks =
                     More [] stats (\_ -> Task.fail e)
 
 
+-- A step whose work is a Task, with state opened when the rows start to
+-- flow and finished when they end (or fail): `dedupeBy`'s spill set.
+transformTask : String -> (() -> Task Error state) -> (state -> List a -> Task Error ( List b, Stats, state )) -> (state -> Task Error ()) -> Dataset a -> Dataset b
+transformTask step start f finish (Dataset d) =
+    Dataset
+        { sources = d.sources
+        , steps = d.steps ++ [ step ]
+        , open =
+            \_ ->
+                start ()
+                    |> Task.andThen
+                           (\st ->
+                               d.open ()
+                                   |> Task.onError (finishThenFail finish st)
+                                   |> Task.andThen (taskChunks st f finish))
+        }
+
+
+finishThenFail : (state -> Task Error ()) -> state -> Error -> Task Error a
+finishThenFail finish st e =
+    finish st |> Task.onError (\_ -> Task.succeed ())
+        |> Task.andThen (\_ -> Task.fail e)
+
+
+taskChunks : state -> (state -> List a -> Task Error ( List b, Stats, state )) -> (state -> Task Error ()) -> Chunks a -> Task Error (Chunks b)
+taskChunks st f finish chunks =
+    case chunks of
+
+        Done ->
+            finish st |> Task.map (\_ -> Done)
+
+        More rs stats next ->
+            f st rs |> Task.onError (finishThenFail finish st)
+                |> Task.map
+                       (\result ->
+                           case result of
+
+                               ( out, delta, st2 ) ->
+                                   More
+                                       out
+                                       (addStats stats delta)
+                                       (\_ ->
+                                           next ()
+                                               |> Task.onError
+                                                      (finishThenFail finish st2)
+                                               |> Task.andThen
+                                                      (taskChunks st2 f finish)))
+
+
 -- | Change every row.
 map : (a -> b) -> Dataset a -> Dataset b
 map f ds =
@@ -589,32 +642,83 @@ renameLastStep name (Dataset d) =
 
 
 -- | Keep the first row for each key and drop the later ones. The set of keys
--- seen holds one SHA-256 per distinct key (64 bytes), not the key itself.
+-- seen holds the SHA-256 of each distinct key (never the key itself), at most
+-- `dedupeMemoryKeys` of them in memory: past that it spills them, sorted, to
+-- files under `.sky/ai/work/dedupe` in the working directory and looks them up
+-- there, so a dataset larger than memory dedupes in bounded memory. The files
+-- are removed when the rows have been read.
 dedupeBy : (row -> String) -> Dataset row -> Dataset row
 dedupeBy key ds =
-    transform
-        "dedupe"
-        Set.empty
-        (\seen rs ->
-            let
-                step r ( kept, s, dropped ) =
-                    let
-                        h = Crypto.sha256 (key r)
-                    in
-                        if Set.member h s then
-                            ( kept, s, dropped + 1 )
+    dedupeBounded dedupeMemoryKeys key ds
 
-                        else
-                            ( r :: kept, Set.insert h s, dropped )
-                ( keptRev, seen2, dups ) =
-                    List.foldl step ( [], seen, 0 ) rs
-            in
-                Ok
-                    ( List.reverse keptRev
-                    , { noStats | duplicates = dups }
-                    , seen2
-                    ))
+
+-- | How many key digests `dedupeBy` keeps in memory before it spills to disk:
+-- 250000 (about 20 MB).
+dedupeMemoryKeys : Int
+dedupeMemoryKeys =
+    250000
+
+
+-- | `dedupeBy` with the number of key digests held in memory before the set
+-- spills to disk (at least 1).
+dedupeBounded : Int -> (row -> String) -> Dataset row -> Dataset row
+dedupeBounded memoryKeys key ds =
+    transformTask
+        "dedupe"
+        (\_ -> dedupeOpen "" (max 1 memoryKeys))
+        (\handle rs ->
+            dedupeAdd handle (List.map key rs)
+                |> Task.map
+                       (\fresh ->
+                           let
+                               kept = keepFresh rs fresh
+                           in
+                               ( kept
+                               , { noStats
+                                     | duplicates =
+                                         List.length rs - List.length kept
+                                 }
+                               , handle
+                               )))
+        (\handle -> dedupeClose handle |> Task.map (\_ -> ()))
         ds
+
+
+-- The rows whose key was new.
+keepFresh : List row -> List Bool -> List row
+keepFresh rs fresh =
+    case rs of
+
+        [] ->
+            []
+
+        r :: more ->
+            case fresh of
+
+                f :: rest ->
+                    if f then
+                        r :: keepFresh more rest
+
+                    else
+                        keepFresh more rest
+
+                [] ->
+                    []
+
+
+dedupeOpen : String -> Int -> Task Error String
+dedupeOpen =
+    Ffi.kernel "Ai_dedupeOpen"
+
+
+dedupeAdd : String -> List String -> Task Error (List Bool)
+dedupeAdd =
+    Ffi.kernel "Ai_dedupeAdd"
+
+
+dedupeClose : String -> Task Error Int
+dedupeClose =
+    Ffi.kernel "Ai_dedupeClose"
 
 
 -- | Scrub every row (`Std.Ai.Dataset.Scrub`). The counts of what was
@@ -881,13 +985,14 @@ type Limits
 , minRows : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
+, engine : Maybe Endpoint
 }
 
 
 -- | At most 4096 tokens per conversation, 2 to 64 turns (system messages do
 -- not count), at most 5% duplicate conversations, at least 1 row, and no
 -- issue at all. Tokens are estimated (`estimateTokens`) unless
--- `withTokenizer` gives the model's own count.
+-- `withEngineTokenizer` or `withTokenizer` gives the model's own count.
 limits : Limits
 limits =
     Limits
@@ -898,6 +1003,7 @@ limits =
         , minRows = 1
         , maxIssues = 0
         , tokenizer = Nothing
+        , engine = Nothing
         }
 
 
@@ -943,6 +1049,21 @@ withMaxIssues n (Limits l) =
 withTokenizer : (String -> Task Error Int) -> Limits -> Limits
 withTokenizer f (Limits l) =
     Limits { l | tokenizer = Just f }
+
+
+-- | Count tokens with the engine's own tokenizer: each message's content is
+-- sent to the slot's `/tokenize` route (`Endpoint.tokenize`; llama-server
+-- and vLLM serve it), so the count is the model's, not an estimate. When the
+-- engine cannot answer (no network, no engine installed and fetching off, a
+-- server without the route), the count falls back to the `withTokenizer`
+-- function if one is given, else to `estimateTokens`, so a check runs offline
+-- too. Under `sky test` in test mode a fixture answers the route (match
+-- `urlContains "/tokenize"`), or the fallback counts.
+--
+--     Dataset.limits |> Dataset.withEngineTokenizer chatSlot
+withEngineTokenizer : Endpoint -> Limits -> Limits
+withEngineTokenizer slot (Limits l) =
+    Limits { l | engine = Just slot }
 
 
 -- | The token estimate used without a tokenizer: a quarter of the characters,
@@ -1039,6 +1160,36 @@ type alias Acc =
 -- | Check every conversation and report, without failing on the limits.
 inspect : Limits -> Dataset Chat -> Task Error Report
 inspect (Limits l) ds =
+    usableEngine l.engine
+        |> Task.andThen (\engine -> inspectWith { l | engine = engine } ds)
+
+
+-- The engine counts tokens when it answers one request; otherwise the run
+-- uses the fallback for every row, so an offline check does not wait on a
+-- failing connection per message.
+usableEngine : Maybe Endpoint -> Task Error (Maybe Endpoint)
+usableEngine engine =
+    case engine of
+
+        Just slot ->
+            Endpoint.tokenize slot "tokenizer check"
+                |> Task.map (\_ -> Just slot)
+                |> Task.onError (\_ -> Task.succeed Nothing)
+
+        Nothing ->
+            Task.succeed Nothing
+
+
+inspectWith : { maxTokens : Int
+, minTurns : Int
+, maxTurns : Int
+, maxDuplicateRate : Float
+, minRows : Int
+, maxIssues : Int
+, tokenizer : Maybe (String -> Task Error Int)
+, engine : Maybe Endpoint
+} -> Dataset Chat -> Task Error Report
+inspectWith l ds =
     fold
         (\acc rs _ -> checkChunk l acc rs)
         { rows = 0
@@ -1077,6 +1228,7 @@ checkChunk : { maxTokens : Int
 , minRows : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
+, engine : Maybe Endpoint
 } -> Acc -> List Chat -> Task Error Acc
 checkChunk l acc rs =
     case rs of
@@ -1085,25 +1237,39 @@ checkChunk l acc rs =
             Task.succeed acc
 
         r :: more ->
-            tokensOf l.tokenizer r
+            tokensOf l.tokenizer l.engine r
                 |> Task.andThen
                        (\tokens -> checkChunk l (checkRow l acc r tokens) more)
 
 
-tokensOf : Maybe (String -> Task Error Int) -> Chat -> Task Error Int
-tokensOf tokenizer r =
-    case tokenizer of
+tokensOf : Maybe (String -> Task Error Int) -> Maybe Endpoint -> Chat -> Task Error Int
+tokensOf tokenizer engine r =
+    Task.sequence
+        (List.map (\m -> messageTokens tokenizer engine m.content) r.messages)
+        |> Task.map (List.foldl (\t n -> n + 4 + t) 0)
 
-        Nothing ->
-            Task.succeed
-                (List.foldl
-                    (\m n -> n + 4 + estimateTokens m.content)
-                    0
-                    r.messages)
 
-        Just f ->
-            Task.sequence (List.map (\m -> f m.content) r.messages)
-                |> Task.map (List.foldl (\t n -> n + 4 + t) 0)
+-- One message's tokens: the engine's count, else the tokenizer function's,
+-- else the estimate.
+messageTokens : Maybe (String -> Task Error Int) -> Maybe Endpoint -> String -> Task Error Int
+messageTokens tokenizer engine text =
+    let
+        fallback =
+            case tokenizer of
+
+                Just f ->
+                    f text
+
+                Nothing ->
+                    Task.succeed (estimateTokens text)
+    in
+        case engine of
+
+            Just slot ->
+                Endpoint.tokenize slot text |> Task.onError (\_ -> fallback)
+
+            Nothing ->
+                fallback
 
 
 checkRow : { maxTokens : Int
@@ -1113,6 +1279,7 @@ checkRow : { maxTokens : Int
 , minRows : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
+, engine : Maybe Endpoint
 } -> Acc -> Chat -> Int -> Acc
 checkRow l acc r tokens =
     let
@@ -1251,6 +1418,7 @@ finishReport : { maxTokens : Int
 , minRows : Int
 , maxIssues : Int
 , tokenizer : Maybe (String -> Task Error Int)
+, engine : Maybe Endpoint
 } -> Acc -> Report
 finishReport l acc =
     let

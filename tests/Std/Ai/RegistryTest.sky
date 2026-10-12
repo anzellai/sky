@@ -24,6 +24,7 @@ import Std.Ai.Eval as Eval exposing (Expect(..))
 import Std.Ai.Store as Store
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+import Std.Ai.Dataset as Dataset exposing (Instruction)
 
 
 -- ── Fixtures ────────────────────────────────────────────────────────
@@ -974,7 +975,9 @@ tests =
                       Test.fail (Error.toString e))
     , Test.test
           "opening twice applies the registry migrations once"
-          (\_ -> Test.equal (Ok ( 1, 0 )) migrated)
+          (\_ ->
+              -- Two migrations: the records (0001) and the dataset versions (0002).
+              Test.equal (Ok ( 2, 0 )) migrated)
     , Test.test
           "an unknown alias is NotRegistered"
           (\_ ->
@@ -1010,4 +1013,223 @@ tests =
                                                     v
                                                     "test"))
                       |> Task.run))
+    , Test.test
+          "a frozen dataset registers once per digest, numbered by name"
+          (\_ ->
+              case datasetsRegistered of
+
+                  Ok ( numbers, labels ) ->
+                      Test.equal
+                          ( [ 1, 1, 2 ], [ "support@1", "support@2" ] )
+                          ( numbers, labels )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a dataset reference resolves by number, and its data is fetched by digest"
+          (\_ ->
+              case datasetResolved of
+
+                  Ok ( number, same ) ->
+                      Test.equal ( 2, True ) ( number, same )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a dataset whose file does not match its manifest is ChecksumMismatch"
+          (\_ ->
+              expectFailure
+                  (\f ->
+                      case f of
+
+                          ChecksumMismatch _ ->
+                              True
+
+                          _ ->
+                              False)
+                  "ChecksumMismatch"
+                  (world
+                      |> Task.andThen
+                             (\w ->
+                                 freezeRows w [ "a" ]
+                                     |> Task.andThen
+                                            (\v ->
+                                                let
+                                                    m = Dataset.manifest v
+                                                in
+                                                    Registry.registerDataset
+                                                        w.reg
+                                                        { m
+                                                            | digest =
+                                                                Crypto.sha256
+                                                                    "other bytes"
+                                                        }
+                                                        (Dataset.blobPath v)))
+                      |> Task.run))
+    , Test.test
+          "a bad or unknown dataset reference is refused, typed"
+          (\_ ->
+              Test.equal
+                  ( Just "InvalidSetting", Just "NotRegistered" )
+                  ( world
+                        |> Task.andThen
+                               (\w -> Registry.datasetVersion w.reg "support")
+                        |> Task.run
+                        |> failureOf
+                        |> Maybe.map Failure.code
+                  , world
+                        |> Task.andThen
+                               (\w -> Registry.datasetVersion w.reg "support@9")
+                        |> Task.run
+                        |> failureOf
+                        |> Maybe.map Failure.code
+                  ))
+    , Test.test
+          "trainedOn finds the versions by dataset reference"
+          (\_ ->
+              case trainedOnRef of
+
+                  Ok labels ->
+                      Test.equal [ "support-lora@v1" ] labels
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "compared evidence against an alias that does not exist yet gates alone"
+          (\_ ->
+              case firstCompared of
+
+                  Ok ( digestMatches, current ) ->
+                      Test.equal ( True, Nothing ) ( digestMatches, current )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
     ]
+
+
+-- ── Datasets ────────────────────────────────────────────────────────
+freezeRows : World -> List String -> Task Error (Dataset.Version Instruction)
+freezeRows w prompts =
+    Dataset.fromList
+        (List.map (\p -> { prompt = p, completion = "answer to " ++ p }) prompts)
+        |> Dataset.split Dataset.defaultSplit .prompt
+        |> Dataset.freeze
+               (Dataset.folder (w.dir ++ "/datasets") "support")
+               Dataset.instructionCodec
+
+
+registerRows : World -> List String -> Task Error Registry.DatasetVersion
+registerRows w prompts =
+    freezeRows w prompts
+        |> Task.andThen
+               (\v ->
+                   Registry.registerDataset
+                       w.reg
+                       (Dataset.manifest v)
+                       (Dataset.blobPath v))
+
+
+datasetsRegistered : Result Error ( List Int, List String )
+datasetsRegistered =
+    world
+        |> Task.andThen
+               (\w ->
+                   Task.sequence
+                       [ registerRows w [ "a", "b" ]
+                       , registerRows w [ "a", "b" ]
+                       , registerRows w [ "a", "b", "c" ]
+                       ]
+                       |> Task.andThen
+                              (\dvs ->
+                                  Registry.datasetVersions w.reg "support"
+                                      |> Task.map
+                                             (\all ->
+                                                 ( List.map .number dvs
+                                                 , List.reverse
+                                                       (List.map
+                                                           Registry.datasetLabel
+                                                           all)
+                                                 ))))
+        |> Task.run
+
+
+datasetResolved : Result Error ( Int, Bool )
+datasetResolved =
+    world
+        |> Task.andThen
+               (\w ->
+                   registerRows w [ "a" ]
+                       |> Task.andThen (\_ -> registerRows w [ "a", "b" ])
+                       |> Task.andThen
+                              (\_ -> Registry.datasetVersion w.reg "support@v2")
+                       |> Task.andThen
+                              (\dv ->
+                                  Registry.fetchDataset w.reg dv
+                                      |> Task.andThen File.readFile
+                                      |> Task.map
+                                             (\text ->
+                                                 ( dv.number
+                                                 , Crypto.sha256 text
+                                                       == dv.digest
+                                                 ))))
+        |> Task.run
+
+
+trainedOnRef : Result Error (List String)
+trainedOnRef =
+    world
+        |> Task.andThen
+               (\w ->
+                   registerRows w [ "a" ]
+                       |> Task.andThen
+                              (\dv ->
+                                  adapterFile w "trained"
+                                      |> Task.andThen
+                                             (\a ->
+                                                 Registry.register
+                                                     w.reg
+                                                     "support-lora"
+                                                     a
+                                                     { lineage
+                                                         | dataset =
+                                                             Registry.datasetLabel
+                                                                 dv
+                                                         , datasetDigest =
+                                                             dv.digest
+                                                     }))
+                       |> Task.andThen
+                              (\_ -> Registry.trainedOn w.reg "support@1")
+                       |> Task.map (List.map Registry.label))
+        |> Task.run
+
+
+firstCompared : Result Error ( Bool, Maybe Int )
+firstCompared =
+    world
+        |> Task.andThen
+               (\w ->
+                   registerTag w "first"
+                       |> Task.andThen
+                              (\v ->
+                                  evidence w v
+                                      |> Task.andThen
+                                             (\passed ->
+                                                 Registry.evidenceAgainst
+                                                     w.reg
+                                                     "prod"
+                                                     v
+                                                     (\_ -> Eval.thresholds)
+                                                     |> Task.map
+                                                            (\found ->
+                                                                case found of
+
+                                                                    ( p, current ) ->
+                                                                        ( Eval.passedDigest
+                                                                              p
+                                                                              == Eval.passedDigest
+                                                                                     passed
+                                                                        , Maybe.map
+                                                                              .number
+                                                                              current
+                                                                        )))))
+        |> Task.run

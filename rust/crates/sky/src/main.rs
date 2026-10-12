@@ -44,6 +44,7 @@ use project::{
 use testrunner::run_test;
 
 mod ai_doctor;
+mod ai_project;
 mod app_url;
 mod bundled;
 mod json_out;
@@ -10323,12 +10324,16 @@ main =
     // `.skydata/` holds the local PostgreSQL cluster `sky db start` supervises —
     // a whole data directory, WAL included. Committing it would put a binary
     // database (and its `postmaster.pid`) into git.
-    let gitignore = "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
+    // `.sky/` is per-machine AI state: the local model registry store, frozen
+    // dataset versions, the `sky ai` pipeline build cache and dedupe spill
+    // files (Std.Ai). A team shares a registry through gs:// or s3://.
+    let gitignore =
+        "sky-out/\n.skycache/\n.skydeps/\n.skydata/\n.sky/\n.env\n*.db\n*.db-shm\n*.db-wal\n";
     // `.dockerignore`: a `COPY . .` must not bake local state into an image.
     // `.skydata/` holds the dev Sky.Spa session key and the local database
     // cluster; `.env` holds secrets (A-7).
     let dockerignore = "# Local state and secrets never go into an image.\n\
-                        .skydata/\n.env\n*.db\n*.db-shm\n*.db-wal\n\
+                        .skydata/\n.sky/\n.env\n*.db\n*.db-shm\n*.db-wal\n\
                         # Build outputs are rebuilt inside the image.\n\
                         sky-out/\n.skycache/\n.skydeps/\n.skyapp/\n.split/\n.git/\n";
 
@@ -11511,54 +11516,204 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
                      download a GGUF file and print its pinned Local.huggingFace value
   ps [--all]         list the engines running on this machine
   start <slot> [--model <ref>] [--context <n>] [--embeddings]
-                     start a slot's local engine and hold it (Ctrl-C stops it)
+                     start a slot's local engine and hold it (Ctrl-C stops it); a slot
+                     the project's pipeline names starts with its code defaults
   stop <slot> | --all
                      stop the engines of a slot
   promote <name> <version> --to <alias> [--min-pass-rate <x>] [--expect <n>|none]
           [--force --reason <text>]
                      point a registry alias at a version, on its attached eval evidence
+                     compared against the version the alias serves now
   rollback <name>@<alias>
                      move a registry alias back to the version before the current one
-  lineage <name>@<alias>|<name>@v<n> | --dataset <sha256>
+  lineage <name>@<alias>|<name>@v<n> | --dataset <sha256>|<name>@<n>
                      print a version's lineage, or the versions trained on a dataset
   data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>]
               [--split <train>/<eval>/<test>] [--seed <n>]
               [--consent <basis>] [--retention <period>]
                      freeze a JSONL file into a content-addressed dataset version
+The project's AI pipeline (src/Ai.sky, Std.Ai.Pipeline):
+  eval <suite> [--against <alias>] [--candidate <model>@v<n>] [--promote-to <alias>]
+       [--junit <file>] [--markdown <file>] [--min-pass-rate <x>] [--max-regression <x>]
+                     run an eval suite, compare it with an alias and gate it (exit 1 on failure)
+  data freeze <dataset>
+                     freeze (and register) one of the pipeline's datasets
+  run <task> [-- <args>]
+                     run one of the pipeline's tasks
+  members            list the pipeline's datasets, suites, slots and tasks
+The pipeline verbs take --test-mode (answer model calls from tests/mocks/, as sky test does).
 The registry verbs take --db <dsn> (else SKY_DB_PATH, DATABASE_URL, or the project's
 [database] path or url) and --registry <url> (else SKY_AI_REGISTRY).
 A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
 
-/// `sky ai <verb>`: the Std.Ai engine verbs. The CLI holds no logic of its
-/// own: it checks the verb's shape, builds the bundled program
-/// (`sky-bundled/ai`, once per Sky build) and runs it with the arguments. The
-/// program calls `Std.Ai.Local` / `Std.Ai.Endpoint`, the same API a user's
+/// How a `sky ai` verb is run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AiMode {
+    /// The bundled program (`sky-bundled/ai`): the engine and registry verbs.
+    Bundled,
+    /// The project's pipeline (`src/Ai.sky`); without one it is an error.
+    Pipeline,
+    /// The pipeline when the project has one, else the bundled program
+    /// (`promote`).
+    PipelineIfAny,
+    /// The pipeline when it names the slot, else the bundled program
+    /// (`start <slot>`).
+    PipelineSlot,
+}
+
+/// `sky ai <verb>`: the Std.Ai verbs. The CLI holds no logic of its own: it
+/// checks the verb's shape, then runs either the bundled program
+/// (`sky-bundled/ai`, built once per Sky build) or the project's own AI
+/// pipeline (`src/Ai.sky`, built per change into `.sky/ai/cli/`,
+/// `ai_project.rs`) with the arguments. Both call the Std.Ai API a user's
 /// program has.
 fn cmd_ai(args: &[String]) -> ExitCode {
+    let test_mode = args.iter().any(|a| a == "--test-mode");
+    let args: Vec<String> = args
+        .iter()
+        .filter(|a| *a != "--test-mode")
+        .cloned()
+        .collect();
     let positional: Vec<&str> = args
         .iter()
         .map(String::as_str)
         .filter(|a| *a != "--format" && *a != "json")
         .collect();
-    let shape_ok = match positional.as_slice() {
-        ["provision", ..] | ["ps", ..] => true,
-        ["pull", repo, file] => repo.contains('/') && !file.is_empty(),
-        ["start", slot, ..] => !slot.starts_with('-'),
-        ["stop", _] => true,
-        ["promote", name, version, rest @ ..] => {
-            !name.starts_with('-') && !version.starts_with('-') && rest.contains(&"--to")
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mode = match positional.as_slice() {
+        ["provision", ..] | ["ps", ..] => Some(AiMode::Bundled),
+        ["pull", repo, file] if repo.contains('/') && !file.is_empty() => Some(AiMode::Bundled),
+        ["start", slot, ..] if !slot.starts_with('-') => Some(AiMode::PipelineSlot),
+        ["stop", _] => Some(AiMode::Bundled),
+        ["promote", name, version, rest @ ..]
+            if !name.starts_with('-') && !version.starts_with('-') && rest.contains(&"--to") =>
+        {
+            Some(AiMode::PipelineIfAny)
         }
-        ["rollback", reference, ..] => reference.contains('@'),
-        ["lineage", "--dataset", digest, ..] => !digest.starts_with('-'),
-        ["lineage", reference, ..] => reference.contains('@'),
-        ["data", "freeze", file, ..] => !file.starts_with('-'),
-        _ => false,
+        ["rollback", reference, ..] if reference.contains('@') => Some(AiMode::Bundled),
+        ["lineage", "--dataset", digest, ..] if !digest.starts_with('-') => Some(AiMode::Bundled),
+        ["lineage", reference, ..] if reference.contains('@') => Some(AiMode::Bundled),
+        ["data", "freeze", arg, ..] if !arg.starts_with('-') => {
+            if ai_project::freeze_names_a_dataset(arg, &cwd) {
+                Some(AiMode::Pipeline)
+            } else {
+                Some(AiMode::Bundled)
+            }
+        }
+        ["eval", suite, ..] if !suite.starts_with('-') => Some(AiMode::Pipeline),
+        ["run", task, ..] if !task.starts_with('-') => Some(AiMode::Pipeline),
+        ["members"] => Some(AiMode::Pipeline),
+        _ => None,
     };
-    if !shape_ok {
+    let Some(mode) = mode else {
         eprintln!("{AI_USAGE}");
         return ExitCode::from(2);
+    };
+    if mode != AiMode::Bundled {
+        let root = locate_project_root(&cwd);
+        let entry = match &root {
+            Some(r) => project::ai_entry::discover(r),
+            None => Ok(None),
+        };
+        match (entry, root) {
+            (Err(e), _) => {
+                eprintln!("sky ai: {e}");
+                return ExitCode::from(2);
+            }
+            (Ok(Some(_)), Some(root)) => {
+                return cmd_ai_pipeline(&args, &positional, mode, &root, test_mode);
+            }
+            _ if mode == AiMode::Pipeline => {
+                let verb = positional[..positional.len().min(2)].join(" ");
+                eprintln!(
+                    "sky ai {verb}: this project has no AI pipeline. Declare one in \
+                     src/Ai.sky:\n\n    module Ai exposing (pipeline)\n\n    \
+                     pipeline : Std.Ai.Pipeline.Pipeline\n\nsee docs/ai/pipeline.md"
+                );
+                return ExitCode::from(2);
+            }
+            _ => {}
+        }
     }
-    let mut args: Vec<String> = args.to_vec();
+    cmd_ai_bundled(args.clone(), &positional, &cwd, test_mode)
+}
+
+/// A pipeline verb: build (or reuse) the project's pipeline program and run
+/// it in the project directory.
+fn cmd_ai_pipeline(
+    args: &[String],
+    positional: &[&str],
+    mode: AiMode,
+    root: &Path,
+    test_mode: bool,
+) -> ExitCode {
+    let Some(repo_root) = assets_root_for(root) else {
+        return ExitCode::FAILURE;
+    };
+    let bin = match ai_project::ensure_built(&repo_root, root, &bundled_cache_slug()) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if mode == AiMode::PipelineSlot {
+        let slot = positional.get(1).copied().unwrap_or("");
+        match ai_project::pipeline_slots(&bin, root) {
+            Ok(slots) if slots.iter().any(|s| s == slot) => {}
+            Ok(_) => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                return cmd_ai_bundled(args.to_vec(), positional, &cwd, test_mode);
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    run_ai_binary(&bin, args, root, test_mode.then_some(root))
+}
+
+/// Run an AI program in the given directory, with the test-mode environment
+/// (`testrunner::test_mode_env`) when `test_project` names the project. On
+/// Unix the program REPLACES this process, so Ctrl-C and `sky ai stop`'s
+/// SIGTERM reach the program that holds an engine (`start`).
+fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&Path>) -> ExitCode {
+    let mut cmd = Command::new(bin);
+    cmd.args(args).current_dir(cwd);
+    if let Some(project_dir) = test_project {
+        // Test mode answers the model calls from tests/mocks/; the verb still
+        // acts on the project's own database (no scratch database).
+        for (k, v) in testrunner::test_mode_env(project_dir, None) {
+            cmd.env(k, v);
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = cmd.exec();
+        eprintln!("sky ai: could not launch {}: {err}", bin.display());
+        ExitCode::FAILURE
+    }
+    #[cfg(not(unix))]
+    {
+        match cmd.status() {
+            Ok(s) => propagate(s.code()),
+            Err(e) => {
+                eprintln!("sky ai: could not launch {}: {e}", bin.display());
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+/// A bundled verb: build (once per Sky build) and run `sky-bundled/ai`.
+fn cmd_ai_bundled(
+    mut args: Vec<String>,
+    positional: &[&str],
+    cwd: &Path,
+    test_mode: bool,
+) -> ExitCode {
     if matches!(
         positional.first().copied(),
         Some("promote" | "rollback" | "lineage")
@@ -11568,9 +11723,7 @@ fn cmd_ai(args: &[String]) -> ExitCode {
             args.push(dsn);
         }
     }
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let Some(repo_root) = assets_root_for(&cwd) else {
+    let Some(repo_root) = assets_root_for(cwd) else {
         return ExitCode::FAILURE;
     };
     let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "ai") else {
@@ -11591,26 +11744,8 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         }
     };
     let bin = out_dir.join("app");
-    // On Unix the program REPLACES this process, so Ctrl-C and `sky ai stop`'s
-    // SIGTERM reach the program that holds the engine (`start`), and the
-    // engine stops with it.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let err = Command::new(&bin).args(&args).exec();
-        eprintln!("sky ai: could not launch {}: {err}", bin.display());
-        ExitCode::FAILURE
-    }
-    #[cfg(not(unix))]
-    {
-        match Command::new(&bin).args(&args).status() {
-            Ok(s) => propagate(s.code()),
-            Err(e) => {
-                eprintln!("sky ai: could not launch {}: {e}", bin.display());
-                ExitCode::FAILURE
-            }
-        }
-    }
+    let project = test_mode.then(|| locate_project_root(cwd)).flatten();
+    run_ai_binary(&bin, &args, cwd, project.as_deref())
 }
 
 /// The database a registry verb (`sky ai promote | rollback | lineage`) opens
@@ -13597,9 +13732,19 @@ fn check_ai(root: &Path) -> Vec<Finding> {
         .filter(|p| !p.trim().is_empty())
         .unwrap_or_else(|| "SKY".to_string());
     let env = |k: &str| std::env::var(k).ok();
+    let entry = project::ai_entry::discover(root);
+    let slots = project::ai_slots::discover_for_entry(root, &[], "Main").0;
+    let pipeline_slots = match &entry {
+        Ok(Some(_)) => {
+            project::ai_slots::discover_for_entry(root, &[], project::ai_entry::AI_MODULE).0
+        }
+        _ => vec![],
+    };
     let inputs = ai_doctor::Inputs {
         home: ai_doctor::ai_home(&prefix, &env),
-        slots: project::ai_slots::discover(root),
+        slots,
+        pipeline_slots,
+        pipeline: entry.map(|e| e.map(|_| ())).transpose(),
         prefix,
         env: &env,
         // The runtime's rule (productionFromEnv): `ENV` (else `SKY_ENV`) set

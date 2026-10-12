@@ -63,6 +63,7 @@ func Ai_migrate(dbArg, jsonArg any) any {
 		for attempt := 0; attempt < 3; attempt++ {
 			r := dbMigrateCore(d, pairs, "", func(_ string, e any) any { return e })
 			if tag, _, _ := anyResultView(r); tag == 0 {
+				aiRememberEvalDb(d, files)
 				return r
 			}
 			last = r
