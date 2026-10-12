@@ -871,7 +871,9 @@ withServiceAccount email =
     update (\s -> { s | serviceAccount = email })
 
 
--- | A runtime ceiling in minutes, below the one the budget sets.
+-- | A runtime ceiling in minutes for each Vertex job (each attempt), below
+-- the one the budget sets. Vertex stops the job there even with no Sky
+-- process left. The budget bounds the whole run, relaunches included.
 withMaxRuntimeMinutes : Int -> Job -> Job
 withMaxRuntimeMinutes n =
     update (\s -> { s | maxRuntimeMinutes = n })

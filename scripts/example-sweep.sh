@@ -321,6 +321,12 @@ declare -a EXAMPLES=(
     # network. The training workflow itself runs offline in its `sky test`
     # suite (rust/crates/sky/tests/ai_train_flow.rs).
     "73-ai-train:server:8073:/"
+    # 74 — Std.Ai.Train on Vertex AI and Std.Ai.Serve on Cloud Run, in a
+    # Sky.Live app: the page freezes its dataset; nothing reaches Google Cloud
+    # until a button is pressed, so serving `/` needs no account and no
+    # network. The cloud workflow runs offline against the runtime's emulator
+    # in its `sky test` suite (rust/crates/sky/tests/ai_cloud_train_flow.rs).
+    "74-ai-cloud:server:8074:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

@@ -1187,26 +1187,35 @@ jobFailure : String -> CustomJob -> Maybe Error
 jobFailure region job =
     let
         lower = String.toLower job.errorMessage
+        quota = String.contains "quota" lower
+        stockout =
+            String.contains "stockout" lower
+                || String.contains "resources are insufficient" lower
+                || String.contains "zone_resource_pool_exhausted" lower
+                || String.contains "does not have enough resources" lower
+        -- Vertex reports a container that was killed (exit 137, a SIGKILL or
+        -- the kernel's out-of-memory killer) as code 8, RESOURCE_EXHAUSTED,
+        -- "Replicas low on memory". That is a trainer that died, which the
+        -- run relaunches from its newest checkpoint, not a region with no
+        -- free GPU: the code alone decides nothing, the message does.
     in
-        if job.errorCode == 8 || String.contains "stockout" lower
-            || String.contains "resources are insufficient" lower
-            || String.contains "resource_exhausted" lower then
-            if String.contains "quota" lower then
-                Just
-                    (Failure.toErrorWith
-                        job.errorMessage
-                        (QuotaExceeded
-                            { resource = "NVIDIA_L4 custom training"
-                            , region = region
-                            , limit = 0
-                            }))
+        if quota
+            && (job.errorCode == 8 || String.contains "resource_exhausted" lower) then
+            Just
+                (Failure.toErrorWith
+                    job.errorMessage
+                    (QuotaExceeded
+                        { resource = "NVIDIA_L4 custom training"
+                        , region = region
+                        , limit = 0
+                        }))
 
-            else
-                Just
-                    (Failure.toErrorWith
-                        job.errorMessage
-                        (CapacityUnavailable
-                            { resource = "NVIDIA_L4", region = region }))
+        else if stockout then
+            Just
+                (Failure.toErrorWith
+                    job.errorMessage
+                    (CapacityUnavailable
+                        { resource = "NVIDIA_L4", region = region }))
 
         else
             Nothing

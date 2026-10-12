@@ -3867,6 +3867,97 @@ pub fn ai_train_resumes_from_the_newest_checkpoint(ctx: &GateCtx) -> GateOutcome
     )
 }
 
+/// Five: the promotion is read, v1 stays loaded while its requests run, no
+/// request failed and none saw its adapter vanish, after the drain only v2 is
+/// loaded, and v2 serves. Fixed by the test, not by the tree's size.
+pub const AI_SERVE_HOT_LOAD_EXPECTED: u64 = 5;
+
+pub fn ai_serve_hot_loads_without_dropping_a_request(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestAiTierHotLoadsAPromotionWithoutDroppingARequest",
+        AI_SERVE_HOT_LOAD_EXPECTED,
+    )
+}
+
+/// Eleven: the cases of the Vertex workflow suite
+/// (`rust/crates/sky/tests/fixtures/ai-cloud/tests/CloudWorkflowTest.sky`), run
+/// against the runtime's Google Cloud emulator. One of them loses the launch's
+/// journal row after the job was created and requires exactly one create.
+/// Measured by this gate.
+pub const AI_TRAIN_EXACTLY_ONCE_EXPECTED: u64 = 11;
+
+/// `sky test` of the Vertex workflow suite in place (inside the repo, so the
+/// build reads the tree's stdlib and a mutation of it takes effect), in test
+/// mode with the emulator's host. Every case must pass, and the count must be
+/// exact.
+pub fn ai_train_vertex_launches_exactly_once(ctx: &GateCtx) -> GateOutcome {
+    use super::layer2;
+
+    const PROJECT: &str = "rust/crates/sky/tests/fixtures/ai-cloud";
+    let sky = match layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let out = Command::new(&sky)
+        .args(["test", "tests/CloudWorkflowTest.sky"])
+        .current_dir(ctx.repo_root.join(PROJECT))
+        .env("SKY_TEST_MODE", "1")
+        .env("SKY_AI_GCP_ENDPOINT", "http://sky-gcp.invalid")
+        .env_remove("GOOGLE_APPLICATION_CREDENTIALS")
+        .env_remove("SKY_AI_TRAIN_BACKEND")
+        .env_remove("SKY_AI_TRAIN_PROJECT")
+        .env_remove("SKY_AI_TRAIN_STAGING")
+        .env_remove("SKY_AI_TRAIN_IMAGE")
+        .stdin(std::process::Stdio::null())
+        .output();
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::new(false, 0, format!("could not run `sky test`: {e}")),
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    // The runner's last line: "<p> passed, <f> failed (<t> total)".
+    let summary = text.lines().rev().find(|l| l.contains(" passed, "));
+    let parse = |l: &str| -> Option<(u64, u64)> {
+        let mut it = l.split_whitespace();
+        let p = it.next()?.parse().ok()?;
+        it.next()?;
+        let f = it.next()?.parse().ok()?;
+        Some((p, f))
+    };
+    match summary.and_then(parse) {
+        Some((passed, 0)) if o.status.success() && passed == AI_TRAIN_EXACTLY_ONCE_EXPECTED => {
+            GateOutcome::new(
+                true,
+                passed,
+                format!("{passed} Vertex workflow cases green, one create per launch"),
+            )
+        }
+        Some((passed, failed)) => GateOutcome::new(
+            false,
+            passed,
+            format!(
+                "{passed} passed, {failed} failed (expected exactly \
+                 {AI_TRAIN_EXACTLY_ONCE_EXPECTED} passing):\n{}",
+                layer2::tail(&text, 25)
+            ),
+        ),
+        None => GateOutcome::new(
+            false,
+            0,
+            format!(
+                "no test summary from `sky test`:\n{}",
+                layer2::tail(&text, 25)
+            ),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod corpus_count_sync {
     //! Keep the declared corpus assertion counts in lockstep with what the

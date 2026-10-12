@@ -14,7 +14,7 @@
 //!
 //!   l2  plan with USD 0.01 is BudgetExceeded, and no job exists
 //!   l3  Fake jobs on n2-standard-4: exactly-once launch after a lost journal
-//!       row, a relaunch from a checkpoint, a cancel, a budget stop
+//!       row, a relaunch from a checkpoint, a cancel, the hard runtime ceiling
 //!   l4  a real Unsloth QLoRA run on one L4 (g2-standard-4)
 //!   l5  the GPU tier on Cloud Run: cold start, two adapters on one GPU, a
 //!       promotion hot-loaded under load, the ID-token and service-token layers
@@ -109,6 +109,12 @@ fn scenario(name: &str, extra: &[(&str, String)]) -> Vec<serde_json::Value> {
     let (bin, dir) = program();
     let mut cmd = Command::new(bin);
     cmd.arg(name).current_dir(dir).stdin(Stdio::null());
+    // A scenario's own database, run directory and registry prefix: the l3
+    // scenarios run at once.
+    cmd.env("SKY_AI_LIVE_DIR", format!(".sky/live/{name}"));
+    if let Ok(reg) = std::env::var("SKY_AI_LIVE_REGISTRY") {
+        cmd.env("SKY_AI_LIVE_REGISTRY", format!("{reg}/{name}"));
+    }
     for (k, v) in extra {
         cmd.env(k, v);
     }
@@ -219,7 +225,15 @@ fn gcp_live_l3_fake_jobs_exactly_once_relaunch_cancel_budget() {
                 "relaunched once from the checkpoint at step 5",
             ),
             "l3-cancel" => (last["code"] == "TrainingCancelled", "TrainingCancelled"),
-            _ => (last["code"] == "BudgetExceeded", "BudgetExceeded"),
+            // Vertex stopped the job at its 3-minute ceiling: one job, no
+            // relaunch, and its runtime (create to end, provisioning
+            // included) far below the 27 minutes the steps need.
+            _ => (
+                last["code"] == "TrainingFailed"
+                    && last["jobs"] == 1
+                    && last["seconds"].as_i64().unwrap_or(i64::MAX) < 20 * 60,
+                "TrainingFailed after the 3-minute ceiling, one job",
+            ),
         };
         if !check.0 {
             failures.push(format!("{name}: expected {}: {last}", check.1));

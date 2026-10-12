@@ -370,9 +370,13 @@ fn a_bad_backend_variable_is_refused_naming_it() {
             "--steps",
             "4",
         ],
-        &[("SKY_AI_TRAIN_BACKEND", "vertex")],
+        &[("SKY_AI_TRAIN_BACKEND", "sagemaker")],
     );
-    assert!(text(&out).contains("phase 4"), "{}", text(&out));
+    assert!(
+        !out.status.success() && text(&out).contains("SageMaker"),
+        "{}",
+        text(&out)
+    );
 
     if cfg!(target_os = "macos") {
         let out = sky_ai(

@@ -11,7 +11,8 @@ tears everything down). Each scenario prints one JSON line the test checks.
     l3-crash    the first attempt dies after step 6; the second resumes from
                 the newest checkpoint
     l3-cancel   cancel while the job runs: TrainingCancelled
-    l3-budget   a run that spends its budget is cancelled: BudgetExceeded
+    l3-budget   the hard ceiling: Vertex stops a job at its scheduling
+                timeout (3 minutes) with no relaunch: TrainingFailed
     l4          a real Unsloth QLoRA run on one L4, collected and registered
     l5          the GPU tier on Cloud Run: deploy, cold start, two adapters on
                 one GPU, a promotion hot-loaded under load, the auth layers
@@ -66,10 +67,17 @@ env name =
     System.getenvOr name ""
 
 
+-- Each scenario's own directory (SKY_AI_LIVE_DIR): the l3 scenarios run at
+-- once, so they never share a database, a run directory or a registry.
+liveDir : String
+liveDir =
+    System.getenvOr "SKY_AI_LIVE_DIR" ".sky/live"
+
+
 world : Task Error World
 world =
-    File.mkdirAll ".sky/live"
-        |> Task.andThen (\_ -> Db.open "sqlite" ".sky/live/live.db")
+    File.mkdirAll liveDir
+        |> Task.andThen (\_ -> Db.open "sqlite" (liveDir ++ "/live.db"))
         |> Task.andThen
                (\db ->
                    Task.fromResult (Store.fromUrl (env "SKY_AI_LIVE_REGISTRY"))
@@ -91,7 +99,7 @@ world =
                                                      |> String.join "\n")
                                       |> Dataset.freeze
                                              (Dataset.folder
-                                                 ".sky/live/datasets"
+                                                 (liveDir ++ "/datasets")
                                                  "support")
                                              Dataset.chatCodec
                                       |> Task.map
@@ -143,7 +151,7 @@ cpuJob w name rank steps stepMs =
         |> Train.withBudget (Money.fromMinor Money.USD 25)
         |> Train.withMaxRuntimeMinutes 15
         |> Train.withMachinePrices prices
-        |> Train.withWorkDir ".sky/live/runs"
+        |> Train.withWorkDir (liveDir ++ "/runs")
         |> Train.withRegistry w.reg
 
 
@@ -358,14 +366,21 @@ run args =
                 |> Task.andThen
                        (\w ->
                            let
-                               -- 21 minutes of estimate at USD 0.28/h is USD
-                               -- 0.098: a USD 0.10 budget lets it start, and
-                               -- a run of 400 slow steps spends it.
+                               -- The hard ceiling that holds with no Sky
+                               -- process left: Vertex stops the job at the
+                               -- job's scheduling timeout. 400 steps of 4 s
+                               -- need 27 minutes; the ceiling is 3, and no
+                               -- relaunch is allowed, so the run ends
+                               -- TrainingFailed long before step 400. (A
+                               -- budget the estimate exceeds never launches:
+                               -- that is l2. The watch's own budget stop is
+                               -- tested against the emulator.)
                                job =
-                                   cpuJob w "spender" 2 400 4000
+                                   cpuJob w "ceiling" 2 400 4000
                                        |> Train.withBudget
-                                              (Money.fromMinor Money.USD 10)
-                                       |> Train.withMaxRuntimeMinutes 0
+                                              (Money.fromMinor Money.USD 30)
+                                       |> Train.withMaxRuntimeMinutes 3
+                                       |> Train.withMaxRelaunches 0
                            in
                                result (Train.drive w.db job)
                                    |> Task.andThen
@@ -401,7 +416,7 @@ run args =
                                               (Money.fromMajor Money.USD 1)
                                        |> Train.withMaxRuntimeMinutes 40
                                        |> Train.withMachinePrices prices
-                                       |> Train.withWorkDir ".sky/live/runs"
+                                       |> Train.withWorkDir (liveDir ++ "/runs")
                                        |> Train.withRegistry w.reg
                            in
                                result (Train.drive w.db job)
@@ -449,7 +464,7 @@ tierTarget =
         |> Serve.withRegistryUrl (env "SKY_AI_LIVE_REGISTRY")
         |> Serve.withServiceAccount (env "SKY_AI_LIVE_SERVE_SA")
         |> Serve.withInvokers [ "serviceAccount:" ++ env "SKY_AI_LIVE_INVOKER" ]
-        |> Serve.withLabels [ ( "sky-live", env "SKY_AI_LIVE_RUN_ID" ) ]
+        |> Serve.withLabels [ ( "live-run", env "SKY_AI_LIVE_RUN_ID" ) ]
 
 
 tier : Serve.Tier

@@ -13,7 +13,7 @@
 #       built with Cloud Build in the project
 #   l2  a budget refusal: plan with USD 0.01, and no job exists after
 #   l3  the Fake driver on n2-standard-4 Vertex jobs: exactly-once launch,
-#       a relaunch from a checkpoint, a budget stop, a cancel
+#       a relaunch from a checkpoint, a cancel, the hard runtime ceiling
 #   l4  a real Unsloth QLoRA run on one L4 (g2-standard-4), the adapter
 #       collected and registered (needs the Vertex L4 training quota)
 #   l5  the GPU tier on Cloud Run with one L4: cold start measured, two
@@ -29,7 +29,7 @@
 # scale-to-zero, the EXIT trap, and this script's own 90-minute bound on the
 # test run.
 #
-# Every resource carries sky-managed=true, sky-live=<run id> and sky-kind. The
+# Every resource carries sky-managed=true, live-run=<run id> and sky-kind. The
 # trap cancels the run's Vertex jobs, deletes its Cloud Run services, secret,
 # repositories and bucket, appends the ledger line, and runs the leak check,
 # which fails the run (exit 3) if anything that can cost money remains.
@@ -120,7 +120,7 @@ REPO="sky-live-$SUFFIX"
 REMOTE="sky-dockerhub-$SUFFIX"
 SECRET="sky-live-$SUFFIX-tier-token"
 SERVICE="sky-live-$SUFFIX-tier"
-LABELS="sky-managed=true,sky-live=$RUN_ID"
+LABELS="sky-managed=true,live-run=$RUN_ID"
 TRAINER_SA="sky-trainer@$PROJECT.iam.gserviceaccount.com"
 SERVE_SA="sky-serve@$PROJECT.iam.gserviceaccount.com"
 LEAK="unknown"
@@ -163,13 +163,13 @@ teardown() {
     set +e
     echo "gcp-live: teardown"
     for job in $(gcloud ai custom-jobs list --project "$PROJECT" --region "$REGION" \
-        --filter="labels.sky-live=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED)" \
+        --filter="labels.live-run=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED)" \
         --format='value(name.basename())' 2>/dev/null); do
         gcloud ai custom-jobs cancel "$job" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 || true
     done
     for i in $(seq 1 60); do
         n="$(gcloud ai custom-jobs list --project "$PROJECT" --region "$REGION" \
-            --filter="labels.sky-live=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED OR state=JOB_STATE_CANCELLING)" \
+            --filter="labels.live-run=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED OR state=JOB_STATE_CANCELLING)" \
             --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
         [ "$n" = "0" ] && break
         sleep 10
@@ -228,7 +228,7 @@ fi
 
 export SKY_AI_LIVE_RUN_ID="$RUN_ID" SKY_AI_LIVE_STAGES="$STAGES" SKY_AI_LIVE_STAGE_LOG="$STAGE_LOG"
 export SKY_AI_TRAIN_PROJECT="$PROJECT" SKY_AI_TRAIN_REGION="$REGION" SKY_AI_TRAIN_STAGING="gs://$BUCKET/train"
-export SKY_AI_TRAIN_SERVICE_ACCOUNT="$TRAINER_SA" SKY_AI_TRAIN_LABELS="sky-live=$RUN_ID"
+export SKY_AI_TRAIN_SERVICE_ACCOUNT="$TRAINER_SA" SKY_AI_TRAIN_LABELS="live-run=$RUN_ID"
 export SKY_AI_SERVE_PROJECT="$PROJECT" SKY_AI_SERVE_REGION="$REGION"
 export SKY_AI_LIVE_REGISTRY="gs://$BUCKET/registry" SKY_AI_LIVE_SERVICE="$SERVICE" SKY_AI_LIVE_SECRET="$SECRET"
 export SKY_AI_LIVE_SERVE_SA="$SERVE_SA"

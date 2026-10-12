@@ -554,6 +554,11 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     // v0.28.0 phase 3: a relaunched Std.Ai.Train trainer resumes from the
     // newest verified checkpoint (runtime-go/rt/ai_train.go).
     ("ai-train-resume", &["stdlib.Std.Ai.Train"]),
+    // v0.28.0 phase 4: a Vertex launch is exactly once across a lost journal
+    // row (sky-stdlib/Std/Ai/Train.sky), and the GPU tier hot-loads a
+    // promotion with no failed request (runtime-go/rt/ai_serve.go).
+    ("ai-train-exactly-once", &["stdlib.Std.Ai.Train"]),
+    ("ai-serve-hot-load", &["stdlib.Std.Ai.Serve"]),
     (
         "live-time-every-mutex-survives-a-panic",
         &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],

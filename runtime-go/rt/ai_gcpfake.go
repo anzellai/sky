@@ -734,8 +734,11 @@ func (f *aiFakeGCP) advance(j *aiFakeJob) {
 			j.lastCk = j.step
 		}
 		if j.crash > 0 && j.attempt == 0 && j.step == j.crash {
+			// What Vertex AI reports for a container that exit 137 ended
+			// (measured on a live run, 2026-10-12): code 8 and a memory
+			// message, though the machine had memory to spare.
 			j.logs = append(j.logs, "Killed")
-			end("JOB_STATE_FAILED", 13, "The replica workerpool0-0 exited with a non-zero status of 137.")
+			end("JOB_STATE_FAILED", 8, "Replicas low on memory: . Specify a machine with larger memory and try again.")
 			return
 		}
 	}

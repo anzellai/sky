@@ -346,9 +346,13 @@ func TestTrainBackendPrecedence(t *testing.T) {
 		t.Fatalf("bad value: %v", err)
 	}
 	t.Setenv("SKY_AI_TRAIN_BACKEND", "vertex")
+	if b, src, err := aiTrainResolveBackend(""); err != nil || b != "vertex" || src != "env" {
+		t.Fatalf("vertex: %s %s %v", b, src, err)
+	}
+	t.Setenv("SKY_AI_TRAIN_BACKEND", "sagemaker")
 	_, _, err = aiTrainResolveBackend("")
-	if f, ok := err.(*aiFailure); !ok || f.code != aiInvalidSetting || !strings.Contains(f.msg, "phase 4") {
-		t.Fatalf("vertex: %v", err)
+	if f, ok := err.(*aiFailure); !ok || f.code != aiInvalidSetting || !strings.Contains(f.msg, "not shipped") {
+		t.Fatalf("sagemaker: %v", err)
 	}
 	t.Setenv("SKY_AI_TRAIN_BACKEND", "")
 	if runtime.GOOS == "darwin" {

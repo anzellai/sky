@@ -1120,6 +1120,53 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::ai_train_resumes_from_the_newest_checkpoint,
     },
+    // ---- Std.Ai.Train on Vertex AI: a launch is exactly once ----------------
+    Gate {
+        name: "ai-train-exactly-once",
+        tier: Tier::T1,
+        // `sky test` of the fixture against the runtime's in-process emulator:
+        // no network, no account.
+        platforms: UNIX,
+        budget_s: 600,
+        expected: bodies::AI_TRAIN_EXACTLY_ONCE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a Vertex launch whose journal row was lost attaches to its job: one create, never two",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-train-exactly-once.ignore-the-intent",
+            description: "create the Vertex job whether or not this attempt's create-only \
+                          intent object was ours, so a launch replayed after a lost journal \
+                          row creates a second paid job; the one-create assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-stdlib/Std/Ai/Train.sky",
+                from: "if mine then",
+                to: "if True then",
+            },
+        }]),
+        body: bodies::ai_train_vertex_launches_exactly_once,
+    },
+    // ---- Std.Ai.Serve: a promotion is hot-loaded with no failed request ----
+    Gate {
+        name: "ai-serve-hot-load",
+        tier: Tier::T1,
+        // The test runs the fake vLLM (testdata/fakevllm) as a process.
+        platforms: UNIX,
+        budget_s: 300,
+        expected: bodies::AI_SERVE_HOT_LOAD_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a GPU tier hot-loads a promoted adapter and drains the old one with no failed request",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-serve-hot-load.unload-while-in-use",
+            description: "let drain unload a retired adapter while a request still uses it; \
+                          the in-flight requests for v1 lose their adapter and the \
+                          v1-stays-loaded assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_serve.go",
+                from: "if r.retired && !pinned[r.served] && r.inflight == 0 && r.loading == nil {",
+                to: "if r.retired && !pinned[r.served] && r.loading == nil {",
+            },
+        }]),
+        body: bodies::ai_serve_hot_loads_without_dropping_a_request,
+    },
     Gate {
         name: "live-time-every-mutex-survives-a-panic",
         tier: Tier::T1,

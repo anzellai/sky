@@ -228,7 +228,12 @@ func TestAiTierLoadsAVersionOnDemandAndEvictsTheLeastRecentlyUsed(t *testing.T) 
 // The hot-load: while 20 requests run on @prod, the alias moves to v2. The
 // tier loads v2, keeps v1 loaded until its last request finishes, then
 // unloads it. Zero requests fail, and none sees its adapter vanish.
+// The harness gate ai-serve-hot-load runs this test and requires its
+// `ASSERTIONS:` line. Its falsifying mutation lets drain unload a retired
+// version while a request still uses it; the "v1 stays loaded" and "no
+// request failed" assertions must go red.
 func TestAiTierHotLoadsAPromotionWithoutDroppingARequest(t *testing.T) {
+	n := 0
 	engine := startFakeVLLM(t, "-delay-ms", "150")
 	reg := newFakeRegistry(t)
 	reg.point("support@prod", 1)
@@ -257,10 +262,12 @@ func TestAiTierHotLoadsAPromotionWithoutDroppingARequest(t *testing.T) {
 	if err := tier.refreshAliases(); err != nil {
 		t.Fatal(err)
 	}
+	n++
 	stats := vllmStats(t, engine)
 	if !strings.Contains(fmt.Sprint(stats["loaded"]), "support-v1") {
 		t.Fatalf("v1 is unloaded while its requests run: %v", stats["loaded"])
 	}
+	n++
 	wg.Wait()
 	tier.drain()
 	time.Sleep(100 * time.Millisecond)
@@ -268,12 +275,16 @@ func TestAiTierHotLoadsAPromotionWithoutDroppingARequest(t *testing.T) {
 	if failures != 0 || stats["broken"].(float64) != 0 {
 		t.Fatalf("%d requests failed, %v saw their adapter vanish", failures, stats["broken"])
 	}
+	n++
 	if loaded := fmt.Sprint(stats["loaded"]); strings.Contains(loaded, "support-v1") || !strings.Contains(loaded, "support-v2") {
 		t.Fatalf("after the drain only v2 is loaded: %s", loaded)
 	}
+	n++
 	if st, _ := tierChat(t, url, "tier-token", "support-v2"); st != 200 {
 		t.Fatalf("v2 serves")
 	}
+	n++
+	fmt.Printf("ASSERTIONS: %d\n", n)
 }
 
 func TestAiTierHealthWaitsForTheEngineAndRefusesAnotherBase(t *testing.T) {

@@ -292,6 +292,57 @@ tests =
                   Err e ->
                       Test.fail (Error.toString e))
     , Test.test
+          "a killed container (code 8, low on memory) is not a stockout; a stockout and a quota are typed"
+          (\_ ->
+              let
+                  classify code message =
+                      case JsonD.decodeString
+                               Google.customJobDecoder
+                               ("{\"name\":\"projects/p/locations/us-central1/customJobs/1\",\"state\":\"JOB_STATE_FAILED\",\"error\":{\"code\":"
+                                   ++ String.fromInt code
+                                   ++ ",\"message\":\""
+                                   ++ message
+                                   ++ "\"}}") of
+
+                          Ok job ->
+                              case Google.jobFailure "us-central1" job of
+
+                                  Just e ->
+                                      Maybe.withDefault
+                                          "untyped"
+                                          (Maybe.map
+                                              Failure.code
+                                              (Failure.fromError e))
+
+                                  Nothing ->
+                                      "relaunch"
+
+                          Err _ ->
+                              "undecodable"
+                  -- The first message is what Vertex AI returned on a live run
+                  -- (2026-10-12) for the Fake driver's exit 137 on an
+                  -- n2-standard-4 with memory to spare.
+              in
+                  Test.equal
+                      [ classify
+                            8
+                            "Replicas low on memory: . Specify a machine with larger memory and try again."
+                      , classify
+                            8
+                            "Resources are insufficient in region: us-central1 (stockout)."
+                      , classify
+                            8
+                            "Quota exceeded for aiplatform.googleapis.com/custom_model_training_nvidia_l4_gpus"
+                      , classify
+                            13
+                            "The replica workerpool0-0 exited with a non-zero status of 1."
+                      ]
+                      [ "relaunch"
+                      , "CapacityUnavailable"
+                      , "QuotaExceeded"
+                      , "relaunch"
+                      ])
+    , Test.test
           "the machine table gives each G2 type its L4s and a CPU type none"
           (\_ ->
               Test.equal
