@@ -1,11 +1,4 @@
-module Assist exposing
-    ( notesSlot
-    , assistant
-    , helpSlot
-    , help
-    , summaryPrompt
-    , summaryOptions
-    )
+module Assist exposing (notesSlot, assistant, helpSlot, help, summaryPrompt, summaryOptions)
 
 {-| The app's two model slots.
 
@@ -34,11 +27,9 @@ import Std.Ai.Provider as Provider exposing (Provider, Message)
 -- managed local engine on the server, and on devices.
 notesSlot : Endpoint
 notesSlot =
-    Endpoint.endpoint "notes"
-        |> Endpoint.withLocal (Local.model Local.devModel)
+    Endpoint.endpoint "notes" |> Endpoint.withLocal (Local.model Local.devModel)
         |> Endpoint.withDevice
-               (Device.spec Device.Auto
-                   |> Device.withContext 2048)
+               (Device.spec Device.Auto |> Device.withContext 2048)
 
 
 -- | The client's provider for `notes`.
@@ -50,8 +41,7 @@ assistant =
 -- | The Help page's slot: on the server only.
 helpSlot : Endpoint
 helpSlot =
-    Endpoint.endpoint "help"
-        |> Endpoint.withLocal (Local.model Local.devModel)
+    Endpoint.endpoint "help" |> Endpoint.withLocal (Local.model Local.devModel)
 
 
 help : Provider
@@ -62,7 +52,8 @@ help =
 -- | The messages that ask for a note's summary.
 summaryPrompt : String -> List Message
 summaryPrompt body =
-    [ Provider.system "You summarise private notes. Answer with one short sentence."
+    [ Provider.system
+          "You summarise private notes. Answer with one short sentence."
     , Provider.user body
     ]
 
@@ -70,4 +61,8 @@ summaryPrompt body =
 -- | Repeatable answers: temperature 0 and a fixed seed.
 summaryOptions : Provider.Options
 summaryOptions =
-    { temperature = Just 0.0, seed = Just 7, maxTokens = Just 48, adapter = Nothing }
+    { temperature = Just 0.0
+    , seed = Just 7
+    , maxTokens = Just 48
+    , adapter = Nothing
+    }

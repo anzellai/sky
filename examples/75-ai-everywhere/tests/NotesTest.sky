@@ -45,17 +45,26 @@ tests =
 
                                      newest :: _ ->
                                          Notes.remove newest.id
-                                             |> Task.map (\after -> ( List.map .title ns, List.map .title after ))
+                                             |> Task.map
+                                                    (\after ->
+                                                        ( List.map .title ns
+                                                        , List.map .title after
+                                                        ))
 
                                      [] ->
                                          Task.succeed ( [], [] )))
                   (\( before, after ) ->
-                      Test.equal ( [ "second", "first" ], [ "first" ] ) ( List.take 2 before, List.take 1 after )))
+                      Test.equal
+                          ( [ "second", "first" ], [ "first" ] )
+                          ( List.take 2 before, List.take 1 after )))
     , Test.test
           "on the server the device provider is the notes slot"
           (\_ ->
               check
-                  (Provider.chatWith Assist.summaryOptions Assist.assistant (Assist.summaryPrompt "Booked the train to Paris.")
+                  (Provider.chatWith
+                      Assist.summaryOptions
+                      Assist.assistant
+                      (Assist.summaryPrompt "Booked the train to Paris.")
                       |> Task.map .content)
                   (\c -> Test.isTrue (String.contains "Paris" c)))
     , Test.test
@@ -68,13 +77,20 @@ tests =
           "the self-check scores a device recording and the server with one suite"
           (\_ ->
               check
-                  (Device.record "device" Assist.assistant (Eval.prompts Suites.summaries)
+                  (Device.record
+                      "device"
+                      Assist.assistant
+                      (Eval.prompts Suites.summaries)
                       |> Task.andThen Suites.score)
-                  (\text -> Test.equal "device passed 100%, the server passed 100%" text))
+                  (\text ->
+                      Test.equal
+                          "device passed 100%, the server passed 100%"
+                          text))
     , Test.test
           "the help slot answers on the server"
           (\_ ->
               check
-                  (Provider.chat Assist.help [ Provider.user "How do I start?" ] |> Task.map .content)
+                  (Provider.chat Assist.help [ Provider.user "How do I start?" ]
+                      |> Task.map .content)
                   (\c -> Test.isTrue (String.contains "Save" c)))
     ]

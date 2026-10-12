@@ -1702,7 +1702,10 @@ block (Registry r) v reason =
 allowOnDevice : Registry -> Version -> String -> Task Error ()
 allowOnDevice (Registry r) v reason =
     if String.trim reason == "" then
-        Task.fail (invalidSetting "reason" "clearing a version for devices needs a reason")
+        Task.fail
+            (invalidSetting
+                "reason"
+                "clearing a version for devices needs a reason")
 
     else if v.blocked /= Nothing then
         Task.fail (notPromotable (label v) "it is blocked")
@@ -1738,7 +1741,8 @@ clearedDataset v rows =
 
         row :: _ ->
             if Db.getString "blocked" row /= "" then
-                Task.fail (notPromotable (label v) "its dataset version is blocked")
+                Task.fail
+                    (notPromotable (label v) "its dataset version is blocked")
 
             else
                 case Dataset.manifestFromJson (Db.getString "manifest" row) of

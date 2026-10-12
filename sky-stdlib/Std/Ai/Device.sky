@@ -498,8 +498,7 @@ firstFitting caps offer need wanted =
 
 fits : Capabilities -> Offer -> Int -> Backend -> Bool
 fits caps offer need b =
-    not (List.member b caps.failed)
-        && need <= offer.maxDownloadBytes
+    not (List.member b caps.failed) && need <= offer.maxDownloadBytes
         && List.any
                (\info -> info.backend == b && need <= info.maxModelBytes)
                caps.backends
@@ -519,8 +518,7 @@ noBackendReason caps offer need =
                 r
 
             [] ->
-                "no backend of the slot can hold "
-                    ++ String.fromInt need
+                "no backend of the slot can hold " ++ String.fromInt need
                     ++ " bytes"
 
 
@@ -568,6 +566,7 @@ estimateTokens : String -> Int
 estimateTokens body =
     String.length body // 3
 
+
 -- ---------------------------------------------------------------------------
 -- Decoding the wire values
 -- ---------------------------------------------------------------------------
@@ -583,16 +582,12 @@ req name d df =
 
 maybeField : String -> JsonD.Decoder a -> JsonD.Decoder (Maybe a)
 maybeField name d =
-    JsonD.oneOf
-        [ JsonD.field name (JsonD.map Just d)
-        , JsonD.succeed Nothing
-        ]
+    JsonD.oneOf [ JsonD.field name (JsonD.map Just d), JsonD.succeed Nothing ]
 
 
 fileDecoder : JsonD.Decoder OfferFile
 fileDecoder =
-    JsonD.succeed
-        (\l s b u -> { label = l, sha256 = s, bytes = b, url = u })
+    JsonD.succeed (\l s b u -> { label = l, sha256 = s, bytes = b, url = u })
         |> req "label" JsonD.string
         |> req "sha256" JsonD.string
         |> req "bytes" JsonD.int
@@ -704,6 +699,7 @@ decodeTask what dec body =
                     ("Std.Ai.Device: the " ++ what ++ " cannot be read: "
                         ++ Error.toString e))
 
+
 -- ---------------------------------------------------------------------------
 -- Kernels
 -- ---------------------------------------------------------------------------
@@ -741,6 +737,7 @@ evictRaw : String -> String -> Task Error String
 evictRaw =
     Ffi.kernel "AiDevice_evict"
 
+
 -- ---------------------------------------------------------------------------
 -- The provider
 -- ---------------------------------------------------------------------------
@@ -750,7 +747,6 @@ that the server has an `Endpoint.withDevice` slot of that name. -}
 provider : String -> Provider
 provider slot =
     Provider.wire (transport slot) ""
-
 
 type alias Ctx =
     { slot : String
@@ -768,7 +764,10 @@ transport slot path body =
                        |> Task.andThen
                               (\offer ->
                                   route
-                                      { slot = slot, offerJson = json, offer = offer }
+                                      { slot = slot
+                                      , offerJson = json
+                                      , offer = offer
+                                      }
                                       True
                                       path
                                       body))
@@ -786,12 +785,19 @@ route ctx retry path body =
                    case decide caps ctx.offer (estimateTokens body) of
 
                        OnDevice b ->
-                           runRaw (backendText b) ctx.slot ctx.offerJson path body
-                               |> Task.onError (afterDeviceFailure ctx retry path body)
+                           runRaw
+                               (backendText b)
+                               ctx.slot
+                               ctx.offerJson
+                               path
+                               body
+                               |> Task.onError
+                                      (afterDeviceFailure ctx retry path body)
 
                        NeedsDownload _ _ ->
                            if ctx.offer.placement == DeviceOnly then
-                               Task.fail (Failure.toError (notDownloaded ctx.offer))
+                               Task.fail
+                                   (Failure.toError (notDownloaded ctx.offer))
 
                            else
                                serverRaw ctx.slot path body
@@ -861,7 +867,10 @@ progressDecoder =
 
 {-| The status for a decision and the download state the runtime reports
 (`state` is `downloading` while `prepare` runs). Pure, for tests. -}
-statusOf : Decision -> { state : String, doneBytes : Int, totalBytes : Int } -> Status
+statusOf : Decision -> { state : String
+, doneBytes : Int
+, totalBytes : Int
+} -> Status
 statusOf decision progress =
     case decision of
 
@@ -906,8 +915,8 @@ statusFor slot json offer =
                    progressRaw slot json
                        |> Task.andThen
                               (decodeTask
-                                   "progress"
-                                   (JsonD.decodeString progressDecoder))
+                                  "progress"
+                                  (JsonD.decodeString progressDecoder))
                        |> Task.map (statusOf (decide caps offer 0)))
 
 
@@ -946,7 +955,8 @@ prepareFor slot json offer =
 
                            else
                                prepareRaw slot (backendText b) json
-                                   |> Task.andThen (\_ -> statusFor slot json offer)
+                                   |> Task.andThen
+                                          (\_ -> statusFor slot json offer)
 
                        OnDevice b ->
                            prepareRaw slot (backendText b) json
@@ -962,9 +972,7 @@ prepareFor slot json offer =
 {-| Remove the slot's model and adapter from this device and unload them. -}
 evict : String -> Task Error ()
 evict slot =
-    offerRaw slot
-        |> Task.andThen (evictRaw slot)
-        |> Task.map (\_ -> ())
+    offerRaw slot |> Task.andThen (evictRaw slot) |> Task.map (\_ -> ())
 
 
 {-| What this device can do. -}
@@ -997,9 +1005,12 @@ requestKey messages =
     JsonE.encode
         0
         (JsonE.list
-            (\m -> JsonE.object [ ( "role", JsonE.string m.role ), ( "content", JsonE.string m.content ) ])
+            (\m ->
+                JsonE.object
+                    [ ( "role", JsonE.string m.role )
+                    , ( "content", JsonE.string m.content )
+                    ])
             messages)
-
 
 {-| One request of an eval suite: its messages and the sampling options the
 suite sends (`Eval.prompts` gives them, temperature 0 and a fixed seed). -}
@@ -1061,7 +1072,10 @@ replayChat rec messages =
                 Task.fail
                     (Failure.toError
                         (NotConfigured
-                            { setting = "a recorded answer for this prompt in " ++ rec.label }))
+                            { setting =
+                                "a recorded answer for this prompt in "
+                                    ++ rec.label
+                            }))
 
 
 {-| A recording as JSON. -}
@@ -1078,7 +1092,9 @@ encodeRecording rec =
                             [ ( "request", JsonE.string e.request )
                             , ( "content", JsonE.string e.content )
                             , ( "promptTokens", JsonE.int e.promptTokens )
-                            , ( "completionTokens", JsonE.int e.completionTokens )
+                            , ( "completionTokens"
+                              , JsonE.int e.completionTokens
+                              )
                             ])
                     rec.entries
               )

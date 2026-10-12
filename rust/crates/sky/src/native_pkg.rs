@@ -1970,6 +1970,29 @@ mod tests {
     }
 
     #[test]
+    fn the_increased_memory_limit_takes_no_argument_and_renders_true() {
+        let src = "bundle =\n    Bundle.default\n\
+                   \x20       |> Bundle.withEntitlement Bundle.IncreasedMemoryLimit\n\
+                   \x20       |> Bundle.withEntitlement (Bundle.AppGroup \"group.com.acme.app\")\n";
+        let ents = scan_entitlements(src).expect("scan");
+        assert_eq!(
+            ents,
+            vec![
+                Entitlement::IncreasedMemoryLimit,
+                Entitlement::AppGroup("group.com.acme.app".into())
+            ]
+        );
+        let doc = plist::render_document(&entitlement_entries(&ents));
+        let back = plist::parse_entries(&doc).expect("valid plist");
+        assert_eq!(
+            back.iter()
+                .find(|(k, _)| k == "com.apple.developer.kernel.increased-memory-limit")
+                .map(|(_, v)| v.clone()),
+            Some(Value::Bool(true))
+        );
+    }
+
+    #[test]
     fn malformed_entitlements_are_refused_with_the_fix() {
         for (src, needle) in [
             (

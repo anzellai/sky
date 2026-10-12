@@ -17,7 +17,13 @@ import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Test as Test exposing (Test)
 import Std.Ai.Provider as Provider
 import Std.Ai.Failure as Failure exposing (Failure(..))
-import Std.Ai.Device as Device exposing (Backend(..), Decision(..), Placement(..), Reason(..), Status(..))
+import Std.Ai.Device as Device exposing
+    ( Backend(..)
+    , Decision(..)
+    , Placement(..)
+    , Reason(..)
+    , Status(..)
+    )
 import Std.Ai.Eval as Eval exposing (Expect(..))
 import Std.Db as Db
 import Sky.Core.File as File
@@ -25,12 +31,20 @@ import Sky.Core.File as File
 
 model : Device.OfferFile
 model =
-    { label = "qwen.gguf", sha256 = "aa", bytes = 400, url = "/_sky/ai/blob/aa" }
+    { label = "qwen.gguf"
+    , sha256 = "aa"
+    , bytes = 400
+    , url = "/_sky/ai/blob/aa"
+    }
 
 
 adapter : Device.OfferFile
 adapter =
-    { label = "support-lora@v3", sha256 = "bb", bytes = 20, url = "/_sky/ai/blob/bb" }
+    { label = "support-lora@v3"
+    , sha256 = "bb"
+    , bytes = 20
+    , url = "/_sky/ai/blob/bb"
+    }
 
 
 offer : Device.Offer
@@ -88,7 +102,10 @@ tests =
                 (\_ ->
                     decided
                         (OnServer OperatorChoice)
-                        (Device.decide browser { offer | placement = ServerOnly } 10))
+                        (Device.decide
+                            browser
+                            { offer | placement = ServerOnly }
+                            10))
           , Test.test
                 "code on the server is the server slot"
                 (\_ ->
@@ -100,14 +117,19 @@ tests =
                 (\_ ->
                     decided
                         (OnServer (OfferRefused "not cleared"))
-                        (Device.decide browser { offer | refused = Just "not cleared" } 10))
+                        (Device.decide
+                            browser
+                            { offer | refused = Just "not cleared" }
+                            10))
           , Test.test
                 "a refused offer is NotPromotable for DeviceOnly"
                 (\_ ->
                     decided
                         (Refused
                             (NotPromotable
-                                { ref = "support-lora@v3", reason = "not cleared" }))
+                                { ref = "support-lora@v3"
+                                , reason = "not cleared"
+                                }))
                         (Device.decide
                             browser
                             { deviceOnly | refused = Just "not cleared" }
@@ -120,7 +142,10 @@ tests =
                 (\_ ->
                     decided
                         (OnDevice WasmCpu)
-                        (Device.decide browser { offer | backends = [ WasmCpu, WebGpu ] } 10))
+                        (Device.decide
+                            browser
+                            { offer | backends = [ WasmCpu, WebGpu ] }
+                            10))
           , Test.test
                 "a backend that failed this session is skipped"
                 (\_ ->
@@ -136,7 +161,9 @@ tests =
                             { browser
                                 | backends =
                                     [ { backend = WebGpu, maxModelBytes = 410 }
-                                    , { backend = WasmCpu, maxModelBytes = 1000 }
+                                    , { backend = WasmCpu
+                                      , maxModelBytes = 1000
+                                      }
                                     ]
                             }
                             offer
@@ -158,13 +185,17 @@ tests =
                         (Refused
                             (DeviceUnsupported
                                 { backend = "native"
-                                , reason = "native: a browser has no native shell"
+                                , reason =
+                                    "native: a browser has no native shell"
                                 }))
                         (Device.decide { browser | backends = [] } deviceOnly 10))
           , Test.test
                 "a model larger than the slot's download limit is never offered"
                 (\_ ->
-                    case Device.decide browser { deviceOnly | maxDownloadBytes = 100 } 10 of
+                    case Device.decide
+                             browser
+                             { deviceOnly | maxDownloadBytes = 100 }
+                             10 of
 
                         Refused (DeviceUnsupported r) ->
                             Test.equal
@@ -178,19 +209,30 @@ tests =
                 (\_ ->
                     decided
                         (OnServer NoStorage)
-                        (Device.decide { notStored | storageAvailableBytes = 461 } offer 10))
+                        (Device.decide
+                            { notStored | storageAvailableBytes = 461 }
+                            offer
+                            10))
           , Test.test
                 "files not stored need 1.1 times their size free (DeviceOnly: StorageDenied)"
                 (\_ ->
                     decided
-                        (Refused (StorageDenied { needBytes = 462, availableBytes = 461 }))
-                        (Device.decide { notStored | storageAvailableBytes = 461 } deviceOnly 10))
+                        (Refused
+                            (StorageDenied
+                                { needBytes = 462, availableBytes = 461 }))
+                        (Device.decide
+                            { notStored | storageAvailableBytes = 461 }
+                            deviceOnly
+                            10))
           , Test.test
                 "exactly enough storage is enough"
                 (\_ ->
                     decided
                         (NeedsDownload WebGpu 420)
-                        (Device.decide { notStored | storageAvailableBytes = 462 } offer 10))
+                        (Device.decide
+                            { notStored | storageAvailableBytes = 462 }
+                            offer
+                            10))
           , Test.test
                 "only the files not stored are downloaded"
                 (\_ ->
@@ -200,10 +242,13 @@ tests =
           , Test.test
                 "a prompt longer than three quarters of the context runs on the server"
                 (\_ ->
-                    decided (OnServer PromptTooLong) (Device.decide browser offer 1537))
+                    decided
+                        (OnServer PromptTooLong)
+                        (Device.decide browser offer 1537))
           , Test.test
                 "a prompt of three quarters of the context runs on the device"
-                (\_ -> decided (OnDevice WebGpu) (Device.decide browser offer 1536))
+                (\_ ->
+                    decided (OnDevice WebGpu) (Device.decide browser offer 1536))
           , Test.test
                 "a prompt too long is InvalidSetting for DeviceOnly"
                 (\_ ->
@@ -228,7 +273,9 @@ tests =
                         (Device.decide
                             { browser
                                 | platform = "ios"
-                                , backends = [ { backend = Native, maxModelBytes = 4000 } ]
+                                , backends =
+                                    [ { backend = Native, maxModelBytes = 4000 }
+                                    ]
                             }
                             offer
                             10))
@@ -254,10 +301,17 @@ tests =
                 "a running download reports its progress"
                 (\_ ->
                     Test.equal
-                        (Downloading { backend = WebGpu, doneBytes = 64, totalBytes = 420 })
+                        (Downloading
+                            { backend = WebGpu
+                            , doneBytes = 64
+                            , totalBytes = 420
+                            })
                         (Device.statusOf
                             (NeedsDownload WebGpu 420)
-                            { state = "downloading", doneBytes = 64, totalBytes = 420 }))
+                            { state = "downloading"
+                            , doneBytes = 64
+                            , totalBytes = 420
+                            }))
           , Test.test
                 "a server decision is ServerSide with its reason"
                 (\_ ->
@@ -269,10 +323,7 @@ tests =
           "Std.Ai.Device wire values"
           [ Test.test
                 "an offer decodes"
-                (\_ ->
-                    Test.equal
-                        (Ok offer)
-                        (Device.decodeOffer offerJson))
+                (\_ -> Test.equal (Ok offer) (Device.decodeOffer offerJson))
           , Test.test
                 "an offer without an adapter or a refusal decodes"
                 (\_ ->
@@ -287,10 +338,12 @@ tests =
                 "an unknown backend is refused, not ignored"
                 (\_ ->
                     Test.err
-                        (Device.decodeOffer (String.replace "\"wasm-cpu\"" "\"tpu\"" offerJson)))
+                        (Device.decodeOffer
+                            (String.replace "\"wasm-cpu\"" "\"tpu\"" offerJson)))
           , Test.test
                 "capabilities decode"
-                (\_ -> Test.equal (Ok browser) (Device.decodeCapabilities capsJson))
+                (\_ ->
+                    Test.equal (Ok browser) (Device.decodeCapabilities capsJson))
           , Test.test
                 "a backend names round trip"
                 (\_ ->
@@ -340,7 +393,9 @@ tests =
                 (\_ ->
                     Test.equal
                         [ "auto", "device", "server" ]
-                        (List.map Device.placementText [ Auto, DeviceOnly, ServerOnly ]))
+                        (List.map
+                            Device.placementText
+                            [ Auto, DeviceOnly, ServerOnly ]))
           ]
     , Test.suite
           "Std.Ai.Device record and replay"
@@ -355,25 +410,27 @@ tests =
                                        Task.sequence
                                            (List.map
                                                (\p ->
-                                                   Provider.chat (Device.replay rec) p.messages
+                                                   Provider.chat
+                                                       (Device.replay rec)
+                                                       p.messages
                                                        |> Task.map .content)
                                                prompts))
                             |> Task.run))
           , Test.test
                 "a prompt that was not recorded is NotConfigured"
                 (\_ ->
-                    case
-                        Device.record "device:wasm-cpu" echo prompts
-                            |> Task.andThen
-                                   (\rec ->
-                                       Provider.chat
-                                           (Device.replay rec)
-                                           [ Provider.user "three" ])
-                            |> Task.run
-                    of
+                    case Device.record "device:wasm-cpu" echo prompts
+                             |> Task.andThen
+                                    (\rec ->
+                                        Provider.chat
+                                            (Device.replay rec)
+                                            [ Provider.user "three" ])
+                             |> Task.run of
 
                         Err e ->
-                            Test.equal (Just "NotConfigured") (Maybe.map Failure.code (Failure.fromError e))
+                            Test.equal
+                                (Just "NotConfigured")
+                                (Maybe.map Failure.code (Failure.fromError e))
 
                         Ok _ ->
                             Test.fail "a missing prompt was answered")
@@ -381,10 +438,14 @@ tests =
                 "Eval.prompts lists each case's messages with the suite's options"
                 (\_ ->
                     Test.equal
-                        [ ( "Paris?", Just 0.0, Just 42 ), ( "Rome?", Just 0.0, Just 42 ) ]
+                        [ ( "Paris?", Just 0.0, Just 42 )
+                        , ( "Rome?", Just 0.0, Just 42 )
+                        ]
                         (List.map
                             (\p ->
-                                ( List.reverse p.messages |> List.head |> Maybe.map .content |> Maybe.withDefault ""
+                                ( List.reverse p.messages |> List.head
+                                      |> Maybe.map .content
+                                      |> Maybe.withDefault ""
                                 , p.options.temperature
                                 , p.options.seed
                                 ))
@@ -399,15 +460,25 @@ tests =
                         rec =
                             { label = "device:webgpu"
                             , entries =
-                                [ { request = "[]", content = "a \"quoted\" answer", promptTokens = 3, completionTokens = 4 } ]
+                                [ { request = "[]"
+                                  , content = "a \"quoted\" answer"
+                                  , promptTokens = 3
+                                  , completionTokens = 4
+                                  }
+                                ]
                             }
                     in
-                        Test.equal (Ok rec) (Device.decodeRecording (Device.encodeRecording rec)))
+                        Test.equal
+                            (Ok rec)
+                            (Device.decodeRecording (Device.encodeRecording rec)))
           ]
     ]
 
 
-idle : { state : String, doneBytes : Int, totalBytes : Int }
+idle : { state : String
+, doneBytes : Int
+, totalBytes : Int
+}
 idle =
     { state = "idle", doneBytes = 0, totalBytes = 0 }
 
@@ -415,7 +486,9 @@ idle =
 prompts : List Device.Prompt
 prompts =
     [ { messages = [ Provider.user "one" ], options = Provider.defaultOptions }
-    , { messages = [ Provider.system "terse", Provider.user "two" ], options = Provider.defaultOptions }
+    , { messages = [ Provider.system "terse", Provider.user "two" ]
+      , options = Provider.defaultOptions
+      }
     ]
 
 
@@ -426,11 +499,11 @@ echo =
             Task.succeed
                 { content =
                     "echo: "
-                        ++ (List.reverse messages
-                                |> List.head
-                                |> Maybe.map .content
-                                |> Maybe.withDefault "")
-                , usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+                        ++ (List.reverse messages |> List.head
+                               |> Maybe.map .content
+                               |> Maybe.withDefault "")
+                , usage =
+                    { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
                 })
 
 
@@ -465,11 +538,18 @@ parity =
                    Device.record "device:wasm-cpu" echo (Eval.prompts capitals)
                        |> Task.andThen
                               (\rec ->
-                                  Eval.runAs rec.label db (Device.replay rec) capitals
+                                  Eval.runAs
+                                      rec.label
+                                      db
+                                      (Device.replay rec)
+                                      capitals
                                       |> Task.andThen
                                              (\onDevice ->
                                                  Eval.run db echo capitals
                                                      |> Task.map
-                                                            (\live -> ( onDevice.passRate, live.passRate, onDevice.candidate )))))
+                                                            (\live ->
+                                                                ( onDevice.passRate
+                                                                , live.passRate
+                                                                , onDevice.candidate
+                                                                )))))
         |> Task.run
-

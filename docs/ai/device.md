@@ -170,10 +170,16 @@ violation.
 Measured on an Apple M-series Mac (16 GB) with the development model (Qwen2.5
 0.5B, Q4_0, 430 MB) and a 24-step `Std.Ai.Train` MLX adapter, asking one short
 question: Chromium WebGPU (a Metal adapter) answered in 0.45 s, Chromium CPU in
-5.5 s, WebKit CPU in 6.1 s; a local download of the model took 7 s in
-Chromium and 13 s in WebKit. The iOS 27 simulator, the Android 15 arm64
-emulator and the Mac app answered "The capital of France is Paris." on the
-device. The WebGPU answer with the adapter matched the server's word for word.
+5.5 s, WebKit CPU in 6.1 s. A local download of the model took 7 s in
+Chromium and 13 s in WebKit. The iOS 27 simulator (the model downloaded from
+the backend) and the Android 15 arm64 emulator (the model carried in the app
+with `--ai-embed`, 28 s from launch to the answer) answered "The capital of
+France is Paris." on the device. The Mac app ran the synthetic model on its
+managed engine. The WebGPU answer with the adapter matched the server's word
+for word. In `examples/75-ai-everywhere` a note's summary took 10.1 s on the
+CPU build and 0.8 s on WebGPU, and the self-check (three prompts on the
+device, scored on the server) took 27.1 s and 2.8 s, with both pass rates at
+100%.
 
 ## The server's routes
 

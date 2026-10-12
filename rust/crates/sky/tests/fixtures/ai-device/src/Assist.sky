@@ -13,9 +13,9 @@ import Std.Ai.Provider exposing (Provider)
 
 probeSlot : Endpoint
 probeSlot =
-    Endpoint.endpoint "probe"
-        |> Endpoint.withLocal (Local.model Local.devModel)
-        |> Endpoint.withDevice (Device.spec Device.Auto |> Device.withContext 2048)
+    Endpoint.endpoint "probe" |> Endpoint.withLocal (Local.model Local.devModel)
+        |> Endpoint.withDevice
+               (Device.spec Device.Auto |> Device.withContext 2048)
 
 
 assistant : Provider

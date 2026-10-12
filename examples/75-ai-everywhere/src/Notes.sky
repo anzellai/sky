@@ -1,13 +1,4 @@
-module Notes exposing
-    ( Note
-    , store
-    , database
-    , connect
-    , open
-    , all
-    , add
-    , remove
-    )
+module Notes exposing (Note, store, database, connect, open, all, add, remove)
 
 {-| The notes: a `Std.Db.Store` on the app's own SQLite file. The database is
 set in code (`database`); `SKY_DB_PATH` moves it (a SQLite file, or a
@@ -51,26 +42,27 @@ connect =
 -- | The database with the notes table created (idempotent).
 open : Task Error Db
 open =
-    connect |> Task.andThen (\db -> Store.create db store |> Task.map (\_ -> db))
+    connect
+        |> Task.andThen (\db -> Store.create db store |> Task.map (\_ -> db))
 
 
 -- | Every note, newest first.
 all : Task Error (List Note)
 all =
-    open
-        |> Task.andThen (\db -> Store.all db store)
+    open |> Task.andThen (\db -> Store.all db store)
         |> Task.map (List.sortBy (\n -> 0 - n.id))
 
 
 add : String -> String -> Task Error (List Note)
 add title body =
     open
-        |> Task.andThen (\db -> Store.insert db store { id = 0, title = title, body = body })
+        |> Task.andThen
+               (\db ->
+                   Store.insert db store { id = 0, title = title, body = body })
         |> Task.andThen (\_ -> all)
 
 
 remove : Int -> Task Error (List Note)
 remove id =
-    open
-        |> Task.andThen (\db -> Store.delete db store "id" (String.fromInt id))
+    open |> Task.andThen (\db -> Store.delete db store "id" (String.fromInt id))
         |> Task.andThen (\_ -> all)

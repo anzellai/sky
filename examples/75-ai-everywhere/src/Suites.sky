@@ -1,4 +1,4 @@
-module Suites exposing (summaries, score)
+module Suites exposing (summaries, score, scoreText)
 
 {-| The self-check: one eval suite measures the model where it runs. The
 client records the device's answers to the suite's prompts
@@ -23,9 +23,21 @@ summaries =
     Eval.suite
         "summaries"
         Assist.summaryPrompt
-        [ { id = "paris", input = "Booked the train to Paris for the conference on Monday.", expect = Contains "Paris", tags = [] }
-        , { id = "dentist", input = "Dentist appointment moved to Thursday at 3pm.", expect = Contains "Thursday", tags = [] }
-        , { id = "groceries", input = "Buy milk, eggs and bread on the way home.", expect = Contains "milk", tags = [] }
+        [ { id = "paris"
+          , input = "Booked the train to Paris for the conference on Monday."
+          , expect = Contains "Paris"
+          , tags = []
+          }
+        , { id = "dentist"
+          , input = "Dentist appointment moved to Thursday at 3pm."
+          , expect = Contains "Thursday"
+          , tags = []
+          }
+        , { id = "groceries"
+          , input = "Buy milk, eggs and bread on the way home."
+          , expect = Contains "milk"
+          , tags = []
+          }
         ]
         |> Eval.withOptions Assist.summaryOptions
 
@@ -44,8 +56,22 @@ score rec =
                    Eval.runAs rec.label db (Device.replay rec) summaries
                        |> Task.andThen
                               (\onDevice ->
-                                  Eval.runAs "server:notes" db (Device.provider "notes") summaries
+                                  Eval.runAs
+                                      "server:notes"
+                                      db
+                                      (Device.provider "notes")
+                                      summaries
                                       |> Task.map
                                              (\onServer ->
-                                                 rec.label ++ " passed " ++ percent onDevice.passRate
-                                                     ++ ", the server passed " ++ percent onServer.passRate)))
+                                                 rec.label ++ " passed "
+                                                     ++ percent
+                                                            onDevice.passRate
+                                                     ++ ", the server passed "
+                                                     ++ percent
+                                                            onServer.passRate)))
+
+
+-- | Score a recording the client sent as JSON (`Device.encodeRecording`).
+scoreText : String -> Task Error String
+scoreText text =
+    Task.fromResult (Device.decodeRecording text) |> Task.andThen score

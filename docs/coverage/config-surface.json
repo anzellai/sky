@@ -48,14 +48,14 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:2380 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:2412 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:13890 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:14917 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -78,7 +78,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:13765 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:14792 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
@@ -90,17 +90,17 @@
       "structural: rust/crates/sky/src/main.rs fn check_auth_secret — `sky doctor` tests for the `[live]` / `[auth]` section HEADERS inline, with no key read at all, to decide whether to check for an auth secret. Neither section is a key the scan can see."
     ],
     "name": [
-      "rust/crates/sky/src/main.rs:10741 (sky_toml_project_key)",
-      "rust/crates/sky/src/main.rs:10861 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:11761 (sky_toml_project_key)",
+      "rust/crates/sky/src/main.rs:11881 (sky_toml_project_key)"
     ],
     "root": [
-      "rust/crates/project/src/build.rs:2386 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:2418 (sky_toml_project_key)"
     ],
     "spa.wire": [
-      "rust/crates/sky/src/main.rs:5218 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:5302 (sky_toml_section_key)"
     ],
     "version": [
-      "rust/crates/sky/src/main.rs:10748 (sky_toml_project_key)"
+      "rust/crates/sky/src/main.rs:11768 (sky_toml_project_key)"
     ]
   },
   "read_without_doc": [

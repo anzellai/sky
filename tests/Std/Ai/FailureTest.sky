@@ -58,7 +58,8 @@ every =
           , logTail = "Killed"
           }
     , TrainingCancelled { runId = "support-0123456789ab", step = 40 }
-    , DeviceUnsupported { backend = "webgpu", reason = "WebGPU registered no GPU device" }
+    , DeviceUnsupported
+          { backend = "webgpu", reason = "WebGPU registered no GPU device" }
     , StorageDenied { needBytes = 472000000, availableBytes = 100000000 }
     ]
 

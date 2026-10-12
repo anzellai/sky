@@ -1264,8 +1264,7 @@ ggufKv k v =
 ggufAdapter : String -> String
 ggufAdapter tag =
     Encoding.hexDecode
-        ("4747554603000000" ++ le8 0 ++ le8 3
-            ++ ggufKv "general.type" "adapter"
+        ("4747554603000000" ++ le8 0 ++ le8 3 ++ ggufKv "general.type" "adapter"
             ++ ggufKv "adapter.type" "lora"
             ++ ggufKv "sky.tag" tag)
         |> Result.withDefault ""
@@ -1276,36 +1275,49 @@ ggufAdapter tag =
 deviceVersion : World -> Bool -> Bool -> String -> Task Error Registry.Version
 deviceVersion w scrubbed registered tag =
     let
-        rows = Dataset.fromList [ { prompt = "mail me at a@b.example", completion = "ok" }, { prompt = "b", completion = "c" } ]
-
+        rows =
+            Dataset.fromList
+                [ { prompt = "mail me at a@b.example", completion = "ok" }
+                , { prompt = "b", completion = "c" }
+                ]
         prepared =
             if scrubbed then
                 rows |> Dataset.scrub (Scrub.forInstruction Scrub.defaults)
 
             else
                 rows
-
         path = w.dir ++ "/" ++ tag ++ ".gguf"
     in
-        prepared
-            |> Dataset.unsplit
-            |> Dataset.freeze (Dataset.folder (w.dir ++ "/datasets") ("device-" ++ tag)) Dataset.instructionCodec
+        prepared |> Dataset.unsplit
+            |> Dataset.freeze
+                   (Dataset.folder (w.dir ++ "/datasets") ("device-" ++ tag))
+                   Dataset.instructionCodec
             |> Task.andThen
                    (\v ->
                        (if registered then
-                            Registry.registerDataset w.reg (Dataset.manifest v) (Dataset.blobPath v)
-                                |> Task.map (\_ -> ())
+                           Registry.registerDataset
+                               w.reg
+                               (Dataset.manifest v)
+                               (Dataset.blobPath v)
+                               |> Task.map (\_ -> ())
 
-                        else
-                            Task.succeed ())
-                           |> Task.andThen (\_ -> File.writeFile path (ggufAdapter tag))
+                       else
+                           Task.succeed ())
+                           |> Task.andThen
+                                  (\_ -> File.writeFile path (ggufAdapter tag))
                            |> Task.andThen
                                   (\_ ->
                                       Registry.register
                                           w.reg
                                           "device-lora"
-                                          { path = path, format = Gguf, method = Lora }
-                                          { lineage | datasetDigest = (Dataset.manifest v).digest }))
+                                          { path = path
+                                          , format = Gguf
+                                          , method = Lora
+                                          }
+                                          { lineage
+                                              | datasetDigest =
+                                                  (Dataset.manifest v).digest
+                                          }))
 
 
 cleared : Result Error ( Maybe String, Bool, List String )
@@ -1316,21 +1328,36 @@ cleared =
                    deviceVersion w True True "ok"
                        |> Task.andThen
                               (\v ->
-                                  Registry.allowOnDevice w.reg v "  reviewed: no personal data in the weights  "
-                                      |> Task.andThen (\_ -> Registry.version w.reg "device-lora" v.number)
+                                  Registry.allowOnDevice
+                                      w.reg
+                                      v
+                                      "  reviewed: no personal data in the weights  "
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.version
+                                                     w.reg
+                                                     "device-lora"
+                                                     v.number)
                                       |> Task.andThen
                                              (\after ->
-                                                 (Registry.resolver (Task.succeed w.reg)).resolve
-                                                     ("registry:" ++ Registry.label after)
+                                                 (Registry.resolver
+                                                     (Task.succeed w.reg)).resolve
+                                                     ("registry:"
+                                                         ++ Registry.label after)
                                                      False
                                                      |> Task.andThen
                                                             (\ad ->
-                                                                Registry.history w.reg "device-lora" "device"
+                                                                Registry.history
+                                                                    w.reg
+                                                                    "device-lora"
+                                                                    "device"
                                                                     |> Task.map
                                                                            (\events ->
                                                                                ( after.onDevice
                                                                                , ad.onDevice
-                                                                               , List.map .action events
+                                                                               , List.map
+                                                                                     .action
+                                                                                     events
                                                                                ))))))
         |> Task.run
 
@@ -1338,7 +1365,11 @@ cleared =
 refusal : (World -> Task Error Registry.Version) -> String -> Result Error ()
 refusal make reason =
     world
-        |> Task.andThen (\w -> make w |> Task.andThen (\v -> Registry.allowOnDevice w.reg v reason))
+        |> Task.andThen
+               (\w ->
+                   make w
+                       |> Task.andThen
+                              (\v -> Registry.allowOnDevice w.reg v reason))
         |> Task.run
 
 
@@ -1348,27 +1379,38 @@ deviceTests =
           "allowOnDevice clears a GGUF version trained on a scrubbed, registered dataset, audited"
           (\_ ->
               Test.equal
-                  (Ok ( Just "reviewed: no personal data in the weights", True, [ "allow-on-device" ] ))
+                  (Ok
+                      ( Just "reviewed: no personal data in the weights"
+                      , True
+                      , [ "allow-on-device" ]
+                      ))
                   cleared)
     , Test.test
           "allowOnDevice refuses a version whose dataset was not scrubbed"
           (\_ ->
-              expectFailure isNotPromotable "NotPromotable"
+              expectFailure
+                  isNotPromotable
+                  "NotPromotable"
                   (refusal (\w -> deviceVersion w False True "raw") "ok"))
     , Test.test
           "allowOnDevice refuses a version whose dataset is not in the registry"
           (\_ ->
-              expectFailure isNotPromotable "NotPromotable"
+              expectFailure
+                  isNotPromotable
+                  "NotPromotable"
                   (refusal (\w -> deviceVersion w True False "unknown") "ok"))
     , Test.test
           "allowOnDevice refuses a safetensors version: a device loads GGUF only"
           (\_ ->
-              expectFailure isNotPromotable "NotPromotable"
+              expectFailure
+                  isNotPromotable
+                  "NotPromotable"
                   (refusal (\w -> registerTag w "st") "ok"))
     , Test.test
           "allowOnDevice needs a reason"
           (\_ ->
-              expectFailure isInvalid "InvalidSetting"
+              expectFailure
+                  isInvalid
+                  "InvalidSetting"
                   (refusal (\w -> deviceVersion w True True "noreason") "   "))
     ]
-

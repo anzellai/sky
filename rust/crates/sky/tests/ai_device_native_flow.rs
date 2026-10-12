@@ -421,6 +421,15 @@ fn desktop_mac_runs_the_slot_on_the_managed_engine() {
         .spawn()
         .expect("start the desktop app");
     let answered = backend.wait_for("SKY-PROBE answer=", 600);
+    // SIGTERM: the app stops the engine it started on its way out. A SIGKILL
+    // would leave the engine running until the next Sky program reaps it.
+    let _ = Command::new("kill")
+        .args(["-TERM", &app.id().to_string()])
+        .status();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::time::Instant::now() < deadline && app.try_wait().ok().flatten().is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
     let _ = app.kill();
     let _ = app.wait();
     assert!(answered, "no answer: {:?}", backend.reports());

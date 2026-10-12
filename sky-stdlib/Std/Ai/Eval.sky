@@ -232,7 +232,9 @@ with the options of each sample (temperature 0 and seed `seed + sample` by
 default). A device records the answers to them (`Std.Ai.Device.record`), and
 the server scores the recording with `Std.Ai.Device.replay` and `runAs`, so one
 suite measures the device and the server alike. -}
-prompts : Suite input -> List { messages : List Message, options : Provider.Options }
+prompts : Suite input -> List { messages : List Message
+, options : Provider.Options
+}
 prompts (Suite s) =
     List.concatMap
         (\c ->
@@ -241,7 +243,11 @@ prompts (Suite s) =
                     { messages = s.prompt c.input
                     , options =
                         { temperature = s.options.temperature
-                        , seed = Just (Maybe.withDefault (s.seed + sample) s.options.seed)
+                        , seed =
+                            Just
+                                (Maybe.withDefault
+                                    (s.seed + sample)
+                                    s.options.seed)
                         , maxTokens = s.options.maxTokens
                         , adapter = s.options.adapter
                         }

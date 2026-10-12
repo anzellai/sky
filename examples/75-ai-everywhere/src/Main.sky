@@ -52,8 +52,7 @@ config =
 -- | The native apps: an id, and the memory an on-device model needs on iOS.
 bundle : Bundle
 bundle =
-    Bundle.default
-        |> Bundle.withName "Private Notes"
+    Bundle.default |> Bundle.withName "Private Notes"
         |> Bundle.withId "org.skylang.privatenotes"
         |> Bundle.withEntitlement Bundle.IncreasedMemoryLimit
 
@@ -79,9 +78,9 @@ type Msg
     | BodyChanged String
     | Save String String
     | Delete Int
-    | DeviceRead (Result Error Device.Status)
+    | DeviceRead (Result Error String)
     | Download
-    | Downloaded (Result Error Device.Status)
+    | Downloaded (Result Error String)
     | Tick
     | Forget
     | Forgotten (Result Error ())
@@ -92,7 +91,7 @@ type Msg
     | HelpAnswered (Result Error String)
     | SelfCheck
     | Recorded (Result Error Device.Recording)
-    | Score (Result Error Device.Recording)
+    | Score (Result Error String)
     | Checked (Result Error String)
 
 
@@ -110,11 +109,9 @@ init _ =
       , check = ""
       , notice = ""
       }
-    , Cmd.batch
-          [ Cmd.perform Notes.all NotesLoaded
-          , Cmd.perform (Device.status "notes") DeviceRead
-          ]
+    , Cmd.perform Notes.all NotesLoaded
     )
+
 
 -- ── The device ──────────────────────────────────────────────────────
 describe : Device.Status -> String
@@ -125,8 +122,7 @@ describe s =
             "ready on this device (" ++ Device.backendText r.backend ++ ")"
 
         Device.NotDownloaded r ->
-            "can run on this device after a download of "
-                ++ megabytes r.bytes
+            "can run on this device after a download of " ++ megabytes r.bytes
 
         Device.Downloading r ->
             "downloading " ++ megabytes r.doneBytes ++ " of "
@@ -170,17 +166,6 @@ megabytes n =
     String.fromInt (n // 1000000) ++ " MB"
 
 
-isConsentPoint : Device.Status -> Bool
-isConsentPoint s =
-    case s of
-
-        Device.NotDownloaded _ ->
-            True
-
-        _ ->
-            False
-
-
 isReady : Device.Status -> Bool
 isReady s =
     case s of
@@ -192,13 +177,23 @@ isReady s =
             False
 
 
+-- The device's status, as the card shows it. It runs in the client: a
+-- device's status is the device's.
+deviceText : Task Error String
+deviceText =
+    Device.status "notes" |> Task.map describe
+
+
 -- Summarise on the device or the server, and say which.
 summarise : String -> Task Error ( String, String )
 summarise body =
     Device.status "notes"
         |> Task.andThen
                (\s ->
-                   Provider.chatWith Assist.summaryOptions Assist.assistant (Assist.summaryPrompt body)
+                   Provider.chatWith
+                       Assist.summaryOptions
+                       Assist.assistant
+                       (Assist.summaryPrompt body)
                        |> Task.map
                               (\r ->
                                   ( r.content
@@ -218,12 +213,13 @@ recordHere =
                (\s ->
                    Device.record
                        (if isReady s then
-                            "device"
+                           "device"
 
-                        else
-                            "device (answered by the server)")
+                       else
+                           "device (answered by the server)")
                        Assist.assistant
                        (Eval.prompts Suites.summaries))
+
 
 -- ── Update ──────────────────────────────────────────────────────────
 update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
@@ -234,7 +230,7 @@ update msg model =
             ( { model | page = p }, Cmd.none )
 
         NotesLoaded (Ok ns) ->
-            ( { model | notes = ns }, Cmd.none )
+            ( { model | notes = ns }, Cmd.perform deviceText DeviceRead )
 
         NotesLoaded (Err e) ->
             ( { model | notice = Error.toString e }, Cmd.none )
@@ -246,42 +242,61 @@ update msg model =
             ( { model | body = b }, Cmd.none )
 
         Save title body ->
-            ( { model | title = "", body = "" }, Cmd.perform (Notes.add title body) NotesLoaded )
+            ( { model | title = "", body = "" }
+            , Cmd.perform (Notes.add title body) NotesLoaded
+            )
 
         Delete id ->
             ( model, Cmd.perform (Notes.remove id) NotesLoaded )
 
         DeviceRead (Ok s) ->
-            ( { model | device = describe s, downloading = model.downloading && not (isReady s) }, Cmd.none )
+            ( { model
+                  | device = s
+                  , downloading =
+                      model.downloading && not (String.startsWith "ready" s)
+              }
+            , Cmd.none
+            )
 
         DeviceRead (Err e) ->
             ( { model | device = Error.toString e }, Cmd.none )
 
         Download ->
             ( { model | downloading = True, device = "starting the download" }
-            , Cmd.perform (Device.prepare "notes") Downloaded
+            , Cmd.perform
+                  (Device.prepare "notes" |> Task.map describe)
+                  Downloaded
             )
 
         Downloaded (Ok s) ->
-            ( { model | downloading = False, device = describe s }, Cmd.none )
+            ( { model | downloading = False, device = s }, Cmd.none )
 
         Downloaded (Err e) ->
-            ( { model | downloading = False, device = "the download failed: " ++ Error.toString e }, Cmd.none )
+            ( { model
+                  | downloading = False
+                  , device = "the download failed: " ++ Error.toString e
+              }
+            , Cmd.none
+            )
 
         Tick ->
-            ( model, Cmd.perform (Device.status "notes") DeviceRead )
+            ( model, Cmd.perform deviceText DeviceRead )
 
         Forget ->
             ( model, Cmd.perform (Device.evict "notes") Forgotten )
 
         Forgotten _ ->
-            ( model, Cmd.perform (Device.status "notes") DeviceRead )
+            ( model, Cmd.perform deviceText DeviceRead )
 
         Summarise id body ->
             ( model, Cmd.perform (summarise body) (Summarised id) )
 
         Summarised id (Ok ( text, badge )) ->
-            ( { model | summaries = ( id, text ++ "  [" ++ badge ++ "]" ) :: List.filter (\( i, _ ) -> i /= id) model.summaries }
+            ( { model
+                  | summaries =
+                      ( id, text ++ "  [" ++ badge ++ "]" )
+                          :: List.filter (\( i, _ ) -> i /= id) model.summaries
+              }
             , Cmd.none
             )
 
@@ -294,8 +309,13 @@ update msg model =
         AskHelp q ->
             ( { model | answer = "asking the server" }
             , Cmd.perform
-                  (Provider.chatWith Assist.summaryOptions Assist.help
-                      [ Provider.system "You help people use a private notes app. Answer in two sentences.", Provider.user q ]
+                  (Provider.chatWith
+                      Assist.summaryOptions
+                      Assist.help
+                      [ Provider.system
+                            "You help people use a private notes app. Answer in two sentences."
+                      , Provider.user q
+                      ]
                       |> Task.map .content)
                   HelpAnswered
             )
@@ -307,16 +327,21 @@ update msg model =
             ( { model | answer = Error.toString e }, Cmd.none )
 
         SelfCheck ->
-            ( { model | check = "asking the device" }, Cmd.perform recordHere Recorded )
+            ( { model | check = "asking the device" }
+            , Cmd.perform recordHere Recorded
+            )
 
         Recorded (Ok rec) ->
-            ( { model | check = "scoring on the server" }, Cmd.perform (Task.succeed rec) Score )
+            -- The recording crosses to the server as its JSON text.
+            ( { model | check = "scoring on the server" }
+            , Cmd.perform (Task.succeed (Device.encodeRecording rec)) Score
+            )
 
         Recorded (Err e) ->
             ( { model | check = Error.toString e }, Cmd.none )
 
-        Score (Ok rec) ->
-            ( model, Cmd.perform (Suites.score rec) Checked )
+        Score (Ok text) ->
+            ( model, Cmd.perform (Suites.scoreText text) Checked )
 
         Score (Err e) ->
             ( { model | check = Error.toString e }, Cmd.none )
@@ -336,6 +361,7 @@ subscriptions model =
 
     else
         Sub.none
+
 
 -- ── View ────────────────────────────────────────────────────────────
 accent : Ui.Color
@@ -357,22 +383,38 @@ button id label msg =
 
 nav : Element Msg
 nav =
-    Ui.row [ Ui.spacing 16 ]
+    Ui.row
+        [ Ui.spacing 16 ]
         [ Ui.link [ Font.color accent ] { url = "/", label = Ui.text "Notes" }
-        , Ui.link [ Font.color accent ] { url = "/help", label = Ui.text "Help" }
-        , Ui.link [ Font.color accent ] { url = "/selfcheck", label = Ui.text "Self-check" }
+        , Ui.link
+              [ Font.color accent ]
+              { url = "/help", label = Ui.text "Help" }
+        , Ui.link
+              [ Font.color accent ]
+              { url = "/selfcheck", label = Ui.text "Self-check" }
         ]
 
 
 deviceCard : Model -> Element Msg
 deviceCard model =
     Ui.column
-        [ Ui.padding 12, Ui.spacing 8, Border.rounded 8, Background.color (Ui.rgb255 241 245 249), Ui.width Ui.fill ]
-        [ Ui.el [ Ui.htmlAttribute "id" "device" ] (Ui.text ("Assistant: " ++ model.device))
+        [ Ui.padding 12
+        , Ui.spacing 8
+        , Border.rounded 8
+        , Background.color (Ui.rgb255 241 245 249)
+        , Ui.width Ui.fill
+        ]
+        [ Ui.el
+              [ Ui.htmlAttribute "id" "device" ]
+              (Ui.text ("Assistant: " ++ model.device))
         , if String.startsWith "can run on this device" model.device then
-              Ui.column [ Ui.spacing 6 ]
-                  [ Ui.paragraph []
-                        [ Ui.text "Download the assistant to this device? Your notes are then summarised here and never sent for it. The model comes from this app's server and is checked before use." ]
+              Ui.column
+                  [ Ui.spacing 6 ]
+                  [ Ui.paragraph
+                        []
+                        [ Ui.text
+                              "Download the assistant to this device? Your notes are then summarised here and never sent for it. The model comes from this app's server and is checked before use."
+                        ]
                   , button "download" "Download" Download
                   ]
 
@@ -386,54 +428,100 @@ deviceCard model =
 
 summaryOf : Model -> Int -> String
 summaryOf model id =
-    List.filter (\( i, _ ) -> i == id) model.summaries
-        |> List.head
+    List.filter (\( i, _ ) -> i == id) model.summaries |> List.head
         |> Maybe.map (\( _, s ) -> s)
         |> Maybe.withDefault ""
 
 
 noteView : Model -> Note -> Element Msg
 noteView model n =
-    Ui.column [ Ui.spacing 6, Ui.padding 10, Border.width 1, Border.color (Ui.rgb255 226 232 240), Border.rounded 6, Ui.width Ui.fill ]
+    Ui.column
+        [ Ui.spacing 6
+        , Ui.padding 10
+        , Border.width 1
+        , Border.color (Ui.rgb255 226 232 240)
+        , Border.rounded 6
+        , Ui.width Ui.fill
+        ]
         [ Ui.el [ Font.bold ] (Ui.text n.title)
         , Ui.paragraph [] [ Ui.text n.body ]
-        , Ui.row [ Ui.spacing 8 ]
-              [ button ("summarise-" ++ String.fromInt n.id) "Summarise" (Summarise n.id n.body)
+        , Ui.row
+              [ Ui.spacing 8 ]
+              [ button
+                    ("summarise-" ++ String.fromInt n.id)
+                    "Summarise"
+                    (Summarise n.id n.body)
               , button ("delete-" ++ String.fromInt n.id) "Delete" (Delete n.id)
               ]
-        , Ui.el [ Ui.htmlAttribute "id" ("summary-" ++ String.fromInt n.id), Font.italic ] (Ui.text (summaryOf model n.id))
+        , Ui.el
+              [ Ui.htmlAttribute "id" ("summary-" ++ String.fromInt n.id)
+              , Font.italic
+              ]
+              (Ui.text (summaryOf model n.id))
         ]
 
 
 notesPage : Model -> Element Msg
 notesPage model =
-    Ui.column [ Ui.spacing 12, Ui.width Ui.fill ]
+    Ui.column
+        [ Ui.spacing 12, Ui.width Ui.fill ]
         [ deviceCard model
-        , Input.text [ Ui.htmlAttribute "id" "title" ]
-              { onChange = TitleChanged, text = model.title, placeholder = Just (Input.placeholder [] (Ui.text "Title")), label = Input.labelAbove [] (Ui.text "Title") }
-        , Input.multiline [ Ui.htmlAttribute "id" "body" ]
-              { onChange = BodyChanged, text = model.body, placeholder = Just (Input.placeholder [] (Ui.text "Your note")), label = Input.labelAbove [] (Ui.text "Note"), spellcheck = True }
+        , Input.text
+              [ Ui.htmlAttribute "id" "title" ]
+              { onChange = TitleChanged
+              , text = model.title
+              , placeholder = Just (Input.placeholder [] (Ui.text "Title"))
+              , label = Input.labelAbove [] (Ui.text "Title")
+              }
+        , Input.multiline
+              [ Ui.htmlAttribute "id" "body" ]
+              { onChange = BodyChanged
+              , text = model.body
+              , placeholder = Just (Input.placeholder [] (Ui.text "Your note"))
+              , label = Input.labelAbove [] (Ui.text "Note")
+              , spellcheck = True
+              }
         , button "save" "Save" (Save model.title model.body)
-        , Ui.column [ Ui.spacing 8, Ui.width Ui.fill ] (List.map (noteView model) model.notes)
+        , Ui.column
+              [ Ui.spacing 8, Ui.width Ui.fill ]
+              (List.map (noteView model) model.notes)
         ]
 
 
 helpPage : Model -> Element Msg
 helpPage model =
-    Ui.column [ Ui.spacing 12, Ui.width Ui.fill ]
-        [ Ui.paragraph [] [ Ui.text "Ask how the app works. The server's own model answers." ]
-        , Input.text [ Ui.htmlAttribute "id" "question" ]
-              { onChange = QuestionChanged, text = model.question, placeholder = Nothing, label = Input.labelAbove [] (Ui.text "Question") }
+    Ui.column
+        [ Ui.spacing 12, Ui.width Ui.fill ]
+        [ Ui.paragraph
+              []
+              [ Ui.text "Ask how the app works. The server's own model answers."
+              ]
+        , Input.text
+              [ Ui.htmlAttribute "id" "question" ]
+              { onChange = QuestionChanged
+              , text = model.question
+              , placeholder = Nothing
+              , label = Input.labelAbove [] (Ui.text "Question")
+              }
         , button "ask" "Ask" (AskHelp model.question)
-        , Ui.paragraph [ Ui.htmlAttribute "id" "answer" ] [ Ui.text model.answer ]
+        , Ui.paragraph
+              [ Ui.htmlAttribute "id" "answer" ]
+              [ Ui.text model.answer ]
         ]
 
 
 checkPage : Model -> Element Msg
 checkPage model =
-    Ui.column [ Ui.spacing 12, Ui.width Ui.fill ]
-        [ Ui.paragraph [] [ Ui.text "One eval suite, three short notes: the device answers, the server scores its answers and its own." ]
-        , Ui.el [ Ui.htmlAttribute "id" "device" ] (Ui.text ("Assistant: " ++ model.device))
+    Ui.column
+        [ Ui.spacing 12, Ui.width Ui.fill ]
+        [ Ui.paragraph
+              []
+              [ Ui.text
+                    "One eval suite, three short notes: the device answers, the server scores its answers and its own."
+              ]
+        , Ui.el
+              [ Ui.htmlAttribute "id" "device" ]
+              (Ui.text ("Assistant: " ++ model.device))
         , button "selfcheck" "Run the self-check" SelfCheck
         , Ui.paragraph [ Ui.htmlAttribute "id" "check" ] [ Ui.text model.check ]
         ]
@@ -441,10 +529,19 @@ checkPage model =
 
 view : Model -> Element Msg
 view model =
-    Ui.column [ Ui.padding 24, Ui.spacing 16, Ui.width (Ui.fill |> Ui.maximum 720), Ui.centerX ]
+    Ui.column
+        [ Ui.padding 24
+        , Ui.spacing 16
+        , Ui.width (Ui.fill |> Ui.maximum 720)
+        , Ui.centerX
+        ]
         [ Ui.el [ Font.size 24, Font.bold ] (Ui.text "Private Notes")
         , nav
-        , if model.notice == "" then Ui.none else Ui.el [ Font.color (Ui.rgb255 185 28 28) ] (Ui.text model.notice)
+        , if model.notice == "" then
+              Ui.none
+
+          else
+              Ui.el [ Font.color (Ui.rgb255 185 28 28) ] (Ui.text model.notice)
         , case model.page of
 
               "help" ->
@@ -459,7 +556,12 @@ view model =
 
 
 appDef =
-    App.app { init = init, update = update, view = view, subscriptions = subscriptions }
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
         |> App.withRoutes
                [ App.route "/" "notes"
                , App.route "/help" "help"

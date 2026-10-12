@@ -21,15 +21,12 @@ import Assist
 
 bundle : Bundle
 bundle =
-    Bundle.default
-        |> Bundle.withName "Sky Device Probe"
+    Bundle.default |> Bundle.withName "Sky Device Probe"
         |> Bundle.withId "com.example.deviceprobe"
         |> Bundle.withEntitlement Bundle.IncreasedMemoryLimit
 
-
 type alias Model =
     { status : String }
-
 
 type Msg
     = StatusGot (Result Error Device.Status)
@@ -42,6 +39,7 @@ type Msg
 describe : Device.Status -> String
 describe s =
     case s of
+
         Device.Ready r ->
             "ready:" ++ Device.backendText r.backend
 
@@ -69,9 +67,15 @@ ask : Cmd.Cmd Msg
 ask =
     Cmd.perform
         (Provider.chatWith
-            { temperature = Just 0.0, seed = Just 1, maxTokens = Just 32, adapter = Nothing }
+            { temperature = Just 0.0
+            , seed = Just 1
+            , maxTokens = Just 32
+            , adapter = Nothing
+            }
             Assist.assistant
-            [ Provider.system "Answer in one short sentence.", Provider.user "What is the capital of France?" ])
+            [ Provider.system "Answer in one short sentence."
+            , Provider.user "What is the capital of France?"
+            ])
         Answered
 
 
@@ -83,19 +87,27 @@ init _ =
 update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
 update msg model =
     case msg of
+
         StatusGot (Ok s) ->
             ( { model | status = describe s }
-            , Cmd.batch [ report ("status=" ++ describe s), Cmd.perform (Device.prepare "probe") Prepared ]
+            , Cmd.batch
+                  [ report ("status=" ++ describe s)
+                  , Cmd.perform (Device.prepare "probe") Prepared
+                  ]
             )
 
         StatusGot (Err e) ->
             ( model, report ("status=err:" ++ Error.toString e) )
 
         Prepared (Ok s) ->
-            ( { model | status = describe s }, Cmd.batch [ report ("prepared=" ++ describe s), ask ] )
+            ( { model | status = describe s }
+            , Cmd.batch [ report ("prepared=" ++ describe s), ask ]
+            )
 
         Prepared (Err e) ->
-            ( model, Cmd.batch [ report ("prepared=err:" ++ Error.toString e), ask ] )
+            ( model
+            , Cmd.batch [ report ("prepared=err:" ++ Error.toString e), ask ]
+            )
 
         Answered (Ok r) ->
             ( { model | status = r.content }, report ("answer=" ++ r.content) )
@@ -119,6 +131,11 @@ view model =
 
 
 main =
-    App.app { init = init, update = update, view = view, subscriptions = \_ -> Sub.none }
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
         |> App.withNotFound ()
         |> App.run

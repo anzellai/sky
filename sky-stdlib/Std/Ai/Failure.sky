@@ -520,7 +520,8 @@ facts f =
                 )
 
         DeviceUnsupported r ->
-            ( "this device cannot run the model on " ++ r.backend ++ ": " ++ r.reason
+            ( "this device cannot run the model on " ++ r.backend ++ ": "
+                  ++ r.reason
             , [ ( "backend", r.backend ), ( "reason", r.reason ) ]
             )
 
@@ -530,7 +531,8 @@ facts f =
                 available = String.fromInt r.availableBytes
             in
                 ( "the device model needs " ++ need ++ " bytes of storage and "
-                      ++ available ++ " are available"
+                      ++ available
+                      ++ " are available"
                 , [ ( "needBytes", need ), ( "availableBytes", available ) ]
                 )
 
