@@ -228,105 +228,105 @@
 #   match for the message and the attributes, R6) and decodes through
 #   monomorphic helpers instead of `Maybe.map` lambdas (R12 via R1); the Error
 #   kernels and the Provider rewrite below account for the rest.
-#   Rows still above origin/main, per cause:
-#   66-slack-agent 147 (origin 142, +5). The `Std.Ai.Provider` rewrite: the
-#     request body is built with `Json.Encode` so that an unset option is not
-#     sent, where origin used `Codec.toJson` for a fixed shape: the
-#     `JsonEnc_encode` return (R5) and the `JsonE.list messageValue` callback
-#     narrow (R1, erased kernel HOF) are +2. The built-in backends are now one
-#     `Wire` transport, so `embeddingsUrl` is reachable from `chat`:
-#     `String.endsWith` and `String.dropRight` returns (R5) are +2. Decoding
-#     after the transport adds one `Task.andThen` callback narrow (R5) +1. Not
-#     closed now: each needs a typed kernel return (R5, §5.3) for a Json /
-#     String / Task kernel, which is a change to every row.
-#   sky-bundled/console 330 (origin/main 292, recorded but never measured on
-#     either parent; the origin sources measure 276 with this compiler). +54
-#     is the new AI tab (AiTab.sky, State.sky, View.encodeFilters), and no
-#     token is an open row: 28 `String.fromInt`, 3 `String.left`, 3
-#     `Encoding.urlEncode`, 2 `String.toUpper`, 1 `String.join`, 1
-#     `Basics.not` and 8 `::` / `List.concat` returns (R5, 46); 5 empty list
-#     literals in the annotated `emptyAiData` (R1, primitive join); 3
-#     `List.map` callback narrows in the panels (R1). Not closed now: R5 needs
-#     typed kernel returns (`rt.String_fromIntT` exists and takes an `int`, not
-#     the `any` the twin route passes), and the empty-literal R1 needs
-#     slot-typed construction of `[]` (§5.2).
-00-standard-libs	adapter=0	dispatch=0	narrow=164
+#   The two rows this note listed as still above origin/main
+#   (66-slack-agent 147, sky-bundled/console 330) were closed by the next
+#   transition.
+# ── Recorded transition, 2026-10-12 — typed kernel returns (R5, §5.3) ──
+#   narrow 14423 -> 12669 (-1754), 61 rows tightened, none raised, adapter 0,
+#   dispatch 0, all 80 rows measured (the four FFI examples after `sky install`).
+#   `kernel_typed_return_twin` (lower.rs) routes a fully applied
+#   String.fromInt / toUpper / toLower / startsWith / endsWith / contains /
+#   join / left / right / dropLeft / dropRight, Encoding.urlEncode, Basics.not
+#   and Json.Encode.encode call to a runtime twin that returns the result's Go
+#   type, so the call site narrows nothing. A twin parameter typed `int` /
+#   `string` / `bool` / `[]string` is used only when the argument lowers to
+#   exactly that type (doc 14 §1, per call site); otherwise the erased call
+#   stays. An empty list literal in a typed slot is built at the slot's type
+#   (R1, §5.2). Twins are checked against the erased kernels in
+#   runtime-go/rt/kernel_twins_test.go; the rt package builds for wasm.
+#   Every row is now at or below origin/main 03d61922f: 66-slack-agent 136
+#   (origin 142), sky-bundled/console 204 (origin 292), apps/relay 142
+#   (origin 176), 09-live-counter 101 (origin 125). The four rows that were
+#   UNMEASURED without a generated FFI surface now measure 03-tea-external 3,
+#   05-mux-server 3, 08-notes-app 361 (was carried at 403), 13-skyshop 1194
+#   (was carried at 1260).
+00-standard-libs	adapter=0	dispatch=0	narrow=141
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
 03-tea-external	adapter=0	dispatch=0	narrow=3
-04-local-pkg	adapter=0	dispatch=0	narrow=2
+04-local-pkg	adapter=0	dispatch=0	narrow=1
 05-mux-server	adapter=0	dispatch=0	narrow=3
-06-json	adapter=0	dispatch=0	narrow=70
-07-todo-cli	adapter=0	dispatch=0	narrow=170
-08-notes-app	adapter=0	dispatch=0	narrow=403
-09-live-counter	adapter=0	dispatch=0	narrow=125
-10-live-component	adapter=0	dispatch=0	narrow=129
-12-skyvote	adapter=0	dispatch=0	narrow=442
-13-skyshop	adapter=0	dispatch=0	narrow=1260
+06-json	adapter=0	dispatch=0	narrow=61
+07-todo-cli	adapter=0	dispatch=0	narrow=159
+08-notes-app	adapter=0	dispatch=0	narrow=361
+09-live-counter	adapter=0	dispatch=0	narrow=101
+10-live-component	adapter=0	dispatch=0	narrow=104
+12-skyvote	adapter=0	dispatch=0	narrow=405
+13-skyshop	adapter=0	dispatch=0	narrow=1194
 14-task-demo	adapter=0	dispatch=0	narrow=8
-15-http-server	adapter=0	dispatch=0	narrow=9
-16-skychess	adapter=0	dispatch=0	narrow=555
-17-skymon	adapter=0	dispatch=0	narrow=490
-18-job-queue	adapter=0	dispatch=0	narrow=220
-19-skyforum	adapter=0	dispatch=0	narrow=106
-20-cli-counter	adapter=0	dispatch=0	narrow=42
-21-tui-stopwatch	adapter=0	dispatch=0	narrow=50
-22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=56
-23-tui-todo	adapter=0	dispatch=0	narrow=68
-24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=74
-25-sky-console	adapter=0	dispatch=0	narrow=82
-26-ui-showcase	adapter=0	dispatch=0	narrow=332
-27-multi-session-chat	adapter=0	dispatch=0	narrow=206
-28-streaming-chat	adapter=0	dispatch=0	narrow=75
+15-http-server	adapter=0	dispatch=0	narrow=8
+16-skychess	adapter=0	dispatch=0	narrow=482
+17-skymon	adapter=0	dispatch=0	narrow=450
+18-job-queue	adapter=0	dispatch=0	narrow=197
+19-skyforum	adapter=0	dispatch=0	narrow=98
+20-cli-counter	adapter=0	dispatch=0	narrow=41
+21-tui-stopwatch	adapter=0	dispatch=0	narrow=47
+22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=53
+23-tui-todo	adapter=0	dispatch=0	narrow=64
+24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=69
+25-sky-console	adapter=0	dispatch=0	narrow=68
+26-ui-showcase	adapter=0	dispatch=0	narrow=262
+27-multi-session-chat	adapter=0	dispatch=0	narrow=196
+28-streaming-chat	adapter=0	dispatch=0	narrow=73
 29-webview-threejs-spike	adapter=0	dispatch=0	narrow=51
-30-sse-server-demo	adapter=0	dispatch=0	narrow=15
-31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=65
-32-sse-relay	adapter=0	dispatch=0	narrow=20
-33-websocket-echo	adapter=0	dispatch=0	narrow=5
-34-multi-tier-console	adapter=0	dispatch=0	narrow=68
-35-composite-generics	adapter=0	dispatch=0	narrow=156
-36-composite-server	adapter=0	dispatch=0	narrow=266
-37-composite-live-shop	adapter=0	dispatch=0	narrow=380
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=295
+30-sse-server-demo	adapter=0	dispatch=0	narrow=14
+31-webview-stopwatch-ui	adapter=0	dispatch=0	narrow=62
+32-sse-relay	adapter=0	dispatch=0	narrow=18
+33-websocket-echo	adapter=0	dispatch=0	narrow=4
+34-multi-tier-console	adapter=0	dispatch=0	narrow=60
+35-composite-generics	adapter=0	dispatch=0	narrow=142
+36-composite-server	adapter=0	dispatch=0	narrow=242
+37-composite-live-shop	adapter=0	dispatch=0	narrow=322
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=245
 40-generic-adt-field	adapter=0	dispatch=0	narrow=2
 41-nested-curry	adapter=0	dispatch=0	narrow=4
 42-poly-record	adapter=0	dispatch=0	narrow=2
 43-composition	adapter=0	dispatch=0	narrow=2
-44-record-update	adapter=0	dispatch=0	narrow=3
-45-record-update-anon	adapter=0	dispatch=0	narrow=2
+44-record-update	adapter=0	dispatch=0	narrow=1
+45-record-update-anon	adapter=0	dispatch=0	narrow=1
 46-row-poly-result	adapter=0	dispatch=0	narrow=5
 47-func-field-record	adapter=0	dispatch=0	narrow=7
-48-tuple-unused-binding	adapter=0	dispatch=0	narrow=2
+48-tuple-unused-binding	adapter=0	dispatch=0	narrow=1
 49-xmodule-adt	adapter=0	dispatch=0	narrow=1
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=443
-53-record-update-map	adapter=0	dispatch=0	narrow=25
-54-record-fieldset-collision	adapter=0	dispatch=0	narrow=3
-55-store-partial-update	adapter=0	dispatch=0	narrow=132
-61-app-kanban	adapter=0	dispatch=0	narrow=251
-62-app-notes	adapter=0	dispatch=0	narrow=423
-63-app-chat	adapter=0	dispatch=0	narrow=427
-64-app-native	adapter=0	dispatch=0	narrow=271
-65-metadata-service	adapter=0	dispatch=0	narrow=26
-66-slack-agent	adapter=0	dispatch=0	narrow=147
-67-durable-counter	adapter=0	dispatch=0	narrow=77
-68-ai-dataset	adapter=0	dispatch=0	narrow=548
-69-ai-scrub	adapter=0	dispatch=0	narrow=99
-70-ai-synthetic	adapter=0	dispatch=0	narrow=696
-71-ai-registry	adapter=0	dispatch=0	narrow=956
-apps/dispatch	adapter=0	dispatch=0	narrow=399
-apps/fieldbook	adapter=0	dispatch=0	narrow=657
+52-blog-analytics	adapter=0	dispatch=0	narrow=378
+53-record-update-map	adapter=0	dispatch=0	narrow=21
+54-record-fieldset-collision	adapter=0	dispatch=0	narrow=2
+55-store-partial-update	adapter=0	dispatch=0	narrow=123
+61-app-kanban	adapter=0	dispatch=0	narrow=189
+62-app-notes	adapter=0	dispatch=0	narrow=354
+63-app-chat	adapter=0	dispatch=0	narrow=354
+64-app-native	adapter=0	dispatch=0	narrow=218
+65-metadata-service	adapter=0	dispatch=0	narrow=21
+66-slack-agent	adapter=0	dispatch=0	narrow=136
+67-durable-counter	adapter=0	dispatch=0	narrow=73
+68-ai-dataset	adapter=0	dispatch=0	narrow=491
+69-ai-scrub	adapter=0	dispatch=0	narrow=85
+70-ai-synthetic	adapter=0	dispatch=0	narrow=654
+71-ai-registry	adapter=0	dispatch=0	narrow=883
+apps/dispatch	adapter=0	dispatch=0	narrow=341
+apps/fieldbook	adapter=0	dispatch=0	narrow=532
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=497
-apps/relay	adapter=0	dispatch=0	narrow=175
-examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=67
-examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=67
-examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=260
+apps/ledger	adapter=0	dispatch=0	narrow=429
+apps/relay	adapter=0	dispatch=0	narrow=142
+examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=63
+examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=64
+examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=201
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
-examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=211
+examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=195
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=656
-sky-bundled/console	adapter=0	dispatch=0	narrow=330
-sky-bundled/doc	adapter=0	dispatch=0	narrow=55
+sky-bundled/ai	adapter=0	dispatch=0	narrow=600
+sky-bundled/console	adapter=0	dispatch=0	narrow=204
+sky-bundled/doc	adapter=0	dispatch=0	narrow=51
 test_pkg	adapter=0	dispatch=0	narrow=1
