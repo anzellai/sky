@@ -225,10 +225,13 @@ examples).
 
 ## The CLI
 
-The registry verbs open the registry on the app's database (`--db <dsn>`,
-else `SKY_DB_PATH`, else `DATABASE_URL`, else the project's `[database]`
-`url` or `path`), with the store at `--registry <url>` (which wins over the
-variable), else `SKY_AI_REGISTRY`. Each takes `--format json`.
+The registry verbs open the registry on the app's database. In a project with
+a pipeline (`src/Ai.sky`) that is the database its code names
+(`Pipeline.withDb`); `--db <dsn>` wins over it, and without a pipeline the
+database is `--db`, else `SKY_DB_PATH`, else `DATABASE_URL`. The store is
+`--registry <url>` (which wins over the variable), else `SKY_AI_REGISTRY`, else
+the pipeline's `withRegistry`. Nothing is read from `sky.toml`. Each takes
+`--format json`.
 
 ```bash
 sky ai promote support-lora 3 --to prod                 # on the attached evidence

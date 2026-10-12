@@ -50,14 +50,14 @@
   "config": {
     "_note": "counted over distinct paths: apps/ledger backs two member rows and must not have its sections counted twice.",
     "database_drivers": {
-      "sqlite": 16
+      "sqlite": 15
     },
     "paths_with_sky_toml": 63,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
       "[app]": 5,
-      "[database]": 16,
+      "[database]": 15,
       "[dependencies]": 1,
       "[live]": 2,
       "[source]": 59
@@ -486,7 +486,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 957,
+      "expected_assertions": 958,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -662,7 +662,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2603,
+    "stdlib_entries": 2605,
     "stdlib_modules": 123,
     "surfaces_covered": 180,
     "surfaces_covered_pct": 94.2,
@@ -2714,6 +2714,11 @@
             "by": "examples/52-blog-analytics (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/72-ai-support-desk (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 4
@@ -2755,6 +2760,11 @@
             "by": "examples/52-blog-analytics (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 3
@@ -16492,14 +16502,13 @@
     "symbols_unreferenced_generous": {
       "by_module": {
         "Sky.Config": {
-          "count": 15,
+          "count": 14,
           "symbols": [
             "Capacity",
             "JobStore",
             "LogFormat",
             "LogLevel",
             "Telemetry",
-            "apply",
             "withCsrf",
             "withJobs",
             "withLiveBroker",
@@ -16957,7 +16966,7 @@
           ]
         },
         "Std.App": {
-          "count": 17,
+          "count": 18,
           "symbols": [
             "BaseConfig",
             "DesktopOpts",
@@ -16967,6 +16976,7 @@
             "TerminalOpts",
             "WebOpts",
             "apiServerRoute",
+            "applyServerConfig",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -17705,7 +17715,7 @@
     "symbols_unreferenced_strict": {
       "by_module": {
         "Sky.Config": {
-          "count": 17,
+          "count": 16,
           "symbols": [
             "Capacity",
             "Database",
@@ -17714,7 +17724,6 @@
             "LogLevel",
             "Sessions",
             "Telemetry",
-            "apply",
             "withCsrf",
             "withJobs",
             "withLiveBroker",
@@ -18213,7 +18222,7 @@
           ]
         },
         "Std.App": {
-          "count": 20,
+          "count": 21,
           "symbols": [
             "BaseConfig",
             "Config",
@@ -18226,6 +18235,7 @@
             "TerminalOpts",
             "WebOpts",
             "apiServerRoute",
+            "applyServerConfig",
             "baseDefaults",
             "desktopDefaults",
             "mobileDefaults",
@@ -19041,7 +19051,7 @@
         }
       },
       "count": 845,
-      "pct_of_denominator": 32.5
+      "pct_of_denominator": 32.4
     }
   },
   "units": [
@@ -20363,19 +20373,16 @@
       ]
     },
     {
-      "db_drivers": [
-        "sqlite"
-      ],
+      "db_drivers": [],
       "gate": null,
       "id": "examples/72-ai-support-desk",
-      "modules_imported": 33,
+      "modules_imported": 34,
       "path": "examples/72-ai-support-desk",
-      "refs_generous": 206,
-      "refs_qualified": 188,
+      "refs_generous": 211,
+      "refs_qualified": 193,
       "role": "Example",
       "sky_files": 9,
       "sky_toml_sections": [
-        "[database]",
         "[source]"
       ]
     },
@@ -20882,8 +20889,8 @@
       "id": "tests/Std",
       "modules_imported": 42,
       "path": "tests/Std",
-      "refs_generous": 477,
-      "refs_qualified": 461,
+      "refs_generous": 481,
+      "refs_qualified": 465,
       "role": "SkySuite",
       "sky_files": 17,
       "sky_toml_sections": []

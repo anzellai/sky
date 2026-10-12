@@ -2916,8 +2916,10 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// 932 -> 956: measured by the `sky-suites` gate in v0.28.0 phase 2 part C
 /// (+13 `tests/Std/Ai/PipelineTest.sky`, +6 `RegistryTest`, +2
 /// `SyntheticTest`, +2 `DatasetTest`, +1 `EvalTest`), then 957 (+1
-/// `EvalTest`: `JsonShape` reads a fenced answer).
-pub const SKY_SUITES_EXPECTED: u64 = 957;
+/// `EvalTest`: `JsonShape` reads a fenced answer), then 958 (+1
+/// `DatasetTest`: `inspect` finds duplicates through the bounded spill set),
+/// measured by the `sky-suites` gate (37 suites).
+pub const SKY_SUITES_EXPECTED: u64 = 958;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.

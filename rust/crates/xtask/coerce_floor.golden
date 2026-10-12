@@ -296,6 +296,14 @@
 #   the fix branch's value: 68-ai-dataset 490 (491), 70-ai-synthetic 415
 #   (654), 71-ai-registry 839 (883), sky-bundled/ai 586 (600);
 #   72-ai-support-desk 465.
+# ── Recorded transition, 2026-10-12 — merge of fix/spa-init-perform ──
+#   narrow +7 over 2 rows, adapter 0, dispatch 0, every other row unchanged
+#   (81 of 81 measured). Both rows are new since origin/main. 68-ai-dataset
+#   490 -> 496: `Dataset.inspectWith` now checks duplicates through the bounded
+#   spill set (`dedupeOpen` / `Ai_dedupeFirst` / `dedupeClose`) inside a
+#   `Task.andThen` chain, and each erased Task callback narrows its argument
+#   (R5). 72-ai-support-desk 465 -> 466: the app connects its database in code
+#   (`Tickets.sky`) instead of through sky.toml.
 00-standard-libs	adapter=0	dispatch=0	narrow=130
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
@@ -357,11 +365,11 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=16
 66-slack-agent	adapter=0	dispatch=0	narrow=136
 67-durable-counter	adapter=0	dispatch=0	narrow=73
-68-ai-dataset	adapter=0	dispatch=0	narrow=490
+68-ai-dataset	adapter=0	dispatch=0	narrow=496
 69-ai-scrub	adapter=0	dispatch=0	narrow=78
 70-ai-synthetic	adapter=0	dispatch=0	narrow=415
 71-ai-registry	adapter=0	dispatch=0	narrow=839
-72-ai-support-desk	adapter=0	dispatch=0	narrow=465
+72-ai-support-desk	adapter=0	dispatch=0	narrow=466
 apps/dispatch	adapter=0	dispatch=0	narrow=341
 apps/fieldbook	adapter=0	dispatch=0	narrow=480
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2

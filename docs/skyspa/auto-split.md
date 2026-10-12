@@ -989,6 +989,26 @@ built from (`Cmd.batch [ <native leaves>, Spa.rpc … ]`). A native leaf that
 uses a `let`-bound value of the arm or a server-tainted binding fails the build,
 naming it.
 
+**`init`'s command runs on the server when it must (v0.28.0).** `init`'s
+command runs once when the client starts, unless the SSR page settled it. When
+that command reaches a server-only binding (a task that opens the database, an
+AI slot, a qualified binding of a server module, through a helper or a `let`)
+and is not the GET-safe read the SSR settles, the client cannot hold it. The
+split then gives `init` the follow-up treatment of a server branch: the client
+`init` keeps its model and sends one RPC, `POST /_rpc/SpaInit_`; the backend
+handler runs `init ()`'s command (`Spa_collectFollowUps`) and answers the
+follow-up Msgs as JSON; the client dispatches them in order through `update`
+(`AppliedSpaInit_`), and a follow-up it cannot decode, or a failed RPC, goes to
+`App.withRpcError`, else the console. `let` bindings that only the command used
+become `Cmd.none` in the client copy, and a `Std.Native` or navigation leaf
+runs in the client when the RPC is sent. Shapes the split cannot rewrite fail
+the build, naming the binding: an `init` whose body is not a `( model, cmd )`
+tuple (through `let … in`), or a model that uses a server-only binding.
+`spa_split::plan_init_rpc`; tests `init_command_reaching_server_bindings_runs_through_an_init_rpc`
+and `init_in_a_sibling_module_reaching_server_bindings_runs_through_an_init_rpc`.
+Before, `init` was copied verbatim and the client failed with `Undefined name`
+(`examples/72-ai-support-desk` under `--target web:app`).
+
 **Guard.** `App.withGuard` runs in the client before `update` for every Msg,
 exactly like Live (`Spa.withGuard`, `spaGuardedUpdate`); a rejected Msg keeps the
 model and runs no Cmd. The backend still runs the guard on every server branch
@@ -1038,7 +1058,8 @@ left (the SSR settle runs one round) and no write was suppressed (a GET never
 mutates). The client skips exactly the named commands, so a settled deep link
 makes no RPC and `onNavigate` runs once per navigation, as on Sky.Live. A
 command the server did not finish (a chained read, a suppressed write, an
-`init` command that is not GET-safe) still runs once on the client.
+`init` command that is not GET-safe) still runs once on the client; an `init`
+command that reaches server-only bindings runs through the init RPC (§20).
 
 **`update` without `case msg of`.** A wholly pure `update` with no `case` runs in
 the client as written. One that reaches a server effect fails with a message
@@ -1372,11 +1393,24 @@ is logged (`spa.session-check.failed`). The check never fails open.
 Sky.Live uses for a retired session id (the `sky_session_aliases` table on
 sqlite and postgres, a `sky:alias:` key on redis), under the key prefix
 `spa-sid:`. It expires with the token it ends, and the store's own alias sweep
-removes it. The store is resolved as for Sky.Live: `SKY_LIVE_STORE` /
-`SKY_LIVE_STORE_PATH`, else the project's `sky.toml` `[live] store` /
-`storePath` (the split copies these two lines into the backend manifest).
-`App.withConfig { store = … }` in the source is not read by the split backend:
-set the store in `sky.toml` or in the environment.
+removes it. The store is resolved as for Sky.Live: the operator's
+`SKY_LIVE_STORE` / `SKY_LIVE_STORE_PATH`, else the code
+(`App.withConfig (WebConfig { store = … })`, a top-level `config` with
+`Sky.Config.withSessions`), else a legacy `sky.toml` `[live] store` /
+`storePath`. The `--target web:app` synthesis carries `App.withConfig` and
+`App.withBase` into a `spaServerConfig_` boot task
+(`App.applyServerConfig`), which the backend runs before it listens: the
+session store, its `ttl` and `idleEvict`, `maxBodyBytes`, `csrf`, and the
+base log, database and telemetry land in the builder layer, so an operator's
+variable still wins and a `sky.toml` default does not (v0.28.0; before, the
+synthesis dropped both builders and the backend saw only `sky.toml` and the
+environment). The boot line names the source: `set by App.withConfig in the
+app's code`. The backend's port is not taken from `WebConfig`: it listens on
+`PORT` (default 8951). A static-only backend (no server branch) runs no
+configuration task: it keeps no session, store or database for it to reach. The split also copies the runtime tables of a legacy
+`sky.toml` (`[live] store` / `storePath`, `[database]`, `[log]`, `[analytics]`,
+`[jobs]`, `[env]`, `[security]`) into the backend manifest, for projects that
+still keep them; settings belong in code.
 
 **The boot log names the store, or says there is none.** A backend with a
 signed session opens the store at boot and logs

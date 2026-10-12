@@ -310,6 +310,7 @@ aiEvalDecoder =
         |> Pipeline.optional "verdict" Decode.string ""
         |> Pipeline.optional "failures" (Decode.list Decode.string) []
         |> Pipeline.optional "caseResults" (Decode.list aiEvalCaseDecoder) []
+        |> Pipeline.optional "source" Decode.string ""
 
 
 aiEvalCaseDecoder : Decode.Decoder AiEvalCase

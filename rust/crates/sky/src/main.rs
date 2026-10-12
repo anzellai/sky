@@ -2150,6 +2150,14 @@ struct AppFields {
     /// `Server.setConsoleAuth` before `Server.listen`. It is server-only: the
     /// console is mounted by the backend, and the wasm client never calls it.
     console_auth: Option<String>,
+    /// `App.withConfig` arguments (in order) and the last `App.withBase`
+    /// argument: the server side of the app's code configuration. Carried
+    /// into a `spaServerConfig_` boot task the split backend runs before it
+    /// listens (`App.applyServerConfig`), so the backend honours the session
+    /// store, TTL, CSRF switch, log, database and telemetry the code names, as
+    /// the Sky.Live build does (operator env > code > default).
+    server_configs: Vec<String>,
+    server_base: Option<String>,
     /// `App.withClientCrypto` — the typed opt-in that keeps end-to-end key
     /// material (Std.Crypto.Noise / Cpace / Kx / Sign / Kdf) in the wasm client.
     /// It takes no argument; the synthesis carries it as
@@ -2187,6 +2195,8 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withGuard",
     "withRpcError",
     "withConsoleAuth",
+    "withConfig",
+    "withBase",
 ];
 
 /// `Std.App` builders that do not apply to a Sky.Spa client build: terminal /
@@ -2195,11 +2205,9 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
 /// durable-model hooks. Reported by name as a warning, never silent. Any
 /// `with…` builder in NEITHER list fails the build (fail closed).
 const SPA_IGNORED_BUILDERS: &[&str] = &[
-    "withConfig",
     "withInput",
     "withWindow",
     "withOnKey",
-    "withBase",
     "withDurable",
     "withDurableId",
 ];
@@ -2263,6 +2271,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
     let mut rpc_error = None;
     let mut console_auth = None;
+    let mut server_configs: Vec<String> = Vec::new();
+    let mut server_base: Option<String> = None;
     let mut client_crypto = false;
     let mut dropped_builders: Vec<String> = Vec::new();
     for step in &value.steps {
@@ -2323,6 +2333,12 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
             "withGuard" => guard = Some(place("guard", arg)),
             "withRpcError" => rpc_error = Some(place("rpcError", arg)),
             "withConsoleAuth" => console_auth = Some(place("consoleAuth", arg)),
+            // Server-side code configuration (see `AppFields::server_configs`).
+            "withConfig" => {
+                let n = server_configs.len();
+                server_configs.push(place(&format!("config{n}"), arg));
+            }
+            "withBase" => server_base = Some(place("base", arg)),
             _ => unreachable!("carried builder list and match disagree: {name}"),
         }
     }
@@ -2339,6 +2355,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         guard,
         rpc_error,
         console_auth,
+        server_configs,
+        server_base,
         client_crypto,
         dropped_builders,
         hoisted,
@@ -2975,9 +2993,10 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
             "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
              into the synthesised client entry: {list}.\n  \
              `withRoutes` + `withNotFound` + `withHead` + `withOnNavigate` + `withRequest` + \
-             `withGuard` + `withRpcError` + `withConsoleAuth` cross the App→Spa synthesis \
-             (guard/request/console auth enforced server-side). The steps listed here (terminal / desktop input and window \
-             knobs, per-target config, base config, durable-model hooks) do not apply to a \
+             `withGuard` + `withRpcError` + `withConsoleAuth` + `withConfig` + `withBase` cross \
+             the App→Spa synthesis (guard/request/console auth and the code configuration \
+             enforced server-side). The steps listed here (terminal / desktop input and window \
+             knobs, durable-model hooks) do not apply to a \
              Sky.Spa client build; any other `App.with…` step fails the build.",
             n = fields.dropped_builders.len(),
             list = fields.dropped_builders.join(", "),
@@ -3204,6 +3223,24 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // dispatches into `update`, so a failed RPC reaches the app's own error
     // handling instead of being silently kept. Emitted only when the app
     // declares it; the default keeps the loud-log floor.
+    // Carry `App.withConfig` / `App.withBase` (configuration is code). A NAMED
+    // `spaServerConfig_` task the split backend runs at boot, before it
+    // listens; it reaches a server-only kernel, so the split keeps it out of
+    // the wasm client.
+    let server_config_binding = if fields.server_configs.is_empty() && fields.server_base.is_none()
+    {
+        String::new()
+    } else {
+        let aq = fields.import.qualifier_or_default();
+        format!(
+            "spaServerConfig_ =\n    {aq}.applyServerConfig [ {} ] {}\n\n\n",
+            fields.server_configs.join(", "),
+            fields
+                .server_base
+                .clone()
+                .unwrap_or_else(|| format!("{aq}.baseDefaults"))
+        )
+    };
     let rpc_error_binding = match &fields.rpc_error {
         Some(f) => format!("spaRpcError_ =\n    ({f})\n\n\n"),
         None => String::new(),
@@ -3281,6 +3318,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          {guard_binding}\
          {rpc_error_binding}\
          {console_auth_binding}\
+         {server_config_binding}\
          spaSubscriptions_ model_ =\n    ({subscriptions}) model_\n\n\n\
          spaView_ model_ =\n    \
          {spa_view_body}\n\n\n\
@@ -11542,8 +11580,9 @@ The project's AI pipeline (src/Ai.sky, Std.Ai.Pipeline):
                      run one of the pipeline's tasks
   members            list the pipeline's datasets, suites, slots and tasks
 The pipeline verbs take --test-mode (answer model calls from tests/mocks/, as sky test does).
-The registry verbs take --db <dsn> (else SKY_DB_PATH, DATABASE_URL, or the project's
-[database] path or url) and --registry <url> (else SKY_AI_REGISTRY).
+The registry verbs (promote, rollback, lineage) use the pipeline's database and registry
+in a project; each takes --db <dsn> (else SKY_DB_PATH, DATABASE_URL) and --registry <url>
+(else SKY_AI_REGISTRY).
 A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
 
 /// How a `sky ai` verb is run.
@@ -11590,9 +11629,15 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         {
             Some(AiMode::PipelineIfAny)
         }
-        ["rollback", reference, ..] if reference.contains('@') => Some(AiMode::Bundled),
-        ["lineage", "--dataset", digest, ..] if !digest.starts_with('-') => Some(AiMode::Bundled),
-        ["lineage", reference, ..] if reference.contains('@') => Some(AiMode::Bundled),
+        // The registry verbs run through the project's pipeline when there is
+        // one, so they act on the database and registry its code names
+        // (`Pipeline.withDb`, `withRegistry`); else the bundled program, on
+        // `--db` / `SKY_DB_PATH` / `DATABASE_URL`.
+        ["rollback", reference, ..] if reference.contains('@') => Some(AiMode::PipelineIfAny),
+        ["lineage", "--dataset", digest, ..] if !digest.starts_with('-') => {
+            Some(AiMode::PipelineIfAny)
+        }
+        ["lineage", reference, ..] if reference.contains('@') => Some(AiMode::PipelineIfAny),
         ["data", "freeze", arg, ..] if !arg.starts_with('-') => {
             if ai_project::freeze_names_a_dataset(arg, &cwd) {
                 Some(AiMode::Pipeline)
@@ -11635,7 +11680,7 @@ fn cmd_ai(args: &[String]) -> ExitCode {
             _ => {}
         }
     }
-    cmd_ai_bundled(args.clone(), &positional, &cwd, test_mode)
+    cmd_ai_bundled(args.clone(), &cwd, test_mode)
 }
 
 /// A pipeline verb: build (or reuse) the project's pipeline program and run
@@ -11663,7 +11708,7 @@ fn cmd_ai_pipeline(
             Ok(slots) if slots.iter().any(|s| s == slot) => {}
             Ok(_) => {
                 let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                return cmd_ai_bundled(args.to_vec(), positional, &cwd, test_mode);
+                return cmd_ai_bundled(args.to_vec(), &cwd, test_mode);
             }
             Err(e) => {
                 eprintln!("{e}");
@@ -11708,21 +11753,7 @@ fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&
 }
 
 /// A bundled verb: build (once per Sky build) and run `sky-bundled/ai`.
-fn cmd_ai_bundled(
-    mut args: Vec<String>,
-    positional: &[&str],
-    cwd: &Path,
-    test_mode: bool,
-) -> ExitCode {
-    if matches!(
-        positional.first().copied(),
-        Some("promote" | "rollback" | "lineage")
-    ) {
-        if let Some(dsn) = ai_registry_db_default(&args) {
-            args.push("--db".to_string());
-            args.push(dsn);
-        }
-    }
+fn cmd_ai_bundled(args: Vec<String>, cwd: &Path, test_mode: bool) -> ExitCode {
     let Some(repo_root) = assets_root_for(cwd) else {
         return ExitCode::FAILURE;
     };
@@ -11746,33 +11777,6 @@ fn cmd_ai_bundled(
     let bin = out_dir.join("app");
     let project = test_mode.then(|| locate_project_root(cwd)).flatten();
     run_ai_binary(&bin, &args, cwd, project.as_deref())
-}
-
-/// The database a registry verb (`sky ai promote | rollback | lineage`) opens
-/// when it names none: the project's own, as the app reads it. An explicit
-/// `--db`, `SKY_DB_PATH` or `DATABASE_URL` wins (the program reads the
-/// variables itself), so the CLI adds the project's `[database]` `url` or
-/// `path` only when none of them is set. A relative SQLite path is relative to
-/// the project directory, where the app runs.
-fn ai_registry_db_default(args: &[String]) -> Option<String> {
-    if args.iter().any(|a| a == "--db") {
-        return None;
-    }
-    let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
-    if set("SKY_DB_PATH") || set("DATABASE_URL") {
-        return None;
-    }
-    let cwd = std::env::current_dir().ok()?;
-    let root = locate_project_root(&cwd)?;
-    let value = project::sky_toml_section_key(&root, "database", "url")
-        .filter(|v| !v.is_empty())
-        .or_else(|| {
-            project::sky_toml_section_key(&root, "database", "path").filter(|v| !v.is_empty())
-        })?;
-    if value.contains("://") || Path::new(&value).is_absolute() {
-        return Some(value);
-    }
-    Some(root.join(value).to_string_lossy().into_owned())
 }
 
 // ---- bundled-app helpers -------------------------------------------------

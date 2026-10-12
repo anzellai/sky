@@ -161,6 +161,8 @@ func resolveStoreKindSource() (kind, source string) {
 		return "", ""
 	}
 	switch {
+	case isConfigApplied(name) && serverSettingSource(name) != "":
+		return v, serverSettingSource(name) + " in the app's code"
 	case isConfigApplied(name):
 		return v, configKeyToBuilder["LiveStore"] + " in the app's `config`"
 	case isSeededDefault(name):

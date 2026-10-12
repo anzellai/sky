@@ -64,13 +64,17 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   `withTokenizer` or the estimate when the engine does not answer.
 - **`dedupeBy` dedupes in bounded memory**: past `dedupeMemoryKeys` (250000)
   key digests it spills them, sorted, to files under `.sky/ai/work/dedupe/`
-  and looks them up there (`dedupeBounded n` sets the bound).
+  and looks them up there (`dedupeBounded n` sets the bound). `inspect` and
+  `validate` find duplicate conversations through the same bounded set, with
+  the row each one repeats (`withMemoryKeys n` sets their bound), so a
+  dataset larger than memory is inspected in bounded memory too.
 - `Endpoint.inspect` (settings and sources without resolving an adapter or
   starting anything), `Endpoint.slotName`, `Eval.suiteName`.
 - **The console's AI tab shows eval runs from the app's database**, read when
   the tab asks, so a `sky ai eval` run in CI or a terminal appears in the
   running app's console (each run's console row is stored with it, migration
-  `_sky_ai_eval_0002`).
+  `_sky_ai_eval_0002`). Each row is labelled `from database` or
+  `this process`.
 - `sky doctor` reports the pipeline (`ai-pipeline`, `ai-pipeline-invalid`)
   and checks the slots only the pipeline uses, marked `(pipeline)`.
 - `examples/72-ai-support-desk`: a Sky.Live support desk with Std.Ui whose
@@ -301,8 +305,9 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   asks the judge in both orders and counts a win only when both agree.
   `encodeReport` / `decodeReport`. The eval tables are now created through the
   migration ledger (`_sky_ai_eval_*`).
-- **`sky ai promote | rollback | lineage`**, on the app's database (`--db`,
-  else `SKY_DB_PATH`, `DATABASE_URL`, or the project's `[database]`), each
+- **`sky ai promote | rollback | lineage`**, on the app's database (in a
+  project, the pipeline's `withDb`; `--db`, else `SKY_DB_PATH`,
+  `DATABASE_URL`, wins; nothing is read from `sky.toml`), each
   with `--format json`; `promote` takes `--min-pass-rate`, `--expect`,
   `--force --reason`; `lineage --dataset <sha256>`.
 - **Startup report and `sky doctor` for AI slots.** The build lists the slots
@@ -323,6 +328,56 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
 
 ### Fixed
 
+- **A Sky.Spa split app whose `init` command reaches the server failed to
+  build.** `update` arms that return `Cmd.perform <server task> ToMsg` were
+  rewritten into an RPC, but `init` was copied into the wasm client verbatim,
+  so `sky build --target web:app` on `examples/72-ai-support-desk` failed with
+  `Undefined name: loadTickets` and reported a split defect. The client `init`
+  now sends one RPC (`POST /_rpc/SpaInit_`); the backend runs `init`'s command
+  and answers the follow-up Msgs, which the client dispatches through
+  `update`. This covers a direct `Cmd.perform`, `Cmd.batch`, helpers, `let`
+  bindings, qualified bindings of other modules and an `init` in a sibling
+  module (`spa_split::plan_init_rpc`; tests in `spa_split_flow.rs`).
+- **A Sky.Spa split backend lost the app's `[database]` settings.** The
+  generated `backend/sky.toml` carried only `[live] store` / `storePath`, so a
+  database-backed app built with `--target web:app` answered every read with
+  "db.connect: no path given". The backend now carries the runtime tables the
+  build bakes into the binary (`[database]`, `[log]`, `[analytics]`, `[jobs]`,
+  `[env]`, `[security]`) verbatim (`spa_split::emit_backend_runtime_sections`).
+  This is compatibility for projects that still keep these tables: settings
+  belong in code (`Sky.Config.withDatabase` and the other `withX` builders),
+  with the operator's variable winning, and the split carries code as it is.
+- **A Sky.Spa split backend ignored the app's code configuration.** The
+  `--target web:app` synthesis dropped `App.withConfig` and `App.withBase`, so
+  the backend took its session store, TTL and CSRF switch only from
+  `sky.toml` `[live]` or the environment, and its log, database and telemetry
+  from `sky.toml`. Both builders are now carried into a `spaServerConfig_`
+  boot task (`App.applyServerConfig`, new) that the backend runs before it
+  listens, in the builder layer: operator env > code > default, as in the
+  Sky.Live build. The boot line names `App.withConfig` as the store's source
+  (`Spa_applyServerSettings`; test
+  `a_spa_backend_honours_the_store_the_app_names_with_with_config`).
+- **`sky ai rollback` and `sky ai lineage` read the database from `sky.toml`.**
+  The CLI passed the project's `[database]` path or url to the bundled
+  program. In a project with a pipeline (`src/Ai.sky`) these verbs now run
+  through it, as `promote` does, on the database and registry its code names
+  (`Pipeline.withDb`, `Pipeline.withRegistry`); `--db`, `SKY_DB_PATH` and
+  `DATABASE_URL` still win. Nothing in `sky ai` reads `sky.toml` settings
+  (test `registry_verbs_use_the_database_the_project_code_names`).
+- **`sky test` gave a database named in code no throwaway copy.** The
+  offline test database was planned from `sky.toml` `[database]` only, so a
+  project that names its database with `Config.withDatabase` ran its tests on
+  the real file (`examples/72-ai-support-desk` wrote `support-desk.db`). The
+  plan now also reads the `Config.withDatabase (Sqlite …)` / `(Postgres …)`
+  the code names (`project::code_database_engine`; test
+  `a_database_named_in_code_gets_the_throwaway_database`).
+- **`examples/72-ai-support-desk` names its database in code.** Its
+  `sky.toml` holds only the name, entry and source root; `Tickets.database`
+  is `Config.withDatabase (Config.Sqlite "support-desk.db")`, and the app,
+  the pipeline (`Pipeline.withDb Tickets.connect`) and the registry connect
+  through it. `SKY_DB_PATH` replaces it. `Db.connect`'s documentation and its
+  "no path given" error now name `Config.withDatabase` and `SKY_DB_PATH`
+  instead of `sky.toml`.
 - **The memoised-binding lint warned about every top-level AI slot that serves
   registry adapters.** `chatSlot = Endpoint.endpoint "chat" |>
   Endpoint.fromRegistry (Registry.resolver openRegistry)` only STORES the
@@ -372,7 +427,10 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   three chunks, the engine tokenizer's fallback);
   `runtime-go/rt/ai_dedupe_test.go` (the set never holds more than its limit
   in memory, the live heap does not grow with ten times the keys, merges,
-  sweeps), `ai_console_test.go` (runs read from the database, merged with the
+  sweeps; `inspect`'s duplicate check stays within its limit and names the
+  first row of every repeat), `DatasetTest.sky` (a spilled `inspect` over
+  three chunks), `console_app/console_ai_eval_source_test.go` (an eval run's
+  source label), `ai_console_test.go` (runs read from the database, merged with the
   ring); `rust/crates/sky/tests/ai_pipeline_flow.rs` (the flagship's suites
   offline, the whole lifecycle through the CLI on the fake engine, the
   adapter guard, the app serving the promoted adapter, refusals without

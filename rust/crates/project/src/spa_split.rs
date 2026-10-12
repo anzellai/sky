@@ -1477,6 +1477,8 @@ fn build_follow_ctx(
     check_ids: &[ModuleId],
     server: &[(String, BranchIo)],
     follow_up: &[spa_partition::FollowUpBranch],
+    // The constructors that identify the `Msg` union (see `msg_marks`).
+    msg_marks: &HashSet<String>,
     wires: &mut Vec<Wire>,
     resolver: &mut CodecResolver,
     // Server-internal Msgs have no client arm (pruned from the client `Msg`).
@@ -1494,7 +1496,8 @@ fn build_follow_ctx(
         return Ok(None);
     }
     // The Msg union: the union whose variants include the follow-up branches.
-    let want: HashSet<&str> = fu.iter().map(|f| f.branch.as_str()).collect();
+    let mut want: HashSet<&str> = fu.iter().map(|f| f.branch.as_str()).collect();
+    want.extend(msg_marks.iter().map(|m| m.as_str()));
     let mut found: Option<(ModuleId, syntax::ast::Decl)> = None;
     'mods: for m in check_ids {
         for d in db.module_parse(*m).tree().decls() {
@@ -2999,6 +3002,82 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         }
     }
 
+    // ---- `init`'s command on the server (INIT_RPC) ----
+    // Resolve the module that declares `init`, decide the GET-safe strip (GAP-2,
+    // below), and, when `init`'s command reaches a server-only binding and is
+    // not stripped, plan the client `init` that asks the server to run it (see
+    // [`plan_init_rpc`]). The plan adds the `SpaInit_` pseudo server branch, so
+    // the Msg union, the `Applied` variant, the regenerated `update` and the
+    // follow-up wire are set up as for any server branch.
+    let init_def = spa_partition::find_config_field_def(&db, &check_ids, entry, "init");
+    let init_mod = init_def
+        .and_then(|d| db.def_loc(d).map(|l| l.module))
+        .unwrap_or(entry);
+    let init_in_entry = init_mod == entry;
+    let init_src = {
+        let iparse = db.module_parse(init_mod);
+        let isrc = iparse.syntax().text().to_string();
+        app_init_src(&iparse.tree(), &isrc)
+    };
+    let (init_plan, strip_init_cmd): (Option<InitRpcPlan>, bool) = {
+        let tdefs = tainted_def_ids(&db, &report);
+        let names_here = tainted_in_scope(&db, &tdefs, init_mod);
+        let strip = init_cmd_is_get_safe(&init_src)
+            && names_here.iter().any(|t| references_word(&init_src, t));
+        if strip {
+            (None, true)
+        } else {
+            // The module that declares the Msg union: the union naming an
+            // `update` arm's constructor.
+            let heads: HashSet<String> = report
+                .branches
+                .iter()
+                .map(|b| ctor_name(&b.msg).to_string())
+                .collect();
+            let msg_mod = check_ids.iter().copied().find(|m| {
+                db.module_parse(*m).tree().decls().any(|d| {
+                    matches!(decl_kind(&d), DeclKind::Union)
+                        && union_variant_names(&d).iter().any(|v| heads.contains(v))
+                })
+            });
+            let plan = plan_init_rpc(
+                &db,
+                init_mod,
+                &tdefs,
+                &names_here,
+                msg_mod,
+                report.settle.init_continuations.clone(),
+            )?;
+            (plan, false)
+        }
+    };
+    if init_plan.is_some() {
+        if pure_whole_update {
+            return Err(format!(
+                "cannot auto-split: `init`'s command reaches a server effect, and `{upd_name}` has no top-level `case msg of` for the server's answer to come back through. Write it as `update msg model = case msg of …` with one arm per Msg constructor."
+            ));
+        }
+        server.push((INIT_RPC.to_string(), BranchIo::default()));
+    }
+    // The constructors that identify the Msg union: the real server branches,
+    // else (only `init` runs on the server) every `update` arm's constructor.
+    let msg_marks: HashSet<String> = {
+        let real: HashSet<String> = server
+            .iter()
+            .filter(|(n, _)| n != INIT_RPC)
+            .map(|(n, _)| n.clone())
+            .collect();
+        if real.is_empty() {
+            report
+                .branches
+                .iter()
+                .map(|b| ctor_name(&b.msg).to_string())
+                .collect()
+        } else {
+            real
+        }
+    };
+
     // ---- GAP-A: resolve the module that DECLARES the `Msg` union ----
     // The generated frontend `update` references the `Applied<Msg>` RPC-response
     // variants, so they must be injected into the `Msg` union WHEREVER it is
@@ -3016,13 +3095,12 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     let msg_module: Option<ModuleId> = if server.is_empty() {
         None
     } else {
-        let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
         check_ids.iter().copied().filter(|m| *m != entry).find(|m| {
             db.module_parse(*m).tree().decls().any(|d| {
                 matches!(decl_kind(&d), DeclKind::Union)
                     && union_variant_names(&d)
                         .iter()
-                        .any(|v| want.contains(v.as_str()))
+                        .any(|v| msg_marks.contains(v))
             })
         })
     };
@@ -3175,6 +3253,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     }
     let mut wires: Vec<Wire> = Vec::new();
     for (name, io) in &server {
+        // `init`'s RPC answers the follow-up JSON as a plain string: no wire.
+        if name == INIT_RPC {
+            continue;
+        }
         let args = server_args.get(name).cloned().unwrap_or_default();
         wires.push(build_wire(
             name,
@@ -3187,11 +3269,22 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     }
     // SPA-3: follow-up wires (built before the codec copy / seed passes read
     // `resolver` + `wires`).
+    // `init`'s command is a follow-up branch too: its RPC runs the server
+    // performs and answers the follow-up Msgs.
+    let mut follow_up = report.follow_up.clone();
+    if let Some(p) = &init_plan {
+        follow_up.push(spa_partition::FollowUpBranch {
+            branch: INIT_RPC.to_string(),
+            ctors: p.ctors.clone(),
+            native: p.native,
+        });
+    }
     let follow_ctx = build_follow_ctx(
         &db,
         &check_ids,
         &server,
-        &report.follow_up,
+        &follow_up,
+        &msg_marks,
         &mut wires,
         &mut resolver,
         &report
@@ -3349,15 +3442,12 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `Msg` union itself is NEVER moved (it is the `Applied<Msg>` inject target,
     // stays in its module, and is not a wire field), so it is excluded below.
     let msg_union_name: Option<String> = msg_module.and_then(|m| {
-        let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
         db.module_parse(m)
             .tree()
             .decls()
             .find(|d| {
                 matches!(decl_kind(d), DeclKind::Union)
-                    && union_variant_names(d)
-                        .iter()
-                        .any(|v| want.contains(v.as_str()))
+                    && union_variant_names(d).iter().any(|v| msg_marks.contains(v))
             })
             .and_then(|d| decl_name(&d))
     });
@@ -3823,16 +3913,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // `init` source for the curated GET-safe read decision. Scanning only the
     // entry (the old `app_init_src(file, src)`) missed a sibling `init`, so the
     // SSR settle was skipped and the first paint shipped an empty `#sky-model`.
-    let init_def = spa_partition::find_config_field_def(&db, &check_ids, entry, "init");
-    let init_mod = init_def
-        .and_then(|d| db.def_loc(d).map(|l| l.module))
-        .unwrap_or(entry);
-    let init_in_entry = init_mod == entry;
-    let init_src = {
-        let iparse = db.module_parse(init_mod);
-        let isrc = iparse.syntax().text().to_string();
-        app_init_src(&iparse.tree(), &isrc)
-    };
+    // (`init_def`, `init_mod`, `init_in_entry` and `init_src` are resolved
+    // above, where `init`'s server command is planned.)
 
     // ---- GAP-2: the frontend init-command strip is init-MODULE-aware ----
     // The client keeps `init` but must NOT run its command when that command is a
@@ -3846,9 +3928,8 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // it here from the RESOLVED init module so a sibling init is stripped in its
     // own module copy (below), exactly as an entry init is stripped in
     // `gen_frontend`.
+    // (`strip_init_cmd` is decided above, beside the `init` RPC plan.)
     let init_tainted = sorted_scope(init_mod);
-    let strip_init_cmd = init_cmd_is_get_safe(&init_src)
-        && init_tainted.iter().any(|t| references_word(&init_src, t));
     // `init`'s PURE model expr — the client SSR model decoder is derived from it
     // (`Codec.fromJson (Codec.auto <model>)`). Read from whichever module
     // declares `init`, so the decoder is emitted for a sibling init too.
@@ -4092,6 +4173,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     write("backend/src/Shared.sky", &shared_src, &mut files)?;
     write("frontend/src/Shared.sky", &shared_src, &mut files)?;
     write("backend/src/Main.sky", &backend_src, &mut files)?;
+    // `init`'s server command: the client `init` sends the RPC instead.
+    let frontend_src = match &init_plan {
+        Some(p) if init_in_entry => apply_init_rpc(&frontend_src, p, &no_frontend_names)?,
+        _ => frontend_src,
+    };
     let frontend_src = strip_tainted_from_imports(&frontend_src, &tainted_by_module);
     write("frontend/src/Main.sky", &frontend_src, &mut files)?;
     // The generated projects must be able to REBUILD any third-party imports the
@@ -4105,10 +4191,14 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     // (runtime-go/rt/spa_session_revocation.go), so it carries the project's
     // `[live] store` / `storePath` (the frontend has no server state).
     let live_store = emit_live_store_section(project_dir);
+    // The backend runs the app's effects, so it carries the runtime tables the
+    // build bakes into the binary (`[database]` above all: without it a
+    // database-backed app's backend answered every read with "no path given").
+    let runtime_sections = emit_backend_runtime_sections(project_dir);
     write(
         "backend/sky.toml",
         &format!(
-            "{}{dep_sections}{live_store}",
+            "{}{dep_sections}{live_store}{runtime_sections}",
             sky_toml(&format!("{proj_name}-backend"), "backend")
         ),
         &mut files,
@@ -4172,6 +4262,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &ms_expose,
                 &moved_unions,
                 &server_internal,
+                &msg_marks,
             )
         } else if strip_init_cmd && !init_in_entry && *m == init_mod {
             // GAP-2: the sibling that declares `init` reads through a
@@ -4189,6 +4280,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             own_moved_nominals_verbatim(&mparse.tree(), &stripped_init, &moved_unions)
         } else {
             own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions)
+        };
+        let frontend_text = match &init_plan {
+            Some(p) if *m == init_mod => apply_init_rpc(&frontend_text, p, &no_frontend_names)?,
+            _ => frontend_text,
         };
         let frontend_text = strip_tainted_from_imports(&frontend_text, &tainted_by_module);
         write(&format!("frontend/src/{rel}"), &frontend_text, &mut files)?;
@@ -4243,6 +4338,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 &client_result_map,
                 follow_here(*m),
                 &arm_routes,
+                &msg_marks,
             )?;
             // Bug #4b: a regenerated SIBLING `update` references `spaRpcError_`,
             // which the synthesis placed in the ENTRY. The sibling cannot import
@@ -4254,6 +4350,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 }
             } else {
                 subset
+            };
+            let subset = match &init_plan {
+                Some(p) if *m == init_mod => apply_init_rpc(&subset, p, &no_frontend_names)?,
+                _ => subset,
             };
             let subset = strip_tainted_from_imports(&subset, &tainted_by_module);
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
@@ -4284,10 +4384,26 @@ The command runs server-side during SSR and the client hydrates from it; a read 
     propagate_deps(project_dir, &out_dir.join("frontend"))?;
     propagate_deps(project_dir, &out_dir.join("backend"))?;
 
+    if let Some(p) = &init_plan {
+        let follows = match &p.ctors {
+            Some(cs) if !cs.is_empty() => {
+                format!(" and dispatches the follow-up Msg(s) [{}]", cs.join(", "))
+            }
+            _ => String::new(),
+        };
+        notes.push(format!(
+            "init's command reaches server-only bindings: the client init sends one RPC (POST /_rpc/{INIT_RPC}), the backend runs init's command{follows}."
+        ));
+    }
+
     Ok(SpaSplitReport {
         out_dir: out_dir.to_string_lossy().to_string(),
         files,
-        server_branches: server.iter().map(|(n, _)| n.clone()).collect(),
+        server_branches: server
+            .iter()
+            .filter(|(n, _)| n != INIT_RPC)
+            .map(|(n, _)| n.clone())
+            .collect(),
         client_branches: client_names,
         excluded: excluded_names,
         notes,
@@ -5087,6 +5203,43 @@ fn emit_dep_sections(project_dir: &Path) -> String {
 /// comment included): `build.rs` parses them exactly as it parses the
 /// project's own manifest. The operator's `SKY_LIVE_STORE` /
 /// `SKY_LIVE_STORE_PATH` still win at run time.
+/// The `sky.toml` tables the split BACKEND must carry verbatim: the runtime
+/// sections the build bakes into the binary as defaults (`project::build`'s
+/// sky.toml reader) other than `[live]`, whose keys are the client shell's
+/// except the session store ([`emit_live_store_section`]). A database-backed
+/// app (`[database] path`) otherwise lost its DSN under `--target web:app`.
+const BACKEND_RUNTIME_SECTIONS: &[&str] =
+    &["database", "log", "analytics", "jobs", "env", "security"];
+
+fn emit_backend_runtime_sections(project_dir: &Path) -> String {
+    let Ok(toml) = std::fs::read_to_string(project_dir.join("sky.toml")) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    let mut keep = false;
+    for line in toml.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            let name = l
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or("")
+                .trim();
+            keep = BACKEND_RUNTIME_SECTIONS.contains(&name);
+            if keep {
+                out.push_str(&format!("\n[{name}]\n"));
+            }
+            continue;
+        }
+        if keep && !l.is_empty() && !l.starts_with('#') {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn emit_live_store_section(project_dir: &Path) -> String {
     let Ok(toml) = std::fs::read_to_string(project_dir.join("sky.toml")) else {
         return String::new();
@@ -5709,7 +5862,7 @@ fn shared_import_lines(
 /// COPIED user types, which a consumer may already read from their origin module.
 fn generated_wire_names(server: &[(String, BranchIo)]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for (name, _) in server {
+    for (name, _) in server.iter().filter(|(n, _)| n != INIT_RPC) {
         out.push(format!("{name}Req"));
         out.push(format!("{}ReqCodec", lower_first(name)));
         out.push(format!("{name}Resp"));
@@ -6107,6 +6260,289 @@ fn init_cmd_is_get_safe(init_src: &str) -> bool {
         rest = &rest[i + "Cmd.perform".len()..];
     }
     saw_perform
+}
+
+/// The generated route that runs `init`'s command on the server. It is a
+/// pseudo SERVER branch: it has no Msg constructor of its own, its client
+/// result arrives as `AppliedSpaInit_ (Result Error String)` (the follow-up
+/// JSON), and its backend handler runs `init ()`'s command instead of an
+/// `update` arm.
+pub(crate) const INIT_RPC: &str = "SpaInit_";
+
+/// The `Applied<Msg>` variant line spliced into the `Msg` union for a server
+/// branch: its RPC response, or for [`INIT_RPC`] the follow-up JSON.
+fn applied_variant_line(m: &str) -> String {
+    if m == INIT_RPC {
+        format!("\n    | Applied{m} (Result Error String)")
+    } else {
+        format!("\n    | Applied{m} (Result Error {m}Resp)")
+    }
+}
+
+/// The client `init` command that asks the server to run `init`'s real
+/// command (see [`plan_init_rpc`]).
+struct InitRpcPlan {
+    /// `init`'s value decl as the source writes it (trimmed).
+    original: String,
+    /// The same decl with its command replaced by the RPC, and every `let`
+    /// binding only the command used set to `Cmd.none`.
+    rewritten: String,
+    /// The import lines the module's frontend copy needs for `rewritten`.
+    imports: Vec<String>,
+    /// The Msg constructors the command dispatches (`None`: unreadable).
+    ctors: Option<Vec<String>>,
+    /// The command holds a `Std.Native` leaf (the client runs it).
+    native: bool,
+}
+
+/// The module byte ranges, inside `within`, of references that resolve to a
+/// server-tainted definition (qualified or bare).
+fn tainted_refs_in(
+    db: &SkyDatabase,
+    m: ModuleId,
+    tainted: &HashSet<DefId>,
+    within: (usize, usize),
+) -> Vec<(usize, usize)> {
+    let resolved = db.resolve(m);
+    let mut out: Vec<(usize, usize)> = resolved
+        .ref_occs
+        .iter()
+        .filter_map(|occ| match &occ.res {
+            hir::Res::Def(d) if tainted.contains(d) => {
+                let (a, b) = (occ.span.range.0 as usize, occ.span.range.1 as usize);
+                (a >= within.0 && b <= within.1).then_some((a, b))
+            }
+            _ => None,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Plan the client side of `init`'s server command.
+///
+/// `init`'s command runs once when the client starts (unless the SSR page
+/// settled it). When that command reaches a server-only binding (a task that
+/// opens the database, an AI slot), the wasm client cannot hold it: it is
+/// excluded from the frontend, and a verbatim `init` fails with `Undefined
+/// name`. `update` arms get the RPC rewrite; this is the same treatment for
+/// `init`. The client `init` keeps its model and sends one RPC
+/// (`POST /_rpc/SpaInit_`); the backend runs `init ()`'s command, every
+/// server perform leaf, and answers with the follow-up Msgs, which the client
+/// dispatches through `update` in order (SPA-3). The command's shape does not
+/// matter to the backend (it evaluates `init ()` itself), so a direct
+/// `Cmd.perform`, a `Cmd.batch`, a helper and a `let`-bound command all work.
+/// A `Std.Native` or `Std.Nav` leaf runs in the client when the RPC is sent.
+///
+/// `Ok(None)` when `init` reaches no server-tainted binding (it stays
+/// verbatim). An `Err` names a shape the split cannot rewrite.
+fn plan_init_rpc(
+    db: &SkyDatabase,
+    init_mod: ModuleId,
+    tainted: &HashSet<DefId>,
+    tainted_names_here: &HashSet<String>,
+    msg_module: Option<ModuleId>,
+    ctors: Option<Vec<String>>,
+) -> Result<Option<InitRpcPlan>, String> {
+    use syntax::ast::Expr as E;
+    let parse = db.module_parse(init_mod);
+    let src = parse.syntax().text().to_string();
+    let file = parse.tree();
+    let Some(decl) = file
+        .decls()
+        .find(|d| decl_name(d).as_deref() == Some("init") && is_value_decl(d))
+    else {
+        return Ok(None);
+    };
+    let node = decl.syntax();
+    let d0 = u32::from(node.text_range().start()) as usize;
+    let d1 = u32::from(node.text_range().end()) as usize;
+    let refs = tainted_refs_in(db, init_mod, tainted, (d0, d1));
+    if refs.is_empty() {
+        return Ok(None);
+    }
+    let names = |rs: &[(usize, usize)]| -> String {
+        let mut v: Vec<String> = rs.iter().map(|(a, b)| src[*a..*b].to_string()).collect();
+        v.sort();
+        v.dedup();
+        v.join(", ")
+    };
+    let Some((model, cmd)) = init_return_tuple(&decl) else {
+        return Err(format!(
+            "sky.spa: `init` reaches server-only binding(s) ({}), so its command must run on the \
+             server, but its body is not a `( model, cmd )` tuple the split can read. Return the \
+             tuple directly from `init` (a `let … in ( model, cmd )` is fine).",
+            names(&refs)
+        ));
+    };
+    // A node's range without its leading and trailing trivia (the parser
+    // attaches the white space around an expression to it).
+    let range_of = |n: &syntax::SyntaxNode| -> (usize, usize) {
+        let (a, b) = (
+            u32::from(n.text_range().start()) as usize,
+            u32::from(n.text_range().end()) as usize,
+        );
+        let t = &src[a..b];
+        let lead = t.len() - t.trim_start().len();
+        let trail = t.len() - t.trim_end().len();
+        (a + lead, (b - trail).max(a + lead))
+    };
+    let inside = |r: &(usize, usize), outer: (usize, usize)| r.0 >= outer.0 && r.1 <= outer.1;
+    let model_range = range_of(model.syntax());
+    let model_text = src[model_range.0..model_range.1].to_string();
+    let in_model: Vec<(usize, usize)> = refs
+        .iter()
+        .copied()
+        .filter(|r| inside(r, model_range))
+        .collect();
+    if !in_model.is_empty() {
+        return Err(format!(
+            "sky.spa: `init`'s returned model uses server-only binding(s) ({}), which the wasm \
+             client cannot run. Return the default model from `init` and load the value in its \
+             command (`Cmd.perform <task> Got<Field>`).",
+            names(&in_model)
+        ));
+    }
+    // The replacements, as absolute module ranges: the command, and every
+    // `let` binding on the way to the tuple that uses a server-only binding
+    // (only the command can use it: the model was checked above).
+    let cmd_range = range_of(cmd.syntax());
+    let mut repl: Vec<((usize, usize), String)> = Vec::new();
+    let mut covered: Vec<(usize, usize)> = vec![cmd_range];
+    if let syntax::ast::Decl::Value(v) = &decl {
+        let mut cur = v.body();
+        while let Some(E::Let(l)) = cur {
+            for b in l.bindings() {
+                let Some(body) = b.body() else { continue };
+                let br = range_of(body.syntax());
+                if !refs.iter().any(|r| inside(r, br)) {
+                    continue;
+                }
+                let bname = b.name().map(|t| t.text().to_string()).unwrap_or_default();
+                if bname.is_empty() || references_word(&model_text, &bname) {
+                    return Err(format!(
+                        "sky.spa: `init`'s model and its server command share a `let` binding \
+                         that uses server-only binding(s) ({}). Keep the server work in the \
+                         command only.",
+                        names(&refs)
+                    ));
+                }
+                repl.push((br, "Cmd.none".to_string()));
+                covered.push(br);
+            }
+            cur = l.body();
+        }
+    }
+    let outside: Vec<(usize, usize)> = refs
+        .iter()
+        .copied()
+        .filter(|r| !covered.iter().any(|c| inside(r, *c)))
+        .collect();
+    if !outside.is_empty() {
+        return Err(format!(
+            "sky.spa: `init` uses server-only binding(s) ({}) outside its `( model, cmd )` \
+             result, so the client cannot run it. Use them in the command only.",
+            names(&outside)
+        ));
+    }
+    // Client residual: the leaves the backend cannot run (a `Std.Native`
+    // effect, a navigation) run in the client when the RPC is sent.
+    let cmd_text = src[cmd_range.0..cmd_range.1].to_string();
+    let tuple = model
+        .syntax()
+        .parent()
+        .ok_or_else(|| "sky.spa: `init`'s result tuple could not be read".to_string())?;
+    let mut residual: Vec<String> = Vec::new();
+    let native_alias = collect_imports(&file, &src)
+        .into_iter()
+        .find(|i| i.module_path == "Std.Native")
+        .map(|i| {
+            i.text
+                .split_whitespace()
+                .skip_while(|w| *w != "as")
+                .nth(1)
+                .unwrap_or("Std.Native")
+                .to_string()
+        });
+    let native = native_alias
+        .as_ref()
+        .is_some_and(|a| cmd_text.contains(&format!("{a}.")));
+    if let (true, Some(alias)) = (native, native_alias.as_deref()) {
+        residual.push(native_residual(
+            &tuple,
+            &src,
+            alias,
+            tainted_names_here,
+            "init",
+        )?);
+    }
+    let nav = NavNames::of_module(&file, &src);
+    if nav.names_nav(&cmd_text) {
+        residual.push(nav_residual(
+            &tuple,
+            &src,
+            &nav,
+            tainted_names_here,
+            "init",
+        )?);
+    }
+    let mut imports = vec![
+        "import Std.Spa as SpaInitRpc_".to_string(),
+        "import Std.Codec as SpaInitCodec_".to_string(),
+    ];
+    let q = match msg_module {
+        Some(mm) if mm != init_mod => {
+            imports.push(format!("import {} as SpaMsgMod_", db.module_name(mm)));
+            "SpaMsgMod_."
+        }
+        _ => "",
+    };
+    let rpc = format!(
+        "SpaInitRpc_.rpc SpaInitCodec_.string SpaInitCodec_.string \"/_rpc/{INIT_RPC}\" \"\" {q}Applied{INIT_RPC}"
+    );
+    let call = if residual.is_empty() {
+        rpc
+    } else {
+        imports.push("import Std.Cmd as SpaInitCmd_".to_string());
+        format!("SpaInitCmd_.batch [ {}, {rpc} ]", residual.join(", "))
+    };
+    repl.push((cmd_range, call));
+    repl.sort_by(|a, b| b.0 .0.cmp(&a.0 .0));
+    let mut rewritten = src[d0..d1].to_string();
+    for ((a, b), t) in repl {
+        rewritten.replace_range(a - d0..b - d0, &t);
+    }
+    Ok(Some(InitRpcPlan {
+        original: src[d0..d1].trim_end().to_string(),
+        rewritten: rewritten.trim_end().to_string(),
+        imports,
+        ctors,
+        native,
+    }))
+}
+
+/// Put the planned client `init` into a frontend module copy: replace the
+/// verbatim `init` decl, add the imports the RPC needs, and drop the imports
+/// the old command alone used. Fails closed when the decl is not found
+/// verbatim exactly once.
+fn apply_init_rpc(
+    text: &str,
+    plan: &InitRpcPlan,
+    backend_only: &HashSet<String>,
+) -> Result<String, String> {
+    if text.matches(plan.original.as_str()).count() != 1 {
+        return Err(
+            "sky.spa: internal error: the frontend copy of `init` is not the source's `init` \
+             (the client `init` command could not be rewritten)"
+                .to_string(),
+        );
+    }
+    let mut out = text.replacen(plan.original.as_str(), &plan.rewritten, 1);
+    for line in &plan.imports {
+        out = ensure_import_line(&out, line);
+    }
+    Ok(drop_dangling_sibling_imports(&out, backend_only))
 }
 
 /// The joined source of every decl named `init` (the type annotation and the
@@ -6984,6 +7420,13 @@ fn gen_backend(
     // the server runs the setup before it starts serving; otherwise a deployed
     // backend serves empty data (no schema / no seed). It is dropped from the
     // wasm frontend by the taint analysis, so only the backend runs it.
+    // Configuration is code: the synthesis carries `App.withConfig` /
+    // `App.withBase` into a `spaServerConfig_` task (`App.applyServerConfig`),
+    // run first at boot so the store, TTL, log and database the code names are
+    // in place before anything opens them.
+    let has_synth_server_config = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaServerConfig_"));
     let has_synth_boot_setup = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaBootSetup_"));
@@ -7488,6 +7931,45 @@ fn gen_backend(
     }
     for (name, io) in server {
         let handler = format!("{}Handler", lower_first(name));
+        if name == INIT_RPC {
+            // `init`'s command, run on the server (see `plan_init_rpc`): the
+            // client `init` asks once, the backend runs `init ()`'s command
+            // (every server perform leaf) and answers the follow-up Msgs as
+            // JSON, which the client dispatches through `update` in order.
+            let handler_body_name = if session_proj.is_empty() {
+                handler.clone()
+            } else {
+                handlers.push_str(&format!(
+                    "{handler} : Handler\n{handler} req =\n    spaWithSession_ req ({handler}Inner_ req)\n\n\n"
+                ));
+                format!("{handler}Inner_")
+            };
+            let answer = "Task.succeed (Server.json (Codec.toJson Codec.string (spaEncodeFollows_ (spaFollowUps_ spaInitCmd_))))";
+            let answer = if push_mode {
+                format!(
+                    "spaInterpretPublish spaBroker spaInitCmd_\n\
+                     \x20       |> Task.andThen (\\_ -> {answer})"
+                )
+            } else {
+                answer.to_string()
+            };
+            handlers.push_str(&format!(
+                "-- Generated endpoint for `init`'s command: the client `init` cannot run\n\
+                 -- it (it reaches server-only bindings), so the backend runs it here and\n\
+                 -- answers the follow-up Msgs for the client to dispatch through `update`.\n\
+                 {handler_body_name} : Handler\n\
+                 {handler_body_name} _ =\n\
+                 \x20   let\n\
+                 \x20       ( _, spaInitCmd_ ) =\n\
+                 \x20           init ()\n\
+                 \x20   in\n\
+                 \x20   {answer}\n\n\n"
+            ));
+            routes.push(format!(
+                "        , Server.rpc \"POST /_rpc/{name}\" {handler}"
+            ));
+            continue;
+        }
         let req_codec = format!("{}ReqCodec", lower_first(name));
         let resp_codec = format!("{}RespCodec", lower_first(name));
         // Response field NAMES = the write-set (or the whole model). Codecs live
@@ -8166,7 +8648,17 @@ fn gen_backend(
     // report that the backend keeps no server-side session (so a configured
     // `[live] store` is not used, and the log says so rather than leaving the
     // inline console's own memory store as the only store line).
-    let mut boot: Vec<String> = vec![format!("spaSetWireHash_ \"{wire_hash}\"")];
+    let mut boot: Vec<String> = Vec::new();
+    // The app's code configuration first: a boot TASK in the sequence (a
+    // `_ =` let only evaluates it), so the store, TTL, log and database are in
+    // place before the session store opens and the server listens.
+    // A static-only backend carries none of the entry's bindings (it serves
+    // the client and keeps no session, database or store), so there is
+    // nothing for the configuration to reach.
+    if has_synth_server_config && !static_only_backend {
+        boot.push("spaServerConfig_".to_string());
+    }
+    boot.push(format!("spaSetWireHash_ \"{wire_hash}\""));
     boot.push(format!(
         "spaSessionBoot_ {}",
         if session_proj.is_empty() {
@@ -8443,7 +8935,7 @@ fn gen_frontend(
                 // go too), then append the generated Applied<Msg> variants.
                 body.push_str(&union_text_without_variants(src, &d, server_internal));
                 for (m, _) in server {
-                    body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
+                    body.push_str(&applied_variant_line(m));
                 }
                 body.push_str("\n\n\n");
             }
@@ -9021,6 +9513,33 @@ fn gen_frontend_update(
     }
     // Generated Applied<Msg> apply arms.
     for (m, io) in server {
+        if m == INIT_RPC {
+            // `init`'s command ran on the server: dispatch its follow-up Msgs.
+            // A follow-up the client cannot decode, and a failed RPC, are
+            // reported (App.withRpcError, else the console), never dropped.
+            let (decode_err, rpc_err) = if has_rpc_error {
+                (
+                    format!("update (spaRpcError_ e_) {model_param}"),
+                    format!("update (spaRpcError_ e) {model_param}"),
+                )
+            } else {
+                (
+                    format!("( {model_param}, Spa.reportError e_ )"),
+                    format!("( {model_param}, Spa.reportRpcFailure e )"),
+                )
+            };
+            arms_out.push_str(&format!(
+                "        Applied{m} (Ok spaInitJson_) ->\n\
+                 \x20           case spaDecodeFollows_ spaInitJson_ of\n\
+                 \x20               Ok spaFollows_ ->\n\
+                 \x20                   ( {model_param}, Spa.followUps spaFollows_ )\n\n\
+                 \x20               Err e_ ->\n\
+                 \x20                   {decode_err}\n\n\
+                 \x20       Applied{m} (Err e) ->\n\
+                 \x20           {rpc_err}\n\n"
+            ));
+            continue;
+        }
         // The write-set the Applied arm folds back: none when the client already
         // made the arm's own write (an async constructor with a client model
         // half); the server's write-set otherwise.
@@ -9213,8 +9732,10 @@ fn render_module_client_subset(
     follow: Option<FollowHere<'_>>,
     // Per-arm routing of `update`'s case (see [`ArmRoutes`]).
     arm_routes: &ArmRoutes,
+    // The constructors that identify the `Msg` union (see `msg_marks`).
+    msg_marks: &HashSet<String>,
 ) -> Result<String, String> {
-    let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
+    let want: HashSet<&str> = msg_marks.iter().map(|n| n.as_str()).collect();
 
     let mut body = String::new();
     let mut stripped_copied = false;
@@ -9248,7 +9769,7 @@ fn render_module_client_subset(
                 // the SERVER-INTERNAL variants first (their client arms go too).
                 body.push_str(&union_text_without_variants(msrc, &d, server_internal));
                 for (m, _) in server {
-                    body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
+                    body.push_str(&applied_variant_line(m));
                 }
                 body.push_str("\n\n\n");
             }
@@ -9622,13 +10143,15 @@ fn inject_applied_variants_into_module(
     moved_unions: &BTreeMap<String, Vec<String>>,
     // SERVER-INTERNAL Msgs — pruned from the `Msg` union (their client arms go too).
     server_internal: &HashSet<String>,
+    // The constructors that identify the `Msg` union (see `msg_marks`).
+    msg_marks: &HashSet<String>,
 ) -> String {
     if server.is_empty() {
         return msrc.to_string();
     }
     // The `Msg` union is the one whose variants include the server branch ctors
     // (matched the same way the module was selected) — robust to the type's name.
-    let want: HashSet<&str> = server.iter().map(|(n, _)| n.as_str()).collect();
+    let want: HashSet<&str> = msg_marks.iter().map(|n| n.as_str()).collect();
     let has_msg_union = mfile.decls().any(|d| {
         matches!(decl_kind(&d), DeclKind::Union)
             && union_variant_names(&d)
@@ -9660,7 +10183,7 @@ fn inject_applied_variants_into_module(
         {
             body.push_str(&union_text_without_variants(msrc, &d, server_internal));
             for (m, _) in server {
-                body.push_str(&format!("\n    | Applied{m} (Result Error {m}Resp)"));
+                body.push_str(&applied_variant_line(m));
             }
             body.push_str("\n\n\n");
         } else {
@@ -10411,6 +10934,22 @@ mod live_store_section_tests {
         assert_eq!(
             got,
             "\n[live]\nstore = \"postgres\"   # shared\nstorePath = \"postgres://db/app\"\n"
+        );
+    }
+
+    /// Regression (v0.28.0, examples/72-ai-support-desk under `--target
+    /// web:app`): the backend lost `[database]`, so every database read
+    /// answered "no path given". It now carries the runtime tables verbatim.
+    #[test]
+    fn backend_manifest_carries_the_runtime_tables() {
+        let dir = project(
+            "name = \"z\"\n\n[source]\nroot = \"src\"\n\n# the app's store\n[database]\ndriver = \"sqlite\"\npath = \"desk.db\"\n\n[log]\nlevel = \"debug\"\n\n[live]\nport = 8000\n\n[env]\nprefix = \"DESK\"\n",
+        );
+        let got = super::emit_backend_runtime_sections(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            got,
+            "\n[database]\ndriver = \"sqlite\"\npath = \"desk.db\"\n\n[log]\nlevel = \"debug\"\n\n[env]\nprefix = \"DESK\"\n"
         );
     }
 

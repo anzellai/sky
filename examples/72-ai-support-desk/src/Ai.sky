@@ -23,11 +23,13 @@ import Assist
 import Data
 import Suites
 import Tasks
+import Tickets
 
 
 pipeline : Pipeline
 pipeline =
-    Pipeline.pipeline "support-desk" |> Pipeline.withRegistry Assist.registryUrl
+    Pipeline.pipeline "support-desk" |> Pipeline.withDb Tickets.connect
+        |> Pipeline.withRegistry Assist.registryUrl
         |> Pipeline.withSlot Assist.chatSlot
         |> Pipeline.withSlot Synthetic.teacherSlot
         |> Pipeline.withSlot Eval.judgeSlot

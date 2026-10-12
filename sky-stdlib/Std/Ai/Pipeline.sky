@@ -104,6 +104,7 @@ import Sky.Core.Io as Io
 import Sky.Core.System as System
 import Sky.Core.Time as Time
 import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Math as Math
 import Std.Log exposing (println)
 import Std.Codec exposing (Codec)
 import Std.Db as Db exposing (Db)
@@ -947,6 +948,15 @@ commandLineWith p args =
             "promote" :: name :: number :: opts ->
                 withFlags p opts (\q -> promoteVerb json q name number opts)
 
+            "rollback" :: ref :: opts ->
+                withFlags p opts (\q -> rollbackVerb json q ref)
+
+            "lineage" :: "--dataset" :: digest :: opts ->
+                withFlags p opts (\q -> trainedOnVerb json q digest)
+
+            "lineage" :: ref :: opts ->
+                withFlags p opts (\q -> lineageVerb json q ref)
+
             ["members"] ->
                 membersVerb json p
 
@@ -1390,6 +1400,132 @@ promoteVerb json p name number opts =
 
                            else
                                println (eventText name ev))
+
+
+-- The pipeline's registry, on its own database (`withDb`, `--db`) and store
+-- (`withRegistry`, `SKY_AI_REGISTRY`, `--registry`). The registry verbs of a
+-- project use it, so they act on the database the app's code names.
+registryOf : Pipeline -> Task Error Registry.Registry
+registryOf p =
+    context p [] |> Task.andThen (\ctx -> ctx.registry)
+
+
+-- `sky ai rollback <name>@<alias>` in a project.
+rollbackVerb : Bool -> Pipeline -> String -> Task Error ()
+rollbackVerb json p ref =
+    registryOf p |> Task.andThen (\reg -> Registry.rollback reg ref)
+        |> Task.andThen
+               (\ev ->
+                   if json then
+                       println (JsonE.encode 0 (Registry.eventValue ev))
+
+                   else
+                       println
+                           (eventText
+                               (Maybe.withDefault
+                                   ref
+                                   (List.head (String.split "@" ref)))
+                               ev))
+
+
+-- `sky ai lineage <name>@<alias>|<name>@v<n>` in a project.
+lineageVerb : Bool -> Pipeline -> String -> Task Error ()
+lineageVerb json p ref =
+    registryOf p |> Task.andThen (\reg -> Registry.lineage reg ref)
+        |> Task.andThen
+               (\l ->
+                   if json then
+                       println (JsonE.encode 0 (Registry.lineageValue l))
+
+                   else
+                       println (lineageText l))
+
+
+lineageText : Registry.LineageReport -> String
+lineageText l =
+    let
+        v = l.version
+    in
+        String.join
+            "\n"
+            ([ Registry.label v ++ "  (" ++ v.method ++ " adapter, " ++ v.format
+                  ++ ", "
+                  ++ String.fromInt v.size
+                  ++ " bytes)"
+            , "  served as   " ++ Registry.servedName v
+            , "  adapter     sha256:" ++ v.digest
+            , "  base        " ++ v.base
+            , "  dataset     " ++ v.dataset ++ "  sha256:" ++ v.datasetDigest
+            , "  aliases     "
+                  ++ (if List.isEmpty l.aliases then
+                         "(none)"
+
+                     else
+                         String.join ", " l.aliases)
+            ]
+                ++ (case v.blocked of
+
+                       Just why ->
+                           [ "  BLOCKED     " ++ why ]
+
+                       Nothing ->
+                           [])
+                ++ List.map
+                       (\( k, value ) ->
+                           "  " ++ String.padRight 11 ' ' k ++ " " ++ value)
+                       v.metadata
+                ++ ("  reports" :: List.map reportLine l.reports)
+                ++ ("  events"
+                       :: List.map (\e -> "    " ++ eventText v.name e) l.events))
+
+
+reportLine : Registry.ReportLink -> String
+reportLine r =
+    "    " ++ r.suite ++ "  " ++ r.verdict ++ "  pass rate "
+        ++ String.fromInt (Math.round (r.passRate * 100.0))
+        ++ "%  ("
+        ++ String.fromInt r.passed
+        ++ " passed, "
+        ++ String.fromInt r.failed
+        ++ " failed)  digest "
+        ++ r.digest
+
+
+-- `sky ai lineage --dataset <sha256>|<name>@<n>` in a project.
+trainedOnVerb : Bool -> Pipeline -> String -> Task Error ()
+trainedOnVerb json p digest =
+    registryOf p |> Task.andThen (\reg -> Registry.trainedOn reg digest)
+        |> Task.andThen
+               (\vs ->
+                   if json then
+                       println
+                           (JsonE.encode 0 (JsonE.list Registry.versionValue vs))
+
+                   else if List.isEmpty vs then
+                       println
+                           ("no version was trained on "
+                               ++ (if String.contains "@" digest then
+                                      digest
+
+                                  else
+                                      "sha256:" ++ digest))
+
+                   else
+                       println
+                           (String.join
+                               "\n"
+                               (List.map
+                                   (\v ->
+                                       Registry.label v
+                                           ++ (case v.blocked of
+
+                                                  Just why ->
+                                                      "  (blocked: " ++ why
+                                                          ++ ")"
+
+                                                  Nothing ->
+                                                      ""))
+                                   vs)))
 
 
 -- `--expect <n>|none`: promote only while the alias still points at version

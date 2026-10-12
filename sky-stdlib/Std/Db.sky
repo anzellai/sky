@@ -73,8 +73,12 @@ open =
     Ffi.kernel "Db_open"
 
 
--- | Use the connection configured by `sky.toml`'s `[database]`
--- section (driver + url).
+-- | Connect to the app's database. The DSN is the operator's
+-- `<PREFIX>_DB_PATH` (default `SKY_DB_PATH`), else the code's
+-- `Sky.Config.withDatabase` (applied by a top-level `config` binding or
+-- `Config.apply`), else `DATABASE_URL`. A SQLite file path or a
+-- `postgres://` URL; the driver follows the DSN. (A legacy `sky.toml`
+-- `[database]` table still seeds the lowest layer.)
 connect : () -> Task Error Db
 connect =
     Ffi.kernel "Db_connect"

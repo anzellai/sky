@@ -9492,3 +9492,413 @@ fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
         "the line names sky.toml and the environment, which did not set the store:\n{both}"
     );
 }
+
+// ── `init`'s command reaches server-only bindings ───────────────────────────
+//
+// Regression (v0.28.0, found building examples/72-ai-support-desk with
+// `--target web:app`): `update` arms that return `Cmd.perform <server task>
+// ToMsg` were rewritten into an RPC, but `init` was copied into the wasm client
+// verbatim, so its `Cmd.perform loadTickets Loaded` named a binding the
+// frontend excludes and the client failed with `Undefined name: loadTickets`
+// (reported by Sky as a split defect). The split now sends one RPC from the
+// client `init` (`POST /_rpc/SpaInit_`); the backend runs `init ()`'s command
+// and answers the follow-up Msgs, which the client dispatches through `update`.
+
+/// The server module both fixtures use: two tasks that touch the file system.
+const INIT_RPC_BOOT_SKY: &str = r#"module Boot exposing (status, note)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+
+
+status : Task Error String
+status =
+    File.writeFile "status.txt" "ready"
+        |> Task.andThen (\_ -> File.readFile "status.txt")
+
+
+note : Task Error String
+note =
+    File.readFile "note.txt"
+        |> Task.onError (\_ -> Task.succeed "no note")
+"#;
+
+/// Every shape that reaches `init`'s command: a direct `Cmd.perform` of an
+/// entry binding, a qualified binding of another module through a helper
+/// command, a `let`-bound command, all inside one `Cmd.batch`.
+const INIT_RPC_ENTRY_MAIN_SKY: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Boot
+
+
+type alias Model =
+    { items : String, status : String, note : String }
+
+
+type Msg
+    = Loaded (Result Error String)
+    | StatusRead (Result Error String)
+    | Noted (Result Error String)
+    | Refresh
+
+
+loadItems : Task Error String
+loadItems =
+    File.writeFile "seed.txt" "apples"
+        |> Task.andThen (\_ -> File.readFile "seed.txt")
+
+
+refreshCmd : Cmd Msg
+refreshCmd =
+    Cmd.perform Boot.status StatusRead
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    let
+        noteCmd =
+            Cmd.perform Boot.note Noted
+    in
+    ( { items = "", status = "", note = "" }
+    , Cmd.batch [ Cmd.perform loadItems Loaded, refreshCmd, noteCmd ]
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Loaded r ->
+            ( { model | items = Result.withDefault "?" r }, Cmd.none )
+
+        StatusRead r ->
+            ( { model | status = Result.withDefault "?" r }, Cmd.none )
+
+        Noted r ->
+            ( { model | note = Result.withDefault "?" r }, Cmd.none )
+
+        Refresh ->
+            ( model, refreshCmd )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text (model.items ++ " " ++ model.status ++ " " ++ model.note)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app
+"#;
+
+/// `init` in a sibling module (`State`), the Msg union in another (`Types`).
+const INIT_RPC_TYPES_SKY: &str = r#"module Types exposing (Model, Msg(..))
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+
+
+type alias Model =
+    { status : String, note : String }
+
+
+type Msg
+    = StatusRead (Result Error String)
+    | Noted (Result Error String)
+"#;
+
+const INIT_RPC_STATE_SKY: &str = r#"module State exposing (init)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Types exposing (Model, Msg(..))
+import Boot
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "", note = "" }
+    , Cmd.batch [ Cmd.perform Boot.status StatusRead, Cmd.perform Boot.note Noted ]
+    )
+"#;
+
+const INIT_RPC_SIBLING_MAIN_SKY: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Types exposing (Model, Msg(..))
+import State exposing (init)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        StatusRead r ->
+            ( { model | status = Result.withDefault "?" r }, Cmd.none )
+
+        Noted r ->
+            ( { model | note = Result.withDefault "?" r }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text (model.status ++ " " ++ model.note)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app
+"#;
+
+/// Build `proj` with `--target web:app`, assert the client never names a
+/// server-only binding and `init` sends the RPC, then (Go-gated) run the
+/// backend and check `POST /_rpc/SpaInit_` answers every follow-up Msg.
+fn assert_init_rpc_split(
+    proj: &std::path::Path,
+    init_rel: &str,
+    banned: &[&str],
+    follows: &[&str],
+) {
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    let front_init = std::fs::read_to_string(split.join("frontend/src").join(init_rel))
+        .unwrap_or_else(|e| panic!("frontend copy of {init_rel} must exist ({e}):\n{log}"));
+    for b in banned {
+        assert!(
+            !front_init.contains(b),
+            "the client `init` must not name the server-only `{b}`:\n{front_init}\n{log}"
+        );
+    }
+    assert!(
+        front_init.contains("\"/_rpc/SpaInit_\""),
+        "the client `init` must send the init RPC:\n{front_init}"
+    );
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        back.contains("Server.rpc \"POST /_rpc/SpaInit_\""),
+        "the backend must serve the init RPC:\n{back}"
+    );
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "--target web:app must build when init's command reaches the server:\n{log}"
+    );
+    let backend_dir = split.join("backend");
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let child = Killed(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file)
+            .spawn()
+            .expect("spawn the split backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 80),
+        "the split backend never listened:\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    let (code, body) = curl_post_status_body(port, "/_rpc/SpaInit_", "\"\"")
+        .expect("POST /_rpc/SpaInit_ should answer");
+    drop(child);
+    assert_eq!(code, 200, "the init RPC must answer 200: {body}");
+    for f in follows {
+        assert!(
+            body.contains(f),
+            "the init RPC must answer the follow-up `{f}`: {body}"
+        );
+    }
+}
+
+#[test]
+fn init_command_reaching_server_bindings_runs_through_an_init_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app("init-rpc-entry", INIT_RPC_ENTRY_MAIN_SKY);
+    std::fs::write(proj.join("src/Boot.sky"), INIT_RPC_BOOT_SKY).unwrap();
+    assert_init_rpc_split(
+        &proj,
+        "Main.sky",
+        &["loadItems", "Boot.status", "Boot.note"],
+        &[
+            "Loaded",
+            "apples",
+            "StatusRead",
+            "ready",
+            "Noted",
+            "no note",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+#[test]
+fn init_in_a_sibling_module_reaching_server_bindings_runs_through_an_init_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app("init-rpc-sibling", INIT_RPC_SIBLING_MAIN_SKY);
+    std::fs::write(proj.join("src/Boot.sky"), INIT_RPC_BOOT_SKY).unwrap();
+    std::fs::write(proj.join("src/Types.sky"), INIT_RPC_TYPES_SKY).unwrap();
+    std::fs::write(proj.join("src/State.sky"), INIT_RPC_STATE_SKY).unwrap();
+    assert_init_rpc_split(
+        &proj,
+        "State.sky",
+        &["Boot.status", "Boot.note"],
+        &["StatusRead", "ready", "Noted", "no note"],
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// Configuration is code (v0.28.0): the split backend honours the app's
+/// `App.withConfig (WebConfig { store = … })` and `App.withBase`, as the
+/// Sky.Live build does (operator env > code > default). Before, the App→Spa
+/// synthesis dropped both builders, so the backend took its session store only
+/// from `sky.toml` `[live]` or the environment: this app's code-named store
+/// was never seen and the boot line named no store at all.
+#[test]
+fn a_spa_backend_honours_the_store_the_app_names_with_with_config() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build(
+        "spa-deeplink",
+        &[(
+            "src/Main.sky",
+            "        |> App.withNotFound NotFoundPage\n",
+            "        |> App.withNotFound NotFoundPage\n        |> App.withConfig (App.WebConfig { App.webDefaults | store = Just \"postgres\" })\n        |> App.withBase { App.baseDefaults | logLevel = Config.Debug }\n",
+        ), (
+            "src/Main.sky",
+            "import Std.App as App\n",
+            "import Std.App as App\nimport Sky.Config as Config\n",
+        )],
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    assert!(
+        !log.contains("withConfig") || !log.contains("NOT carried"),
+        "withConfig must be carried, not dropped:\n{log}"
+    );
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    let backend = std::fs::read_to_string(dir.join("src/Main.sky")).unwrap_or_default();
+    assert!(
+        backend.contains("spaServerConfig_"),
+        "the backend applies the app's code configuration at boot:\n{backend}"
+    );
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .unwrap_or_default();
+    assert!(
+        !front.contains("spaServerConfig_"),
+        "the server configuration never reaches the wasm client:\n{front}"
+    );
+    let port = free_port();
+    let stdout = dir.join("server.log");
+    let stderr = dir.join("server.err");
+    let _child = Killed(
+        Command::new(dir.join("sky-out/app"))
+            .current_dir(&dir)
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("ENV")
+            .env_remove("SKY_LIVE_STORE")
+            .env_remove("SKY_LIVE_STORE_PATH")
+            .env_remove("SKY_LOG_LEVEL")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap())
+            .spawn()
+            .expect("start the split backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&stdout, 120),
+        "the split backend did not start:\n{}\n{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    let both = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    assert!(
+        both.contains("The session store \"postgres\", set by App.withConfig"),
+        "the backend resolves the store the code names, and says who named it:\n{both}"
+    );
+    // The operator's variable still wins over the code.
+    drop(_child);
+    let port = free_port();
+    let _child = Killed(
+        Command::new(dir.join("sky-out/app"))
+            .current_dir(&dir)
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("ENV")
+            .env("SKY_LIVE_STORE", "memory")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap())
+            .spawn()
+            .expect("start the split backend"),
+    );
+    assert!(wait_for_spa_backend(&stdout, 120), "restart failed");
+    let both = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    assert!(
+        both.contains("The session store \"memory\", set by SKY_LIVE_STORE in the environment"),
+        "the operator's variable wins over the code:\n{both}"
+    );
+}

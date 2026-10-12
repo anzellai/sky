@@ -275,7 +275,9 @@ evalsPanel filter evals =
     panel
         "Eval runs"
         (if List.isEmpty evals then
-            [ emptyState "No Std.Ai.Eval run in this process yet." ]
+            [ emptyState
+                  "No Std.Ai.Eval run in this process or in the app's database yet."
+            ]
 
         else
             List.map (evalRow filter) evals)
@@ -304,6 +306,7 @@ evalRow filter e =
                       [ Font.bold, Font.size 13 ]
                       (Ui.text ("eval " ++ e.suite))
                 , muted e.model
+                , evalSource e.source
                 , Ui.el
                       [ Font.size 12 ]
                       (Ui.text (percent e.passRate ++ " passed"))
@@ -340,6 +343,28 @@ evalRow filter e =
 
                    else
                        []))
+
+
+-- Where a run came from: "from database" for a run read from the app's
+-- database (another process's, such as `sky ai eval` in CI or a terminal),
+-- "this process" for one this process made.
+evalSource : String -> Element Msg
+evalSource source =
+    Ui.el
+        [ Font.size 11
+        , Font.color textMuted
+        , Ui.paddingXY 6 1
+        , Border.rounded 8
+        , Border.width 1
+        , Border.color borderSoft
+        , Ui.htmlAttribute "data-ai-eval-source" source
+        ]
+        (Ui.text
+            (if source == "database" then
+                "from database"
+
+            else
+                "this process"))
 
 
 failureLine : String -> Element Msg

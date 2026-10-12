@@ -57,15 +57,13 @@ type Msg
     | Reset
 
 
-loadConfig : Task Error (List (Set String))
-loadConfig =
-    File.readFile "config.txt"
-        |> Task.map (\s -> [ Set.fromList [ s ] ])
-
-
+-- `init` performs nothing. Since `init`'s command runs on the server
+-- (`SpaInit_`), a `Cmd.perform … GotConfig` here would make `GotConfig` an
+-- exact follow-up that cannot cross the wire, which is a build error, not the
+-- warning this fixture is about. Only `Blast` can still produce `GotConfig`.
 init : a -> ( Model, Cmd Msg )
 init _ =
-    ( emptyModel, Cmd.perform loadConfig GotConfig )
+    ( emptyModel, Cmd.none )
 
 
 sendAll : Model -> ( Model, Cmd Msg )

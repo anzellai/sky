@@ -581,6 +581,7 @@ const SERVER_ONLY_MEMBERS: &[(&str, &str)] = &[
     ("Spa", "sessionBoot"),
     ("Spa", "setWireHash"),
     ("Spa", "isLegacyRpc"),
+    ("Spa", "applyServerSettings"),
 ];
 
 fn classify_kernel(module: &str, func: &str) -> KernelClass {

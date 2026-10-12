@@ -252,8 +252,8 @@ func Db_connect(path any) any {
 			if env == "" {
 				return Err[any, any](ErrInvalidInput(
 					"db.connect: no path given and " + skyEnvName("DB_PATH") +
-						" / DATABASE_URL are unset (set [database].path/url in sky.toml, " +
-						"or pass a path)"))
+						" / DATABASE_URL are unset (set the database in code with " +
+						"Config.withDatabase, or set " + skyEnvName("DB_PATH") + ")"))
 			}
 			path = env
 		}

@@ -146,8 +146,8 @@ pub fn entry_source_with(config_module: Option<&str>) -> String {
 /// it exposes one, else the app's entry module (sky.toml `entry`) when that
 /// defines and exposes one. The second value is a warning when the entry
 /// module defines `config` without exposing it: the pipeline cannot apply it,
-/// so it would read the database `sky.toml` and the environment name, which
-/// may not be the app's.
+/// so its database and environment prefix fall back to the operator's
+/// environment and the stdlib defaults, which may not be the app's.
 pub fn config_source(project_dir: &Path) -> (Option<String>, Option<String>) {
     let root = project_dir.join(crate::build::configured_source_root(project_dir));
     if let Ok(src) = std::fs::read_to_string(root.join(format!("{AI_MODULE}.sky"))) {
@@ -179,7 +179,7 @@ pub fn config_source(project_dir: &Path) -> (Option<String>, Option<String>) {
             None,
             Some(format!(
                 "{entry} defines `config` but does not expose it, so the AI pipeline cannot apply it \
-                 and reads the database sky.toml and the environment name; expose it \
+                 and its database falls back to SKY_DB_PATH / DATABASE_URL; expose it \
                  (`module {name} exposing (main, config)`)"
             )),
         )

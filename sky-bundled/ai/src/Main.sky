@@ -24,8 +24,8 @@ each verb is a call to the Std.Ai API a user's own program can make.
                                                  Dataset.fromJsonLines, split, freezeJson
 
 The registry verbs open the registry on the database `--db <dsn>` names, else
-the app's own (`SKY_DB_PATH`, else `DATABASE_URL`; the CLI passes the
-project's `[database]` path or url when neither is set), with the artefact
+the app's own (`SKY_DB_PATH`, else `DATABASE_URL`; in a project with a
+pipeline the CLI runs these verbs through it instead), with the artefact
 store at `--registry <url>` (it wins over the variable), else
 `SKY_AI_REGISTRY`, else `file://.sky/ai/registry`.
 

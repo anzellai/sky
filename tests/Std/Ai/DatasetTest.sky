@@ -808,6 +808,21 @@ tests =
                   Err e ->
                       Test.fail (Error.toString e))
     , Test.test
+          "inspect finds duplicates through the bounded spill set, with the row each repeats"
+          (\_ ->
+              case inspectedSpilled of
+
+                  Ok ( r, leftover ) ->
+                      Test.equal
+                          ( ( 2500, 2200 ), firstDuplicates, [] )
+                          ( ( r.rows, r.duplicates )
+                          , List.take 3 (List.filterMap duplicateOf r.issues)
+                          , leftover
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
           "describeIssue names the row and never the message text"
           (\_ ->
               Test.equal
@@ -838,6 +853,65 @@ issueTag i =
 
         DuplicateRow r ->
             "DuplicateRow " ++ String.fromInt r.row
+
+
+-- `( row, firstRow )` of a `DuplicateRow` issue.
+duplicateOf : Issue -> Maybe ( Int, Int )
+duplicateOf i =
+    case i of
+
+        DuplicateRow r ->
+            Just ( r.row, r.firstRow )
+
+        _ ->
+            Nothing
+
+
+-- Row i (1 to 2500) is conversation `modBy 300 i`, so rows 301, 302 and 303
+-- repeat rows 1, 2 and 3.
+firstDuplicates : List ( Int, Int )
+firstDuplicates =
+    [ ( 301, 1 ), ( 302, 2 ), ( 303, 3 ) ]
+
+
+-- 2500 chat rows over 300 conversations, read in three chunks and inspected
+-- with 20 digests in memory (the rest spilled to disk), and the dedupe set
+-- directories left behind (none).
+inspectedSpilled : Result Error ( Dataset.Report, List String )
+inspectedSpilled =
+    File.tempDir "sky-inspect-spill"
+        |> Task.andThen
+               (\dir ->
+                   let
+                       path = dir ++ "/chats.jsonl"
+                       line i =
+                           "{\"messages\":[{\"role\":\"user\",\"content\":\"question "
+                               ++ String.fromInt (modBy 300 i)
+                               ++ "\"},{\"role\":\"assistant\",\"content\":\"answer\"}]}"
+                   in
+                       writeLines path (List.map line (List.range 1 2500))
+                           |> Task.andThen
+                                  (\_ ->
+                                      Dataset.inspect
+                                          (Dataset.limits
+                                              |> Dataset.withMemoryKeys 20)
+                                          (Dataset.fromJsonl
+                                              Dataset.chatCodec
+                                              path))
+                           |> Task.andThen
+                                  (\report ->
+                                      File.readDir ".sky/ai/work/dedupe"
+                                          |> Task.onError
+                                                 (\_ -> Task.succeed [])
+                                          |> Task.map
+                                                 (\names ->
+                                                     ( report
+                                                     , List.filter
+                                                           (String.startsWith
+                                                               "set-")
+                                                           names
+                                                     ))))
+        |> Task.run
 
 
 -- 2500 JSONL rows over 700 keys, read in three chunks: deduped with 50 keys
