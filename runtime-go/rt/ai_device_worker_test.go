@@ -200,4 +200,3 @@ func TestDeviceWorkerRefusedStoreIsStorageDenied(t *testing.T) {
 		t.Fatalf("prepare on a refused store: %v", v)
 	}
 }
-
