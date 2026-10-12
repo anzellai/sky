@@ -3239,6 +3239,19 @@ impl<'a> Ctx<'a> {
         {
             actual = expected.clone();
         }
+        // An EMPTY list literal `[]` holds no element, so it has no shape of its
+        // own: its inferred `List a` leaves `a` free and it lowers as `[]any{}`,
+        // which a typed slot (`[]State_AiSlot_R` in a record field) then narrows
+        // with `rt.AsListT` (doc 14 R1, "primitive join"). Build it at the slot's
+        // slice type instead (lever §5.2, slot-typed construction). §1: the slot's
+        // Go shape is known at emit time and the value carries none, so `[]T{}`
+        // is exactly the value the narrowing would have produced.
+        if matches!(&self.body.exprs[e], Expr::List(es) if es.is_empty())
+            && matches!(expected, GoTy::Slice(el) if **el != GoTy::Any)
+            && matches!(&actual, GoTy::Slice(el) if **el == GoTy::Any)
+        {
+            actual = expected.clone();
+        }
         // Same principle, applied to a RECORD LITERAL: `{ key = k, value = v }`
         // has no identity beyond its fields, so the slot it flows into is the
         // authoritative statement of which record it is. The literal's own
@@ -5816,27 +5829,48 @@ impl<'a> Ctx<'a> {
                 return self.kernel_call_lowered(go, vec![wxs], actual);
             }
         }
-        let largs: Vec<GoExpr> = args
+        let lowered: Vec<GoExpr> = args
             .iter()
             .map(|a| {
                 let e = self.lower_expr(*a, &GoTy::Any);
-                let e = Self::kernel_to_kernel(e);
-                self.widen(e)
+                Self::kernel_to_kernel(e)
             })
             .collect();
         // A kernel whose runtime twin already returns the Sky result's Go type
-        // is called through that twin, so its result needs no narrowing. See
+        // is called through that twin, so its result needs no narrowing. A
+        // twin parameter that takes a concrete Go type is used only when the
+        // argument already lowers to exactly that type (doc 14 §1: both shapes
+        // known at emit time); otherwise the erased call stays. See
         // `kernel_typed_return_twin`.
-        if let Some((typed, ret)) = kernel_typed_return_twin(go, largs.len()) {
-            let call = GoExpr::new(
-                GoExprKind::Call(
-                    Box::new(GoExpr::new(GoExprKind::Ident(typed.into()), GoTy::Any)),
-                    largs,
-                ),
-                ret,
-            );
-            return self.coerce_if_needed(call, actual);
+        if let Some(twin) = kernel_typed_return_twin(go, lowered.len()) {
+            let fits = twin
+                .params
+                .iter()
+                .zip(&lowered)
+                .all(|(p, e)| p.as_ref().is_none_or(|want| *want == e.ty));
+            if fits {
+                let targs: Vec<GoExpr> = twin
+                    .params
+                    .iter()
+                    .zip(lowered)
+                    .map(|(p, e)| if p.is_some() { e } else { self.widen(e) })
+                    .collect();
+                let call = GoExpr::new(
+                    GoExprKind::Call(
+                        Box::new(GoExpr::new(
+                            GoExprKind::Ident(twin.symbol.into()),
+                            GoTy::Any,
+                        )),
+                        targs,
+                    ),
+                    twin.ret,
+                );
+                return self.coerce_if_needed(call, actual);
+            }
+            let largs: Vec<GoExpr> = lowered.into_iter().map(|e| self.widen(e)).collect();
+            return self.kernel_call_lowered(go, largs, actual);
         }
+        let largs: Vec<GoExpr> = lowered.into_iter().map(|e| self.widen(e)).collect();
         self.kernel_call_lowered(go, largs, actual)
     }
 
@@ -9392,12 +9426,65 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// instead of through three Sky payload narrowings (R6, §4.5); the ADT's
 /// representation is unchanged. Verified by `coerce-floor` (apps/relay) and
 /// `runtime-go/rt/error_kernels_test.go`.
-fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<(&'static str, GoTy)> {
+/// A typed runtime twin: its symbol, one entry per parameter (`None` takes the
+/// argument widened to `any`, `Some(t)` takes it only when it lowers to exactly
+/// `t`), and its Go result type.
+struct TypedTwin {
+    symbol: &'static str,
+    params: Vec<Option<GoTy>>,
+    ret: GoTy,
+}
+
+fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
+    let int = || GoTy::Bare(Prim::Int);
+    let str_ = || GoTy::Bare(Prim::Str);
+    let bool_ = || GoTy::Bare(Prim::Bool);
     let maybe = |t: GoTy| GoTy::Named("rt.SkyMaybe".into(), vec![t]);
+    let twin = |symbol: &'static str, params: Vec<Option<GoTy>>, ret: GoTy| {
+        Some(TypedTwin {
+            symbol,
+            params,
+            ret,
+        })
+    };
     match (go, nargs) {
-        ("rt.Error_isRetryable", 1) => Some(("rt.Error_isRetryableT", GoTy::Bare(Prim::Bool))),
-        ("rt.Error_domain", 1) => Some(("rt.Error_domainT", maybe(GoTy::Bare(Prim::Str)))),
-        ("rt.Error_retryAfter", 1) => Some(("rt.Error_retryAfterT", maybe(GoTy::Bare(Prim::Int)))),
+        ("rt.Error_isRetryable", 1) => twin("rt.Error_isRetryableT", vec![None], bool_()),
+        ("rt.Error_domain", 1) => twin("rt.Error_domainT", vec![None], maybe(str_())),
+        ("rt.Error_retryAfter", 1) => twin("rt.Error_retryAfterT", vec![None], maybe(int())),
+        // Pre-existing typed twins, each checked against its erased form in
+        // runtime-go/rt/kernel_twins_test.go.
+        ("rt.String_fromInt", 1) => twin("rt.String_fromIntT", vec![Some(int())], str_()),
+        ("rt.String_toUpper", 1) => twin("rt.String_toUpperT", vec![Some(str_())], str_()),
+        ("rt.String_toLower", 1) => twin("rt.String_toLowerT", vec![Some(str_())], str_()),
+        ("rt.String_endsWith", 2) => twin(
+            "rt.String_endsWithT",
+            vec![Some(str_()), Some(str_())],
+            bool_(),
+        ),
+        ("rt.String_startsWith", 2) => twin(
+            "rt.String_startsWithT",
+            vec![Some(str_()), Some(str_())],
+            bool_(),
+        ),
+        ("rt.String_contains", 2) => twin(
+            "rt.String_containsT",
+            vec![Some(str_()), Some(str_())],
+            bool_(),
+        ),
+        ("rt.String_join", 2) => twin(
+            "rt.String_joinT",
+            vec![Some(str_()), Some(GoTy::Slice(Box::new(str_())))],
+            str_(),
+        ),
+        ("rt.Encoding_urlEncode", 1) => twin("rt.Encoding_urlEncodeT", vec![Some(str_())], str_()),
+        ("rt.Basics_not", 1) => twin("rt.Basics_notT", vec![Some(bool_())], bool_()),
+        // Erased-argument twins that assert the erased result's one Go type
+        // inside the runtime (runtime-go/rt/kernel_twins.go).
+        ("rt.String_left", 2) => twin("rt.String_leftT", vec![None, None], str_()),
+        ("rt.String_right", 2) => twin("rt.String_rightT", vec![None, None], str_()),
+        ("rt.String_dropLeft", 2) => twin("rt.String_dropLeftT", vec![None, None], str_()),
+        ("rt.String_dropRight", 2) => twin("rt.String_dropRightT", vec![None, None], str_()),
+        ("rt.JsonEnc_encode", 2) => twin("rt.JsonEnc_encodeT", vec![None, None], str_()),
         _ => None,
     }
 }

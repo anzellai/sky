@@ -441,6 +441,25 @@ nothing, and the read of the stdlib ADT (R6, §4.5) happens once inside the
 runtime instead of as three Sky payload narrowings. The ADT's representation
 is unchanged. A value reference keeps the erased symbol.
 
+The same table now carries the String / Encoding / Basics / Json.Encode
+kernels whose erased result has one Go type. Each entry names its parameter
+shapes: a parameter typed `Some(t)` (`String.fromInt` takes `int`,
+`String.endsWith` takes two `string`s, `String.join` a `[]string`) is used only
+when the argument already lowers to exactly `t`, which is the §1 test applied
+per call site; otherwise the erased call stays, byte for byte. The pre-existing
+typed twins (`rt.String_fromIntT`, `String_toUpperT`, `String_endsWithT`,
+`Encoding_urlEncodeT`, `Basics_notT`, …) are checked against their erased forms
+in `runtime-go/rt/kernel_twins_test.go`; the new erased-argument twins
+(`String_leftT`, `String_dropRightT`, `JsonEnc_encodeT`, …,
+`runtime-go/rt/kernel_twins.go`) call the erased kernel and assert its one
+result type, so their semantics are the erased kernel's by construction.
+Measured: narrow 14423 -> 12669 over all 80 coerce-floor rows, adapter 0.
+`::` stays untouched, as above.
+
+An empty list literal `[]` in a typed slot is built at the slot's slice type
+(`lower_expr_at`, lever §5.2): it carries no element, so `[]T{}` is exactly the
+value the former `rt.AsListT[T]([]any{})` produced.
+
 `list_unary_prim_twin` (`lower.rs`) stops at twins returning a Go **primitive**,
 and that boundary is load-bearing rather than a convenient stopping point:
 `bool` and `int` need no container rebuilt on the way out, so the twin is a
