@@ -63,12 +63,6 @@ import Std.Decimal as Decimal
 -- ---------------------------------------------------------------------------
 -- Provider
 -- ---------------------------------------------------------------------------
-type alias Direct =
-    { endpoint : String
-    , apiKey : Secret
-    , model : String
-    }
-
 {-| The bring-your-own backend: the two functions a `custom` provider supplies.
 `chat` is mandatory; `chatTools` is how it answers a native tool-calling request
 (a `custom` provider with no native wire degrades this to a plain `chat`).
@@ -86,14 +80,17 @@ body. A failure is an `Error`, classified by the transport.
 type alias WireTransport =
     String -> String -> Task Error String
 
+-- `post what path body`: `what` names the operation ("chat", "chatTools",
+-- "embed") for a built-in backend's error message; a `wire` transport ignores
+-- it. The built-in backends (`openai`, `compatible`) are a `Wire` too, over
+-- `backendPost`, so every operation has one OpenAI-compatible arm.
 type alias WireImpl =
-    { post : WireTransport
+    { post : String -> String -> String -> Task Error String
     , model : String
     }
 
 type Provider
-    = Backend Direct
-    | Routed (List Message -> Provider)
+    = Routed (List Message -> Provider)
     | Custom CustomImpl
     | Wire WireImpl
 
@@ -101,11 +98,7 @@ type Provider
 {-| The hosted OpenAI chat-completions endpoint. -}
 openai : Secret -> String -> Provider
 openai apiKey model =
-    Backend
-        { endpoint = "https://api.openai.com/v1/chat/completions"
-        , apiKey = apiKey
-        , model = model
-        }
+    compatible "https://api.openai.com/v1/chat/completions" apiKey model
 
 
 {-| Any OpenAI-compatible endpoint — a gateway, vLLM, or a local llama.cpp server
@@ -113,7 +106,10 @@ openai apiKey model =
 -}
 compatible : String -> Secret -> String -> Provider
 compatible endpoint apiKey model =
-    Backend { endpoint = endpoint, apiKey = apiKey, model = model }
+    Wire
+        { post = \what path body -> backendPost endpoint apiKey what path body
+        , model = model
+        }
 
 
 {-| A multi-provider ROUTER: a `Provider` that, per call, picks a concrete backend
@@ -187,7 +183,7 @@ transport fill it in at call time (an `Endpoint` does, from its resolved slot).
 -}
 wire : WireTransport -> String -> Provider
 wire transport model =
-    Wire { post = transport, model = model }
+    Wire { post = \_ path body -> transport path body, model = model }
 
 -- ---------------------------------------------------------------------------
 -- Messages
@@ -311,19 +307,11 @@ chatWith opts provider messages =
         Routed select ->
             chatWith opts (select messages) messages
 
-        Backend p ->
-            postBackend
-                "chat"
-                p.endpoint
-                p.apiKey
-                (chatBody opts p.model messages)
-                |> Task.andThen decodeChat
-
         Custom c ->
             c.chat messages
 
         Wire w ->
-            w.post "/chat/completions" (chatBody opts w.model messages)
+            w.post "chat" "/chat/completions" (chatBody opts w.model messages)
                 |> Task.andThen decodeChat
 
 
@@ -332,9 +320,32 @@ chatBody opts model messages =
     JsonE.encode
         0
         (JsonE.object
-            (( "model", JsonE.string (modelFor opts model) )
-                :: ( "messages", JsonE.list messageValue messages )
-                :: optionFields opts))
+            (List.concat
+                [ [ ( "model", JsonE.string (modelFor opts model) )
+                  , ( "messages", JsonE.list messageValue messages )
+                  ]
+                , (case opts.temperature of
+
+                      Just t ->
+                          [ ( "temperature", JsonE.float t ) ]
+
+                      Nothing ->
+                          [])
+                , (case opts.seed of
+
+                      Just n ->
+                          [ ( "seed", JsonE.int n ) ]
+
+                      Nothing ->
+                          [])
+                , (case opts.maxTokens of
+
+                      Just n ->
+                          [ ( "max_tokens", JsonE.int n ) ]
+
+                      Nothing ->
+                          [])
+                ]))
 
 
 modelFor : Options -> String -> String
@@ -350,20 +361,9 @@ modelFor opts model =
 
 messageValue : Message -> JsonE.Value
 messageValue m =
-    Codec.toValue messageCodec m
-
-
-messageCodec : Codec Message
-messageCodec =
-    Codec.auto { role = "", content = "" }
-
-
-optionFields opts =
-    List.filterMap
-        identity
-        [ Maybe.map (\t -> ( "temperature", JsonE.float t )) opts.temperature
-        , Maybe.map (\n -> ( "seed", JsonE.int n )) opts.seed
-        , Maybe.map (\n -> ( "max_tokens", JsonE.int n )) opts.maxTokens
+    JsonE.object
+        [ ( "role", JsonE.string m.role )
+        , ( "content", JsonE.string m.content )
         ]
 
 
@@ -376,6 +376,27 @@ decodeChat body =
 
         Err e ->
             Task.fail e
+
+
+-- The transport of a built-in backend: `/chat/completions` posts to the
+-- configured endpoint, `/embeddings` to the URL derived from it.
+backendPost : String -> Secret -> String -> String -> String -> Task Error String
+backendPost endpoint apiKey what path body =
+    if path == "/embeddings" then
+        case embeddingsUrl endpoint of
+
+            Just url ->
+                postBackend what url apiKey body
+
+            Nothing ->
+                Task.fail
+                    (Error.invalidInput
+                        ("Provider.embed: cannot derive the embeddings URL from "
+                            ++ endpoint
+                            ++ " (it does not end with /chat/completions)"))
+
+    else
+        postBackend what endpoint apiKey body
 
 
 -- POST one OpenAI-compatible body to a fixed URL (the built-in backends).
@@ -419,27 +440,13 @@ embed provider inputs =
         Routed select ->
             embed (select (List.map user inputs)) inputs
 
-        Backend p ->
-            case embeddingsUrl p.endpoint of
-
-                Just url ->
-                    postBackend "embed" url p.apiKey (embedBody p.model inputs)
-                        |> Task.andThen decodeEmbeddings
-
-                Nothing ->
-                    Task.fail
-                        (Error.invalidInput
-                            ("Provider.embed: cannot derive the embeddings URL from "
-                                ++ p.endpoint
-                                ++ " (it does not end with /chat/completions)"))
-
         Custom _ ->
             Task.fail
                 (Error.invalidInput
                     "Provider.embed: a custom provider has no embeddings route; use Provider.wire for an OpenAI-compatible server")
 
         Wire w ->
-            w.post "/embeddings" (embedBody w.model inputs)
+            w.post "embed" "/embeddings" (embedBody w.model inputs)
                 |> Task.andThen decodeEmbeddings
 
 
@@ -562,14 +569,12 @@ chatTools provider turns tools =
         Routed select ->
             chatTools (select (turnMessages turns)) turns tools
 
-        Backend p ->
-            chatToolsBackend p turns tools
-
         Custom c ->
             c.chatTools turns tools
 
         Wire w ->
             w.post
+                "chatTools"
                 "/chat/completions"
                 (JsonE.encode 0 (requestValue w.model turns tools))
                 |> Task.andThen decodeToolResponse
@@ -603,16 +608,6 @@ turnMessages turns =
                 Returned _ content ->
                     Just { role = "tool", content = content })
         turns
-
-
-chatToolsBackend : Direct -> List Turn -> List ToolSpec -> Task Error ToolResponse
-chatToolsBackend p turns tools =
-    postBackend
-        "chatTools"
-        p.endpoint
-        p.apiKey
-        (JsonE.encode 0 (requestValue p.model turns tools))
-        |> Task.andThen decodeToolResponse
 
 
 requestValue model turns tools =
