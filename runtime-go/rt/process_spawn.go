@@ -147,7 +147,49 @@ type procHandle struct {
 var (
 	procRegistry sync.Map // map[int64]*procHandle
 	procExitOnce sync.Once
+
+	// procBeforeExitKill holds the owners that must end their own children
+	// in their own way before killAllChildProcesses kills what is left. See
+	// registerBeforeChildKill.
+	procBeforeExitKillMu sync.Mutex
+	procBeforeExitKill   []namedStopper
 )
+
+// registerBeforeChildKill records fn to run at the START of every
+// killAllChildProcesses, before any child is killed. An owner whose children
+// carry state outside this process registers here: the managed llama-server
+// (ai_engine.go) has an entry in engines.json and a supervisor that takes an
+// exit it did not ask for as a crash. Killed as a plain child, its entry was
+// removed only by the supervisor's goroutine, in a race with the process
+// exit, and the supervisor counted a crash (and restarted the engine, or
+// exited the app outside development). fn must be idempotent: the exit path
+// can run more than once (generated main's defer, then the drain).
+func registerBeforeChildKill(name string, fn func()) {
+	if fn == nil {
+		return
+	}
+	procBeforeExitKillMu.Lock()
+	procBeforeExitKill = append(procBeforeExitKill, namedStopper{name: name, fn: fn})
+	procBeforeExitKillMu.Unlock()
+}
+
+// runBeforeChildKill runs the registered owners, LIFO. A panicking one is
+// contained: the process is exiting, and the children must still end.
+func runBeforeChildKill() {
+	procBeforeExitKillMu.Lock()
+	list := append([]namedStopper(nil), procBeforeExitKill...)
+	procBeforeExitKillMu.Unlock()
+	for i := len(list) - 1; i >= 0; i-- {
+		func(s namedStopper) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "[sky.shutdown] child owner %q panicked: %v\n", s.name, r)
+				}
+			}()
+			s.fn()
+		}(list[i])
+	}
+}
 
 // lookupProc resolves a Process handle for the calling goroutine: Err when
 // the id names nothing in this server, or when another Sky.Live session owns
@@ -450,7 +492,9 @@ func (h *procHandle) shutdown() {
 
 // killAllChildProcesses ends every child this program still runs. Called on
 // every runtime exit path (ExitProcess, LogPanicAndExit, the shutdown drain).
+// The owners registered with registerBeforeChildKill end theirs first.
 func killAllChildProcesses() {
+	runBeforeChildKill()
 	var hs []*procHandle
 	procRegistry.Range(func(_, v any) bool {
 		hs = append(hs, v.(*procHandle))

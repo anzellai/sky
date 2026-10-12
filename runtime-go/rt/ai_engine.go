@@ -182,7 +182,11 @@ func aiEngineFor(slot string, spec aiLocalSpec) *aiEngine {
 	if e, ok := aiEngines[key]; ok {
 		return e
 	}
-	aiExitHookOnce.Do(func() { RegisterResourceCloser("ai.engines", aiStopAllEngines) })
+	// The exit path stops engines as engines, before it kills the children
+	// (registerBeforeChildKill says why). The shutdown drain reaches it too:
+	// a program with an engine has spawned a child, so its drain runs
+	// killAllChildProcesses through the "process.children" closer.
+	aiExitHookOnce.Do(func() { registerBeforeChildKill("ai.engines", aiStopAllEngines) })
 	e := &aiEngine{key: key, slot: slot, spec: spec, state: "stopped"}
 	aiEngines[key] = e
 	aiEngineSeq++
@@ -752,8 +756,11 @@ func (e *aiEngine) status() any {
 	}
 }
 
-// aiStopAllEngines stops every engine this process started (an exit hook;
-// killAllChildProcesses also ends them, this tidies the registry and keys).
+// aiStopAllEngines stops every engine this process started: an intentional
+// stop, so the supervisor counts no crash and restarts nothing, and the
+// registry entry and key file are gone when it returns. It runs at the start
+// of every exit path (killAllChildProcesses). The engines stop together, so
+// the exit waits for the slowest one, not for the sum.
 func aiStopAllEngines() {
 	aiEnginesMu.Lock()
 	var es []*aiEngine
@@ -761,9 +768,15 @@ func aiStopAllEngines() {
 		es = append(es, e)
 	}
 	aiEnginesMu.Unlock()
+	var wg sync.WaitGroup
 	for _, e := range es {
-		e.stop()
+		wg.Add(1)
+		go func(e *aiEngine) {
+			defer wg.Done()
+			e.stop()
+		}(e)
 	}
+	wg.Wait()
 }
 
 // aiResetEngines stops and forgets every engine (tests).

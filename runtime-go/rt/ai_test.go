@@ -967,6 +967,41 @@ func TestAiStopSlotEndsAnOrphanedEngine(t *testing.T) {
 	}
 }
 
+// The exit path of a program (killAllChildProcesses, from generated main's
+// defer, ExitProcess and the shutdown drain) stops its engines as engines
+// BEFORE it kills the children. Before, it killed the engine like any other
+// child: the supervisor saw an unexpected exit, counted a crash (in
+// production: exited the app; in development: queued a restart), and only
+// its goroutine removed the registry entry, in a race with the process exit.
+// When the process won, `engines.json` kept an entry for an engine that was
+// gone (ai_cli_flow.rs endpoint test, about 1 run in 35 under load).
+func TestAiExitPathStopsEnginesBeforeKillingChildren(t *testing.T) {
+	dir, model := aiTestEnv(t, nil)
+	s := localSlot(t, model, nil)
+	if _, err := s.post("/chat/completions", chatBody("x")); err != nil {
+		t.Fatal(err)
+	}
+	pid := s.engine.pid
+	killAllChildProcesses()
+	// The process would end here: what is on disk now is what it leaves.
+	if list := aiRegistryList(); len(list) != 0 {
+		t.Fatalf("the exit path left registry entries: %v", list)
+	}
+	if !aiWaitGone(pid, 5*time.Second) {
+		t.Fatal("the exit path left the engine running")
+	}
+	// The stop was intentional: no crash is recorded and nothing restarts.
+	time.Sleep(300 * time.Millisecond)
+	st := s.engine.status().(map[string]any)
+	if st["state"] != "stopped" || st["lastCrash"] != "" {
+		t.Fatalf("the exit path was taken for a crash: %v", st)
+	}
+	launch, _ := os.ReadFile(filepath.Join(dir, "launches.log"))
+	if n := strings.Count(string(launch), "\n"); n != 1 {
+		t.Fatalf("%d launches, want 1", n)
+	}
+}
+
 // A holder killed without running its exit path (SIGKILL, SIGPIPE) leaves its
 // engine running in its own process group. The next program that starts an
 // engine ends it, and only it: an entry whose pid now names another process
