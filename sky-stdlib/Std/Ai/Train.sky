@@ -1834,6 +1834,35 @@ registryAdapter a =
             }
 
 
+-- | The files registered with the version besides its main file: the PEFT
+-- weights (when the GGUF file is the version) and `adapter_config.json`, which
+-- a vLLM tier loads, from the run's `adapter/` directory.
+companions : Adapter -> List Registry.Companion
+companions a =
+    let
+        dir = dirOf a.peft.path
+        config = { role = "peft.config", path = dir ++ "/adapter_config.json" }
+    in
+        case a.gguf of
+
+            Just _ ->
+                [ { role = "peft", path = a.peft.path }, config ]
+
+            Nothing ->
+                [ config ]
+
+
+dirOf : String -> String
+dirOf path =
+    case List.reverse (String.split "/" path) of
+
+        _ :: rest ->
+            String.join "/" (List.reverse rest)
+
+        [] ->
+            "."
+
+
 methodOf : Adapter -> Registry.Method
 methodOf a =
     if a.method == "qlora" then
@@ -3288,11 +3317,12 @@ registerStep ctx job a =
                 ctx
                 Codec.string
                 "register"
-                (Registry.register
+                (Registry.registerWith
                     reg
                     (settings job).name
                     (registryAdapter a)
                     (lineage a)
+                    (companions a)
                     |> Task.map Registry.label)
                 |> Task.map (\label -> { a | registered = Just label })
 

@@ -293,6 +293,11 @@ type aiEndpointBuilder struct {
 	resolverName    string
 	resolve         any
 	adapterRefreshS int
+	// auth is Endpoint.withGoogleAuth ("google") or "" (the bearer key
+	// alone); idToken is the Sky function that mints a Google ID token for an
+	// audience (Std.Ai.Cloud.Google.idToken).
+	auth    string
+	idToken any
 }
 
 func parseAiEndpointBuilder(v any) aiEndpointBuilder {
@@ -313,6 +318,8 @@ func parseAiEndpointBuilder(v any) aiEndpointBuilder {
 		hasResolver:     aiBoolField(v, "HasResolver", "hasResolver"),
 		resolverName:    aiStrField(v, "ResolverName", "resolverName"),
 		adapterRefreshS: aiIntField(v, "AdapterRefreshS", "adapterRefreshS"),
+		auth:            aiStrField(v, "Auth", "auth"),
+		idToken:         recordField(v, "IdToken", "idToken"),
 	}
 	if b.hasResolver {
 		b.resolve = recordField(v, "Resolve", "resolve")
@@ -350,9 +357,9 @@ func (b aiEndpointBuilder) fingerprint() string {
 	if b.hasResolver {
 		resolver = "resolver:" + b.resolverName
 	}
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d|%v|%+v|%s|%d", b.slot, b.mode, b.url,
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d|%v|%+v|%s|%d|%s", b.slot, b.mode, b.url,
 		aiShortHash(b.key), b.model, b.adapter, b.timeoutMs, b.maxInFlight, b.queue,
-		b.queueWaitMs, b.retries, b.hasLocal, b.local, resolver, b.adapterRefreshS)
+		b.queueWaitMs, b.retries, b.hasLocal, b.local, resolver, b.adapterRefreshS, b.auth)
 }
 
 // aiSlotConfig is a fully resolved slot.
@@ -376,7 +383,11 @@ type aiSlotConfig struct {
 	registry       bool
 	resolve        any
 	adapterRefresh time.Duration
-	settings       []aiSetting
+	// auth is "bearer" (the key in Authorization) or "google" (also a Google
+	// ID token for the URL's origin in X-Serverless-Authorization).
+	auth     string
+	idToken  any
+	settings []aiSetting
 }
 
 // resolveAiSlot applies the local-or-remote rule (design §8.1):
@@ -472,6 +483,22 @@ func resolveAiSlot(b aiEndpointBuilder) (*aiSlotConfig, error) {
 		if v, _ := layer("ADAPTER_REFRESH_S", itoaSet(b.adapterRefreshS), aiNonNegativeInt); v != "" {
 			c.adapterRefresh = time.Duration(aiAtoi(v)) * time.Second
 		}
+	}
+
+	authOK := func(s string) bool {
+		s = strings.ToLower(strings.TrimSpace(s))
+		return s == "bearer" || s == "google"
+	}
+	if raw, ok := lookupEnvRaw(name("AUTH")); ok && raw != "" && !authOK(raw) {
+		return nil, aiFailf(aiInvalidSetting, "%s=%q: use bearer or google", name("AUTH"), raw).with("setting", name("AUTH"))
+	}
+	c.auth = "bearer"
+	if v, _ := layer("AUTH", b.auth, authOK); v != "" {
+		c.auth = strings.ToLower(strings.TrimSpace(v))
+	}
+	c.idToken = b.idToken
+	if c.auth == "google" && c.mode == "remote" && c.idToken == nil {
+		return nil, aiFailf(aiNotConfigured, "slot %q: %s=google needs the Google ID-token source; build the slot with Std.Ai.Endpoint", b.slot, name("AUTH")).with("setting", name("AUTH"))
 	}
 
 	c.timeout = 120 * time.Second

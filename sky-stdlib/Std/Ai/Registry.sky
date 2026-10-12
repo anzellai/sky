@@ -60,6 +60,15 @@ module Std.Ai.Registry exposing
     , store
     , database
     , register
+    , Companion
+    , registerWith
+    , companion
+    , publishPointers
+    , Pointer
+    , VersionManifest
+    , readPointer
+    , readManifest
+    , storeResolver
     , attachReport
     , reports
     , evalHistory
@@ -488,53 +497,93 @@ baseDigestOf ref =
 -- resumed workflow does not create a second one; the same bytes with another
 -- base model are refused.
 register : Registry -> String -> Adapter -> Lineage -> Task Error Version
-register (Registry r) name adapter lin =
+register reg name adapter lin =
+    registerWith reg name adapter lin []
+
+-- | A file that travels with an adapter version: its role and its path. A
+-- trained adapter registers its GGUF file as the version (what llama.cpp
+-- loads) and its PEFT files as companions, `peft` (the safetensors weights)
+-- and `peft.config` (adapter_config.json), which vLLM loads; an adapter
+-- registered as safetensors can carry its GGUF export as `gguf`. Each is
+-- stored by digest and recorded in the version's metadata under its role.
+type alias Companion =
+    { role : String
+    , path : String
+    }
+
+
+-- | `register` with companion files (see `Companion`). After the record is
+-- written the registry publishes its pointer objects to the store
+-- (`publishPointers`), so a serving tier that reads only the store sees the
+-- new version.
+registerWith : Registry -> String -> Adapter -> Lineage -> List Companion -> Task Error Version
+registerWith (Registry r) name adapter lin0 companions =
     let
         checked =
             Result.map2
                 (\n base -> ( n, base ))
                 (validName name)
-                (baseDigestOf lin.base)
+                (baseDigestOf lin0.base)
     in
         Task.fromResult checked
             |> Task.andThen
-                   (\( _, baseDigest ) ->
-                       if not (Regex.match "^[0-9a-f]{64}$" lin.datasetDigest) then
-                           Task.fail
-                               (invalidSetting
-                                   "datasetDigest"
-                                   (quote lin.datasetDigest
-                                       ++ " is not a sha256 digest (64 lower-case hex digits)"))
-
-                       else
-                           adapterInfoRaw adapter.path
-                               |> Task.andThen
-                                      (\info ->
-                                          if info.format
-                                              /= formatText adapter.format then
-                                              Task.fail
-                                                  (invalidSetting
-                                                      "format"
-                                                      (adapter.path ++ " is "
-                                                          ++ info.format
-                                                          ++ ", not "
-                                                          ++ formatText
-                                                                 adapter.format))
-
-                                          else
-                                              Store.put r.store adapter.path
-                                                  |> Task.andThen
-                                                         (\blob ->
-                                                             insertVersion
-                                                                 (Registry r)
-                                                                 name
-                                                                 adapter
-                                                                 lin
-                                                                 baseDigest
-                                                                 info
-                                                                 blob)))
+                   (\pair ->
+                       Task.sequence
+                           (List.map
+                               (\c ->
+                                   Store.put r.store c.path
+                                       |> Task.map (\blob -> ( c.role, blob.sha256 )))
+                               companions)
+                           |> Task.map (\stored -> ( pair, stored )))
             |> Task.andThen
-                   (\v -> publish (Registry r) name |> Task.map (\_ -> v))
+                   (\( ( _, baseDigest ), stored ) ->
+                       let
+                           lin =
+                               { lin0
+                                   | metadata =
+                                       List.filter
+                                           (\( k, _ ) ->
+                                               not (List.any (\( role, _ ) -> role == k) stored))
+                                           lin0.metadata
+                                           ++ stored
+                               }
+                       in
+                           if not (Regex.match "^[0-9a-f]{64}$" lin.datasetDigest) then
+                               Task.fail
+                                   (invalidSetting
+                                       "datasetDigest"
+                                       (quote lin.datasetDigest
+                                           ++ " is not a sha256 digest (64 lower-case hex digits)"))
+
+                           else
+                               adapterInfoRaw adapter.path
+                                   |> Task.andThen
+                                          (\info ->
+                                              if info.format /= formatText adapter.format then
+                                                  Task.fail
+                                                      (invalidSetting
+                                                          "format"
+                                                          (adapter.path ++ " is " ++ info.format
+                                                              ++ ", not "
+                                                              ++ formatText adapter.format))
+
+                                              else
+                                                  Store.put r.store adapter.path
+                                                      |> Task.andThen
+                                                             (\blob ->
+                                                                 insertVersion
+                                                                     (Registry r)
+                                                                     name
+                                                                     adapter
+                                                                     lin
+                                                                     baseDigest
+                                                                     info
+                                                                     blob)))
+            |> Task.andThen
+                   (\v ->
+                       publishConsole (Registry r) name
+                           |> Task.andThen (\_ -> publishAfter (Registry r) name)
+                           |> Task.map (\_ -> v))
 
 
 insertVersion : Registry -> String -> Adapter -> Lineage -> String -> AdapterInfo -> Store.Blob -> Task Error Version
@@ -712,7 +761,7 @@ attachReport (Registry r) v report =
                                               , SqlInt now
                                               ]
                                               |> Task.map (\_ -> ())))
-            |> Task.andThen (\_ -> publish (Registry r) v.name)
+            |> Task.andThen (\_ -> publishConsole (Registry r) v.name)
 
 
 verdictOf : Eval.Report -> String
@@ -1067,7 +1116,10 @@ move (Registry r) aliasName expected v action reportDigest reason =
                                                           reportDigest
                                                           reason)))
         |> Task.andThen
-               (\ev -> publish (Registry r) v.name |> Task.map (\_ -> ev))
+               (\ev ->
+                   publishConsole (Registry r) v.name
+                       |> Task.andThen (\_ -> publishAfter (Registry r) v.name)
+                       |> Task.map (\_ -> ev))
 
 
 -- The version as stored, inside the move's transaction: it exists, its
@@ -1679,7 +1731,7 @@ block (Registry r) v reason =
             |> Task.andThen
                    (\n ->
                        if n == 1 then
-                           publish (Registry r) v.name
+                           publishConsole (Registry r) v.name
 
                        else
                            Task.fail (notRegistered (label v)))
@@ -1720,7 +1772,7 @@ stripScheme ref =
 adapterFor : Registry -> String -> Bool -> Task Error Endpoint.Adapter
 adapterFor reg ref localEngine =
     resolve reg ref
-        |> Task.andThen (\v -> publish reg v.name |> Task.map (\_ -> v))
+        |> Task.andThen (\v -> publishConsole reg v.name |> Task.map (\_ -> v))
         |> Task.andThen
                (\v ->
                    let
@@ -1737,23 +1789,41 @@ adapterFor reg ref localEngine =
                        if not localEngine then
                            Task.succeed (info "")
 
-                       else if v.format /= "gguf" then
-                           Task.fail
-                               (invalidSetting
-                                   "adapter"
-                                   (label v ++ " is " ++ v.format
-                                       ++ "; a local engine (llama.cpp) loads GGUF adapters only"))
+                       else if v.format == "gguf" then
+                           fetch reg v |> Task.map info
 
                        else
-                           fetch reg v |> Task.map info)
+                           case companion "gguf" v of
+
+                               Just gguf ->
+                                   -- A safetensors version that carries its
+                                   -- GGUF export: the local engine loads that.
+                                   Store.fetch (store reg) gguf
+                                       |> Task.map
+                                              (\path ->
+                                                  { ref = ref
+                                                  , label = label v
+                                                  , servedName = servedName v
+                                                  , digest = gguf
+                                                  , baseDigest = v.baseDigest
+                                                  , format = "gguf"
+                                                  , path = path
+                                                  })
+
+                               Nothing ->
+                                   Task.fail
+                                       (invalidSetting
+                                           "adapter"
+                                           (label v ++ " is " ++ v.format
+                                               ++ " with no GGUF export; a local engine (llama.cpp) loads GGUF adapters only (train with Train.withGgufExport)")))
 
 
 -- ── The console ─────────────────────────────────────────────────────
 -- Hand the console's AI panel the model's current state: aliases, the
 -- newest versions and the newest alias events. A console failure never fails
 -- the registry call.
-publish : Registry -> String -> Task Error ()
-publish (Registry r) name =
+publishConsole : Registry -> String -> Task Error ()
+publishConsole (Registry r) name =
     Task.map4
         (\als vs evs reps ->
             JsonE.object
@@ -1949,3 +2019,405 @@ lineageValue l =
 quote : String -> String
 quote s =
     "\"" ++ s ++ "\""
+
+-- ── Pointer objects in the store ────────────────────────────────────
+-- The records live in the app's database. A serving tier must not need that
+-- database, so the registry also publishes what serving reads to its store:
+--
+--     models/<name>/versions/<n>.json   a version's manifest, written once
+--     aliases/<name>/<alias>.json       where an alias points: { number,
+--                                       generation, digest, servedName }
+--
+-- `register` writes the manifest and every alias move rewrites the alias's
+-- pointer, after the database commit. A pointer is replaced only by a newer
+-- generation, through the store's conditional write, so a delayed writer can
+-- never move it back. `publishPointers` (and `sky ai registry publish
+-- <name>`) writes them all again: after a crash between a commit and its
+-- publish, or for versions registered before pointers existed.
+
+-- | Where an alias points, as the store holds it.
+type alias Pointer =
+    { name : String
+    , aliasName : String
+    , number : Int
+    , generation : Int
+    , digest : String
+    , servedName : String
+    }
+
+-- | A version as the store holds it: what a serving tier needs to load it
+-- without the registry's database. `baseId` is the original weights' id
+-- (`<org>/<repo>@<commit>`) a trained adapter records; `peft`,
+-- `peftConfig` and `gguf` are the companions' digests (`""` when absent).
+type alias VersionManifest =
+    { name : String
+    , number : Int
+    , label : String
+    , servedName : String
+    , digest : String
+    , format : String
+    , method : String
+    , architecture : String
+    , base : String
+    , baseDigest : String
+    , baseId : String
+    , dataset : String
+    , datasetDigest : String
+    , peft : String
+    , peftConfig : String
+    , gguf : String
+    }
+
+
+-- | A companion's digest by its role (`peft`, `peft.config`, `gguf`).
+companion : String -> Version -> Maybe String
+companion role v =
+    List.filter (\( k, _ ) -> k == role) v.metadata |> List.head
+        |> Maybe.map (\( _, d ) -> d)
+
+
+metadataOr : String -> Version -> String
+metadataOr key v =
+    companion key v |> Maybe.withDefault ""
+
+
+manifestOf : Version -> VersionManifest
+manifestOf v =
+    { name = v.name
+    , number = v.number
+    , label = label v
+    , servedName = servedName v
+    , digest = v.digest
+    , format = v.format
+    , method = v.method
+    , architecture = v.architecture
+    , base = v.base
+    , baseDigest = v.baseDigest
+    , baseId = metadataOr "baseId" v
+    , dataset = v.dataset
+    , datasetDigest = v.datasetDigest
+    , peft =
+        if v.format == "safetensors" then
+            v.digest
+
+        else
+            metadataOr "peft" v
+    , peftConfig = metadataOr "peft.config" v
+    , gguf =
+        if v.format == "gguf" then
+            v.digest
+
+        else
+            metadataOr "gguf" v
+    }
+
+
+manifestJson : VersionManifest -> String
+manifestJson m =
+    JsonE.encode
+        0
+        (JsonE.object
+            [ ( "architecture", JsonE.string m.architecture )
+            , ( "base", JsonE.string m.base )
+            , ( "baseDigest", JsonE.string m.baseDigest )
+            , ( "baseId", JsonE.string m.baseId )
+            , ( "dataset", JsonE.string m.dataset )
+            , ( "datasetDigest", JsonE.string m.datasetDigest )
+            , ( "digest", JsonE.string m.digest )
+            , ( "format", JsonE.string m.format )
+            , ( "gguf", JsonE.string m.gguf )
+            , ( "label", JsonE.string m.label )
+            , ( "method", JsonE.string m.method )
+            , ( "name", JsonE.string m.name )
+            , ( "number", JsonE.int m.number )
+            , ( "peft", JsonE.string m.peft )
+            , ( "peftConfig", JsonE.string m.peftConfig )
+            , ( "servedName", JsonE.string m.servedName )
+            , ( "v", JsonE.int 1 )
+            ])
+
+
+manifestDecoder : JsonD.Decoder VersionManifest
+manifestDecoder =
+    let
+        str k = JsonD.oneOf [ JsonD.field k JsonD.string, JsonD.succeed "" ]
+    in
+        JsonD.map4
+            (\( name, number, lbl, served ) ( digest, format, method, arch ) ( base, baseDigest, baseId, dataset ) ( dd, peft, cfg, gguf ) ->
+                { name = name
+                , number = number
+                , label = lbl
+                , servedName = served
+                , digest = digest
+                , format = format
+                , method = method
+                , architecture = arch
+                , base = base
+                , baseDigest = baseDigest
+                , baseId = baseId
+                , dataset = dataset
+                , datasetDigest = dd
+                , peft = peft
+                , peftConfig = cfg
+                , gguf = gguf
+                })
+            (JsonD.map4
+                (\a b c d -> ( a, b, c, d ))
+                (str "name")
+                (JsonD.field "number" JsonD.int)
+                (str "label")
+                (str "servedName"))
+            (JsonD.map4 (\a b c d -> ( a, b, c, d )) (str "digest") (str "format") (str "method") (str "architecture"))
+            (JsonD.map4 (\a b c d -> ( a, b, c, d )) (str "base") (str "baseDigest") (str "baseId") (str "dataset"))
+            (JsonD.map4 (\a b c d -> ( a, b, c, d )) (str "datasetDigest") (str "peft") (str "peftConfig") (str "gguf"))
+
+
+pointerJson : Pointer -> String
+pointerJson p =
+    JsonE.encode
+        0
+        (JsonE.object
+            [ ( "alias", JsonE.string p.aliasName )
+            , ( "digest", JsonE.string p.digest )
+            , ( "generation", JsonE.int p.generation )
+            , ( "name", JsonE.string p.name )
+            , ( "number", JsonE.int p.number )
+            , ( "servedName", JsonE.string p.servedName )
+            , ( "v", JsonE.int 1 )
+            ])
+
+
+pointerDecoder : JsonD.Decoder Pointer
+pointerDecoder =
+    JsonD.map3
+        (\( n, a ) ( num, gen ) ( d, s ) ->
+            { name = n
+            , aliasName = a
+            , number = num
+            , generation = gen
+            , digest = d
+            , servedName = s
+            })
+        (JsonD.map2 (\a b -> ( a, b )) (JsonD.field "name" JsonD.string) (JsonD.field "alias" JsonD.string))
+        (JsonD.map2 (\a b -> ( a, b )) (JsonD.field "number" JsonD.int) (JsonD.field "generation" JsonD.int))
+        (JsonD.map2 (\a b -> ( a, b )) (JsonD.field "digest" JsonD.string) (JsonD.field "servedName" JsonD.string))
+
+
+manifestKey : String -> Int -> String
+manifestKey name number =
+    "models/" ++ name ++ "/versions/" ++ String.fromInt number ++ ".json"
+
+
+pointerKey : String -> String -> String
+pointerKey name aliasName =
+    "aliases/" ++ name ++ "/" ++ aliasName ++ ".json"
+
+
+-- | Where `<name>@<alias>` points, as the store holds it.
+readPointer : Store -> String -> String -> Task Error (Maybe Pointer)
+readPointer st name aliasName =
+    Store.getAt st (pointerKey name aliasName)
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Nothing ->
+                           Task.succeed Nothing
+
+                       Just text ->
+                           Task.fromResult (JsonD.decodeString pointerDecoder text)
+                               |> Task.map Just)
+
+
+-- | A version's manifest, as the store holds it.
+readManifest : Store -> String -> Int -> Task Error (Maybe VersionManifest)
+readManifest st name number =
+    Store.getAt st (manifestKey name number)
+        |> Task.andThen
+               (\found ->
+                   case found of
+
+                       Nothing ->
+                           Task.succeed Nothing
+
+                       Just text ->
+                           Task.fromResult (JsonD.decodeString manifestDecoder text)
+                               |> Task.map Just)
+
+
+-- | Write the store's pointer objects for a model: every version's manifest
+-- (once) and every alias's pointer (when the store's is older). Returns how
+-- many objects were written.
+publishPointers : Registry -> String -> Task Error Int
+publishPointers (Registry r) name =
+    Task.map2
+        (\vs als -> ( vs, als ))
+        (versions (Registry r) name)
+        (aliases (Registry r) name)
+        |> Task.andThen
+               (\( vs, als ) ->
+                   Task.sequence (List.map (writeManifest r.store) vs)
+                       |> Task.andThen
+                              (\written ->
+                                  Task.sequence
+                                      (List.map
+                                          (\a ->
+                                              case List.filter (\v -> v.number == a.number) vs |> List.head of
+
+                                                  Just v ->
+                                                      writePointer
+                                                          r.store
+                                                          { name = name
+                                                          , aliasName = a.aliasName
+                                                          , number = a.number
+                                                          , generation = a.generation
+                                                          , digest = v.digest
+                                                          , servedName = servedName v
+                                                          }
+                                                          0
+
+                                                  Nothing ->
+                                                      Task.succeed 0)
+                                          als)
+                                      |> Task.map (\moved -> List.foldl (\a b -> a + b) 0 (written ++ moved))))
+
+
+-- After a commit: publish the pointers, and say how to repair them when the
+-- store refused (the database change stands).
+publishAfter : Registry -> String -> Task Error ()
+publishAfter reg name =
+    publishPointers reg name
+        |> Task.map (\_ -> ())
+        |> Task.onError
+               (\e ->
+                   Task.fail
+                       (Failure.toErrorWith
+                           ("the database records the change; run `sky ai registry publish " ++ name
+                               ++ "` to repair the store: "
+                               ++ Error.toString e)
+                           (EngineFailed { reason = "the registry could not publish its pointer objects to " ++ Store.location (store reg) })))
+
+
+writeManifest : Store -> Version -> Task Error Int
+writeManifest st v =
+    Store.putIf st (manifestKey v.name v.number) "" (manifestJson (manifestOf v))
+        |> Task.map
+               (\created ->
+                   if created then
+                       1
+
+                   else
+                       0)
+
+
+-- A pointer is replaced only by a newer generation: read it with its
+-- object generation, and write with that generation as the precondition.
+writePointer : Store -> Pointer -> Int -> Task Error Int
+writePointer st p tries =
+    Store.getObject st (pointerKey p.name p.aliasName)
+        |> Task.andThen
+               (\current ->
+                   let
+                       ( objectGen, older ) =
+                           case current of
+
+                               Nothing ->
+                                   ( "", True )
+
+                               Just o ->
+                                   case JsonD.decodeString pointerDecoder o.body of
+
+                                       Ok q ->
+                                           ( o.generation, q.generation < p.generation )
+
+                                       Err _ ->
+                                           ( o.generation, True )
+                   in
+                       if not older then
+                           Task.succeed 0
+
+                       else
+                           Store.putIf st (pointerKey p.name p.aliasName) objectGen (pointerJson p)
+                               |> Task.andThen
+                                      (\done ->
+                                          if done then
+                                              Task.succeed 1
+
+                                          else if tries < 5 then
+                                              writePointer st p (tries + 1)
+
+                                          else
+                                              Task.fail
+                                                  (Failure.toError
+                                                      (PromotionConflict
+                                                          { ref = p.name ++ "@" ++ p.aliasName
+                                                          , expected = "a stable pointer"
+                                                          , actual = "five racing writers"
+                                                          }))))
+
+
+-- | A resolver that reads only the store's pointer objects: for a serving
+-- tier or a process with no access to the registry's database. A remote slot
+-- gets the served name; a local slot gets the version's GGUF file (or its
+-- GGUF companion).
+storeResolver : Store -> Endpoint.Resolver
+storeResolver st =
+    { name = "store"
+    , resolve =
+        \ref localEngine ->
+            Task.fromResult (splitRef (stripScheme ref))
+                |> Task.andThen
+                       (\( name, which ) ->
+                           (if isVersionWord which then
+                               Task.succeed
+                                   (String.toInt (String.dropLeft 1 which) |> Maybe.withDefault 0)
+
+                           else
+                               readPointer st name which
+                                   |> Task.andThen
+                                          (\p ->
+                                              case p of
+
+                                                  Just ptr ->
+                                                      Task.succeed ptr.number
+
+                                                  Nothing ->
+                                                      Task.fail (notRegistered (stripScheme ref))))
+                               |> Task.andThen
+                                      (\number ->
+                                          readManifest st name number
+                                              |> Task.andThen
+                                                     (\m ->
+                                                         case m of
+
+                                                             Nothing ->
+                                                                 Task.fail
+                                                                     (notRegistered
+                                                                         (name ++ "@v" ++ String.fromInt number))
+
+                                                             Just man ->
+                                                                 let
+                                                                     info path digest format =
+                                                                         { ref = stripScheme ref
+                                                                         , label = man.label
+                                                                         , servedName = man.servedName
+                                                                         , digest = digest
+                                                                         , baseDigest = man.baseDigest
+                                                                         , format = format
+                                                                         , path = path
+                                                                         }
+                                                                 in
+                                                                     if not localEngine then
+                                                                         Task.succeed (info "" man.digest man.format)
+
+                                                                     else if man.gguf == "" then
+                                                                         Task.fail
+                                                                             (invalidSetting
+                                                                                 "adapter"
+                                                                                 (man.label
+                                                                                     ++ " has no GGUF file; a local engine (llama.cpp) loads GGUF adapters only"))
+
+                                                                     else
+                                                                         Store.fetch st man.gguf
+                                                                             |> Task.map (\path -> info path man.gguf "gguf")))))
+    }

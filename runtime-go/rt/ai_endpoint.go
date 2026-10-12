@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -51,6 +52,12 @@ type aiSlot struct {
 	adAt      time.Time
 	adErr     string
 	resolveMu sync.Mutex
+
+	// The Google ID token (AUTH=google) and when it expires; idMu makes one
+	// caller mint while the others wait for it.
+	idMu  sync.Mutex
+	idTok string
+	idExp time.Time
 }
 
 // aiRootPrefix marks a path the server answers at its root, not under its
@@ -298,7 +305,15 @@ func (s *aiSlot) post(path, body string) (string, error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.timeout)
 		defer cancel()
-		return aiRemotePost(ctx, s.cfg, url, body)
+		extra := map[string]string{}
+		if s.cfg.mode == "remote" && s.cfg.auth == "google" {
+			tok, err := s.googleIDToken()
+			if err != nil {
+				return "", err
+			}
+			extra["X-Serverless-Authorization"] = "Bearer " + tok
+		}
+		return aiRemotePostWith(ctx, s.cfg, url, body, extra)
 	}
 	// Starting an engine (a first fetch, a cold load) is bounded by the start
 	// deadline, not by the call's timeout; the call's own timeout starts when
@@ -357,8 +372,14 @@ func aiPatchModel(body, model string) string {
 // A timed-out call is never retried: the server may have done the work, and
 // a Durable.step around the call is what makes it exactly-once.
 func aiRemotePost(ctx context.Context, c *aiSlotConfig, url, body string) (string, error) {
+	return aiRemotePostWith(ctx, c, url, body, nil)
+}
+
+// aiRemotePostWith is aiRemotePost with extra request headers (the Google ID
+// token of a slot with AUTH=google).
+func aiRemotePostWith(ctx context.Context, c *aiSlotConfig, url, body string, extra map[string]string) (string, error) {
 	for attempt := 0; ; attempt++ {
-		out, retryAfter, err := aiPostOnce(ctx, url, c.key, c.hasKey, body)
+		out, retryAfter, err := aiPostOnceWith(ctx, url, c.key, c.hasKey, body, extra)
 		if err == nil {
 			return out, nil
 		}
@@ -394,6 +415,10 @@ func aiBackoff(attempt int, retryAfter time.Duration) time.Duration {
 
 // aiPostOnce makes one POST and classifies the outcome.
 func aiPostOnce(ctx context.Context, url, key string, hasKey bool, body string) (string, time.Duration, error) {
+	return aiPostOnceWith(ctx, url, key, hasKey, body, nil)
+}
+
+func aiPostOnceWith(ctx context.Context, url, key string, hasKey bool, body string, extra map[string]string) (string, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte(body)))
 	if err != nil {
 		return "", 0, aiFailf(aiInvalidSetting, "bad URL: %v", err).with("setting", "url")
@@ -401,6 +426,9 @@ func aiPostOnce(ctx context.Context, url, key string, hasKey bool, body string) 
 	req.Header.Set("Content-Type", "application/json")
 	if hasKey {
 		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
 	}
 	resp, err := aiCallClient.Do(req)
 	if err != nil {
@@ -608,4 +636,49 @@ func skyErrorMessage(v any) string {
 		}
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// googleIDToken is the slot's Google ID token for its URL's origin: minted
+// by the Sky source (Std.Ai.Cloud.Google.idToken: a service-account key file
+// or the metadata server), kept until five minutes before its `exp`. A
+// failure to mint is the Sky source's own typed failure (NotConfigured when
+// there is no credential).
+func (s *aiSlot) googleIDToken() (string, error) {
+	s.idMu.Lock()
+	defer s.idMu.Unlock()
+	if s.idTok != "" && time.Until(s.idExp) > 5*time.Minute {
+		return s.idTok, nil
+	}
+	audience := aiRedactURL(s.cfg.baseURL)
+	res := AnyTaskRun(sky_call(s.cfg.idToken, audience))
+	tag, okV, errV := anyResultView(res)
+	if tag != 0 {
+		return "", &aiSkyError{v: errV}
+	}
+	tok := aiSecretString(okV)
+	if tok == "" {
+		return "", aiFailf(aiNotConfigured, "slot %q: the Google ID token for %s is empty", s.cfg.slot, audience).with("setting", "GOOGLE_APPLICATION_CREDENTIALS")
+	}
+	s.idTok, s.idExp = tok, aiJWTExpiry(tok, time.Now().Add(55*time.Minute))
+	return tok, nil
+}
+
+// aiJWTExpiry reads a JWT's `exp` (unix seconds) without checking its
+// signature (the token is ours, minted a moment ago); def when it has none.
+func aiJWTExpiry(tok string, def time.Time) time.Time {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		return def
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return def
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(raw, &claims) != nil || claims.Exp == 0 {
+		return def
+	}
+	return time.Unix(claims.Exp, 0)
 }

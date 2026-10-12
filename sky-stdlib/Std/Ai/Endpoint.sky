@@ -17,6 +17,7 @@ module Std.Ai.Endpoint exposing
     , withQueue
     , withQueueWait
     , withRetry
+    , withGoogleAuth
     , provider
     , warm
     , describe
@@ -81,6 +82,7 @@ import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Secret as Secret exposing (Secret)
 import Std.Ai.Provider as Provider exposing (Provider)
 import Std.Ai.Local as LocalEngine
+import Std.Ai.Cloud.Google as Google
 import Sky.Core.List as List
 import Sky.Core.Json.Encode as JsonE
 import Sky.Core.Json.Decode as JsonD
@@ -122,6 +124,8 @@ type alias Config =
     , resolverName : String
     , resolve : String -> Bool -> Task Error Adapter
     , adapterRefreshS : Int
+    , auth : String
+    , idToken : String -> Task Error Secret
     }
 
 {-| A registry adapter, as a resolver hands it to the slot: the reference it
@@ -186,6 +190,8 @@ endpoint slot =
         , resolverName = ""
         , resolve = noResolver
         , adapterRefreshS = -1
+        , auth = ""
+        , idToken = Google.idToken
         }
 
 
@@ -351,6 +357,20 @@ withQueue n (Endpoint c) =
 withQueueWait : Int -> Endpoint -> Endpoint
 withQueueWait ms (Endpoint c) =
     Endpoint { c | queueWaitMs = ms }
+
+
+{-| Call a private Cloud Run service (a `Std.Ai.Serve` GPU tier) as this
+program's Google service account. Each request carries a Google ID token for
+the service's URL in `X-Serverless-Authorization` (Cloud Run checks it and
+removes it before the request reaches the service), while `Authorization`
+keeps the slot's own key (`withKey`, the tier's service token). The token
+comes from `GOOGLE_APPLICATION_CREDENTIALS` (a service-account key file) or
+the metadata server, and is reused until five minutes before it expires.
+Env: `<PREFIX>_AI_<SLOT>_AUTH` (`google`, or `bearer` for the key alone, the
+default). -}
+withGoogleAuth : Endpoint -> Endpoint
+withGoogleAuth (Endpoint c) =
+    Endpoint { c | auth = "google" }
 
 
 {-| Retries for an overloaded server or a connection that never reached it.
