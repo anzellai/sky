@@ -59,7 +59,7 @@ showPlan =
 
 generate : Task Error ()
 generate =
-    Synthetic.generate Faq.generator
+    Synthetic.run Faq.generator
         |> Task.andThen
                (\gen ->
                    showReport gen.report
@@ -67,7 +67,7 @@ generate =
                               (\_ ->
                                   Synthetic.toDataset gen
                                       |> Dataset.scrub
-                                             (Scrub.instruction Scrub.defaults)
+                                             (Scrub.forInstruction Scrub.defaults)
                                       |> Dataset.split
                                              Dataset.defaultSplit
                                              .prompt

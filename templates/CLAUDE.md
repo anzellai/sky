@@ -110,7 +110,7 @@ judge a `tests/mocks/` fixture, or pass `Eval.withJudge` a `Provider.custom`.
 An eval is a test: let its `Eval.check` thresholds fail it, and do not loosen
 a threshold to make a run pass.
 
-`Std.Ai.Dataset.Synthetic.generate` calls a teacher slot (`"teacher"`) and,
+`Std.Ai.Dataset.Synthetic.run` calls a teacher slot (`"teacher"`) and,
 with `withJudge`, the judge slot, once per planned call: both are the local
 pinned model by default, so a real generation starts an engine and can make
 many calls. Bound it with `withTarget`, `withMaxCalls` and `withCostBudget`,

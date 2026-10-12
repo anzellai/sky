@@ -122,7 +122,7 @@ good =
 frozenTwice : String -> Task Error ( Dataset.Version Instruction, Dataset.Version Instruction )
 frozenTwice dir =
     let
-        tgt = Dataset.target dir "support"
+        tgt = Dataset.folder dir "support"
         spl = Dataset.split Dataset.defaultSplit .prompt
     in
         writeLines
@@ -175,7 +175,7 @@ tests =
                                          | completion =
                                              String.toUpper r.completion
                                      })
-                          |> Dataset.take 2
+                          |> Dataset.upTo 2
               in
                   run
                       (Dataset.rows ds)
@@ -184,7 +184,7 @@ tests =
                               ( [ "How do I reset my password?"
                                 , "Where is my order?"
                                 ]
-                              , [ "filter", "dedupe", "map", "take 2" ]
+                              , [ "filter", "dedupe", "map", "upTo 2" ]
                               , [ "list:5" ]
                               )
                               ( List.map .prompt rs
@@ -252,7 +252,7 @@ tests =
                                      ]
                                      |> Task.andThen
                                             (\_ ->
-                                                Dataset.count
+                                                Dataset.countRows
                                                     (Dataset.fromJsonl
                                                         Dataset.instructionCodec
                                                         (dir ++ "/bad.jsonl"))))))
@@ -292,7 +292,7 @@ tests =
               Test.expectErrorKind
                   InvalidInput
                   (Task.run
-                      (Dataset.count
+                      (Dataset.countRows
                           (Dataset.fromJsonLines "/no/such/dir/rows.jsonl"))))
     , Test.test
           "fromJsonLines gives canonical JSON text: sorted keys, no spacing"
@@ -349,10 +349,10 @@ tests =
                              (\dir ->
                                  Dataset.fromList sample
                                      |> Dataset.scrub
-                                            (Scrub.instruction Scrub.defaults)
+                                            (Scrub.forInstruction Scrub.defaults)
                                      |> Dataset.unsplit
                                      |> Dataset.freeze
-                                            (Dataset.target dir "scrubbed")
+                                            (Dataset.folder dir "scrubbed")
                                             Dataset.instructionCodec
                                      |> Task.andThen
                                             (\v ->
@@ -471,7 +471,7 @@ tests =
                                             }
                                             .prompt
                                      |> Dataset.freeze
-                                            (Dataset.target dir "faq"
+                                            (Dataset.folder dir "faq"
                                                 |> Dataset.withConsentBasis
                                                        "contract"
                                                 |> Dataset.withRetention "P2Y")
@@ -504,7 +504,7 @@ tests =
                       |> Task.andThen
                              (\dir ->
                                  let
-                                     tgt = Dataset.target dir "faq"
+                                     tgt = Dataset.folder dir "faq"
                                  in
                                      Dataset.fromList
                                          (List.map
@@ -565,7 +565,7 @@ tests =
                       |> Task.andThen
                              (\dir ->
                                  let
-                                     tgt = Dataset.target dir "faq"
+                                     tgt = Dataset.folder dir "faq"
                                  in
                                      Dataset.fromList [ ins "q" "a" ]
                                          |> Dataset.unsplit
@@ -592,7 +592,7 @@ tests =
                       |> Task.andThen
                              (\dir ->
                                  let
-                                     tgt = Dataset.target dir "faq"
+                                     tgt = Dataset.folder dir "faq"
                                      freezeRows n =
                                          Dataset.freeze
                                              tgt
@@ -621,10 +621,10 @@ tests =
                              (\dir ->
                                  Dataset.fromList sample
                                      |> Dataset.scrub
-                                            (Scrub.instruction Scrub.defaults)
+                                            (Scrub.forInstruction Scrub.defaults)
                                      |> Dataset.unsplit
                                      |> Dataset.freeze
-                                            (Dataset.target dir "rt"
+                                            (Dataset.folder dir "rt"
                                                 |> Dataset.withRetention "P1Y")
                                             Dataset.instructionCodec))
                   (\v ->
@@ -650,13 +650,13 @@ tests =
                                                     (dir ++ "/raw.jsonl")
                                                     |> Dataset.unsplit
                                                     |> Dataset.freezeJson
-                                                           (Dataset.target
+                                                           (Dataset.folder
                                                                dir
                                                                "raw"))
                                      |> Task.andThen
                                             (\v ->
                                                 Dataset.loadJson
-                                                    (Dataset.target dir "raw")
+                                                    (Dataset.folder dir "raw")
                                                     (Dataset.digest v))
                                      |> Task.andThen Dataset.versionRows))
                   (Test.equal [ "{\"text\":\"one\"}", "{\"text\":\"two\"}" ]))

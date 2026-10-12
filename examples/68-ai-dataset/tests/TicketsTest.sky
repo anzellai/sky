@@ -34,7 +34,7 @@ allText rows =
 freezeInto : String -> Task Error (Dataset.Version Chat)
 freezeInto dir =
     Tickets.tickets |> Dataset.split Tickets.splitSpec Tickets.firstQuestion
-        |> Dataset.freeze (Dataset.target dir "tickets") Dataset.chatCodec
+        |> Dataset.freeze (Dataset.folder dir "tickets") Dataset.chatCodec
 
 
 tests : List Test
@@ -54,7 +54,7 @@ tests =
                           )))
     , Test.test
           "the repeated refund question is dropped"
-          (\_ -> ok (Dataset.count Tickets.tickets) (Test.equal 7))
+          (\_ -> ok (Dataset.countRows Tickets.tickets) (Test.equal 7))
     , Test.test
           "the tickets pass validation"
           (\_ ->

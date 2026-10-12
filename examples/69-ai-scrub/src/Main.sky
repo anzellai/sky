@@ -21,7 +21,7 @@ import Redact
 main : Task Error ()
 main =
     let
-        ( kept, report ) = Scrub.applyAll Redact.scrubber Redact.tickets
+        ( kept, report ) = Scrub.scrubRows Redact.scrubber Redact.tickets
         lines = List.map (\t -> "- " ++ t.subject ++ ": " ++ t.body) kept
         counts =
             Dict.toList report

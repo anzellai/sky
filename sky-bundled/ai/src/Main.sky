@@ -369,7 +369,7 @@ freeze json file opts =
                         Nothing ->
                             identity
                 tgt =
-                    Dataset.target out name |> withConsent |> withRetention
+                    Dataset.folder out name |> withConsent |> withRetention
             in
                 Dataset.fromJsonLines file
                     |> Dataset.split spec (keyOf (flag "--key" opts))

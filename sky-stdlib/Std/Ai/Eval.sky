@@ -812,27 +812,42 @@ judgeScore (Judge j) seed messages rubric answer =
             |> Task.map (\r -> readJudge j.passAt r.content)
 
 
+-- The score is `SCORE: <1-5>` anywhere in the reply, or, when the label is
+-- missing, a reply that starts with a single digit 1 to 5 (`5`, `4 - polite`):
+-- small judge models often drop the label. A reply such as `10/10` or `No.`
+-- has no score.
 readJudge : Int -> String -> Score
 readJudge passAt reply =
-    case Regex.find "SCORE:\\s*[1-5]" (String.toUpper reply) of
+    let
+        labelled = Regex.find "SCORE:\\s*[1-5]" (String.toUpper reply)
+        bare = Regex.find "^\\s*[1-5](\\D|$)" reply
+        found =
+            case labelled of
 
-        Just found ->
-            let
-                n =
-                    Maybe.withDefault 1 (String.toInt (String.right 1 found))
-            in
-                { value = intToFloat (n - 1) / 4.0
-                , passed = n >= passAt
-                , reason =
-                    "judge " ++ String.fromInt n ++ "/5: "
-                        ++ clip (String.trim reply)
+                Just f ->
+                    Just (String.right 1 f)
+
+                Nothing ->
+                    Maybe.map (\b -> String.left 1 (String.trim b)) bare
+    in
+        case found of
+
+            Just digit ->
+                let
+                    n = Maybe.withDefault 1 (String.toInt digit)
+                in
+                    { value = intToFloat (n - 1) / 4.0
+                    , passed = n >= passAt
+                    , reason =
+                        "judge " ++ String.fromInt n ++ "/5: "
+                            ++ clip (String.trim reply)
+                    }
+
+            Nothing ->
+                { value = 0.0
+                , passed = False
+                , reason = "the judge gave no SCORE: " ++ quote (clip reply)
                 }
-
-        Nothing ->
-            { value = 0.0
-            , passed = False
-            , reason = "the judge gave no SCORE: " ++ quote (clip reply)
-            }
 
 
 -- ── Aggregation ─────────────────────────────────────────────────────

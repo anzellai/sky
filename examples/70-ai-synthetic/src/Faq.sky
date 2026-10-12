@@ -46,6 +46,6 @@ generator =
                (\r -> ( r.prompt, r.completion ))
 
 
-versions : Dataset.Target
+versions : Dataset.Folder
 versions =
-    Dataset.target ".sky/ai/datasets" "support-faq"
+    Dataset.folder ".sky/ai/datasets" "support-faq"

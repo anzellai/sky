@@ -269,6 +269,9 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=26
 66-slack-agent	adapter=0	dispatch=0	narrow=142
 67-durable-counter	adapter=0	dispatch=0	narrow=77
+68-ai-dataset	adapter=0	dispatch=0	narrow=591
+69-ai-scrub	adapter=0	dispatch=0	narrow=99
+70-ai-synthetic	adapter=0	dispatch=0	narrow=735
 apps/dispatch	adapter=0	dispatch=0	narrow=399
 apps/fieldbook	adapter=0	dispatch=0	narrow=657
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
@@ -280,6 +283,7 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=260
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=211
 simple	adapter=0	dispatch=0	narrow=3
+sky-bundled/ai	adapter=0	dispatch=0	narrow=354
 sky-bundled/console	adapter=0	dispatch=0	narrow=292
 sky-bundled/doc	adapter=0	dispatch=0	narrow=55
 test_pkg	adapter=0	dispatch=0	narrow=1

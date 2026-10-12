@@ -24,7 +24,7 @@ Phase 1 and the dataset part of phase 2 of the Std.Ai lifecycle design
   `preferenceCodec`) from `fromJsonl` (read 1000 lines at a time, so a large
   file never sits in memory), `fromJsonLines`, `fromCsv`, `fromStore` and
   `fromList`. Steps `map`, `filter`, `filterMap`, `dedupeBy` (one SHA-256 per
-  distinct key), `scrub`, `take`, `toChat`, `toInstruction`, recorded with the
+  distinct key), `scrub`, `upTo`, `toChat`, `toInstruction`, recorded with the
   sources for lineage. `split` puts each row in `Train`, `Eval` or `Test` by
   the first 28 bits of `sha256 "<seed>:<key>"`, so the same row is in the same
   part in every version (`splitOf` is the pure function). `inspect` and
@@ -48,9 +48,9 @@ Phase 1 and the dataset part of phase 2 of the Std.Ai lifecycle design
   labelled values), `email`, `iban` (mod 97), `cardNumber` (Luhn), `usSsn`,
   `ukNino`, `phone`, `pattern` (a `Result`: a pattern that does not compile is
   an error, kernel `Ai_datasetCheckPattern`) and `custom`; `defaults` in the
-  order that keeps them apart. Scrubbers for `instruction`, `chat`,
-  `preference`, `string` and your own rows (`scrubber`), `dropIf`, `apply`,
-  `applyAll`. The report is a count per rule and never holds the replaced
+  order that keeps them apart. Scrubbers `forInstruction`, `forChat`,
+  `forPreference`, `forString` and your own rows (`scrubber`), `dropIf`,
+  `scrubRow`, `scrubRows`. The report is a count per rule and never holds the replaced
   text. (`sky-stdlib/Std/Ai/Dataset/Scrub.sky`.)
 - **`Std.Ai.Dataset.Synthetic`: generate a dataset with a teacher model.** The
   teacher is the slot `"teacher"`, the local pinned model by default, moved
@@ -74,6 +74,14 @@ Phase 1 and the dataset part of phase 2 of the Std.Ai lifecycle design
 
 ### Fixed
 
+- **A judge that answers `5` instead of `SCORE: 5` no longer fails every
+  rubric case.** The pinned 0.5B development model, the default judge, drops
+  the label; `Std.Ai.Eval` now also reads a reply that starts with one digit
+  from 1 to 5. A reply with no score still fails the case.
+- **`sky ai <verb> --format json` printed a non-JSON line on its first run.**
+  The one-time "building bundled app" notice of every bundled program
+  (`sky ai`, `sky doc --serve`, the console) went to stdout; it now goes to
+  stderr, so stdout carries only the verb's output.
 - `docs/tooling/testing.md` said a test-mode HTTP fixture cannot tell two
   requests to the same URL apart by body. It can: `match.bodyContains` has
   been read for some time, and the page now documents it.

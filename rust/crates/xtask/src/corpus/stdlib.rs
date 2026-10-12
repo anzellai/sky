@@ -3980,34 +3980,34 @@ fn aiscrub_battery(edge: &str) -> Vec<Check> {
     match edge {
         "nominal" => vec![
             s(
-                &["Scrub.text", "Scrub.defaults"],
-                "Tuple.first (Scrub.text Scrub.defaults \"mail ada@example.com, card 4111 1111 1111 1111, iban GB82 WEST 1234 5698 7654 32\")",
+                &["Scrub.scrubText", "Scrub.defaults"],
+                "Tuple.first (Scrub.scrubText Scrub.defaults \"mail ada@example.com, card 4111 1111 1111 1111, iban GB82 WEST 1234 5698 7654 32\")",
                 "mail [EMAIL], card [CARD], iban [IBAN]",
             ),
             i(
-                &["Scrub.text", "Scrub.total", "Scrub.phone"],
-                "Scrub.total (Tuple.second (Scrub.text [ Scrub.phone ] \"+44 20 7946 0958 or (415) 555-0132\"))",
+                &["Scrub.scrubText", "Scrub.total", "Scrub.phone"],
+                "Scrub.total (Tuple.second (Scrub.scrubText [ Scrub.phone ] \"+44 20 7946 0958 or (415) 555-0132\"))",
                 2,
             ),
             bo(&["Scrub.isCardNumber"], "Scrub.isCardNumber \"378282246310005\"", true),
             bo(&["Scrub.isIban"], "Scrub.isIban \"DE89 3704 0044 0532 0130 00\"", true),
             s(
-                &["Scrub.applyAll", "Scrub.string", "Scrub.dropIf", "Scrub.email"],
+                &["Scrub.scrubRows", "Scrub.forString", "Scrub.dropIf", "Scrub.email"],
                 "aiScrubDrop",
                 "[EMAIL];internal=1,email=1",
             ),
         ],
         "failure" => vec![
             s(
-                &["Scrub.text", "Scrub.cardNumber"],
-                "Tuple.first (Scrub.text [ Scrub.cardNumber ] \"order 4111 1111 1111 1112\")",
+                &["Scrub.scrubText", "Scrub.cardNumber"],
+                "Tuple.first (Scrub.scrubText [ Scrub.cardNumber ] \"order 4111 1111 1111 1112\")",
                 "order 4111 1111 1111 1112",
             ),
             bo(&["Scrub.isIban"], "Scrub.isIban \"GB83WEST12345698765432\"", false),
             s(&["Scrub.pattern"], "aiScrubBadPattern", "InvalidInput"),
             i(
-                &["Scrub.text", "Scrub.total"],
-                "Scrub.total (Tuple.second (Scrub.text Scrub.defaults \"on 2024-01-01 at 12:30 pi is 3.14159265\"))",
+                &["Scrub.scrubText", "Scrub.total"],
+                "Scrub.total (Tuple.second (Scrub.scrubText Scrub.defaults \"on 2024-01-01 at 12:30 pi is 3.14159265\"))",
                 0,
             ),
         ],
@@ -4034,8 +4034,8 @@ fn aidataset_battery(edge: &str) -> Vec<Check> {
                 "EEXTXXTTXTETTTXXXTTX",
             ),
             i(
-                &["Dataset.fromList", "Dataset.dedupeBy", "Dataset.take", "Dataset.count"],
-                "Result.withDefault -1 (Task.run (Dataset.count (Dataset.fromList [ \"a\", \"b\", \"a\", \"c\", \"d\" ] |> Dataset.dedupeBy identity |> Dataset.take 3)))",
+                &["Dataset.fromList", "Dataset.dedupeBy", "Dataset.upTo", "Dataset.countRows"],
+                "Result.withDefault -1 (Task.run (Dataset.countRows (Dataset.fromList [ \"a\", \"b\", \"a\", \"c\", \"d\" ] |> Dataset.dedupeBy identity |> Dataset.upTo 3)))",
                 3,
             ),
             s(
@@ -4047,7 +4047,7 @@ fn aidataset_battery(edge: &str) -> Vec<Check> {
         ],
         "failure" => vec![
             s(&["Dataset.validate", "Dataset.limits"], "aiValidateBad", "DatasetInvalid/InvalidInput"),
-            s(&["Dataset.count", "Dataset.fromJsonLines"], "aiMissingFile", "DatasetInvalid"),
+            s(&["Dataset.countRows", "Dataset.fromJsonLines"], "aiMissingFile", "DatasetInvalid"),
         ],
         _ => vec![],
     }
@@ -4074,7 +4074,7 @@ fn aisynthetic_battery(edge: &str) -> Vec<Check> {
             ),
             s(
                 &[
-                    "Synthetic.generate",
+                    "Synthetic.run",
                     "Synthetic.withTeacher",
                     "Synthetic.withFilter",
                 ],
@@ -4085,11 +4085,11 @@ fn aisynthetic_battery(edge: &str) -> Vec<Check> {
         ],
         "failure" => vec![
             s(
-                &["Synthetic.generate", "Synthetic.withMaxCalls"],
+                &["Synthetic.run", "Synthetic.withMaxCalls"],
                 "aiSynthProse",
                 "0/2/calls",
             ),
-            s(&["Synthetic.generate"], "aiSynthDown", "Unavailable"),
+            s(&["Synthetic.run"], "aiSynthDown", "Unavailable"),
         ],
         _ => vec![],
     }
@@ -6072,7 +6072,7 @@ aiScrubDrop : String
 aiScrubDrop =
     let
         ( kept, report ) =
-            Scrub.applyAll (Scrub.string [ Scrub.email ] |> Scrub.dropIf "internal" (String.startsWith "INTERNAL")) [ "INTERNAL x", "a@b.io" ]
+            Scrub.scrubRows (Scrub.forString [ Scrub.email ] |> Scrub.dropIf "internal" (String.startsWith "INTERNAL")) [ "INTERNAL x", "a@b.io" ]
     in
     String.join "," kept ++ ";" ++ String.join "," (List.map (\k -> k ++ "=" ++ String.fromInt (Scrub.countOf k report)) [ "internal", "email" ])
 
@@ -6140,7 +6140,7 @@ aiValidateBad =
 
 aiMissingFile : String
 aiMissingFile =
-    case Task.run (Dataset.count (Dataset.fromJsonLines "/no/such/dir/rows.jsonl")) of
+    case Task.run (Dataset.countRows (Dataset.fromJsonLines "/no/such/dir/rows.jsonl")) of
         Ok _ ->
             "read"
 
@@ -6188,7 +6188,7 @@ aiPlanSeeds =
 
 aiSynthRun : Int -> String
 aiSynthRun target =
-    case Task.run (Synthetic.generate (aiGen |> Synthetic.withTarget target |> Synthetic.withTeacher "table" (Provider.custom aiTable) |> Synthetic.withFilter "short" (\r -> String.length r.completion > 5))) of
+    case Task.run (Synthetic.run (aiGen |> Synthetic.withTarget target |> Synthetic.withTeacher "table" (Provider.custom aiTable) |> Synthetic.withFilter "short" (\r -> String.length r.completion > 5))) of
         Ok g ->
             String.fromInt (List.length g.rows) ++ "/" ++ String.fromInt g.report.calls ++ "/" ++ String.fromInt (Dict.foldl (\_ v acc -> acc + v) 0 g.report.filtered) ++ "/" ++ (case g.report.stop of
                 Synthetic.TargetReached -> "target"
@@ -6201,7 +6201,7 @@ aiSynthRun target =
 
 aiSynthProse : String
 aiSynthProse =
-    case Task.run (Synthetic.generate (aiGen |> Synthetic.withMaxCalls 2 |> Synthetic.withTeacher "prose" (Provider.custom (\_ -> Task.succeed { content = "no json", usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 } })))) of
+    case Task.run (Synthetic.run (aiGen |> Synthetic.withMaxCalls 2 |> Synthetic.withTeacher "prose" (Provider.custom (\_ -> Task.succeed { content = "no json", usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 } })))) of
         Ok g ->
             String.fromInt (List.length g.rows) ++ "/" ++ String.fromInt g.report.unparsed ++ "/" ++ (case g.report.stop of
                 Synthetic.TargetReached -> "target"
@@ -6214,7 +6214,7 @@ aiSynthProse =
 
 aiSynthDown : String
 aiSynthDown =
-    case Task.run (Synthetic.generate (aiGen |> Synthetic.withTeacher "down" (Provider.custom (\_ -> Task.fail (Error.unavailable "down"))))) of
+    case Task.run (Synthetic.run (aiGen |> Synthetic.withTeacher "down" (Provider.custom (\_ -> Task.fail (Error.unavailable "down"))))) of
         Ok _ ->
             "ok"
 

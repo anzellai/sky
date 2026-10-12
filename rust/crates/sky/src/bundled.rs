@@ -78,7 +78,7 @@ pub fn ensure_built(
     materialise(src_dir, &app_dir, keep_entry)
         .map_err(|e| format!("sky {name}: could not materialise bundled source: {e}"))?;
 
-    println!(
+    eprintln!(
         "sky {name}: building bundled app (one-time per version, into {})...",
         app_dir.display()
     );

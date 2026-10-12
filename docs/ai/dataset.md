@@ -41,7 +41,7 @@ support =
         , { prompt = "Where is my parcel?", completion = "Mail help@example.com with the order number." }
         , { prompt = "How do I get a refund?", completion = "A repeated question." }
         ]
-        |> Dataset.scrub (Scrub.instruction Scrub.defaults)
+        |> Dataset.scrub (Scrub.forInstruction Scrub.defaults)
         |> Dataset.dedupeBy .prompt
 
 
@@ -49,7 +49,7 @@ main : Task Error ()
 main =
     support
         |> Dataset.split Dataset.defaultSplit .prompt
-        |> Dataset.freeze (Dataset.target ".sky/ai/datasets" "support") Dataset.instructionCodec
+        |> Dataset.freeze (Dataset.folder ".sky/ai/datasets" "support") Dataset.instructionCodec
         |> Task.andThen
             (\v ->
                 println
@@ -76,7 +76,7 @@ with a codec:
 | `fromList rows` | rows in memory |
 
 A dataset is a description. Nothing is read until you freeze it, validate it,
-or ask for its rows (`rows`, `count`). A JSONL file is read 1000 lines at a
+or ask for its rows (`rows`, `countRows`). A JSONL file is read 1000 lines at a
 time, so a large file never sits in memory. `fromCsv` and `fromStore` read
 their source whole: a quoted CSV field can span lines, and a store is one
 query.
@@ -88,7 +88,7 @@ hold personal data.
 
 ## Steps
 
-`map`, `filter`, `filterMap`, `dedupeBy key`, `scrub scrubber`, `take n`,
+`map`, `filter`, `filterMap`, `dedupeBy key`, `scrub scrubber`, `upTo n`,
 `toChat` and `toInstruction` run in order, chunk by chunk. `dedupeBy` keeps
 the first row for each key and holds one SHA-256 per distinct key, not the
 key. `steps dataset` lists the steps and `sources dataset` the sources; both go
@@ -183,7 +183,7 @@ non-zero with the typed failure when a line is not JSON.
 ## Scrubbing personal data
 
 ```elm
-Scrub.text Scrub.defaults "Mail ada@example.com or call +44 20 7946 0958"
+Scrub.scrubText Scrub.defaults "Mail ada@example.com or call +44 20 7946 0958"
 --> ( "Mail [EMAIL] or call [PHONE]", Dict.fromList [ ( "email", 1 ), ( "phone", 1 ) ] )
 ```
 
@@ -207,11 +207,11 @@ survives. A date, a time or a decimal number is not a phone number.
 `Result`: a pattern that does not compile is an `InvalidInput` error, not a
 rule that silently matches nothing.
 
-A `Scrubber row` applies rules to the text fields of a row: `instruction`,
-`chat` (every message's content) and `preference` for the built-in shapes,
-`string` for plain strings, and `scrubber rules get set` for your own type.
+A `Scrubber row` applies rules to the text fields of a row: `forInstruction`,
+`forChat` (every message's content) and `forPreference` for the built-in
+shapes, `forString` for plain strings, and `scrubber rules get set` for your own type.
 `dropIf name predicate` drops whole rows and counts them under `name`.
-`apply` scrubs one row, `applyAll` a list, and `Dataset.scrub` a dataset,
+`scrubRow` scrubs one row, `scrubRows` a list, and `Dataset.scrub` a dataset,
 whose counts reach the manifest.
 
 The `Report` is a `Dict` from rule name to count (`merge`, `total`,
@@ -241,9 +241,9 @@ faq =
 
 
 main =
-    Synthetic.generate faq
+    Synthetic.run faq
         |> Task.map Synthetic.toDataset
-        |> Task.andThen (\ds -> ds |> Dataset.scrub (Scrub.instruction Scrub.defaults) |> Dataset.split Dataset.defaultSplit .prompt |> Dataset.freeze target Dataset.instructionCodec)
+        |> Task.andThen (\ds -> ds |> Dataset.scrub (Scrub.forInstruction Scrub.defaults) |> Dataset.split Dataset.defaultSplit .prompt |> Dataset.freeze target Dataset.instructionCodec)
 ```
 
 **The teacher** is the model slot `"teacher"` (`Synthetic.teacherSlot`): the

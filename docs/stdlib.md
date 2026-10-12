@@ -2476,7 +2476,7 @@ Guides: [`ai/local.md`](ai/local.md#failures) and [`ai/eval.md`](ai/eval.md).
 
 A dataset is a lazy description of typed rows (`Chat`, `Instruction`,
 `Preference`, or your own record) from JSONL, CSV, a `Std.Db.Store` table or a
-list. Steps (`map`, `filter`, `dedupeBy`, `scrub`, `take`) run chunk by chunk,
+list. Steps (`map`, `filter`, `dedupeBy`, `scrub`, `upTo`) run chunk by chunk,
 so a large JSONL file never sits in memory. `split` assigns each row to
 `Train`, `Eval` or `Test` by a seeded SHA-256 of its key, so a row never moves
 between parts. `validate` checks chat rows (empty turns, role order, tokens,
@@ -2496,9 +2496,9 @@ of what was kept and dropped.
 
 | Module | Main functions |
 |---|---|
-| `Std.Ai.Dataset` | `fromJsonl`, `fromJsonLines`, `fromCsv`, `fromStore`, `fromList`, `withSource`, `map`, `filter`, `filterMap`, `dedupeBy`, `scrub`, `take`, `toChat`, `toInstruction`, `rows`, `count`, `toJsonl`, `writeJsonl`, `split`, `unsplit`, `splitOf`, `part`, `limits`, `inspect`, `validate`, `target`, `withConsentBasis`, `withRetention`, `freeze`, `freezeJson`, `load`, `loadJson`, `versions`, `manifest`, `digest`, `versionRows`, `versionPart`, `fromVersion`, `manifestJson`, `manifestFromJson` |
-| `Std.Ai.Dataset.Scrub` | `email`, `phone`, `cardNumber`, `iban`, `usSsn`, `ukNino`, `secrets`, `pattern`, `custom`, `defaults`, `text`, `scrubber`, `string`, `instruction`, `chat`, `preference`, `dropIf`, `apply`, `applyAll`, `merge`, `total`, `countOf`, `isCardNumber`, `isIban` |
-| `Std.Ai.Dataset.Synthetic` | `generator`, `teacherSlot`, `withTeacher`, `withTeacherSlot`, `withTemplate`, `withSystemPrompt`, `withPersonas`, `withTopics`, `withExamples`, `withPerCall`, `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`, `withMaxCalls`, `withCostBudget`, `withDedupe`, `withFilter`, `withJudge`, `plan`, `parseRows`, `generate`, `toDataset` |
+| `Std.Ai.Dataset` | `fromJsonl`, `fromJsonLines`, `fromCsv`, `fromStore`, `fromList`, `withSource`, `map`, `filter`, `filterMap`, `dedupeBy`, `scrub`, `upTo`, `toChat`, `toInstruction`, `rows`, `countRows`, `toJsonl`, `writeJsonl`, `split`, `unsplit`, `splitOf`, `part`, `limits`, `inspect`, `validate`, `folder`, `withConsentBasis`, `withRetention`, `freeze`, `freezeJson`, `load`, `loadJson`, `versions`, `manifest`, `digest`, `versionRows`, `versionPart`, `fromVersion`, `manifestJson`, `manifestFromJson` |
+| `Std.Ai.Dataset.Scrub` | `email`, `phone`, `cardNumber`, `iban`, `usSsn`, `ukNino`, `secrets`, `pattern`, `custom`, `defaults`, `scrubText`, `scrubber`, `forString`, `forInstruction`, `forChat`, `forPreference`, `dropIf`, `scrubRow`, `scrubRows`, `merge`, `total`, `countOf`, `isCardNumber`, `isIban` |
+| `Std.Ai.Dataset.Synthetic` | `generator`, `teacherSlot`, `withTeacher`, `withTeacherSlot`, `withTemplate`, `withSystemPrompt`, `withPersonas`, `withTopics`, `withExamples`, `withPerCall`, `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`, `withMaxCalls`, `withCostBudget`, `withDedupe`, `withFilter`, `withJudge`, `plan`, `parseRows`, `run`, `toDataset` |
 
 Guide: [`ai/dataset.md`](ai/dataset.md).
 

@@ -1,6 +1,6 @@
 module Std.Ai.Dataset.Synthetic exposing
     ( Generator
-    , Request
+    , Call
     , Generated
     , Report
     , Stop(..)
@@ -27,7 +27,7 @@ module Std.Ai.Dataset.Synthetic exposing
     , withJudge
     , plan
     , parseRows
-    , generate
+    , run
     , toDataset
     )
 
@@ -46,7 +46,7 @@ module Std.Ai.Dataset.Synthetic exposing
             |> Synthetic.withDedupe .prompt
             |> Synthetic.withFilter "short answer" (\r -> String.length r.completion >= 20)
 
-    Synthetic.generate faq
+    Synthetic.run faq
         |> Task.map Synthetic.toDataset
 
 The teacher is a model slot, `"teacher"`: the local pinned development model
@@ -297,7 +297,7 @@ withJudge j rubric show (Generator g) =
 
 -- ── The plan ────────────────────────────────────────────────────────
 -- | One teacher call: its index, persona, topic, sampling seed and messages.
-type alias Request =
+type alias Call =
     { index : Int
     , persona : String
     , topic : String
@@ -321,7 +321,7 @@ callLimit g =
 
 
 -- | Every call the run may make, in order. Pure: it calls nothing.
-plan : Generator row -> List Request
+plan : Generator row -> List Call
 plan (Generator g) =
     let
         topics = orNone g.topics
@@ -546,8 +546,8 @@ type alias State row =
 
 
 -- | Run the plan until the target, the call limit or the budget stops it.
-generate : Generator row -> Task Error (Generated row)
-generate (Generator g) =
+run : Generator row -> Task Error (Generated row)
+run (Generator g) =
     teacherLabel g.endpoint g.teacherName
         |> Task.andThen
                (\label ->
@@ -612,7 +612,7 @@ overBudget budget spent =
             False
 
 
-loop : Generator row -> List Request -> State row -> Task Error (State row)
+loop : Generator row -> List Call -> State row -> Task Error (State row)
 loop (Generator g) requests st =
     let
         report = st.report
@@ -681,7 +681,7 @@ loop (Generator g) requests st =
                         |> Task.andThen (loop (Generator g) rest)
 
 
-admitAll : Generator row -> Request -> List row -> State row -> Task Error (State row)
+admitAll : Generator row -> Call -> List row -> State row -> Task Error (State row)
 admitAll (Generator g) req candidates st =
     case candidates of
 
@@ -697,7 +697,7 @@ admitAll (Generator g) req candidates st =
                     |> Task.andThen (admitAll (Generator g) req more)
 
 
-admit : Generator row -> Request -> row -> State row -> Task Error (State row)
+admit : Generator row -> Call -> row -> State row -> Task Error (State row)
 admit (Generator g) req r st =
     let
         report = st.report

@@ -13,15 +13,15 @@ module Std.Ai.Dataset.Scrub exposing
     , custom
     , defaults
     , ruleName
-    , text
+    , scrubText
     , scrubber
-    , string
-    , instruction
-    , chat
-    , preference
+    , forString
+    , forInstruction
+    , forChat
+    , forPreference
     , dropIf
-    , apply
-    , applyAll
+    , scrubRow
+    , scrubRows
     , emptyReport
     , merge
     , total
@@ -37,7 +37,7 @@ replace them with a placeholder, and count what was replaced.
     rules =
         Scrub.defaults
 
-    Scrub.text rules "Mail ada@example.com or call +44 20 7946 0958"
+    Scrub.scrubText rules "Mail ada@example.com or call +44 20 7946 0958"
     --> ( "Mail [EMAIL] or call [PHONE]", Dict.fromList [ ( "email", 1 ), ( "phone", 1 ) ] )
 
 A rule finds candidates with a regular expression and, where a format has a
@@ -46,8 +46,8 @@ Luhn check, an IBAN its mod-97 check, a US social security number and a UK
 national insurance number their issuing rules. A number that only looks like a
 card number is left alone, so ordinary numbers in the data survive.
 
-A `Scrubber row` applies rules to the text fields of a row (`instruction`,
-`chat`, `preference` and `string` for the built-in shapes, `scrubber` for your
+A `Scrubber row` applies rules to the text fields of a row (`forInstruction`,
+`forChat`, `forPreference` and `forString` for the built-in shapes, `scrubber` for your
 own) and can drop whole rows (`dropIf`). `Std.Ai.Dataset.scrub` runs one over
 a dataset, and the counts go into the frozen version's manifest.
 
@@ -454,8 +454,8 @@ defaults =
 
 
 -- | Apply rules to one string, in order.
-text : List Rule -> String -> ( String, Report )
-text rules s =
+scrubText : List Rule -> String -> ( String, Report )
+scrubText rules s =
     List.foldl
         (\(Rule r) ( acc, report ) ->
             let
@@ -526,8 +526,8 @@ scrubber rules get set =
 
 
 -- | A scrubber for plain strings.
-string : List Rule -> Scrubber String
-string rules =
+forString : List Rule -> Scrubber String
+forString rules =
     scrubber
         rules
         (\s -> [ s ])
@@ -542,10 +542,10 @@ string rules =
 
 
 -- | A scrubber for instruction rows (`Std.Ai.Dataset.Instruction`).
-instruction : List Rule -> Scrubber { prompt : String
+forInstruction : List Rule -> Scrubber { prompt : String
 , completion : String
 }
-instruction rules =
+forInstruction rules =
     scrubber
         rules
         (\r -> [ r.prompt, r.completion ])
@@ -560,8 +560,8 @@ instruction rules =
 
 
 -- | A scrubber for chat rows (`Std.Ai.Dataset.Chat`): every message's content.
-chat : List Rule -> Scrubber { messages : List Message }
-chat rules =
+forChat : List Rule -> Scrubber { messages : List Message }
+forChat rules =
     scrubber
         rules
         (\r -> List.map .content r.messages)
@@ -579,11 +579,11 @@ chat rules =
 
 
 -- | A scrubber for preference rows (`Std.Ai.Dataset.Preference`).
-preference : List Rule -> Scrubber { prompt : String
+forPreference : List Rule -> Scrubber { prompt : String
 , chosen : String
 , rejected : String
 }
-preference rules =
+forPreference rules =
     scrubber
         rules
         (\r -> [ r.prompt, r.chosen, r.rejected ])
@@ -605,8 +605,8 @@ dropIf name predicate (Scrubber s) =
 
 
 -- | Scrub one row: `Nothing` when a drop rule removed it.
-apply : Scrubber row -> row -> ( Maybe row, Report )
-apply (Scrubber s) row =
+scrubRow : Scrubber row -> row -> ( Maybe row, Report )
+scrubRow (Scrubber s) row =
     case List.find (\( _, p ) -> p row) s.drops of
 
         Just ( name, _ ) ->
@@ -618,7 +618,7 @@ apply (Scrubber s) row =
                     List.foldl
                         (\t ( acc, rep ) ->
                             let
-                                ( out, r ) = text s.rules t
+                                ( out, r ) = scrubText s.rules t
                             in
                                 ( acc ++ [ out ], merge rep r ))
                         ( [], emptyReport )
@@ -628,13 +628,13 @@ apply (Scrubber s) row =
 
 
 -- | Scrub a list of rows: the rows kept, in order, and the summed report.
-applyAll : Scrubber row -> List row -> ( List row, Report )
-applyAll sc rows =
+scrubRows : Scrubber row -> List row -> ( List row, Report )
+scrubRows sc rows =
     let
         ( kept, report ) =
             List.foldl
                 (\row ( acc, rep ) ->
-                    case apply sc row of
+                    case scrubRow sc row of
 
                         ( Just r, rr ) ->
                             ( r :: acc, merge rep rr )

@@ -15,7 +15,7 @@ import Redact
 
 scrubbed : ( List Redact.Ticket, Scrub.Report )
 scrubbed =
-    Scrub.applyAll Redact.scrubber Redact.tickets
+    Scrub.scrubRows Redact.scrubber Redact.tickets
 
 
 text : String

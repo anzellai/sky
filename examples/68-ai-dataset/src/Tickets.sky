@@ -17,7 +17,7 @@ import Std.Ai.Dataset.Scrub as Scrub
 tickets : Dataset Chat
 tickets =
     Dataset.fromJsonl Dataset.chatCodec "data/tickets.jsonl"
-        |> Dataset.scrub (Scrub.chat Scrub.defaults)
+        |> Dataset.scrub (Scrub.forChat Scrub.defaults)
         |> Dataset.dedupeBy firstQuestion
 
 
@@ -43,8 +43,8 @@ splitSpec =
 
 -- | Versions live under `.sky/ai/datasets/tickets/`, one data file and one
 -- manifest per digest.
-versions : Dataset.Target
+versions : Dataset.Folder
 versions =
-    Dataset.target ".sky/ai/datasets" "tickets"
+    Dataset.folder ".sky/ai/datasets" "tickets"
         |> Dataset.withConsentBasis "contract: support terms 2026"
         |> Dataset.withRetention "P2Y"

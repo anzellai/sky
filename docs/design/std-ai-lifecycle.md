@@ -602,7 +602,7 @@ Design points:
 `Synthetic`, the typed `DatasetInvalid` failure, and `sky ai data freeze`,
 which runs a bundled program over a JSONL file because the project's
 `src/Ai.sky` entry arrives with `Std.Ai.Pipeline`. Changes from the sketch:
-`freeze` and `load` take a `Target` (a directory and a name) instead of a
+`freeze` and `load` take a `Folder` (a directory and a name) instead of a
 registry, and the manifest is the lineage the registry records; `split` takes
 a seed (`{ train, eval, test, seed }`) and `freeze` takes the `Splits`, so
 the counts per split are in the manifest; `validate` estimates tokens unless

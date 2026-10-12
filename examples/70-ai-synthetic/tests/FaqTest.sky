@@ -21,7 +21,7 @@ import Faq
 
 generated : (Synthetic.Generated Instruction -> TestResult) -> TestResult
 generated check =
-    case Task.run (Synthetic.generate Faq.generator) of
+    case Task.run (Synthetic.run Faq.generator) of
 
         Ok gen ->
             check gen
@@ -32,14 +32,14 @@ generated check =
 
 freezeOnce : String -> Task Error String
 freezeOnce dir =
-    Synthetic.generate Faq.generator
+    Synthetic.run Faq.generator
         |> Task.andThen
                (\gen ->
                    Synthetic.toDataset gen
-                       |> Dataset.scrub (Scrub.instruction Scrub.defaults)
+                       |> Dataset.scrub (Scrub.forInstruction Scrub.defaults)
                        |> Dataset.split Dataset.defaultSplit .prompt
                        |> Dataset.freeze
-                              (Dataset.target dir "support-faq")
+                              (Dataset.folder dir "support-faq")
                               Dataset.instructionCodec)
         |> Task.map Dataset.digest
 

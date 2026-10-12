@@ -93,7 +93,7 @@ base =
 
 generated : Synthetic.Generator Instruction -> (Synthetic.Generated Instruction -> TestResult) -> TestResult
 generated g check =
-    case Task.run (Synthetic.generate g) of
+    case Task.run (Synthetic.run g) of
 
         Ok gen ->
             check gen
@@ -358,7 +358,7 @@ tests =
               Test.expectErrorKind
                   Unavailable
                   (Task.run
-                      (Synthetic.generate
+                      (Synthetic.run
                           (base
                               |> Synthetic.withTeacher
                                      "down"

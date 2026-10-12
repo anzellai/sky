@@ -22,7 +22,7 @@ func writeDatasetFile(t *testing.T, body string) string {
 
 // readAll drives Ai_datasetReadLines the way Std.Ai.Dataset does: chunk after
 // chunk from the returned offset until done.
-func readAll(t *testing.T, path string, chunk int) ([]string, int) {
+func readDatasetLines(t *testing.T, path string, chunk int) ([]string, int) {
 	t.Helper()
 	var all []string
 	offset, calls := 0, 0
@@ -50,7 +50,7 @@ func TestAiDatasetReadLinesChunksAFileWithoutLosingALine(t *testing.T) {
 	body := "{\"a\":1}\n{\"a\":2}\r\n\n{\"a\":3}\n{\"a\":4}"
 	p := writeDatasetFile(t, body)
 	for _, chunk := range []int{1, 2, 3, 10} {
-		got, _ := readAll(t, p, chunk)
+		got, _ := readDatasetLines(t, p, chunk)
 		want := []string{`{"a":1}`, `{"a":2}`, ``, `{"a":3}`, `{"a":4}`}
 		if strings.Join(got, "|") != strings.Join(want, "|") {
 			t.Errorf("chunk %d: lines %q, want %q", chunk, got, want)
@@ -59,7 +59,7 @@ func TestAiDatasetReadLinesChunksAFileWithoutLosingALine(t *testing.T) {
 	// A file that ends with a newline is done with its last line: no extra
 	// empty read and no phantom empty row.
 	p2 := writeDatasetFile(t, "x\ny\n")
-	got, calls := readAll(t, p2, 2)
+	got, calls := readDatasetLines(t, p2, 2)
 	if strings.Join(got, "|") != "x|y" || calls != 1 {
 		t.Errorf("lines %q in %d calls, want x|y in 1", got, calls)
 	}
@@ -70,7 +70,7 @@ func TestAiDatasetReadLinesFailsTypedForAMissingFile(t *testing.T) {
 	if isOkResult(r) {
 		t.Fatal("a missing file read as Ok")
 	}
-	df, ok := DomainOf(errValue(r))
+	df, ok := DomainOf(datasetErrValue(r))
 	if !ok || df.Domain != "ai" || df.Code != "DatasetInvalid" {
 		t.Fatalf("domain failure %+v (ok %v), want ai/DatasetInvalid", df, ok)
 	}
@@ -109,11 +109,11 @@ func TestAiDatasetCanonicalRejectsWithoutEchoingTheRow(t *testing.T) {
 		if isOkResult(r) {
 			t.Fatalf("%q canonicalised", in)
 		}
-		df, ok := DomainOf(errValue(r))
+		df, ok := DomainOf(datasetErrValue(r))
 		if !ok || df.Code != "DatasetInvalid" {
 			t.Fatalf("%q: %+v", in, df)
 		}
-		msg := errValue(r).(skyErrorAdt).Fields[1].(skyErrorInfo).Message
+		msg := datasetErrValue(r).(skyErrorAdt).Fields[1].(skyErrorInfo).Message
 		for _, leak := range []string{"ada@example.com", "secret-token", `"b"`} {
 			if strings.Contains(msg, leak) {
 				t.Errorf("the failure for %q repeats row text %q: %s", in, leak, msg)
@@ -134,7 +134,7 @@ func TestAiDatasetSha256FileIsTheDigestOfTheBytes(t *testing.T) {
 		t.Errorf("digest %s, want %s", got, want)
 	}
 	r = Ai_datasetSha256File(filepath.Join(t.TempDir(), "none")).(func() any)()
-	if df, ok := DomainOf(errValue(r)); !ok || df.Code != "DatasetInvalid" {
+	if df, ok := DomainOf(datasetErrValue(r)); !ok || df.Code != "DatasetInvalid" {
 		t.Errorf("missing file: %+v", df)
 	}
 }
@@ -142,13 +142,13 @@ func TestAiDatasetSha256FileIsTheDigestOfTheBytes(t *testing.T) {
 func TestAiDatasetReadLinesRefusesAnOverlongLine(t *testing.T) {
 	p := writeDatasetFile(t, strings.Repeat("x", aiDatasetMaxLine+10)+"\n")
 	r := Ai_datasetReadLines(p, 0, 5).(func() any)()
-	if df, ok := DomainOf(errValue(r)); !ok || df.Code != "DatasetInvalid" {
+	if df, ok := DomainOf(datasetErrValue(r)); !ok || df.Code != "DatasetInvalid" {
 		t.Fatalf("an overlong line: %v", r)
 	}
 }
 
 // errValue is the Err payload of a Result (a Task already run).
-func errValue(r any) any {
+func datasetErrValue(r any) any {
 	sr, _ := r.(SkyResult[any, any])
 	return sr.ErrValue
 }

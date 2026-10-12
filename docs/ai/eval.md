@@ -85,8 +85,9 @@ other setting: the slot mechanism of [`local.md`](local.md) is the switch.
 
 `Eval.withJudge (Eval.judge provider "my-rubric-v2")` uses another provider
 and names your own rubric prompt version, which the report records. The judge
-answers with `SCORE: <1-5>`; an answer without a score fails the case and says
-so. `Eval.withPassScore` moves the pass mark.
+answers with `SCORE: <1-5>`; a reply without the label that starts with one
+digit from 1 to 5 (`5`, `4 - polite`) is read too, because small judge models
+often drop the label. An answer with no score fails the case and says so. `Eval.withPassScore` moves the pass mark.
 
 `Eval.judgeAnswer judge seed rubric question answer` asks the judge about one
 answer outside a suite, with the same prompt, temperature 0 and pass mark.

@@ -20,11 +20,11 @@ module Std.Ai.Dataset exposing
     , filterMap
     , dedupeBy
     , scrub
-    , take
+    , upTo
     , toChat
     , toInstruction
     , rows
-    , count
+    , countRows
     , toJsonl
     , writeJsonl
     , Split(..)
@@ -50,8 +50,8 @@ module Std.Ai.Dataset exposing
     , Report
     , inspect
     , validate
-    , Target
-    , target
+    , Folder
+    , folder
     , withConsentBasis
     , withRetention
     , Manifest
@@ -81,14 +81,14 @@ split it, check it, and freeze it into a content-addressed version.
     support : Dataset.Dataset Instruction
     support =
         Dataset.fromJsonl Dataset.instructionCodec "data/support.jsonl"
-            |> Dataset.scrub (Scrub.instruction Scrub.defaults)
+            |> Dataset.scrub (Scrub.forInstruction Scrub.defaults)
             |> Dataset.dedupeBy .prompt
 
     freezeSupport : Task Error (Dataset.Version Instruction)
     freezeSupport =
         support
             |> Dataset.split Dataset.defaultSplit .prompt
-            |> Dataset.freeze (Dataset.target "data/versions" "support") Dataset.instructionCodec
+            |> Dataset.freeze (Dataset.folder "data/versions" "support") Dataset.instructionCodec
 
 A `Dataset row` is a description. Nothing is read until you freeze it,
 validate it or ask for its rows, and a JSONL file is read in chunks of lines,
@@ -506,7 +506,7 @@ sources (Dataset d) =
     d.sources
 
 
--- | The steps applied, in order (`map`, `filter`, `dedupe`, `scrub(…)`, …).
+-- | The steps applied, in order (`map`, `filter`, `dedupe`, `scrub`, …).
 steps : Dataset row -> List String
 steps (Dataset d) =
     d.steps
@@ -626,17 +626,17 @@ scrub sc ds =
         ()
         (\_ rs ->
             let
-                ( kept, report ) = Scrub.applyAll sc rs
+                ( kept, report ) = Scrub.scrubRows sc rs
             in
                 Ok ( kept, { noStats | scrub = report }, () ))
         ds
 
 
 -- | Only the first `n` rows.
-take : Int -> Dataset row -> Dataset row
-take n ds =
+upTo : Int -> Dataset row -> Dataset row
+upTo n ds =
     transform
-        ("take " ++ String.fromInt n)
+        ("upTo " ++ String.fromInt n)
         n
         (\left rs ->
             Ok ( List.take left rs, noStats, max 0 (left - List.length rs) ))
@@ -682,8 +682,8 @@ rows ds =
 
 
 -- | The number of rows, read in chunks.
-count : Dataset row -> Task Error Int
-count ds =
+countRows : Dataset row -> Task Error Int
+countRows ds =
     fold (\n rs _ -> Task.succeed (n + List.length rs)) 0 ds
 
 
@@ -1340,8 +1340,8 @@ percent r =
 -- ── Frozen versions ─────────────────────────────────────────────────
 -- | Where a version is written: a directory and the dataset's name, and the
 -- governance facts the manifest records.
-type Target
-    = Target { dir : String
+type Folder
+    = Folder { dir : String
 , name : String
 , consentBasis : Maybe String
 , retention : Maybe String
@@ -1350,24 +1350,24 @@ type Target
 
 -- | Versions of the dataset `name` under `dir`: the data in
 -- `<dir>/<name>/<sha256>.jsonl` and the manifest in `<dir>/<name>/<sha256>.json`.
-target : String -> String -> Target
-target dir name =
-    Target
+folder : String -> String -> Folder
+folder dir name =
+    Folder
         { dir = dir, name = name, consentBasis = Nothing, retention = Nothing }
 
 
 -- | The legal basis for using the data (for example `"contract"` or
 -- `"consent:2026-10 support opt-in"`), recorded in the manifest.
-withConsentBasis : String -> Target -> Target
-withConsentBasis basis (Target t) =
-    Target { t | consentBasis = Just basis }
+withConsentBasis : String -> Folder -> Folder
+withConsentBasis basis (Folder t) =
+    Folder { t | consentBasis = Just basis }
 
 
 -- | How long the data may be kept (for example `"P2Y"`), recorded in the
 -- manifest.
-withRetention : String -> Target -> Target
-withRetention period (Target t) =
-    Target { t | retention = Just period }
+withRetention : String -> Folder -> Folder
+withRetention period (Folder t) =
+    Folder { t | retention = Just period }
 
 -- | The record of a frozen version: what a registry stores as the dataset's
 -- lineage. `schema` is the row codec's shape (field and column type), and
@@ -1419,7 +1419,7 @@ type alias Tally =
 -- write the manifest. The data file appears whole or not at all. Freezing the
 -- same rows again writes nothing new and returns the version already there,
 -- with its first manifest.
-freeze : Target -> Codec row -> Splits row -> Task Error (Version row)
+freeze : Folder -> Codec row -> Splits row -> Task Error (Version row)
 freeze tgt codec splits =
     freezeEncoded
         tgt
@@ -1437,7 +1437,7 @@ freeze tgt codec splits =
 
 -- | Freeze rows that are already JSON texts (as `fromJsonLines` reads them).
 -- This is what `sky ai data freeze` runs.
-freezeJson : Target -> Splits String -> Task Error (Version String)
+freezeJson : Folder -> Splits String -> Task Error (Version String)
 freezeJson tgt splits =
     freezeEncoded tgt canonical "json" splits
         |> Task.map
@@ -1485,8 +1485,8 @@ colText c =
             colText inner ++ "?"
 
 
-freezeEncoded : Target -> (row -> Result Error String) -> String -> Splits row -> Task Error ( Manifest, String )
-freezeEncoded (Target t) encode schema (Splits s) =
+freezeEncoded : Folder -> (row -> Result Error String) -> String -> Splits row -> Task Error ( Manifest, String )
+freezeEncoded (Folder t) encode schema (Splits s) =
     let
         dir = t.dir ++ "/" ++ t.name
     in
@@ -1793,20 +1793,20 @@ andMap da df =
 -- | Load a frozen version by its digest (with or without a `sha256:`
 -- prefix) and check that its data file still has that digest: a changed file
 -- fails with `ChecksumMismatch`, a missing one with `DatasetInvalid`.
-load : Target -> String -> Codec row -> Task Error (Version row)
+load : Folder -> String -> Codec row -> Task Error (Version row)
 load tgt wanted codec =
     loadWith tgt wanted (Codec.fromJson codec)
 
 
 -- | `load` for a version frozen with `freezeJson`: each row is its canonical
 -- JSON text.
-loadJson : Target -> String -> Task Error (Version String)
+loadJson : Folder -> String -> Task Error (Version String)
 loadJson tgt wanted =
     loadWith tgt wanted Ok
 
 
-loadWith : Target -> String -> (String -> Result Error row) -> Task Error (Version row)
-loadWith (Target t) wanted decode =
+loadWith : Folder -> String -> (String -> Result Error row) -> Task Error (Version row)
+loadWith (Folder t) wanted decode =
     let
         d =
             if String.startsWith "sha256:" wanted then
@@ -1840,8 +1840,8 @@ loadWith (Target t) wanted decode =
 
 
 -- | The manifests of every version of a dataset, newest first.
-versions : Target -> Task Error (List Manifest)
-versions (Target t) =
+versions : Folder -> Task Error (List Manifest)
+versions (Folder t) =
     let
         dir = t.dir ++ "/" ++ t.name
     in

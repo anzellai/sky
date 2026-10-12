@@ -4539,7 +4539,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "aidataset" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "TTTTTXXTTTTXTTTTTTTT|EEXTXXTTXTETTTXXXTTX|3|{\"completion\":\"c\",\"prompt\":\"p\"}|T/2/0"
+stdout     = "TTTTTXXTTTTXTTTTTTTT|EEXTXXTTXTETTTXXXTTX|3|{"completion":"c","prompt":"p"}|T/2/0"
 
 [[case]]
 id         = "stdlib_edge/failure-aidataset"

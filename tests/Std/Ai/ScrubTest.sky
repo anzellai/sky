@@ -22,12 +22,12 @@ import Std.Ai.Dataset.Scrub as Scrub
 
 scrubbed : List Scrub.Rule -> String -> String
 scrubbed rules s =
-    Tuple.first (Scrub.text rules s)
+    Tuple.first (Scrub.scrubText rules s)
 
 
 counted : List Scrub.Rule -> String -> String -> Int
 counted rules name s =
-    Scrub.countOf name (Tuple.second (Scrub.text rules s))
+    Scrub.countOf name (Tuple.second (Scrub.scrubText rules s))
 
 
 same : List Scrub.Rule -> String -> TestResult
@@ -148,7 +148,7 @@ tests =
           (\_ ->
               let
                   ( out, report ) =
-                      Scrub.text
+                      Scrub.scrubText
                           Scrub.defaults
                           "Card 4111 1111 1111 1111, call +44 20 7946 0958, mail ada@example.com, key sk-abcdefghijklmnopqrstuvwxyz012345, IBAN GB82 WEST 1234 5698 7654 32."
               in
@@ -167,7 +167,7 @@ tests =
           (\_ ->
               let
                   ( _, report ) =
-                      Scrub.text
+                      Scrub.scrubText
                           Scrub.defaults
                           "ada@example.com 4111111111111111"
                   shown =
@@ -187,7 +187,7 @@ tests =
                   ( "Plain text, 42 apples.", 0 )
                   (Tuple.mapSecond
                       Scrub.total
-                      (Scrub.text Scrub.defaults "Plain text, 42 apples.")))
+                      (Scrub.scrubText Scrub.defaults "Plain text, 42 apples.")))
     , Test.test
           "a user pattern replaces with its upper-case name"
           (\_ ->
@@ -238,16 +238,16 @@ tests =
                   )
                   (Tuple.mapSecond
                       Scrub.total
-                      (Scrub.apply
-                          (Scrub.instruction Scrub.defaults)
+                      (Scrub.scrubRow
+                          (Scrub.forInstruction Scrub.defaults)
                           { prompt = "I am ada@example.com"
                           , completion = "Hi, we called +44 20 7946 0958."
                           })))
     , Test.test
           "a chat scrubber reaches every message and keeps the roles"
           (\_ ->
-              case Scrub.apply
-                       (Scrub.chat Scrub.defaults)
+              case Scrub.scrubRow
+                       (Scrub.forChat Scrub.defaults)
                        { messages =
                            [ Provider.system "Be brief."
                            , Provider.user "Card 4111111111111111"
@@ -281,8 +281,8 @@ tests =
                       , rejected = "[EMAIL]"
                       })
                   (Tuple.first
-                      (Scrub.apply
-                          (Scrub.preference [ Scrub.email ])
+                      (Scrub.scrubRow
+                          (Scrub.forPreference [ Scrub.email ])
                           { prompt = "a@b.io"
                           , chosen = "c@d.io"
                           , rejected = "e@f.io"
@@ -292,12 +292,12 @@ tests =
           (\_ ->
               let
                   sc =
-                      Scrub.string [ Scrub.email ]
+                      Scrub.forString [ Scrub.email ]
                           |> Scrub.dropIf
                                  "internal"
                                  (String.contains "INTERNAL")
                   ( kept, report ) =
-                      Scrub.applyAll sc [ "a@b.io", "INTERNAL note", "plain" ]
+                      Scrub.scrubRows sc [ "a@b.io", "INTERNAL note", "plain" ]
               in
                   Test.equal
                       ( [ "[EMAIL]", "plain" ]
