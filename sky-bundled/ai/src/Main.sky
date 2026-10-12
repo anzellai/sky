@@ -16,6 +16,7 @@ each verb is a call to the Std.Ai API a user's own program can make.
                                                  Registry.promoteCompared,
                                                  promoteIf, forcePromote
     sky ai rollback <name>@<alias>               Registry.rollback
+    sky ai registry publish <name>               Registry.publishPointers
     sky ai lineage <name>@<alias>|<name>@v<n>    Registry.lineage
     sky ai lineage --dataset <sha256>|<name>@<n> Registry.trainedOn
     sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>]
@@ -91,6 +92,9 @@ run args =
 
             "rollback" :: ref :: opts ->
                 rollback json ref opts
+
+            "registry" :: "publish" :: name :: opts ->
+                publish json name opts
 
             "lineage" :: "--dataset" :: digest :: opts ->
                 trainedOn json digest opts
@@ -541,6 +545,19 @@ eventText name ev =
 
            else
                " (report " ++ ev.report ++ ")")
+
+
+-- `sky ai registry publish <name>`: Registry.publishPointers.
+publish : Bool -> String -> List String -> Task Error ()
+publish json name opts =
+    openRegistry opts
+        |> Task.andThen (\reg -> Registry.publishPointers reg name)
+        |> Task.andThen
+               (\n ->
+                   emit
+                       json
+                       (JsonE.object [ ( "name", JsonE.string name ), ( "written", JsonE.int n ) ])
+                       ("published " ++ name ++ ": " ++ String.fromInt n ++ " pointer objects written"))
 
 
 rollback : Bool -> String -> List String -> Task Error ()

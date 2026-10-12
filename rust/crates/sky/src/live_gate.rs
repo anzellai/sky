@@ -93,6 +93,12 @@ pub enum Need {
     /// silicon (`sky ai provision --train mlx --base dev`), or the network to
     /// fetch them.
     AiTrainMlx,
+    /// A Google Cloud project prepared for Std.Ai's live tests, entered only
+    /// through the wrapper `scripts/ai/gcp-live.sh`, which sets
+    /// `SKY_AI_GCP_LIVE=1`, builds the run's bucket, repositories, secret and
+    /// images, and ALWAYS tears them down and checks for leaks. These tests
+    /// spend money, so they are `#[ignore]` and run only through it.
+    GcpLive,
 }
 
 impl Need {
@@ -143,6 +149,12 @@ impl Need {
                  4-bit Qwen dev weights), or give the test network access to github.com, \
                  pypi.org, files.pythonhosted.org and huggingface.co"
             }
+            Need::GcpLive => {
+                "run these tests through `scripts/ai/gcp-live.sh --project <id>` (after \
+                 `scripts/ai/gcp-bootstrap.sh --project <id>` once): it sets SKY_AI_GCP_LIVE=1 \
+                 and the run's resources, keeps spend under the ledger's cap, and tears \
+                 everything down"
+            }
         }
     }
 
@@ -159,6 +171,7 @@ impl Need {
             Need::AiEngine => "the Std.Ai engine and development model",
             Need::AiTrainToolchain => "the Std.Ai.Train Fake toolchain and the dev model",
             Need::AiTrainMlx => "the Std.Ai.Train Mlx toolchain and the dev base weights",
+            Need::GcpLive => "the Google Cloud live-test wrapper (scripts/ai/gcp-live.sh)",
         }
     }
 }

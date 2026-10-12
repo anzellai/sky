@@ -11584,6 +11584,27 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
                      write a run's adapter as GGUF (or the merged model)
   start <slot> ... [--adapter file:<path>#sha256=<hex>]
                      serve a GGUF LoRA adapter with the slot's model
+  train --data ... --backend vertex [--project <p>] [--region <r>] [--machine <type>]
+        [--staging gs://<bucket>/<prefix>] [--budget \"USD 5.00\"] [--image <ref>@sha256:<hex>]
+        [--price <machine>@<region>=<amount>]... [--price-book <date>] [--spot] [--keep-staging]
+                     fine-tune on Google Vertex AI (each setting falls back to SKY_AI_TRAIN_*)
+  registry publish <name>
+                     write the registry's pointer objects to its store again
+  serve [--adapters <name>@<alias>,...] [--registry <url>] [--bind <addr>]
+                     run the GPU tier (vLLM next to it) on the development base
+  serve --image [--out <dir>] --service <name> [target flags]
+                     write the tier image (linux/amd64 binary, Dockerfile) and its
+                     Cloud Run service (service.json, service.yaml)
+  deploy --service <name> --tier-image <ref> [target flags] [--dry-run]
+                     deploy the tier to Cloud Run with one L4 (scales to zero)
+  teardown --service <name> | --run <key> [--staging gs://...] | --all-sky
+                     delete what Sky made in the cloud
+  cloud ls [--run <key>] | cloud prices --service <name> --region <r> [--match <word>]...
+                     list Sky's cloud resources; read the Cloud Billing catalogue
+  image build --train|--tier --repo <name> --staging gs://... 
+                     build the trainer or tier image with Cloud Build in your project
+  Target flags: --project, --region, --adapters, --engine-image, --token-secret,
+  --registry, --service-account, --invoker, --min-instances, --max-instances.
 The project's AI pipeline (src/Ai.sky, Std.Ai.Pipeline):
   eval <suite> [--against <alias>] [--candidate <model>@v<n>] [--promote-to <alias>]
        [--junit <file>] [--markdown <file>] [--min-pass-rate <x>] [--max-regression <x>]
@@ -11668,6 +11689,13 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         ["train", "resume" | "cancel", run, ..] if !run.starts_with('-') => Some(AiMode::Bundled),
         ["train", rest @ ..] if rest.contains(&"--data") => Some(AiMode::Bundled),
         ["export", run, ..] if !run.starts_with('-') => Some(AiMode::Bundled),
+        ["registry", "publish", name, ..] if !name.starts_with('-') => Some(AiMode::PipelineIfAny),
+        // The cloud verbs run the bundled cloud program (sky-bundled/ai-cloud).
+        ["serve", ..] | ["deploy", ..] | ["teardown", ..] => Some(AiMode::Bundled),
+        ["cloud", "ls" | "prices", ..] => Some(AiMode::Bundled),
+        ["image", "build", rest @ ..] if rest.contains(&"--train") || rest.contains(&"--tier") => {
+            Some(AiMode::Bundled)
+        }
         _ => None,
     };
     let Some(mode) = mode else {
@@ -11786,7 +11814,17 @@ fn cmd_ai_bundled(args: Vec<String>, cwd: &Path, test_mode: bool) -> ExitCode {
         .find(|a| *a != "--format" && *a != "json");
     let training = matches!(first, Some("train" | "export"))
         || (first == Some("provision") && args.iter().any(|a| a == "--train"));
-    let bundle = if training { "ai-train" } else { "ai" };
+    let cloud = matches!(
+        first,
+        Some("serve" | "deploy" | "teardown" | "cloud" | "image")
+    );
+    let bundle = if training {
+        "ai-train"
+    } else if cloud {
+        "ai-cloud"
+    } else {
+        "ai"
+    };
     let Some(src_dir) = bundled::bundled_src_dir(&repo_root, bundle) else {
         return bundled_missing(bundle);
     };
@@ -11806,7 +11844,135 @@ fn cmd_ai_bundled(args: Vec<String>, cwd: &Path, test_mode: bool) -> ExitCode {
     };
     let bin = out_dir.join("app");
     let project = test_mode.then(|| locate_project_root(cwd)).flatten();
+    let args = if cloud {
+        match ai_cloud_args(&repo_root, &src_dir, args, cwd) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        args
+    };
     run_ai_binary(&bin, &args, cwd, project.as_deref())
+}
+
+/// The cloud verbs that need a file the Sky program cannot make: the tier's
+/// linux/amd64 binary (`serve --image`, `image build --tier`), cross-built
+/// from the same bundled program with `GOOS=linux GOARCH=amd64` (a static
+/// binary: the runtime is pure Go), and the trainer image's build context
+/// (`image build --train`: the driver, the locks and the Dockerfile, from the
+/// assets this Sky carries). Returns the arguments the program runs with.
+fn ai_cloud_args(
+    repo_root: &Path,
+    src_dir: &Path,
+    args: Vec<String>,
+    cwd: &Path,
+) -> Result<Vec<String>, String> {
+    let first: Vec<String> = args
+        .iter()
+        .filter(|a| *a != "--format" && *a != "json")
+        .take(2)
+        .cloned()
+        .collect();
+    let first: Vec<&str> = first.iter().map(String::as_str).collect();
+    let tier_image = (first.first() == Some(&"serve") && args.iter().any(|a| a == "--image"))
+        || (first == ["image", "build"] && args.iter().any(|a| a == "--tier"));
+    let train_image = first == ["image", "build"] && args.iter().any(|a| a == "--train");
+    if train_image {
+        let mut out = args.clone();
+        out.push("--context".into());
+        out.push(
+            repo_root
+                .join("runtime-go/rt/ai_train_assets")
+                .display()
+                .to_string(),
+        );
+        return Ok(out);
+    }
+    if !tier_image {
+        return Ok(args);
+    }
+    // The tier binary, cross-built once per Sky build and cached apart from
+    // the native program.
+    let prev = (std::env::var("GOOS").ok(), std::env::var("GOARCH").ok());
+    std::env::set_var("GOOS", "linux");
+    std::env::set_var("GOARCH", "amd64");
+    let built = bundled::ensure_built(
+        repo_root,
+        src_dir,
+        "ai-cloud",
+        "tier-linux-amd64",
+        bundled::ENTRY_LIVE,
+        &bundled_cache_slug(),
+    );
+    match prev.0 {
+        Some(v) => std::env::set_var("GOOS", v),
+        None => std::env::remove_var("GOOS"),
+    }
+    match prev.1 {
+        Some(v) => std::env::set_var("GOARCH", v),
+        None => std::env::remove_var("GOARCH"),
+    }
+    let tier_bin = built?.join("app");
+    let out_dir = if first.first() == Some(&"serve") {
+        let out = flag_value(&args, "--out").unwrap_or_else(|| ".sky/ai/tier-image".into());
+        cwd.join(out)
+    } else {
+        std::env::temp_dir().join(format!("sky-tier-image-{}", std::process::id()))
+    };
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("sky ai: cannot create {}: {e}", out_dir.display()))?;
+    std::fs::copy(&tier_bin, out_dir.join("app"))
+        .map_err(|e| format!("sky ai: cannot copy the tier binary: {e}"))?;
+    let mut out: Vec<String> = args.into_iter().filter(|a| a != "--image").collect();
+    if first.first() == Some(&"serve") {
+        out.push("--render".into());
+        if flag_value(&out, "--out").is_none() {
+            out.push("--out".into());
+            out.push(out_dir.display().to_string());
+        }
+    } else {
+        // `image build --tier`: the context is the binary and its Dockerfile.
+        let dockerfile = out_dir.join("Dockerfile");
+        if !dockerfile.exists() {
+            let mut render = vec![
+                "serve".to_string(),
+                "--render".into(),
+                "--out".into(),
+                out_dir.display().to_string(),
+                "--service".into(),
+                "tier".into(),
+            ];
+            render.extend(
+                out.iter()
+                    .filter(|a| a.as_str() == "--format" || a.as_str() == "json")
+                    .cloned(),
+            );
+            let native = bundled::ensure_built(
+                repo_root,
+                src_dir,
+                "ai-cloud",
+                "cli",
+                bundled::ENTRY_LIVE,
+                &bundled_cache_slug(),
+            )?
+            .join("app");
+            let status = Command::new(&native)
+                .args(&render)
+                .current_dir(cwd)
+                .stdout(Stdio::null())
+                .status()
+                .map_err(|e| format!("sky ai: cannot render the tier's Dockerfile: {e}"))?;
+            if !status.success() {
+                return Err("sky ai: rendering the tier's Dockerfile failed".into());
+            }
+        }
+        out.push("--context".into());
+        out.push(out_dir.display().to_string());
+    }
+    Ok(out)
 }
 
 // ---- bundled-app helpers -------------------------------------------------

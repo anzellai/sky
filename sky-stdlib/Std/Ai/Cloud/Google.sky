@@ -76,11 +76,18 @@ module Std.Ai.Cloud.Google exposing
     , QuotaReading
     , quota
     , logTail
+    , ensureRepository
+    , ImageBuild
+    , packDirectory
+    , buildImage
+    , Sku
+    , skus
     )
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Ffi as Ffi
 import Sky.Core.Task as Task
+import Sky.Core.Math as Math
 import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -1308,7 +1315,7 @@ type alias QuotaReading =
 
 -- | Read a quota for a region: `quota project service quotaId region`
 -- (service `aiplatform.googleapis.com`, quota id
--- `CustomModelTrainingNvidiaL4GPUsPerProjectPerRegion`). An API that is off
+-- `CustomModelTrainingL4GPUsPerProjectPerRegion`). An API that is off
 -- or refuses is a reading with no limit and a note, never a failure: the
 -- launch itself is the final check.
 quota : String -> String -> String -> String -> Task Error QuotaReading
@@ -1450,3 +1457,308 @@ trimTrailingSlash s =
 
     else
         s
+
+
+-- ── Artifact Registry and Cloud Build ───────────────────────────────
+-- | Create a Docker repository in Artifact Registry (labelled
+-- `sky-managed=true`) unless it exists.
+ensureRepository : String -> String -> String -> Task Error ()
+ensureRepository project region repo =
+    serviceBase "artifactregistry" region
+        |> Task.andThen
+               (\base ->
+                   call
+                       "POST"
+                       (base ++ "/v1/projects/" ++ project ++ "/locations/" ++ region
+                           ++ "/repositories?repositoryId="
+                           ++ Encoding.urlEncode repo)
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "format", JsonE.string "DOCKER" )
+                               , ( "labels", JsonE.object [ ( "sky-managed", JsonE.string "true" ) ] )
+                               ])))
+        |> Task.andThen
+               (\resp ->
+                   if resp.status == 409 then
+                       Task.succeed ()
+
+                   else
+                       ok "Artifact Registry repository" region resp |> Task.map (\_ -> ()))
+
+
+-- | An image to build with Cloud Build in your own project: the source (a
+-- `.tar.gz` already in a bucket), the Dockerfile's path inside it, and the
+-- image's name (`<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>`).
+type alias ImageBuild =
+    { project : String
+    , region : String
+    , bucket : String
+    , object : String
+    , dockerfile : String
+    , image : String
+    , timeoutSeconds : Int
+    }
+
+
+type alias Packed =
+    { sha256 : String
+    , size : Int
+    }
+
+
+tarGzRaw : String -> String -> Task Error Packed
+tarGzRaw =
+    Ffi.kernel "Ai_tarGz"
+
+
+-- | Pack a directory into a gzipped tar at `out`, reproducibly (sorted
+-- entries, no times or owners, hidden files left out): a Cloud Build source.
+-- Returns the archive's digest and size.
+packDirectory : String -> String -> Task Error { sha256 : String, size : Int }
+packDirectory dir out =
+    tarGzRaw dir out
+        |> Task.map (\p -> { sha256 = p.sha256, size = p.size })
+
+
+-- | Build an image with Cloud Build (Docker with BuildKit) and return its
+-- reference pinned by the digest Cloud Build reports:
+-- `<image name>@sha256:<hex>`. Polls the build's operation until it ends (at
+-- most `timeoutSeconds`). The source must already be uploaded (`sky ai image
+-- build` packs a directory with the same reproducible tar the runtime makes,
+-- and stores it by digest in the staging bucket).
+buildImage : ImageBuild -> Task Error String
+buildImage b =
+    serviceBase "cloudbuild" b.region
+        |> Task.andThen
+               (\base ->
+                   call
+                       "POST"
+                       (base ++ "/v1/projects/" ++ b.project ++ "/locations/" ++ b.region ++ "/builds")
+                       (JsonE.encode
+                           0
+                           (JsonE.object
+                               [ ( "source"
+                                 , JsonE.object
+                                       [ ( "storageSource"
+                                         , JsonE.object
+                                               [ ( "bucket", JsonE.string b.bucket )
+                                               , ( "object", JsonE.string b.object )
+                                               ]
+                                         )
+                                       ]
+                                 )
+                               , ( "steps"
+                                 , JsonE.list
+                                       identity
+                                       [ JsonE.object
+                                             [ ( "name", JsonE.string "gcr.io/cloud-builders/docker" )
+                                             , ( "env", JsonE.list JsonE.string [ "DOCKER_BUILDKIT=1" ] )
+                                             , ( "args"
+                                               , JsonE.list
+                                                     JsonE.string
+                                                     [ "build", "--network=cloudbuild", "-t", b.image, "-f", b.dockerfile, "." ]
+                                               )
+                                             ]
+                                       ]
+                                 )
+                               , ( "images", JsonE.list JsonE.string [ b.image ] )
+                               , ( "timeout", JsonE.string (String.fromInt b.timeoutSeconds ++ "s") )
+                               , ( "tags", JsonE.list JsonE.string [ "sky-managed" ] )
+                               , ( "options", JsonE.object [ ( "diskSizeGb", JsonE.int 100 ), ( "logging", JsonE.string "CLOUD_LOGGING_ONLY" ) ] )
+                               ]))
+                       |> Task.andThen (ok "Cloud Build" b.region)
+                       |> Task.andThen
+                              (\body ->
+                                  Task.fromResult
+                                      (JsonD.decodeString (JsonD.field "name" JsonD.string) body))
+                       |> Task.andThen (\op -> waitBuild base b op 0))
+
+
+waitBuild : String -> ImageBuild -> String -> Int -> Task Error String
+waitBuild base b op n =
+    call "GET" (base ++ "/v1/" ++ op) ""
+        |> Task.andThen (ok "Cloud Build" b.region)
+        |> Task.andThen
+               (\body ->
+                   case JsonD.decodeString (JsonD.oneOf [ JsonD.field "done" JsonD.bool, JsonD.succeed False ]) body of
+
+                       Ok True ->
+                           case JsonD.decodeString (JsonD.at [ "error", "message" ] JsonD.string) body of
+
+                               Ok message ->
+                                   Task.fail
+                                       (Failure.toErrorWith
+                                           message
+                                           (ToolchainFailed { tool = "Cloud Build", logTail = message }))
+
+                               Err _ ->
+                                   case JsonD.decodeString
+                                            (JsonD.at [ "response", "results", "images" ]
+                                                (JsonD.index 0 (JsonD.field "digest" JsonD.string)))
+                                            body of
+
+                                       Ok digest ->
+                                           Task.succeed (imageName b.image ++ "@" ++ digest)
+
+                                       Err _ ->
+                                           Task.fail
+                                               (Failure.toError
+                                                   (ToolchainFailed
+                                                       { tool = "Cloud Build"
+                                                       , logTail = "the build finished without an image digest: " ++ String.left 300 body
+                                                       }))
+
+                       _ ->
+                           if n * 5 > b.timeoutSeconds + 300 then
+                               Task.fail
+                                   (Failure.toError
+                                       (TimedOut { afterMs = Just (n * 5000) }))
+
+                           else
+                               Time.sleep (Math.min 5000 (100 * (n + 1)))
+                                   |> Task.andThen (\_ -> waitBuild base b op (n + 1)))
+
+
+-- An image name without its tag: `…/repo/image:tag` is `…/repo/image`.
+imageName : String -> String
+imageName ref =
+    case List.reverse (String.split "/" ref) of
+
+        last :: rest ->
+            String.join "/" (List.reverse ((String.split ":" last |> List.head |> Maybe.withDefault last) :: rest))
+
+        [] ->
+            ref
+
+
+-- ── The Cloud Billing catalogue ─────────────────────────────────────
+-- | One price of the Cloud Billing catalogue: its service, its description,
+-- the regions it applies to, its usage unit (`h`, `GiBy.h`, `s`) and the
+-- price of one unit in USD as an exact decimal text, with the first tier's
+-- start (a free tier starts above 0).
+type alias Sku =
+    { service : String
+    , description : String
+    , regions : List String
+    , unit : String
+    , usd : String
+    }
+
+
+-- | The catalogue's prices of a service (by its display name: `Vertex AI`,
+-- `Cloud Run`, `Compute Engine`) whose description contains every word of
+-- `match`, in `region`. Read with your credentials; prices are the public
+-- list prices in USD.
+skus : String -> String -> List String -> Task Error (List Sku)
+skus serviceName region match =
+    serviceBase "cloudbilling" region
+        |> Task.andThen
+               (\base ->
+                   call "GET" (base ++ "/v1/services?pageSize=5000") ""
+                       |> Task.andThen (ok "Cloud Billing catalogue" region)
+                       |> Task.andThen
+                              (\body ->
+                                  case JsonD.decodeString
+                                           (JsonD.field
+                                               "services"
+                                               (JsonD.list
+                                                   (JsonD.map2
+                                                       (\i d -> ( i, d ))
+                                                       (JsonD.field "serviceId" JsonD.string)
+                                                       (JsonD.field "displayName" JsonD.string))))
+                                           body of
+
+                                      Ok services ->
+                                          case List.filter (\( _, d ) -> d == serviceName) services |> List.head of
+
+                                              Just ( id, _ ) ->
+                                                  skuPages base id serviceName "" []
+
+                                              Nothing ->
+                                                  Task.fail
+                                                      (Failure.toError
+                                                          (InvalidSetting
+                                                              { setting = "service"
+                                                              , reason = serviceName ++ " is not a Cloud Billing service name"
+                                                              }))
+
+                                      Err e ->
+                                          Task.fail e))
+        |> Task.map
+               (\all ->
+                   List.filter
+                       (\sku ->
+                           (List.member region sku.regions || List.member "global" sku.regions)
+                               && List.all
+                                      (\w -> String.contains (String.toLower w) (String.toLower sku.description))
+                                      match)
+                       all)
+
+
+skuPages : String -> String -> String -> String -> List Sku -> Task Error (List Sku)
+skuPages base id serviceName token acc =
+    call
+        "GET"
+        (base ++ "/v1/services/" ++ id ++ "/skus?pageSize=5000"
+            ++ (if token == "" then
+                    ""
+
+                else
+                    "&pageToken=" ++ Encoding.urlEncode token))
+        ""
+        |> Task.andThen (ok "Cloud Billing catalogue" "")
+        |> Task.andThen
+               (\body ->
+                   case JsonD.decodeString
+                            (JsonD.map2
+                                (\list next -> ( list, next ))
+                                (JsonD.oneOf [ JsonD.field "skus" (JsonD.list (skuDecoder serviceName)), JsonD.succeed [] ])
+                                (JsonD.oneOf [ JsonD.field "nextPageToken" JsonD.string, JsonD.succeed "" ]))
+                            body of
+
+                       Ok ( list, "" ) ->
+                           Task.succeed (acc ++ list)
+
+                       Ok ( list, next ) ->
+                           skuPages base id serviceName next (acc ++ list)
+
+                       Err e ->
+                           Task.fail e)
+
+
+skuDecoder : String -> JsonD.Decoder Sku
+skuDecoder serviceName =
+    JsonD.map4
+        (\d r u p -> { service = serviceName, description = d, regions = r, unit = u, usd = p })
+        (JsonD.field "description" JsonD.string)
+        (JsonD.oneOf [ JsonD.field "serviceRegions" (JsonD.list JsonD.string), JsonD.succeed [] ])
+        (JsonD.oneOf
+            [ JsonD.at [ "pricingInfo" ] (JsonD.index 0 (JsonD.at [ "pricingExpression", "usageUnit" ] JsonD.string))
+            , JsonD.succeed ""
+            ])
+        (JsonD.oneOf
+            [ JsonD.at [ "pricingInfo" ]
+                (JsonD.index 0
+                    (JsonD.at [ "pricingExpression", "tieredRates" ]
+                        (JsonD.map
+                            (\rates -> List.reverse rates |> List.head |> Maybe.withDefault "0")
+                            (JsonD.list unitPrice))))
+            , JsonD.succeed "0"
+            ])
+
+
+-- A rate's unit price as an exact decimal: `units` whole dollars and
+-- `nanos` billionths.
+unitPrice : JsonD.Decoder String
+unitPrice =
+    JsonD.at
+        [ "unitPrice" ]
+        (JsonD.map2
+            (\units nanos ->
+                let
+                    n = String.padLeft 9 '0' (String.fromInt nanos)
+                in
+                    units ++ "." ++ n)
+            (JsonD.oneOf [ JsonD.field "units" JsonD.string, JsonD.succeed "0" ])
+            (JsonD.oneOf [ JsonD.field "nanos" JsonD.int, JsonD.succeed 0 ]))

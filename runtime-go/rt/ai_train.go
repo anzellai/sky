@@ -1392,7 +1392,7 @@ func aiTrainCloudLive(state string) bool {
 // Ai_trainCloudResolve : Code -> Task Error (List Setting) — the Vertex
 // settings, each through the shared resolver (operator env > the job's
 // `withX` value > default), in a fixed order: PROJECT, REGION, MACHINE,
-// STAGING, BUDGET, IMAGE, SERVICE_ACCOUNT. A setting nobody set is "" with
+// STAGING, BUDGET, IMAGE, SERVICE_ACCOUNT, LABELS. A setting nobody set is "" with
 // source "default"; Train.sky names the builder and the variable it needs.
 func Ai_trainCloudResolve(codeArg any) any {
 	code := map[string]string{
@@ -1403,10 +1403,11 @@ func Ai_trainCloudResolve(codeArg any) any {
 		"BUDGET":          aiStrField(codeArg, "Budget", "budget"),
 		"IMAGE":           aiStrField(codeArg, "Image", "image"),
 		"SERVICE_ACCOUNT": aiStrField(codeArg, "ServiceAccount", "serviceAccount"),
+		"LABELS":          aiStrField(codeArg, "Labels", "labels"),
 	}
 	return func() any {
 		out := []any{}
-		for _, key := range []string{"PROJECT", "REGION", "MACHINE", "STAGING", "BUDGET", "IMAGE", "SERVICE_ACCOUNT"} {
+		for _, key := range []string{"PROJECT", "REGION", "MACHINE", "STAGING", "BUDGET", "IMAGE", "SERVICE_ACCOUNT", "LABELS"} {
 			v, src := aiTrainCloudLayer(key, code[key])
 			out = append(out, map[string]any{"key": key, "name": skyEnvName("AI_TRAIN_" + key), "value": strings.TrimSpace(v), "source": src})
 		}
@@ -1432,6 +1433,8 @@ func aiTrainCloudLayer(key, code string) (string, string) {
 		return aiLayer("AI_TRAIN_IMAGE", code, nil)
 	case "SERVICE_ACCOUNT":
 		return aiLayer("AI_TRAIN_SERVICE_ACCOUNT", code, nil)
+	case "LABELS":
+		return aiLayer("AI_TRAIN_LABELS", code, nil)
 	}
 	return "", "default"
 }

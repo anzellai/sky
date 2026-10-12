@@ -1,0 +1,556 @@
+module Main exposing (main)
+
+{-| The program behind the `sky ai` cloud verbs. The CLI holds no logic of its
+own: it builds this program once per Sky version and runs it with the verb's
+arguments, and each verb is a call to the Std.Ai API a user's own program can
+make.
+
+    sky ai serve [--adapters <name>@<alias>,…] [--bind <addr>] [--engine-url <url>]
+                 [--models <dir>] [--max-adapters <n>] [--registry <url>]
+                                                 Serve.run (Serve.devBase)
+    sky ai serve --render --out <dir> --service <name> [target flags]
+                                                 Serve.render (the CLI adds the
+                                                 linux/amd64 tier binary)
+    sky ai deploy --service <name> --tier-image <ref> [target flags] [--dry-run]
+                                                 Serve.deploy
+    sky ai teardown --service <name> | --run <key> --staging gs://… | --all-sky
+                                                 Serve.teardown, Google.delete*
+    sky ai cloud ls [--run <key>]                Google.listCustomJobs, listServices
+    sky ai cloud prices --service <name> [--match <word>]…
+                                                 Google.skus
+    sky ai image build --train|--tier --repo <name> --staging gs://… --context <dir>
+                                                 Google.packDirectory, buildImage
+
+Target flags: --project, --region (else SKY_AI_SERVE_PROJECT and _REGION),
+--adapters, --engine-image, --token-secret, --registry, --service-account,
+--invoker (repeatable), --min-instances, --max-instances. The cloud verbs take
+--project and --region (else SKY_AI_TRAIN_PROJECT and _REGION). Every verb
+takes `--format json`. Listings print kinds and short names only.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.System as System
+import Sky.Core.File as File
+import Sky.Core.Json.Encode as JsonE
+import Std.Log exposing (println)
+import Std.Ai.Serve as Serve
+import Std.Ai.Store as Store
+import Std.Ai.Cloud.Google as Google
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+
+run : List String -> Task Error ()
+run args =
+    let
+        json = List.member "--format" args && List.member "json" args
+        rest = List.filter (\a -> a /= "--format" && a /= "json") args
+    in
+        case rest of
+
+            "serve" :: opts ->
+                if List.member "--render" opts then
+                    renderVerb json opts
+
+                else
+                    serveVerb opts
+
+            "deploy" :: opts ->
+                deployVerb json opts
+
+            "teardown" :: opts ->
+                teardownVerb json opts
+
+            "cloud" :: "ls" :: opts ->
+                lsVerb json opts
+
+            "cloud" :: "prices" :: opts ->
+                pricesVerb json opts
+
+            "image" :: "build" :: opts ->
+                imageVerb json opts
+
+            _ ->
+                Task.fail (Error.invalidInput usage)
+
+
+usage : String
+usage =
+    "usage: sky ai serve [--adapters <name>@<alias>,…] | serve --image --out <dir> --service <name> [target flags] | deploy --service <name> --tier-image <ref> [target flags] [--dry-run] | teardown --service <name> | --run <key> --staging gs://… | --all-sky | cloud ls [--run <key>] | cloud prices --service <name> [--match <word>] | image build --train|--tier --repo <name> --staging gs://…  (each takes --project, --region and --format json)"
+
+
+flag : String -> List String -> Maybe String
+flag name opts =
+    case opts of
+
+        a :: b :: more ->
+            if a == name then
+                Just b
+
+            else
+                flag name (b :: more)
+
+        _ ->
+            Nothing
+
+
+flags : String -> List String -> List String
+flags name opts =
+    case opts of
+
+        a :: b :: more ->
+            if a == name then
+                b :: flags name more
+
+            else
+                flags name (b :: more)
+
+        _ ->
+            []
+
+
+text : String -> List String -> String
+text name opts =
+    Maybe.withDefault "" (flag name opts)
+
+
+emit : Bool -> JsonE.Value -> String -> Task Error ()
+emit json value plain =
+    if json then
+        println (JsonE.encode 0 value)
+
+    else
+        println plain
+
+
+need : String -> String -> Task Error String
+need name value =
+    if String.isEmpty value then
+        Task.fail (Error.invalidInput ("sky ai: " ++ name ++ " is required"))
+
+    else
+        Task.succeed value
+
+
+-- The project and region of a cloud verb: the flags, else the training
+-- variables (the bucket and the jobs a run made live there).
+projectRegion : List String -> Task Error ( String, String )
+projectRegion opts =
+    let
+        pick name var =
+            case flag name opts of
+
+                Just v ->
+                    v
+
+                Nothing ->
+                    System.getenvOr var ""
+    in
+        Task.map2
+            (\p r -> ( p, r ))
+            (need "--project (or SKY_AI_TRAIN_PROJECT)" (pick "--project" "SKY_AI_TRAIN_PROJECT"))
+            (need "--region (or SKY_AI_TRAIN_REGION)" (pick "--region" "SKY_AI_TRAIN_REGION"))
+
+-- ─── serve ──────────────────────────────────────────────────────────────
+adapterList : List String -> List String
+adapterList opts =
+    flags "--adapters" opts |> List.concatMap (String.split ",")
+        |> List.map String.trim
+        |> List.filter (\a -> not (String.isEmpty a))
+
+
+tierOf : List String -> Serve.Tier
+tierOf opts =
+    let
+        set name f t =
+            case flag name opts of
+
+                Just v ->
+                    f v t
+
+                Nothing ->
+                    t
+    in
+        Serve.tier Serve.Vllm Serve.devBase |> Serve.withAdapters (adapterList opts)
+            |> set "--bind" Serve.withBind
+            |> set "--engine-url" Serve.withEngineUrl
+            |> set "--models" Serve.withModelsDir
+            |> set "--max-adapters"
+                   (\v t -> Serve.withMaxAdapters (Maybe.withDefault 4 (String.toInt v)) t)
+
+
+serveVerb : List String -> Task Error ()
+serveVerb opts =
+    let
+        tier = tierOf opts
+    in
+        (case flag "--registry" opts of
+
+            Just url ->
+                Task.fromResult (Store.fromUrl url) |> Task.map (\st -> Serve.withRegistry st tier)
+
+            Nothing ->
+                Task.succeed tier)
+            |> Task.andThen Serve.run
+
+
+targetOf : List String -> Serve.Target
+targetOf opts =
+    let
+        int name def = Maybe.withDefault def (Maybe.andThen String.toInt (flag name opts))
+        set name f t =
+            case flag name opts of
+
+                Just v ->
+                    f v t
+
+                Nothing ->
+                    t
+    in
+        Serve.cloudRun { project = text "--project" opts, region = text "--region" opts, service = text "--service" opts }
+            |> set "--tier-image" Serve.withTierImage
+            |> set "--engine-image" Serve.withEngineImage
+            |> set "--token-secret" Serve.withTokenSecret
+            |> set "--registry" Serve.withRegistryUrl
+            |> set "--service-account" Serve.withServiceAccount
+            |> Serve.withInvokers (flags "--invoker" opts)
+            |> Serve.withMinInstances (int "--min-instances" 0)
+            |> Serve.withMaxInstances (int "--max-instances" 1)
+            |> Serve.withLabels
+                   (flags "--label" opts
+                       |> List.filterMap
+                              (\l ->
+                                  case String.split "=" l of
+
+                                      [k, v] ->
+                                          Just ( k, v )
+
+                                      _ ->
+                                          Nothing))
+
+
+renderVerb : Bool -> List String -> Task Error ()
+renderVerb json opts =
+    need "--out" (text "--out" opts)
+        |> Task.andThen
+               (\out ->
+                   let
+                       r = Serve.render (targetOf opts) (tierOf opts)
+                   in
+                       File.mkdirAll out
+                           |> Task.andThen (\_ -> File.writeFile (out ++ "/Dockerfile") r.dockerfile)
+                           |> Task.andThen (\_ -> File.writeFile (out ++ "/service.json") r.serviceJson)
+                           |> Task.andThen (\_ -> File.writeFile (out ++ "/service.yaml") r.knativeYaml)
+                           |> Task.andThen
+                                  (\_ ->
+                                      emit
+                                          json
+                                          (JsonE.object
+                                              [ ( "out", JsonE.string out )
+                                              , ( "files"
+                                                , JsonE.list JsonE.string [ "Dockerfile", "service.json", "service.yaml" ]
+                                                )
+                                              ])
+                                          ("wrote " ++ out ++ "/Dockerfile, service.json and service.yaml")))
+
+
+deployVerb : Bool -> List String -> Task Error ()
+deployVerb json opts =
+    need "--service" (text "--service" opts)
+        |> Task.andThen
+               (\_ ->
+                   if List.member "--dry-run" opts then
+                       emit
+                           json
+                           (JsonE.object
+                               [ ( "service", JsonE.string (text "--service" opts) )
+                               , ( "spec", Result.withDefault JsonE.null (JsonE.raw (Serve.serviceJson (targetOf opts) (tierOf opts))) )
+                               ])
+                           (Serve.serviceJson (targetOf opts) (tierOf opts))
+
+                   else
+                       Serve.deploy (targetOf opts) (tierOf opts)
+                           |> Task.andThen
+                                  (\d ->
+                                      emit
+                                          json
+                                          (JsonE.object
+                                              [ ( "url", JsonE.string d.url )
+                                              , ( "revision", JsonE.string d.revision )
+                                              , ( "region", JsonE.string d.region )
+                                              , ( "service", JsonE.string d.service )
+                                              ])
+                                          ("deployed " ++ d.service ++ " (" ++ d.revision ++ ") at " ++ d.url)))
+
+-- ─── teardown and ls ────────────────────────────────────────────────────
+ended : String -> Bool
+ended state =
+    List.member state [ "JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED" ]
+
+
+-- Cancel the jobs that still run, delete the ones that ended. A job is
+-- deleted once it has ended; one still cancelling is reported, not waited on.
+clearJobs : String -> String -> String -> Task Error ( Int, Int )
+clearJobs project region filter =
+    Google.listCustomJobs project region filter
+        |> Task.andThen
+               (\jobs ->
+                   Task.sequence
+                       (List.map
+                           (\j ->
+                               if ended j.state then
+                                   Google.deleteCustomJob j.name |> Task.map (\_ -> ( 1, 0 ))
+
+                               else
+                                   Google.cancelCustomJob j.name |> Task.map (\_ -> ( 0, 1 )))
+                           jobs))
+        |> Task.map
+               (List.foldl (\( d, c ) ( ds, cs ) -> ( ds + d, cs + c )) ( 0, 0 ))
+
+
+teardownVerb : Bool -> List String -> Task Error ()
+teardownVerb json opts =
+    case ( flag "--service" opts, flag "--run" opts, List.member "--all-sky" opts ) of
+
+        ( Just service, _, _ ) ->
+            Serve.teardown
+                (Serve.cloudRun { project = text "--project" opts, region = text "--region" opts, service = service })
+                |> Task.andThen
+                       (\_ ->
+                           emit
+                               json
+                               (JsonE.object [ ( "service", JsonE.string service ), ( "deleted", JsonE.bool True ) ])
+                               ("deleted the service " ++ service))
+
+        ( Nothing, Just key, _ ) ->
+            projectRegion opts
+                |> Task.andThen
+                       (\( project, region ) ->
+                           clearJobs project region ("labels.sky-run=\"" ++ key ++ "\"")
+                               |> Task.andThen
+                                      (\( deleted, cancelled ) ->
+                                          (case flag "--staging" opts of
+
+                                              Just url ->
+                                                  Task.fromResult (Store.fromUrl url)
+                                                      |> Task.andThen (\st -> Store.deletePrefix st ("runs/" ++ key ++ "/"))
+
+                                              Nothing ->
+                                                  Task.succeed 0)
+                                              |> Task.andThen
+                                                     (\objects ->
+                                                         emit
+                                                             json
+                                                             (JsonE.object
+                                                                 [ ( "run", JsonE.string key )
+                                                                 , ( "jobsDeleted", JsonE.int deleted )
+                                                                 , ( "jobsCancelled", JsonE.int cancelled )
+                                                                 , ( "objectsDeleted", JsonE.int objects )
+                                                                 ])
+                                                             ("run " ++ key ++ ": " ++ String.fromInt deleted
+                                                                 ++ " jobs deleted, "
+                                                                 ++ String.fromInt cancelled
+                                                                 ++ " cancelled (delete them again once they end), "
+                                                                 ++ String.fromInt objects
+                                                                 ++ " staging objects deleted"))))
+
+        ( Nothing, Nothing, True ) ->
+            projectRegion opts
+                |> Task.andThen
+                       (\( project, region ) ->
+                           clearJobs project region "labels.sky-managed=\"true\""
+                               |> Task.andThen
+                                      (\( deleted, cancelled ) ->
+                                          Google.listServices project region
+                                              |> Task.andThen
+                                                     (\svcs ->
+                                                         let
+                                                             mine =
+                                                                 List.filter
+                                                                     (\s -> List.member ( "sky-managed", "true" ) s.labels)
+                                                                     svcs
+                                                         in
+                                                             Task.sequence (List.map (\s -> Google.deleteService s.name) mine)
+                                                                 |> Task.map (\_ -> List.length mine))
+                                              |> Task.andThen
+                                                     (\services ->
+                                                         emit
+                                                             json
+                                                             (JsonE.object
+                                                                 [ ( "jobsDeleted", JsonE.int deleted )
+                                                                 , ( "jobsCancelled", JsonE.int cancelled )
+                                                                 , ( "servicesDeleted", JsonE.int services )
+                                                                 ])
+                                                             (String.fromInt deleted ++ " jobs deleted, " ++ String.fromInt cancelled
+                                                                 ++ " cancelled, "
+                                                                 ++ String.fromInt services
+                                                                 ++ " services deleted"))))
+
+        _ ->
+            Task.fail (Error.invalidInput "sky ai teardown: name --service <name>, --run <key>, or --all-sky")
+
+
+shortName : String -> String
+shortName name =
+    String.split "/" name |> List.reverse |> List.head |> Maybe.withDefault name
+
+
+lsVerb : Bool -> List String -> Task Error ()
+lsVerb json opts =
+    projectRegion opts
+        |> Task.andThen
+               (\( project, region ) ->
+                   let
+                       filter =
+                           case flag "--run" opts of
+
+                               Just key ->
+                                   "labels.sky-run=\"" ++ key ++ "\""
+
+                               Nothing ->
+                                   "labels.sky-managed=\"true\""
+                   in
+                       Task.map2
+                           (\jobs svcs -> ( jobs, List.filter (\s -> List.member ( "sky-managed", "true" ) s.labels) svcs ))
+                           (Google.listCustomJobs project region filter)
+                           (Google.listServices project region)
+                           |> Task.andThen
+                                  (\( jobs, svcs ) ->
+                                      let
+                                          rows =
+                                              List.map
+                                                  (\j ->
+                                                      ( "custom-job"
+                                                      , j.displayName
+                                                      , j.state
+                                                      ))
+                                                  jobs
+                                                  ++ List.map (\s -> ( "run-service", shortName s.name, s.ready )) svcs
+                                      in
+                                          emit
+                                              json
+                                              (JsonE.list
+                                                  (\( k, n, st ) ->
+                                                      JsonE.object
+                                                          [ ( "kind", JsonE.string k )
+                                                          , ( "name", JsonE.string n )
+                                                          , ( "state", JsonE.string st )
+                                                          ])
+                                                  rows)
+                                              (if List.isEmpty rows then
+                                                  "nothing Sky made is running in " ++ region
+
+                                              else
+                                                  String.join "\n" (List.map (\( k, n, st ) -> k ++ "  " ++ n ++ "  " ++ st) rows))))
+
+-- ─── prices ─────────────────────────────────────────────────────────────
+pricesVerb : Bool -> List String -> Task Error ()
+pricesVerb json opts =
+    Task.map2
+        (\service region -> ( service, region ))
+        (need "--service" (text "--service" opts))
+        (need "--region" (text "--region" opts))
+        |> Task.andThen
+               (\( service, region ) ->
+                   Google.skus service region (flags "--match" opts)
+                       |> Task.andThen
+                              (\found ->
+                                  emit
+                                      json
+                                      (JsonE.list
+                                          (\s ->
+                                              JsonE.object
+                                                  [ ( "service", JsonE.string s.service )
+                                                  , ( "description", JsonE.string s.description )
+                                                  , ( "unit", JsonE.string s.unit )
+                                                  , ( "usd", JsonE.string s.usd )
+                                                  ])
+                                          found)
+                                      (String.join
+                                          "\n"
+                                          (List.map (\s -> s.usd ++ " USD / " ++ s.unit ++ "  " ++ s.description) found))))
+
+-- ─── image build ────────────────────────────────────────────────────────
+imageVerb : Bool -> List String -> Task Error ()
+imageVerb json opts =
+    let
+        train = List.member "--train" opts
+        ( imageId, dockerfile ) =
+            if train then
+                ( "sky-ai-trainer", "image/Dockerfile.trainer" )
+
+            else
+                ( "sky-ai-tier", "Dockerfile" )
+    in
+        projectRegion opts
+            |> Task.andThen
+                   (\( project, region ) ->
+                       Task.map3
+                           (\repo staging context -> ( repo, staging, context ))
+                           (need "--repo" (text "--repo" opts))
+                           (need "--staging" (text "--staging" opts))
+                           (need "--context" (text "--context" opts))
+                           |> Task.andThen
+                                  (\( repo, staging, context ) ->
+                                      Task.fromResult (Store.fromUrl staging)
+                                          |> Task.andThen
+                                                 (\st ->
+                                                     File.tempDir "sky-image"
+                                                         |> Task.andThen
+                                                                (\tmp ->
+                                                                    Google.packDirectory context (tmp ++ "/source.tar.gz")
+                                                                        |> Task.andThen (\_ -> Store.put st (tmp ++ "/source.tar.gz")))
+                                                         |> Task.andThen
+                                                                (\blob ->
+                                                                    Google.ensureRepository project region repo
+                                                                        |> Task.andThen
+                                                                               (\_ ->
+                                                                                   Google.buildImage
+                                                                                       { project = project
+                                                                                       , region = region
+                                                                                       , bucket = bucketOf staging
+                                                                                       , object = blobObject staging blob.sha256
+                                                                                       , dockerfile = dockerfile
+                                                                                       , image =
+                                                                                           region ++ "-docker.pkg.dev/" ++ project ++ "/" ++ repo ++ "/"
+                                                                                               ++ imageId
+                                                                                               ++ ":"
+                                                                                               ++ String.left 12 blob.sha256
+                                                                                       , timeoutSeconds = 3600
+                                                                                       }))))
+                           |> Task.andThen
+                                  (\ref ->
+                                      emit
+                                          json
+                                          (JsonE.object [ ( "image", JsonE.string ref ) ])
+                                          ref))
+
+
+bucketOf : String -> String
+bucketOf url =
+    String.dropLeft 5 url |> String.split "/" |> List.head |> Maybe.withDefault ""
+
+
+-- The object name of a blob the store put below the staging prefix.
+blobObject : String -> String -> String
+blobObject url sha =
+    let
+        prefix =
+            String.dropLeft 5 url |> String.split "/" |> List.drop 1
+                |> List.filter (\p -> not (String.isEmpty p))
+                |> String.join "/"
+    in
+        if String.isEmpty prefix then
+            "blobs/sha256/" ++ sha
+
+        else
+            prefix ++ "/blobs/sha256/" ++ sha

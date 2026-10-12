@@ -951,6 +951,9 @@ commandLineWith p args =
             "rollback" :: ref :: opts ->
                 withFlags p opts (\q -> rollbackVerb json q ref)
 
+            "registry" :: "publish" :: name :: opts ->
+                withFlags p opts (\q -> publishVerb json q name)
+
             "lineage" :: "--dataset" :: digest :: opts ->
                 withFlags p opts (\q -> trainedOnVerb json q digest)
 
@@ -1408,6 +1411,25 @@ promoteVerb json p name number opts =
 registryOf : Pipeline -> Task Error Registry.Registry
 registryOf p =
     context p [] |> Task.andThen (\ctx -> ctx.registry)
+
+
+-- `sky ai registry publish <name>` in a project: write the store's pointer
+-- objects for a model again (after a crash between a commit and its
+-- publish, or for versions registered before pointers existed).
+publishVerb : Bool -> Pipeline -> String -> Task Error ()
+publishVerb json p name =
+    registryOf p
+        |> Task.andThen (\reg -> Registry.publishPointers reg name)
+        |> Task.andThen
+               (\n ->
+                   if json then
+                       println
+                           (JsonE.encode
+                               0
+                               (JsonE.object [ ( "name", JsonE.string name ), ( "written", JsonE.int n ) ]))
+
+                   else
+                       println ("published " ++ name ++ ": " ++ String.fromInt n ++ " pointer objects written"))
 
 
 -- `sky ai rollback <name>@<alias>` in a project.

@@ -51,6 +51,7 @@ module Std.Ai.Train exposing
     , withMaxRuntimeMinutes
     , withSpot
     , withKeepStaging
+    , withLabels
     , CloudSettings
     , CloudPlan
     , cloudSettings
@@ -451,6 +452,7 @@ type alias Settings =
     , maxRuntimeMinutes : Int
     , spot : Bool
     , keepStaging : Bool
+    , labels : List ( String, String )
     }
 
 -- | A training job: a base, a frozen dataset version and the settings.
@@ -521,6 +523,7 @@ newJob base format m file =
             , maxRuntimeMinutes = 0
             , spot = False
             , keepStaging = False
+            , labels = []
             }
         , base = base
         , registry = Nothing
@@ -878,6 +881,15 @@ withMaxRuntimeMinutes n =
 withSpot : Job -> Job
 withSpot =
     update (\s -> { s | spot = True })
+
+
+-- | Labels for the job's Vertex resources, beside Sky's own (`sky-managed`,
+-- `sky-run`, `sky-attempt`, `sky-kind`): a team, a cost centre. Each key and
+-- value is lower case letters, digits, `-` and `_`, at most 63 characters.
+-- Env: `SKY_AI_TRAIN_LABELS` (`team=support,env=qa`), added to these.
+withLabels : List ( String, String ) -> Job -> Job
+withLabels ls =
+    update (\s -> { s | labels = s.labels ++ ls })
 
 
 -- | Keep the run's staging prefix (data, checkpoints, adapter) and its
@@ -3373,6 +3385,7 @@ type alias CloudSettings =
     , priceBook : String
     , accelerator : String
     , acceleratorCount : Int
+    , labels : List ( String, String )
     , sources : List RawSetting
     }
 
@@ -3408,6 +3421,7 @@ type alias RawCloudCode =
     , budget : String
     , image : String
     , serviceAccount : String
+    , labels : String
     }
 
 
@@ -3463,6 +3477,7 @@ cloudSettings job =
             , budget = Maybe.withDefault "" (Maybe.map moneyText s.budget)
             , image = s.image
             , serviceAccount = s.serviceAccount
+            , labels = ""
             }
     in
         cloudResolveRaw code
@@ -3497,6 +3512,26 @@ checkCloud s found =
         budgetR = settingValue "BUDGET" found
         image = settingValue "IMAGE" found
         account = settingValue "SERVICE_ACCOUNT" found
+        labelsR = settingValue "LABELS" found
+        envLabels =
+            String.split "," labelsR.value |> List.map String.trim
+                |> List.filter (\l -> not (String.isEmpty l))
+                |> List.map
+                       (\l ->
+                           case String.split "=" l of
+
+                               [k, v] ->
+                                   ( String.trim k, String.trim v )
+
+                               _ ->
+                                   ( l, "" ))
+        allLabels = s.labels ++ envLabels
+        badLabel =
+            List.filter
+                (\( k, v ) ->
+                    not (Google.validLabel k) || not (Google.validLabel v)
+                        || String.startsWith "sky-" k)
+                allLabels
         machine =
             if machineR.value == "" then
                 "g2-standard-4"
@@ -3518,7 +3553,14 @@ checkCloud s found =
                 _ ->
                     False
     in
-        if project.value == "" then
+        if not (List.isEmpty badLabel) then
+            Err
+                (invalid
+                    labelsR.name
+                    (String.join ", " (List.map (\( k, v ) -> k ++ "=" ++ v) badLabel)
+                        ++ ": a label is lower case letters, digits, - and _ (at most 63), and sky- keys are Sky's own"))
+
+        else if project.value == "" then
             Err (notSet project "withCloud")
 
         else if region.value == "" then
@@ -3636,6 +3678,7 @@ checkCloud s found =
                                                         , accelerator = acc
                                                         , acceleratorCount =
                                                             count
+                                                        , labels = allLabels
                                                         , sources = found
                                                         }
 
@@ -3731,7 +3774,7 @@ planCloud job =
 -- the Cloud Quotas API on 2026-10-12).
 l4TrainingQuota : String
 l4TrainingQuota =
-    "CustomModelTrainingNvidiaL4GPUsPerProjectPerRegion"
+    "CustomModelTrainingL4GPUsPerProjectPerRegion"
 
 
 planCloudWith : Job -> ModelShape -> Task Error CloudPlan
@@ -3904,6 +3947,7 @@ cloudJobSpec cs p key attempt resumeFrom =
         , ( "sky-attempt", String.fromInt attempt )
         , ( "sky-kind", "train" )
         ]
+            ++ cs.labels
     }
 
 
@@ -3997,13 +4041,14 @@ type alias RawCloud =
     , priceBook : String
     , accelerator : String
     , acceleratorCount : Int
+    , labels : List ( String, String )
     }
 
 
 rawCloudCodec : Codec RawCloud
 rawCloudCodec =
     Codec.object
-        (\p r m st i sa b ph pb a ac ->
+        (\p r m st i sa b ph pb a ac ls ->
             { project = p
             , region = r
             , machine = m
@@ -4015,6 +4060,7 @@ rawCloudCodec =
             , priceBook = pb
             , accelerator = a
             , acceleratorCount = ac
+            , labels = ls
             })
         |> Codec.field "project" .project Codec.string
         |> Codec.field "region" .region Codec.string
@@ -4027,6 +4073,21 @@ rawCloudCodec =
         |> Codec.field "priceBook" .priceBook Codec.string
         |> Codec.field "accelerator" .accelerator Codec.string
         |> Codec.field "acceleratorCount" .acceleratorCount Codec.int
+        |> Codec.field
+               "labels"
+               .labels
+               (Codec.list
+                   (Codec.map
+                       (\t ->
+                           case String.split "=" t of
+
+                               [k, v] ->
+                                   ( k, v )
+
+                               _ ->
+                                   ( t, "" ))
+                       (\( k, v ) -> k ++ "=" ++ v)
+                       Codec.string))
         |> Codec.buildObject
 
 
@@ -4043,6 +4104,7 @@ toRawCloud cs =
     , priceBook = cs.priceBook
     , accelerator = cs.accelerator
     , acceleratorCount = cs.acceleratorCount
+    , labels = cs.labels
     }
 
 
@@ -4059,6 +4121,7 @@ fromRawCloud r =
     , priceBook = r.priceBook
     , accelerator = r.accelerator
     , acceleratorCount = r.acceleratorCount
+    , labels = r.labels
     , sources = []
     }
 
@@ -4578,7 +4641,8 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                            ctx
                            Codec.string
                            ("launch-" ++ tag)
-                           (launchOnce job cs p store key attempt from)
+                           (budgetLeft job cs attempt spentMinor
+                               |> Task.andThen (\_ -> launchOnce job cs p store key attempt from spentMinor))
                            |> Task.andThen
                                   (\name ->
                                       writeCloudFile
@@ -4606,6 +4670,38 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                                                          spentMinor)))
 
 
+-- The seconds of machine time the rest of the budget buys.
+affordableSeconds : CloudSettings -> Int -> Int
+affordableSeconds cs spentMinor =
+    let
+        left =
+            Money.sub cs.budget (Money.fromMinor (Money.currency cs.budget) spentMinor)
+    in
+        case Decimal.div (Money.amount left) (Money.amount cs.perHour) of
+
+            Ok hours ->
+                Decimal.toInt (Decimal.floor (Decimal.mul hours (Decimal.fromInt 3600)))
+
+            Err _ ->
+                86400
+
+
+-- A relaunch needs at least its provisioning allowance (15 minutes) of
+-- budget left; else the run ends BudgetExceeded instead of paying for an
+-- attempt that cannot finish.
+budgetLeft : Job -> CloudSettings -> Int -> Int -> Task Error ()
+budgetLeft job cs attempt spentMinor =
+    let
+        spent = Money.fromMinor (Money.currency cs.budget) spentMinor
+        next = Money.add spent (perMinutes cs.perHour 15)
+    in
+        if attempt > 0 && Money.gt next cs.budget then
+            Task.fail (Failure.toError (BudgetExceeded { budget = cs.budget, estimate = next }))
+
+        else
+            Task.succeed ()
+
+
 -- The newest checkpoint whose manifest is in the bucket (the manifest is
 -- written last, so its presence means every file of the checkpoint is
 -- there; the container checks each file's digest when it resumes).
@@ -4630,13 +4726,19 @@ newestCheckpoint store key =
 -- the job; anyone who finds it there (another worker, or this workflow
 -- resumed after a crash between the create and its journal row) attaches to
 -- the job its labels name instead. A create is never made twice.
-launchOnce : Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Task Error String
-launchOnce job cs p store key attempt from =
+launchOnce : Job -> CloudSettings -> CloudPlan -> Store -> String -> Int -> Int -> Int -> Task Error String
+launchOnce job cs p store key attempt from spentMinor =
     let
         intentKey =
             runPath key ++ "/launch-" ++ String.fromInt attempt ++ ".intent"
         spec = cloudJobSpec cs p key attempt from
-        jobSpec = { spec | spot = (settings job).spot }
+        -- A relaunch gets only what is left of the budget as its ceiling.
+        jobSpec =
+            { spec
+                | spot = (settings job).spot
+                , timeoutSeconds =
+                    Math.max 60 (Math.min spec.timeoutSeconds (affordableSeconds cs spentMinor))
+            }
     in
         Time.unixMillis ()
             |> Task.andThen
@@ -4859,7 +4961,14 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                            Task.fail e
 
                                        Nothing ->
-                                           if relaunched >= s.maxRelaunches then
+                                           if Money.gte (Money.add spent (perMinutes cs.perHour 1)) cs.budget then
+                                               -- It ran into the ceiling its budget set: Vertex
+                                               -- stopped it, and nothing is left to relaunch with.
+                                               Task.fail
+                                                   (Failure.toError
+                                                       (BudgetExceeded { budget = cs.budget, estimate = spent }))
+
+                                           else if relaunched >= s.maxRelaunches then
                                                Google.logTail
                                                    cs.project
                                                    (lastSegment name)

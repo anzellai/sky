@@ -1,0 +1,30 @@
+{
+  "read": "2026-10-12",
+  "source": "Cloud Billing Catalog API (services.skus.list), read with `sky ai cloud prices`; public list prices in USD, region us-central1 (Iowa, Americas)",
+  "note": "Each rate is the sum of its catalogue SKUs, rounded up. Vertex AI custom training bills the machine (cores, RAM, GPU), its management fee and the boot disk; Cloud Run with a GPU bills instance-based CPU, memory and the GPU per second.",
+  "rates": {
+    "vertexG2Standard4PerHour": "0.95",
+    "vertexG2Standard4Parts": "L4 0.644046276 + fee 0.084006035; 4 cores x (0.028736444 + 0.003748231); 16 GiB x (0.003366566 + 0.000439100); 100 GiB SSD PD 0.1955/GiB-month = 0.0268/h; sum 0.9457",
+    "vertexN2Standard4PerHour": "0.28",
+    "vertexN2Standard4Parts": "4 cores x (0.036352650 + 0.004741600); 16 GiB x (0.004872550 + 0.000635600); 100 GiB SSD PD 0.0268/h; sum 0.2793",
+    "cloudRunL4InstancePerHour": "1.14",
+    "cloudRunL4InstanceParts": "L4 without zonal redundancy 0.0001867/s = 0.67212/h; 5 vCPU x 0.000018/s = 0.324/h; 20 GiB x 0.000002/GiB-s = 0.144/h; sum 1.14012",
+    "cloudBuildPerMinute": "0.006",
+    "cloudBuildParts": "Build time e2-standard-2, 0.006/min (default pool)"
+  },
+  "upperBound": true,
+  "stageWorstCaseUsd": {
+    "l0": 0.0,
+    "l1": 0.30,
+    "l2": 0.0,
+    "l3": 0.25,
+    "l4": 0.70,
+    "l5": 0.90
+  },
+  "stageWorstCaseBasis": {
+    "l1": "two Cloud Build builds of at most 40 minutes together, and about 25 GB of images kept for under a day",
+    "l3": "three n2-standard-4 jobs capped at 15 minutes each by their runtime ceiling",
+    "l4": "one g2-standard-4 job capped at 40 minutes",
+    "l5": "one Cloud Run L4 instance for at most 45 minutes"
+  }
+}

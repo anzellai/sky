@@ -84,6 +84,7 @@ module Std.Ai.Serve exposing
     , withTokenSecret
     , withRegistryUrl
     , withTimeoutSeconds
+    , withLabels
     , targetSettings
     , defaultEngineImage
     , tierBaseImage
@@ -551,6 +552,7 @@ type alias TargetSettings =
     , tokenSecret : String
     , registryUrl : String
     , timeoutSeconds : Int
+    , labels : List ( String, String )
     }
 
 -- | A deployment target. `cloudRun` is the one shipped.
@@ -592,6 +594,7 @@ cloudRun c =
         , tokenSecret = ""
         , registryUrl = ""
         , timeoutSeconds = 300
+        , labels = []
         }
 
 
@@ -661,6 +664,13 @@ withTimeoutSeconds s =
     updateTarget (\t -> { t | timeoutSeconds = s })
 
 
+-- | Labels for the service, beside Sky's own (`sky-managed`,
+-- `sky-deployment`, `sky-kind`): a team, a cost centre.
+withLabels : List ( String, String ) -> Target -> Target
+withLabels ls =
+    updateTarget (\t -> { t | labels = t.labels ++ ls })
+
+
 -- | Where a target deploys.
 targetSettings : Target -> TargetSettings
 targetSettings (CloudRun t) =
@@ -693,10 +703,11 @@ modelsHome =
 labelsValue : TargetSettings -> JsonE.Value
 labelsValue t =
     JsonE.object
-        [ ( "sky-deployment", JsonE.string t.service )
-        , ( "sky-kind", JsonE.string "serve" )
-        , ( "sky-managed", JsonE.string "true" )
-        ]
+        ([ ( "sky-deployment", JsonE.string t.service )
+         , ( "sky-kind", JsonE.string "serve" )
+         , ( "sky-managed", JsonE.string "true" )
+         ]
+            ++ List.map (\( k, v ) -> ( k, JsonE.string v )) t.labels)
 
 
 env : String -> String -> JsonE.Value

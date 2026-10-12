@@ -41,6 +41,7 @@ import Std.Db as Db exposing (Db)
 import Std.Ai.Dataset as Dataset
 import Std.Ai.Registry as Registry
 import Std.Ai.Train as Train exposing (Backend(..))
+import Std.Money as Money exposing (Money)
 
 
 main : Task Error ()
@@ -159,11 +160,14 @@ backendOf name =
         "fake" ->
             Ok Fake
 
+        "vertex" ->
+            Ok Vertex
+
         _ ->
             Err
                 (Error.invalidInput
                     ("sky ai: the training backend " ++ name
-                        ++ " is not one of mlx, unsloth, fake"))
+                        ++ " is not one of mlx, unsloth, vertex, fake"))
 
 
 provisionTrain : Bool -> String -> List String -> Task Error ()
@@ -449,6 +453,7 @@ jobOn ref digest opts =
                 |> applyIf (List.member "--gguf" opts) Train.withGgufExport
                 |> applyIf (List.member "--merged" opts) Train.withMergedExport
                 |> Train.withQuantisedBase
+                |> cloudFlags opts
         withBackend job =
             case Maybe.map backendOf (flag "--backend" opts) of
 
@@ -507,6 +512,87 @@ jobOn ref digest opts =
                                                                  b
                                                                  v))))
             |> Task.andThen withBackend
+
+
+-- The Vertex flags: where the job runs (each falls back to its
+-- SKY_AI_TRAIN_* variable), the budget, the trainer image and the prices.
+-- `--price <machine>@<region>=<amount>` (repeatable) is the price book, in
+-- the budget's currency, versioned by `--price-book <date>`.
+cloudFlags : List String -> Train.Job -> Train.Job
+cloudFlags opts job =
+    let
+        text name = Maybe.withDefault "" (flag name opts)
+        budget = flag "--budget" opts |> Maybe.andThen parseMoney
+        currency =
+            Maybe.map Money.currency budget |> Maybe.withDefault Money.USD
+        rates =
+            flags "--price" opts
+                |> List.filterMap
+                       (\p ->
+                           case String.split "=" p of
+
+                               [where_, amount] ->
+                                   case String.split "@" where_ of
+
+                                       [machine, region] ->
+                                           Just { machine = machine, region = region, perHour = amount }
+
+                                       _ ->
+                                           Nothing
+
+                               _ ->
+                                   Nothing)
+    in
+        job
+            |> Train.withCloud
+                   { project = text "--project"
+                   , region = text "--region"
+                   , machine = text "--machine"
+                   , staging = text "--staging"
+                   }
+            |> (\j ->
+                   case budget of
+
+                       Just m ->
+                           Train.withBudget m j
+
+                       Nothing ->
+                           j)
+            |> Train.withImage (text "--image")
+            |> Train.withServiceAccount (text "--service-account")
+            |> intFlag "--max-runtime-minutes" opts (\n j -> Train.withMaxRuntimeMinutes n j)
+            |> applyIf (List.member "--spot" opts) Train.withSpot
+            |> applyIf (List.member "--keep-staging" opts) Train.withKeepStaging
+            |> Train.withLabels
+                   (flags "--label" opts
+                       |> List.filterMap
+                              (\l ->
+                                  case String.split "=" l of
+
+                                      [k, v] ->
+                                          Just ( k, v )
+
+                                      _ ->
+                                          Nothing))
+            |> applyIf
+                   (not (List.isEmpty rates))
+                   (Train.withMachinePrices
+                       (Train.machinePrices
+                           currency
+                           (Maybe.withDefault "cli" (flag "--price-book" opts))
+                           rates))
+
+
+-- "USD 5.00".
+parseMoney : String -> Maybe Money
+parseMoney text =
+    case String.split " " (String.trim text) of
+
+        [c, amount] ->
+            Result.toMaybe (Money.fromString (Money.parseCurrency c) amount)
+
+        _ ->
+            Nothing
 
 
 trainDb : List String -> Task Error Db

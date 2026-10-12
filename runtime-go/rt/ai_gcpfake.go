@@ -111,7 +111,9 @@ type aiFakeGCP struct {
 
 	missingImages map[string]bool
 	unready       map[string]string // service id → reason
-	quotas        map[string]int    // quotaId|region → limit
+	repos         map[string]bool
+	builds        map[string]map[string]any // operation → its result
+	quotas        map[string]int            // quotaId|region → limit
 	stockouts     int
 	listLag       time.Duration
 	// clockScale makes a job's reported times run faster than the wall
@@ -133,6 +135,8 @@ func newAiFakeGCP() *aiFakeGCP {
 		ops:           map[string]time.Time{},
 		missingImages: map[string]bool{},
 		unready:       map[string]string{},
+		repos:         map[string]bool{},
+		builds:        map[string]map[string]any{},
 		quotas:        map[string]int{},
 	}
 }
@@ -157,7 +161,11 @@ func (f *aiFakeGCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/run/v2/"):
 		f.run(w, r, strings.TrimPrefix(path, "/run/v2/"), body)
 	case strings.HasPrefix(path, "/artifactregistry/v1/"):
-		f.artifact(w, r, strings.TrimPrefix(path, "/artifactregistry/v1/"))
+		f.artifact(w, r, strings.TrimPrefix(path, "/artifactregistry/v1/"), body)
+	case strings.HasPrefix(path, "/cloudbuild/v1/"):
+		f.cloudBuild(w, r, strings.TrimPrefix(path, "/cloudbuild/v1/"), body)
+	case strings.HasPrefix(path, "/cloudbilling/v1/"):
+		f.billing(w, r, strings.TrimPrefix(path, "/cloudbilling/v1/"))
 	case strings.HasPrefix(path, "/cloudquotas/v1/"):
 		f.quota(w, r, strings.TrimPrefix(path, "/cloudquotas/v1/"))
 	case path == "/logging/v2/entries:list":
@@ -986,7 +994,18 @@ func aiFakeCheckService(spec map[string]any) string {
 
 // ─── Artifact Registry, quotas, logging ─────────────────────────────────
 
-func (f *aiFakeGCP) artifact(w http.ResponseWriter, r *http.Request, path string) {
+func (f *aiFakeGCP) artifact(w http.ResponseWriter, r *http.Request, path string, body []byte) {
+	if strings.HasSuffix(path, "/repositories") && r.Method == "POST" {
+		id := r.URL.Query().Get("repositoryId")
+		key := path + "/" + id
+		if f.repos[key] {
+			aiFakeError(w, 409, "ALREADY_EXISTS", "the repository already exists")
+			return
+		}
+		f.repos[key] = true
+		aiFakeJSON(w, 200, map[string]any{"name": "operations/repo-" + id, "done": true})
+		return
+	}
 	idx := strings.Index(path, "/dockerImages/")
 	if idx < 0 {
 		aiFakeError(w, 404, "NOT_FOUND", path)
@@ -1003,7 +1022,7 @@ func (f *aiFakeGCP) artifact(w http.ResponseWriter, r *http.Request, path string
 }
 
 // aiFakeL4Quota is the Cloud Quotas id of Vertex AI's L4 training quota.
-const aiFakeL4Quota = "CustomModelTrainingNvidiaL4GPUsPerProjectPerRegion"
+const aiFakeL4Quota = "CustomModelTrainingL4GPUsPerProjectPerRegion"
 
 func (f *aiFakeGCP) quota(w http.ResponseWriter, r *http.Request, path string) {
 	idx := strings.Index(path, "/quotaInfos/")
@@ -1039,6 +1058,64 @@ func (f *aiFakeGCP) logging(w http.ResponseWriter, body []byte) {
 		}
 	}
 	aiFakeJSON(w, 200, map[string]any{"entries": entries})
+}
+
+// ─── Cloud Build and the billing catalogue ──────────────────────────────
+
+// cloudBuild runs a build at once: its image's digest is the SHA-256 of the
+// build request (a build of the same source is the same image).
+func (f *aiFakeGCP) cloudBuild(w http.ResponseWriter, r *http.Request, path string, body []byte) {
+	if strings.HasSuffix(path, "/builds") && r.Method == "POST" {
+		var req struct {
+			Source struct {
+				StorageSource struct{ Bucket, Object string } `json:"storageSource"`
+			} `json:"source"`
+			Images []string `json:"images"`
+		}
+		json.Unmarshal(body, &req)
+		if _, ok := f.get(req.Source.StorageSource.Bucket, req.Source.StorageSource.Object); !ok || len(req.Images) == 0 {
+			aiFakeError(w, 400, "INVALID_ARGUMENT", "the build's source is not in the bucket")
+			return
+		}
+		f.opSeq++
+		parts := strings.Split(path, "/")
+		name := strings.Join(parts[:4], "/") + fmt.Sprintf("/operations/build-%d", f.opSeq)
+		f.builds[name] = map[string]any{"results": map[string]any{"images": []any{
+			map[string]any{"name": req.Images[0], "digest": "sha256:" + aiSha256Hex(body)}}}}
+		aiFakeJSON(w, 200, map[string]any{"name": name, "done": false})
+		return
+	}
+	if res, ok := f.builds[path]; ok {
+		aiFakeJSON(w, 200, map[string]any{"name": path, "done": true, "response": res})
+		return
+	}
+	aiFakeError(w, 404, "NOT_FOUND", path)
+}
+
+// billing serves a tiny catalogue: an L4 GPU and a vCPU for Cloud Run.
+func (f *aiFakeGCP) billing(w http.ResponseWriter, r *http.Request, path string) {
+	if path == "services" {
+		aiFakeJSON(w, 200, map[string]any{"services": []any{
+			map[string]any{"serviceId": "152E-C115-5142", "displayName": "Cloud Run"},
+			map[string]any{"serviceId": "C7E2-9256-1C43", "displayName": "Vertex AI"}}})
+		return
+	}
+	sku := func(desc, unit string, units string, nanos int) map[string]any {
+		return map[string]any{"description": desc, "serviceRegions": []any{"us-central1"},
+			"pricingInfo": []any{map[string]any{"pricingExpression": map[string]any{"usageUnit": unit,
+				"tieredRates": []any{map[string]any{"unitPrice": map[string]any{"units": units, "nanos": nanos}}}}}}}
+	}
+	switch path {
+	case "services/152E-C115-5142/skus":
+		aiFakeJSON(w, 200, map[string]any{"skus": []any{
+			sku("Services Nvidia L4 GPU in us-central1 (no zonal redundancy)", "s", "0", 186700),
+			sku("Services CPU in us-central1", "s", "0", 18000)}})
+	case "services/C7E2-9256-1C43/skus":
+		aiFakeJSON(w, 200, map[string]any{"skus": []any{
+			sku("Custom Training on G2 Instance Core running in Americas", "h", "0", 25000000)}})
+	default:
+		aiFakeError(w, 404, "NOT_FOUND", path)
+	}
 }
 
 // ─── control ────────────────────────────────────────────────────────────
