@@ -74,6 +74,13 @@ symbol = "Std.Markdown.stringChars"
 reason = "deleted with its only caller, `allChars` (see above). It existed to turn a String into a List String one grapheme at a time so a predicate could be folded over it; `restIsAll` indexes the string directly instead, so nothing needs the intermediate list. Module-private, never exposed, no remaining reference in sky-stdlib."
 owner  = "anzel"
 commit = "2771303a"
+
+[[removal]]
+symbol = "Std.Ai.Provider.Direct"
+# Accounted 2026-10-12. stdlib.unfiltered.types 337 -> 336.
+reason = "deleted when the built-in backends (`openai`, `compatible`) became a `Wire` over the internal `backendPost` transport, so `Provider` has one OpenAI-compatible arm instead of a separate `Backend Direct` constructor (one runtime payload narrowing fewer per operation). `Direct` was the `Backend` payload record and was never in the module's exposing list; `Provider` is opaque, so no caller could name it."
+owner  = "anzel"
+commit = "d5c684718"
 #
 #
 # ===========================================================================
