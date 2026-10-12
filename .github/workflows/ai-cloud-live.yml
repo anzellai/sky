@@ -1,0 +1,73 @@
+# The paid live tests of Std.Ai's Google Cloud backends (Vertex AI training,
+# the Cloud Run GPU tier). Manual dispatch ONLY: never on a push, a pull
+# request, a schedule or a release, and never in ci-green or the release
+# gate. Each run spends real money under the hard cap the ledger enforces
+# (scripts/ai/gcp-live.sh), and tears everything down.
+#
+# Setup (once, by a maintainer):
+#   * the project bootstrapped with scripts/ai/gcp-bootstrap.sh;
+#   * Workload Identity Federation for this repository, its provider in the
+#     GCP_WIF_PROVIDER secret and the deployer service account's email in
+#     GCP_DEPLOYER (no key JSON is stored);
+#   * the project id in the GCP_PROJECT secret;
+#   * the `gcp-live` environment with a required reviewer.
+#
+# After a run, commit the ledger line it uploads (the artefact) before the
+# next run: the wrapper adds each run to scripts/ai/live/gcp-ledger.jsonl.
+name: ai-cloud-live
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type `spend` to run tests that cost money"
+        required: true
+        default: ""
+      stages:
+        description: "Comma list of stages (l0,l1,l2,l3,l4,l5)"
+        required: true
+        default: "l0,l1,l2,l3"
+
+concurrency:
+  group: ai-cloud-live
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    environment: gcp-live
+    timeout-minutes: 120
+    steps:
+      - name: Refuse without confirmation
+        if: ${{ github.event.inputs.confirm != 'spend' }}
+        run: |
+          echo "ai-cloud-live: type 'spend' in the confirm input to run paid tests" >&2
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER }}
+          create_credentials_file: true
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build the compiler
+        run: ./scripts/build.sh
+      - name: Run the live stages
+        env:
+          SKY_PYTHON: python3
+        run: scripts/ai/gcp-live.sh --project "${{ secrets.GCP_PROJECT }}" --stages "${{ github.event.inputs.stages }}"
+      - name: Upload the ledger line
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcp-ledger
+          path: scripts/ai/live/gcp-ledger.jsonl

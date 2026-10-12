@@ -42,7 +42,10 @@ lineage =
     , dataset = "support@1"
     , datasetDigest = Crypto.sha256 "support"
     , metadata =
-        [ ( "baseId", "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775" ) ]
+        [ ( "baseId"
+          , "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775"
+          )
+        ]
     }
 
 type alias World =
@@ -64,7 +67,12 @@ world =
                                       st = Store.local (dir ++ "/store")
                                   in
                                       Registry.open db st
-                                          |> Task.map (\reg -> { reg = reg, store = st, dir = dir })))
+                                          |> Task.map
+                                                 (\reg ->
+                                                     { reg = reg
+                                                     , store = st
+                                                     , dir = dir
+                                                     })))
 
 
 -- Register a safetensors adapter `tag` with a GGUF export and its
@@ -77,14 +85,20 @@ registerTag w tag =
         config = w.dir ++ "/" ++ tag ++ "-adapter_config.json"
     in
         File.writeFile weights (safetensors tag)
-            |> Task.andThen (\_ -> File.writeFile gguf ("GGUF export of " ++ tag))
-            |> Task.andThen (\_ -> File.writeFile config "{\"peft_type\":\"LORA\",\"r\":8}")
+            |> Task.andThen
+                   (\_ -> File.writeFile gguf ("GGUF export of " ++ tag))
+            |> Task.andThen
+                   (\_ ->
+                       File.writeFile config "{\"peft_type\":\"LORA\",\"r\":8}")
             |> Task.andThen
                    (\_ ->
                        Registry.registerWith
                            w.reg
                            "support-lora"
-                           { path = weights, format = Safetensors, method = Lora }
+                           { path = weights
+                           , format = Safetensors
+                           , method = Lora
+                           }
                            lineage
                            [ { role = "gguf", path = gguf }
                            , { role = "peft.config", path = config }
@@ -100,18 +114,38 @@ promoted =
                        |> Task.andThen
                               (\v1 ->
                                   Registry.forcePromote w.reg "prod" v1 "first"
-                                      |> Task.andThen (\_ -> Registry.readPointer w.store "support-lora" "prod")
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.readPointer
+                                                     w.store
+                                                     "support-lora"
+                                                     "prod")
                                       |> Task.andThen
                                              (\first ->
                                                  registerTag w "two"
                                                      |> Task.andThen
-                                                            (\v2 -> Registry.forcePromote w.reg "prod" v2 "second")
+                                                            (\v2 ->
+                                                                Registry.forcePromote
+                                                                    w.reg
+                                                                    "prod"
+                                                                    v2
+                                                                    "second")
                                                      |> Task.andThen
                                                             (\_ ->
                                                                 Task.map2
-                                                                    (\m second -> ( m, first, second ))
-                                                                    (Registry.readManifest w.store "support-lora" 2)
-                                                                    (Registry.readPointer w.store "support-lora" "prod")))))
+                                                                    (\m second ->
+                                                                        ( m
+                                                                        , first
+                                                                        , second
+                                                                        ))
+                                                                    (Registry.readManifest
+                                                                        w.store
+                                                                        "support-lora"
+                                                                        2)
+                                                                    (Registry.readPointer
+                                                                        w.store
+                                                                        "support-lora"
+                                                                        "prod")))))
         |> Task.run
 
 
@@ -130,12 +164,26 @@ stale =
                                       w.store
                                       "aliases/support-lora/prod.json"
                                       "{\"alias\":\"prod\",\"digest\":\"x\",\"generation\":9,\"name\":\"support-lora\",\"number\":7,\"servedName\":\"support-lora-v7\",\"v\":1}"
-                                      |> Task.andThen (\_ -> Registry.forcePromote w.reg "prod" v1 "late")
-                                      |> Task.andThen (\_ -> Registry.publishPointers w.reg "support-lora")
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.forcePromote
+                                                     w.reg
+                                                     "prod"
+                                                     v1
+                                                     "late")
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.publishPointers
+                                                     w.reg
+                                                     "support-lora")
                                       |> Task.andThen
                                              (\n ->
-                                                 Registry.readPointer w.store "support-lora" "prod"
-                                                     |> Task.map (\p -> ( p, n )))))
+                                                 Registry.readPointer
+                                                     w.store
+                                                     "support-lora"
+                                                     "prod"
+                                                     |> Task.map
+                                                            (\p -> ( p, n )))))
         |> Task.run
 
 
@@ -145,22 +193,32 @@ resolved =
         |> Task.andThen
                (\w ->
                    registerTag w "one"
-                       |> Task.andThen (\v -> Registry.forcePromote w.reg "qa" v "serve")
+                       |> Task.andThen
+                              (\v -> Registry.forcePromote w.reg "qa" v "serve")
                        |> Task.andThen
                               (\_ ->
                                   let
                                       r = Registry.storeResolver w.store
-                                      db = Registry.resolver (Task.succeed w.reg)
+                                      db =
+                                          Registry.resolver (Task.succeed w.reg)
                                   in
                                       Task.map3
                                           (\remote local fromDb ->
-                                              ( ( remote.servedName, remote.format )
-                                              , ( local.format, String.right 5 local.path )
+                                              ( ( remote.servedName
+                                                , remote.format
+                                                )
+                                              , ( local.format
+                                                , String.right 5 local.path
+                                                )
                                               , fromDb.format
                                               ))
-                                          (r.resolve "registry:support-lora@qa" False)
+                                          (r.resolve
+                                              "registry:support-lora@qa"
+                                              False)
                                           (r.resolve "support-lora@qa" True)
-                                          (db.resolve "registry:support-lora@qa" True)))
+                                          (db.resolve
+                                              "registry:support-lora@qa"
+                                              True)))
         |> Task.run
 
 
@@ -179,8 +237,13 @@ writes st =
                                       |> Task.map (Maybe.map .generation)
                                       |> Task.andThen
                                              (\gen ->
-                                                 Store.putIf st "runs/a/x.json" (Maybe.withDefault "" gen) "{\"n\":3}")
-                                      |> Task.map (\third -> ( first, second, third ))))
+                                                 Store.putIf
+                                                     st
+                                                     "runs/a/x.json"
+                                                     (Maybe.withDefault "" gen)
+                                                     "{\"n\":3}")
+                                      |> Task.map
+                                             (\third -> ( first, second, third ))))
 
 
 reads : Store -> Task Error ( List String, Int, String )
@@ -189,7 +252,9 @@ reads st =
         (List.map
             (\k -> Store.putAt st ("runs/a/events/" ++ k) "line\n")
             [ "00000000.jsonl", "00000001.jsonl", "00000002.jsonl" ])
-        |> Task.andThen (\_ -> Store.list st "runs/a/events/" "runs/a/events/00000000.jsonl")
+        |> Task.andThen
+               (\_ ->
+                   Store.list st "runs/a/events/" "runs/a/events/00000000.jsonl")
         |> Task.andThen
                (\listed ->
                    Store.fetchAt st "runs/a/x.json" (Crypto.sha256 "{\"n\":3}")
@@ -202,9 +267,12 @@ reads st =
 
 named : Result Error ( ( Bool, Bool, Bool ), ( List String, Int, String ) )
 named =
-    File.tempDir "sky-store-named"
-        |> Task.map Store.local
-        |> Task.andThen (\st -> writes st |> Task.andThen (\w -> reads st |> Task.map (\r -> ( w, r ))))
+    File.tempDir "sky-store-named" |> Task.map Store.local
+        |> Task.andThen
+               (\st ->
+                   writes st
+                       |> Task.andThen
+                              (\w -> reads st |> Task.map (\r -> ( w, r ))))
         |> Task.run
 
 
@@ -217,7 +285,12 @@ mismatch =
                        st = Store.local dir
                    in
                        Store.putAt st "a.json" "{}"
-                           |> Task.andThen (\_ -> Store.fetchAt st "a.json" (Crypto.sha256 "other")))
+                           |> Task.andThen
+                                  (\_ ->
+                                      Store.fetchAt
+                                          st
+                                          "a.json"
+                                          (Crypto.sha256 "other")))
         |> Task.run
 
 
@@ -242,11 +315,24 @@ tests =
                   Ok ( Just m, Just first, Just second ) ->
                       Test.equal
                           ( ( m.label, m.servedName, m.format )
-                          , ( m.baseId, String.length m.gguf, String.length m.peftConfig, m.peft == m.digest )
-                          , ( ( first.number, first.generation ), ( second.number, second.generation ) )
+                          , ( m.baseId
+                            , String.length m.gguf
+                            , String.length m.peftConfig
+                            , m.peft == m.digest
+                            )
+                          , ( ( first.number, first.generation )
+                            , ( second.number, second.generation )
+                            )
                           )
-                          ( ( "support-lora@v2", "support-lora-v2", "safetensors" )
-                          , ( "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775", 64, 64, True )
+                          ( ( "support-lora@v2"
+                            , "support-lora-v2"
+                            , "safetensors"
+                            )
+                          , ( "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775"
+                            , 64
+                            , 64
+                            , True
+                            )
                           , ( ( 1, 1 ), ( 2, 2 ) )
                           )
 
@@ -272,9 +358,14 @@ tests =
           "the store resolver serves the served name remotely and the GGUF companion locally"
           (\_ ->
               Test.equal
-                  (Ok ( ( "support-lora-v1", "safetensors" ), ( "gguf", "gguf" ), "gguf" ))
+                  (Ok
+                      ( ( "support-lora-v1", "safetensors" )
+                      , ( "gguf", "gguf" )
+                      , "gguf"
+                      ))
                   (Result.map
-                      (\( remote, ( fmt, _ ), dbFormat ) -> ( remote, ( fmt, "gguf" ), dbFormat ))
+                      (\( remote, ( fmt, _ ), dbFormat ) ->
+                          ( remote, ( fmt, "gguf" ), dbFormat ))
                       resolved))
     , Test.test
           "named objects: create once, replace by generation, list from an offset, fetch, delete"
@@ -282,7 +373,12 @@ tests =
               Test.equal
                   (Ok
                       ( ( True, False, True )
-                      , ( [ "runs/a/events/00000001.jsonl", "runs/a/events/00000002.jsonl" ], 4, "{\"n\":3}" )
+                      , ( [ "runs/a/events/00000001.jsonl"
+                          , "runs/a/events/00000002.jsonl"
+                          ]
+                        , 4
+                        , "{\"n\":3}"
+                        )
                       ))
                   named)
     , Test.test

@@ -220,7 +220,9 @@ operator can set the adapter instead, with the slot's `SKY_AI_<SLOT>_ADAPTER` (f
   digest), checks that the version was trained on the engine's base model, and
   starts `llama-server` with `--lora <file>`. An adapter trained on another
   base is `AdapterMismatch`, never a model that answers nonsense. A
-  safetensors adapter is refused on a local engine (convert it to GGUF first).
+  safetensors version that carries its GGUF export as the `gguf` companion
+  serves through that file; one without it is refused on a local engine
+  (convert it to GGUF first).
 - The slot resolves the alias when it starts (`Endpoint.warm`, or its first
   call) and again on a call that comes after the refresh interval: 30 seconds
   by default, `Endpoint.withAdapterRefresh` or
@@ -234,6 +236,46 @@ operator can set the adapter instead, with the slot's `SKY_AI_<SLOT>_ADAPTER` (f
 
 A slot name names one slot in a process: give two registries' adapters two
 slot names.
+
+## Companions
+
+A version is one file (its digest is the version's identity), and it can
+carry companion files, each stored by digest and recorded in the version's
+metadata under its role:
+
+```elm
+Registry.registerWith reg "support" adapter lineage
+    [ { role = "peft", path = "run/adapter/adapter_model.safetensors" }
+    , { role = "peft.config", path = "run/adapter/adapter_config.json" }
+    ]
+```
+
+`Std.Ai.Train` registers a trained adapter this way: the GGUF file is the
+version (what llama.cpp loads) and the PEFT weights and `adapter_config.json`
+are its companions (what vLLM loads). A safetensors version can carry its
+GGUF export as `gguf`. `Registry.companion "peft" v` reads a digest back.
+
+## Pointer objects: what a serving tier reads
+
+The records live in the app's database, and a GPU tier must not need that
+database. So the registry also publishes, to its store:
+
+| Object | Holds | Written |
+|---|---|---|
+| `models/<name>/versions/<n>.json` | the version's manifest: served name, digests, format, the base's id and digest, the companions' digests | once, by `register` |
+| `aliases/<name>/<alias>.json` | `{ number, generation, digest, servedName }` | by every alias move, after the database commits |
+
+An alias pointer is replaced only by a newer generation, through the store's
+conditional write (GCS's object generation, S3's ETag, a local file's
+digest), so a delayed writer can never move it back. `Registry.readPointer`,
+`Registry.readManifest` and `Registry.storeResolver` (a slot resolver that
+reads only these objects) use them; `Std.Ai.Serve` reads them to follow the
+aliases. A publish that the store refuses fails the call, saying that the
+database change stands and naming the repair:
+
+```
+sky ai registry publish support      # write every manifest and pointer of a model again
+```
 
 ## The artefact store
 

@@ -24,8 +24,10 @@ import (
 	"compress/gzip"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,6 +50,26 @@ func aiGcpEndpoint() string {
 }
 
 // Ai_gcpEndpoint : () -> Task Error String
+// aiGcpLoopbackEmulator reports whether host is the loopback emulator that
+// SKY_AI_GCP_ENDPOINT names (http://127.0.0.1:<port> or localhost). Test mode
+// lets requests to it reach the network; every other host stays mocked.
+func aiGcpLoopbackEmulator(host string) bool {
+	ep := aiGcpEndpoint()
+	if ep == "" || host == "" {
+		return false
+	}
+	u, err := url.Parse(ep)
+	if err != nil || u.Scheme != "http" || u.Host != host {
+		return false
+	}
+	h := u.Hostname()
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
 func Ai_gcpEndpoint(_ any) any {
 	return func() any { return Ok[any, any](aiGcpEndpoint()) }
 }

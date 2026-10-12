@@ -1,0 +1,68 @@
+module Ai exposing (pipeline)
+
+{-| The example's AI pipeline: what the `sky ai` verbs run in this project.
+
+    sky ai run train                    train the job on Vertex AI (src/Cloud.sky)
+    sky ai eval support --candidate support@v1 --against prod --promote-to prod
+                                        gate a version, then promote it
+    sky ai run deploy-tier              deploy the GPU tier to Cloud Run
+    sky ai run teardown-tier            delete the tier's service
+    sky ai registry publish support     write the store's pointer objects again
+
+The app (src/Main.sky) does not import this module.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.System as System
+import Std.Log exposing (println)
+import Std.Db as Db
+import Std.Ai.Pipeline as Pipeline exposing (Pipeline)
+import Std.Ai.Serve as Serve
+import Std.Ai.Train as Train
+import Cloud
+import Suites
+
+
+pipeline : Pipeline
+pipeline =
+    Pipeline.pipeline "ai-cloud" |> Pipeline.withDb (Db.connect ())
+        |> Pipeline.withRegistry ""
+        |> Pipeline.withSlot (Cloud.supportSlot ())
+        |> Pipeline.withSuite
+               "support"
+               (Pipeline.suiteOn (Cloud.supportSlot ()) Suites.support
+                   |> Pipeline.forModel "support"
+                   |> Pipeline.withThresholds Suites.thresholds)
+        |> Pipeline.withTask "train" train
+        |> Pipeline.withTask "deploy-tier" deployTier
+        |> Pipeline.withTask "teardown-tier" teardownTier
+
+
+train : Pipeline.Context -> Task Error ()
+train _ =
+    Cloud.open |> Task.andThen (\w -> Train.drive w.db (Cloud.trainJob w))
+        |> Task.andThen
+               (\a ->
+                   println
+                       (Cloud.describe a ++ ", registered as "
+                           ++ Maybe.withDefault "nothing" a.registered))
+
+
+deployTier : Pipeline.Context -> Task Error ()
+deployTier _ =
+    Serve.deploy
+        (Cloud.target (System.getenvOr "SKY_AI_REGISTRY" ""))
+        Cloud.tier
+        |> Task.andThen
+               (\d ->
+                   println
+                       ("deployed " ++ d.service ++ " (" ++ d.revision ++ ") at "
+                           ++ d.url))
+
+
+teardownTier : Pipeline.Context -> Task Error ()
+teardownTier _ =
+    Serve.teardown (Cloud.target "")
+        |> Task.andThen (\_ -> println "deleted the tier's service")

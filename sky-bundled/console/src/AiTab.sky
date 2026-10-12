@@ -25,6 +25,7 @@ module AiTab exposing (aiView)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Math as Math
 import Std.Ui as Ui
 import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
@@ -92,6 +93,7 @@ aiView filter data =
     , callsPanel filter data.calls
     , evalsPanel filter data.evals
     , trainingPanel data.training
+    , tiersPanel data.tiers
     , registryPanel filter data.registry
     ]
 
@@ -471,6 +473,22 @@ trainingRow r =
                     [ muted ("loss " ++ maybeLoss r.loss)
                     , muted ("eval loss " ++ maybeLoss r.valLoss)
                     , muted (relaunchText r)
+                    , if r.cloud == "" then
+                          Ui.none
+
+                      else
+                          Ui.el
+                              [ Font.size 12
+                              , Ui.htmlAttribute
+                                    "data-ai-train-cloud"
+                                    r.cloudState
+                              ]
+                              (Ui.text
+                                  (r.cloud ++ " · " ++ r.cloudState
+                                      ++ " · spent "
+                                      ++ r.spent
+                                      ++ " of "
+                                      ++ r.budget))
                     , muted
                           (if r.lastCheckpoint > 0 then
                               "checkpoint at step "
@@ -501,6 +519,67 @@ trainingRow r =
                     Ui.none
               ]
         , lossCurve r.losses
+        ]
+
+
+-- ─── GPU tiers ──────────────────────────────────────────────────
+tiersPanel : List AiTier -> Element Msg
+tiersPanel tiers =
+    if List.isEmpty tiers then
+        Ui.none
+
+    else
+        panel "GPU tiers" (List.map tierRow tiers)
+
+
+tierRow : AiTier -> Element Msg
+tierRow t =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 4
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        , Ui.htmlAttribute "data-ai-tier" t.bind
+        ]
+        [ Ui.row
+              [ Ui.spacing 12 ]
+              [ Ui.el
+                    [ Font.bold, Font.size 13 ]
+                    (Ui.text ("tier " ++ t.bind ++ " · " ++ t.base))
+              , Ui.el
+                    [ Font.size 12
+                    , Font.bold
+                    , Font.color
+                          (if t.ready then
+                              ok
+
+                          else
+                              err)
+                    ]
+                    (Ui.text
+                        (if t.ready then
+                            "ready"
+
+                        else
+                            "not ready: " ++ t.reason))
+              ]
+        , Ui.row
+              [ Ui.spacing 12 ]
+              [ muted ("adapters " ++ String.join ", " t.resident)
+              , muted ("in flight " ++ String.fromInt t.inFlight)
+              , muted
+                    ("engine running " ++ String.fromFloat t.running
+                        ++ ", waiting "
+                        ++ String.fromFloat t.waiting)
+              , muted
+                    ("KV cache "
+                        ++ String.fromInt (Math.round (100.0 * t.kvCache))
+                        ++ " %")
+              , muted
+                    ("loads " ++ String.fromInt t.loads ++ ", unloads "
+                        ++ String.fromInt t.unloads)
+              ]
         ]
 
 

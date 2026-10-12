@@ -104,6 +104,7 @@ because they name global variables: `home`, `offline`, `fetch`, `llama`, `vllm`,
 | `Endpoint.withMode Local` / `Remote` | `SKY_AI_<SLOT>_MODE` (`local`, `remote`) | inferred by the rule above |
 | `Endpoint.withUrl` | `SKY_AI_<SLOT>_URL`, the OpenAI-compatible base ending `/v1` | none |
 | `Endpoint.withKey` (a `Secret`) | `SKY_AI_<SLOT>_KEY` | no key |
+| `Endpoint.withGoogleAuth` | `SKY_AI_<SLOT>_AUTH` (`bearer`, `google`): `google` also sends a Google ID token for the URL in `X-Serverless-Authorization`, for a private Cloud Run tier ([`serve.md`](serve.md#calling-the-tier-from-an-app)) | `bearer` |
 | `Endpoint.withModel` | `SKY_AI_<SLOT>_MODEL`: remote, the served model name; local, a model reference | the `withLocal` model |
 | `Endpoint.withAdapter` | `SKY_AI_<SLOT>_ADAPTER`, sent as the request's model name; `registry:<name>@<alias>` is resolved through the slot's registry ([`registry.md`](registry.md)) | none |
 | `Endpoint.withAdapterRefresh` | `SKY_AI_<SLOT>_ADAPTER_REFRESH_S`: how often a registry adapter is resolved again (`0` once, at start) | 30 |
@@ -321,6 +322,9 @@ whether to retry needs no typed view: `Error.isRetryable err` and
 | `AdapterMismatch` | `InvalidInput` | no | `adapter`, `adapterBase`, `engineBase`: an adapter for another base model |
 | `TrainingFailed` | `Unavailable` | no | `runId`, `step`, `reason`, `logTail`: the trainer reported an error or died more often than the job allows ([`train.md`](train.md#failures)) |
 | `TrainingCancelled` | `Conflict` | no | `runId`, `step`: the training run was cancelled |
+| `QuotaExceeded` | `PermissionDenied` | no | `resource`, `region`, `limit`: a cloud quota (one L4 for Vertex AI training, say) is below what the job needs ([`deploy-gcp.md`](deploy-gcp.md#quotas)) |
+| `CapacityUnavailable` | `Unavailable` | yes | `resource`, `region`: the region has no free machine of that kind now |
+| `DeploymentFailed` | `Unavailable` | no | `target`, `reason`, `logTail`: a tier's revision never became ready ([`serve.md`](serve.md)) |
 
 A crashed engine is not retryable even though it is `Unavailable`: the
 engine's supervisor restarts it, and a crash loop must not be retried blindly.
@@ -330,6 +334,9 @@ in place, because the server may have done the work.
 `Failure.toError` builds the same `Error` (for a provider or a test that
 reports an AI failure), and `Failure.code` is the constructor's name, which
 is also the `error.code` field of a structured log line.
+`Failure.toErrorWith detail failure` adds a detail to the message
+(`Std.Ai <code>: <text> (<detail>)`): a cloud call adds the provider's own
+message this way. The typed view is the same as `toError`'s.
 
 ## Tests
 

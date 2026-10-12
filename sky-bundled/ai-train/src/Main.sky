@@ -535,7 +535,11 @@ cloudFlags opts job =
                                    case String.split "@" where_ of
 
                                        [machine, region] ->
-                                           Just { machine = machine, region = region, perHour = amount }
+                                           Just
+                                               { machine = machine
+                                               , region = region
+                                               , perHour = amount
+                                               }
 
                                        _ ->
                                            Nothing
@@ -560,7 +564,10 @@ cloudFlags opts job =
                            j)
             |> Train.withImage (text "--image")
             |> Train.withServiceAccount (text "--service-account")
-            |> intFlag "--max-runtime-minutes" opts (\n j -> Train.withMaxRuntimeMinutes n j)
+            |> intFlag
+                   "--max-runtime-minutes"
+                   opts
+                   (\n j -> Train.withMaxRuntimeMinutes n j)
             |> applyIf (List.member "--spot" opts) Train.withSpot
             |> applyIf (List.member "--keep-staging" opts) Train.withKeepStaging
             |> Train.withLabels

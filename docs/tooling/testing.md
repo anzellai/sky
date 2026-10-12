@@ -282,6 +282,33 @@ checkpoint. `examples/73-ai-train/tests/TrainExampleTest.sky` trains, crashes,
 resumes, registers and serves an adapter this way. See
 [`../ai/train.md`](../ai/train.md#tests).
 
+### Google Cloud (`Std.Ai.Cloud.Google`, `Train.Vertex`, `Std.Ai.Serve`)
+
+Put `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in `.env.test`. In test mode
+every Google Cloud call to that host is answered in process by an emulator in
+the runtime: OAuth and the metadata server, Cloud Storage (with generation
+preconditions), Vertex AI custom jobs (which run the Fake trainer's protocol
+into the staging bucket), Cloud Run services and their operations, IAM,
+Artifact Registry, Cloud Build, Cloud Quotas, the Cloud Billing catalogue and
+Cloud Logging. Its state lives for the test process, so a test can launch,
+watch, cancel, deploy and tear down, and assert what is left.
+`examples/74-ai-cloud/tests/CloudTest.sky` trains on Vertex AI, registers,
+deploys the tier and calls it this way.
+
+When several processes must share one emulated project (an app and the
+`sky ai` verbs, as the cargo flows do), run `runtime-go/rt/testdata/fakegcp`
+on a loopback port and point `SKY_AI_GCP_ENDPOINT` at it. Test mode lets
+requests to that one loopback host through and keeps every other request
+mocked.
+
+The paid tests on a real project are `rust/crates/sky/tests/ai_gcp_live.rs`.
+They need `Need::GcpLive`: they fail unless the wrapper set
+`SKY_AI_GCP_LIVE=1` (or `SKY_LIVE_TESTS=skip`). Run them only
+through `scripts/ai/gcp-live.sh`, which checks the cost ledger before it
+starts, labels every resource, tears everything down on exit and fails the
+run if anything is left. CI runs them on manual dispatch only
+(`.github/workflows/ai-cloud-live.yml`), never on a commit or a release.
+
 ### Log capture
 
 Set **`SKY_TEST_LOG_CAPTURE=<path>`** and the app's `Std.Log` output is written

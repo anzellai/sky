@@ -299,8 +299,45 @@ fn assemble_and_emit_with(
     }
     let stdlib_names: std::collections::BTreeSet<String> =
         stdlib.iter().map(|(n, _, _)| n.clone()).collect();
-    for (n, file, _p) in stdlib {
-        db.add_module(&n, file);
+    // The stdlib is trusted (never type-checked again), but a stdlib module
+    // that does not parse is still reported as the parse error it is, naming
+    // the stdlib file. Before this, a recovered ERROR node in a stdlib module
+    // (an operator section `(+)` written while editing it) reached lowering
+    // and stopped the build with an internal compiler error that named no
+    // file. The `roundtrip` gate keeps the shipped stdlib free of them; this
+    // is for the person editing it.
+    let mut stdlib_parse: Vec<diagnostics::Diagnostic> = Vec::new();
+    let mut stdlib_text: std::collections::HashMap<base::FileId, String> =
+        std::collections::HashMap::new();
+    let mut stdlib_paths: std::collections::HashMap<base::FileId, String> =
+        std::collections::HashMap::new();
+    for (n, file, p) in stdlib {
+        let id = db.add_module(&n, file);
+        let parse = skydb::parse(&db, file);
+        if !parse.errors().is_empty() || parse.error_node_count() > 0 {
+            let mut here: Vec<diagnostics::Diagnostic> = parse
+                .errors()
+                .iter()
+                .filter(|d| d.severity == diagnostics::Severity::Error)
+                .cloned()
+                .collect();
+            if here.is_empty() {
+                here.push(diagnostics::Diagnostic::error(
+                    "E0001",
+                    format!("PARSE ERROR in stdlib module {n}: unstructured input (recovered ERROR node)"),
+                ));
+            }
+            stdlib_parse.extend(cap_parse_errors(here));
+            stdlib_text.insert(base::FileId(id.index()), file.text(&db).to_string());
+            stdlib_paths.insert(base::FileId(id.index()), p.display().to_string());
+        }
+    }
+    if !stdlib_parse.is_empty() {
+        let sources = CliSources {
+            text: &stdlib_text,
+            paths: &stdlib_paths,
+        };
+        return Err(render_diags(&stdlib_parse, &sources));
     }
     // The Sky dependencies, loaded by the routines every loader shares
     // (`load_source_db` too, so the Sky.Spa split analyses the program the
@@ -4917,5 +4954,63 @@ mod ffi_trust_tests {
             n += 1;
         }
         assert!(n >= 17, "found only {n} generator kernel bindings");
+    }
+}
+
+#[cfg(test)]
+mod stdlib_parse_tests {
+    //! A stdlib module that does not parse is a parse error naming its file,
+    //! never an internal compiler error at lowering.
+    use super::*;
+
+    #[test]
+    fn a_stdlib_module_that_does_not_parse_names_its_file() {
+        let root = std::env::temp_dir().join(format!(
+            "sky-stdlib-parse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let lib = root.join("sky-stdlib/Std/Broken.sky");
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::write(
+            &lib,
+            "module Std.Broken exposing (total)\n\n\ntotal : List Int -> Int\ntotal xs =\n    List.foldl (+) 0 xs\n",
+        )
+        .unwrap();
+        let app = root.join("app");
+        std::fs::create_dir_all(app.join("src")).unwrap();
+        std::fs::write(
+            app.join("sky.toml"),
+            "name = \"t\"\nentry = \"src/Main.sky\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            app.join("src/Main.sky"),
+            "module Main exposing (main)\n\nimport Std.Broken\n\n\nmain =\n    Std.Broken.total [ 1 ]\n",
+        )
+        .unwrap();
+        let err = match assemble_and_emit(&root, &app) {
+            Ok(_) => panic!("a stdlib module that does not parse was built"),
+            Err(e) => e,
+        };
+        let text: String = err
+            .diagnostics
+            .iter()
+            .map(|d| format!("{d:?}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(text.contains("E0001"), "not a parse error:\n{text}");
+        assert!(
+            text.contains("Broken.sky"),
+            "the stdlib file is not named:\n{text}"
+        );
+        assert!(
+            !text.contains("error-recovery"),
+            "still an internal error:\n{text}"
+        );
     }
 }

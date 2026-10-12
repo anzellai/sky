@@ -122,7 +122,7 @@ type aiFakeGCP struct {
 	clockScale float64
 
 	creates, cancels, jobDeletes, serviceCreates, servicePatches, serviceDeletes int
-	idTokens, accessTokens                                                       int
+	idTokens, accessTokens, federated                                            int
 }
 
 func newAiFakeGCP() *aiFakeGCP {
@@ -152,6 +152,10 @@ func (f *aiFakeGCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.control(w, r, strings.TrimPrefix(path, "/_fake/"))
 	case path == "/oauth2/token":
 		f.token(w, r, body)
+	case path == "/sts/v1/token":
+		f.sts(w, body)
+	case strings.HasPrefix(path, "/iamcredentials/v1/"):
+		f.iamCredentials(w, r, strings.TrimPrefix(path, "/iamcredentials/v1/"), body)
 	case strings.HasPrefix(path, "/metadata/"):
 		f.metadata(w, r, strings.TrimPrefix(path, "/metadata"))
 	case strings.HasPrefix(path, "/storage/"):
@@ -235,6 +239,40 @@ func (f *aiFakeGCP) token(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	f.accessTokens++
 	aiFakeJSON(w, 200, map[string]any{"access_token": fmt.Sprintf("fake-access-%d", f.accessTokens), "expires_in": 3600, "token_type": "Bearer"})
+}
+
+// sts exchanges a workload identity federation subject token for a
+// federated token (Google's Security Token Service).
+func (f *aiFakeGCP) sts(w http.ResponseWriter, body []byte) {
+	form, _ := url.ParseQuery(string(body))
+	if form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" || form.Get("subject_token") == "" || form.Get("audience") == "" {
+		aiFakeJSON(w, 400, map[string]any{"error": "invalid_request", "error_description": "a token exchange needs grant_type, audience and subject_token"})
+		return
+	}
+	f.federated++
+	aiFakeJSON(w, 200, map[string]any{"access_token": fmt.Sprintf("fake-federated-%d", f.federated), "issued_token_type": "urn:ietf:params:oauth:token-type:access_token", "token_type": "Bearer", "expires_in": 3600})
+}
+
+// iamCredentials impersonates a service account with a federated token.
+func (f *aiFakeGCP) iamCredentials(w http.ResponseWriter, r *http.Request, path string, body []byte) {
+	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer fake-federated-") {
+		aiFakeError(w, 401, "UNAUTHENTICATED", "impersonation needs a federated token")
+		return
+	}
+	switch {
+	case strings.HasSuffix(path, ":generateAccessToken"):
+		f.accessTokens++
+		aiFakeJSON(w, 200, map[string]any{"accessToken": fmt.Sprintf("fake-impersonated-%d", f.accessTokens), "expireTime": aiFakeTime(f.now().Add(time.Hour))})
+	case strings.HasSuffix(path, ":generateIdToken"):
+		var req struct {
+			Audience string `json:"audience"`
+		}
+		json.Unmarshal(body, &req)
+		f.idTokens++
+		aiFakeJSON(w, 200, map[string]any{"token": aiFakeIDToken(req.Audience, f.now())})
+	default:
+		aiFakeError(w, 404, "NOT_FOUND", path)
+	}
 }
 
 func (f *aiFakeGCP) metadata(w http.ResponseWriter, r *http.Request, path string) {
@@ -1078,15 +1116,15 @@ func (f *aiFakeGCP) cloudBuild(w http.ResponseWriter, r *http.Request, path stri
 			return
 		}
 		f.opSeq++
-		parts := strings.Split(path, "/")
-		name := strings.Join(parts[:4], "/") + fmt.Sprintf("/operations/build-%d", f.opSeq)
-		f.builds[name] = map[string]any{"results": map[string]any{"images": []any{
+		id := fmt.Sprintf("build-%d", f.opSeq)
+		f.builds[path+"/"+id] = map[string]any{"id": id, "status": "SUCCESS", "results": map[string]any{"images": []any{
 			map[string]any{"name": req.Images[0], "digest": "sha256:" + aiSha256Hex(body)}}}}
-		aiFakeJSON(w, 200, map[string]any{"name": name, "done": false})
+		aiFakeJSON(w, 200, map[string]any{"name": "operations/build/p/" + id, "done": false,
+			"metadata": map[string]any{"build": map[string]any{"id": id, "status": "QUEUED"}}})
 		return
 	}
 	if res, ok := f.builds[path]; ok {
-		aiFakeJSON(w, 200, map[string]any{"name": path, "done": true, "response": res})
+		aiFakeJSON(w, 200, res)
 		return
 	}
 	aiFakeError(w, 404, "NOT_FOUND", path)
@@ -1139,7 +1177,7 @@ func (f *aiFakeGCP) control(w http.ResponseWriter, r *http.Request, what string)
 		}
 		aiFakeJSON(w, 200, map[string]any{"creates": f.creates, "cancels": f.cancels, "jobDeletes": f.jobDeletes,
 			"serviceCreates": f.serviceCreates, "servicePatches": f.servicePatches, "serviceDeletes": f.serviceDeletes,
-			"idTokens": f.idTokens, "accessTokens": f.accessTokens, "jobs": jobs, "services": services, "objects": objects})
+			"idTokens": f.idTokens, "accessTokens": f.accessTokens, "federated": f.federated, "jobs": jobs, "services": services, "objects": objects})
 	case "fail":
 		if j := f.jobs[q.Get("job")]; j != nil {
 			j.forceFail = orDefault(q.Get("message"), "The replica workerpool0-0 exited with a non-zero status of 1.")

@@ -158,7 +158,13 @@ fn training(stage: &str, line: &serde_json::Value) {
     } else {
         rate("vertexN2Standard4PerHour")
     };
-    record(stage, "vertex-custom-job", machine, line["seconds"].as_f64().unwrap_or(0.0), per_hour);
+    record(
+        stage,
+        "vertex-custom-job",
+        machine,
+        line["seconds"].as_f64().unwrap_or(0.0),
+        per_hour,
+    );
 }
 
 #[test]
@@ -200,10 +206,16 @@ fn gcp_live_l3_fake_jobs_exactly_once_relaunch_cancel_budget() {
                     .find(|l| l["scenario"] == "l3-once-attempt-0")
                     .cloned()
                     .unwrap_or_default();
-                (attempt0["jobs"] == 1 && last["ok"] == true && last["steps"] == 20, "one job for attempt 0 and the run finished")
+                (
+                    attempt0["jobs"] == 1 && last["ok"] == true && last["steps"] == 20,
+                    "one job for attempt 0 and the run finished",
+                )
             }
             "l3-crash" => (
-                last["ok"] == true && last["relaunches"] == 1 && last["resumedFrom"] == 5 && last["steps"] == 12,
+                last["ok"] == true
+                    && last["relaunches"] == 1
+                    && last["resumedFrom"] == 5
+                    && last["steps"] == 12,
                 "relaunched once from the checkpoint at step 5",
             ),
             "l3-cancel" => (last["code"] == "TrainingCancelled", "TrainingCancelled"),
@@ -227,7 +239,13 @@ fn gcp_live_l4_unsloth_qlora_on_one_l4() {
     training("l4", r);
     assert_eq!(r["ok"], true, "the Unsloth run: {r}");
     assert_eq!(r["steps"], 30, "{r}");
-    assert!(r["registered"].as_str().unwrap_or("").starts_with("support@v"), "{r}");
+    assert!(
+        r["registered"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("support@v"),
+        "{r}"
+    );
 }
 
 /// The tier's service token, read from Secret Manager into memory and handed
@@ -236,7 +254,16 @@ fn tier_token() -> String {
     let secret = std::env::var("SKY_AI_LIVE_SECRET").unwrap();
     let project = std::env::var("SKY_AI_SERVE_PROJECT").unwrap();
     let out = Command::new("gcloud")
-        .args(["secrets", "versions", "access", "latest", "--secret", &secret, "--project", &project])
+        .args([
+            "secrets",
+            "versions",
+            "access",
+            "latest",
+            "--secret",
+            &secret,
+            "--project",
+            &project,
+        ])
         .stderr(Stdio::null())
         .output()
         .expect("gcloud secrets versions access");
@@ -261,19 +288,43 @@ fn gcp_live_l5_the_gpu_tier_on_cloud_run() {
     let t0 = std::time::Instant::now();
     let out = scenario(
         "l5",
-        &[("SKY_AI_LIVE_TOKEN", tier_token()), ("SKY_AI_LIVE_INVOKER", active_account())],
+        &[
+            ("SKY_AI_LIVE_TOKEN", tier_token()),
+            ("SKY_AI_LIVE_INVOKER", active_account()),
+        ],
     );
     let r = out.last().unwrap();
     // The service exists from the deploy until the wrapper deletes it; bill
     // the whole scenario at the instance's rate (an upper bound: it scales to
     // zero when idle).
-    record("l5", "cloud-run-l4", "1 L4, 5 vCPU, 20 GiB", t0.elapsed().as_secs_f64(), rate("cloudRunL4InstancePerHour"));
+    record(
+        "l5",
+        "cloud-run-l4",
+        "1 L4, 5 vCPU, 20 GiB",
+        t0.elapsed().as_secs_f64(),
+        rate("cloudRunL4InstancePerHour"),
+    );
     assert_eq!(r["base"]["ok"], true, "the base answers: {r}");
     assert_eq!(r["v1"]["ok"], true, "support-v1 answers: {r}");
-    assert_eq!(r["v2"]["ok"], true, "support-v2 answers on the same GPU: {r}");
+    assert_eq!(
+        r["v2"]["ok"], true,
+        "support-v2 answers on the same GPU: {r}"
+    );
     let models = r["models"]["text"].as_str().unwrap_or("");
-    assert!(models.contains("support-v1") && models.contains("support-v2"), "/v1/models lists both: {r}");
-    assert_eq!(r["hotLoadOk"], 20, "the promotion is hot-loaded with no failed request: {r}");
-    assert_eq!(r["noIdTokenStatus"], 403, "Cloud Run refuses a call without an ID token: {r}");
-    assert_eq!(r["badTokenStatus"], 401, "the tier refuses a wrong service token: {r}");
+    assert!(
+        models.contains("support-v1") && models.contains("support-v2"),
+        "/v1/models lists both: {r}"
+    );
+    assert_eq!(
+        r["hotLoadOk"], 20,
+        "the promotion is hot-loaded with no failed request: {r}"
+    );
+    assert_eq!(
+        r["noIdTokenStatus"], 403,
+        "Cloud Run refuses a call without an ID token: {r}"
+    );
+    assert_eq!(
+        r["badTokenStatus"], 401,
+        "the tier refuses a wrong service token: {r}"
+    );
 }

@@ -202,6 +202,9 @@ type AiConsoleResponse struct {
 	Registry []aiRegistryModel `json:"registry"`
 	// Training is the Std.Ai.Train runs (ai_train_console.go).
 	Training []aiTrainRun `json:"training"`
+	// Tiers is the Std.Ai.Serve GPU tiers this process runs (ai_serve.go):
+	// resident adapters, aliases, and the engine's queue and KV-cache use.
+	Tiers []aiTierStatus `json:"tiers"`
 }
 
 // aiConsoleSnapshot builds the panel's data. outcome is "" (every call) or
@@ -213,7 +216,7 @@ func aiConsoleSnapshot(outcome, slot string) AiConsoleResponse {
 	evals := append([]aiEvalRecord(nil), aiEvalRing...)
 	aiConsoleMu.Unlock()
 
-	resp := AiConsoleResponse{Slots: []aiConsoleSlot{}, Engines: []map[string]any{}, Calls: []aiCallRecord{}, Evals: []aiEvalRecord{}, Registry: aiRegistrySnapshot(), Training: aiTrainConsoleRuns()}
+	resp := AiConsoleResponse{Slots: []aiConsoleSlot{}, Engines: []map[string]any{}, Calls: []aiCallRecord{}, Evals: []aiEvalRecord{}, Registry: aiRegistrySnapshot(), Training: aiTrainConsoleRuns(), Tiers: aiTierStatuses()}
 
 	aiSlotsMu.Lock()
 	seen := map[string]bool{}

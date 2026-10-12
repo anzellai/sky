@@ -1418,18 +1418,22 @@ registryOf p =
 -- publish, or for versions registered before pointers existed).
 publishVerb : Bool -> Pipeline -> String -> Task Error ()
 publishVerb json p name =
-    registryOf p
-        |> Task.andThen (\reg -> Registry.publishPointers reg name)
+    registryOf p |> Task.andThen (\reg -> Registry.publishPointers reg name)
         |> Task.andThen
                (\n ->
                    if json then
                        println
                            (JsonE.encode
                                0
-                               (JsonE.object [ ( "name", JsonE.string name ), ( "written", JsonE.int n ) ]))
+                               (JsonE.object
+                                   [ ( "name", JsonE.string name )
+                                   , ( "written", JsonE.int n )
+                                   ]))
 
                    else
-                       println ("published " ++ name ++ ": " ++ String.fromInt n ++ " pointer objects written"))
+                       println
+                           ("published " ++ name ++ ": " ++ String.fromInt n
+                               ++ " pointer objects written"))
 
 
 -- `sky ai rollback <name>@<alias>` in a project.

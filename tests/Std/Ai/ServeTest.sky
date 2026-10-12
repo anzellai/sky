@@ -25,8 +25,10 @@ tier =
 
 target : Serve.Target
 target =
-    Serve.cloudRun { project = "p", region = "us-central1", service = "support-tier" }
-        |> Serve.withTierImage "us-central1-docker.pkg.dev/p/sky/tier@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    Serve.cloudRun
+        { project = "p", region = "us-central1", service = "support-tier" }
+        |> Serve.withTierImage
+               "us-central1-docker.pkg.dev/p/sky/tier@sha256:2222222222222222222222222222222222222222222222222222222222222222"
         |> Serve.withTokenSecret "support-tier-token"
         |> Serve.withRegistryUrl "gs://bkt/registry"
         |> Serve.withServiceAccount "tier@p.iam.gserviceaccount.com"
@@ -46,7 +48,9 @@ container : Int -> List String -> JsonD.Decoder a -> Maybe a
 container i path d =
     Result.toMaybe
         (JsonD.decodeString
-            (JsonD.at [ "template", "containers" ] (JsonD.index i (JsonD.at path d)))
+            (JsonD.at
+                [ "template", "containers" ]
+                (JsonD.index i (JsonD.at path d)))
             service)
 
 
@@ -59,7 +63,10 @@ tests =
                   s = Serve.settings tier
               in
                   Test.equal
-                      ( s.baseName, Serve.baseIdOf tier, Serve.basePath "/models/home" tier )
+                      ( s.baseName
+                      , Serve.baseIdOf tier
+                      , Serve.basePath "/models/home" tier
+                      )
                       ( "qwen2.5-0.5b-instruct"
                       , "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775"
                       , "/models/home/bases/Qwen--Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775"
@@ -96,7 +103,9 @@ tests =
               Test.equal
                   ( ( at [ "template", "scaling", "minInstanceCount" ] JsonD.int
                     , at [ "template", "scaling", "maxInstanceCount" ] JsonD.int
-                    , at [ "template", "nodeSelector", "accelerator" ] JsonD.string
+                    , at
+                          [ "template", "nodeSelector", "accelerator" ]
+                          JsonD.string
                     )
                   , ( at [ "labels", "sky-managed" ] JsonD.string
                     , at [ "labels", "sky-deployment" ] JsonD.string
@@ -112,12 +121,23 @@ tests =
           "the tier is the ingress; vLLM has the GPU, starts after the tier, and loads adapters at run time"
           (\_ ->
               Test.equal
-                  ( ( container 0 [ "name" ] JsonD.string, container 0 [ "ports" ] (JsonD.index 0 (JsonD.field "containerPort" JsonD.int)) )
+                  ( ( container 0 [ "name" ] JsonD.string
+                    , container
+                          0
+                          [ "ports" ]
+                          (JsonD.index 0 (JsonD.field "containerPort" JsonD.int))
+                    )
                   , ( container 1 [ "name" ] JsonD.string
-                    , container 1 [ "resources", "limits", "nvidia.com/gpu" ] JsonD.string
+                    , container
+                          1
+                          [ "resources", "limits", "nvidia.com/gpu" ]
+                          JsonD.string
                     , container 1 [ "dependsOn" ] (JsonD.index 0 JsonD.string)
                     )
-                  , container 1 [ "env" ] (JsonD.index 1 (JsonD.field "value" JsonD.string))
+                  , container
+                        1
+                        [ "env" ]
+                        (JsonD.index 1 (JsonD.field "value" JsonD.string))
                   )
                   ( ( Just "tier", Just 8080 )
                   , ( Just "engine", Just "1", Just "tier" )
@@ -127,8 +147,11 @@ tests =
           "the service token is a Secret Manager reference, never text"
           (\_ ->
               Test.equal
-                  ( container 0 [ "env" ] (JsonD.list (JsonD.field "name" JsonD.string))
-                      |> Maybe.map (List.member "SKY_AI_SERVE_TOKEN")
+                  ( container
+                        0
+                        [ "env" ]
+                        (JsonD.list (JsonD.field "name" JsonD.string))
+                        |> Maybe.map (List.member "SKY_AI_SERVE_TOKEN")
                   , String.contains "support-tier-token" service
                   , String.contains "secretKeyRef" service
                   )
@@ -137,8 +160,10 @@ tests =
           "every image is pinned by digest"
           (\_ ->
               Test.equal
-                  ( container 0 [ "image" ] JsonD.string |> Maybe.map (String.contains "@sha256:")
-                  , container 1 [ "image" ] JsonD.string |> Maybe.map (String.contains "@sha256:")
+                  ( container 0 [ "image" ] JsonD.string
+                        |> Maybe.map (String.contains "@sha256:")
+                  , container 1 [ "image" ] JsonD.string
+                        |> Maybe.map (String.contains "@sha256:")
                   , String.contains "@sha256:" Serve.tierBaseImage
                   )
                   ( Just True, Just True, True ))
@@ -151,7 +176,9 @@ tests =
                   Test.equal
                       ( String.contains "name: support-tier" yaml
                       , String.contains "nvidia.com/gpu: \"1\"" yaml
-                      , String.contains "autoscaling.knative.dev/minScale: \"0\"" yaml
+                      , String.contains
+                            "autoscaling.knative.dev/minScale: \"0\""
+                            yaml
                       , String.contains "secretKeyRef" yaml
                       )
                       ( True, True, True, True ))
@@ -159,7 +186,9 @@ tests =
           "the tier's Dockerfile copies the static binary onto a pinned distroless base"
           (\_ ->
               Test.equal
-                  ( String.contains ("FROM " ++ Serve.tierBaseImage) Serve.dockerfile
+                  ( String.contains
+                        ("FROM " ++ Serve.tierBaseImage)
+                        Serve.dockerfile
                   , String.contains "COPY app /app" Serve.dockerfile
                   , String.contains "USER nonroot" Serve.dockerfile
                   )

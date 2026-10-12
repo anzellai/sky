@@ -58,6 +58,8 @@ module Std.Ai.Train exposing
     , cloudEstimate
     , planCloud
     , runKey
+    , CloudStatus
+    , cloudStatus
     , cloudJobSpec
     , inputsJson
     , Settings
@@ -5371,3 +5373,62 @@ cloudCleanup ctx job cloud a =
                                               store
                                               (runPath cloud.key ++ "/"))))
             |> Task.map (\_ -> a)
+
+
+-- | A Vertex run as its last watch saw it: the job, its state
+-- (`JOB_STATE_RUNNING`, …), the attempt, where it runs, and the spend so far
+-- against the budget, in exact money.
+type alias CloudStatus =
+    { job : String
+    , state : String
+    , attempt : Int
+    , region : String
+    , machine : String
+    , spent : Money
+    , budget : Money
+    }
+
+
+-- | The job's Vertex run, from its run directory (`Nothing` for a local run
+-- or one that has not launched).
+cloudStatus : Job -> Task Error (Maybe CloudStatus)
+cloudStatus job =
+    let
+        path = runDir job ++ "/cloud.json"
+    in
+        File.exists path
+            |> Task.andThen
+                   (\there ->
+                       if not there then
+                           Task.succeed Nothing
+
+                       else
+                           File.readFile path
+                               |> Task.map
+                                      (\text ->
+                                          JsonD.decodeString
+                                              (JsonD.map3
+                                                  (\( j, st, a ) ( r, m ) ( sp, bu ) ->
+                                                      { job = j
+                                                      , state = st
+                                                      , attempt = a
+                                                      , region = r
+                                                      , machine = m
+                                                      , spent = Maybe.withDefault (Money.zero Money.USD) (parseMoney sp)
+                                                      , budget = Maybe.withDefault (Money.zero Money.USD) (parseMoney bu)
+                                                      })
+                                                  (JsonD.map3
+                                                      (\j st a -> ( j, st, a ))
+                                                      (JsonD.field "job" JsonD.string)
+                                                      (JsonD.field "state" JsonD.string)
+                                                      (JsonD.field "attempt" JsonD.int))
+                                                  (JsonD.map2
+                                                      (\r m -> ( r, m ))
+                                                      (JsonD.field "region" JsonD.string)
+                                                      (JsonD.field "machine" JsonD.string))
+                                                  (JsonD.map2
+                                                      (\sp bu -> ( sp, bu ))
+                                                      (JsonD.field "spent" JsonD.string)
+                                                      (JsonD.field "budget" JsonD.string)))
+                                              text
+                                              |> Result.toMaybe))

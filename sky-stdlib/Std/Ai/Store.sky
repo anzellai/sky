@@ -1227,35 +1227,44 @@ awsKeys c =
             Task.succeed k
 
         Nothing ->
-            let
-                id = System.getenvOr "AWS_ACCESS_KEY_ID" ""
-            in
-                if id /= "" then
-                    Task.succeed
-                        { accessKey = id
-                        , secretKey = Secret.fromEnv "AWS_SECRET_ACCESS_KEY"
-                        , sessionToken =
-                            if System.getenvOr "AWS_SESSION_TOKEN" "" /= "" then
-                                Just (Secret.fromEnv "AWS_SESSION_TOKEN")
+            -- Read when the Task runs, not when it is built.
+            Task.lazy (\_ -> System.getenvOr "AWS_ACCESS_KEY_ID" "")
+                |> Task.andThen awsEnvKeys
 
-                            else
-                                Nothing
-                        }
+
+awsEnvKeys : String -> Task Error AwsKeys
+awsEnvKeys id =
+    if id /= "" then
+        Task.succeed
+            { accessKey = id
+            , secretKey = Secret.fromEnv "AWS_SECRET_ACCESS_KEY"
+            , sessionToken =
+                if System.getenvOr "AWS_SESSION_TOKEN" "" /= "" then
+                    Just (Secret.fromEnv "AWS_SESSION_TOKEN")
 
                 else
-                    instanceRoleKeys
-                        |> Task.onError
-                               (\_ ->
-                                   Task.fail
-                                       (Failure.toError
-                                           (NotConfigured
-                                               { setting =
-                                                   "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, an instance role (IMDSv2), or Store.withAwsKeys"
-                                               })))
+                    Nothing
+            }
+
+    else
+        instanceRoleKeys
+            |> Task.onError
+                   (\_ ->
+                       Task.fail
+                           (Failure.toError
+                               (NotConfigured
+                                   { setting =
+                                       "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, an instance role (IMDSv2), or Store.withAwsKeys"
+                                   })))
 
 
 instanceRoleKeys : Task Error AwsKeys
 instanceRoleKeys =
+    Task.lazy (\_ -> ()) |> Task.andThen instanceRoleKeysNow
+
+
+instanceRoleKeysNow : () -> Task Error AwsKeys
+instanceRoleKeysNow _ =
     let
         base =
             trimTrailingSlash

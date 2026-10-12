@@ -157,8 +157,13 @@ projectRegion opts =
     in
         Task.map2
             (\p r -> ( p, r ))
-            (need "--project (or SKY_AI_TRAIN_PROJECT)" (pick "--project" "SKY_AI_TRAIN_PROJECT"))
-            (need "--region (or SKY_AI_TRAIN_REGION)" (pick "--region" "SKY_AI_TRAIN_REGION"))
+            (need
+                "--project (or SKY_AI_TRAIN_PROJECT)"
+                (pick "--project" "SKY_AI_TRAIN_PROJECT"))
+            (need
+                "--region (or SKY_AI_TRAIN_REGION)"
+                (pick "--region" "SKY_AI_TRAIN_REGION"))
+
 
 -- ─── serve ──────────────────────────────────────────────────────────────
 adapterList : List String -> List String
@@ -180,12 +185,17 @@ tierOf opts =
                 Nothing ->
                     t
     in
-        Serve.tier Serve.Vllm Serve.devBase |> Serve.withAdapters (adapterList opts)
+        Serve.tier Serve.Vllm Serve.devBase
+            |> Serve.withAdapters (adapterList opts)
             |> set "--bind" Serve.withBind
             |> set "--engine-url" Serve.withEngineUrl
             |> set "--models" Serve.withModelsDir
-            |> set "--max-adapters"
-                   (\v t -> Serve.withMaxAdapters (Maybe.withDefault 4 (String.toInt v)) t)
+            |> set
+                   "--max-adapters"
+                   (\v t ->
+                       Serve.withMaxAdapters
+                           (Maybe.withDefault 4 (String.toInt v))
+                           t)
 
 
 serveVerb : List String -> Task Error ()
@@ -196,7 +206,8 @@ serveVerb opts =
         (case flag "--registry" opts of
 
             Just url ->
-                Task.fromResult (Store.fromUrl url) |> Task.map (\st -> Serve.withRegistry st tier)
+                Task.fromResult (Store.fromUrl url)
+                    |> Task.map (\st -> Serve.withRegistry st tier)
 
             Nothing ->
                 Task.succeed tier)
@@ -206,7 +217,8 @@ serveVerb opts =
 targetOf : List String -> Serve.Target
 targetOf opts =
     let
-        int name def = Maybe.withDefault def (Maybe.andThen String.toInt (flag name opts))
+        int name def =
+            Maybe.withDefault def (Maybe.andThen String.toInt (flag name opts))
         set name f t =
             case flag name opts of
 
@@ -216,7 +228,11 @@ targetOf opts =
                 Nothing ->
                     t
     in
-        Serve.cloudRun { project = text "--project" opts, region = text "--region" opts, service = text "--service" opts }
+        Serve.cloudRun
+            { project = text "--project" opts
+            , region = text "--region" opts
+            , service = text "--service" opts
+            }
             |> set "--tier-image" Serve.withTierImage
             |> set "--engine-image" Serve.withEngineImage
             |> set "--token-secret" Serve.withTokenSecret
@@ -247,9 +263,21 @@ renderVerb json opts =
                        r = Serve.render (targetOf opts) (tierOf opts)
                    in
                        File.mkdirAll out
-                           |> Task.andThen (\_ -> File.writeFile (out ++ "/Dockerfile") r.dockerfile)
-                           |> Task.andThen (\_ -> File.writeFile (out ++ "/service.json") r.serviceJson)
-                           |> Task.andThen (\_ -> File.writeFile (out ++ "/service.yaml") r.knativeYaml)
+                           |> Task.andThen
+                                  (\_ ->
+                                      File.writeFile
+                                          (out ++ "/Dockerfile")
+                                          r.dockerfile)
+                           |> Task.andThen
+                                  (\_ ->
+                                      File.writeFile
+                                          (out ++ "/service.json")
+                                          r.serviceJson)
+                           |> Task.andThen
+                                  (\_ ->
+                                      File.writeFile
+                                          (out ++ "/service.yaml")
+                                          r.knativeYaml)
                            |> Task.andThen
                                   (\_ ->
                                       emit
@@ -257,10 +285,16 @@ renderVerb json opts =
                                           (JsonE.object
                                               [ ( "out", JsonE.string out )
                                               , ( "files"
-                                                , JsonE.list JsonE.string [ "Dockerfile", "service.json", "service.yaml" ]
+                                                , JsonE.list
+                                                      JsonE.string
+                                                      [ "Dockerfile"
+                                                      , "service.json"
+                                                      , "service.yaml"
+                                                      ]
                                                 )
                                               ])
-                                          ("wrote " ++ out ++ "/Dockerfile, service.json and service.yaml")))
+                                          ("wrote " ++ out
+                                              ++ "/Dockerfile, service.json and service.yaml")))
 
 
 deployVerb : Bool -> List String -> Task Error ()
@@ -272,8 +306,17 @@ deployVerb json opts =
                        emit
                            json
                            (JsonE.object
-                               [ ( "service", JsonE.string (text "--service" opts) )
-                               , ( "spec", Result.withDefault JsonE.null (JsonE.raw (Serve.serviceJson (targetOf opts) (tierOf opts))) )
+                               [ ( "service"
+                                 , JsonE.string (text "--service" opts)
+                                 )
+                               , ( "spec"
+                                 , Result.withDefault
+                                       JsonE.null
+                                       (JsonE.raw
+                                           (Serve.serviceJson
+                                               (targetOf opts)
+                                               (tierOf opts)))
+                                 )
                                ])
                            (Serve.serviceJson (targetOf opts) (tierOf opts))
 
@@ -285,16 +328,28 @@ deployVerb json opts =
                                           json
                                           (JsonE.object
                                               [ ( "url", JsonE.string d.url )
-                                              , ( "revision", JsonE.string d.revision )
-                                              , ( "region", JsonE.string d.region )
-                                              , ( "service", JsonE.string d.service )
+                                              , ( "revision"
+                                                , JsonE.string d.revision
+                                                )
+                                              , ( "region"
+                                                , JsonE.string d.region
+                                                )
+                                              , ( "service"
+                                                , JsonE.string d.service
+                                                )
                                               ])
-                                          ("deployed " ++ d.service ++ " (" ++ d.revision ++ ") at " ++ d.url)))
+                                          ("deployed " ++ d.service ++ " ("
+                                              ++ d.revision
+                                              ++ ") at "
+                                              ++ d.url)))
+
 
 -- ─── teardown and ls ────────────────────────────────────────────────────
 ended : String -> Bool
 ended state =
-    List.member state [ "JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED" ]
+    List.member
+        state
+        [ "JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED" ]
 
 
 -- Cancel the jobs that still run, delete the ones that ended. A job is
@@ -308,10 +363,12 @@ clearJobs project region filter =
                        (List.map
                            (\j ->
                                if ended j.state then
-                                   Google.deleteCustomJob j.name |> Task.map (\_ -> ( 1, 0 ))
+                                   Google.deleteCustomJob j.name
+                                       |> Task.map (\_ -> ( 1, 0 ))
 
                                else
-                                   Google.cancelCustomJob j.name |> Task.map (\_ -> ( 0, 1 )))
+                                   Google.cancelCustomJob j.name
+                                       |> Task.map (\_ -> ( 0, 1 )))
                            jobs))
         |> Task.map
                (List.foldl (\( d, c ) ( ds, cs ) -> ( ds + d, cs + c )) ( 0, 0 ))
@@ -319,30 +376,50 @@ clearJobs project region filter =
 
 teardownVerb : Bool -> List String -> Task Error ()
 teardownVerb json opts =
-    case ( flag "--service" opts, flag "--run" opts, List.member "--all-sky" opts ) of
+    case ( flag "--service" opts
+         , flag "--run" opts
+         , List.member "--all-sky" opts
+         ) of
 
         ( Just service, _, _ ) ->
             Serve.teardown
-                (Serve.cloudRun { project = text "--project" opts, region = text "--region" opts, service = service })
+                (Serve.cloudRun
+                    { project = text "--project" opts
+                    , region = text "--region" opts
+                    , service = service
+                    })
                 |> Task.andThen
                        (\_ ->
                            emit
                                json
-                               (JsonE.object [ ( "service", JsonE.string service ), ( "deleted", JsonE.bool True ) ])
+                               (JsonE.object
+                                   [ ( "service", JsonE.string service )
+                                   , ( "deleted", JsonE.bool True )
+                                   ])
                                ("deleted the service " ++ service))
 
         ( Nothing, Just key, _ ) ->
             projectRegion opts
                 |> Task.andThen
                        (\( project, region ) ->
-                           clearJobs project region ("labels.sky-run=\"" ++ key ++ "\"")
+                           clearJobs
+                               project
+                               region
+                               ("labels.sky-run=\"" ++ key ++ "\"")
                                |> Task.andThen
                                       (\( deleted, cancelled ) ->
                                           (case flag "--staging" opts of
 
                                               Just url ->
-                                                  Task.fromResult (Store.fromUrl url)
-                                                      |> Task.andThen (\st -> Store.deletePrefix st ("runs/" ++ key ++ "/"))
+                                                  Task.fromResult
+                                                      (Store.fromUrl url)
+                                                      |> Task.andThen
+                                                             (\st ->
+                                                                 Store.deletePrefix
+                                                                     st
+                                                                     ("runs/"
+                                                                         ++ key
+                                                                         ++ "/"))
 
                                               Nothing ->
                                                   Task.succeed 0)
@@ -351,23 +428,43 @@ teardownVerb json opts =
                                                          emit
                                                              json
                                                              (JsonE.object
-                                                                 [ ( "run", JsonE.string key )
-                                                                 , ( "jobsDeleted", JsonE.int deleted )
-                                                                 , ( "jobsCancelled", JsonE.int cancelled )
-                                                                 , ( "objectsDeleted", JsonE.int objects )
+                                                                 [ ( "run"
+                                                                   , JsonE.string
+                                                                         key
+                                                                   )
+                                                                 , ( "jobsDeleted"
+                                                                   , JsonE.int
+                                                                         deleted
+                                                                   )
+                                                                 , ( "jobsCancelled"
+                                                                   , JsonE.int
+                                                                         cancelled
+                                                                   )
+                                                                 , ( "objectsDeleted"
+                                                                   , JsonE.int
+                                                                         objects
+                                                                   )
                                                                  ])
-                                                             ("run " ++ key ++ ": " ++ String.fromInt deleted
+                                                             ("run " ++ key
+                                                                 ++ ": "
+                                                                 ++ String.fromInt
+                                                                        deleted
                                                                  ++ " jobs deleted, "
-                                                                 ++ String.fromInt cancelled
+                                                                 ++ String.fromInt
+                                                                        cancelled
                                                                  ++ " cancelled (delete them again once they end), "
-                                                                 ++ String.fromInt objects
+                                                                 ++ String.fromInt
+                                                                        objects
                                                                  ++ " staging objects deleted"))))
 
         ( Nothing, Nothing, True ) ->
             projectRegion opts
                 |> Task.andThen
                        (\( project, region ) ->
-                           clearJobs project region "labels.sky-managed=\"true\""
+                           clearJobs
+                               project
+                               region
+                               "labels.sky-managed=\"true\""
                                |> Task.andThen
                                       (\( deleted, cancelled ) ->
                                           Google.listServices project region
@@ -376,27 +473,56 @@ teardownVerb json opts =
                                                          let
                                                              mine =
                                                                  List.filter
-                                                                     (\s -> List.member ( "sky-managed", "true" ) s.labels)
+                                                                     (\s ->
+                                                                         List.member
+                                                                             ( "sky-managed"
+                                                                             , "true"
+                                                                             )
+                                                                             s.labels)
                                                                      svcs
                                                          in
-                                                             Task.sequence (List.map (\s -> Google.deleteService s.name) mine)
-                                                                 |> Task.map (\_ -> List.length mine))
+                                                             Task.sequence
+                                                                 (List.map
+                                                                     (\s ->
+                                                                         Google.deleteService
+                                                                             s.name)
+                                                                     mine)
+                                                                 |> Task.map
+                                                                        (\_ ->
+                                                                            List.length
+                                                                                mine))
                                               |> Task.andThen
                                                      (\services ->
                                                          emit
                                                              json
                                                              (JsonE.object
-                                                                 [ ( "jobsDeleted", JsonE.int deleted )
-                                                                 , ( "jobsCancelled", JsonE.int cancelled )
-                                                                 , ( "servicesDeleted", JsonE.int services )
+                                                                 [ ( "jobsDeleted"
+                                                                   , JsonE.int
+                                                                         deleted
+                                                                   )
+                                                                 , ( "jobsCancelled"
+                                                                   , JsonE.int
+                                                                         cancelled
+                                                                   )
+                                                                 , ( "servicesDeleted"
+                                                                   , JsonE.int
+                                                                         services
+                                                                   )
                                                                  ])
-                                                             (String.fromInt deleted ++ " jobs deleted, " ++ String.fromInt cancelled
+                                                             (String.fromInt
+                                                                 deleted
+                                                                 ++ " jobs deleted, "
+                                                                 ++ String.fromInt
+                                                                        cancelled
                                                                  ++ " cancelled, "
-                                                                 ++ String.fromInt services
+                                                                 ++ String.fromInt
+                                                                        services
                                                                  ++ " services deleted"))))
 
         _ ->
-            Task.fail (Error.invalidInput "sky ai teardown: name --service <name>, --run <key>, or --all-sky")
+            Task.fail
+                (Error.invalidInput
+                    "sky ai teardown: name --service <name>, --run <key>, or --all-sky")
 
 
 shortName : String -> String
@@ -420,7 +546,15 @@ lsVerb json opts =
                                    "labels.sky-managed=\"true\""
                    in
                        Task.map2
-                           (\jobs svcs -> ( jobs, List.filter (\s -> List.member ( "sky-managed", "true" ) s.labels) svcs ))
+                           (\jobs svcs ->
+                               ( jobs
+                               , List.filter
+                                     (\s ->
+                                         List.member
+                                             ( "sky-managed", "true" )
+                                             s.labels)
+                                     svcs
+                               ))
                            (Google.listCustomJobs project region filter)
                            (Google.listServices project region)
                            |> Task.andThen
@@ -434,23 +568,44 @@ lsVerb json opts =
                                                       , j.state
                                                       ))
                                                   jobs
-                                                  ++ List.map (\s -> ( "run-service", shortName s.name, s.ready )) svcs
+                                                  ++ List.map
+                                                         (\s ->
+                                                             ( "run-service"
+                                                             , shortName s.name
+                                                             , s.ready
+                                                             ))
+                                                         svcs
                                       in
                                           emit
                                               json
                                               (JsonE.list
                                                   (\( k, n, st ) ->
                                                       JsonE.object
-                                                          [ ( "kind", JsonE.string k )
-                                                          , ( "name", JsonE.string n )
-                                                          , ( "state", JsonE.string st )
+                                                          [ ( "kind"
+                                                            , JsonE.string k
+                                                            )
+                                                          , ( "name"
+                                                            , JsonE.string n
+                                                            )
+                                                          , ( "state"
+                                                            , JsonE.string st
+                                                            )
                                                           ])
                                                   rows)
                                               (if List.isEmpty rows then
-                                                  "nothing Sky made is running in " ++ region
+                                                  "nothing Sky made is running in "
+                                                      ++ region
 
                                               else
-                                                  String.join "\n" (List.map (\( k, n, st ) -> k ++ "  " ++ n ++ "  " ++ st) rows))))
+                                                  String.join
+                                                      "\n"
+                                                      (List.map
+                                                          (\( k, n, st ) ->
+                                                              k ++ "  " ++ n
+                                                                  ++ "  "
+                                                                  ++ st)
+                                                          rows))))
+
 
 -- ─── prices ─────────────────────────────────────────────────────────────
 pricesVerb : Bool -> List String -> Task Error ()
@@ -469,15 +624,29 @@ pricesVerb json opts =
                                       (JsonE.list
                                           (\s ->
                                               JsonE.object
-                                                  [ ( "service", JsonE.string s.service )
-                                                  , ( "description", JsonE.string s.description )
-                                                  , ( "unit", JsonE.string s.unit )
-                                                  , ( "usd", JsonE.string s.usd )
+                                                  [ ( "service"
+                                                    , JsonE.string s.service
+                                                    )
+                                                  , ( "description"
+                                                    , JsonE.string s.description
+                                                    )
+                                                  , ( "unit"
+                                                    , JsonE.string s.unit
+                                                    )
+                                                  , ( "usd"
+                                                    , JsonE.string s.usd
+                                                    )
                                                   ])
                                           found)
                                       (String.join
                                           "\n"
-                                          (List.map (\s -> s.usd ++ " USD / " ++ s.unit ++ "  " ++ s.description) found))))
+                                          (List.map
+                                              (\s ->
+                                                  s.usd ++ " USD / " ++ s.unit
+                                                      ++ "  "
+                                                      ++ s.description)
+                                              found))))
+
 
 -- ─── image build ────────────────────────────────────────────────────────
 imageVerb : Bool -> List String -> Task Error ()
@@ -507,37 +676,66 @@ imageVerb json opts =
                                                      File.tempDir "sky-image"
                                                          |> Task.andThen
                                                                 (\tmp ->
-                                                                    Google.packDirectory context (tmp ++ "/source.tar.gz")
-                                                                        |> Task.andThen (\_ -> Store.put st (tmp ++ "/source.tar.gz")))
+                                                                    Google.packDirectory
+                                                                        context
+                                                                        (tmp
+                                                                            ++ "/source.tar.gz")
+                                                                        |> Task.andThen
+                                                                               (\_ ->
+                                                                                   Store.put
+                                                                                       st
+                                                                                       (tmp
+                                                                                           ++ "/source.tar.gz")))
                                                          |> Task.andThen
                                                                 (\blob ->
-                                                                    Google.ensureRepository project region repo
+                                                                    Google.ensureRepository
+                                                                        project
+                                                                        region
+                                                                        repo
                                                                         |> Task.andThen
                                                                                (\_ ->
                                                                                    Google.buildImage
-                                                                                       { project = project
-                                                                                       , region = region
-                                                                                       , bucket = bucketOf staging
-                                                                                       , object = blobObject staging blob.sha256
-                                                                                       , dockerfile = dockerfile
+                                                                                       { project =
+                                                                                           project
+                                                                                       , region =
+                                                                                           region
+                                                                                       , bucket =
+                                                                                           bucketOf
+                                                                                               staging
+                                                                                       , object =
+                                                                                           blobObject
+                                                                                               staging
+                                                                                               blob.sha256
+                                                                                       , dockerfile =
+                                                                                           dockerfile
                                                                                        , image =
-                                                                                           region ++ "-docker.pkg.dev/" ++ project ++ "/" ++ repo ++ "/"
+                                                                                           region
+                                                                                               ++ "-docker.pkg.dev/"
+                                                                                               ++ project
+                                                                                               ++ "/"
+                                                                                               ++ repo
+                                                                                               ++ "/"
                                                                                                ++ imageId
                                                                                                ++ ":"
-                                                                                               ++ String.left 12 blob.sha256
-                                                                                       , timeoutSeconds = 3600
+                                                                                               ++ String.left
+                                                                                                      12
+                                                                                                      blob.sha256
+                                                                                       , timeoutSeconds =
+                                                                                           3600
                                                                                        }))))
                            |> Task.andThen
                                   (\ref ->
                                       emit
                                           json
-                                          (JsonE.object [ ( "image", JsonE.string ref ) ])
+                                          (JsonE.object
+                                              [ ( "image", JsonE.string ref ) ])
                                           ref))
 
 
 bucketOf : String -> String
 bucketOf url =
-    String.dropLeft 5 url |> String.split "/" |> List.head |> Maybe.withDefault ""
+    String.dropLeft 5 url |> String.split "/" |> List.head
+        |> Maybe.withDefault ""
 
 
 -- The object name of a blob the store put below the staging prefix.

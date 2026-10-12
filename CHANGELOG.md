@@ -11,13 +11,15 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry, the project's AI pipeline and adapter training (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline, Std.Ai.Train) (unreleased)
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry, the project's AI pipeline, adapter training, cloud training and a GPU serving tier (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Pipeline, Std.Ai.Train, Std.Ai.Serve, Std.Ai.Cloud.Google) (unreleased)
 
-Phase 1, phase 2 (the dataset, registry and pipeline parts) and phase 3 (local
-training and GGUF export) of the Std.Ai lifecycle design
+Phase 1, phase 2 (the dataset, registry and pipeline parts), phase 3 (local
+training and GGUF export) and phase 4 (training on Google Cloud Vertex AI and
+a GPU serving tier on Cloud Run) of the Std.Ai lifecycle design
 (`docs/design/std-ai-lifecycle.md`). The user guides are `docs/ai/local.md`,
 `docs/ai/eval.md`, `docs/ai/dataset.md`, `docs/ai/registry.md`,
-`docs/ai/pipeline.md` and `docs/ai/train.md`.
+`docs/ai/pipeline.md`, `docs/ai/train.md`, `docs/ai/serve.md` and
+`docs/ai/deploy-gcp.md`.
 
 ### Added
 
@@ -352,7 +354,7 @@ training and GGUF export) of the Std.Ai lifecycle design
   `SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`) wins over `withBackend`,
   which wins over detection (Mlx on Apple silicon, Unsloth on Linux with an
   NVIDIA GPU). A host that cannot run the backend is `NoAccelerator`, never a
-  fallback. `vertex` and `sagemaker` are `InvalidSetting` (phase 4). One
+  fallback. `sagemaker` is `InvalidSetting`; `vertex` is phase 4 (below). One
   Sky-shipped driver runs every backend with its own loop, data order,
   protocol and safetensors checkpoints: MLX-LM as a library with Adam, Unsloth
   core with `FastLanguageModel`, `get_peft_model` and AdamW, and a
@@ -427,7 +429,118 @@ training and GGUF export) of the Std.Ai lifecycle design
   base) took 8.5 s with a peak memory footprint of 2.24 GB, and a resume from
   the step-8 checkpoint gave bit-identical losses and the same adapter digest.
 
+#### Training on Vertex AI and the GPU tier (phase 4)
+
+- **`Std.Ai.Cloud.Google`: Google Cloud from Sky, over HTTP.** Credentials
+  from a service-account key file, workload identity federation (the Security
+  Token Service, then the service account impersonated) or the metadata
+  server; a user's own login is `NotConfigured`. Calls retry 429 and 503 with
+  backoff (`Overloaded` after four), and a refusal is typed: a quota is
+  `QuotaExceeded`, a region with no free GPU is `CapacityUnavailable`, any
+  other is `RemoteRejected` naming the request. Vertex AI custom jobs, Cloud
+  Run services and their operations, IAM invokers, Artifact Registry, Cloud
+  Build image builds, Cloud Quotas, Cloud Logging and the Cloud Billing
+  catalogue.
+- **`Train.withBackend Train.Vertex`: the same job on one NVIDIA L4.**
+  `withCloud`, `withBudget`, `withMachinePrices` (a dated price book),
+  `withImage`, `withServiceAccount`, `withMaxRuntimeMinutes`, `withSpot`,
+  `withKeepStaging` and `withLabels`, each with a `SKY_AI_TRAIN_*` variable
+  that wins. `plan` checks the trainer image's digest exists, the staging
+  bucket is in the job's region, the L4 quota, and the estimate (provisioning,
+  steps, export) against the budget, before anything launches
+  (`BudgetExceeded`, `QuotaExceeded`). The launch is exactly once across a
+  crash: a create-only intent object in the staging bucket, then the job's
+  labels. The run uploads the data, watches the job, mirrors the trainer's
+  progress and checkpoints from the bucket, resumes a crashed job from its
+  newest verified checkpoint, stops at the budget, downloads the adapter,
+  converts and registers it, and deletes the job records and the staging
+  prefix. The budget is also the job's hard runtime ceiling, so Vertex stops
+  it with no Sky process left. `cancel` cancels the cloud job too.
+- **The trainer image.** `Dockerfile.trainer`: NVIDIA's CUDA 13 base pinned by
+  digest, the pinned CPython and uv, the Unsloth hash lock and the Sky driver
+  behind a shim (`sky_cloud.py`) that moves data, checkpoints and the adapter
+  through the bucket. `sky ai image build --train` builds it with Cloud Build
+  into your own Artifact Registry and prints it pinned by digest. Nothing is
+  published to a public registry.
+- **`Std.Ai.Serve`: one base, many LoRA adapters, one GPU.**
+  `Serve.tier Serve.Vllm Serve.devBase` with `withAdapters`,
+  `withMaxAdapters`, `withAliasPolling`, `withToken` and the other builders
+  (each with a `SKY_AI_SERVE_*` variable). `Serve.run` stages the base's pinned
+  files, runs in front of vLLM with runtime LoRA loading, serves the OpenAI
+  routes behind a service token compared in constant time, keeps the aliases
+  loaded, loads other versions on demand, evicts the least recently used one,
+  and hot-loads a promotion: the old version drains before it is unloaded, so
+  no request fails. `/health` is 200 only when vLLM is up and every alias is
+  loaded; `/metrics` has `sky_ai_tier_*` and vLLM's own signals.
+- **`Serve.cloudRun` and `Serve.deploy`.** The tier and vLLM in one Cloud Run
+  service with one L4 that scales to zero, the token from Secret Manager, IAM
+  on and `roles/run.invoker` for `withInvokers` only. `deploy` creates or
+  updates the service under its etag, waits for the revision (a revision that
+  never becomes ready is `DeploymentFailed`), and is idempotent. `render`
+  gives the service as Admin API JSON and as Knative YAML, and `dockerfile`
+  the tier's image. `teardown`.
+- **`Endpoint.withGoogleAuth`** (or `SKY_AI_<SLOT>_AUTH=google`) sends a
+  Google ID token for a private Cloud Run tier in
+  `X-Serverless-Authorization`, kept until five minutes before it expires.
+- **The registry for a tier.** `Registry.registerWith` keeps a version's
+  companion files (a trained adapter's PEFT files beside its GGUF file), and
+  each registration and alias move writes pointer objects to the store
+  (`models/<name>/versions/<n>.json`, `aliases/<name>/<alias>.json`, guarded
+  by generation), which the tier reads instead of the database.
+  `Registry.storeResolver`, `readPointer`, `readManifest`,
+  `publishPointers`. `Store` gains generation-guarded `putIf`, `getObject`,
+  `list`, `deletePrefix` and `bucketLocation`.
+- **`Std.Ai.Failure`**: `QuotaExceeded`, `CapacityUnavailable` and
+  `DeploymentFailed`, and `toErrorWith` for a failure with the provider's own
+  detail.
+- **CLI**: `sky ai train --backend vertex` (with `--project`, `--region`,
+  `--machine`, `--staging`, `--budget`, `--image`, `--price`,
+  `--price-book`, `--spot`, `--keep-staging`, `--label`), `sky ai serve`
+  (`--image` writes the static linux/amd64 tier binary, its Dockerfile and its
+  service), `sky ai deploy`, `sky ai teardown`, `sky ai cloud ls`,
+  `sky ai cloud prices`, `sky ai image build` and `sky ai registry publish`,
+  run by a third bundled program (`sky-bundled/ai-cloud`).
+- **A Google Cloud emulator in the runtime.** Under `sky test` with
+  `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid`, every Google Cloud call is
+  answered in process and statefully (Vertex jobs run the Fake trainer into the
+  bucket), so a program tests its cloud workflow offline.
+  `runtime-go/rt/testdata/fakegcp` serves the same emulator on a loopback
+  port for several processes, and test mode lets requests to that one host
+  through.
+- **The console's AI tab** shows a Vertex run's job state and spend against
+  its budget, and a "GPU tiers" section.
+- **Live tests under a hard cap.** `scripts/ai/gcp-bootstrap.sh` sets a
+  project up once; `scripts/ai/gcp-live.sh` runs
+  `rust/crates/sky/tests/ai_gcp_live.rs` (`Need::GcpLive`): it checks the cost
+  ledger (`scripts/ai/live/gcp-ledger.jsonl`) before it starts, labels every
+  resource, tears everything down on exit and fails the run if anything is
+  left. `.github/workflows/ai-cloud-live.yml` runs it on manual dispatch only.
+- New variables: `SKY_AI_TRAIN_PROJECT`, `SKY_AI_TRAIN_REGION`,
+  `SKY_AI_TRAIN_MACHINE`, `SKY_AI_TRAIN_STAGING`, `SKY_AI_TRAIN_BUDGET`,
+  `SKY_AI_TRAIN_IMAGE`, `SKY_AI_TRAIN_SERVICE_ACCOUNT`,
+  `SKY_AI_TRAIN_LABELS`, `SKY_AI_SERVE_*`, `SKY_AI_GCP_ENDPOINT`,
+  `SKY_AI_<SLOT>_AUTH`.
+- `examples/74-ai-cloud`: a web app that trains a support adapter on Vertex
+  AI under a budget, registers it, deploys the GPU tier to Cloud Run and asks
+  it. Its test runs the whole lifecycle against the emulator.
+
 ### Fixed
+
+- **A stdlib module that did not parse stopped the build with an internal
+  compiler error.** The stdlib is trusted and was not checked for parse
+  errors, so a recovered error node (an operator section such as `(+)`, which
+  Sky has no grammar for) reached lowering as `an error-recovery expression
+  reached lowering`, naming no file, and an extra closing parenthesis at the
+  end of a declaration was dropped in silence. The build now reports a stdlib
+  parse error as `[E0001]` with the stdlib file and line
+  (test `a_stdlib_module_that_does_not_parse_names_its_file`). Two such
+  parentheses in `Std.Ai.Cloud.Google` and `Std.Ai.Registry` are fixed.
+- **Credentials were read when a Task was built, not when it ran.**
+  `Std.Ai.Cloud.Google` read `GOOGLE_APPLICATION_CREDENTIALS`, and
+  `Std.Ai.Store` read `AWS_ACCESS_KEY_ID` and the instance metadata address,
+  while the Task was being built. A Task built once (a top-level value) and run
+  after the variable changed used the old value. They are now read when the
+  Task runs (`GoogleAuthTest.sky` in `ai_cloud_train_flow.rs`).
 
 - **A Sky.Spa split app whose `init` command reaches the server failed to
   build.** `update` arms that return `Cmd.perform <server task> ToMsg` were

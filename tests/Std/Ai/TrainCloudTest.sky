@@ -30,8 +30,14 @@ book =
     Train.machinePrices
         Money.USD
         "2026-10-12"
-        [ { machine = "g2-standard-4", region = "us-central1", perHour = "1.20" }
-        , { machine = "n2-standard-4", region = "us-central1", perHour = "0.30" }
+        [ { machine = "g2-standard-4"
+          , region = "us-central1"
+          , perHour = "1.20"
+          }
+        , { machine = "n2-standard-4"
+          , region = "us-central1"
+          , perHour = "0.30"
+          }
         ]
 
 
@@ -44,27 +50,38 @@ version =
                        (List.map
                            (\n ->
                                { messages =
-                                   [ Provider.user ("Where is order " ++ String.fromInt n ++ "?")
+                                   [ Provider.user
+                                         ("Where is order " ++ String.fromInt n
+                                             ++ "?")
                                    , Provider.assistant "It ships tomorrow."
                                    ]
                                })
                            (List.range 1 30))
-                       |> Dataset.split { train = 70, eval = 30, test = 0, seed = 0 } (\r -> String.join "|" (List.map .content r.messages))
-                       |> Dataset.freeze (Dataset.folder dir "orders") Dataset.chatCodec)
+                       |> Dataset.split
+                              { train = 70, eval = 30, test = 0, seed = 0 }
+                              (\r ->
+                                  String.join "|" (List.map .content r.messages))
+                       |> Dataset.freeze
+                              (Dataset.folder dir "orders")
+                              Dataset.chatCodec)
         |> Task.run
 
 
 build : Dataset.Version Dataset.Chat -> Train.Job
 build v =
-    Train.lora Train.devBase v
-        |> Train.withName "support"
+    Train.lora Train.devBase v |> Train.withName "support"
         |> Train.withMaxSteps 30
         |> Train.withBatch { perDevice = 4, accumulate = 1 }
         |> Train.withSequenceLength 512
         |> Train.withBackend Train.Vertex
         |> Train.withCloud
-               { project = "p", region = "us-central1", machine = "g2-standard-4", staging = "gs://bkt/sky" }
-        |> Train.withImage "us-central1-docker.pkg.dev/p/sky/sky-ai-trainer@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+               { project = "p"
+               , region = "us-central1"
+               , machine = "g2-standard-4"
+               , staging = "gs://bkt/sky"
+               }
+        |> Train.withImage
+               "us-central1-docker.pkg.dev/p/sky/sky-ai-trainer@sha256:1111111111111111111111111111111111111111111111111111111111111111"
         |> Train.withBudget (Money.fromMajor Money.USD 3)
         |> Train.withMachinePrices book
 
@@ -90,7 +107,9 @@ codeOf r =
     case r of
 
         Err e ->
-            Maybe.withDefault ("not typed: " ++ Error.toString e) (Maybe.map Failure.code (Failure.fromError e))
+            Maybe.withDefault
+                ("not typed: " ++ Error.toString e)
+                (Maybe.map Failure.code (Failure.fromError e))
 
         Ok _ ->
             "Ok"
@@ -132,9 +151,14 @@ tests =
                   Ok cs ->
                       Test.equal
                           ( ( cs.machine, cs.accelerator, cs.acceleratorCount )
-                          , ( Money.toMinor cs.perHour, Money.toMinor cs.budget, cs.priceBook )
+                          , ( Money.toMinor cs.perHour
+                            , Money.toMinor cs.budget
+                            , cs.priceBook
+                            )
                           )
-                          ( ( "g2-standard-4", "NVIDIA_L4", 1 ), ( 120, 300, "2026-10-12" ) )
+                          ( ( "g2-standard-4", "NVIDIA_L4", 1 )
+                          , ( 120, 300, "2026-10-12" )
+                          )
 
                   Err e ->
                       Test.fail (Error.toString e))
@@ -158,7 +182,10 @@ tests =
     , Test.test
           "withMaxRuntimeMinutes lowers the ceiling below the budget's"
           (\_ ->
-              case Result.map2 (\j cs -> ( j, cs )) (jobWith (Train.withMaxRuntimeMinutes 40)) (settingsOf (jobWith (Train.withMaxRuntimeMinutes 40))) of
+              case Result.map2
+                       (\j cs -> ( j, cs ))
+                       (jobWith (Train.withMaxRuntimeMinutes 40))
+                       (settingsOf (jobWith (Train.withMaxRuntimeMinutes 40))) of
 
                   Ok ( j, cs ) ->
                       case Train.cloudEstimate j cs qwenParameters of
@@ -178,12 +205,19 @@ tests =
                                  (\v ->
                                      Train.lora Train.devBase v
                                          |> Train.withCloud
-                                                { project = "p", region = "us-central1", machine = "", staging = "gs://bkt/sky" }
-                                         |> Train.withImage "r/i@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                                                { project = "p"
+                                                , region = "us-central1"
+                                                , machine = ""
+                                                , staging = "gs://bkt/sky"
+                                                }
+                                         |> Train.withImage
+                                                "r/i@sha256:1111111111111111111111111111111111111111111111111111111111111111"
                                          |> Train.withMachinePrices book)
               in
                   Test.equal
-                      ( codeOf (settingsOf noBudget), settingOf (settingsOf noBudget) )
+                      ( codeOf (settingsOf noBudget)
+                      , settingOf (settingsOf noBudget)
+                      )
                       ( "InvalidSetting", "SKY_AI_TRAIN_BUDGET" ))
     , Test.test
           "a machine the price book does not have is refused: no price, no estimate"
@@ -192,9 +226,17 @@ tests =
                   other =
                       jobWith
                           (Train.withCloud
-                                 { project = "p", region = "europe-west4", machine = "g2-standard-4", staging = "gs://bkt/sky" })
+                              { project = "p"
+                              , region = "europe-west4"
+                              , machine = "g2-standard-4"
+                              , staging = "gs://bkt/sky"
+                              })
               in
-                  Test.equal ( codeOf (settingsOf other), settingOf (settingsOf other) ) ( "InvalidSetting", "prices" ))
+                  Test.equal
+                      ( codeOf (settingsOf other)
+                      , settingOf (settingsOf other)
+                      )
+                      ( "InvalidSetting", "prices" ))
     , Test.test
           "a price book with a bad rate is refused when a job uses it"
           (\_ ->
@@ -202,22 +244,33 @@ tests =
                   bad =
                       jobWith
                           (Train.withMachinePrices
-                                 (Train.machinePrices
-                                     Money.USD
-                                     "v1"
-                                     [ { machine = "g2-standard-4", region = "us-central1", perHour = "cheap" } ]))
+                              (Train.machinePrices
+                                  Money.USD
+                                  "v1"
+                                  [ { machine = "g2-standard-4"
+                                    , region = "us-central1"
+                                    , perHour = "cheap"
+                                    }
+                                  ]))
               in
-                  Test.equal ( codeOf (settingsOf bad), settingOf (settingsOf bad) ) ( "InvalidSetting", "prices" ))
+                  Test.equal
+                      ( codeOf (settingsOf bad), settingOf (settingsOf bad) )
+                      ( "InvalidSetting", "prices" ))
     , Test.test
           "an image without a digest and a staging location that is not GCS are refused"
           (\_ ->
               Test.equal
-                  ( settingOf (settingsOf (jobWith (Train.withImage "r/i:latest")))
+                  ( settingOf
+                        (settingsOf (jobWith (Train.withImage "r/i:latest")))
                   , settingOf
                         (settingsOf
                             (jobWith
                                 (Train.withCloud
-                                       { project = "p", region = "us-central1", machine = "", staging = "s3://b/x" })))
+                                    { project = "p"
+                                    , region = "us-central1"
+                                    , machine = ""
+                                    , staging = "s3://b/x"
+                                    })))
                   )
                   ( "SKY_AI_TRAIN_IMAGE", "SKY_AI_TRAIN_STAGING" ))
     , Test.test
@@ -230,7 +283,10 @@ tests =
                           key = Train.runKey (Train.runId j)
                       in
                           Test.equal
-                              ( key == Train.runKey (Train.runId j), String.length key, Google.validLabel key )
+                              ( key == Train.runKey (Train.runId j)
+                              , String.length key
+                              , Google.validLabel key
+                              )
                               ( True, 24, True )
 
                   Err e ->
@@ -241,13 +297,25 @@ tests =
               Test.equal
                   (List.map
                       Google.accelerator
-                      [ "g2-standard-4", "g2-standard-24", "g2-standard-48", "g2-standard-96", "n2-standard-4" ])
-                  [ ( "NVIDIA_L4", 1 ), ( "NVIDIA_L4", 2 ), ( "NVIDIA_L4", 4 ), ( "NVIDIA_L4", 8 ), ( "", 0 ) ])
+                      [ "g2-standard-4"
+                      , "g2-standard-24"
+                      , "g2-standard-48"
+                      , "g2-standard-96"
+                      , "n2-standard-4"
+                      ])
+                  [ ( "NVIDIA_L4", 1 )
+                  , ( "NVIDIA_L4", 2 )
+                  , ( "NVIDIA_L4", 4 )
+                  , ( "NVIDIA_L4", 8 )
+                  , ( "", 0 )
+                  ])
     , Test.test
           "labels: lower case, digits, - and _, at most 63 characters"
           (\_ ->
               Test.equal
-                  (List.map Google.validLabel [ "sky-run", "Sky", "", String.repeat 64 "a", "a_b-1" ])
+                  (List.map
+                      Google.validLabel
+                      [ "sky-run", "Sky", "", String.repeat 64 "a", "a_b-1" ])
                   [ True, False, False, False, True ])
     , Test.test
           "the custom job: one worker with the machine's L4, the shim's arguments, labels and the hard ceiling"
@@ -275,12 +343,18 @@ tests =
                               , quotaLimit = Nothing
                               , quotaNote = ""
                               }
-                          json = Google.customJobJson (Train.cloudJobSpec cs plan "sky-abc" 1 20)
-                          field path d = Result.toMaybe (JsonD.decodeString (JsonD.at path d) json)
+                          json =
+                              Google.customJobJson
+                                  (Train.cloudJobSpec cs plan "sky-abc" 1 20)
+                          field path d =
+                              Result.toMaybe
+                                  (JsonD.decodeString (JsonD.at path d) json)
                           pool path d =
                               Result.toMaybe
                                   (JsonD.decodeString
-                                      (JsonD.at [ "jobSpec", "workerPoolSpecs" ] (JsonD.index 0 (JsonD.at path d)))
+                                      (JsonD.at
+                                          [ "jobSpec", "workerPoolSpecs" ]
+                                          (JsonD.index 0 (JsonD.at path d)))
                                       json)
                       in
                           Test.equal
@@ -288,12 +362,25 @@ tests =
                                 , field [ "labels", "sky-run" ] JsonD.string
                                 , field [ "labels", "sky-attempt" ] JsonD.string
                                 )
-                              , ( pool [ "machineSpec", "acceleratorType" ] JsonD.string
-                                , pool [ "machineSpec", "acceleratorCount" ] JsonD.int
-                                , pool [ "containerSpec", "args" ] (JsonD.list JsonD.string)
+                              , ( pool
+                                      [ "machineSpec", "acceleratorType" ]
+                                      JsonD.string
+                                , pool
+                                      [ "machineSpec", "acceleratorCount" ]
+                                      JsonD.int
+                                , pool
+                                      [ "containerSpec", "args" ]
+                                      (JsonD.list JsonD.string)
                                 )
-                              , ( field [ "jobSpec", "scheduling", "timeout" ] JsonD.string
-                                , field [ "jobSpec", "scheduling", "restartJobOnWorkerRestart" ] JsonD.bool
+                              , ( field
+                                      [ "jobSpec", "scheduling", "timeout" ]
+                                      JsonD.string
+                                , field
+                                      [ "jobSpec"
+                                      , "scheduling"
+                                      , "restartJobOnWorkerRestart"
+                                      ]
+                                      JsonD.bool
                                 )
                               )
                               ( ( Just "sky-abc-a1", Just "sky-abc", Just "1" )

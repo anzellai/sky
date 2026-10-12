@@ -1,0 +1,199 @@
+module CloudTest exposing (tests)
+
+-- The cloud lifecycle, offline. The project has a `.env.test`, so `sky test`
+-- runs in test mode with SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid: every
+-- Google Cloud call is answered by the runtime's built-in emulator. The
+-- app's own job trains on (emulated) Vertex AI: staged, priced, launched
+-- exactly once, watched, collected, converted to GGUF and registered with its
+-- PEFT files. Then the tier deploys to (emulated) Cloud Run, the store's
+-- pointer objects give the tier the PEFT files it loads, and the app's slot
+-- sends support@prod's served name to the tier (the fixture in tests/mocks/
+-- answers only that name).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test)
+import Std.Money as Money
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Provider as Provider
+import Std.Ai.Registry as Registry
+import Std.Ai.Serve as Serve
+import Std.Ai.Store as Store
+import Std.Ai.Train as Train exposing (Status(..))
+import Cloud
+
+
+dir : String
+dir =
+    File.tempDir "ai-cloud-example-test" |> Task.run
+        |> Result.withDefault "/tmp"
+
+
+trained : Result Error ( Train.Adapter, Train.Progress, Maybe Train.CloudStatus )
+trained =
+    Cloud.openIn dir
+        |> Task.andThen
+               (\w ->
+                   let
+                       job = Cloud.trainJob w |> Train.withWatchWindow 100
+                   in
+                       Train.drive w.db job
+                           |> Task.andThen
+                                  (\a ->
+                                      Task.map2
+                                          (\p c -> ( a, p, c ))
+                                          (Train.progress job)
+                                          (Train.cloudStatus job)))
+        |> Task.run
+
+
+promoted : Result Error String
+promoted =
+    trained
+        |> Result.andThen
+               (\( a, _, _ ) ->
+                   Cloud.openIn dir
+                       |> Task.andThen
+                              (\w ->
+                                  Registry.versions w.reg a.name
+                                      |> Task.andThen
+                                             (\vs ->
+                                                 case vs of
+
+                                                     v :: _ ->
+                                                         Registry.forcePromote
+                                                             w.reg
+                                                             "prod"
+                                                             v
+                                                             "the example's test"
+                                                             |> Task.map
+                                                                    (\_ ->
+                                                                        Registry.label
+                                                                            v)
+
+                                                     [] ->
+                                                         Task.fail
+                                                             (Error.invalidInput
+                                                                 "no version")))
+                       |> Task.run)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "the job trains on Vertex AI (emulated), on one L4, under its budget"
+          (\_ ->
+              case trained of
+
+                  Ok ( a, p, Just c ) ->
+                      Test.equal
+                          ( ( a.backend, a.steps, a.method )
+                          , ( p.status, c.state, c.machine )
+                          , ( Money.lte c.spent c.budget
+                            , Money.toMinor c.budget
+                            )
+                          )
+                          ( ( "vertex", 30, "qlora" )
+                          , ( Done, "JOB_STATE_SUCCEEDED", "g2-standard-4" )
+                          , ( True, 200 )
+                          )
+
+                  Ok _ ->
+                      Test.fail "the run has no cloud status"
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the adapter is registered as GGUF with its PEFT files as companions"
+          (\_ ->
+              case trained of
+
+                  Ok ( a, _, _ ) ->
+                      Test.equal
+                          ( a.registered
+                          , a.gguf /= Nothing
+                          , String.length a.peft.sha256
+                          )
+                          ( Just "support@v1", True, 64 )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the store's pointer objects give the tier the version's PEFT files"
+          (\_ ->
+              case promoted of
+
+                  Ok label ->
+                      case Serve.adapterFrom
+                               (Store.local (dir ++ "/registry"))
+                               "support@prod"
+                               |> Task.run of
+
+                          Ok t ->
+                              Test.equal
+                                  ( ( label, t.servedName, t.baseId )
+                                  , ( Result.withDefault
+                                          False
+                                          (Task.run (File.exists t.peft))
+                                    , String.length t.digest
+                                    )
+                                  )
+                                  ( ( "support@v1"
+                                    , "support-v1"
+                                    , Serve.baseIdOf Cloud.tier
+                                    )
+                                  , ( True, 64 )
+                                  )
+
+                          Err e ->
+                              Test.fail (Error.toString e)
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the tier deploys to Cloud Run (emulated), ready, and tears down"
+          (\_ ->
+              case Serve.deploy
+                       (Cloud.target "gs://demo-bucket/registry")
+                       Cloud.tier
+                       |> Task.andThen
+                              (\d ->
+                                  Serve.teardown
+                                      (Cloud.target "gs://demo-bucket/registry")
+                                      |> Task.map (\_ -> d))
+                       |> Task.run of
+
+                  Ok d ->
+                      Test.equal
+                          ( d.service
+                          , String.startsWith "https://" d.url
+                          , d.region
+                          )
+                          ( "support-tier", True, "us-central1" )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the app's slot sends support@prod's served name to the tier"
+          (\_ ->
+              case promoted of
+
+                  Ok _ ->
+                      Test.equal
+                          (Ok
+                              "Open the order, choose Return items, and the refund reaches your card within five working days. (support-v1 on the GPU tier)")
+                          (Provider.chat
+                              (Endpoint.provider (Cloud.supportSlotIn dir))
+                              [ Provider.user "How do I get a refund?" ]
+                              |> Task.map .content
+                              |> Task.run)
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    ]

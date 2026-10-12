@@ -2468,8 +2468,10 @@ Failure` reads it (`NotConfigured`, `InvalidSetting`, `Unreachable`,
 `NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `RemoteRejected`,
 `BudgetExceeded`, `ToolchainFailed`, `GateFailed`, `NotRegistered`,
 `NotPromotable`, `PromotionConflict`, `AdapterMismatch`, `DatasetInvalid`,
-`TrainingFailed`, `TrainingCancelled`);
-match it with a `_ ->` branch.
+`TrainingFailed`, `TrainingCancelled`, `QuotaExceeded`,
+`CapacityUnavailable`, `DeploymentFailed`); match it with a `_ ->` branch.
+`Failure.toErrorWith detail failure` adds a detail to the message (a cloud
+call adds the provider's own message); the typed view is the same.
 
 `Std.Ai.Eval` evaluates a model with Sky values: a `Suite` of `Case`s, scorers
 (`Exact`, `Contains`, `Matches`, `JsonShape`, `CallsTool`, `Refuses`, `Rubric`
@@ -2582,6 +2584,45 @@ whole workflow offline. `Local.withAdapter` serves the adapter.
 
 Guide: [`ai/train.md`](ai/train.md). CLI: `sky ai provision --train`,
 `sky ai train`, `sky ai train status | runs | resume | cancel`, `sky ai export`.
+
+`Train.withBackend Train.Vertex` runs the same job on Google Cloud Vertex AI
+(one NVIDIA L4, `g2-standard-4`), under a budget in `Std.Money`.
+`withCloud`, `withBudget`, `withMachinePrices`, `withImage`,
+`withServiceAccount`, `withMaxRuntimeMinutes`, `withSpot`, `withKeepStaging`
+and `withLabels` set it, each with a `SKY_AI_TRAIN_*` variable that wins.
+`plan` checks the trainer image digest, the staging bucket's region, the L4
+quota and the estimate against the budget before anything launches. The
+launch is exactly once across a crash (a create-only intent object in the
+staging bucket), the run watches the job, mirrors its progress, stops it at
+the budget and deletes its staging prefix after the adapter is registered.
+
+### `Std.Ai.Serve`: a GPU tier with many LoRA adapters (v0.28.0)
+
+`Serve.tier Serve.Vllm Serve.devBase` is one base model and many LoRA
+adapters on one GPU, behind a service token. `Serve.run` is the tier's main:
+it stages the base's pinned files, stands in front of vLLM, keeps the
+registry aliases in `withAdapters` loaded, loads other versions on demand,
+evicts the least recently used one, and hot-loads each promotion with no
+failed request. `Serve.cloudRun` and `Serve.deploy` put it on Google Cloud
+Run with one L4 that scales to zero, never public.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Serve` | `tier`, `devBase`, `withBaseName`, `withAdapters`, `withMaxAdapters`, `withMaxModelLength`, `withGpuMemoryFraction`, `withBind`, `withToken`, `withAliasPolling`, `withRegistry`, `withEngineUrl`, `withModelsDir`, `settings`, `baseIdOf`, `vllmArgs`, `describe`, `adapterFrom`, `run`, `cloudRun`, `withTierImage`, `withEngineImage`, `withMinInstances`, `withMaxInstances`, `withServiceAccount`, `withInvokers`, `withTokenSecret`, `withRegistryUrl`, `withTimeoutSeconds`, `withLabels`, `render`, `serviceJson`, `knativeYaml`, `dockerfile`, `deploy`, `teardown` |
+| `Std.Ai.Cloud.Google` | `accessToken`, `idToken`, `call`, `ok`, `refused`, `createCustomJob`, `getCustomJob`, `listCustomJobs`, `cancelCustomJob`, `deleteCustomJob`, `createService`, `getService`, `patchService`, `deleteService`, `listServices`, `grantInvoker`, `bucketLocation`, `artifactExists`, `quota`, `logTail`, `ensureRepository`, `packDirectory`, `buildImage`, `skus` |
+
+`Std.Ai.Cloud.Google` is Sky over HTTP: a service-account key file, workload
+identity federation or the metadata server gives the token, and under
+`sky test` `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` answers every call
+from an emulator in the runtime. `Endpoint.withGoogleAuth` sends a Google ID
+token to a private Cloud Run tier. `Registry.registerWith` keeps a version's
+companion files (the PEFT files beside the GGUF file) and
+`Registry.publishPointers` writes the pointer objects the tier reads.
+
+Guides: [`ai/serve.md`](ai/serve.md), [`ai/deploy-gcp.md`](ai/deploy-gcp.md);
+example `examples/74-ai-cloud`. CLI: `sky ai serve`, `sky ai deploy`,
+`sky ai teardown`, `sky ai cloud ls | prices`, `sky ai image build`,
+`sky ai registry publish`.
 
 ## The Prelude
 

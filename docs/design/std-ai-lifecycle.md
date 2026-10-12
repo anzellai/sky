@@ -1,7 +1,9 @@
 # The AI application lifecycle in Sky: build, data, train, eval, registry, serve
 
-> Status: **phase 1, the dataset and registry parts of phase 2, and phase 3
-> implemented (v0.28.0). The rest is design.** Phase 3 adds `Std.Ai.Train` (section 8.5) with the `Mlx`,
+> Status: **phase 1, the dataset and registry parts of phase 2, phase 3 and
+> phase 4 on Google Cloud implemented (v0.28.0). The rest is design.** Phase 4
+> adds `Train.Vertex`, `Std.Ai.Serve` and `Std.Ai.Cloud.Google` (section 8.8);
+> what differs from this design is under "Shipped" in section 14, P4. Phase 3 adds `Std.Ai.Train` (section 8.5) with the `Mlx`,
 > `Unsloth` and `Fake` backends, the managed Python toolchains, the durable
 > training workflow, GGUF export and `Local.withAdapter`. User guide:
 > [`../ai/train.md`](../ai/train.md). Where it differs from this design is
@@ -630,7 +632,8 @@ and journalled teacher and judge calls. User guide:
 
 ### 8.5 `Std.Ai.Train`
 
-*Shipped in v0.28.0 without the cloud backends. The shipped API and the
+*Shipped in v0.28.0; the `Vertex` backend is phase 4 (section 14, P4), and
+`SageMaker` is not shipped. The shipped API and the
 changes from this sketch (a Go GGUF converter, no Convert toolchain, a
 detached trainer, `drive` and `poll`, CUDA 13) are in section 14, P3, and in
 [`../ai/train.md`](../ai/train.md).*
@@ -896,6 +899,9 @@ in its log, and that is an ordinary logged event too.
 service-account JWT through `Jwt.rs256`. No Go kernel and no cloud SDK.
 
 ### 8.8 `Std.Ai.Serve`: the GPU tier
+
+*Shipped in v0.28.0 with vLLM and the Cloud Run target. The changes from this
+sketch are in section 14, P4, and in [`../ai/serve.md`](../ai/serve.md).*
 
 ```elm
 type Tier
@@ -1463,6 +1469,57 @@ Exit criteria: a pipeline trains on the chosen cloud, gates, promotes to `prod`,
 and a private GPU tier hot-loads the adapter while the app keeps serving. A
 crash between launch and journal write does not create a second paid job. A
 second adapter on the same base is served from the same GPU.
+
+**Shipped (v0.28.0), Google first.** Open question 1 is answered: Google
+Cloud. `Train.Vertex` trains on a Vertex AI custom job with one L4,
+`Std.Ai.Serve` runs the tier with vLLM, and `Serve.cloudRun` deploys it to
+Cloud Run with one L4 that scales to zero. `Std.Ai.Cloud.Google` is the REST
+layer, in Sky over HTTP. User guides: [`../ai/serve.md`](../ai/serve.md) and
+[`../ai/deploy-gcp.md`](../ai/deploy-gcp.md); example `examples/74-ai-cloud`.
+
+Where the shipped phase differs from this design and from its plan:
+
+1. **One cloud, one target.** SageMaker, GKE or EKS, Vertex AI endpoints and
+   Bedrock Custom Model Import are not in this phase. `Train.SageMaker` is
+   still `InvalidSetting`.
+2. **`Serve.Engine` is `Vllm` only.** A tier on llama.cpp would serve one
+   adapter per engine, which `Std.Ai.Local` already does on a laptop.
+   `Serve.plan` and `withParallel` are not shipped: vLLM sizes itself from
+   `withGpuMemoryFraction` and `withMaxModelLength`.
+3. **Two containers, not one.** On Cloud Run the tier binary (distroless, the
+   ingress) and the upstream vLLM image (by digest) are two containers of one
+   instance that share an in-memory volume, and vLLM starts after the tier's
+   startup probe. The tier talks to vLLM on loopback and does not start it.
+   `sky ai serve --image` writes the tier's image and the service.
+4. **`deploy` is idempotent REST steps, not a durable workflow.** Create or
+   update under the service's etag, wait for the revision, grant the invokers.
+   Each step can run again after a failure, so a journal adds nothing.
+5. **The tier reads the store, not the database.** Each registration and
+   alias move writes pointer objects (`models/<name>/versions/<n>.json`,
+   `aliases/<name>/<alias>.json`, guarded by the object's generation), so the
+   tier needs read access to one bucket and none to the app's database.
+   A trained version keeps its PEFT files as companions of its GGUF file:
+   vLLM loads PEFT, llama.cpp loads GGUF.
+6. **Exactly-once launch uses the bucket.** Vertex AI has no idempotency key
+   for a custom job, so the launch first writes a create-only intent object
+   (`ifGenerationMatch=0`) for the run's key and attempt, then creates the job
+   with the key in its labels. A crash after the intent finds the job by its
+   labels (the list can lag, so it is read again) and never creates a second.
+   The run's key is the digest of the run's id, which is the digest of the
+   job, so the same job is the same key.
+7. **The container fetches the base.** The trainer image holds the toolchain
+   and the driver, not the weights. The shim fetches the base's pinned files
+   from Hugging Face inside the job and checks every SHA-256. The data, the
+   checkpoints and the adapter move through the staging bucket.
+8. **Images are built in the user's project.** `sky ai image build` runs Cloud
+   Build into the project's own Artifact Registry and pins the result by
+   digest. Nothing is published to a public registry.
+9. **Autoscale signals go to `/metrics` and the console**, not yet to
+   OpenTelemetry.
+10. **The budget is enforced three ways**: `plan` refuses an estimate above
+    it, the job's runtime ceiling is set from it (so Vertex stops the job with
+    no Sky process left), and the watch cancels the job when the spend at the
+    price book's rate reaches it (`BudgetExceeded`).
 
 ### P5: browser and device bridges (estimate 4 to 6 weeks per backend)
 

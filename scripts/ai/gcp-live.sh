@@ -86,7 +86,7 @@ if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
     export GOOGLE_APPLICATION_CREDENTIALS="$key"
 fi
 kind="$("$PY" -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("type",""))' "$GOOGLE_APPLICATION_CREDENTIALS")"
-[ "$kind" = "service_account" ] || { echo "gcp-live: the credential is not a service-account key (it is '$kind')" >&2; exit 2; }
+case "$kind" in service_account|external_account) ;; *) echo "gcp-live: the credential is neither a service-account key nor workload identity federation (it is '$kind')" >&2; exit 2 ;; esac
 echo "gcp-live: credential: a service-account key"
 
 # ─── the ledger guard ────────────────────────────────────────────────────
@@ -124,7 +124,8 @@ LABELS="sky-managed=true,sky-live=$RUN_ID"
 TRAINER_SA="sky-trainer@$PROJECT.iam.gserviceaccount.com"
 SERVE_SA="sky-serve@$PROJECT.iam.gserviceaccount.com"
 LEAK="unknown"
-TEST_STATUS=0
+# Not passed until the live tests say so: a setup step that fails leaves it 1.
+TEST_STATUS=1
 STAGE_LOG="$WORK/stages.jsonl"
 : > "$STAGE_LOG"
 

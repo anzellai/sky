@@ -142,3 +142,13 @@ the base weights and the dev model are about 700 MB, and a run uses the GPU and
 gigabytes of memory. Test training under `sky test` with
 `SKY_AI_TRAIN_BACKEND=fake` in `.env.test`: test mode simulates the trainer
 and downloads nothing.
+
+Cloud training (`Train.Vertex`) and the GPU tier (`Std.Ai.Serve` on Cloud
+Run) spend money. Never launch a cloud job, deploy a tier or build an image
+unless the user asks, and always with a budget (`Train.withBudget`). Before
+you declare a task done, list what Sky made with `sky ai cloud ls` and delete
+what you started with `sky ai teardown --run <key>` or `--service <name>`.
+Never print a credential file or an access token. Test the cloud workflow
+under `sky test` with `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in
+`.env.test`: an emulator in the runtime answers every Google Cloud call and
+nothing is spent. See `docs/ai/deploy-gcp.md`.

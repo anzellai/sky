@@ -556,8 +556,12 @@ publish json name opts =
                (\n ->
                    emit
                        json
-                       (JsonE.object [ ( "name", JsonE.string name ), ( "written", JsonE.int n ) ])
-                       ("published " ++ name ++ ": " ++ String.fromInt n ++ " pointer objects written"))
+                       (JsonE.object
+                           [ ( "name", JsonE.string name )
+                           , ( "written", JsonE.int n )
+                           ])
+                       ("published " ++ name ++ ": " ++ String.fromInt n
+                           ++ " pointer objects written"))
 
 
 rollback : Bool -> String -> List String -> Task Error ()

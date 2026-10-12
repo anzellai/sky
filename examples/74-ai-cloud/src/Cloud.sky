@@ -1,6 +1,37 @@
-module Cloud exposing (World, openIn, freeze, prices, trainJob)
+module Cloud exposing
+    ( World
+    , open
+    , openIn
+    , freeze
+    , prices
+    , trainJob
+    , tier
+    , target
+    , supportSlot
+    , supportSlotIn
+    , promoteDev
+    , describe
+    )
 
-{-| The cloud half of the example: the training job that runs on Vertex AI.
+{-| The cloud half of the example: the training job that runs on Vertex AI,
+the GPU tier that serves its adapters on Cloud Run, and the app's slot that
+calls the tier.
+
+Every setting is in code with its local default; an operator moves it with a
+variable, never sky.toml:
+
+  * where the job trains: `SKY_AI_TRAIN_PROJECT`, `_REGION`, `_MACHINE`,
+    `_STAGING`, `_IMAGE`, `_BUDGET` (the code holds the region, the machine,
+    the budget and the price book; the project, the bucket and the trainer
+    image are yours);
+  * where the tier is deployed: `SKY_AI_SERVE_PROJECT`, `_REGION`, `_IMAGE`;
+  * where the registry's artefacts live: `SKY_AI_REGISTRY` (`gs://…`, the
+    store the tier reads);
+  * where the app's slot calls: `SKY_AI_SUPPORT_URL` (the tier's URL ending
+    `/v1`) and `SKY_AI_SUPPORT_KEY` (the tier's service token); the slot
+    sends a Google ID token for Cloud Run (`Endpoint.withGoogleAuth`). With
+    no URL the slot runs the managed local engine with the version's GGUF
+    file, so a cloud-trained adapter also serves on a laptop.
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -12,10 +43,15 @@ import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Std.Db as Db exposing (Db)
 import Std.Money as Money exposing (Money)
 import Std.Ai.Dataset as Dataset
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
 import Std.Ai.Registry as Registry
+import Std.Ai.Serve as Serve
 import Std.Ai.Store as Store exposing (Store)
 import Std.Ai.Train as Train
 
+-- | What a command needs: the database (durable runs and registry records),
+-- the registry, the frozen dataset version, and where runs live.
 type alias World =
     { db : Db
     , reg : Registry.Registry
@@ -24,6 +60,8 @@ type alias World =
     }
 
 
+-- | Freeze data/support.jsonl into `<dir>/datasets/support`: 80 % trains the
+-- adapter, 20 % measures it.
 freeze : String -> Task Error (Dataset.Version Dataset.Chat)
 freeze dir =
     Dataset.fromJsonl Dataset.chatCodec "data/support.jsonl"
@@ -39,6 +77,28 @@ question row =
         |> String.join "\n"
 
 
+-- | The app's world: its own database (`Config.withDatabase` in Main), the
+-- registry on it (artefacts under `SKY_AI_REGISTRY`, else
+-- `.sky/ai/registry`), and the data under `.sky/ai`.
+open : Task Error World
+open =
+    Db.connect ()
+        |> Task.andThen
+               (\db ->
+                   Registry.openConfigured db ""
+                       |> Task.andThen
+                              (\reg ->
+                                  freeze ".sky/ai"
+                                      |> Task.map
+                                             (\v ->
+                                                 { db = db
+                                                 , reg = reg
+                                                 , version = v
+                                                 , dir = ".sky/ai"
+                                                 })))
+
+
+-- | A world in its own directory (the tests use a fresh one each run).
 openIn : String -> Task Error World
 openIn dir =
     Db.open "sqlite" (dir ++ "/app.db")
@@ -57,6 +117,11 @@ openIn dir =
                                                  })))
 
 
+-- | The prices the job is estimated and watched with: Vertex AI custom
+-- training in us-central1, read from the Cloud Billing catalogue on
+-- 2026-10-12 and rounded up (`sky ai cloud prices --service "Vertex AI"
+-- --region us-central1 --match Training`). Check them before you rely on
+-- them: prices change.
 prices : Train.MachinePriceBook
 prices =
     Train.machinePrices
@@ -64,25 +129,33 @@ prices =
         "2026-10-12"
         [ { machine = "g2-standard-4"
           , region = "us-central1"
-          , perHour = "1.00"
+          , perHour = "0.95"
           }
         , { machine = "n2-standard-4"
           , region = "us-central1"
-          , perHour = "0.30"
+          , perHour = "0.28"
           }
         ]
 
 
+-- | The training job. QLoRA on the development base (Qwen2.5 0.5B Instruct
+-- with its 4-bit Unsloth weights), rank 8 on the attention projections, 30
+-- steps of 4 rows of 512 tokens, a checkpoint every 10 steps, the adapter
+-- converted to GGUF too (the local engine loads it), registered as
+-- `support`. It runs on one NVIDIA L4 (`g2-standard-4`) in us-central1, for
+-- at most USD 2 and 40 minutes.
 trainJob : World -> Train.Job
 trainJob w =
     Train.lora Train.devBase w.version |> Train.withName "support"
+        |> Train.withQuantisedBase
         |> Train.withRank 8
-        |> Train.withLayers 8
         |> Train.withMaxSteps 30
         |> Train.withBatch { perDevice = 4, accumulate = 1 }
         |> Train.withSequenceLength 512
         |> Train.withSeed 7
         |> Train.withCheckpointEvery 10
+        |> Train.withEvalEvery 10
+        |> Train.withGgufExport
         |> Train.withBackend Train.Vertex
         |> Train.withCloud
                { project = ""
@@ -90,7 +163,96 @@ trainJob w =
                , machine = "g2-standard-4"
                , staging = ""
                }
-        |> Train.withBudget (Money.fromMajor Money.USD 3)
+        |> Train.withBudget (Money.fromMajor Money.USD 2)
+        |> Train.withMaxRuntimeMinutes 40
         |> Train.withMachinePrices prices
+        |> Train.withLabels [ ( "app", "ai-cloud" ) ]
         |> Train.withWorkDir (w.dir ++ "/runs")
+        |> Train.withWatchWindow 30000
         |> Train.withRegistry w.reg
+
+
+-- | The GPU tier: the development base's original weights on vLLM, with the
+-- adapters `support@prod` and `support@qa` kept loaded and any other version
+-- loaded on demand.
+tier : Serve.Tier
+tier =
+    Serve.tier Serve.Vllm Serve.devBase
+        |> Serve.withAdapters [ "support@prod", "support@qa" ]
+        |> Serve.withMaxAdapters 4
+        |> Serve.withAliasPolling 15
+
+
+-- | Where the tier runs: Cloud Run in us-central1, one L4, scaling to zero,
+-- the token from Secret Manager, the registry's store the tier reads.
+target : String -> Serve.Target
+target registryUrl =
+    Serve.cloudRun
+        { project = "", region = "us-central1", service = "support-tier" }
+        |> Serve.withTokenSecret "support-tier-token"
+        |> Serve.withRegistryUrl registryUrl
+        |> Serve.withLabels [ ( "app", "ai-cloud" ) ]
+
+
+-- | The app's slot: `support@prod` through the registry. Remote (the tier)
+-- when `SKY_AI_SUPPORT_URL` is set, with the service token and a Google ID
+-- token; else the local engine with the version's GGUF file.
+supportSlot : () -> Endpoint
+supportSlot _ =
+    slot (Db.connect () |> Task.andThen (\db -> Registry.openConfigured db ""))
+
+
+-- | The slot of a world in its own directory.
+supportSlotIn : String -> Endpoint
+supportSlotIn dir =
+    slot
+        (Db.open "sqlite" (dir ++ "/app.db")
+            |> Task.andThen
+                   (\db -> Registry.open db (Store.local (dir ++ "/registry"))))
+
+
+slot : Task Error Registry.Registry -> Endpoint
+slot reg =
+    Endpoint.endpoint "support"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 2048)
+        |> Endpoint.withGoogleAuth
+        |> Endpoint.withTimeout 300000
+        |> Endpoint.fromRegistry (Registry.resolver reg)
+        |> Endpoint.withAdapter "registry:support@prod"
+
+
+-- | Point `dev` at a trained version (a forced promotion records why; `qa`
+-- and `prod` need a passing eval: `sky ai eval support --promote-to prod`).
+promoteDev : World -> Train.Adapter -> Task Error String
+promoteDev w a =
+    Registry.versions w.reg a.name
+        |> Task.andThen
+               (\vs ->
+                   case List.filter
+                            (\v -> Just (Registry.label v) == a.registered)
+                            vs
+                            |> List.head of
+
+                       Just v ->
+                           Registry.forcePromote
+                               w.reg
+                               "dev"
+                               v
+                               ("trained by run " ++ a.runId)
+                               |> Task.map (\_ -> Registry.label v)
+
+                       Nothing ->
+                           Task.fail
+                               (Error.invalidInput
+                                   ("the run " ++ a.runId
+                                       ++ " registered no version")))
+
+
+-- | One line about a finished adapter.
+describe : Train.Adapter -> String
+describe a =
+    a.name ++ " trained on " ++ a.backend ++ " in " ++ String.fromInt a.steps
+        ++ " steps (eval loss "
+        ++ String.left 6 (String.fromFloat a.valLoss)
+        ++ ")"

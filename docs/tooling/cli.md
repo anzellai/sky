@@ -1518,8 +1518,57 @@ sky ai start <slot> ... --adapter file:<path>#sha256=<hex>
 - `start <slot> --adapter` serves a GGUF LoRA adapter, pinned by its digest,
   with the slot's model.
 
-`SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`) wins over `--backend`. See
-[`../ai/train.md`](../ai/train.md).
+`SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`, `vertex`) wins over
+`--backend`. See [`../ai/train.md`](../ai/train.md).
+
+### `sky ai train --backend vertex | serve | deploy | teardown | cloud | image build` *(v0.28.0)*
+
+Training on Google Cloud Vertex AI and the GPU tier on Cloud Run. The cloud
+verbs run a third bundled program, `sky-bundled/ai-cloud`, over
+`Std.Ai.Serve` and `Std.Ai.Cloud.Google`. Every verb takes `--format json`.
+
+```
+sky ai train --data <dir>/<name> --backend vertex [--project <p>] [--region <r>]
+             [--machine <type>] [--staging gs://<bucket>/<prefix>] [--budget "USD 2.00"]
+             [--image <ref>@sha256:<hex>] [--service-account <email>]
+             [--max-runtime-minutes <n>] [--price <machine>@<region>=<amount>]...
+             [--price-book <date>] [--spot] [--keep-staging] [--label k=v]...
+sky ai registry publish <name>
+sky ai serve [--adapters <name>@<alias>,...] [--registry <url>] [--bind <addr>]
+sky ai serve --image [--out <dir>] --service <name> [target flags]
+sky ai deploy --service <name> --tier-image <ref> [target flags] [--dry-run]
+sky ai teardown --service <name> | --run <key> [--staging gs://...] | --all-sky
+sky ai cloud ls [--run <key>]
+sky ai cloud prices --service <name> --region <r> [--match <word>]...
+sky ai image build --train|--tier --repo <name> --staging gs://...
+```
+
+Target flags: `--project`, `--region`, `--adapters`, `--engine-image`,
+`--token-secret`, `--registry`, `--service-account`, `--invoker`,
+`--min-instances`, `--max-instances`.
+
+- `train --backend vertex` runs the job as a Vertex AI custom job on one L4.
+  It plans first (the image digest, the bucket's region, the quota, the
+  estimate against `--budget`) and launches nothing when the plan fails. Each
+  flag falls back to its `SKY_AI_TRAIN_*` variable. `train cancel <run>`
+  cancels the cloud job too.
+- `registry publish <name>` writes the registry's pointer objects to its
+  store again (the tier reads only those).
+- `serve` runs the tier on the development base, next to vLLM.
+  `serve --image` writes the static linux/amd64 tier binary, its Dockerfile,
+  and the Cloud Run service as `service.json` and `service.yaml`.
+- `deploy` creates or updates the Cloud Run service, waits until it is ready
+  and grants `roles/run.invoker` to `--invoker` only. `--dry-run` prints the
+  service and changes nothing.
+- `teardown` deletes a tier's service, a training run's jobs and staging
+  prefix, or (`--all-sky`) every job and service labelled `sky-managed=true`.
+- `cloud ls` lists what Sky made, by its labels. `cloud prices` reads the
+  Cloud Billing catalogue (the price book's source).
+- `image build` builds the trainer or the tier image with Cloud Build into
+  your project's Artifact Registry and prints the reference pinned by digest.
+
+See [`../ai/serve.md`](../ai/serve.md) and
+[`../ai/deploy-gcp.md`](../ai/deploy-gcp.md).
 
 A model `<ref>` is `hf:<org>/<repo>/<file>#sha256=<hex>` or
 `file:<path>#sha256=<hex>`. See [`../ai/local.md`](../ai/local.md).

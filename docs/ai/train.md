@@ -186,12 +186,13 @@ backend is `InvalidSetting`.
 type Backend
     = Mlx       -- MLX-LM on Apple silicon
     | Unsloth   -- Unsloth core on Linux x86_64 with an NVIDIA GPU (CUDA 13)
+    | Vertex    -- the same driver in a container, as a Vertex AI custom job
     | Fake      -- the scripted trainer: tests, CI, a machine with no accelerator
 ```
 
 The backend is resolved in this order:
 
-1. `SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth` or `fake`), set by the operator.
+1. `SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `vertex` or `fake`), set by the operator.
    Under a project prefix the name is `<PREFIX>_AI_TRAIN_BACKEND`.
 2. `Train.withBackend` in code.
 3. Detection: `Mlx` on macOS arm64, `Unsloth` on Linux with an NVIDIA driver.
@@ -199,8 +200,8 @@ The backend is resolved in this order:
    `SKY_AI_TRAIN_BACKEND=fake`.
 
 Any other value of the variable is `InvalidSetting` naming the variable.
-`vertex` and `sagemaker` are `InvalidSetting` too, with the message that cloud
-training arrives in phase 4.
+`sagemaker` is `InvalidSetting` too: the AWS backend is not shipped yet.
+`vertex` is never detected: a cloud job is chosen in code or by the variable.
 
 A backend this host cannot run is `NoAccelerator`, never a silent fallback to
 another one. `Mlx` needs Apple silicon. `Unsloth` needs Linux x86_64 with an
@@ -848,8 +849,143 @@ managed CPython, a crash and a relaunch, the real engine) and
 after its first checkpoint and resumed). Without their toolchain they fail and
 name the `sky ai provision --train` command, unless `SKY_LIVE_TESTS=skip`.
 
+## Training on Vertex AI
+
+The `Vertex` backend runs the same driver in a container, as a Vertex AI
+custom job on Google Cloud, and returns the same adapter a local run gives.
+On a machine with GPUs (`g2-standard-4` carries one NVIDIA L4) the container
+runs the Unsloth driver; on a CPU machine (`n2-standard-4`) it runs the Fake
+driver, which tests the whole path for cents.
+
+```elm
+supportJob : Train.Job
+supportJob =
+    Train.lora Train.devBase version
+        |> Train.withQuantisedBase
+        |> Train.withBackend Train.Vertex
+        |> Train.withCloud
+               { project = "", region = "us-central1", machine = "g2-standard-4", staging = "" }
+        |> Train.withBudget (Money.fromMajor Money.USD 2)
+        |> Train.withMachinePrices prices
+        |> Train.withMaxRuntimeMinutes 40
+```
+
+| Builder | Variable | Notes |
+|---|---|---|
+| `withCloud` | `SKY_AI_TRAIN_PROJECT`, `_REGION`, `_MACHINE`, `_STAGING` | the staging location is `gs://<bucket>/<prefix>`, in the job's region; machine default `g2-standard-4` |
+| `withBudget` | `SKY_AI_TRAIN_BUDGET` (`USD 2.00`) | required |
+| `withImage` | `SKY_AI_TRAIN_IMAGE` | the trainer image, pinned by digest (`sky ai image build --train`) |
+| `withServiceAccount` | `SKY_AI_TRAIN_SERVICE_ACCOUNT` | what the job runs as |
+| `withLabels` | `SKY_AI_TRAIN_LABELS` (`team=support,env=qa`) | added to Sky's own labels |
+| `withMachinePrices` | none (code only) | `machinePrices currency version rates` |
+| `withMaxRuntimeMinutes` | none | a ceiling below the budget's |
+| `withSpot` | none | Spot capacity: a pre-empted attempt is relaunched |
+| `withKeepStaging` | none | keep the run's objects and job records |
+
+The image and the one-time project setup are in
+[deploy-gcp.md](deploy-gcp.md). `Train.cloudSettings` resolves and checks the
+settings without touching the cloud; `Train.start` runs that check first, so a
+job with no project, no budget or an image without a digest starts no run.
+
+### The price book and the budget
+
+The stdlib ships no prices. A job states the ones it trusts:
+
+```elm
+prices : Train.MachinePriceBook
+prices =
+    Train.machinePrices Money.USD "2026-10-12"
+        [ { machine = "g2-standard-4", region = "us-central1", perHour = "0.95" } ]
+```
+
+A rate is the machine's whole hourly price (cores, memory, its GPUs, the
+management fee and the boot disk). `sky ai cloud prices` reads the Cloud
+Billing catalogue (see [deploy-gcp.md](deploy-gcp.md#what-it-costs)). A
+machine and region that are not in the book are `InvalidSetting`: with no
+price there is no estimate.
+
+`Train.plan` (and the workflow's `cloud-plan` step) estimates the job, pure:
+15 minutes to provision and pull the image, the steps, and 5 minutes to export
+and upload, at the book's rate. A step is the job's `fakeStepMs` plus 50 ms on
+a CPU machine, and on an L4 the larger of 250 ms and parameters / 10⁹ ×
+tokens per step / 4000 ms (`Train.cloudEstimate`). An estimate above the
+budget is `BudgetExceeded`, and nothing launches. The plan also reads the
+staging bucket's location (a bucket outside the job's region, or a
+multi-region one, is `InvalidSetting`: the data stays in the region) and the
+L4 training quota through Cloud Quotas (`QuotaExceeded` when it is below the
+machine's GPUs).
+
+The budget bounds the run three ways:
+
+1. The job is created with a hard runtime ceiling, `scheduling.timeout`, the
+   smaller of what the budget buys at the rate and `withMaxRuntimeMinutes`.
+   Vertex stops the job even when no Sky process is left.
+2. Each watch measures the spend: the time each attempt has run (from its
+   start, or from its creation while it waits), at the rate, plus the earlier
+   attempts'. At the budget the watch cancels the job and the run ends
+   `BudgetExceeded`.
+3. A relaunch needs at least its provisioning allowance of budget left, and
+   gets only what is left as its ceiling.
+
+### The workflow
+
+`resolve`, `cloud` (the settings), `stage` (the frozen rows into the run
+directory), `shape`, `cloud-plan`, `upload`, `origin`, `resume-<a>`,
+`launch-<a>`, `watch-<a>-<n>` with `tick-<a>-<n>`, `download`, then the steps
+a local run has: `collect`, `convert`, `merge`, `register`, and `cleanup`.
+
+* **upload** stores the train and eval rows as content-addressed blobs in the
+  staging bucket and writes `runs/<key>/inputs.json` once: the rows' digests,
+  the driver's settings and the base's pinned snapshot. `<key>` is
+  `Train.runKey (Train.runId job)`, `sky-` and 20 hex digits: the same job is
+  the same key, so a resumed run finds its checkpoints.
+* **launch** is exactly once. It first writes `runs/<key>/launch-<a>.intent`
+  with a create-only precondition. Whoever writes it creates the custom job,
+  labelled `sky-managed=true`, `sky-run=<key>`, `sky-attempt=<a>` and
+  `sky-kind=train`. A launch that finds the intent already there (another
+  worker, or this workflow resumed after a crash between the create and its
+  journal row) attaches to the job its labels name, or to the one its
+  container named in `attempt-<a>/hello.json`, and never creates a second
+  paid job. An intent with no job after ten minutes is `TrainingFailed`.
+* **watch** is one step that holds no process: the job's state, the protocol
+  segments the container wrote since the last watch
+  (`attempt-<a>/events/<seq>.jsonl`), and the spend. A durable sleep of at
+  most 30 seconds (`withWatchWindow`) follows. The segments are mirrored into
+  the run directory's `events.jsonl` and the job's state into `cloud.json`,
+  so `Train.progress`, `Train.cloudStatus`, `sky ai train status` and the
+  console show a cloud run as they show a local one.
+* A `done` line ends the watch; an `error` line is the driver's typed failure;
+  a cancelled job is `TrainingCancelled`; a stockout is
+  `CapacityUnavailable`. A job that ended with no terminal line (a crash, a
+  Spot pre-emption) is relaunched from the newest checkpoint whose manifest is
+  in the bucket (the container checks every file's digest when it resumes), up
+  to `withMaxRelaunches`, then `TrainingFailed` with the job's last log lines.
+* **download** fetches the adapter files, each checked against the adapter's
+  manifest, into the run directory's `adapter/`.
+* **cleanup**, after the adapter is registered, deletes the run's job records
+  and its staging prefix, unless `withKeepStaging`.
+
+The container's shim (`runtime-go/rt/ai_train_assets/driver/sky_cloud.py`)
+downloads the run's inputs and the base (each file checked against its
+digest), runs the driver, and uploads each checkpoint before the protocol
+line that names it, the adapter before `artefact` and `done`, and every
+segment with a create-only precondition. It reads the `cancel` marker each
+cycle and forwards Vertex's SIGTERM, so the driver checkpoints and stops.
+
+### Cancel
+
+`Train.cancel job` (and `sky ai train cancel <run>`) writes the run's `cancel`
+marker and asks Vertex to cancel the job. The run ends `TrainingCancelled`.
+
+### Offline
+
+Under `sky test`, `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in the
+project's `.env.test` sends every Google Cloud call to the runtime's built-in
+emulator, which runs the Fake protocol into an emulated bucket the way the
+container does. `examples/74-ai-cloud` and
+`rust/crates/sky/tests/fixtures/ai-cloud` test the whole workflow this way.
+
 ## Not yet
 
-These parts of §8.5 are later work: the cloud backends (`Vertex`,
-`SageMaker`), `withCloud`, `withBudget` and `withMachinePrices` (phase 4), and
-the progress in `Trace`.
+These parts of §8.5 are later work: the AWS backend (`SageMaker`) and the
+progress in `Trace`.

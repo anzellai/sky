@@ -182,25 +182,32 @@ devBase =
     , revision = "7ae557604adf67be50417f59c2c2f167def9a775"
     , files =
         [ { path = "config.json"
-          , sha256 = "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45"
+          , sha256 =
+              "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45"
           }
         , { path = "generation_config.json"
-          , sha256 = "e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6"
+          , sha256 =
+              "e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6"
           }
         , { path = "model.safetensors"
-          , sha256 = "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe"
+          , sha256 =
+              "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe"
           }
         , { path = "tokenizer.json"
-          , sha256 = "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
+          , sha256 =
+              "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
           }
         , { path = "tokenizer_config.json"
-          , sha256 = "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583"
+          , sha256 =
+              "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583"
           }
         , { path = "vocab.json"
-          , sha256 = "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+          , sha256 =
+              "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
           }
         , { path = "merges.txt"
-          , sha256 = "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"
+          , sha256 =
+              "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"
           }
         ]
     }
@@ -338,7 +345,8 @@ vllmArgs home (Tier t) =
 
 maxAdaptersOf : TierSettings -> Int
 maxAdaptersOf t =
-    Math.max (Math.max 1 (List.length t.adapters))
+    Math.max
+        (Math.max 1 (List.length t.adapters))
         (if t.maxAdapters > 0 then
             t.maxAdapters
 
@@ -426,7 +434,6 @@ describe : Tier -> Task Error (List Setting)
 describe (Tier t) =
     resolveRaw (raw t)
 
-
 -- | An adapter as the tier loads it: its served name, the base it was
 -- trained on, and the local paths of its PEFT weights and
 -- `adapter_config.json`, each checked against its digest.
@@ -450,8 +457,12 @@ adapterFrom st ref =
     case String.split "@" ref of
 
         [name, which] ->
-            (if String.startsWith "v" which && String.toInt (String.dropLeft 1 which) /= Nothing then
-                Task.succeed (String.toInt (String.dropLeft 1 which) |> Maybe.withDefault 0)
+            (if String.startsWith "v" which
+                && String.toInt (String.dropLeft 1 which)
+                /= Nothing then
+                Task.succeed
+                    (String.toInt (String.dropLeft 1 which)
+                        |> Maybe.withDefault 0)
 
             else
                 Registry.readPointer st name which
@@ -463,14 +474,18 @@ adapterFrom st ref =
                                        Task.succeed ptr.number
 
                                    Nothing ->
-                                       Task.fail (Failure.toError (NotRegistered { ref = ref }))))
+                                       Task.fail
+                                           (Failure.toError
+                                               (NotRegistered { ref = ref }))))
                 |> Task.andThen (\n -> Registry.readManifest st name n)
                 |> Task.andThen
                        (\found ->
                            case found of
 
                                Nothing ->
-                                   Task.fail (Failure.toError (NotRegistered { ref = ref }))
+                                   Task.fail
+                                       (Failure.toError
+                                           (NotRegistered { ref = ref }))
 
                                Just m ->
                                    if m.peft == "" || m.peftConfig == "" then
@@ -500,7 +515,11 @@ adapterFrom st ref =
         _ ->
             Task.fail
                 (Failure.toError
-                    (InvalidSetting { setting = "adapter", reason = ref ++ ": write <name>@<alias> or <name>@v<n>" }))
+                    (InvalidSetting
+                        { setting = "adapter"
+                        , reason =
+                            ref ++ ": write <name>@<alias> or <name>@v<n>"
+                        }))
 
 
 -- | Run the tier: stage the base's files below the AI home (`SKY_AI_HOME`;
@@ -579,7 +598,10 @@ tierBaseImage =
 -- | Google Cloud Run with one NVIDIA L4, scaling to zero: `{ project,
 -- region, service }`. The project and region fall back to
 -- `SKY_AI_SERVE_PROJECT` and `SKY_AI_SERVE_REGION` (`deploy` reads them).
-cloudRun : { project : String, region : String, service : String } -> Target
+cloudRun : { project : String
+, region : String
+, service : String
+} -> Target
 cloudRun c =
     CloudRun
         { project = c.project
@@ -680,7 +702,8 @@ targetSettings (CloudRun t) =
 -- | The service's full resource name.
 serviceName : Target -> String
 serviceName (CloudRun t) =
-    "projects/" ++ t.project ++ "/locations/" ++ t.region ++ "/services/" ++ t.service
+    "projects/" ++ t.project ++ "/locations/" ++ t.region ++ "/services/"
+        ++ t.service
 
 -- ── Rendering ───────────────────────────────────────────────────────
 -- | What `render` gives: the Cloud Run service (Admin API v2 JSON), the same
@@ -704,9 +727,9 @@ labelsValue : TargetSettings -> JsonE.Value
 labelsValue t =
     JsonE.object
         ([ ( "sky-deployment", JsonE.string t.service )
-         , ( "sky-kind", JsonE.string "serve" )
-         , ( "sky-managed", JsonE.string "true" )
-         ]
+        , ( "sky-kind", JsonE.string "serve" )
+        , ( "sky-managed", JsonE.string "true" )
+        ]
             ++ List.map (\( k, v ) -> ( k, JsonE.string v )) t.labels)
 
 
@@ -727,28 +750,28 @@ tierEnv t s =
     , env "SKY_AI_SERVE_MAX_ADAPTERS" (String.fromInt (maxAdaptersOf s))
     ]
         ++ (if t.registryUrl == "" then
-                []
+               []
 
-            else
-                [ env "SKY_AI_REGISTRY" t.registryUrl ])
+           else
+               [ env "SKY_AI_REGISTRY" t.registryUrl ])
         ++ (if t.tokenSecret == "" then
-                []
+               []
 
-            else
-                [ JsonE.object
-                      [ ( "name", JsonE.string "SKY_AI_SERVE_TOKEN" )
-                      , ( "valueSource"
-                        , JsonE.object
-                              [ ( "secretKeyRef"
-                                , JsonE.object
-                                      [ ( "secret", JsonE.string t.tokenSecret )
-                                      , ( "version", JsonE.string "latest" )
-                                      ]
-                                )
-                              ]
-                        )
-                      ]
-                ])
+           else
+               [ JsonE.object
+                     [ ( "name", JsonE.string "SKY_AI_SERVE_TOKEN" )
+                     , ( "valueSource"
+                       , JsonE.object
+                             [ ( "secretKeyRef"
+                               , JsonE.object
+                                     [ ( "secret", JsonE.string t.tokenSecret )
+                                     , ( "version", JsonE.string "latest" )
+                                     ]
+                               )
+                             ]
+                       )
+                     ]
+               ])
 
 
 -- | The Cloud Run service for a tier (Admin API v2), pure. One instance holds
@@ -761,7 +784,11 @@ serviceJson (CloudRun t) (Tier s) =
         volume =
             JsonE.list
                 identity
-                [ JsonE.object [ ( "name", JsonE.string "models" ), ( "mountPath", JsonE.string "/models" ) ] ]
+                [ JsonE.object
+                      [ ( "name", JsonE.string "models" )
+                      , ( "mountPath", JsonE.string "/models" )
+                      ]
+                ]
         tierContainer =
             JsonE.object
                 [ ( "name", JsonE.string "tier" )
@@ -770,7 +797,9 @@ serviceJson (CloudRun t) (Tier s) =
                   , JsonE.list
                         identity
                         [ JsonE.object
-                              [ ( "name", JsonE.string "http1" ), ( "containerPort", JsonE.int 8080 ) ]
+                              [ ( "name", JsonE.string "http1" )
+                              , ( "containerPort", JsonE.int 8080 )
+                              ]
                         ]
                   )
                 , ( "env", JsonE.list identity (tierEnv t s) )
@@ -778,7 +807,9 @@ serviceJson (CloudRun t) (Tier s) =
                   , JsonE.object
                         [ ( "limits"
                           , JsonE.object
-                                [ ( "cpu", JsonE.string "1" ), ( "memory", JsonE.string "4Gi" ) ]
+                                [ ( "cpu", JsonE.string "1" )
+                                , ( "memory", JsonE.string "4Gi" )
+                                ]
                           )
                         ]
                   )
@@ -787,7 +818,9 @@ serviceJson (CloudRun t) (Tier s) =
                   , JsonE.object
                         [ ( "httpGet"
                           , JsonE.object
-                                [ ( "path", JsonE.string "/startup" ), ( "port", JsonE.int 8080 ) ]
+                                [ ( "path", JsonE.string "/startup" )
+                                , ( "port", JsonE.int 8080 )
+                                ]
                           )
                         , ( "periodSeconds", JsonE.int 2 )
                         , ( "failureThreshold", JsonE.int 300 )
@@ -801,9 +834,14 @@ serviceJson (CloudRun t) (Tier s) =
                 , ( "command"
                   , JsonE.list
                         JsonE.string
-                        [ "python3", "-m", "vllm.entrypoints.openai.api_server" ]
+                        [ "python3"
+                        , "-m"
+                        , "vllm.entrypoints.openai.api_server"
+                        ]
                   )
-                , ( "args", JsonE.list JsonE.string (vllmArgs modelsHome (Tier s)) )
+                , ( "args"
+                  , JsonE.list JsonE.string (vllmArgs modelsHome (Tier s))
+                  )
                 , ( "env"
                   , JsonE.list
                         identity
@@ -829,7 +867,9 @@ serviceJson (CloudRun t) (Tier s) =
                   , JsonE.object
                         [ ( "httpGet"
                           , JsonE.object
-                                [ ( "path", JsonE.string "/health" ), ( "port", JsonE.int 8000 ) ]
+                                [ ( "path", JsonE.string "/health" )
+                                , ( "port", JsonE.int 8000 )
+                                ]
                           )
                         , ( "periodSeconds", JsonE.int 5 )
                         , ( "timeoutSeconds", JsonE.int 5 )
@@ -852,17 +892,27 @@ serviceJson (CloudRun t) (Tier s) =
                 , ( "template"
                   , JsonE.object
                         ([ ( "labels", labelsValue t )
-                         , ( "scaling"
-                           , JsonE.object
-                                 [ ( "minInstanceCount", JsonE.int t.minInstances )
-                                 , ( "maxInstanceCount", JsonE.int t.maxInstances )
-                                 ]
-                           )
-                         , ( "timeout", JsonE.string (String.fromInt t.timeoutSeconds ++ "s") )
-                         , ( "maxInstanceRequestConcurrency", JsonE.int 16 )
-                         , ( "gpuZonalRedundancyDisabled", JsonE.bool True )
-                         , ( "nodeSelector", JsonE.object [ ( "accelerator", JsonE.string "nvidia-l4" ) ] )
-                         ]
+                        , ( "scaling"
+                          , JsonE.object
+                                [ ( "minInstanceCount"
+                                  , JsonE.int t.minInstances
+                                  )
+                                , ( "maxInstanceCount"
+                                  , JsonE.int t.maxInstances
+                                  )
+                                ]
+                          )
+                        , ( "timeout"
+                          , JsonE.string
+                                (String.fromInt t.timeoutSeconds ++ "s")
+                          )
+                        , ( "maxInstanceRequestConcurrency", JsonE.int 16 )
+                        , ( "gpuZonalRedundancyDisabled", JsonE.bool True )
+                        , ( "nodeSelector"
+                          , JsonE.object
+                                [ ( "accelerator", JsonE.string "nvidia-l4" ) ]
+                          )
+                        ]
                             ++ account
                             ++ [ ( "volumes"
                                  , JsonE.list
@@ -871,14 +921,22 @@ serviceJson (CloudRun t) (Tier s) =
                                              [ ( "name", JsonE.string "models" )
                                              , ( "emptyDir"
                                                , JsonE.object
-                                                     [ ( "medium", JsonE.string "MEMORY" )
-                                                     , ( "sizeLimit", JsonE.string "6Gi" )
+                                                     [ ( "medium"
+                                                       , JsonE.string "MEMORY"
+                                                       )
+                                                     , ( "sizeLimit"
+                                                       , JsonE.string "6Gi"
+                                                       )
                                                      ]
                                                )
                                              ]
                                        ]
                                  )
-                               , ( "containers", JsonE.list identity [ tierContainer, engineContainer ] )
+                               , ( "containers"
+                                 , JsonE.list
+                                       identity
+                                       [ tierContainer, engineContainer ]
+                                 )
                                ])
                   )
                 ])
@@ -900,11 +958,14 @@ knativeYaml (CloudRun t) (Tier s) =
             , ( "SKY_AI_SERVE_MAX_ADAPTERS", String.fromInt (maxAdaptersOf s) )
             ]
                 ++ (if t.registryUrl == "" then
-                        []
+                       []
 
-                    else
-                        [ ( "SKY_AI_REGISTRY", t.registryUrl ) ])
-                |> List.map (\( k, v ) -> "        - name: " ++ k ++ "\n          value: " ++ q v)
+                   else
+                       [ ( "SKY_AI_REGISTRY", t.registryUrl ) ])
+                |> List.map
+                       (\( k, v ) ->
+                           "        - name: " ++ k ++ "\n          value: "
+                               ++ q v)
         secretLines =
             if t.tokenSecret == "" then
                 []
@@ -926,27 +987,29 @@ knativeYaml (CloudRun t) (Tier s) =
         String.join
             "\n"
             ([ "apiVersion: serving.knative.dev/v1"
-             , "kind: Service"
-             , "metadata:"
-             , "  name: " ++ t.service
-             , "  labels:"
-             , "    sky-managed: \"true\""
-             , "    sky-deployment: " ++ q t.service
-             , "    sky-kind: serve"
-             , "  annotations:"
-             , "    run.googleapis.com/invoker-iam-disabled: \"false\""
-             , "spec:"
-             , "  template:"
-             , "    metadata:"
-             , "      annotations:"
-             , "        autoscaling.knative.dev/minScale: " ++ q (String.fromInt t.minInstances)
-             , "        autoscaling.knative.dev/maxScale: " ++ q (String.fromInt t.maxInstances)
-             , "        run.googleapis.com/gpu-zonal-redundancy-disabled: \"true\""
-             , "        run.googleapis.com/container-dependencies: '{\"engine\":[\"tier\"]}'"
-             , "    spec:"
-             , "      containerConcurrency: 16"
-             , "      timeoutSeconds: " ++ String.fromInt t.timeoutSeconds
-             ]
+            , "kind: Service"
+            , "metadata:"
+            , "  name: " ++ t.service
+            , "  labels:"
+            , "    sky-managed: \"true\""
+            , "    sky-deployment: " ++ q t.service
+            , "    sky-kind: serve"
+            , "  annotations:"
+            , "    run.googleapis.com/invoker-iam-disabled: \"false\""
+            , "spec:"
+            , "  template:"
+            , "    metadata:"
+            , "      annotations:"
+            , "        autoscaling.knative.dev/minScale: "
+                  ++ q (String.fromInt t.minInstances)
+            , "        autoscaling.knative.dev/maxScale: "
+                  ++ q (String.fromInt t.maxInstances)
+            , "        run.googleapis.com/gpu-zonal-redundancy-disabled: \"true\""
+            , "        run.googleapis.com/container-dependencies: '{\"engine\":[\"tier\"]}'"
+            , "    spec:"
+            , "      containerConcurrency: 16"
+            , "      timeoutSeconds: " ++ String.fromInt t.timeoutSeconds
+            ]
                 ++ account
                 ++ [ "      nodeSelector:"
                    , "        run.googleapis.com/accelerator: nvidia-l4"
@@ -1073,15 +1136,28 @@ resolveTarget (CloudRun t) =
                                |> Maybe.map .value
                                |> Maybe.withDefault ""
                        resolved =
-                           { t | project = value "PROJECT", region = value "REGION", tierImage = value "IMAGE" }
-                       pinned ref =
-                           String.contains "@sha256:" ref
+                           { t
+                               | project = value "PROJECT"
+                               , region = value "REGION"
+                               , tierImage = value "IMAGE"
+                           }
+                       pinned ref = String.contains "@sha256:" ref
                    in
                        if resolved.project == "" then
-                           Task.fail (Failure.toError (NotConfigured { setting = "SKY_AI_SERVE_PROJECT (or Serve.cloudRun { project })" }))
+                           Task.fail
+                               (Failure.toError
+                                   (NotConfigured
+                                       { setting =
+                                           "SKY_AI_SERVE_PROJECT (or Serve.cloudRun { project })"
+                                       }))
 
                        else if resolved.region == "" then
-                           Task.fail (Failure.toError (NotConfigured { setting = "SKY_AI_SERVE_REGION (or Serve.cloudRun { region })" }))
+                           Task.fail
+                               (Failure.toError
+                                   (NotConfigured
+                                       { setting =
+                                           "SKY_AI_SERVE_REGION (or Serve.cloudRun { region })"
+                                       }))
 
                        else if not (pinned resolved.tierImage) then
                            Task.fail
@@ -1098,7 +1174,9 @@ resolveTarget (CloudRun t) =
                                (Failure.toError
                                    (InvalidSetting
                                        { setting = "engineImage"
-                                       , reason = quote resolved.engineImage ++ " is not pinned by digest"
+                                       , reason =
+                                           quote resolved.engineImage
+                                               ++ " is not pinned by digest"
                                        }))
 
                        else
@@ -1135,16 +1213,22 @@ deploy target t =
                                           Task.fail
                                               (Failure.toError
                                                   (NotProvisioned
-                                                      { what = "the tier image " ++ ts.tierImage
-                                                      , command = "sky ai image build --tier"
+                                                      { what =
+                                                          "the tier image "
+                                                              ++ ts.tierImage
+                                                      , command =
+                                                          "sky ai image build --tier"
                                                       }))
 
                                       else if not engineThere then
                                           Task.fail
                                               (Failure.toError
                                                   (NotProvisioned
-                                                      { what = "the engine image " ++ ts.engineImage
-                                                      , command = "an Artifact Registry remote repository of Docker Hub (docs/ai/deploy-gcp.md)"
+                                                      { what =
+                                                          "the engine image "
+                                                              ++ ts.engineImage
+                                                      , command =
+                                                          "an Artifact Registry remote repository of Docker Hub (docs/ai/deploy-gcp.md)"
                                                       }))
 
                                       else
@@ -1156,7 +1240,9 @@ deploy target t =
                                           |> Task.map
                                                  (\_ ->
                                                      { url = svc.uri
-                                                     , revision = lastPart svc.latestReady
+                                                     , revision =
+                                                         lastPart
+                                                             svc.latestReady
                                                      , region = ts.region
                                                      , service = ts.service
                                                      })))
@@ -1179,16 +1265,27 @@ upsert ts tgt t =
                                       (\found ->
                                           let
                                               etag =
-                                                  Maybe.map .etag found |> Maybe.withDefault ""
+                                                  Maybe.map .etag found
+                                                      |> Maybe.withDefault ""
                                               spec = serviceJson tgt t
                                               withEtag =
                                                   if etag == "" then
                                                       spec
 
                                                   else
-                                                      "{\"etag\":" ++ JsonE.encode 0 (JsonE.string etag) ++ "," ++ String.dropLeft 1 spec
+                                                      "{\"etag\":"
+                                                          ++ JsonE.encode
+                                                                 0
+                                                                 (JsonE.string
+                                                                     etag)
+                                                          ++ ","
+                                                          ++ String.dropLeft
+                                                                 1
+                                                                 spec
                                           in
-                                              Google.patchService (serviceName tgt) withEtag
+                                              Google.patchService
+                                                  (serviceName tgt)
+                                                  withEtag
                                                   |> Task.map (\_ -> ())))
 
 
@@ -1206,12 +1303,14 @@ waitReady ts name n =
                                (Failure.toError
                                    (DeploymentFailed
                                        { target = "cloudrun:" ++ ts.service
-                                       , reason = "the service disappeared while it was deploying"
+                                       , reason =
+                                           "the service disappeared while it was deploying"
                                        , logTail = ""
                                        }))
 
                        Just svc ->
-                           if svc.ready == "CONDITION_SUCCEEDED" && not svc.reconciling then
+                           if svc.ready == "CONDITION_SUCCEEDED"
+                               && not svc.reconciling then
                                Task.succeed svc
 
                            else if svc.ready == "CONDITION_FAILED" then
@@ -1228,13 +1327,15 @@ waitReady ts name n =
                                    (Failure.toError
                                        (DeploymentFailed
                                            { target = "cloudrun:" ++ ts.service
-                                           , reason = "the revision was not ready after 30 minutes"
+                                           , reason =
+                                               "the revision was not ready after 30 minutes"
                                            , logTail = svc.message
                                            }))
 
                            else
                                Time.sleep (Math.min 2000 (50 * (n + 1)))
-                                   |> Task.andThen (\_ -> waitReady ts name (n + 1)))
+                                   |> Task.andThen
+                                          (\_ -> waitReady ts name (n + 1)))
 
 
 lastPart : String -> String
@@ -1247,7 +1348,8 @@ lastPart s =
 teardown : Target -> Task Error ()
 teardown target =
     resolveTargetLoose target
-        |> Task.andThen (\ts -> Google.deleteService (serviceName (CloudRun ts)))
+        |> Task.andThen
+               (\ts -> Google.deleteService (serviceName (CloudRun ts)))
 
 
 -- The project and region only (teardown needs no image).
@@ -1265,7 +1367,14 @@ resolveTargetLoose (CloudRun t) =
                        if value "PROJECT" == "" || value "REGION" == "" then
                            Task.fail
                                (Failure.toError
-                                   (NotConfigured { setting = "SKY_AI_SERVE_PROJECT and SKY_AI_SERVE_REGION" }))
+                                   (NotConfigured
+                                       { setting =
+                                           "SKY_AI_SERVE_PROJECT and SKY_AI_SERVE_REGION"
+                                       }))
 
                        else
-                           Task.succeed { t | project = value "PROJECT", region = value "REGION" })
+                           Task.succeed
+                               { t
+                                   | project = value "PROJECT"
+                                   , region = value "REGION"
+                               })

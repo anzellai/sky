@@ -185,30 +185,41 @@ notConfigured =
 -- account only.
 keyFile : () -> Task Error (Maybe KeyFile)
 keyFile _ =
-    let
-        path = System.getenvOr "GOOGLE_APPLICATION_CREDENTIALS" ""
-    in
-        if path == "" then
-            Task.succeed Nothing
+    -- The variable is read when the Task runs, not when it is built: a Task
+    -- built once (a top-level value) and run after a `System.setenv` sees the
+    -- new value.
+    Task.lazy (\_ -> System.getenvOr "GOOGLE_APPLICATION_CREDENTIALS" "")
+        |> Task.andThen keyFileAt
 
-        else
-            File.readFileLimit path 65536
-                |> Task.andThen
-                       (\text ->
-                           case JsonD.decodeString keyFileDecoder text of
 
-                               Ok k ->
-                                   if k.kind == "service_account" && k.clientEmail
-                                       /= ""
-                                       && k.privateKey
-                                       /= "" then
-                                       Task.succeed (Just k)
+keyFileAt : String -> Task Error (Maybe KeyFile)
+keyFileAt path =
+    if path == "" then
+        Task.succeed Nothing
 
-                                   else
-                                       Task.fail notConfigured
+    else
+        File.readFileLimit path 65536
+            |> Task.andThen
+                   (\text ->
+                       case JsonD.decodeString keyFileDecoder text of
 
-                               Err _ ->
-                                   Task.fail notConfigured)
+                           Ok k ->
+                               if k.kind == "service_account" && k.clientEmail
+                                   /= ""
+                                   && k.privateKey
+                                   /= "" then
+                                   Task.succeed (Just k)
+
+                               else if k.kind == "external_account" then
+                                   Task.succeed Nothing
+
+                               else
+                                   Task.fail notConfigured
+
+                           Err _ ->
+                               Task.fail notConfigured)
+                                       -- Workload identity federation: see
+                                       -- `federated`.
 
 
 -- The token endpoint: the key's own, or the emulator's.
@@ -316,26 +327,33 @@ accessToken scopes =
                                                              "access_token"))
 
                        Nothing ->
-                           metadataBase ()
+                           federated ()
                                |> Task.andThen
-                                      (\base ->
-                                          Http.defaultRequest
-                                              (base
-                                                  ++ "/computeMetadata/v1/instance/service-accounts/default/token?scopes="
-                                                  ++ Encoding.urlEncode
-                                                         (String.join "," scopes))
-                                              |> Http.withHeader
-                                                     "Metadata-Flavor"
-                                                     "Google"
-                                              |> Http.withTimeout 3000
-                                              |> Http.request
-                                              |> Task.onError
-                                                     (\_ ->
-                                                         Task.fail notConfigured)
-                                              |> Task.andThen
-                                                     (tokenField
-                                                         "the metadata server"
-                                                         "access_token")))
+                                      (\fed ->
+                                          case fed of
+
+                                              Just f ->
+                                                  federatedAccessToken f scopes
+
+                                              Nothing ->
+                                                  metadataAccessToken scopes))
+
+
+metadataAccessToken : List String -> Task Error Secret
+metadataAccessToken scopes =
+    metadataBase ()
+        |> Task.andThen
+               (\base ->
+                   Http.defaultRequest
+                       (base
+                           ++ "/computeMetadata/v1/instance/service-accounts/default/token?scopes="
+                           ++ Encoding.urlEncode (String.join "," scopes))
+                       |> Http.withHeader "Metadata-Flavor" "Google"
+                       |> Http.withTimeout 3000
+                       |> Http.request
+                       |> Task.onError (\_ -> Task.fail notConfigured)
+                       |> Task.andThen
+                              (tokenField "the metadata server" "access_token"))
 
 
 -- | An ID token for an audience (a Cloud Run service's URL): a signed
@@ -366,42 +384,282 @@ idToken audience =
                                                              "id_token"))
 
                        Nothing ->
-                           metadataBase ()
+                           federated ()
                                |> Task.andThen
-                                      (\base ->
-                                          Http.defaultRequest
-                                              (base
-                                                  ++ "/computeMetadata/v1/instance/service-accounts/default/identity?format=full&audience="
-                                                  ++ Encoding.urlEncode audience)
-                                              |> Http.withHeader
-                                                     "Metadata-Flavor"
-                                                     "Google"
-                                              |> Http.withTimeout 3000
-                                              |> Http.request
-                                              |> Task.onError
-                                                     (\_ ->
-                                                         Task.fail notConfigured)
-                                              |> Task.andThen
-                                                     (\resp ->
-                                                         if resp.status == 200 then
-                                                             Task.succeed
-                                                                 (Secret.fromString
-                                                                     (String.trim
-                                                                         resp.body))
+                                      (\fed ->
+                                          case fed of
 
-                                                         else
-                                                             Task.fail
-                                                                 (Failure.toError
-                                                                     (RemoteRejected
-                                                                         { status =
-                                                                             resp.status
-                                                                         })))))
+                                              Just f ->
+                                                  federatedIdToken f audience
+
+                                              Nothing ->
+                                                  metadataIdToken audience))
+
+
+metadataIdToken : String -> Task Error Secret
+metadataIdToken audience =
+    metadataBase ()
+        |> Task.andThen
+               (\base ->
+                   Http.defaultRequest
+                       (base
+                           ++ "/computeMetadata/v1/instance/service-accounts/default/identity?format=full&audience="
+                           ++ Encoding.urlEncode audience)
+                       |> Http.withHeader "Metadata-Flavor" "Google"
+                       |> Http.withTimeout 3000
+                       |> Http.request
+                       |> Task.onError (\_ -> Task.fail notConfigured)
+                       |> Task.andThen
+                              (\resp ->
+                                  if resp.status == 200 then
+                                      Task.succeed
+                                          (Secret.fromString
+                                              (String.trim resp.body))
+
+                                  else
+                                      Task.fail
+                                          (Failure.toError
+                                              (RemoteRejected
+                                                  { status = resp.status }))))
+
+-- ── Workload identity federation ────────────────────────────────────
+-- An `external_account` credential (what `google-github-actions/auth` writes
+-- for a GitHub Actions job, and what other clouds' federation writes): a
+-- subject token from a file or a URL is exchanged at Google's Security Token
+-- Service for a federated token, which then impersonates the service
+-- account the credential names. No key is stored anywhere.
+type alias External =
+    { audience : String
+    , subjectTokenType : String
+    , tokenUrl : String
+    , impersonationUrl : String
+    , sourceFile : String
+    , sourceUrl : String
+    , sourceAuthorization : String
+    , formatType : String
+    , formatField : String
+    }
+
+
+externalDecoder : JsonD.Decoder External
+externalDecoder =
+    let
+        str path =
+            JsonD.oneOf [ JsonD.at path JsonD.string, JsonD.succeed "" ]
+    in
+        JsonD.map3
+            (\( a, t, u ) ( i, f, url ) ( auth, ft, ff ) ->
+                { audience = a
+                , subjectTokenType = t
+                , tokenUrl = u
+                , impersonationUrl = i
+                , sourceFile = f
+                , sourceUrl = url
+                , sourceAuthorization = auth
+                , formatType = ft
+                , formatField = ff
+                })
+            (JsonD.map3
+                (\a t u -> ( a, t, u ))
+                (str [ "audience" ])
+                (str [ "subject_token_type" ])
+                (str [ "token_url" ]))
+            (JsonD.map3
+                (\i f u -> ( i, f, u ))
+                (str [ "service_account_impersonation_url" ])
+                (str [ "credential_source", "file" ])
+                (str [ "credential_source", "url" ]))
+            (JsonD.map3
+                (\a t f -> ( a, t, f ))
+                (str [ "credential_source", "headers", "Authorization" ])
+                (str [ "credential_source", "format", "type" ])
+                (str
+                    [ "credential_source"
+                    , "format"
+                    , "subject_token_field_name"
+                    ]))
+
+
+-- The federated credential named by GOOGLE_APPLICATION_CREDENTIALS, if it is
+-- one.
+federated : () -> Task Error (Maybe External)
+federated _ =
+    -- The variable is read when the Task runs, not when it is built: a Task
+    -- built once (a top-level value) and run after a `System.setenv` sees the
+    -- new value.
+    Task.lazy (\_ -> System.getenvOr "GOOGLE_APPLICATION_CREDENTIALS" "")
+        |> Task.andThen federatedAt
+
+
+federatedAt : String -> Task Error (Maybe External)
+federatedAt path =
+    if path == "" then
+        Task.succeed Nothing
+
+    else
+        File.readFileLimit path 65536
+            |> Task.map
+                   (\text ->
+                       if String.contains "\"external_account\"" text then
+                           Result.toMaybe
+                               (JsonD.decodeString externalDecoder text)
+
+                       else
+                           Nothing)
+
+
+-- The subject token the credential source holds (a file or a URL; text, or
+-- JSON with the token in a named field).
+subjectToken : External -> Task Error String
+subjectToken e =
+    (if e.sourceFile /= "" then
+        File.readFileLimit e.sourceFile 65536
+
+    else if e.sourceUrl /= "" then
+        Http.defaultRequest e.sourceUrl
+            |> (\r ->
+                   if e.sourceAuthorization == "" then
+                       r
+
+                   else
+                       Http.withHeader "Authorization" e.sourceAuthorization r)
+            |> Http.withTimeout 15000
+            |> Http.request
+            |> Task.andThen
+                   (\resp ->
+                       if resp.status == 200 then
+                           Task.succeed resp.body
+
+                       else
+                           Task.fail
+                               (Failure.toError
+                                   (RemoteRejected { status = resp.status })))
+
+    else
+        Task.fail notConfigured)
+        |> Task.andThen
+               (\raw ->
+                   if e.formatType == "json" then
+                       Task.fromResult
+                           (JsonD.decodeString
+                               (JsonD.field e.formatField JsonD.string)
+                               raw)
+
+                   else
+                       Task.succeed (String.trim raw))
+
+
+-- The federated token from Google's Security Token Service.
+stsToken : External -> List String -> Task Error Secret
+stsToken e scopes =
+    subjectToken e
+        |> Task.andThen
+               (\subject ->
+                   Http.defaultRequest
+                       (if e.tokenUrl == "" then
+                           "https://sts.googleapis.com/v1/token"
+
+                       else
+                           e.tokenUrl)
+                       |> Http.withMethod "POST"
+                       |> Http.withHeader
+                              "Content-Type"
+                              "application/x-www-form-urlencoded"
+                       |> Http.withBody
+                              ("grant_type="
+                                  ++ Encoding.urlEncode
+                                         "urn:ietf:params:oauth:grant-type:token-exchange"
+                                  ++ "&audience="
+                                  ++ Encoding.urlEncode e.audience
+                                  ++ "&scope="
+                                  ++ Encoding.urlEncode (String.join " " scopes)
+                                  ++ "&requested_token_type="
+                                  ++ Encoding.urlEncode
+                                         "urn:ietf:params:oauth:token-type:access_token"
+                                  ++ "&subject_token_type="
+                                  ++ Encoding.urlEncode e.subjectTokenType
+                                  ++ "&subject_token="
+                                  ++ Encoding.urlEncode subject)
+                       |> Http.withTimeout 15000
+                       |> Http.request
+                       |> Task.andThen
+                              (tokenField
+                                  "the Security Token Service"
+                                  "access_token"))
+
+
+federatedAccessToken : External -> List String -> Task Error Secret
+federatedAccessToken e scopes =
+    if e.impersonationUrl == "" then
+        stsToken e scopes
+
+    else
+        stsToken e [ cloudPlatform ]
+            |> Task.andThen
+                   (\fed ->
+                       Http.defaultRequest e.impersonationUrl
+                           |> Http.withMethod "POST"
+                           |> Http.withBearer fed
+                           |> Http.withHeader "Content-Type" "application/json"
+                           |> Http.withBody
+                                  (JsonE.encode
+                                      0
+                                      (JsonE.object
+                                          [ ( "scope"
+                                            , JsonE.list JsonE.string scopes
+                                            )
+                                          , ( "lifetime", JsonE.string "3600s" )
+                                          ]))
+                           |> Http.withTimeout 15000
+                           |> Http.request
+                           |> Task.andThen
+                                  (tokenField
+                                      "the IAM Credentials API"
+                                      "accessToken"))
+
+
+-- An ID token through the impersonated service account
+-- (`generateIdToken`). A federated credential without impersonation has no
+-- service account to speak for: NotConfigured.
+federatedIdToken : External -> String -> Task Error Secret
+federatedIdToken e audience =
+    if e.impersonationUrl == "" then
+        Task.fail notConfigured
+
+    else
+        stsToken e [ cloudPlatform ]
+            |> Task.andThen
+                   (\fed ->
+                       Http.defaultRequest
+                           (String.replace
+                               ":generateAccessToken"
+                               ":generateIdToken"
+                               e.impersonationUrl)
+                           |> Http.withMethod "POST"
+                           |> Http.withBearer fed
+                           |> Http.withHeader "Content-Type" "application/json"
+                           |> Http.withBody
+                                  (JsonE.encode
+                                      0
+                                      (JsonE.object
+                                          [ ( "audience"
+                                            , JsonE.string audience
+                                            )
+                                          , ( "includeEmail", JsonE.bool True )
+                                          ]))
+                           |> Http.withTimeout 15000
+                           |> Http.request
+                           |> Task.andThen
+                                  (tokenField "the IAM Credentials API" "token"))
 
 -- ── One authorised call ─────────────────────────────────────────────
--- | A Google API's answer: its status and its body.
+-- | A Google API's answer: its status, its body, and the request it answers
+-- (`POST /v1/projects/…/customJobs`: the method and the path, never the
+-- host's query string), which a failure names.
 type alias Response =
     { status : Int
     , body : String
+    , request : String
     }
 
 
@@ -451,7 +709,10 @@ attempt token method url body n =
 
                        else
                            Task.succeed
-                               { status = resp.status, body = resp.body })
+                               { status = resp.status
+                               , body = resp.body
+                               , request = method ++ " " ++ pathOf url
+                               })
 
 
 -- | A 2xx answer's body; any other answer as its typed failure: a quota
@@ -466,11 +727,35 @@ ok resource region resp =
         Task.fail (refused resource region resp)
 
 
+-- The path of a URL, without its scheme, host and query.
+pathOf : String -> String
+pathOf url =
+    let
+        rest =
+            case String.split "://" url of
+
+                [_, r] ->
+                    r
+
+                _ ->
+                    url
+        path =
+            case String.split "/" rest of
+
+                _ :: parts ->
+                    "/" ++ String.join "/" parts
+
+                [] ->
+                    rest
+    in
+        String.split "?" path |> List.head |> Maybe.withDefault path
+
+
 -- | The typed failure for a non-2xx answer (see `ok`).
 refused : String -> String -> Response -> Error
 refused resource region resp =
     let
-        message = googleMessage resp.body
+        message = googleMessage resp.body ++ " [" ++ resp.request ++ "]"
         lower = String.toLower message
     in
         if String.contains "stockout" lower
@@ -1469,14 +1754,19 @@ ensureRepository project region repo =
                (\base ->
                    call
                        "POST"
-                       (base ++ "/v1/projects/" ++ project ++ "/locations/" ++ region
+                       (base ++ "/v1/projects/" ++ project ++ "/locations/"
+                           ++ region
                            ++ "/repositories?repositoryId="
                            ++ Encoding.urlEncode repo)
                        (JsonE.encode
                            0
                            (JsonE.object
                                [ ( "format", JsonE.string "DOCKER" )
-                               , ( "labels", JsonE.object [ ( "sky-managed", JsonE.string "true" ) ] )
+                               , ( "labels"
+                                 , JsonE.object
+                                       [ ( "sky-managed", JsonE.string "true" )
+                                       ]
+                                 )
                                ])))
         |> Task.andThen
                (\resp ->
@@ -1484,8 +1774,8 @@ ensureRepository project region repo =
                        Task.succeed ()
 
                    else
-                       ok "Artifact Registry repository" region resp |> Task.map (\_ -> ()))
-
+                       ok "Artifact Registry repository" region resp
+                           |> Task.map (\_ -> ()))
 
 -- | An image to build with Cloud Build in your own project: the source (a
 -- `.tar.gz` already in a bucket), the Dockerfile's path inside it, and the
@@ -1499,7 +1789,6 @@ type alias ImageBuild =
     , image : String
     , timeoutSeconds : Int
     }
-
 
 type alias Packed =
     { sha256 : String
@@ -1515,10 +1804,11 @@ tarGzRaw =
 -- | Pack a directory into a gzipped tar at `out`, reproducibly (sorted
 -- entries, no times or owners, hidden files left out): a Cloud Build source.
 -- Returns the archive's digest and size.
-packDirectory : String -> String -> Task Error { sha256 : String, size : Int }
+packDirectory : String -> String -> Task Error { sha256 : String
+, size : Int
+}
 packDirectory dir out =
-    tarGzRaw dir out
-        |> Task.map (\p -> { sha256 = p.sha256, size = p.size })
+    tarGzRaw dir out |> Task.map (\p -> { sha256 = p.sha256, size = p.size })
 
 
 -- | Build an image with Cloud Build (Docker with BuildKit) and return its
@@ -1534,7 +1824,9 @@ buildImage b =
                (\base ->
                    call
                        "POST"
-                       (base ++ "/v1/projects/" ++ b.project ++ "/locations/" ++ b.region ++ "/builds")
+                       (base ++ "/v1/projects/" ++ b.project ++ "/locations/"
+                           ++ b.region
+                           ++ "/builds")
                        (JsonE.encode
                            0
                            (JsonE.object
@@ -1542,8 +1834,12 @@ buildImage b =
                                  , JsonE.object
                                        [ ( "storageSource"
                                          , JsonE.object
-                                               [ ( "bucket", JsonE.string b.bucket )
-                                               , ( "object", JsonE.string b.object )
+                                               [ ( "bucket"
+                                                 , JsonE.string b.bucket
+                                                 )
+                                               , ( "object"
+                                                 , JsonE.string b.object
+                                                 )
                                                ]
                                          )
                                        ]
@@ -1552,72 +1848,137 @@ buildImage b =
                                  , JsonE.list
                                        identity
                                        [ JsonE.object
-                                             [ ( "name", JsonE.string "gcr.io/cloud-builders/docker" )
-                                             , ( "env", JsonE.list JsonE.string [ "DOCKER_BUILDKIT=1" ] )
+                                             [ ( "name"
+                                               , JsonE.string
+                                                     "gcr.io/cloud-builders/docker"
+                                               )
+                                             , ( "env"
+                                               , JsonE.list
+                                                     JsonE.string
+                                                     [ "DOCKER_BUILDKIT=1" ]
+                                               )
                                              , ( "args"
                                                , JsonE.list
                                                      JsonE.string
-                                                     [ "build", "--network=cloudbuild", "-t", b.image, "-f", b.dockerfile, "." ]
+                                                     [ "build"
+                                                     , "-t"
+                                                     , b.image
+                                                     , "-f"
+                                                     , b.dockerfile
+                                                     , "."
+                                                     ]
                                                )
                                              ]
                                        ]
                                  )
-                               , ( "images", JsonE.list JsonE.string [ b.image ] )
-                               , ( "timeout", JsonE.string (String.fromInt b.timeoutSeconds ++ "s") )
-                               , ( "tags", JsonE.list JsonE.string [ "sky-managed" ] )
-                               , ( "options", JsonE.object [ ( "diskSizeGb", JsonE.int 100 ), ( "logging", JsonE.string "CLOUD_LOGGING_ONLY" ) ] )
+                               , ( "images"
+                                 , JsonE.list JsonE.string [ b.image ]
+                                 )
+                               , ( "timeout"
+                                 , JsonE.string
+                                       (String.fromInt b.timeoutSeconds ++ "s")
+                                 )
+                               , ( "tags"
+                                 , JsonE.list JsonE.string [ "sky-managed" ]
+                                 )
+                               , ( "options"
+                                 , JsonE.object
+                                       [ ( "diskSizeGb", JsonE.int 100 )
+                                       , ( "logging"
+                                         , JsonE.string "CLOUD_LOGGING_ONLY"
+                                         )
+                                       ]
+                                 )
                                ]))
                        |> Task.andThen (ok "Cloud Build" b.region)
                        |> Task.andThen
                               (\body ->
                                   Task.fromResult
-                                      (JsonD.decodeString (JsonD.field "name" JsonD.string) body))
-                       |> Task.andThen (\op -> waitBuild base b op 0))
+                                      (JsonD.decodeString
+                                          (JsonD.at
+                                              [ "metadata", "build", "id" ]
+                                              JsonD.string)
+                                          body))
+                       |> Task.andThen
+                              (\id ->
+                                  waitBuild
+                                      (base ++ "/v1/projects/" ++ b.project
+                                          ++ "/locations/"
+                                          ++ b.region
+                                          ++ "/builds/"
+                                          ++ id)
+                                      b
+                                      0))
 
 
-waitBuild : String -> ImageBuild -> String -> Int -> Task Error String
-waitBuild base b op n =
-    call "GET" (base ++ "/v1/" ++ op) ""
-        |> Task.andThen (ok "Cloud Build" b.region)
+-- Poll the build until it ends: SUCCESS gives the image's digest, any other
+-- end (FAILURE, INTERNAL_ERROR, TIMEOUT, CANCELLED, EXPIRED) is
+-- ToolchainFailed with the build's status detail.
+waitBuild : String -> ImageBuild -> Int -> Task Error String
+waitBuild url b n =
+    call "GET" url "" |> Task.andThen (ok "Cloud Build" b.region)
         |> Task.andThen
                (\body ->
-                   case JsonD.decodeString (JsonD.oneOf [ JsonD.field "done" JsonD.bool, JsonD.succeed False ]) body of
+                   let
+                       status =
+                           JsonD.decodeString
+                               (JsonD.field "status" JsonD.string)
+                               body
+                               |> Result.withDefault ""
+                   in
+                       if status == "SUCCESS" then
+                           case JsonD.decodeString
+                                    (JsonD.at
+                                        [ "results", "images" ]
+                                        (JsonD.index
+                                            0
+                                            (JsonD.field "digest" JsonD.string)))
+                                    body of
 
-                       Ok True ->
-                           case JsonD.decodeString (JsonD.at [ "error", "message" ] JsonD.string) body of
-
-                               Ok message ->
-                                   Task.fail
-                                       (Failure.toErrorWith
-                                           message
-                                           (ToolchainFailed { tool = "Cloud Build", logTail = message }))
+                               Ok digest ->
+                                   Task.succeed
+                                       (imageName b.image ++ "@" ++ digest)
 
                                Err _ ->
-                                   case JsonD.decodeString
-                                            (JsonD.at [ "response", "results", "images" ]
-                                                (JsonD.index 0 (JsonD.field "digest" JsonD.string)))
-                                            body of
+                                   Task.fail
+                                       (Failure.toError
+                                           (ToolchainFailed
+                                               { tool = "Cloud Build"
+                                               , logTail =
+                                                   "the build succeeded without an image digest"
+                                               }))
 
-                                       Ok digest ->
-                                           Task.succeed (imageName b.image ++ "@" ++ digest)
-
-                                       Err _ ->
-                                           Task.fail
-                                               (Failure.toError
-                                                   (ToolchainFailed
-                                                       { tool = "Cloud Build"
-                                                       , logTail = "the build finished without an image digest: " ++ String.left 300 body
-                                                       }))
-
-                       _ ->
-                           if n * 5 > b.timeoutSeconds + 300 then
+                       else if List.member
+                           status
+                           [ "FAILURE"
+                           , "INTERNAL_ERROR"
+                           , "TIMEOUT"
+                           , "CANCELLED"
+                           , "EXPIRED"
+                           ] then
+                           let
+                               detail =
+                                   JsonD.decodeString
+                                       (JsonD.field "statusDetail" JsonD.string)
+                                       body
+                                       |> Result.withDefault status
+                           in
                                Task.fail
-                                   (Failure.toError
-                                       (TimedOut { afterMs = Just (n * 5000) }))
+                                   (Failure.toErrorWith
+                                       detail
+                                       (ToolchainFailed
+                                           { tool = "Cloud Build"
+                                           , logTail = status ++ ": " ++ detail
+                                           }))
 
-                           else
-                               Time.sleep (Math.min 5000 (100 * (n + 1)))
-                                   |> Task.andThen (\_ -> waitBuild base b op (n + 1)))
+                       else if n * 5 > b.timeoutSeconds + 300 then
+                           Task.fail
+                               (Failure.toError
+                                   (TimedOut { afterMs = Just (n * 5000) }))
+
+                       else
+                           Time.sleep (Math.min 5000 (100 * (n + 1)))
+                               |> Task.andThen (\_ -> waitBuild url b (n + 1)))
 
 
 -- An image name without its tag: `…/repo/image:tag` is `…/repo/image`.
@@ -1626,11 +1987,14 @@ imageName ref =
     case List.reverse (String.split "/" ref) of
 
         last :: rest ->
-            String.join "/" (List.reverse ((String.split ":" last |> List.head |> Maybe.withDefault last) :: rest))
+            String.join
+                "/"
+                (List.reverse
+                    ((String.split ":" last |> List.head |> Maybe.withDefault last)
+                        :: rest))
 
         [] ->
             ref
-
 
 -- ── The Cloud Billing catalogue ─────────────────────────────────────
 -- | One price of the Cloud Billing catalogue: its service, its description,
@@ -1665,22 +2029,37 @@ skus serviceName region match =
                                                (JsonD.list
                                                    (JsonD.map2
                                                        (\i d -> ( i, d ))
-                                                       (JsonD.field "serviceId" JsonD.string)
-                                                       (JsonD.field "displayName" JsonD.string))))
+                                                       (JsonD.field
+                                                           "serviceId"
+                                                           JsonD.string)
+                                                       (JsonD.field
+                                                           "displayName"
+                                                           JsonD.string))))
                                            body of
 
                                       Ok services ->
-                                          case List.filter (\( _, d ) -> d == serviceName) services |> List.head of
+                                          case List.filter
+                                                   (\( _, d ) -> d == serviceName)
+                                                   services
+                                                   |> List.head of
 
                                               Just ( id, _ ) ->
-                                                  skuPages base id serviceName "" []
+                                                  skuPages
+                                                      base
+                                                      id
+                                                      serviceName
+                                                      ""
+                                                      []
 
                                               Nothing ->
                                                   Task.fail
                                                       (Failure.toError
                                                           (InvalidSetting
-                                                              { setting = "service"
-                                                              , reason = serviceName ++ " is not a Cloud Billing service name"
+                                                              { setting =
+                                                                  "service"
+                                                              , reason =
+                                                                  serviceName
+                                                                      ++ " is not a Cloud Billing service name"
                                                               }))
 
                                       Err e ->
@@ -1689,9 +2068,13 @@ skus serviceName region match =
                (\all ->
                    List.filter
                        (\sku ->
-                           (List.member region sku.regions || List.member "global" sku.regions)
+                           (List.member region sku.regions
+                               || List.member "global" sku.regions)
                                && List.all
-                                      (\w -> String.contains (String.toLower w) (String.toLower sku.description))
+                                      (\w ->
+                                          String.contains
+                                              (String.toLower w)
+                                              (String.toLower sku.description))
                                       match)
                        all)
 
@@ -1702,10 +2085,10 @@ skuPages base id serviceName token acc =
         "GET"
         (base ++ "/v1/services/" ++ id ++ "/skus?pageSize=5000"
             ++ (if token == "" then
-                    ""
+                   ""
 
-                else
-                    "&pageToken=" ++ Encoding.urlEncode token))
+               else
+                   "&pageToken=" ++ Encoding.urlEncode token))
         ""
         |> Task.andThen (ok "Cloud Billing catalogue" "")
         |> Task.andThen
@@ -1713,8 +2096,16 @@ skuPages base id serviceName token acc =
                    case JsonD.decodeString
                             (JsonD.map2
                                 (\list next -> ( list, next ))
-                                (JsonD.oneOf [ JsonD.field "skus" (JsonD.list (skuDecoder serviceName)), JsonD.succeed [] ])
-                                (JsonD.oneOf [ JsonD.field "nextPageToken" JsonD.string, JsonD.succeed "" ]))
+                                (JsonD.oneOf
+                                    [ JsonD.field
+                                          "skus"
+                                          (JsonD.list (skuDecoder serviceName))
+                                    , JsonD.succeed []
+                                    ])
+                                (JsonD.oneOf
+                                    [ JsonD.field "nextPageToken" JsonD.string
+                                    , JsonD.succeed ""
+                                    ]))
                             body of
 
                        Ok ( list, "" ) ->
@@ -1730,20 +2121,38 @@ skuPages base id serviceName token acc =
 skuDecoder : String -> JsonD.Decoder Sku
 skuDecoder serviceName =
     JsonD.map4
-        (\d r u p -> { service = serviceName, description = d, regions = r, unit = u, usd = p })
+        (\d r u p ->
+            { service = serviceName
+            , description = d
+            , regions = r
+            , unit = u
+            , usd = p
+            })
         (JsonD.field "description" JsonD.string)
-        (JsonD.oneOf [ JsonD.field "serviceRegions" (JsonD.list JsonD.string), JsonD.succeed [] ])
         (JsonD.oneOf
-            [ JsonD.at [ "pricingInfo" ] (JsonD.index 0 (JsonD.at [ "pricingExpression", "usageUnit" ] JsonD.string))
+            [ JsonD.field "serviceRegions" (JsonD.list JsonD.string)
+            , JsonD.succeed []
+            ])
+        (JsonD.oneOf
+            [ JsonD.at
+                  [ "pricingInfo" ]
+                  (JsonD.index
+                      0
+                      (JsonD.at [ "pricingExpression", "usageUnit" ] JsonD.string))
             , JsonD.succeed ""
             ])
         (JsonD.oneOf
-            [ JsonD.at [ "pricingInfo" ]
-                (JsonD.index 0
-                    (JsonD.at [ "pricingExpression", "tieredRates" ]
-                        (JsonD.map
-                            (\rates -> List.reverse rates |> List.head |> Maybe.withDefault "0")
-                            (JsonD.list unitPrice))))
+            [ JsonD.at
+                  [ "pricingInfo" ]
+                  (JsonD.index
+                      0
+                      (JsonD.at
+                          [ "pricingExpression", "tieredRates" ]
+                          (JsonD.map
+                              (\rates ->
+                                  List.reverse rates |> List.head
+                                      |> Maybe.withDefault "0")
+                              (JsonD.list unitPrice))))
             , JsonD.succeed "0"
             ])
 

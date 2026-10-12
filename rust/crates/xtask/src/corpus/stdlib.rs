@@ -415,6 +415,30 @@ pub const SURFACES: &[Surface] = &[
             "Sky.Core.Maybe as Maybe",
         ],
     ),
+    // v0.28.0 phase 4 Std.Ai.Serve: the tier's pure parts. vLLM's command line
+    // for a tier, the base id an adapter must match, and a Cloud Run
+    // service's resource name. The expected values follow from the documented
+    // tier (docs/ai/serve.md) and the Cloud Run API's resource names.
+    sf2(
+        "aiserve",
+        "Std.Ai.Serve",
+        &["Sky.Core.String as String", "Sky.Core.List as List"],
+    ),
+    // v0.28.0 phase 4 Std.Ai.Cloud.Google: the pure helpers. A machine type's
+    // accelerator, Google's label rule, and the typed failure a refusal is: a
+    // quota is QuotaExceeded, a stockout CapacityUnavailable, anything else
+    // RemoteRejected. The expected values follow from Google's documented
+    // machine table and label rule, not from a call.
+    sf2(
+        "aigooglecloud",
+        "Std.Ai.Cloud.Google",
+        &[
+            "Std.Ai.Failure as Failure",
+            "Sky.Core.String as String",
+            "Sky.Core.List as List",
+            "Sky.Core.Maybe as Maybe",
+        ],
+    ),
     sf2(
         "aieval",
         "Std.Ai.Eval",
@@ -822,6 +846,10 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Ai.Registry",
     // v0.28.0: Std.Ai.Train lands covered (`aitrain` surface).
     "Std.Ai.Train",
+    // v0.28.0 phase 4: Std.Ai.Serve and Std.Ai.Cloud.Google land covered
+    // (`aiserve`, `aigooglecloud` surfaces).
+    "Std.Ai.Serve",
+    "Std.Ai.Cloud.Google",
     // v0.28.0: Std.Ai.Dataset, its Scrub and Synthetic modules land covered
     // (`aidataset`, `aiscrub`, `aisynthetic` surfaces).
     "Std.Ai.Dataset",
@@ -1445,6 +1473,8 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "aistore" => aistore_battery(edge),
         "airegistry" => airegistry_battery(edge),
         "aitrain" => aitrain_battery(edge),
+        "aiserve" => aiserve_battery(edge),
+        "aigooglecloud" => aigooglecloud_battery(edge),
         "aiscrub" => aiscrub_battery(edge),
         "aidataset" => aidataset_battery(edge),
         "aisynthetic" => aisynthetic_battery(edge),
@@ -4232,11 +4262,53 @@ fn aitrain_battery(edge: &str) -> Vec<Check> {
             ),
             s(
                 &["Train.backendName"],
-                "String.join \",\" (List.map Train.backendName [ Train.Mlx, Train.Unsloth, Train.Fake ])",
-                "mlx,unsloth,fake",
+                "String.join \",\" (List.map Train.backendName [ Train.Mlx, Train.Unsloth, Train.Fake, Train.Vertex ])",
+                "mlx,unsloth,fake,vertex",
             ),
+            // `sky-` and the first 20 hex digits of SHA-256("x").
+            s(&["Train.runKey"], "Train.runKey \"x\"", "sky-2d711642b726b0440162"),
         ],
         "failure" => vec![s(&["Train.decodeEvent"], "aiTrainRefused", "ToolchainFailed")],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Serve ---------------------------------------------------------
+fn aiserve_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Serve.vllmArgs", "Serve.withMaxAdapters"], "aiServeLora", "--enable-lora --max-loras 3"),
+            s(
+                &["Serve.baseIdOf", "Serve.tier", "Serve.devBase"],
+                "Serve.baseIdOf (Serve.tier Serve.Vllm Serve.devBase)",
+                "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775",
+            ),
+            s(
+                &["Serve.serviceName", "Serve.cloudRun"],
+                "Serve.serviceName (Serve.cloudRun { project = \"p\", region = \"us-central1\", service = \"t\" })",
+                "projects/p/locations/us-central1/services/t",
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Cloud.Google ----------------------------------------------------
+fn aigooglecloud_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Google.accelerator"],
+                "aiGoogleAccelerators",
+                "NVIDIA_L4 1,NVIDIA_L4 2, 0",
+            ),
+            s(&["Google.validLabel"], "aiGoogleLabels", "TFFF"),
+        ],
+        "failure" => vec![s(
+            &["Google.refused"],
+            "aiGoogleRefusals",
+            "QuotaExceeded CapacityUnavailable RemoteRejected",
+        )],
         _ => vec![],
     }
 }
@@ -6589,6 +6661,57 @@ aiRegistryVersion =
 aiRegistryNames : String
 aiRegistryNames =
     Registry.label aiRegistryVersion ++ " " ++ Registry.servedName aiRegistryVersion
+"#
+        }
+        "aiserve" => {
+            r#"aiServeLora : String
+aiServeLora =
+    Serve.vllmArgs "/h" (Serve.tier Serve.Vllm Serve.devBase |> Serve.withMaxAdapters 3)
+        |> List.drop 4
+        |> List.take 3
+        |> String.join " "
+"#
+        }
+        "aigooglecloud" => {
+            r#"aiGoogleAccelerators : String
+aiGoogleAccelerators =
+    [ "g2-standard-4", "g2-standard-24", "n2-standard-4" ]
+        |> List.map
+               (\m ->
+                   let
+                       ( kind, n ) =
+                           Google.accelerator m
+                   in
+                       kind ++ " " ++ String.fromInt n)
+        |> String.join ","
+
+
+aiGoogleLabels : String
+aiGoogleLabels =
+    [ "sky-run_1", "Upper", "", String.repeat 64 "a" ]
+        |> List.map
+               (\l ->
+                   if Google.validLabel l then
+                       "T"
+
+                   else
+                       "F")
+        |> String.join ""
+
+
+aiGoogleRefusals : String
+aiGoogleRefusals =
+    [ { status = 429, body = "{\"error\":{\"message\":\"Quota exceeded for aiplatform.googleapis.com/custom_model_training_nvidia_l4_gpus\"}}", request = "POST /v1/projects/p/locations/us-central1/customJobs" }
+    , { status = 400, body = "{\"error\":{\"message\":\"The zone does not have enough resources available (ZONE_RESOURCE_POOL_EXHAUSTED)\"}}", request = "POST /v1/x" }
+    , { status = 404, body = "{\"error\":{\"message\":\"not found\"}}", request = "GET /v1/x" }
+    ]
+        |> List.map
+               (\r ->
+                   Google.refused "L4" "us-central1" r
+                       |> Failure.fromError
+                       |> Maybe.map Failure.code
+                       |> Maybe.withDefault "untyped")
+        |> String.join " "
 "#
         }
         "aitrain" => {

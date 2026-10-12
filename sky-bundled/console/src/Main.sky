@@ -191,6 +191,7 @@ aiDecoder =
         |> Pipeline.optional "evals" (Decode.list aiEvalDecoder) []
         |> Pipeline.optional "registry" (Decode.list aiModelDecoder) []
         |> Pipeline.optional "training" (Decode.list aiTrainingDecoder) []
+        |> Pipeline.optional "tiers" (Decode.list aiTierDecoder) []
 
 
 -- A training run. An older runtime sends no `training` key, so the list is
@@ -211,6 +212,38 @@ aiTrainingDecoder =
         |> Pipeline.optional "registered" Decode.string ""
         |> Pipeline.optional "losses" (Decode.list curvePoint) []
         |> Pipeline.optional "valLosses" (Decode.list curvePoint) []
+        |> Pipeline.optional "cloud" Decode.string ""
+        |> Pipeline.optional "cloudState" Decode.string ""
+        |> Pipeline.optional "spent" Decode.string ""
+        |> Pipeline.optional "budget" Decode.string ""
+
+
+-- A GPU tier. An older runtime sends no `tiers` key.
+aiTierDecoder : Decode.Decoder AiTier
+aiTierDecoder =
+    Decode.succeed AiTier |> Pipeline.optional "bind" Decode.string ""
+        |> Pipeline.optional "base" Decode.string ""
+        |> Pipeline.optional "ready" Decode.bool False
+        |> Pipeline.optional "reason" Decode.string ""
+        |> Pipeline.optional "resident" (Decode.list Decode.string) []
+        |> Pipeline.optional "inFlight" intFromFloat 0
+        |> Pipeline.optional "loads" intFromFloat 0
+        |> Pipeline.optional "unloads" intFromFloat 0
+        |> Pipeline.optional
+               "signals"
+               (Decode.oneOf
+                   [ Decode.field "running" Decode.float, Decode.succeed 0.0 ])
+               0.0
+        |> Pipeline.optional
+               "signals"
+               (Decode.oneOf
+                   [ Decode.field "waiting" Decode.float, Decode.succeed 0.0 ])
+               0.0
+        |> Pipeline.optional
+               "signals"
+               (Decode.oneOf
+                   [ Decode.field "kvCache" Decode.float, Decode.succeed 0.0 ])
+               0.0
 
 
 -- A curve point is `[step, value]`; the console keeps the value.

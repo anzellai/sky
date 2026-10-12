@@ -208,7 +208,13 @@ A Training section lists the `Std.Ai.Train` runs the process touched and the
 runs under `.sky/ai/runs`: each with its status, its step of the total, its
 latest loss and eval loss, its relaunches (and the step it resumed from), its
 last checkpoint, the version it registered, the error of a failed or cancelled
-run, and a small loss curve (at most 200 points). A row holds no dataset text.
+run, and a small loss curve (at most 200 points). A run on Vertex AI also
+shows its job's state and its spend against its budget. A row holds no
+dataset text. A "GPU tiers" section shows each `Std.Ai.Serve` tier the
+process runs: whether it is ready, the adapters it holds, the requests in
+flight, the loads and unloads, and vLLM's running and waiting requests and KV
+cache use. The tier also answers `/metrics` in Prometheus text
+(`sky_ai_tier_*`, `sky_ai_engine_*`, see [`ai/serve.md`](ai/serve.md)).
 The rings hold no prompt, no answer and no secret. The hub has no AI data, so its AI tab is empty. Guide:
 [`ai/local.md`](ai/local.md#in-the-sky-console).
 

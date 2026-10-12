@@ -320,6 +320,28 @@ type alias AiTrainingRun =
     , registered : String
     , losses : List Float
     , valLosses : List Float
+    , cloud : String
+    , cloudState : String
+    , spent : String
+    , budget : String
+    }
+
+-- One Std.Ai.Serve GPU tier (`aiTierStatus` in runtime-go/rt/ai_serve.go):
+-- whether it is ready (and why not), its aliases and resident adapters, the
+-- requests in flight, and the engine's signals (`running`, `waiting`,
+-- `kvCache`).
+type alias AiTier =
+    { bind : String
+    , base : String
+    , ready : Bool
+    , reason : String
+    , resident : List String
+    , inFlight : Int
+    , loads : Int
+    , unloads : Int
+    , running : Float
+    , waiting : Float
+    , kvCache : Float
     }
 
 type alias AiData =
@@ -329,6 +351,7 @@ type alias AiData =
     , evals : List AiEval
     , registry : List AiModel
     , training : List AiTrainingRun
+    , tiers : List AiTier
     }
 
 
@@ -340,6 +363,7 @@ emptyAiData =
     , evals = []
     , registry = []
     , training = []
+    , tiers = []
     }
 
 -- The AI panel's controls. `failedOnly` and `slot` filter the recent

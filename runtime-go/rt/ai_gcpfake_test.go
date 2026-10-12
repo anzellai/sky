@@ -289,3 +289,40 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// Test mode keeps every outbound request mocked, except the loopback emulator
+// that SKY_AI_GCP_ENDPOINT names (the fakegcp process the cargo flows share
+// between several Sky processes). Before the passthrough, `sky ai train
+// --backend vertex` under SKY_TEST_MODE could not reach it and failed
+// NotConfigured at the metadata server.
+func TestTestModeReachesTheLoopbackEmulatorOnly(t *testing.T) {
+	emu := httptest.NewServer(FakeGCPHandler())
+	defer emu.Close()
+	other := httptest.NewServer(FakeGCPHandler())
+	defer other.Close()
+	t.Setenv("SKY_TEST_MODE", "1")
+	t.Setenv("SKY_AI_GCP_ENDPOINT", emu.URL)
+	resetTestModeForTest()
+	defer resetTestModeForTest()
+	c := &http.Client{Transport: &testHttpTransport{}}
+	get := func(base string) (*http.Response, error) {
+		req, _ := http.NewRequest("GET", base+"/metadata/computeMetadata/v1/instance/service-accounts/default/token", nil)
+		req.Header.Set("Metadata-Flavor", "Google")
+		return c.Do(req)
+	}
+	resp, err := get(emu.URL)
+	if err != nil {
+		t.Fatalf("the emulator SKY_AI_GCP_ENDPOINT names is refused in test mode: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("emulator status %d", resp.StatusCode)
+	}
+	if _, err := get(other.URL); err == nil {
+		t.Fatalf("a loopback host the endpoint does not name passed through test mode")
+	}
+	t.Setenv("SKY_AI_GCP_ENDPOINT", "http://example.com:80")
+	if aiGcpLoopbackEmulator("example.com:80") {
+		t.Fatalf("a non-loopback endpoint passed through test mode")
+	}
+}

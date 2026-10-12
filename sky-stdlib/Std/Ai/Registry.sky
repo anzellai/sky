@@ -532,7 +532,8 @@ registerWith (Registry r) name adapter lin0 companions =
                            (List.map
                                (\c ->
                                    Store.put r.store c.path
-                                       |> Task.map (\blob -> ( c.role, blob.sha256 )))
+                                       |> Task.map
+                                              (\blob -> ( c.role, blob.sha256 )))
                                companions)
                            |> Task.map (\stored -> ( pair, stored )))
             |> Task.andThen
@@ -543,7 +544,10 @@ registerWith (Registry r) name adapter lin0 companions =
                                    | metadata =
                                        List.filter
                                            (\( k, _ ) ->
-                                               not (List.any (\( role, _ ) -> role == k) stored))
+                                               not
+                                                   (List.any
+                                                       (\( role, _ ) -> role == k)
+                                                       stored))
                                            lin0.metadata
                                            ++ stored
                                }
@@ -559,13 +563,16 @@ registerWith (Registry r) name adapter lin0 companions =
                                adapterInfoRaw adapter.path
                                    |> Task.andThen
                                           (\info ->
-                                              if info.format /= formatText adapter.format then
+                                              if info.format
+                                                  /= formatText adapter.format then
                                                   Task.fail
                                                       (invalidSetting
                                                           "format"
-                                                          (adapter.path ++ " is " ++ info.format
+                                                          (adapter.path ++ " is "
+                                                              ++ info.format
                                                               ++ ", not "
-                                                              ++ formatText adapter.format))
+                                                              ++ formatText
+                                                                     adapter.format))
 
                                               else
                                                   Store.put r.store adapter.path
@@ -582,7 +589,8 @@ registerWith (Registry r) name adapter lin0 companions =
             |> Task.andThen
                    (\v ->
                        publishConsole (Registry r) name
-                           |> Task.andThen (\_ -> publishAfter (Registry r) name)
+                           |> Task.andThen
+                                  (\_ -> publishAfter (Registry r) name)
                            |> Task.map (\_ -> v))
 
 
@@ -2034,7 +2042,6 @@ quote s =
 -- never move it back. `publishPointers` (and `sky ai registry publish
 -- <name>`) writes them all again: after a crash between a commit and its
 -- publish, or for versions registered before pointers existed.
-
 -- | Where an alias points, as the store holds it.
 type alias Pointer =
     { name : String
@@ -2167,9 +2174,24 @@ manifestDecoder =
                 (JsonD.field "number" JsonD.int)
                 (str "label")
                 (str "servedName"))
-            (JsonD.map4 (\a b c d -> ( a, b, c, d )) (str "digest") (str "format") (str "method") (str "architecture"))
-            (JsonD.map4 (\a b c d -> ( a, b, c, d )) (str "base") (str "baseDigest") (str "baseId") (str "dataset"))
-            (JsonD.map4 (\a b c d -> ( a, b, c, d )) (str "datasetDigest") (str "peft") (str "peftConfig") (str "gguf"))
+            (JsonD.map4
+                (\a b c d -> ( a, b, c, d ))
+                (str "digest")
+                (str "format")
+                (str "method")
+                (str "architecture"))
+            (JsonD.map4
+                (\a b c d -> ( a, b, c, d ))
+                (str "base")
+                (str "baseDigest")
+                (str "baseId")
+                (str "dataset"))
+            (JsonD.map4
+                (\a b c d -> ( a, b, c, d ))
+                (str "datasetDigest")
+                (str "peft")
+                (str "peftConfig")
+                (str "gguf"))
 
 
 pointerJson : Pointer -> String
@@ -2198,9 +2220,18 @@ pointerDecoder =
             , digest = d
             , servedName = s
             })
-        (JsonD.map2 (\a b -> ( a, b )) (JsonD.field "name" JsonD.string) (JsonD.field "alias" JsonD.string))
-        (JsonD.map2 (\a b -> ( a, b )) (JsonD.field "number" JsonD.int) (JsonD.field "generation" JsonD.int))
-        (JsonD.map2 (\a b -> ( a, b )) (JsonD.field "digest" JsonD.string) (JsonD.field "servedName" JsonD.string))
+        (JsonD.map2
+            (\a b -> ( a, b ))
+            (JsonD.field "name" JsonD.string)
+            (JsonD.field "alias" JsonD.string))
+        (JsonD.map2
+            (\a b -> ( a, b ))
+            (JsonD.field "number" JsonD.int)
+            (JsonD.field "generation" JsonD.int))
+        (JsonD.map2
+            (\a b -> ( a, b ))
+            (JsonD.field "digest" JsonD.string)
+            (JsonD.field "servedName" JsonD.string))
 
 
 manifestKey : String -> Int -> String
@@ -2225,7 +2256,8 @@ readPointer st name aliasName =
                            Task.succeed Nothing
 
                        Just text ->
-                           Task.fromResult (JsonD.decodeString pointerDecoder text)
+                           Task.fromResult
+                               (JsonD.decodeString pointerDecoder text)
                                |> Task.map Just)
 
 
@@ -2241,7 +2273,8 @@ readManifest st name number =
                            Task.succeed Nothing
 
                        Just text ->
-                           Task.fromResult (JsonD.decodeString manifestDecoder text)
+                           Task.fromResult
+                               (JsonD.decodeString manifestDecoder text)
                                |> Task.map Just)
 
 
@@ -2262,45 +2295,65 @@ publishPointers (Registry r) name =
                                   Task.sequence
                                       (List.map
                                           (\a ->
-                                              case List.filter (\v -> v.number == a.number) vs |> List.head of
+                                              case List.filter
+                                                       (\v ->
+                                                           v.number == a.number)
+                                                       vs
+                                                       |> List.head of
 
                                                   Just v ->
                                                       writePointer
                                                           r.store
                                                           { name = name
-                                                          , aliasName = a.aliasName
+                                                          , aliasName =
+                                                              a.aliasName
                                                           , number = a.number
-                                                          , generation = a.generation
+                                                          , generation =
+                                                              a.generation
                                                           , digest = v.digest
-                                                          , servedName = servedName v
+                                                          , servedName =
+                                                              servedName v
                                                           }
                                                           0
 
                                                   Nothing ->
                                                       Task.succeed 0)
                                           als)
-                                      |> Task.map (\moved -> List.foldl (\a b -> a + b) 0 (written ++ moved))))
+                                      |> Task.map
+                                             (\moved ->
+                                                 List.foldl
+                                                     (\a b -> a + b)
+                                                     0
+                                                     (written ++ moved))))
 
 
 -- After a commit: publish the pointers, and say how to repair them when the
 -- store refused (the database change stands).
 publishAfter : Registry -> String -> Task Error ()
 publishAfter reg name =
-    publishPointers reg name
-        |> Task.map (\_ -> ())
+    publishPointers reg name |> Task.map (\_ -> ())
         |> Task.onError
                (\e ->
                    Task.fail
                        (Failure.toErrorWith
-                           ("the database records the change; run `sky ai registry publish " ++ name
+                           ("the database records the change; run `sky ai registry publish "
+                               ++ name
                                ++ "` to repair the store: "
                                ++ Error.toString e)
-                           (EngineFailed { reason = "the registry could not publish its pointer objects to " ++ Store.location (store reg) })))
+                           (EngineFailed
+                               { reason =
+                                   "the registry could not publish its pointer objects to "
+                                       ++ Store.location (store reg)
+                               })))
 
 
 writeManifest : Store -> Version -> Task Error Int
 writeManifest st v =
-    Store.putIf st (manifestKey v.name v.number) "" (manifestJson (manifestOf v))
+    Store.putIf
+        st
+        (manifestKey v.name v.number)
+        ""
+        (manifestJson (manifestOf v))
         |> Task.map
                (\created ->
                    if created then
@@ -2328,7 +2381,9 @@ writePointer st p tries =
                                    case JsonD.decodeString pointerDecoder o.body of
 
                                        Ok q ->
-                                           ( o.generation, q.generation < p.generation )
+                                           ( o.generation
+                                           , q.generation < p.generation
+                                           )
 
                                        Err _ ->
                                            ( o.generation, True )
@@ -2337,7 +2392,11 @@ writePointer st p tries =
                            Task.succeed 0
 
                        else
-                           Store.putIf st (pointerKey p.name p.aliasName) objectGen (pointerJson p)
+                           Store.putIf
+                               st
+                               (pointerKey p.name p.aliasName)
+                               objectGen
+                               (pointerJson p)
                                |> Task.andThen
                                       (\done ->
                                           if done then
@@ -2350,9 +2409,13 @@ writePointer st p tries =
                                               Task.fail
                                                   (Failure.toError
                                                       (PromotionConflict
-                                                          { ref = p.name ++ "@" ++ p.aliasName
-                                                          , expected = "a stable pointer"
-                                                          , actual = "five racing writers"
+                                                          { ref =
+                                                              p.name ++ "@"
+                                                                  ++ p.aliasName
+                                                          , expected =
+                                                              "a stable pointer"
+                                                          , actual =
+                                                              "five racing writers"
                                                           }))))
 
 
@@ -2370,7 +2433,8 @@ storeResolver st =
                        (\( name, which ) ->
                            (if isVersionWord which then
                                Task.succeed
-                                   (String.toInt (String.dropLeft 1 which) |> Maybe.withDefault 0)
+                                   (String.toInt (String.dropLeft 1 which)
+                                       |> Maybe.withDefault 0)
 
                            else
                                readPointer st name which
@@ -2382,7 +2446,9 @@ storeResolver st =
                                                       Task.succeed ptr.number
 
                                                   Nothing ->
-                                                      Task.fail (notRegistered (stripScheme ref))))
+                                                      Task.fail
+                                                          (notRegistered
+                                                              (stripScheme ref))))
                                |> Task.andThen
                                       (\number ->
                                           readManifest st name number
@@ -2393,24 +2459,41 @@ storeResolver st =
                                                              Nothing ->
                                                                  Task.fail
                                                                      (notRegistered
-                                                                         (name ++ "@v" ++ String.fromInt number))
+                                                                         (name
+                                                                             ++ "@v"
+                                                                             ++ String.fromInt
+                                                                                    number))
 
                                                              Just man ->
                                                                  let
                                                                      info path digest format =
-                                                                         { ref = stripScheme ref
-                                                                         , label = man.label
-                                                                         , servedName = man.servedName
-                                                                         , digest = digest
-                                                                         , baseDigest = man.baseDigest
-                                                                         , format = format
-                                                                         , path = path
+                                                                         { ref =
+                                                                             stripScheme
+                                                                                 ref
+                                                                         , label =
+                                                                             man.label
+                                                                         , servedName =
+                                                                             man.servedName
+                                                                         , digest =
+                                                                             digest
+                                                                         , baseDigest =
+                                                                             man.baseDigest
+                                                                         , format =
+                                                                             format
+                                                                         , path =
+                                                                             path
                                                                          }
                                                                  in
-                                                                     if not localEngine then
-                                                                         Task.succeed (info "" man.digest man.format)
+                                                                     if not
+                                                                         localEngine then
+                                                                         Task.succeed
+                                                                             (info
+                                                                                 ""
+                                                                                 man.digest
+                                                                                 man.format)
 
-                                                                     else if man.gguf == "" then
+                                                                     else if man.gguf
+                                                                         == "" then
                                                                          Task.fail
                                                                              (invalidSetting
                                                                                  "adapter"
@@ -2418,6 +2501,13 @@ storeResolver st =
                                                                                      ++ " has no GGUF file; a local engine (llama.cpp) loads GGUF adapters only"))
 
                                                                      else
-                                                                         Store.fetch st man.gguf
-                                                                             |> Task.map (\path -> info path man.gguf "gguf")))))
+                                                                         Store.fetch
+                                                                             st
+                                                                             man.gguf
+                                                                             |> Task.map
+                                                                                    (\path ->
+                                                                                        info
+                                                                                            path
+                                                                                            man.gguf
+                                                                                            "gguf"))))
     }
