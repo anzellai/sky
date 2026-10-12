@@ -6582,6 +6582,7 @@ aiRegistryVersion =
     , datasetDigest = ""
     , metadata = []
     , blocked = Nothing
+    , onDevice = Nothing
     , createdAt = 0
     }
 

@@ -18,6 +18,9 @@ import Sky.Test as Test exposing (Test)
 import Std.Ai.Provider as Provider
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Device as Device exposing (Backend(..), Decision(..), Placement(..), Reason(..), Status(..))
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Db as Db
+import Sky.Core.File as File
 
 
 model : Device.OfferFile
@@ -352,7 +355,7 @@ tests =
                                        Task.sequence
                                            (List.map
                                                (\p ->
-                                                   Provider.chat (Device.replay rec) p
+                                                   Provider.chat (Device.replay rec) p.messages
                                                        |> Task.map .content)
                                                prompts))
                             |> Task.run))
@@ -375,6 +378,21 @@ tests =
                         Ok _ ->
                             Test.fail "a missing prompt was answered")
           , Test.test
+                "Eval.prompts lists each case's messages with the suite's options"
+                (\_ ->
+                    Test.equal
+                        [ ( "Paris?", Just 0.0, Just 42 ), ( "Rome?", Just 0.0, Just 42 ) ]
+                        (List.map
+                            (\p ->
+                                ( List.reverse p.messages |> List.head |> Maybe.map .content |> Maybe.withDefault ""
+                                , p.options.temperature
+                                , p.options.seed
+                                ))
+                            (Eval.prompts capitals)))
+          , Test.test
+                "one suite scores a device recording as it scores the live provider"
+                (\_ -> Test.equal (Ok ( 0.5, 0.5, "device:wasm-cpu" )) parity)
+          , Test.test
                 "a recording round trips through JSON"
                 (\_ ->
                     let
@@ -394,9 +412,11 @@ idle =
     { state = "idle", doneBytes = 0, totalBytes = 0 }
 
 
-prompts : List (List Provider.Message)
+prompts : List Device.Prompt
 prompts =
-    [ [ Provider.user "one" ], [ Provider.system "terse", Provider.user "two" ] ]
+    [ { messages = [ Provider.user "one" ], options = Provider.defaultOptions }
+    , { messages = [ Provider.system "terse", Provider.user "two" ], options = Provider.defaultOptions }
+    ]
 
 
 echo : Provider.Provider
@@ -422,3 +442,34 @@ offerJson =
 capsJson : String
 capsJson =
     "{\"platform\":\"browser\",\"backends\":[{\"backend\":\"webgpu\",\"maxModelBytes\":1000},{\"backend\":\"wasm-cpu\",\"maxModelBytes\":1000}],\"unsupported\":[{\"backend\":\"native\",\"reason\":\"a browser has no native shell\"}],\"storageAvailableBytes\":10000,\"metered\":false,\"ready\":[\"aa\",\"bb\"],\"failed\":[]}"
+
+
+capitals : Eval.Suite String
+capitals =
+    Eval.suite
+        "capitals"
+        (\q -> [ Provider.system "Answer with the city.", Provider.user q ])
+        [ { id = "fr", input = "Paris?", expect = Contains "Paris?", tags = [] }
+        , { id = "it", input = "Rome?", expect = Contains "Milan", tags = [] }
+        ]
+
+
+-- The device answers (`echo` stands in for the device engine), the server
+-- scores the recording, and the pass rate equals a live run's.
+parity : Result Error ( Float, Float, String )
+parity =
+    File.tempDir "sky-device-parity"
+        |> Task.andThen (\dir -> Db.open "sqlite" (dir ++ "/eval.db"))
+        |> Task.andThen
+               (\db ->
+                   Device.record "device:wasm-cpu" echo (Eval.prompts capitals)
+                       |> Task.andThen
+                              (\rec ->
+                                  Eval.runAs rec.label db (Device.replay rec) capitals
+                                      |> Task.andThen
+                                             (\onDevice ->
+                                                 Eval.run db echo capitals
+                                                     |> Task.map
+                                                            (\live -> ( onDevice.passRate, live.passRate, onDevice.candidate )))))
+        |> Task.run
+

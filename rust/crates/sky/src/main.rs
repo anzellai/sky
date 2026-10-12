@@ -6689,11 +6689,19 @@ fn build_android_apk(
         let mf = root.join("app/src/main/AndroidManifest.xml");
         let text =
             std::fs::read_to_string(&mf).map_err(|e| format!("read {}: {e}", mf.display()))?;
+        // ACCESS_NETWORK_STATE (a normal permission, no prompt): a download
+        // waits for an unmetered network unless the slot allows metered.
         std::fs::write(
             &mf,
             text.replacen(
                 "android:supportsRtl=\"true\">",
                 "android:supportsRtl=\"true\"\n        android:extractNativeLibs=\"false\">",
+                1,
+            )
+            .replacen(
+                "<uses-permission android:name=\"android.permission.INTERNET\" />",
+                "<uses-permission android:name=\"android.permission.INTERNET\" />\n    \
+                 <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />",
                 1,
             ),
         )
@@ -7115,10 +7123,30 @@ enum SkyAi {
                     guard let rel = f["url"] as? String, let url = URL(string: rel, relativeTo: base) else {
                         throw NSError(domain: "sky", code: 1, userInfo: [NSLocalizedDescriptionKey: "unavailable: no download address"])
                     }
-                    let (tmp, resp) = try await URLSession.shared.download(from: url)
-                    if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
-                        throw NSError(domain: "sky", code: 2, userInfo: [NSLocalizedDescriptionKey: "unavailable: the server answered \(http.statusCode)"])
+                    // 64 MiB Range requests: each finishes well inside a server's
+                    // write timeout, and a slow link never holds one response open.
+                    let tmp = d.appendingPathComponent(sha + ".part")
+                    FileManager.default.createFile(atPath: tmp.path, contents: nil)
+                    let out = try FileHandle(forWritingTo: tmp)
+                    var off: Int64 = 0
+                    let chunk: Int64 = 64 << 20
+                    while off < bytes {
+                        let end = min(off + chunk, bytes) - 1
+                        var req = URLRequest(url: url)
+                        req.setValue("bytes=\(off)-\(end)", forHTTPHeaderField: "Range")
+                        let (data, resp) = try await URLSession.shared.data(for: req)
+                        if let http = resp as? HTTPURLResponse, http.statusCode != 206 && !(http.statusCode == 200 && off == 0) {
+                            try? out.close()
+                            throw NSError(domain: "sky", code: 2, userInfo: [NSLocalizedDescriptionKey: "unavailable: the server answered \(http.statusCode)"])
+                        }
+                        try out.write(contentsOf: data)
+                        off += Int64(data.count)
+                        doneBytes += Int64(data.count)
+                        setProgress(k, ["state": "downloading", "doneBytes": doneBytes, "totalBytes": total])
+                        if data.isEmpty { break }
                     }
+                    try out.close()
+                    doneBytes -= off
                     let got = try sha256(of: tmp)
                     if got != sha {
                         try? FileManager.default.removeItem(at: tmp)
@@ -8598,9 +8626,9 @@ public class MainActivity extends Activity {
                     case "sky:aiStatus":
                     case "sky:aiChat":
                     case "sky:aiEvict":
-                        // Std.Ai.Device (sky/ai/SkyAi.java). The page's origin is
-                        // where a device downloads the slot's files from.
-                        if (!p.has("origin")) p.put("origin", originOf(web.getUrl()));
+                        // Std.Ai.Device (sky/ai/SkyAi.java). The client sends the
+                        // page's origin, where a device downloads the slot's files
+                        // from (a WebView method may not be called on this thread).
                         sky.ai.SkyAi.handle(act, name, p, new sky.ai.SkyAi.Reply() {
                             @Override public void ok(String data) { replyOk(cbId, data); }
                             @Override public void err(String msg) { replyErr(cbId, msg); }
@@ -8760,15 +8788,6 @@ public class MainActivity extends Activity {
 
         protected void replyOk(String cbId, String jsonReply) { reply(cbId, true, jsonReply); }
         protected void replyErr(String cbId, String message) { reply(cbId, false, message); }
-
-        private static String originOf(String url) {
-            try {
-                java.net.URL u = new java.net.URL(url);
-                return u.getProtocol() + "://" + u.getAuthority();
-            } catch (Exception e) {
-                return "";
-            }
-        }
 
         private void reply(String cbId, boolean ok, String data) {
             final String js = "window.__skyBridgeCb && window.__skyBridgeCb['" + cbId
@@ -9485,6 +9504,7 @@ import org.json.JSONObject;
 public final class SkyAi {
     public interface Reply { void ok(String data); void err(String msg); }
 
+    private static final long CHUNK = 64L << 20;
     private static final ExecutorService ENGINE = Executors.newSingleThreadExecutor();
     private static final ExecutorService NET = Executors.newSingleThreadExecutor();
     private static final Map<String, JSONObject> PROGRESS = new HashMap<>();
@@ -9589,7 +9609,9 @@ public final class SkyAi {
             .put(new JSONObject().put("backend", "webgpu").put("reason", "the Android shell runs llama.cpp natively"))
             .put(new JSONObject().put("backend", "wasm-cpu").put("reason", "the Android shell runs llama.cpp natively")));
         o.put("storageAvailableBytes", fs.getAvailableBytes());
-        o.put("metered", cm != null && cm.isActiveNetworkMetered());
+        boolean metered = false;
+        try { metered = cm != null && cm.isActiveNetworkMetered(); } catch (SecurityException e) { metered = false; }
+        o.put("metered", metered);
         o.put("ready", ready);
         o.put("failed", new JSONArray());
         return o.toString();
@@ -9618,19 +9640,32 @@ public final class SkyAi {
                     String sha = f.getString("sha256");
                     if (ready(c, sha) != null) { done += f.optLong("bytes", 0); continue; }
                     URL url = new URL(new URL(p.optString("origin", "")), f.getString("url"));
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setConnectTimeout(30000);
-                    conn.setReadTimeout(60000);
-                    if (conn.getResponseCode() != 200) throw new java.io.IOException("unavailable: the server answered " + conn.getResponseCode());
+                    long size = f.optLong("bytes", 0);
                     File part = new File(dir(c), sha + ".part");
                     MessageDigest md = MessageDigest.getInstance("SHA-256");
-                    try (InputStream in = conn.getInputStream(); OutputStream out = new FileOutputStream(part)) {
-                        byte[] buf = new byte[1 << 20]; int n;
-                        while ((n = in.read(buf)) > 0) {
-                            out.write(buf, 0, n); md.update(buf, 0, n); done += n;
-                            setProgress(k, "downloading", done, total, null);
+                    // 64 MiB Range requests: each finishes well inside a server's
+                    // write timeout, and a slow link never holds one response open.
+                    try (OutputStream out = new FileOutputStream(part)) {
+                        for (long off = 0; off < size; off += CHUNK) {
+                            long end = Math.min(off + CHUNK, size) - 1;
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setConnectTimeout(30000);
+                            conn.setReadTimeout(60000);
+                            conn.setRequestProperty("Range", "bytes=" + off + "-" + end);
+                            int code = conn.getResponseCode();
+                            if (code != 206 && !(code == 200 && off == 0 && end == size - 1)) {
+                                conn.disconnect();
+                                throw new java.io.IOException("unavailable: the server answered " + code);
+                            }
+                            try (InputStream in = conn.getInputStream()) {
+                                byte[] buf = new byte[1 << 20]; int n;
+                                while ((n = in.read(buf)) > 0) {
+                                    out.write(buf, 0, n); md.update(buf, 0, n); done += n;
+                                    setProgress(k, "downloading", done, total, null);
+                                }
+                            } finally { conn.disconnect(); }
                         }
-                    } finally { conn.disconnect(); }
+                    }
                     StringBuilder got = new StringBuilder();
                     for (byte b : md.digest()) got.append(String.format("%02x", b));
                     if (!got.toString().equals(sha)) {

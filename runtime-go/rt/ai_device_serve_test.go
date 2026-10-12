@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // deviceEndpoint is an Endpoint config as the Sky side passes it.
@@ -334,5 +335,47 @@ func TestDeviceWireFailureRoundTrip(t *testing.T) {
 	kind, df := aiDomainFailure(in)
 	if kind != errKindUnavailable || df.Retryable {
 		t.Fatalf("DeviceUnsupported kind %d retryable %v", kind, df.Retryable)
+	}
+}
+
+// A blob outlives the server's write deadline: a device on a slow link reads
+// a chunk for longer than SKY_HTTP_WRITE_TIMEOUT, and the response is not cut
+// (the Android emulator's 64 MiB chunks were, at 30 s, as "unexpected end of
+// stream").
+func TestDeviceBlobOutlivesTheServerWriteDeadline(t *testing.T) {
+	aiTestEnv(t, nil)
+	data := make([]byte, 4<<20)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	path, sum := writeBytes(t, "slow.gguf", data)
+	aiDeviceReset()
+	t.Cleanup(aiDeviceReset)
+	cfg := deviceEndpoint("chat", "", "auto", "file:"+path+"#sha256="+sum, "")
+	AiDeviceRegister("chat", func() any { return cfg })
+	mux := http.NewServeMux()
+	registerAiDeviceRoutes(mux)
+	srv := httptest.NewUnstartedServer(mux)
+	srv.Config.WriteTimeout = 300 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+	get(t, srv.URL+"/_sky/ai/device/chat", nil)
+	resp, err := http.Get(srv.URL + "/_sky/ai/blob/" + sum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got := 0
+	buf := make([]byte, 256<<10)
+	for {
+		n, err := resp.Body.Read(buf)
+		got += n
+		time.Sleep(60 * time.Millisecond) // a slow reader: about 1 s in all
+		if err != nil {
+			break
+		}
+	}
+	if got != len(data) {
+		t.Fatalf("read %d of %d bytes: the server cut the response at its write deadline", got, len(data))
 	}
 }

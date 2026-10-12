@@ -85,6 +85,7 @@ module Std.Ai.Registry exposing
     , fetchDataset
     , datasetValue
     , block
+    , allowOnDevice
     , fetch
     , label
     , servedName
@@ -176,6 +177,7 @@ type alias Version =
     , datasetDigest : String
     , metadata : List ( String, String )
     , blocked : Maybe String
+    , onDevice : Maybe String
     , createdAt : Int
     }
 
@@ -282,6 +284,9 @@ migrations =
 {"name":"created_at","type":"int"}]},
 {"kind":"addIndex","name":"_sky_ai_registry_datasets_number","table":"_sky_ai_registry_datasets","indexColumns":["name","number"],"unique":true},
 {"kind":"addIndex","name":"_sky_ai_registry_datasets_digest","table":"_sky_ai_registry_datasets","indexColumns":["name","digest"],"unique":true}
+]},
+{"id":"_sky_ai_registry_0003","ops":[
+{"kind":"addColumn","table":"_sky_ai_registry_versions","column":"on_device","type":"text","nullable":true}
 ]}]"""
 
 
@@ -1685,6 +1690,98 @@ block (Registry r) v reason =
                            Task.fail (notRegistered (label v)))
 
 
+-- | Clear a version for devices (`Std.Ai.Device`): an adapter runs on a
+-- user's phone or browser only after this audited step, because a device
+-- holds the adapter's weights, and weights can carry what they were trained
+-- on. The version must be GGUF, not blocked, and trained on a dataset
+-- version this registry holds that was scrubbed (`Dataset.scrub` is in its
+-- manifest). The reason is recorded on the version and as an alias event
+-- (`allow-on-device` on the pseudo-alias `device`). A slot whose device
+-- adapter is not cleared answers from the server (`Auto`) or fails with
+-- `NotPromotable` (`DeviceOnly`).
+allowOnDevice : Registry -> Version -> String -> Task Error ()
+allowOnDevice (Registry r) v reason =
+    if String.trim reason == "" then
+        Task.fail (invalidSetting "reason" "clearing a version for devices needs a reason")
+
+    else if v.blocked /= Nothing then
+        Task.fail (notPromotable (label v) "it is blocked")
+
+    else if v.format /= "gguf" then
+        Task.fail
+            (notPromotable
+                (label v)
+                ("it is " ++ v.format ++ "; a device loads GGUF adapters only"))
+
+    else
+        Db.query
+            r.db
+            "SELECT manifest, blocked FROM _sky_ai_registry_datasets WHERE digest = ?"
+            [ SqlString v.datasetDigest ]
+            |> Task.andThen (clearedDataset v)
+            |> Task.andThen (\_ -> Time.unixMillis ())
+            |> Task.andThen (recordOnDevice (Registry r) v (String.trim reason))
+
+
+-- The dataset an adapter was trained on must be registered, not blocked and
+-- scrubbed.
+clearedDataset : Version -> List (Dict String String) -> Task Error ()
+clearedDataset v rows =
+    case rows of
+
+        [] ->
+            Task.fail
+                (notPromotable
+                    (label v)
+                    ("its dataset (" ++ v.datasetDigest
+                        ++ ") is not in this registry, so no scrub report can be checked"))
+
+        row :: _ ->
+            if Db.getString "blocked" row /= "" then
+                Task.fail (notPromotable (label v) "its dataset version is blocked")
+
+            else
+                case Dataset.manifestFromJson (Db.getString "manifest" row) of
+
+                    Ok m ->
+                        if List.member "scrub" m.steps then
+                            Task.succeed ()
+
+                        else
+                            Task.fail
+                                (notPromotable
+                                    (label v)
+                                    "its dataset was not scrubbed (add Dataset.scrub before freezing it)")
+
+                    Err e ->
+                        Task.fail e
+
+
+recordOnDevice : Registry -> Version -> String -> Int -> Task Error ()
+recordOnDevice (Registry r) v reason now =
+    Db.exec
+        r.db
+        "UPDATE _sky_ai_registry_versions SET on_device = ? WHERE name = ? AND number = ?"
+        [ SqlString reason, SqlString v.name, SqlInt v.number ]
+        |> Task.andThen
+               (\n ->
+                   if n == 1 then
+                       Db.exec
+                           r.db
+                           "INSERT INTO _sky_ai_registry_events (name, alias, seq, action, from_number, to_number, report, reason, at) SELECT ?, 'device', COALESCE(MAX(seq), 0) + 1, 'allow-on-device', ?, ?, '', ?, ? FROM _sky_ai_registry_events WHERE name = ? AND alias = 'device'"
+                           [ SqlString v.name
+                           , SqlInt v.number
+                           , SqlInt v.number
+                           , SqlString reason
+                           , SqlInt now
+                           , SqlString v.name
+                           ]
+                           |> Task.andThen (\_ -> publish (Registry r) v.name)
+
+                   else
+                       Task.fail (notRegistered (label v)))
+
+
 -- | A local path holding the version's adapter, checked against its digest.
 fetch : Registry -> Version -> Task Error String
 fetch (Registry r) v =
@@ -1732,7 +1829,7 @@ adapterFor reg ref localEngine =
                            , baseDigest = v.baseDigest
                            , format = v.format
                            , path = path
-                           , onDevice = False
+                           , onDevice = v.onDevice /= Nothing
                            }
                    in
                        if not localEngine then
@@ -1794,6 +1891,12 @@ versionOf row =
 
         else
             Just (Db.getString "blocked" row)
+    , onDevice =
+        if Db.getString "on_device" row == "" then
+            Nothing
+
+        else
+            Just (Db.getString "on_device" row)
     , createdAt = Db.getInt "created_at" row
     }
 
@@ -1883,6 +1986,15 @@ versionValue v =
         , ( "metadata", pairsValue v.metadata )
         , ( "blocked"
           , case v.blocked of
+
+                Just why ->
+                    JsonE.string why
+
+                Nothing ->
+                    JsonE.null
+          )
+        , ( "onDevice"
+          , case v.onDevice of
 
                 Just why ->
                     JsonE.string why

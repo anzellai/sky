@@ -65,6 +65,7 @@ module Std.Ai.Eval exposing
     , PairResult
     , suite
     , suiteName
+    , prompts
     , withSamples
     , withConcurrency
     , withJudge
@@ -227,6 +228,29 @@ suite name prompt cases =
 
 
 -- | The suite's name: the `suite` field of its reports.
+{-| Every request a run of the suite sends, in order: each case's messages
+with the options of each sample (temperature 0 and seed `seed + sample` by
+default). A device records the answers to them (`Std.Ai.Device.record`), and
+the server scores the recording with `Std.Ai.Device.replay` and `runAs`, so one
+suite measures the device and the server alike. -}
+prompts : Suite input -> List { messages : List Message, options : Provider.Options }
+prompts (Suite s) =
+    List.concatMap
+        (\c ->
+            List.map
+                (\sample ->
+                    { messages = s.prompt c.input
+                    , options =
+                        { temperature = s.options.temperature
+                        , seed = Just (Maybe.withDefault (s.seed + sample) s.options.seed)
+                        , maxTokens = s.options.maxTokens
+                        , adapter = s.options.adapter
+                        }
+                    })
+                (List.range 0 (s.samples - 1)))
+        s.cases
+
+
 suiteName : Suite input -> String
 suiteName (Suite s) =
     s.name

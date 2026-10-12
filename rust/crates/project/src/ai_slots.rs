@@ -228,8 +228,7 @@ fn endpoint_names(src: &str) -> Vec<String> {
             }
         }
         if let Some(exp) = after.split_once("exposing").map(|(_, e)| e) {
-            let exp = exp.replace(['(', ')', ','], " ");
-            if exp.split_whitespace().any(|w| w == ".." || w == "endpoint") {
+            if exposes_member(exp, "endpoint") {
                 names.push("endpoint".to_string());
             }
         }
@@ -470,6 +469,101 @@ fn reached_sources(
     out
 }
 
+/// Whether an import's `exposing (…)` clause (the text after `exposing`)
+/// exposes `member`: the whole clause is `(..)`, or one of its items is the
+/// member. A type's `(..)` (`Mode(..)`) exposes its constructors, not every
+/// value of the module.
+fn exposes_member(clause: &str, member: &str) -> bool {
+    let Some(open) = clause.find('(') else {
+        return false;
+    };
+    let inner = &clause[open + 1..];
+    let inner = inner.strip_suffix(')').unwrap_or(inner);
+    let inner = match inner.rfind(')') {
+        Some(_) if inner.trim() == ".." => inner,
+        _ => inner,
+    };
+    if inner.trim() == ".." {
+        return true;
+    }
+    let mut depth = 0usize;
+    let mut item = String::new();
+    let mut items = Vec::new();
+    for c in inner.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => items.push(std::mem::take(&mut item)),
+            _ if depth == 0 => item.push(c),
+            _ => {}
+        }
+    }
+    items.push(item);
+    items.iter().any(|i| i.trim() == member)
+}
+
+/// `src` with every comment and string literal replaced by spaces (newlines
+/// kept), so a scan finds code only, at the same byte offsets.
+fn code_only(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out = b.to_vec();
+    let blank = |out: &mut Vec<u8>, from: usize, to: usize| {
+        for x in out.iter_mut().take(to).skip(from) {
+            if *x != b'\n' {
+                *x = b' ';
+            }
+        }
+    };
+    let mut i = 0;
+    while i < b.len() {
+        if b[i..].starts_with(b"--") {
+            let end = src[i..].find('\n').map(|n| i + n).unwrap_or(b.len());
+            blank(&mut out, i, end);
+            i = end;
+        } else if b[i..].starts_with(b"{-") {
+            let mut depth = 0usize;
+            let mut j = i;
+            while j < b.len() {
+                if b[j..].starts_with(b"{-") {
+                    depth += 1;
+                    j += 2;
+                } else if b[j..].starts_with(b"-}") {
+                    depth -= 1;
+                    j += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    j += 1;
+                }
+            }
+            blank(&mut out, i, j);
+            i = j;
+        } else if b[i..].starts_with(b"\"\"\"") {
+            let end = src[i + 3..]
+                .find("\"\"\"")
+                .map(|n| i + 3 + n + 3)
+                .unwrap_or(b.len());
+            blank(&mut out, i, end);
+            i = end;
+        } else if b[i] == b'"' {
+            let mut j = i + 1;
+            while j < b.len() && b[j] != b'"' && b[j] != b'\n' {
+                if b[j] == b'\\' {
+                    j += 1;
+                }
+                j += 1;
+            }
+            let end = (j + 1).min(b.len());
+            blank(&mut out, i, end);
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
+}
+
 /// The names a module reaches a member of `module` by: `<module>.<member>`,
 /// `<alias>.<member>`, and the bare member when the import exposes it.
 fn member_names(src: &str, module: &str, member: &str) -> Vec<String> {
@@ -492,8 +586,7 @@ fn member_names(src: &str, module: &str, member: &str) -> Vec<String> {
             }
         }
         if let Some(exp) = after.split_once("exposing").map(|(_, e)| e) {
-            let exp = exp.replace(['(', ')', ','], " ");
-            if exp.split_whitespace().any(|w| w == ".." || w == member) {
+            if exposes_member(exp, member) {
                 names.push(member.to_string());
             }
         }
@@ -548,8 +641,9 @@ fn scan_device(module: &str, src: &str) -> (Vec<DeviceSlot>, Vec<String>, Vec<St
     if with_device.is_empty() && device_provider.is_empty() {
         return (slots, used, errors);
     }
-    // `Device.provider "x"` anywhere in the module.
-    for at in uses_of(src, &device_provider) {
+    let code = code_only(src);
+    // `Device.provider "x"` anywhere in the module's code.
+    for at in uses_of(&code, &device_provider) {
         let rest = src[at..].trim_start();
         let slot = first_argument(rest).and_then(|arg| {
             let text = crate::app_entry::ArgText { text: arg, col: 0 };
@@ -582,7 +676,8 @@ fn scan_device(module: &str, src: &str) -> (Vec<DeviceSlot>, Vec<String>, Vec<St
         let range = syntax::ast::AstNode::syntax(&v).text_range();
         let (start, end) = (usize::from(range.start()), usize::from(range.end()));
         let body = &src[start..end];
-        if uses_of(body, &with_device).is_empty() {
+        let body_code = &code[start..end];
+        if uses_of(body_code, &with_device).is_empty() {
             continue;
         }
         covered.push((start, end));
@@ -607,7 +702,7 @@ fn scan_device(module: &str, src: &str) -> (Vec<DeviceSlot>, Vec<String>, Vec<St
             continue;
         }
         let mut slot = None;
-        for at in uses_of(body, &endpoints) {
+        for at in uses_of(body_code, &endpoints) {
             let rest = body[at..].trim_start();
             if let Some(arg) = first_argument(rest) {
                 let text = crate::app_entry::ArgText { text: arg, col: 0 };
@@ -632,7 +727,7 @@ fn scan_device(module: &str, src: &str) -> (Vec<DeviceSlot>, Vec<String>, Vec<St
             )),
         }
     }
-    for at in uses_of(src, &with_device) {
+    for at in uses_of(&code, &with_device) {
         if !covered.iter().any(|(s, e)| *s <= at && at <= *e) {
             errors.push(
                 "Endpoint.withDevice is only allowed in a top-level binding without parameters"
@@ -714,6 +809,68 @@ support =
     fn the_synthetic_teacher_is_found() {
         let src = "module Data exposing (..)\n\nimport Std.Ai.Dataset.Synthetic as Synthetic\n\ng = Synthetic.generator \"x\"\n";
         assert_eq!(slots_in_source(src), vec!["teacher"]);
+    }
+
+    #[test]
+    fn a_type_exposing_its_constructors_does_not_expose_every_value() {
+        assert!(!exposes_member("(Mode(..), Endpoint)", "endpoint"));
+        assert!(exposes_member("(Mode(..), endpoint)", "endpoint"));
+        assert!(exposes_member("(..)", "endpoint"));
+        assert!(!exposes_member("(Backend(..))", "provider"));
+    }
+
+    #[test]
+    fn device_slots_and_providers_are_found_in_code_only() {
+        let src = r#"module Assist exposing (..)
+
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint, Mode(..))
+import Std.Ai.Device as Device exposing (Backend(..))
+
+-- Device.provider here is a comment, not a call.
+chatSlot : Endpoint
+chatSlot =
+    Endpoint.endpoint "chat" |> Endpoint.withDevice (Device.spec Device.Auto)
+
+note =
+    "the provider of Device.provider names"
+
+assistant =
+    Device.provider "chat"
+"#;
+        let (slots, used, errors) = scan_device("Assist", src);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(used, vec!["chat".to_string()]);
+        assert_eq!(
+            slots,
+            vec![DeviceSlot {
+                module: "Assist".into(),
+                binding: "chatSlot".into(),
+                slot: "chat".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn misused_device_slots_are_build_errors() {
+        let computed = "module M exposing (..)\n\nimport Std.Ai.Device as Device\n\nname = String.toLower \"X\"\n\np n =\n    Device.provider (n ++ \"x\")\n";
+        let (_, _, errors) = scan_device("M", computed);
+        assert!(
+            errors.iter().any(|e| e.contains("string literal")),
+            "{errors:?}"
+        );
+        let with_params = "module M exposing (..)\n\nimport Std.Ai.Endpoint as Endpoint\n\nslot spec =\n    Endpoint.endpoint \"chat\" |> Endpoint.withDevice spec\n";
+        let (slots, _, errors) = scan_device("M", with_params);
+        assert!(slots.is_empty());
+        assert!(
+            errors.iter().any(|e| e.contains("without parameters")),
+            "{errors:?}"
+        );
+        let unnamed = "module M exposing (..)\n\nimport Std.Ai.Endpoint as Endpoint\n\nbase =\n    Endpoint.endpoint \"chat\"\n\nslot =\n    base |> Endpoint.withDevice spec\n";
+        let (_, _, errors) = scan_device("M", unnamed);
+        assert!(
+            errors.iter().any(|e| e.contains("names its slot")),
+            "{errors:?}"
+        );
     }
 
     #[test]

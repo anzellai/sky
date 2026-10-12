@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -236,44 +237,61 @@ func aiDeskDownload(u string, f aiDeviceFile, progress func(int64)) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	resp, err := aiDeskClient.Get(u)
-	if err != nil {
-		return aiFailf(aiUnreachable, "%s: %v", f.Label, aiStripURL(err)).with("target", "the app's server")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		ff := aiFailf(aiRemoteRejected, "%s: the server answered %d", f.Label, resp.StatusCode)
-		ff.httpStatus = resp.StatusCode
-		return ff
-	}
 	tmp := dest + ".part-" + aiRandomHex(4)
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
+	fail := func(err error) error {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
 	h := sha256.New()
 	var n int64
 	buf := make([]byte, 1<<20)
-	for {
-		m, rerr := resp.Body.Read(buf)
-		if m > 0 {
-			if _, werr := out.Write(buf[:m]); werr != nil {
-				out.Close()
-				os.Remove(tmp)
-				return werr
+	// 64 MiB Range requests: each finishes well inside a server's write
+	// timeout, and a slow link never holds one response open.
+	for off := int64(0); off < f.Bytes; off += aiDeviceChunkBytes {
+		end := off + aiDeviceChunkBytes - 1
+		if end > f.Bytes-1 {
+			end = f.Bytes - 1
+		}
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			return fail(err)
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", off, end))
+		resp, err := aiDeskClient.Do(req)
+		if err != nil {
+			return fail(aiFailf(aiUnreachable, "%s: %v", f.Label, aiStripURL(err)).with("target", "the app's server"))
+		}
+		if resp.StatusCode != http.StatusPartialContent && !(resp.StatusCode == http.StatusOK && off == 0 && end == f.Bytes-1) {
+			resp.Body.Close()
+			ff := aiFailf(aiRemoteRejected, "%s: the server answered %d", f.Label, resp.StatusCode)
+			ff.httpStatus = resp.StatusCode
+			return fail(ff)
+		}
+		for {
+			m, rerr := resp.Body.Read(buf)
+			if m > 0 {
+				if _, werr := out.Write(buf[:m]); werr != nil {
+					resp.Body.Close()
+					return fail(werr)
+				}
+				h.Write(buf[:m])
+				n += int64(m)
+				progress(n)
 			}
-			h.Write(buf[:m])
-			n += int64(m)
-			progress(n)
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				resp.Body.Close()
+				return fail(aiFailf(aiUnreachable, "%s: %v", f.Label, rerr).with("target", "the app's server"))
+			}
 		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			out.Close()
-			os.Remove(tmp)
-			return aiFailf(aiUnreachable, "%s: %v", f.Label, rerr).with("target", "the app's server")
-		}
+		resp.Body.Close()
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)

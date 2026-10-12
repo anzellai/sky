@@ -1,0 +1,8 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/notes/"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"Train to Paris on Monday; dentist moved to Thursday; buy milk.\"}}], \"usage\": {\"prompt_tokens\": 40, \"completion_tokens\": 14, \"total_tokens\": 54}}"
+}

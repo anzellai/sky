@@ -33,6 +33,7 @@ module Std.Ai.Device exposing
     , capabilities
     , Recording
     , Recorded
+    , Prompt
     , record
     , replay
     , encodeRecording
@@ -1000,22 +1001,32 @@ requestKey messages =
             messages)
 
 
-{-| Ask a provider every prompt (one after another, temperature 0 and a fixed
-seed) and keep its answers. On a device, record the prompts of an eval suite
-(`Eval.prompts`) and send the recording to the server, which scores it with
-`replay` and `Eval.runAs`, so one suite measures the device and the server. -}
-record : String -> Provider -> List (List Message) -> Task Error Recording
+{-| One request of an eval suite: its messages and the sampling options the
+suite sends (`Eval.prompts` gives them, temperature 0 and a fixed seed). -}
+type alias Prompt =
+    { messages : List Message
+    , options : Provider.Options
+    }
+
+
+{-| Ask a provider every prompt, one after another, with the prompt's own
+options, and keep its answers. On a device, record the prompts of an eval
+suite (`Eval.prompts suite`) and send the recording to the server, which
+scores it with `replay` and `Eval.runAs`, so one suite measures the device and
+the server. A replay answers by the messages alone, so record a suite with one
+sample per case. -}
+record : String -> Provider -> List Prompt -> Task Error Recording
 record label p prompts =
     Task.sequence (List.map (recordOne p) prompts)
         |> Task.map (\entries -> { label = label, entries = entries })
 
 
-recordOne : Provider -> List Message -> Task Error Recorded
-recordOne p messages =
-    Provider.chatWith Provider.defaultOptions p messages
+recordOne : Provider -> Prompt -> Task Error Recorded
+recordOne p prompt =
+    Provider.chatWith prompt.options p prompt.messages
         |> Task.map
                (\r ->
-                   { request = requestKey messages
+                   { request = requestKey prompt.messages
                    , content = r.content
                    , promptTokens = r.usage.promptTokens
                    , completionTokens = r.usage.completionTokens

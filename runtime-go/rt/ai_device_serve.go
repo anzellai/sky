@@ -399,7 +399,26 @@ func aiDeviceBlobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// A device on a slow link (a phone, an emulator behind its NAT) needs more
+	// than the server's 30-second write deadline for a 64 MiB chunk, and
+	// longer still for a whole file. The deadline moves with the size, so a
+	// stalled client is still cut off.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(aiDeviceBlobDeadline(r, st.Size())))
 	http.ServeContent(w, r, "", st.ModTime(), f)
+}
+
+// aiDeviceBlobDeadline is how long one blob response may take: two minutes
+// a chunk at the least, and more for a whole file at 512 KiB a second.
+func aiDeviceBlobDeadline(r *http.Request, size int64) time.Duration {
+	n := size
+	if r.Header.Get("Range") != "" && n > aiDeviceChunkBytes {
+		n = aiDeviceChunkBytes
+	}
+	d := time.Duration(n/(512<<10)) * time.Second
+	if d < 2*time.Minute {
+		d = 2 * time.Minute
+	}
+	return d
 }
 
 // aiDeviceChunks is the chunk list of one file: its size, the chunk size and
