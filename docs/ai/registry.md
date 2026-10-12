@@ -9,7 +9,8 @@ evaluation, and the type system enforces it: `Registry.promote` takes an
 The design is [`../design/std-ai-lifecycle.md`](../design/std-ai-lifecycle.md)
 §8.7. The live API is `sky doc Std.Ai.Registry` and `sky doc Std.Ai.Store`.
 `examples/71-ai-registry` runs the whole lifecycle with no model and no
-network.
+network. `examples/73-ai-train` trains an adapter with `Std.Ai.Train`,
+registers it and serves it ([`train.md`](train.md)).
 
 ## Two halves: the records and the artefacts
 
@@ -99,6 +100,39 @@ main =
 from the evidence already attached: it re-applies the gate to the version's
 attached reports, newest first (`Registry.evidence`). This is what
 `sky ai promote` runs.
+
+## From a training run
+
+A `Std.Ai.Train` job with `Train.withRegistry reg` registers its adapter when
+the run finishes, as the workflow's last journalled step
+([`train.md`](train.md#registry-and-serving)):
+
+```elm
+supportJob : Registry.Registry -> Dataset.Version Dataset.Chat -> Train.Job
+supportJob reg version =
+    Train.lora Train.devBase version
+        |> Train.withName "support"
+        |> Train.withQuantisedBase
+        |> Train.withGgufExport
+        |> Train.withRegistry reg
+```
+
+- The model name is the job's name (`support`).
+- The file is the GGUF adapter when the job has `withGgufExport`, else the
+  PEFT safetensors. The method is `Qlora` with `withQuantisedBase`, else
+  `Lora`.
+- The lineage's base is the job's serving model (`Local.devModel` for
+  `Train.devBase`), so a local engine checks the adapter against it. The
+  dataset is the frozen version's name and digest.
+- The metadata holds the run: `runId`, `baseId`, `backend`, `toolchain`,
+  `seed`, `steps`, `trainLoss`, `valLoss` and `job` (the job's canonical
+  JSON).
+
+The adapter's `registered` field is the label (`support@v1`). A resumed run
+registers the same bytes, which return the same version.
+`Train.registryAdapter` and `Train.lineage` build the same values for your own
+`Registry.register` call. Promotion stays a separate step: `promote` still needs
+an `Eval.Passed` for the trained version.
 
 ## Aliases: promote, roll back, force
 

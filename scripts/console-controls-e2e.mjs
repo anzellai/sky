@@ -1093,6 +1093,37 @@ async function runAiPanel() {
     await clickText("model fixture-lora");
     await waitFor("closed", async () => ({ ok: (await page.locator("[data-ai-version]").count()) === 0 && urlParams().get("model") === null }));
   });
+  // The fixture wrote two run directories under .sky/ai/runs in its working
+  // directory: one finished (relaunched once, registered) and one failed.
+  await check("ai: the training section shows each run with its status, steps, losses and curve", async () => {
+    await clickTab("AI");
+    await waitFor("training rows", async () => {
+      const attr = async (run, name) => {
+        const loc = page.locator(`[data-ai-training='${run}'] [${name}]`);
+        return (await loc.count()) ? await loc.first().getAttribute(name) : null;
+      };
+      const rows = await page.locator("[data-ai-training]").evaluateAll((els) => els.map((e) => e.getAttribute("data-ai-training")));
+      const t = await bodyText();
+      const s1 = await attr("fixture-train-0001", "data-ai-train-status");
+      const st1 = await attr("fixture-train-0001", "data-ai-train-step");
+      const reg = await attr("fixture-train-0001", "data-ai-train-registered");
+      const curve = await attr("fixture-train-0001", "data-ai-train-curve");
+      const s2 = await attr("fixture-train-0002", "data-ai-train-status");
+      const st2 = await attr("fixture-train-0002", "data-ai-train-step");
+      const ok = setEq(rows.sort(), ["fixture-train-0001", "fixture-train-0002"]) &&
+        /run fixture-train-0001/.test(t) && /run fixture-train-0002/.test(t) &&
+        s1 === "done" && st1 === "40" && /step 40 of 40/.test(t) &&
+        /1 relaunch, resumed from step 10/.test(t) && /checkpoint at step 10/.test(t) &&
+        /eval loss 0\.7000/.test(t) && reg === "fixture-lora@v3" && curve === "40" &&
+        s2 === "failed" && st2 === "3" && /step 3 of 40/.test(t) &&
+        /OutOfMemory: the device ran out of memory/.test(t);
+      return { ok, why: `rows ${fmt(rows)} status ${s1}/${s2} step ${st1}/${st2} registered ${reg} curve ${curve}` };
+    });
+    await waitRead("training read", "/_sky/console/api/ai", 0, (r) => {
+      const runs = ((r.json && r.json.training) || []).map((x) => `${x.run}:${x.status}:${x.step}`);
+      return runs.includes("fixture-train-0001:done:40") && runs.includes("fixture-train-0002:failed:3") ? true : `server answered ${fmt(runs)}`;
+    });
+  });
   await check("ai: reload keeps the AI tab and its calls filter", async () => {
     await clickText("Failed");
     await waitFor("URL", async () => ({ ok: urlParams().get("tab") === "ai" && urlParams().get("calls") === "failed", why: page.url() }));

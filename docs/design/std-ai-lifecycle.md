@@ -1,7 +1,11 @@
 # The AI application lifecycle in Sky: build, data, train, eval, registry, serve
 
-> Status: **phase 1 and the registry part of phase 2 implemented (v0.28.0);
-> the rest is design.** Phase 2 adds `Std.Ai.Registry` and `Std.Ai.Store`
+> Status: **phase 1, the dataset and registry parts of phase 2, and phase 3
+> implemented (v0.28.0). The rest is design.** Phase 3 adds `Std.Ai.Train` (section 8.5) with the `Mlx`,
+> `Unsloth` and `Fake` backends, the managed Python toolchains, the durable
+> training workflow, GGUF export and `Local.withAdapter`. User guide:
+> [`../ai/train.md`](../ai/train.md). Where it differs from this design is
+> recorded under "Shipped" in section 14, P3. Phase 2 adds `Std.Ai.Registry` and `Std.Ai.Store`
 > (section 8.7, with the record store moved to the app's database by the
 > user's decision), judge calibration, pairwise judging and the judge journal
 > (section 8.6), the startup-report lines and `sky doctor` checks (section
@@ -269,7 +273,7 @@ the same function.
 | Gradient descent (Mac) | MLX-LM in a Sky-managed Python toolchain | job spec, data staging, launch, progress, checkpoints, resume, cost |
 | Gradient descent (NVIDIA, AMD) | Unsloth core (Apache-2.0) in a Sky-managed toolchain | the same |
 | Gradient descent (cloud) | Vertex AI custom training or SageMaker training jobs, running the same pinned trainer image | launch by REST, exactly-once, poll, collect, cost |
-| Adapter conversion to GGUF | llama.cpp `convert_lora_to_gguf.py` in the toolchain | a journalled step with a verified output digest |
+| Adapter conversion to GGUF | Sky's Go converter in the runtime (v0.28.0, where the design said llama.cpp `convert_lora_to_gguf.py`) | a journalled step with a verified output digest |
 | Data preparation, splits, dedupe, scrubbing, versioning | Sky | all of it |
 | Scoring, statistics, gating | Sky | all of it, except the judge model's own generation |
 | Registry, lineage, promotion, rollback | Sky (over a file store, GCS or S3) | all of it |
@@ -625,6 +629,11 @@ and journalled teacher and judge calls. User guide:
 [`../ai/dataset.md`](../ai/dataset.md).)*
 
 ### 8.5 `Std.Ai.Train`
+
+*Shipped in v0.28.0 without the cloud backends. The shipped API and the
+changes from this sketch (a Go GGUF converter, no Convert toolchain, a
+detached trainer, `drive` and `poll`, CUDA 13) are in section 14, P3, and in
+[`../ai/train.md`](../ai/train.md).*
 
 ```elm
 type Job
@@ -1312,6 +1321,96 @@ fine-tunes a small base from Sky code only, evaluates it against the base,
 promotes it to `dev`, and the managed local engine serves it, with no Python
 visible to the user. Killing the trainer mid-run resumes from the newest
 checkpoint. The toolchain contract suite is green.
+
+**Shipped (v0.28.0).**
+
+- `Std.Ai.Train` with `Mlx`, `Unsloth` and `Fake`.
+- The managed toolchains: uv 0.12.16, CPython 3.12.14 from
+  python-build-standalone 20260924, and hash locks made by
+  `scripts/ai/lock-toolchains.sh`.
+- The driver and its protocol, `plan` and `estimateMemory`.
+- The durable workflow with verified checkpoints, relaunch, resume and cancel.
+- GGUF and merged export, `Local.withAdapter` and `sky ai start --adapter`.
+- Registration with lineage (`Train.withRegistry`).
+- The Training section of the console's AI tab.
+- `sky ai provision --train`, `sky ai train`, `train status | runs | resume |
+  cancel` and `sky ai export`.
+- `examples/73-ai-train`.
+
+The user guide is
+[`../ai/train.md`](../ai/train.md). The live tests are
+`rust/crates/sky/tests/ai_train_live.rs` (Fake under the managed CPython, a
+killed trainer relaunched, the adapter served by the real engine) and
+`ai_train_mlx_live.rs` (MLX on Apple silicon, the trainer's process group
+killed after the first checkpoint, then resumed, served and evaluated against
+the base). The Unsloth backend's driver part is tested without a GPU by a
+recording fixture (`runtime-go/rt/testdata/train_driver_tests/test_unsloth_fixture.py`),
+and its lock installs on Linux x86_64.
+
+Measured on an Apple M-series Mac with 16 GB: a direct MLX run of the driver
+on the development base (12 steps, 2 rows of 256 tokens, rank 4 on 4 layers,
+4-bit base) took 8.5 s wall time with a peak memory footprint of 2.24 GB. Its
+eval loss went from 2.83 at step 6 to 2.57 at step 12. A resume from the
+step-8 checkpoint gave bit-identical losses for steps 9 to 12 and an adapter
+with the same SHA-256 (the optimiser state is restored).
+
+Where the shipped phase differs from this design and from its plan:
+
+1. **GGUF export is a Go converter in the runtime**
+   (`runtime-go/rt/ai_train_convert.go`), not llama.cpp's
+   `convert_lora_to_gguf.py` (section 6 and section 8.5 `convert`). So no
+   toolchain carries PyTorch for the export, and no Sky-owned converter bundle
+   and no `ai-assets` workflow are needed. The converter writes the layout
+   llama.cpp's converter writes, with F32 tensors (lossless, and an adapter is
+   small). It is unit tested, and the live test loads its output into the real
+   `llama-server` b11200 (`/lora-adapters` lists it). The adapter records
+   `sky.adapter.base_id` and `sky.adapter.serving_sha256`, and a local engine
+   refuses it on another model (`AdapterMismatch`).
+2. **The merged export runs `llama-export-lora`** from the pinned engine build
+   (`Train.withMergedExport`, `sky ai export <run> --merged`). It merges into
+   the Q4_0 dev model. Adapters stay the product: the registry holds adapters
+   only.
+3. **There is no Convert toolchain.** `Train.provision` takes a `Backend`
+   (`Mlx`, `Unsloth`, `Fake`). The section 7 `Std.Ai.Toolchain` module is not
+   a module: the toolchain API is in `Std.Ai.Train` (`provision`,
+   `provisionBase`, `toolchainStatus`).
+4. **The Unsloth lock targets CUDA 13** (the PyPI torch 2.12 wheels, NVIDIA
+   driver 580 or newer), not CUDA 12, and Linux x86_64 only (not AMD). The
+   Unsloth backend uses `FastLanguageModel` and `get_peft_model` with the
+   driver's own loop and AdamW, not TRL's `SFTTrainer`. So every backend shares
+   one data order, one protocol and one safetensors checkpoint format (never
+   `torch.save`).
+5. **The API shape changed.** `progress`, `cancel` and `result` take the `Job`
+   (the run directory is the source of truth, so they need no database).
+   `start`, `poll`, `drive`, `resume` and `workflows` were added. `progressAt`,
+   `cancelAt`, `resumeAt` and `exportAt` work on a run directory (the CLI uses
+   them). `withBudget`, `withCloud` and `withMachinePrices` move to phase 4
+   with the cloud backends. `start` checks the job and resolves the backend
+   before it creates a durable run, so a bad setting starts no run. The
+   workflow does not run `plan`: a program calls `plan` before `start` to get
+   `ModelTooLarge` before anything is downloaded.
+6. **The trainer is a detached process** (its own session on Unix), not a
+   `Process.spawn` child, because such a child dies with the program and a
+   training run must outlive it. The protocol is a file
+   (`<run>/events.jsonl`, the driver's standard output) read from an offset,
+   not `Process.readFrom`. The driver claims standard output for protocol
+   lines and sends any library output to standard error. A launch token on the
+   trainer's command line identifies it, so a recycled pid is never attached
+   to or signalled.
+7. **Test mode simulates the trainer.** Under `sky test` with a `.env.test`, no
+   Python, no model and no network are used: the launch step writes the
+   protocol, verified checkpoints and a no-op adapter, so a program's own tests
+   run the whole workflow.
+8. **The workflow steps** are `resolve`, `stage`, `toolchain`, `base`, `shape`,
+   `plan` (the memory check, ModelTooLarge before a trainer starts), `origin`, `launch-<a>`, `watch-<a>-<n>` with `tick-<a>-<n>` (a watch of at
+   most five minutes, then a one-second durable sleep, so no step outlives the
+   30-minute lease), `resume-<a>`, `collect`, `convert`, `merge` and
+   `register`. Validation is `Train.check`, run by `start` and again in the
+   workflow. Progress goes to the run directory and the console, not yet to
+   `Trace`.
+9. **Progress states** come from the run directory: `Provisioning` before the
+   first trainer starts, `Converting` after the trainer's `done` line, and
+   `Registering` once the GGUF adapter is written.
 
 ### P4: cloud training and the GPU serving tier (estimate 10 to 14 weeks)
 

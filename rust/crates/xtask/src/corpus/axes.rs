@@ -194,6 +194,7 @@ pub const SURFACE: Axis = Axis::new(
         "aieval",
         "aistore",
         "airegistry",
+        "aitrain",
         "aiscrub",
         "aidataset",
         "aisynthetic",

@@ -11529,6 +11529,20 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
               [--split <train>/<eval>/<test>] [--seed <n>]
               [--consent <basis>] [--retention <period>]
                      freeze a JSONL file into a content-addressed dataset version
+  provision --train mlx|unsloth|fake [--base dev]
+                     install a training toolchain (managed Python) and the dev base weights
+  train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>] [--steps <n>] [--rank <r>]
+        [--seed <s>] [--layers <n>] [--checkpoint-every <n>] [--eval-every <n>]
+        [--backend mlx|unsloth|fake] [--gguf] [--merged]
+        [--register] [--detach] [--work-dir <dir>] [--db <dsn>]
+                     fine-tune a LoRA adapter on a frozen dataset version (Ctrl-C detaches;
+                     the trainer keeps training)
+  train status [<run>] | runs | resume <run> | cancel <run>
+                     follow, list, restart or cancel training runs
+  export <run> [--out <file>] [--merged]
+                     write a run's adapter as GGUF (or the merged model)
+  start <slot> ... [--adapter file:<path>#sha256=<hex>]
+                     serve a GGUF LoRA adapter with the slot's model
 The registry verbs take --db <dsn> (else SKY_DB_PATH, DATABASE_URL, or the project's
 [database] path or url) and --registry <url> (else SKY_AI_REGISTRY).
 A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
@@ -11556,6 +11570,10 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         ["lineage", "--dataset", digest, ..] => !digest.starts_with('-'),
         ["lineage", reference, ..] => reference.contains('@'),
         ["data", "freeze", file, ..] => !file.starts_with('-'),
+        ["train", "status", ..] | ["train", "runs", ..] => true,
+        ["train", "resume" | "cancel", run, ..] => !run.starts_with('-'),
+        ["train", rest @ ..] => rest.contains(&"--data"),
+        ["export", run, ..] => !run.starts_with('-'),
         _ => false,
     };
     if !shape_ok {
@@ -11577,13 +11595,20 @@ fn cmd_ai(args: &[String]) -> ExitCode {
     let Some(repo_root) = assets_root_for(&cwd) else {
         return ExitCode::FAILURE;
     };
-    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "ai") else {
-        return bundled_missing("ai");
+    // The training verbs live in their own bundled program
+    // (sky-bundled/ai-train): the engine and registry program stays small, and
+    // the training code builds only the first time a training verb runs.
+    let training = matches!(positional.first().copied(), Some("train" | "export"))
+        || (positional.first().copied() == Some("provision")
+            && args.iter().any(|a| a == "--train"));
+    let bundle = if training { "ai-train" } else { "ai" };
+    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, bundle) else {
+        return bundled_missing(bundle);
     };
     let out_dir = match bundled::ensure_built(
         &repo_root,
         &src_dir,
-        "ai",
+        bundle,
         "cli",
         bundled::ENTRY_LIVE,
         &bundled_cache_slug(),

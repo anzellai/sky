@@ -1,0 +1,548 @@
+module Main exposing (main, config)
+
+{-| Train a support adapter from a web page, watch it train, and ask it.
+
+1.  The page freezes data/support.jsonl into a content-addressed dataset
+    version (the format of examples/68-ai-dataset).
+2.  "Train" starts the durable training run (`Train.start`). A tick advances
+    it (`Train.poll`) and reads its progress from the run directory
+    (`Train.progress`): the step, the loss curve, the checkpoints, a relaunch.
+3.  When the run is done the adapter is in the registry with its lineage; the
+    page points `dev` at it, and the "Ask" box sends a question to the slot
+    that serves `support@dev` on the local engine.
+
+The trainer runs detached: stop the app mid-run, start it again, and the run
+picks up where it is. `sky run src/Main.sky`, then open http://localhost:8073.
+See README.md for the real MLX run on Apple silicon.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Math as Math
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Background as Background
+import Std.Ui.Border as Border
+import Std.Ui.Font as Font
+import Std.Ui.Input as Input
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Provider as Provider
+import Std.Ai.Train as Train exposing (Status(..))
+import Sky.Config as Config exposing (Database(..), Sessions(..))
+import Support
+
+-- ── Model ───────────────────────────────────────────────────────────
+type alias Model =
+    { dataset : String
+    , progress : Maybe Train.Progress
+    , adapter : Maybe Train.Adapter
+    , promoted : String
+    , polling : Bool
+    , question : String
+    , answer : String
+    , error : String
+    }
+
+type Msg
+    = Loaded (Result Error Dataset.Manifest)
+    | StartTraining
+    | Started (Result Error String)
+    | Tick
+    | Advanced (Result Error Bool)
+    | Read (Result Error Train.Progress)
+    | Finished (Result Error (Maybe Train.Adapter))
+    | Promoted (Result Error String)
+    | CancelTraining
+    | CancelSent (Result Error Bool)
+    | Question String
+    | Ask
+    | Answered (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { dataset = ""
+      , progress = Nothing
+      , adapter = Nothing
+      , promoted = ""
+      , polling = False
+      , question = "How do I get a refund?"
+      , answer = ""
+      , error = ""
+      }
+    , Cmd.perform
+          (Support.open |> Task.map (\w -> Dataset.manifest w.version))
+          Loaded
+    )
+
+
+-- ── Commands ────────────────────────────────────────────────────────
+withJob : (Support.World -> Train.Job -> Task Error a) -> Task Error a
+withJob f =
+    Support.open |> Task.andThen (\w -> f w (Support.job w))
+
+
+readProgress : () -> Cmd Msg
+readProgress _ =
+    Cmd.perform (withJob (\_ job -> Train.progress job)) Read
+
+
+advance : () -> Cmd Msg
+advance _ =
+    Cmd.perform (withJob (\w job -> Train.poll w.db [ job ])) Advanced
+
+
+active : Model -> Bool
+active model =
+    case model.progress of
+
+        Just p ->
+            not (finished p.status)
+
+        Nothing ->
+            False
+
+
+ended : Model -> Bool
+ended model =
+    case model.progress of
+
+        Just p ->
+            p.status == Failed || p.status == Cancelled
+
+        Nothing ->
+            False
+
+
+finished : Status -> Bool
+finished s =
+    s == Done || s == Failed || s == Cancelled
+
+
+-- ── Update ──────────────────────────────────────────────────────────
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Loaded (Ok m) ->
+            ( { model
+                  | dataset =
+                      m.name ++ "@" ++ String.left 12 m.digest ++ " · "
+                          ++ String.fromInt m.train
+                          ++ " train rows, "
+                          ++ String.fromInt m.eval
+                          ++ " eval rows"
+              }
+            , readProgress ()
+            )
+
+        Loaded (Err e) ->
+            ( { model | error = Error.toString e }, Cmd.none )
+
+        StartTraining ->
+            ( { model | error = "", adapter = Nothing, promoted = "" }
+            , Cmd.perform
+                  (withJob
+                      (\w job ->
+                          (if ended model then
+                               -- A cancelled or failed run starts again from
+                               -- its newest checkpoint.
+                               Train.resume job |> Task.map (\_ -> ())
+
+                           else
+                               Task.succeed ())
+                              |> Task.andThen (\_ -> Train.start w.db job)))
+                  Started
+            )
+
+        Started (Ok id) ->
+            ( { model | progress = Just (Train.emptyProgress id) }, advance () )
+
+        Started (Err e) ->
+            ( { model | error = Error.toString e }, Cmd.none )
+
+        Tick ->
+            if active model then
+                if model.polling then
+                    ( model, readProgress () )
+
+                else
+                    ( { model | polling = True }
+                    , Cmd.batch [ advance (), readProgress () ]
+                    )
+
+            else
+                ( model, Cmd.none )
+
+        Advanced (Ok _) ->
+            ( { model | polling = False }, readProgress () )
+
+        Advanced (Err e) ->
+            ( { model | polling = False, error = Error.toString e }
+            , readProgress ()
+            )
+
+        Read (Ok p) ->
+            if p.status == Done && model.adapter == Nothing then
+                ( { model | progress = Just p }
+                , Cmd.perform (withJob (\_ job -> Train.result job)) Finished
+                )
+
+            else
+                ( { model | progress = Just p }, Cmd.none )
+
+        Read (Err e) ->
+            ( { model | error = Error.toString e }, Cmd.none )
+
+        Finished (Ok (Just a)) ->
+            ( { model | adapter = Just a }
+            , Cmd.perform
+                  (Support.open |> Task.andThen (\w -> Support.promoteDev w a))
+                  Promoted
+            )
+
+        Finished (Ok Nothing) ->
+            ( model, Cmd.none )
+
+        Finished (Err e) ->
+            ( { model | error = Error.toString e }, Cmd.none )
+
+        Promoted (Ok label) ->
+            ( { model | promoted = label }, Cmd.none )
+
+        Promoted (Err e) ->
+            ( { model | error = Error.toString e }, Cmd.none )
+
+        CancelTraining ->
+            ( model
+            , Cmd.perform (withJob (\_ job -> Train.cancel job)) CancelSent
+            )
+
+        CancelSent _ ->
+            ( model, readProgress () )
+
+        Question q ->
+            ( { model | question = q }, Cmd.none )
+
+        Ask ->
+            ( { model | answer = "…" }
+            , Cmd.perform
+                  (Provider.chat
+                      (Endpoint.provider (Support.chatSlot ()))
+                      [ Provider.user model.question ]
+                      |> Task.map .content)
+                  Answered
+            )
+
+        Answered (Ok text) ->
+            ( { model | answer = text }, Cmd.none )
+
+        Answered (Err e) ->
+            ( { model | answer = "", error = Error.toString e }, Cmd.none )
+
+
+subscriptions : Model -> Sub.Sub Msg
+subscriptions model =
+    if active model then
+        Sub.every 1000 Tick
+
+    else
+        Sub.none
+
+
+-- ── View ────────────────────────────────────────────────────────────
+ink : Ui.Color
+ink =
+    Ui.rgb 28 30 38
+
+
+muted : Ui.Color
+muted =
+    Ui.rgb 110 114 128
+
+
+accent : Ui.Color
+accent =
+    Ui.rgb 44 94 196
+
+
+card : String -> List (Element Msg) -> Element Msg
+card title body =
+    Ui.column
+        [ Ui.width Ui.fill
+        , Ui.padding 20
+        , Ui.spacing 12
+        , Background.color (Ui.rgb 255 255 255)
+        , Border.rounded 10
+        , Border.width 1
+        , Border.color (Ui.rgb 224 226 232)
+        ]
+        (Ui.el [ Font.size 18, Font.bold ] (Ui.text title) :: body)
+
+
+line : String -> String -> Element Msg
+line label value =
+    Ui.row
+        [ Ui.spacing 12 ]
+        [ Ui.el [ Font.color muted, Ui.width (Ui.px 140) ] (Ui.text label)
+        , Ui.text value
+        ]
+
+
+button : String -> Msg -> Bool -> Element Msg
+button label msg enabled =
+    Ui.button
+        [ Ui.paddingXY 16 8
+        , Border.rounded 6
+        , Background.color
+              (if enabled then
+                  accent
+
+              else
+                  Ui.rgb 170 176 190)
+        , Font.color (Ui.rgb 255 255 255)
+        ]
+        { onPress =
+            if enabled then
+                Just msg
+
+            else
+                Nothing
+        , label = Ui.text label
+        }
+
+
+-- A progress bar: `done` of `total` as a filled bar 400 px wide.
+bar : Int -> Int -> Element Msg
+bar done total =
+    let
+        width =
+            if total <= 0 then
+                0
+
+            else
+                400 * done // total
+    in
+        Ui.el
+            [ Ui.width (Ui.px 400)
+            , Ui.height (Ui.px 10)
+            , Background.color (Ui.rgb 230 232 238)
+            , Border.rounded 5
+            ]
+            (Ui.el
+                [ Ui.width (Ui.px width)
+                , Ui.height (Ui.px 10)
+                , Background.color accent
+                , Border.rounded 5
+                ]
+                Ui.none)
+
+
+-- The loss curve as columns, one per point (at most 200).
+curve : List Train.LossPoint -> Element Msg
+curve points =
+    let
+        top =
+            List.foldl
+                (\p m ->
+                    if p.value > m then
+                        p.value
+
+                    else
+                        m)
+                1.0e-4
+                points
+        column p =
+            Ui.el
+                [ Ui.width (Ui.px 2)
+                , Ui.height
+                      (Ui.px (Math.max 1 (Math.round (60.0 * p.value / top))))
+                , Background.color accent
+                , Ui.alignBottom
+                ]
+                Ui.none
+    in
+        Ui.row [ Ui.height (Ui.px 64), Ui.spacing 1 ] (List.map column points)
+
+
+lossText : Maybe Float -> String
+lossText l =
+    case l of
+
+        Just v ->
+            String.left 6 (String.fromFloat v)
+
+        Nothing ->
+            "–"
+
+
+trainingCard : Model -> Element Msg
+trainingCard model =
+    case model.progress of
+
+        Nothing ->
+            card
+                "Training"
+                [ Ui.paragraph
+                      [ Font.color muted ]
+                      [ Ui.text
+                            "No run yet. The backend comes from the host (Mlx on Apple silicon) or SKY_AI_TRAIN_BACKEND."
+                      ]
+                , button "Train" StartTraining (model.dataset /= "")
+                ]
+
+        Just p ->
+            card
+                "Training"
+                [ line "run" p.runId
+                , line "status" (Train.statusText p.status)
+                , line "backend" p.backend
+                , line
+                      "step"
+                      (String.fromInt p.step ++ " of "
+                          ++ String.fromInt p.totalSteps)
+                , bar p.step p.totalSteps
+                , line "train loss" (lossText p.loss)
+                , line "eval loss" (lossText p.valLoss)
+                , line "checkpoint" (String.fromInt p.lastCheckpoint)
+                , line
+                      "relaunches"
+                      (String.fromInt p.relaunches
+                          ++ (if p.relaunches > 0 then
+                                 " (resumed from step "
+                                     ++ String.fromInt p.resumedFrom
+                                     ++ ")"
+
+                             else
+                                 ""))
+                , curve p.losses
+                , if active model then
+                      button "Cancel" CancelTraining True
+
+                  else if ended model then
+                      button "Resume" StartTraining True
+
+                  else
+                      button "Train again" StartTraining True
+                ]
+
+
+adapterCard : Model -> Element Msg
+adapterCard model =
+    case model.adapter of
+
+        Nothing ->
+            Ui.none
+
+        Just a ->
+            card
+                "Adapter"
+                ([ line "trained" (Support.describe a)
+                , line
+                      "dataset"
+                      (a.dataset ++ "@" ++ String.left 12 a.datasetDigest)
+                , line "adapter" (String.left 16 a.peft.sha256)
+                , line "registered" (Maybe.withDefault "–" a.registered)
+                , line
+                      "serving"
+                      (if String.isEmpty model.promoted then
+                          "–"
+
+                      else
+                          model.promoted ++ " as support@dev")
+                ]
+                    ++ (case a.gguf of
+
+                           Just g ->
+                               [ line "gguf" (String.left 16 g.sha256) ]
+
+                           Nothing ->
+                               []))
+
+
+askCard : Model -> Element Msg
+askCard model =
+    if String.isEmpty model.promoted then
+        Ui.none
+
+    else
+        card
+            "Ask the adapter"
+            [ Input.text
+                  [ Ui.width Ui.fill ]
+                  { onChange = Question
+                  , text = model.question
+                  , placeholder = Nothing
+                  , label =
+                      Input.labelAbove [ Font.color muted ] (Ui.text "Question")
+                  }
+            , button "Ask" Ask (not (String.isEmpty model.question))
+            , Ui.paragraph [] [ Ui.text model.answer ]
+            ]
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        [ Ui.width (Ui.maximum 760 Ui.fill)
+        , Ui.centerX
+        , Ui.padding 24
+        , Ui.spacing 16
+        , Background.color (Ui.rgb 246 247 250)
+        , Font.color ink
+        , Font.family "system-ui, -apple-system, sans-serif"
+        , Font.size 14
+        ]
+        [ Ui.el [ Font.size 24, Font.bold ] (Ui.text "Train a support adapter")
+        , card
+              "Dataset"
+              [ line
+                    "version"
+                    (if String.isEmpty model.dataset then
+                        "freezing data/support.jsonl…"
+
+                    else
+                        model.dataset)
+              ]
+        , trainingCard model
+        , adapterCard model
+        , askCard model
+        , if String.isEmpty model.error then
+              Ui.none
+
+          else
+              Ui.paragraph
+                  [ Font.color (Ui.rgb 178 34 34) ]
+                  [ Ui.text model.error ]
+        ]
+
+
+appDef =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+        |> App.withConfig (App.WebConfig { App.webDefaults | port = 8073 })
+
+
+-- The app's database: the durable training runs and the registry's records.
+-- SQLite here; `Config.withDatabase (Postgres …)` or SKY_DB_PATH /
+-- DATABASE_URL move it without another change.
+config : Config.Config
+config =
+    Config.default |> Config.withDatabase (Sqlite "train.db")
+        |> Config.withSessions Memory
+
+
+main =
+    App.run appDef

@@ -1,0 +1,3 @@
+# The Mlx training toolchain (Apple silicon, Python 3.12). MLX and MLX-LM are
+# MIT. scripts/ai/lock-toolchains.sh compiles this into the hashed lock.
+mlx-lm==0.31.3

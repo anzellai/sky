@@ -814,7 +814,9 @@ const MEASURED_SOURCE_ROOTS: &[(&str, &[&str])] = &[
     // drift test was blind to.
     ("rust", &["toml", "lock"]),
     ("rust/crates", &["rs", "toml"]),
-    ("runtime-go", &["go", "mod", "sum"]),
+    // `py`, `in` and `txt`: the Std.Ai.Train driver and its hash locks under
+    // runtime-go/rt/ai_train_assets, which `rt` embeds (go:embed).
+    ("runtime-go", &["go", "mod", "sum", "py", "in", "txt"]),
     ("sky-stdlib", &["sky", "skyi"]),
     ("templates", &["md"]),
     ("sky-bundled", &["sky", "skyi", "toml"]),

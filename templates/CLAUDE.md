@@ -122,3 +122,14 @@ many calls. Bound it with `withTarget`, `withMaxCalls` and `withCostBudget`,
 and test it under `sky test` with `tests/mocks/` fixtures (`match.bodyContains`
 picks the answer for a topic). Never print scrubbed or raw dataset rows to a
 log: `Scrub` reports counts only, and so should your code.
+
+`Std.Ai.Train` starts a trainer that outlives your program: `Train.drive`,
+`Train.start` and `sky ai train` launch a detached process that keeps training
+after a Ctrl-C. Before you declare a task done, list the runs with `sky ai
+train runs` and cancel a run you started and no longer need with `sky ai train
+cancel <run>`. Never kill a trainer by a process pattern. Do not run `sky ai
+provision --train` or a real training run speculatively: the MLX toolchain,
+the base weights and the dev model are about 700 MB, and a run uses the GPU and
+gigabytes of memory. Test training under `sky test` with
+`SKY_AI_TRAIN_BACKEND=fake` in `.env.test`: test mode simulates the trainer
+and downloads nothing.

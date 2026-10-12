@@ -1,0 +1,2956 @@
+module Std.Ai.Train exposing
+    ( SnapshotFile
+    , Snapshot
+    , BaseModel
+    , baseModel
+    , withWeights
+    , withServing
+    , devBase
+    , baseId
+    , baseServing
+    , baseWeights
+    , Backend(..)
+    , backendName
+    , Job
+    , Batch
+    , lora
+    , loraOnInstructions
+    , withName
+    , withQuantisedBase
+    , withRank
+    , withAlpha
+    , withLayers
+    , withTargets
+    , withLearningRate
+    , withEpochs
+    , withMaxSteps
+    , withBatch
+    , withSequenceLength
+    , withSeed
+    , withCheckpointEvery
+    , withEvalEvery
+    , withBackend
+    , withGgufExport
+    , withMergedExport
+    , withWorkDir
+    , withRegistry
+    , withMaxRelaunches
+    , withWatchWindow
+    , fakeCrashAt
+    , fakeStepMs
+    , Settings
+    , settings
+    , jobJson
+    , check
+    , runId
+    , runDir
+    , totalSteps
+    , Host
+    , ModelShape
+    , host
+    , shapeOf
+    , estimateMemory
+    , Plan
+    , plan
+    , Status(..)
+    , statusText
+    , LossPoint
+    , Progress
+    , emptyProgress
+    , Artefact
+    , Adapter
+    , adapterCodec
+    , registryAdapter
+    , lineage
+    , adapterRef
+    , RunRequest
+    , workflow
+    , workflows
+    , start
+    , poll
+    , drive
+    , resume
+    , resumeAt
+    , exportAt
+    , progress
+    , result
+    , progressAt
+    , cancel
+    , cancelAt
+    , runs
+    , ToolchainVersion
+    , Toolchain
+    , provision
+    , provisionBase
+    , toolchainStatus
+    , Event(..)
+    , decodeEvent
+    , foldProgress
+    )
+
+{-| `Std.Ai.Train` — fine-tune a LoRA or QLoRA adapter from Sky code.
+
+    import Std.Ai.Train as Train
+    import Std.Ai.Dataset as Dataset
+
+    supportJob : Dataset.Version Dataset.Chat -> Train.Job
+    supportJob version =
+        Train.lora Train.devBase version
+            |> Train.withName "support"
+            |> Train.withQuantisedBase
+            |> Train.withRank 16
+            |> Train.withSeed 7
+            |> Train.withGgufExport
+
+    -- A command-line program runs it in the foreground:
+    Train.drive db (supportJob version)
+
+A job trains on a frozen `Dataset.Version`, never on a live dataset, so its
+lineage is fixed by the type: the adapter records the version's name and
+digest, the base, the backend, the toolchain and the seed.
+
+**The backend is not in the code by default.** On Apple silicon the detected
+backend is `Mlx` (MLX-LM), on Linux with an NVIDIA GPU it is `Unsloth`, and
+`SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth` or `fake`) overrides both and
+`withBackend`. `Fake` is a scripted trainer for tests and CI: it runs the
+whole protocol and writes a real, no-op adapter. A backend this host cannot
+run is `NoAccelerator`, never a silent fallback.
+
+**Python is managed and invisible.** The trainer is a Sky-shipped driver that
+runs in a toolchain Sky installs under the AI home: a pinned uv, a pinned
+CPython and a hash-locked set of wheels. `provision` (and `sky ai provision
+--train mlx`) installs it ahead of time; a missing toolchain with fetching off
+is `NotProvisioned`, naming the command.
+
+**Training is durable.** `workflow` is a `Std.Durable` workflow: resolve,
+check, stage the data, provision, launch the trainer, watch it, convert the
+adapter to GGUF, register it. The trainer runs detached in its own session,
+so it outlives the program that launched it; a resumed workflow reattaches to
+it. A trainer that dies is relaunched from its newest verified checkpoint, up
+to `withMaxRelaunches` times. Checkpoints are safetensors with a manifest of
+digests, never a pickle.
+
+Failures are typed: `TrainingFailed`, `TrainingCancelled`, `ModelTooLarge`,
+`NoAccelerator`, `DatasetInvalid`, `NotProvisioned`, `ToolchainFailed`,
+`ChecksumMismatch` and `AdapterMismatch` (an adapter that does not fit the
+serving model). See `docs/ai/train.md`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+import Sky.Core.Tuple as Tuple
+import Sky.Core.Math as Math
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Time as Time
+import Sky.Core.File as File
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Codec as Codec exposing (Codec)
+import Std.Db exposing (Db)
+import Std.Durable as Durable
+import Std.Ai.Local as Local
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Registry as Registry
+import Std.Ai.Failure as Failure exposing (Failure(..))
+
+-- ── Base models ─────────────────────────────────────────────────────
+-- | One file of a pinned snapshot: its path in the repository and its
+-- SHA-256.
+type alias SnapshotFile =
+    { path : String
+    , sha256 : String
+    }
+
+-- | A Hugging Face repository at one commit, with the digest of every file
+-- the trainer reads. A file that does not hash to its digest is never used.
+type alias Snapshot =
+    { repo : String
+    , revision : String
+    , files : List SnapshotFile
+    }
+
+-- | The model an adapter is trained on: an id (`<org>/<repo>@<commit>` of the
+-- original weights), the pinned weights each backend trains on, and the GGUF
+-- model that serves the adapter (its digest is the adapter's base digest in
+-- the registry, and the engine checks it before loading the adapter).
+type BaseModel
+    = BaseModel { id : String
+, mlx : Maybe Snapshot
+, unsloth : Maybe Snapshot
+, serving : Local.ModelRef
+}
+
+
+-- | A base model from its id and the GGUF model that serves it. Add the
+-- weights each backend trains on with `withWeights`.
+baseModel : String -> Local.ModelRef -> BaseModel
+baseModel id serving =
+    BaseModel { id = id, mlx = Nothing, unsloth = Nothing, serving = serving }
+
+
+-- | The weights a backend trains on. A 4-bit snapshot (an `mlx-community`
+-- `-4bit` repository, an `unsloth` `-bnb-4bit` repository) makes the job QLoRA.
+-- `Fake` needs none.
+withWeights : Backend -> Snapshot -> BaseModel -> BaseModel
+withWeights backend snap (BaseModel b) =
+    case backend of
+
+        Mlx ->
+            BaseModel { b | mlx = Just snap }
+
+        Unsloth ->
+            BaseModel { b | unsloth = Just snap }
+
+        Fake ->
+            BaseModel b
+
+
+-- | The GGUF model that serves the adapter.
+withServing : Local.ModelRef -> BaseModel -> BaseModel
+withServing ref (BaseModel b) =
+    BaseModel { b | serving = ref }
+
+
+-- | The development base: Qwen2.5 0.5B Instruct (Apache-2.0). Mlx trains on
+-- the `mlx-community` 4-bit snapshot (QLoRA, about 280 MB), Unsloth on the
+-- `unsloth` bnb 4-bit snapshot, and the adapter is served on `Local.devModel`
+-- (the Q4_0 GGUF of the same model).
+devBase : BaseModel
+devBase =
+    baseModel
+        "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775"
+        Local.devModel
+        |> withWeights Mlx devMlx
+        |> withWeights Unsloth devUnsloth
+
+
+devMlx : Snapshot
+devMlx =
+    { repo = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+    , revision = "a5339a4131f135d0fdc6a5c8b5bbed2753bbe0f3"
+    , files =
+        [ { path = "config.json"
+          , sha256 =
+              "b045e57ea90b8f1b35f89f954b176a5c1faa02bd0af2c89bcec191239d66cef4"
+          }
+        , { path = "model.safetensors"
+          , sha256 =
+              "ddffab9cbc7bf6dde941c6724841eeca8981fcfa81ca20ff8efff1396326d153"
+          }
+        , { path = "tokenizer.json"
+          , sha256 =
+              "a8506e7111b80c6d8635951a02eab0f4e1a8e4e5772da83846579e97b16f61bf"
+          }
+        , { path = "tokenizer_config.json"
+          , sha256 =
+              "f7c61e32b7a17d19bf8e7037dcb74079a833e53ea9801f24008cac68458f03b7"
+          }
+        , { path = "special_tokens_map.json"
+          , sha256 =
+              "76862e765266b85aa9459767e33cbaf13970f327a0e88d1c65846c2ddd3a1ecd"
+          }
+        , { path = "added_tokens.json"
+          , sha256 =
+              "58b54bbe36fc752f79a24a271ef66a0a0830054b4dfad94bde757d851968060b"
+          }
+        , { path = "vocab.json"
+          , sha256 =
+              "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+          }
+        , { path = "merges.txt"
+          , sha256 =
+              "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+          }
+        ]
+    }
+
+
+devUnsloth : Snapshot
+devUnsloth =
+    { repo = "unsloth/Qwen2.5-0.5B-Instruct-bnb-4bit"
+    , revision = "216d96b52c97a3c8294776df8477592f6828981c"
+    , files =
+        [ { path = "config.json"
+          , sha256 =
+              "994325141aef76ff9fbc6be18f4dbd363dd2ecafb13a1a7746bf44c665fdfe47"
+          }
+        , { path = "generation_config.json"
+          , sha256 =
+              "409eda00f5fe7d1c29c2c0335823449a4fda6af454b6638b96044fce19186cc5"
+          }
+        , { path = "model.safetensors"
+          , sha256 =
+              "fa6ed98084afb0497d9075a82ab17fdfc0b5d99fb6b37d8f761463e67c100f45"
+          }
+        , { path = "tokenizer.json"
+          , sha256 =
+              "9c5ae00e602b8860cbd784ba82a8aa14e8feecec692e7076590d014d7b7fdafa"
+          }
+        , { path = "tokenizer_config.json"
+          , sha256 =
+              "0553ada6e92b1a29b4431c72782c6e5e6ab675ef0b20ceb2833cd1074c7fb932"
+          }
+        , { path = "special_tokens_map.json"
+          , sha256 =
+              "b5acd1507cb3a3539e63369cb4a2b675a599cf13afe62282d371518288967797"
+          }
+        , { path = "added_tokens.json"
+          , sha256 =
+              "58b54bbe36fc752f79a24a271ef66a0a0830054b4dfad94bde757d851968060b"
+          }
+        , { path = "vocab.json"
+          , sha256 =
+              "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+          }
+        , { path = "merges.txt"
+          , sha256 =
+              "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+          }
+        ]
+    }
+
+
+-- | The base's id.
+baseId : BaseModel -> String
+baseId (BaseModel b) =
+    b.id
+
+
+-- | The GGUF model that serves the base's adapters.
+baseServing : BaseModel -> Local.ModelRef
+baseServing (BaseModel b) =
+    b.serving
+
+
+-- | The weights a backend trains on, if the base has them.
+baseWeights : Backend -> BaseModel -> Maybe Snapshot
+baseWeights backend (BaseModel b) =
+    case backend of
+
+        Mlx ->
+            b.mlx
+
+        Unsloth ->
+            b.unsloth
+
+        Fake ->
+            Nothing
+
+-- ── Jobs ────────────────────────────────────────────────────────────
+-- | Where a job trains. `Fake` runs the scripted trainer (tests, CI, a
+-- machine with no accelerator). Cloud backends arrive in a later phase.
+type Backend
+    = Mlx
+    | Unsloth
+    | Fake
+
+
+-- | The backend's name, as `SKY_AI_TRAIN_BACKEND` writes it.
+backendName : Backend -> String
+backendName b =
+    case b of
+
+        Mlx ->
+            "mlx"
+
+        Unsloth ->
+            "unsloth"
+
+        Fake ->
+            "fake"
+
+-- | Rows per optimiser step: `perDevice` rows at a time, gradients accumulated
+-- over `accumulate` of those.
+type alias Batch =
+    { perDevice : Int
+    , accumulate : Int
+    }
+
+-- | Everything a job holds. Read it with `settings`.
+type alias Settings =
+    { name : String
+    , baseId : String
+    , serving : String
+    , format : String
+    , dataset : String
+    , datasetDigest : String
+    , dataFile : String
+    , trainRows : Int
+    , evalRows : Int
+    , quantised : Bool
+    , rank : Int
+    , alpha : Int
+    , layers : Int
+    , targets : List String
+    , learningRate : Float
+    , epochs : Int
+    , maxSteps : Int
+    , batch : Batch
+    , sequenceLength : Int
+    , seed : Int
+    , checkpointEvery : Int
+    , evalEvery : Int
+    , backend : Maybe Backend
+    , ggufExport : Bool
+    , mergedExport : Bool
+    , workDir : String
+    , maxRelaunches : Int
+    , watchWindowMs : Int
+    , fakeCrashAt : Int
+    , fakeStepMs : Int
+    }
+
+-- | A training job: a base, a frozen dataset version and the settings.
+type Job
+    = Job { s : Settings
+, base : BaseModel
+, registry : Maybe Registry.Registry
+}
+
+
+-- | A LoRA job on a chat dataset (the `{"messages": [...]}` format). The loss
+-- counts each conversation's last assistant turn.
+lora : BaseModel -> Dataset.Version Dataset.Chat -> Job
+lora base version =
+    newJob base "chat" (Dataset.manifest version) (Dataset.blobPath version)
+
+
+-- | A LoRA job on an instruction dataset (`{"prompt", "completion"}`). The
+-- loss counts the completion.
+loraOnInstructions : BaseModel -> Dataset.Version Dataset.Instruction -> Job
+loraOnInstructions base version =
+    newJob
+        base
+        "instruction"
+        (Dataset.manifest version)
+        (Dataset.blobPath version)
+
+
+newJob : BaseModel -> String -> Dataset.Manifest -> String -> Job
+newJob base format m file =
+    Job
+        { s =
+            { name = "adapter"
+            , baseId = baseId base
+            , serving = Local.reference (baseServing base)
+            , format = format
+            , dataset = m.name
+            , datasetDigest = m.digest
+            , dataFile = file
+            , trainRows = m.train
+            , evalRows = m.eval
+            , quantised = False
+            , rank = 8
+            , alpha = 0
+            , layers = 16
+            , targets = defaultTargets
+            , learningRate = 1.0e-4
+            , epochs = 1
+            , maxSteps = 0
+            , batch = { perDevice = 4, accumulate = 1 }
+            , sequenceLength = 1024
+            , seed = 0
+            , checkpointEvery = 100
+            , evalEvery = 50
+            , backend = Nothing
+            , ggufExport = False
+            , mergedExport = False
+            , workDir = ".sky/ai/runs"
+            , maxRelaunches = 3
+            , watchWindowMs = 300000
+            , fakeCrashAt = 0
+            , fakeStepMs = 20
+            }
+        , base = base
+        , registry = Nothing
+        }
+
+
+defaultTargets : List String
+defaultTargets =
+    [ "self_attn.q_proj"
+    , "self_attn.k_proj"
+    , "self_attn.v_proj"
+    , "self_attn.o_proj"
+    ]
+
+
+knownTargets : List String
+knownTargets =
+    defaultTargets ++ [ "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj" ]
+
+
+update : (Settings -> Settings) -> Job -> Job
+update f (Job j) =
+    Job { j | s = f j.s }
+
+
+-- | The adapter's name: the run directory's prefix, and the registry model
+-- name. Lower case, digits and `-`. Default: `adapter`.
+withName : String -> Job -> Job
+withName n =
+    update (\s -> { s | name = n })
+
+
+-- | Mark the job QLoRA: the base weights are 4-bit (the snapshot already is,
+-- for `devBase`). Recorded in the lineage and the registry method.
+withQuantisedBase : Job -> Job
+withQuantisedBase =
+    update (\s -> { s | quantised = True })
+
+
+-- | The LoRA rank. Default: 8.
+withRank : Int -> Job -> Job
+withRank n =
+    update (\s -> { s | rank = n })
+
+
+-- | The LoRA alpha (the update is scaled by alpha / rank). Default: twice
+-- the rank.
+withAlpha : Int -> Job -> Job
+withAlpha n =
+    update (\s -> { s | alpha = n })
+
+
+-- | How many of the last decoder layers get adapters; `-1` for all. Default:
+-- 16.
+withLayers : Int -> Job -> Job
+withLayers n =
+    update (\s -> { s | layers = n })
+
+
+-- | Which projections get adapters, as Hugging Face module paths
+-- (`self_attn.q_proj`, `mlp.down_proj`, …). Default: the four attention
+-- projections.
+withTargets : List String -> Job -> Job
+withTargets ts =
+    update (\s -> { s | targets = ts })
+
+
+-- | The learning rate (Adam). Default: 1e-4.
+withLearningRate : Float -> Job -> Job
+withLearningRate r =
+    update (\s -> { s | learningRate = r })
+
+
+-- | Passes over the train split. Default: 1. `withMaxSteps` wins.
+withEpochs : Int -> Job -> Job
+withEpochs n =
+    update (\s -> { s | epochs = n })
+
+
+-- | Stop after this many optimiser steps.
+withMaxSteps : Int -> Job -> Job
+withMaxSteps n =
+    update (\s -> { s | maxSteps = n })
+
+
+-- | Rows per step. Default: `{ perDevice = 4, accumulate = 1 }`.
+withBatch : Batch -> Job -> Job
+withBatch b =
+    update (\s -> { s | batch = b })
+
+
+-- | Tokens per row; a longer row is cut. Default: 1024.
+withSequenceLength : Int -> Job -> Job
+withSequenceLength n =
+    update (\s -> { s | sequenceLength = n })
+
+
+-- | The seed of the adapter's initial values and of the data order. A resumed
+-- run reads exactly the batches the first run would have. Default: 0.
+withSeed : Int -> Job -> Job
+withSeed n =
+    update (\s -> { s | seed = n })
+
+
+-- | Write a checkpoint every n steps (0: none). A relaunched trainer repeats
+-- at most this many steps. Default: 100.
+withCheckpointEvery : Int -> Job -> Job
+withCheckpointEvery n =
+    update (\s -> { s | checkpointEvery = n })
+
+
+-- | Measure the eval split's loss every n steps (0: at the end only).
+-- Default: 50.
+withEvalEvery : Int -> Job -> Job
+withEvalEvery n =
+    update (\s -> { s | evalEvery = n })
+
+
+-- | Train on this backend unless `SKY_AI_TRAIN_BACKEND` says otherwise.
+-- Without it the backend is detected.
+withBackend : Backend -> Job -> Job
+withBackend b =
+    update (\s -> { s | backend = Just b })
+
+
+-- | Also convert the adapter to GGUF, the format the managed llama-server
+-- loads (`Local.withAdapter`, the registry's local slots).
+withGgufExport : Job -> Job
+withGgufExport =
+    update (\s -> { s | ggufExport = True })
+
+
+-- | Also fold the adapter into the serving model and write a merged GGUF
+-- model (`merged.gguf` in the run directory; it implies the GGUF adapter).
+-- The adapter stays the product: the registry holds adapters only.
+withMergedExport : Job -> Job
+withMergedExport =
+    update (\s -> { s | ggufExport = True, mergedExport = True })
+
+
+-- | The directory that holds the run directories. Default: `.sky/ai/runs`.
+withWorkDir : String -> Job -> Job
+withWorkDir d =
+    update (\s -> { s | workDir = d })
+
+
+-- | Register the finished adapter in this registry under the job's name, with
+-- its lineage (the dataset version and digest, the base, the run).
+withRegistry : Registry.Registry -> Job -> Job
+withRegistry r (Job j) =
+    Job { j | registry = Just r }
+
+
+-- | How often a trainer that died is relaunched from its newest checkpoint
+-- before the run fails with `TrainingFailed`. Default: 3.
+withMaxRelaunches : Int -> Job -> Job
+withMaxRelaunches n =
+    update (\s -> { s | maxRelaunches = n })
+
+
+-- | The longest one watch of the trainer lasts, in milliseconds (at most five
+-- minutes, which keeps every durable step inside its lease). Default: 300000.
+withWatchWindow : Int -> Job -> Job
+withWatchWindow n =
+    update (\s -> { s | watchWindowMs = n })
+
+
+-- | `Fake` only: the first attempt dies after this step, as a killed trainer
+-- does, so a test sees the relaunch from the newest checkpoint.
+fakeCrashAt : Int -> Job -> Job
+fakeCrashAt n =
+    update (\s -> { s | fakeCrashAt = n })
+
+
+-- | `Fake` only: the time one step takes. Default: 20.
+fakeStepMs : Int -> Job -> Job
+fakeStepMs n =
+    update (\s -> { s | fakeStepMs = n })
+
+
+-- | What a job holds.
+settings : Job -> Settings
+settings (Job j) =
+    j.s
+
+
+alphaOf : Settings -> Int
+alphaOf s =
+    if s.alpha > 0 then
+        s.alpha
+
+    else
+        2 * s.rank
+
+
+-- | The job as canonical JSON: the settings that decide the adapter (not the
+-- backend, which the environment picks, nor where the run lives), keys
+-- sorted. It goes into the lineage, and its digest names the run.
+jobJson : Job -> String
+jobJson (Job j) =
+    let
+        s = j.s
+        crash =
+            if s.fakeCrashAt > 0 then
+                [ ( "fakeCrashAt", JsonE.int s.fakeCrashAt ) ]
+
+            else
+                []
+    in
+        JsonE.encode
+            0
+            (JsonE.object
+                ([ ( "alpha", JsonE.int (alphaOf s) )
+                , ( "base", JsonE.string s.baseId )
+                , ( "batch"
+                  , JsonE.object
+                        [ ( "accumulate", JsonE.int s.batch.accumulate )
+                        , ( "perDevice", JsonE.int s.batch.perDevice )
+                        ]
+                  )
+                , ( "checkpointEvery", JsonE.int s.checkpointEvery )
+                , ( "dataset"
+                  , JsonE.object
+                        [ ( "digest", JsonE.string s.datasetDigest )
+                        , ( "name", JsonE.string s.dataset )
+                        ]
+                  )
+                , ( "epochs", JsonE.int s.epochs )
+                , ( "evalEvery", JsonE.int s.evalEvery )
+                ]
+                    ++ crash
+                    ++ [ ( "format", JsonE.string s.format )
+                       , ( "gguf", JsonE.bool s.ggufExport )
+                       , ( "layers", JsonE.int s.layers )
+                       , ( "learningRate", JsonE.float s.learningRate )
+                       , ( "maxSteps", JsonE.int s.maxSteps )
+                       , ( "merged", JsonE.bool s.mergedExport )
+                       , ( "name", JsonE.string s.name )
+                       , ( "quantised", JsonE.bool s.quantised )
+                       , ( "rank", JsonE.int s.rank )
+                       , ( "seed", JsonE.int s.seed )
+                       , ( "sequenceLength", JsonE.int s.sequenceLength )
+                       , ( "serving", JsonE.string s.serving )
+                       , ( "targets", JsonE.list JsonE.string s.targets )
+                       ]))
+
+
+-- | The run's id: the job's name and the first twelve hex digits of its
+-- JSON's SHA-256. The same job is the same run, so starting it again attaches
+-- to it instead of training twice.
+runId : Job -> String
+runId job =
+    (settings job).name ++ "-" ++ String.left 12 (Crypto.sha256 (jobJson job))
+
+
+-- | The run's directory: `<workDir>/<runId>`.
+runDir : Job -> String
+runDir job =
+    (settings job).workDir ++ "/" ++ runId job
+
+
+-- | The optimiser steps the job runs: `maxSteps` when set, else whole epochs
+-- of the train split.
+totalSteps : Job -> Int
+totalSteps job =
+    let
+        s = settings job
+        per = Math.max 1 (s.batch.perDevice * s.batch.accumulate)
+    in
+        if s.maxSteps > 0 then
+            s.maxSteps
+
+        else
+            Math.max 1 ((s.epochs * s.trainRows + per - 1) // per)
+
+
+invalid : String -> String -> Error
+invalid setting reason =
+    Failure.toError (InvalidSetting { setting = setting, reason = reason })
+
+
+-- | Check a job before it runs, without I/O. An empty train or eval split is
+-- `DatasetInvalid` (the eval split measures the adapter); a setting out of
+-- range is `InvalidSetting`.
+check : Job -> Result Error ()
+check job =
+    let
+        s = settings job
+        fails =
+            List.filterMap
+                identity
+                [ failIf
+                      (not (validName s.name))
+                      ( "name"
+                      , quoteText s.name
+                            ++ " is not a name: use lower case letters, digits and -"
+                      )
+                , failIf (s.rank < 1) ( "rank", "the rank must be at least 1" )
+                , failIf (s.alpha < 0) ( "alpha", "alpha must be positive" )
+                , failIf
+                      (s.layers == 0 || s.layers < -1)
+                      ( "layers", "use a number of layers, or -1 for all" )
+                , failIf
+                      (List.isEmpty s.targets)
+                      ( "targets", "name at least one projection" )
+                , failIf
+                      (List.any
+                          (\t -> not (List.member t knownTargets))
+                          s.targets)
+                      ( "targets"
+                      , "a target is one of " ++ String.join ", " knownTargets
+                      )
+                , failIf
+                      (not (s.learningRate > 0.0))
+                      ( "learningRate", "the learning rate must be above 0" )
+                , failIf
+                      (s.epochs < 1 && s.maxSteps < 1)
+                      ( "epochs", "train for at least one epoch or one step" )
+                , failIf
+                      (s.batch.perDevice < 1 || s.batch.accumulate < 1)
+                      ( "batch", "a batch is at least one row" )
+                , failIf
+                      (s.sequenceLength < 16)
+                      ( "sequenceLength", "a sequence is at least 16 tokens" )
+                , failIf
+                      (s.checkpointEvery < 0 || s.evalEvery < 0)
+                      ( "checkpointEvery", "use 0 or a number of steps" )
+                , failIf
+                      (s.maxRelaunches < 0)
+                      ( "maxRelaunches", "use 0 or more" )
+                ]
+    in
+        case fails of
+
+            ( setting, reason ) :: _ ->
+                Err (invalid setting reason)
+
+            [] ->
+                if s.trainRows < 1 || s.evalRows < 1 then
+                    Err
+                        (Failure.toError
+                            (DatasetInvalid
+                                { dataset =
+                                    s.dataset ++ "@"
+                                        ++ String.left 12 s.datasetDigest
+                                , reasons =
+                                    "training needs rows in both the train and the eval split ("
+                                        ++ String.fromInt s.trainRows
+                                        ++ " train, "
+                                        ++ String.fromInt s.evalRows
+                                        ++ " eval)"
+                                }))
+
+                else
+                    Ok ()
+
+
+failIf : Bool -> ( String, String ) -> Maybe ( String, String )
+failIf cond pair =
+    if cond then
+        Just pair
+
+    else
+        Nothing
+
+
+quoteText : String -> String
+quoteText s =
+    "\"" ++ s ++ "\""
+
+
+validName : String -> Bool
+validName n =
+    not (String.isEmpty n) && String.length n <= 48
+        && List.all
+               (\c ->
+                   (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')
+               (String.toList n)
+        && not (String.startsWith "-" n)
+
+-- ── Planning ────────────────────────────────────────────────────────
+-- | The machine: `accelerator` is `metal`, `cuda` or `cpu`.
+type alias Host =
+    { os : String
+    , arch : String
+    , totalBytes : Int
+    , availableBytes : Int
+    , accelerator : String
+    }
+
+-- | The base model's shape, read from its serving GGUF.
+type alias ModelShape =
+    { architecture : String
+    , layers : Int
+    , hidden : Int
+    , intermediate : Int
+    , qDim : Int
+    , kvDim : Int
+    , vocab : Int
+    , parameters : Int
+    }
+
+
+hostRaw : () -> Task Error Host
+hostRaw =
+    Ffi.kernel "Ai_trainHost"
+
+
+-- | This machine.
+host : () -> Task Error Host
+host _ =
+    hostRaw ()
+
+
+shapesRaw : String -> Task Error ModelShape
+shapesRaw =
+    Ffi.kernel "Ai_trainShapes"
+
+
+-- | The shape of the base's serving model (fetched if allowed).
+shapeOf : BaseModel -> Task Error ModelShape
+shapeOf base =
+    shapesRaw (Local.reference (baseServing base))
+
+
+trainedLayers : ModelShape -> Settings -> Int
+trainedLayers shape s =
+    if s.layers < 0 || s.layers > shape.layers then
+        shape.layers
+
+    else
+        s.layers
+
+
+dims : ModelShape -> String -> ( Int, Int )
+dims shape target =
+    case target of
+
+        "self_attn.q_proj" ->
+            ( shape.hidden, shape.qDim )
+
+        "self_attn.k_proj" ->
+            ( shape.hidden, shape.kvDim )
+
+        "self_attn.v_proj" ->
+            ( shape.hidden, shape.kvDim )
+
+        "self_attn.o_proj" ->
+            ( shape.qDim, shape.hidden )
+
+        "mlp.down_proj" ->
+            ( shape.intermediate, shape.hidden )
+
+        _ ->
+            ( shape.hidden, shape.intermediate )
+
+
+-- | The memory a job needs, in bytes. A documented estimate, deliberately on
+-- the high side, not a measurement:
+--
+--   * weights: parameters × 0.5625 bytes for a 4-bit base (4.5 bits with the
+--     scales), × 2 for a 16-bit one;
+--   * the adapter: its parameters (rank × (in + out) per adapted projection)
+--     × 16 bytes (the value, its gradient and Adam's two moments, as f32);
+--   * activations: rows × tokens × adapted layers × (16 × hidden + 4 ×
+--     intermediate) × 2 bytes;
+--   * the logits: rows × tokens × vocabulary × 8 bytes (values and gradient);
+--   * 512 MiB for the runtime.
+estimateMemory : ModelShape -> Job -> Int
+estimateMemory shape job =
+    let
+        s = settings job
+        layers = trainedLayers shape s
+        weights =
+            if s.quantised then
+                shape.parameters * 9 // 16
+
+            else
+                shape.parameters * 2
+        perLayer =
+            List.foldl
+                (\t acc ->
+                    let
+                        ( i, o ) = dims shape t
+                    in
+                        acc + s.rank * (i + o))
+                0
+                s.targets
+        adapter = layers * perLayer * 16
+        rows = s.batch.perDevice
+        activations =
+            rows * s.sequenceLength * layers
+                * (16 * shape.hidden + 4 * shape.intermediate)
+                * 2
+        logits = rows * s.sequenceLength * shape.vocab * 8
+    in
+        weights + adapter + activations + logits + 536870912
+
+-- | What `plan` found: the backend and where it came from (`env`, `code`,
+-- `detected`), the machine, the base's shape, the steps, the estimate and
+-- the memory the backend may use.
+type alias Plan =
+    { runId : String
+    , backend : String
+    , backendSource : String
+    , host : Host
+    , shape : ModelShape
+    , steps : Int
+    , trainRows : Int
+    , evalRows : Int
+    , estimateBytes : Int
+    , availableBytes : Int
+    }
+
+type alias RawSetting =
+    { key : String
+    , name : String
+    , value : String
+    , source : String
+    }
+
+
+resolveRaw : String -> Task Error RawSetting
+resolveRaw =
+    Ffi.kernel "Ai_trainResolve"
+
+
+backendCode : Settings -> String
+backendCode s =
+    Maybe.withDefault "" (Maybe.map backendName s.backend)
+
+
+-- Apple silicon shares its memory with the GPU and Metal works within about
+-- three quarters of it; elsewhere the memory available now.
+usable : Host -> Int
+usable h =
+    if h.accelerator == "metal" then
+        h.totalBytes * 3 // 4
+
+    else
+        h.availableBytes
+
+
+-- | Plan a job before it runs: check it, resolve the backend, read the host
+-- and the base's shape, and estimate the memory. A job that will not fit is
+-- `ModelTooLarge` before anything is downloaded or started; a backend this
+-- host cannot run is `NoAccelerator`.
+plan : Job -> Task Error Plan
+plan job =
+    let
+        s = settings job
+    in
+        Task.fromResult (check job)
+            |> Task.andThen (\_ -> resolveRaw (backendCode s))
+            |> Task.andThen
+                   (\b ->
+                       host ()
+                           |> Task.andThen
+                                  (\h ->
+                                      shapeOf (baseOf job)
+                                          |> Task.andThen
+                                                 (\shape -> fitPlan job b h shape)))
+
+
+fitPlan : Job -> RawSetting -> Host -> ModelShape -> Task Error Plan
+fitPlan job b h shape =
+    let
+        s = settings job
+        need = estimateMemory shape job
+        avail = usable h
+        p =
+            { runId = runId job
+            , backend = b.value
+            , backendSource = b.source
+            , host = h
+            , shape = shape
+            , steps = totalSteps job
+            , trainRows = s.trainRows
+            , evalRows = s.evalRows
+            , estimateBytes = need
+            , availableBytes = avail
+            }
+    in
+        if b.value /= "fake" && need > avail then
+            Task.fail
+                (Failure.toError
+                    (ModelTooLarge { needBytes = need, availableBytes = avail }))
+
+        else
+            Task.succeed p
+
+
+baseOf : Job -> BaseModel
+baseOf (Job j) =
+    j.base
+
+
+registryOf : Job -> Maybe Registry.Registry
+registryOf (Job j) =
+    j.registry
+
+-- ── Progress ────────────────────────────────────────────────────────
+-- | Where a run is.
+type Status
+    = Queued
+    | Provisioning
+    | Running
+    | Relaunching
+    | Converting
+    | Registering
+    | Done
+    | Failed
+    | Cancelled
+
+
+-- | A status as lower-case text.
+statusText : Status -> String
+statusText st =
+    case st of
+
+        Queued ->
+            "queued"
+
+        Provisioning ->
+            "provisioning"
+
+        Running ->
+            "running"
+
+        Relaunching ->
+            "relaunching"
+
+        Converting ->
+            "converting"
+
+        Registering ->
+            "registering"
+
+        Done ->
+            "done"
+
+        Failed ->
+            "failed"
+
+        Cancelled ->
+            "cancelled"
+
+-- | One point of a loss curve.
+type alias LossPoint =
+    { step : Int
+    , value : Float
+    }
+
+-- | A run's progress, folded from the trainer's protocol lines. `losses` and
+-- `valLosses` hold at most 200 points each (a long run is thinned evenly).
+-- `relaunches` counts trainers started after the first; `resumedFrom` is the
+-- checkpoint step the last one resumed from.
+type alias Progress =
+    { runId : String
+    , status : Status
+    , backend : String
+    , step : Int
+    , totalSteps : Int
+    , loss : Maybe Float
+    , valLoss : Maybe Float
+    , tokensPerSecond : Float
+    , attempt : Int
+    , relaunches : Int
+    , resumedFrom : Int
+    , lastCheckpoint : Int
+    , losses : List LossPoint
+    , valLosses : List LossPoint
+    , message : String
+    }
+
+
+-- | The progress of a run that has written nothing yet.
+emptyProgress : String -> Progress
+emptyProgress id =
+    { runId = id
+    , status = Queued
+    , backend = ""
+    , step = 0
+    , totalSteps = 0
+    , loss = Nothing
+    , valLoss = Nothing
+    , tokensPerSecond = 0.0
+    , attempt = 0
+    , relaunches = 0
+    , resumedFrom = 0
+    , lastCheckpoint = 0
+    , losses = []
+    , valLosses = []
+    , message = ""
+    }
+
+-- ── The driver protocol ─────────────────────────────────────────────
+-- | One line the trainer writes (`docs/ai/train.md`, "The driver protocol").
+type Event
+    = Hello { backend : String
+, attempt : Int
+, resumeFrom : Int
+, totalSteps : Int
+}
+    | StepProgress { step : Int
+, total : Int
+, loss : Float
+, tokensPerSecond : Float
+}
+    | Metric { step : Int
+, name : String
+, value : Float
+}
+    | Checkpoint { step : Int
+, path : String
+}
+    | Artefact { kind : String
+, path : String
+, sha256 : String
+}
+    | DoneEvent { step : Int
+, trainLoss : Float
+, valLoss : Float
+}
+    | CancelledEvent { step : Int }
+    | DriverError { code : String
+, message : String
+}
+
+
+toolchainFailed : String -> Error
+toolchainFailed text =
+    Failure.toError (ToolchainFailed { tool = "trainer", logTail = text })
+
+
+-- A number the trainer could not write (a non-finite loss is written as
+-- null) reads as -1.
+num : String -> JsonD.Decoder Float
+num key =
+    JsonD.oneOf [ JsonD.field key JsonD.float, JsonD.succeed (-1.0) ]
+
+
+intOr : String -> Int -> JsonD.Decoder Int
+intOr key d =
+    JsonD.oneOf [ JsonD.field key JsonD.int, JsonD.succeed d ]
+
+
+strOr : String -> JsonD.Decoder String
+strOr key =
+    JsonD.oneOf [ JsonD.field key JsonD.string, JsonD.succeed "" ]
+
+
+-- | Decode one protocol line. A line of a type this release does not know is
+-- `Ok Nothing` (a newer driver may add types); a line that is not protocol
+-- JSON, or whose version `v` is not 1, is `ToolchainFailed`.
+decodeEvent : String -> Result Error (Maybe Event)
+decodeEvent line =
+    case JsonD.decodeString
+             (JsonD.map2
+                 Tuple.pair
+                 (JsonD.field "v" JsonD.int)
+                 (JsonD.field "type" JsonD.string))
+             line of
+
+        Err _ ->
+            Err
+                (toolchainFailed
+                    ("the trainer wrote a line that is not protocol JSON: "
+                        ++ String.left 200 line))
+
+        Ok ( v, typ ) ->
+            if v /= 1 then
+                Err
+                    (toolchainFailed
+                        ("the trainer speaks protocol version "
+                            ++ String.fromInt v
+                            ++ "; this Sky reads version 1 (the toolchain and the runtime differ)"))
+
+            else
+                case eventDecoder typ of
+
+                    Nothing ->
+                        Ok Nothing
+
+                    Just d ->
+                        JsonD.decodeString d line |> Result.map Just
+                            |> Result.mapError
+                                   (\_ ->
+                                       toolchainFailed
+                                           ("the trainer wrote a " ++ typ
+                                               ++ " line without its fields: "
+                                               ++ String.left 200 line))
+
+
+eventDecoder : String -> Maybe (JsonD.Decoder Event)
+eventDecoder typ =
+    case typ of
+
+        "hello" ->
+            Just
+                (JsonD.map4
+                    (\b a r t ->
+                        Hello
+                            { backend = b
+                            , attempt = a
+                            , resumeFrom = r
+                            , totalSteps = t
+                            })
+                    (strOr "backend")
+                    (intOr "attempt" 0)
+                    (intOr "resumeFrom" 0)
+                    (intOr "totalSteps" 0))
+
+        "progress" ->
+            Just
+                (JsonD.map4
+                    (\s t l tps ->
+                        StepProgress
+                            { step = s
+                            , total = t
+                            , loss = l
+                            , tokensPerSecond = tps
+                            })
+                    (JsonD.field "step" JsonD.int)
+                    (intOr "total" 0)
+                    (num "loss")
+                    (num "tokensPerSecond"))
+
+        "metric" ->
+            Just
+                (JsonD.map3
+                    (\s n v -> Metric { step = s, name = n, value = v })
+                    (JsonD.field "step" JsonD.int)
+                    (JsonD.field "name" JsonD.string)
+                    (num "value"))
+
+        "checkpoint" ->
+            Just
+                (JsonD.map2
+                    (\s p -> Checkpoint { step = s, path = p })
+                    (JsonD.field "step" JsonD.int)
+                    (JsonD.field "path" JsonD.string))
+
+        "artefact" ->
+            Just
+                (JsonD.map3
+                    (\k p h -> Artefact { kind = k, path = p, sha256 = h })
+                    (JsonD.field "kind" JsonD.string)
+                    (JsonD.field "path" JsonD.string)
+                    (JsonD.field "sha256" JsonD.string))
+
+        "done" ->
+            Just
+                (JsonD.map3
+                    (\s t v -> DoneEvent { step = s, trainLoss = t, valLoss = v })
+                    (JsonD.field "step" JsonD.int)
+                    (num "trainLoss")
+                    (num "valLoss"))
+
+        "cancelled" ->
+            Just
+                (JsonD.map
+                    (\s -> CancelledEvent { step = s })
+                    (JsonD.field "step" JsonD.int))
+
+        "error" ->
+            Just
+                (JsonD.map2
+                    (\c m -> DriverError { code = c, message = m })
+                    (JsonD.field "code" JsonD.string)
+                    (strOr "message"))
+
+        _ ->
+            Nothing
+
+
+maxPoints : Int
+maxPoints =
+    200
+
+
+-- Keep a curve at most `maxPoints` long: when it is full, drop every second
+-- point (the first and the newest stay).
+addPoint : LossPoint -> List LossPoint -> List LossPoint
+addPoint p pts =
+    let
+        next = pts ++ [ p ]
+    in
+        if List.length next > maxPoints then
+            thin next
+
+        else
+            next
+
+
+thin : List LossPoint -> List LossPoint
+thin pts =
+    List.indexedMap Tuple.pair pts
+        |> List.filter (\( i, _ ) -> modBy 2 i == 0 || i == List.length pts - 1)
+        |> List.map Tuple.second
+
+
+-- | Fold one protocol line into a run's progress.
+foldProgress : Event -> Progress -> Progress
+foldProgress ev p =
+    case ev of
+
+        Hello h ->
+            { p
+                | status = Running
+                , backend = h.backend
+                , attempt = h.attempt
+                , relaunches =
+                    if h.attempt > 0 then
+                        p.relaunches + 1
+
+                    else
+                        p.relaunches
+                , resumedFrom =
+                    if h.attempt > 0 then
+                        h.resumeFrom
+
+                    else
+                        p.resumedFrom
+                , totalSteps =
+                    if h.totalSteps > 0 then
+                        h.totalSteps
+
+                    else
+                        p.totalSteps
+                , message = ""
+            }
+
+        StepProgress e ->
+            { p
+                | status = Running
+                , step = e.step
+                , totalSteps =
+                    if e.total > 0 then
+                        e.total
+
+                    else
+                        p.totalSteps
+                , loss = Just e.loss
+                , tokensPerSecond = e.tokensPerSecond
+                , losses =
+                    if e.loss >= 0.0 then
+                        addPoint { step = e.step, value = e.loss } p.losses
+
+                    else
+                        p.losses
+            }
+
+        Metric m ->
+            if m.name == "val_loss" then
+                { p
+                    | valLoss = Just m.value
+                    , valLosses =
+                        addPoint { step = m.step, value = m.value } p.valLosses
+                }
+
+            else
+                p
+
+        Checkpoint c ->
+            { p | lastCheckpoint = c.step }
+
+        Artefact _ ->
+            p
+
+        DoneEvent d ->
+            { p | status = Converting, step = d.step, valLoss = Just d.valLoss }
+
+        CancelledEvent c ->
+            { p | status = Cancelled, step = c.step, message = "cancelled" }
+
+        DriverError e ->
+            { p | status = Failed, message = e.code ++ ": " ++ e.message }
+
+
+-- Fold every decodable line; an undecodable one is noted in the message and
+-- skipped, so progress never fails on one bad line.
+foldLines : List String -> Progress -> Progress
+foldLines lines p0 =
+    List.foldl
+        (\line p ->
+            case decodeEvent line of
+
+                Ok (Just ev) ->
+                    foldProgress ev p
+
+                Ok Nothing ->
+                    p
+
+                Err e ->
+                    { p | message = Error.toString e })
+        p0
+        lines
+
+-- ── Artefacts and the result ────────────────────────────────────────
+-- | A file the run produced and its SHA-256.
+type alias Artefact =
+    { path : String
+    , sha256 : String
+    }
+
+-- | A trained adapter and its lineage. `peft` is the adapter in the PEFT
+-- layout (safetensors); `gguf` is the GGUF adapter when the job asked for it,
+-- `merged` the merged model. `registered` is the registry label
+-- (`<name>@v<n>`) when the job had a registry.
+type alias Adapter =
+    { name : String
+    , runId : String
+    , baseId : String
+    , serving : String
+    , dataset : String
+    , datasetDigest : String
+    , backend : String
+    , toolchain : String
+    , method : String
+    , seed : Int
+    , steps : Int
+    , peft : Artefact
+    , gguf : Maybe Artefact
+    , merged : Maybe Artefact
+    , trainLoss : Float
+    , valLoss : Float
+    , relaunches : Int
+    , resumedFrom : Int
+    , registered : Maybe String
+    , job : String
+    }
+
+
+artefactCodec : Codec Artefact
+artefactCodec =
+    Codec.object (\p h -> { path = p, sha256 = h })
+        |> Codec.field "path" .path Codec.string
+        |> Codec.field "sha256" .sha256 Codec.string
+        |> Codec.buildObject
+
+
+-- | The JSON form of an adapter record (the run's `result.json`, the durable
+-- workflow's output).
+adapterCodec : Codec Adapter
+adapterCodec =
+    Codec.object
+        (\n r b sv d dd be tc m sd st pf gg mg tl vl rl rf rg jb ->
+            { name = n
+            , runId = r
+            , baseId = b
+            , serving = sv
+            , dataset = d
+            , datasetDigest = dd
+            , backend = be
+            , toolchain = tc
+            , method = m
+            , seed = sd
+            , steps = st
+            , peft = pf
+            , gguf = gg
+            , merged = mg
+            , trainLoss = tl
+            , valLoss = vl
+            , relaunches = rl
+            , resumedFrom = rf
+            , registered = rg
+            , job = jb
+            })
+        |> Codec.field "name" .name Codec.string
+        |> Codec.field "runId" .runId Codec.string
+        |> Codec.field "baseId" .baseId Codec.string
+        |> Codec.field "serving" .serving Codec.string
+        |> Codec.field "dataset" .dataset Codec.string
+        |> Codec.field "datasetDigest" .datasetDigest Codec.string
+        |> Codec.field "backend" .backend Codec.string
+        |> Codec.field "toolchain" .toolchain Codec.string
+        |> Codec.field "method" .method Codec.string
+        |> Codec.field "seed" .seed Codec.int
+        |> Codec.field "steps" .steps Codec.int
+        |> Codec.field "peft" .peft artefactCodec
+        |> Codec.field "gguf" .gguf (Codec.maybe artefactCodec)
+        |> Codec.field "merged" .merged (Codec.maybe artefactCodec)
+        |> Codec.field "trainLoss" .trainLoss Codec.float
+        |> Codec.field "valLoss" .valLoss Codec.float
+        |> Codec.field "relaunches" .relaunches Codec.int
+        |> Codec.field "resumedFrom" .resumedFrom Codec.int
+        |> Codec.field "registered" .registered (Codec.maybe Codec.string)
+        |> Codec.field "job" .job Codec.string
+        |> Codec.buildObject
+
+
+-- | The registry's view of a trained adapter: the GGUF file when there is
+-- one (what a local engine loads), else the PEFT safetensors.
+registryAdapter : Adapter -> Registry.Adapter
+registryAdapter a =
+    case a.gguf of
+
+        Just g ->
+            { path = g.path, format = Registry.Gguf, method = methodOf a }
+
+        Nothing ->
+            { path = a.peft.path
+            , format = Registry.Safetensors
+            , method = methodOf a
+            }
+
+
+methodOf : Adapter -> Registry.Method
+methodOf a =
+    if a.method == "qlora" then
+        Registry.Qlora
+
+    else
+        Registry.Lora
+
+
+-- | The lineage a trained adapter is registered with: the serving model is the
+-- base (its digest is what an engine checks), the dataset version and its
+-- digest, and the run as metadata.
+lineage : Adapter -> Registry.Lineage
+lineage a =
+    { base = Local.fromReference a.serving
+    , dataset = a.dataset ++ "@" ++ String.left 12 a.datasetDigest
+    , datasetDigest = a.datasetDigest
+    , metadata =
+        [ ( "runId", a.runId )
+        , ( "baseId", a.baseId )
+        , ( "backend", a.backend )
+        , ( "toolchain", a.toolchain )
+        , ( "seed", String.fromInt a.seed )
+        , ( "steps", String.fromInt a.steps )
+        , ( "trainLoss", String.fromFloat a.trainLoss )
+        , ( "valLoss", String.fromFloat a.valLoss )
+        , ( "job", a.job )
+        ]
+    }
+
+
+-- | The GGUF adapter as a pinned file, for `Local.withAdapter`. A job without
+-- `withGgufExport` has no GGUF adapter: this is `Nothing`.
+adapterRef : Adapter -> Maybe Local.ModelRef
+adapterRef a =
+    Maybe.map (\g -> Local.file { path = g.path, sha256 = g.sha256 }) a.gguf
+
+-- ── Kernels ─────────────────────────────────────────────────────────
+type alias RawStaged =
+    { train : Int
+    , eval : Int
+    }
+
+type alias RawVersion =
+    { name : String
+    , version : String
+    }
+
+-- | One package of a toolchain and its version.
+type alias ToolchainVersion =
+    RawVersion
+
+-- | A training toolchain: its id (a digest of every pinned input), its
+-- managed python, the driver, and the versions it carries.
+type alias Toolchain =
+    { name : String
+    , id : String
+    , python : String
+    , driverDir : String
+    , dir : String
+    , versions : List ToolchainVersion
+    , packages : Int
+    , installed : Bool
+    }
+
+type alias RawLaunched =
+    { pid : Int
+    , attempt : Int
+    , resumeFrom : Int
+    , startedAtMs : Int
+    , attached : Bool
+    }
+
+type alias RawWatched =
+    { offset : Int
+    , lines : List String
+    , alive : Bool
+    , cancelRequested : Bool
+    , stderrTail : String
+    }
+
+type alias RawCheckpoint =
+    { step : Int
+    , path : String
+    }
+
+type alias RawRunState =
+    { exists : Bool
+    , launched : Bool
+    , converted : Bool
+    , size : Int
+    , attemptOffset : Int
+    , lines : List String
+    , alive : Bool
+    , attempt : Int
+    , pid : Int
+    , cancelRequested : Bool
+    , result : String
+    , stderrTail : String
+    , generation : Int
+    }
+
+type alias RawConverted =
+    { path : String
+    , sha256 : String
+    , tensors : Int
+    , architecture : String
+    }
+
+type alias RawRun =
+    { runId : String
+    , dir : String
+    , modifiedMs : Int
+    }
+
+
+stageRaw : String -> String -> String -> String -> Task Error RawStaged
+stageRaw =
+    Ffi.kernel "Ai_trainStage"
+
+
+toolchainRaw : String -> Task Error Toolchain
+toolchainRaw =
+    Ffi.kernel "Ai_toolchainEnsure"
+
+
+toolchainStatusRaw : () -> Task Error (List Toolchain)
+toolchainStatusRaw =
+    Ffi.kernel "Ai_toolchainStatus"
+
+
+baseRaw : String -> Task Error String
+baseRaw =
+    Ffi.kernel "Ai_trainBaseEnsure"
+
+
+launchRaw : String -> String -> Task Error RawLaunched
+launchRaw =
+    Ffi.kernel "Ai_trainLaunch"
+
+
+watchRaw : String -> Int -> Int -> Task Error RawWatched
+watchRaw =
+    Ffi.kernel "Ai_trainWatch"
+
+
+checkpointsRaw : String -> Task Error (List RawCheckpoint)
+checkpointsRaw =
+    Ffi.kernel "Ai_trainCheckpoints"
+
+
+cancelRaw : String -> Task Error Bool
+cancelRaw =
+    Ffi.kernel "Ai_trainCancel"
+
+
+readRaw : String -> Task Error RawRunState
+readRaw =
+    Ffi.kernel "Ai_trainRead"
+
+
+runsRaw : String -> Task Error (List RawRun)
+runsRaw =
+    Ffi.kernel "Ai_trainRuns"
+
+
+finishRaw : String -> String -> Task Error ()
+finishRaw =
+    Ffi.kernel "Ai_trainFinish"
+
+
+resumeRaw : String -> Task Error Int
+resumeRaw =
+    Ffi.kernel "Ai_trainResume"
+
+
+convertRaw : String -> String -> String -> Task Error RawConverted
+convertRaw =
+    Ffi.kernel "Ai_trainConvert"
+
+
+mergeRaw : String -> String -> Task Error RawConverted
+mergeRaw =
+    Ffi.kernel "Ai_trainMerge"
+
+type alias RawDigest =
+    { sha256 : String
+    , size : Int
+    }
+
+
+digestRaw : String -> Task Error RawDigest
+digestRaw =
+    Ffi.kernel "Ai_fileDigest"
+
+
+-- ── Toolchains ──────────────────────────────────────────────────────
+-- | Install the toolchain a backend trains in (`sky ai provision --train
+-- <backend>` calls this). Idempotent: an installed toolchain returns at once.
+provision : Backend -> Task Error Toolchain
+provision backend =
+    toolchainRaw (backendName backend)
+
+
+-- | Download and verify the weights a backend trains the base on, returning
+-- their directory. `Fake` needs none: it returns `""`.
+provisionBase : Backend -> BaseModel -> Task Error String
+provisionBase backend base =
+    case baseWeights backend base of
+
+        Just snap ->
+            baseRaw (snapshotJson snap)
+
+        Nothing ->
+            case backend of
+
+                Fake ->
+                    Task.succeed ""
+
+                _ ->
+                    Task.fail
+                        (invalid
+                            "base"
+                            (baseId base ++ " has no weights for the "
+                                ++ backendName backend
+                                ++ " backend; give it Train.withWeights"))
+
+
+snapshotJson : Snapshot -> String
+snapshotJson snap =
+    JsonE.encode
+        0
+        (JsonE.object
+            [ ( "files"
+              , JsonE.list
+                    (\f ->
+                        JsonE.object
+                            [ ( "path", JsonE.string f.path )
+                            , ( "sha256", JsonE.string f.sha256 )
+                            ])
+                    snap.files
+              )
+            , ( "repo", JsonE.string snap.repo )
+            , ( "revision", JsonE.string snap.revision )
+            ])
+
+
+-- | Every toolchain this host can run, installed or not.
+toolchainStatus : () -> Task Error (List Toolchain)
+toolchainStatus _ =
+    toolchainStatusRaw ()
+
+-- ── The durable workflow ────────────────────────────────────────────
+-- | A run's durable input: the run's id and the digest of the job that
+-- started it. A worker whose job differs refuses the run.
+type alias RunRequest =
+    { runId : String
+    , job : String
+    }
+
+
+requestCodec : Codec RunRequest
+requestCodec =
+    Codec.object (\r j -> { runId = r, job = j })
+        |> Codec.field "runId" .runId Codec.string
+        |> Codec.field "job" .job Codec.string
+        |> Codec.buildObject
+
+
+request : Job -> RunRequest
+request job =
+    { runId = runId job, job = Crypto.sha256 (jobJson job) }
+
+
+settingCodec : Codec RawSetting
+settingCodec =
+    Codec.object (\k n v s -> { key = k, name = n, value = v, source = s })
+        |> Codec.field "key" .key Codec.string
+        |> Codec.field "name" .name Codec.string
+        |> Codec.field "value" .value Codec.string
+        |> Codec.field "source" .source Codec.string
+        |> Codec.buildObject
+
+
+shapeCodec : Codec ModelShape
+shapeCodec =
+    Codec.object
+        (\a l h i q k v p ->
+            { architecture = a
+            , layers = l
+            , hidden = h
+            , intermediate = i
+            , qDim = q
+            , kvDim = k
+            , vocab = v
+            , parameters = p
+            })
+        |> Codec.field "architecture" .architecture Codec.string
+        |> Codec.field "layers" .layers Codec.int
+        |> Codec.field "hidden" .hidden Codec.int
+        |> Codec.field "intermediate" .intermediate Codec.int
+        |> Codec.field "qDim" .qDim Codec.int
+        |> Codec.field "kvDim" .kvDim Codec.int
+        |> Codec.field "vocab" .vocab Codec.int
+        |> Codec.field "parameters" .parameters Codec.int
+        |> Codec.buildObject
+
+-- The journalled part of a toolchain: what a launch needs.
+type alias Tool =
+    { name : String
+    , id : String
+    , python : String
+    , driverDir : String
+    }
+
+
+toolCodec : Codec Tool
+toolCodec =
+    Codec.object (\n i p d -> { name = n, id = i, python = p, driverDir = d })
+        |> Codec.field "name" .name Codec.string
+        |> Codec.field "id" .id Codec.string
+        |> Codec.field "python" .python Codec.string
+        |> Codec.field "driverDir" .driverDir Codec.string
+        |> Codec.buildObject
+
+-- Where the run stands when the workflow takes it up: the last attempt
+-- recorded in the run directory (-1 for none) and whether it finished.
+type alias Origin =
+    { attempt : Int
+    , alive : Bool
+    , finished : Bool
+    , offset : Int
+    }
+
+
+originCodec : Codec Origin
+originCodec =
+    Codec.object
+        (\a l f o -> { attempt = a, alive = l, finished = f, offset = o })
+        |> Codec.field "attempt" .attempt Codec.int
+        |> Codec.field "alive" .alive Codec.bool
+        |> Codec.field "finished" .finished Codec.bool
+        |> Codec.field "offset" .offset Codec.int
+        |> Codec.buildObject
+
+-- What one watch saw, reduced to what the workflow decides on (the lines
+-- themselves stay in the run directory, so the journal stays small).
+type alias Seen =
+    { offset : Int
+    , outcome : String
+    , step : Int
+    , code : String
+    , message : String
+    , trainLoss : Float
+    , valLoss : Float
+    , peft : String
+    , relaunches : Int
+    , resumedFrom : Int
+    }
+
+
+seenCodec : Codec Seen
+seenCodec =
+    Codec.object
+        (\o c s cd m tl vl pf rl rf ->
+            { offset = o
+            , outcome = c
+            , step = s
+            , code = cd
+            , message = m
+            , trainLoss = tl
+            , valLoss = vl
+            , peft = pf
+            , relaunches = rl
+            , resumedFrom = rf
+            })
+        |> Codec.field "offset" .offset Codec.int
+        |> Codec.field "outcome" .outcome Codec.string
+        |> Codec.field "step" .step Codec.int
+        |> Codec.field "code" .code Codec.string
+        |> Codec.field "message" .message Codec.string
+        |> Codec.field "trainLoss" .trainLoss Codec.float
+        |> Codec.field "valLoss" .valLoss Codec.float
+        |> Codec.field "peft" .peft Codec.string
+        |> Codec.field "relaunches" .relaunches Codec.int
+        |> Codec.field "resumedFrom" .resumedFrom Codec.int
+        |> Codec.buildObject
+
+
+checkpointCodec : Codec RawCheckpoint
+checkpointCodec =
+    Codec.object (\s p -> { step = s, path = p })
+        |> Codec.field "step" .step Codec.int
+        |> Codec.field "path" .path Codec.string
+        |> Codec.buildObject
+
+
+convertedCodec : Codec Artefact
+convertedCodec =
+    artefactCodec
+
+-- Everything the steps before the launch settled.
+type alias Setup =
+    { backend : String
+    , shape : ModelShape
+    , tool : Tool
+    , weights : String
+    }
+
+
+-- | The training workflow, registered under `name`. Each line is a
+-- journalled `Std.Durable` step:
+--
+--     resolve      the backend (env > code > detection)
+--     stage        the version's Train and Eval rows into the run directory
+--     toolchain    the managed toolchain, installed if allowed
+--     base         the backend's base weights, downloaded and verified
+--     shape        the serving model's shape (fetched if allowed)
+--     plan         the memory estimate against this host: a job that will
+--                  not fit is ModelTooLarge before the trainer starts
+--     origin       the run directory's last attempt, if any
+--     launch-<a>   the trainer, detached (attaches if it already runs)
+--     watch-<a>-<n>, tick-<a>-<n>
+--                  watch up to the window, then a durable one-second sleep
+--     resume-<a>, launch-<a>
+--                  a dead trainer relaunched from its newest checkpoint
+--     collect      the PEFT adapter's digest, checked against the trainer's
+--     convert      the GGUF adapter (withGgufExport)
+--     merge        the merged GGUF model (withMergedExport)
+--     register     the registry version (withRegistry)
+--
+-- The run finishes with its result in `<run>/result.json`, a success or the
+-- typed failure, which `progress` and `drive` read.
+workflow : String -> Job -> Durable.WorkflowDef RunRequest Adapter
+workflow name job =
+    Durable.register name requestCodec adapterCodec (body job)
+
+
+-- | The workflows of several jobs, for a worker's `Durable.poll` list.
+workflows : List Job -> List Durable.RegisteredWorkflow
+workflows jobs =
+    List.map (\j -> Durable.erase (defaultWorkflow j)) jobs
+
+
+defaultWorkflow : Job -> Durable.WorkflowDef RunRequest Adapter
+defaultWorkflow job =
+    workflow ("sky.ai.train/" ++ runId job) job
+
+
+durableId : Job -> Int -> String
+durableId job generation =
+    if generation == 0 then
+        runId job
+
+    else
+        runId job ++ "-g" ++ String.fromInt generation
+
+
+-- | Start the job's run (idempotent: a run that exists is left alone) and
+-- return its id. A worker then advances it with `poll`. The job is checked
+-- and its backend resolved first, so a job that cannot run here (a bad
+-- setting, a backend this host lacks) fails at once and starts no run.
+start : Db -> Job -> Task Error String
+start db job =
+    Task.fromResult (check job)
+        |> Task.andThen (\_ -> resolveRaw (backendCode (settings job)))
+        |> Task.andThen (\_ -> Durable.setup db)
+        |> Task.andThen (\_ -> readRaw (runDir job))
+        |> Task.andThen
+               (\state ->
+                   Durable.start
+                       db
+                       (defaultWorkflow job)
+                       (durableId job state.generation)
+                       (request job))
+        |> Task.map (\_ -> runId job)
+
+
+-- | Advance the runs of these jobs that are due (one worker tick). `True`
+-- when it did work.
+poll : Db -> List Job -> Task Error Bool
+poll db jobs =
+    Durable.poll db (workflows jobs)
+
+
+-- | Train in the foreground: start the run, advance it until it ends, and
+-- return the adapter (or the run's typed failure). A finished run returns its
+-- adapter at once; a run whose trainer is still running is attached to. A
+-- Ctrl-C stops this program only: the trainer keeps training, and `drive` or
+-- `start` picks it up again.
+drive : Db -> Job -> Task Error Adapter
+drive db job =
+    start db job |> Task.andThen (\_ -> Task.loop (driveStep db job) 0)
+
+
+driveStep : Db -> Job -> Int -> Task Error (Task.Step Int Adapter)
+driveStep db job n =
+    readRaw (runDir job)
+        |> Task.andThen
+               (\state ->
+                   case resultOf state.result of
+
+                       Just (Ok a) ->
+                           Task.succeed (Task.Done a)
+
+                       Just (Err e) ->
+                           Task.fail e
+
+                       Nothing ->
+                           poll db [ job ]
+                               |> Task.andThen
+                                      (\worked ->
+                                          if worked then
+                                              Task.succeed (Task.Loop (n + 1))
+
+                                          else
+                                              Time.sleep 250
+                                                  |> Task.map
+                                                         (\_ -> Task.Loop (n + 1))))
+
+
+-- The finished run's record: Ok adapter, Err failure, Nothing while it runs.
+resultOf : String -> Maybe (Result Error Adapter)
+resultOf text =
+    if String.isEmpty text then
+        Nothing
+
+    else
+        case JsonD.decodeString (JsonD.field "status" JsonD.string) text of
+
+            Ok "done" ->
+                Just (adapterIn text)
+
+            Ok _ ->
+                Just (Err (errorIn text))
+
+            Err e ->
+                Just (Err e)
+
+
+adapterIn : String -> Result Error Adapter
+adapterIn text =
+    case JsonD.decodeString (JsonD.field "adapter" JsonD.value) text of
+
+        Ok v ->
+            Codec.fromJson adapterCodec (JsonE.encode 0 v)
+
+        Err e ->
+            Err e
+
+
+errorIn : String -> Error
+errorIn text =
+    case JsonD.decodeString (JsonD.field "error" JsonD.value) text of
+
+        Ok v ->
+            case Codec.fromJson Codec.error (JsonE.encode 0 v) of
+
+                Ok e ->
+                    e
+
+                Err _ ->
+                    Error.unexpected ("the run failed: " ++ text)
+
+        Err _ ->
+            Error.unexpected ("the run failed: " ++ text)
+
+
+-- | Start the run again after it failed or was cancelled: the next `start` or
+-- `drive` relaunches the trainer from its newest verified checkpoint. Returns
+-- the run's new generation.
+resume : Job -> Task Error Int
+resume job =
+    resumeRaw (runDir job)
+
+
+-- | `resume` for the run in a run directory.
+resumeAt : String -> Task Error Int
+resumeAt dir =
+    resumeRaw dir
+
+
+-- | Convert the finished adapter in a run directory to GGUF (and, with
+-- `merged`, fold it into the serving model), whether or not the job asked for
+-- it. The serving model and the base come from the run's `job.json`. Returns
+-- the GGUF adapter, or the merged model.
+exportAt : String -> Bool -> Task Error Artefact
+exportAt dir merged =
+    File.readFile (dir ++ "/job.json")
+        |> Task.andThen
+               (\text ->
+                   Task.fromResult
+                       (JsonD.decodeString
+                           (JsonD.map2
+                               Tuple.pair
+                               (JsonD.field "serving" JsonD.string)
+                               (JsonD.field "base" JsonD.string))
+                           text))
+        |> Task.andThen
+               (\( serving, base ) ->
+                   convertRaw dir serving base
+                       |> Task.andThen
+                              (\c ->
+                                  if merged then
+                                      mergeRaw dir serving
+
+                                  else
+                                      Task.succeed c))
+        |> Task.map (\c -> { path = c.path, sha256 = c.sha256 })
+
+
+-- | Cancel the job's run: the trainer writes a checkpoint and stops (killed
+-- after a minute if it does not), and the run ends with `TrainingCancelled`.
+-- `True` when a live trainer was signalled.
+cancel : Job -> Task Error Bool
+cancel job =
+    cancelAt (runDir job)
+
+
+-- | Cancel the run in a run directory.
+cancelAt : String -> Task Error Bool
+cancelAt dir =
+    cancelRaw dir
+
+
+-- | The job's run's progress, from its run directory (no database needed).
+progress : Job -> Task Error Progress
+progress job =
+    progressAt (runDir job)
+
+
+-- | The job's finished adapter: `Nothing` while the run has not finished, the
+-- adapter when it has, and the run's typed failure (`TrainingFailed`,
+-- `TrainingCancelled`, …) when it failed.
+result : Job -> Task Error (Maybe Adapter)
+result job =
+    readRaw (runDir job)
+        |> Task.andThen
+               (\state ->
+                   case resultOf state.result of
+
+                       Just (Ok a) ->
+                           Task.succeed (Just a)
+
+                       Just (Err e) ->
+                           Task.fail e
+
+                       Nothing ->
+                           Task.succeed Nothing)
+
+
+-- | The progress of the run in a run directory.
+progressAt : String -> Task Error Progress
+progressAt dir =
+    readRaw dir |> Task.map (progressOf (lastSegment dir))
+
+
+lastSegment : String -> String
+lastSegment path =
+    String.split "/" path |> List.filter (\p -> not (String.isEmpty p))
+        |> List.reverse
+        |> List.head
+        |> Maybe.withDefault path
+
+
+progressOf : String -> RawRunState -> Progress
+progressOf id state =
+    let
+        folded = foldLines state.lines (emptyProgress id)
+    in
+        case resultOf state.result of
+
+            Just (Ok a) ->
+                { folded
+                    | status = Done
+                    , message =
+                        case a.registered of
+
+                            Just label ->
+                                "registered " ++ label
+
+                            Nothing ->
+                                "done"
+                }
+
+            Just (Err e) ->
+                case Failure.fromError e of
+
+                    Just (TrainingCancelled _) ->
+                        { folded
+                            | status = Cancelled
+                            , message = Error.toString e
+                        }
+
+                    _ ->
+                        { folded | status = Failed, message = Error.toString e }
+
+            Nothing ->
+                if not state.exists then
+                    folded
+
+                else if state.alive then
+                    { folded | status = Running }
+
+                else if not state.launched then
+                    -- Staged; the toolchain and the base are on their way.
+                    { folded | status = Provisioning }
+
+                else if folded.status == Running then
+                    { folded | status = Relaunching }
+
+                else if folded.status == Converting && state.converted then
+                    -- The GGUF adapter is written: the run is registering.
+                    { folded | status = Registering }
+
+                else
+                    folded
+
+
+-- | Every run in a work directory, newest first, with its progress.
+runs : String -> Task Error (List Progress)
+runs workDir =
+    runsRaw workDir
+        |> Task.andThen
+               (\rs ->
+                   Task.sequence
+                       (List.map
+                           (\r -> readRaw r.dir |> Task.map (progressOf r.runId))
+                           rs))
+
+
+-- ── The workflow body ───────────────────────────────────────────────
+body : Job -> Durable.Ctx -> RunRequest -> Task Error Adapter
+body job ctx req =
+    let
+        dir = runDir job
+    in
+        (if req.runId /= runId job then
+            Task.fail
+                (invalid
+                    "job"
+                    ("this worker's job is run " ++ runId job
+                        ++ ", and the durable run is "
+                        ++ req.runId
+                        ++ "; the job changed after the run started (a new job is a new run)"))
+
+        else
+            setup ctx job |> Task.andThen (\st -> train ctx job st)
+                |> Task.andThen (\done -> finish ctx job done))
+            |> Task.onError (\e -> recordFailure dir e)
+
+
+recordFailure : String -> Error -> Task Error Adapter
+recordFailure dir e =
+    if Durable.isSuspend e then
+        Task.fail e
+
+    else
+        finishRaw
+            dir
+            (JsonE.encode
+                0
+                (JsonE.object
+                    [ ( "error"
+                      , Result.withDefault
+                            JsonE.null
+                            (JsonE.raw (Codec.toJson Codec.error e))
+                      )
+                    , ( "message", JsonE.string (Error.toString e) )
+                    , ( "status", JsonE.string "failed" )
+                    ]))
+            |> Task.andThen (\_ -> Task.fail e)
+
+
+setup : Durable.Ctx -> Job -> Task Error Setup
+setup ctx job =
+    Durable.step
+        ctx
+        settingCodec
+        "resolve"
+        (resolveRaw (backendCode (settings job)))
+        |> Task.andThen
+               (\b -> Task.fromResult (check job) |> Task.map (\_ -> b.value))
+        |> Task.andThen (stageStep ctx job)
+        |> Task.andThen (toolchainStep ctx)
+        |> Task.andThen (baseStep ctx job)
+        |> Task.andThen (shapeStep ctx job)
+
+
+stageStep : Durable.Ctx -> Job -> String -> Task Error String
+stageStep ctx job backend =
+    let
+        s = settings job
+    in
+        Durable.step
+            ctx
+            Codec.int
+            "stage"
+            (stageRaw (runDir job) s.dataFile s.datasetDigest (jobJson job)
+                |> Task.map (\st -> st.train))
+            |> Task.map (\_ -> backend)
+
+
+toolchainStep : Durable.Ctx -> String -> Task Error ( String, Tool )
+toolchainStep ctx backend =
+    Durable.step
+        ctx
+        toolCodec
+        "toolchain"
+        (toolchainRaw backend |> Task.map toolOf)
+        |> Task.map (\tool -> ( backend, tool ))
+
+
+baseStep : Durable.Ctx -> Job -> ( String, Tool ) -> Task Error ( String, Tool, String )
+baseStep ctx job ( backend, tool ) =
+    Durable.step ctx Codec.string "base" (weightsFor backend job)
+        |> Task.map (\w -> ( backend, tool, w ))
+
+
+shapeStep : Durable.Ctx -> Job -> ( String, Tool, String ) -> Task Error Setup
+shapeStep ctx job ( backend, tool, weights ) =
+    Durable.step ctx shapeCodec "shape" (shapeOf (baseOf job))
+        |> Task.andThen
+               (\shape ->
+                   Durable.step
+                       ctx
+                       Codec.int
+                       "plan"
+                       (host ()
+                           |> Task.andThen
+                                  (\h ->
+                                      fitPlan
+                                          job
+                                          { key = "", name = "", value = backend, source = "" }
+                                          h
+                                          shape)
+                           |> Task.map .estimateBytes)
+                       |> Task.map
+                              (\_ ->
+                                  { backend = backend
+                                  , shape = shape
+                                  , tool = tool
+                                  , weights = weights
+                                  }))
+
+
+toolOf : Toolchain -> Tool
+toolOf t =
+    { name = t.name, id = t.id, python = t.python, driverDir = t.driverDir }
+
+
+weightsFor : String -> Job -> Task Error String
+weightsFor backend job =
+    case backend of
+
+        "mlx" ->
+            provisionBase Mlx (baseOf job)
+
+        "unsloth" ->
+            provisionBase Unsloth (baseOf job)
+
+        _ ->
+            Task.succeed ""
+
+
+-- The driver's configuration for one attempt (driver.json).
+driverJson : Job -> Setup -> Int -> Maybe RawCheckpoint -> String
+driverJson job st attempt from =
+    let
+        s = settings job
+    in
+        JsonE.encode
+            0
+            (JsonE.object
+                [ ( "alpha", JsonE.int (alphaOf s) )
+                , ( "attempt", JsonE.int attempt )
+                , ( "backend", JsonE.string st.backend )
+                , ( "base"
+                  , JsonE.object
+                        [ ( "id", JsonE.string s.baseId )
+                        , ( "weights", JsonE.string st.weights )
+                        ]
+                  )
+                , ( "batch"
+                  , JsonE.object
+                        [ ( "accumulate", JsonE.int s.batch.accumulate )
+                        , ( "perDevice", JsonE.int s.batch.perDevice )
+                        ]
+                  )
+                , ( "checkpointEvery", JsonE.int s.checkpointEvery )
+                , ( "driverDir", JsonE.string st.tool.driverDir )
+                , ( "epochs", JsonE.int s.epochs )
+                , ( "evalEvery", JsonE.int s.evalEvery )
+                , ( "fakeCrashAt", JsonE.int s.fakeCrashAt )
+                , ( "fakeStepMs", JsonE.int s.fakeStepMs )
+                , ( "format", JsonE.string s.format )
+                , ( "layers", JsonE.int s.layers )
+                , ( "learningRate", JsonE.float s.learningRate )
+                , ( "maxSteps", JsonE.int s.maxSteps )
+                , ( "python", JsonE.string st.tool.python )
+                , ( "quantised", JsonE.bool s.quantised )
+                , ( "rank", JsonE.int s.rank )
+                , ( "resumeDir"
+                  , JsonE.string (Maybe.withDefault "" (Maybe.map .path from))
+                  )
+                , ( "resumeFrom"
+                  , JsonE.int (Maybe.withDefault 0 (Maybe.map .step from))
+                  )
+                , ( "seed", JsonE.int s.seed )
+                , ( "sequenceLength", JsonE.int s.sequenceLength )
+                , ( "shapes"
+                  , JsonE.object
+                        [ ( "hidden", JsonE.int st.shape.hidden )
+                        , ( "intermediate", JsonE.int st.shape.intermediate )
+                        , ( "kvDim", JsonE.int st.shape.kvDim )
+                        , ( "layers", JsonE.int st.shape.layers )
+                        , ( "qDim", JsonE.int st.shape.qDim )
+                        ]
+                  )
+                , ( "targets", JsonE.list JsonE.string s.targets )
+                , ( "toolchain", JsonE.string st.tool.id )
+                , ( "v", JsonE.int 1 )
+                ])
+
+
+-- The run directory as the workflow finds it: a run whose trainer finished
+-- is collected without a launch, a live trainer is attached to, otherwise
+-- the next attempt starts (from the newest checkpoint when there is one).
+origin : String -> Task Error Origin
+origin dir =
+    readRaw dir
+        |> Task.map
+               (\state ->
+                   let
+                       folded = foldLines state.lines (emptyProgress "")
+                       finished = folded.status == Converting
+                   in
+                       { attempt =
+                           if state.launched then
+                               state.attempt
+
+                           else
+                               -1
+                       , alive = state.alive
+                       , finished = finished
+                       , offset =
+                           if finished || state.alive then
+                               state.attemptOffset
+
+                           else
+                               state.size
+                       })
+
+
+train : Durable.Ctx -> Job -> Setup -> Task Error ( Setup, Seen )
+train ctx job st =
+    let
+        dir = runDir job
+    in
+        Durable.step ctx originCodec "origin" (origin dir)
+            |> Task.andThen
+                   (\o ->
+                       if o.finished || o.alive then
+                           watchLoop
+                               ctx
+                               job
+                               st
+                               (Math.max 0 o.attempt)
+                               0
+                               0
+                               o.offset
+                               |> Task.map
+                                      (\seen ->
+                                          -- Attach: the trainer finished or still runs.
+                                          ( st, seen ))
+
+                       else
+                           let
+                               attempt = o.attempt + 1
+                           in
+                               launchAttempt ctx job st attempt
+                                   |> Task.andThen
+                                          (\_ ->
+                                              watchLoop
+                                                  ctx
+                                                  job
+                                                  st
+                                                  attempt
+                                                  0
+                                                  0
+                                                  o.offset)
+                                   |> Task.map (\seen -> ( st, seen )))
+
+
+launchAttempt : Durable.Ctx -> Job -> Setup -> Int -> Task Error RawLaunched
+launchAttempt ctx job st attempt =
+    let
+        dir = runDir job
+        tag = String.fromInt attempt
+    in
+        Durable.step
+            ctx
+            (Codec.maybe checkpointCodec)
+            ("resume-" ++ tag)
+            (if attempt == 0 then
+                Task.succeed Nothing
+
+            else
+                checkpointsRaw dir |> Task.map List.head)
+            |> Task.andThen
+                   (\from ->
+                       Durable.step
+                           ctx
+                           launchedCodec
+                           ("launch-" ++ tag)
+                           (launchRaw dir (driverJson job st attempt from)))
+
+
+launchedCodec : Codec RawLaunched
+launchedCodec =
+    Codec.object
+        (\p a r s at ->
+            { pid = p
+            , attempt = a
+            , resumeFrom = r
+            , startedAtMs = s
+            , attached = at
+            })
+        |> Codec.field "pid" .pid Codec.int
+        |> Codec.field "attempt" .attempt Codec.int
+        |> Codec.field "resumeFrom" .resumeFrom Codec.int
+        |> Codec.field "startedAtMs" .startedAtMs Codec.int
+        |> Codec.field "attached" .attached Codec.bool
+        |> Codec.buildObject
+
+
+-- Watch the trainer: each watch is a journalled step that blocks up to the
+-- window, and between two watches a one-second durable sleep releases the
+-- run, so a worker never holds it past its lease.
+watchLoop : Durable.Ctx -> Job -> Setup -> Int -> Int -> Int -> Int -> Task Error Seen
+watchLoop ctx job st attempt relaunched n offset =
+    let
+        s = settings job
+        dir = runDir job
+        tag = String.fromInt attempt ++ "-" ++ String.fromInt n
+    in
+        Durable.step
+            ctx
+            seenCodec
+            ("watch-" ++ tag)
+            (watchRaw dir offset s.watchWindowMs |> Task.map (seenOf offset))
+            |> Task.andThen
+                   (\seen ->
+                       case seen.outcome of
+
+                           "done" ->
+                               Task.succeed { seen | relaunches = relaunched }
+
+                           "error" ->
+                               Task.fail (driverFailure job seen)
+
+                           "cancelled" ->
+                               Task.fail (cancelled job seen.step)
+
+                           "running" ->
+                               Durable.sleep ctx ("tick-" ++ tag) 1000
+                                   |> Task.andThen
+                                          (\_ ->
+                                              watchLoop
+                                                  ctx
+                                                  job
+                                                  st
+                                                  attempt
+                                                  relaunched
+                                                  (n + 1)
+                                                  seen.offset)
+
+                           "cancelling" ->
+                               Task.fail (cancelled job seen.step)
+
+                           _ ->
+                               if relaunched >= s.maxRelaunches then
+                                   Task.fail
+                                       (Failure.toError
+                                           (TrainingFailed
+                                               { runId = runId job
+                                               , step = seen.step
+                                               , reason =
+                                                   "the trainer died without finishing "
+                                                       ++ String.fromInt
+                                                              (relaunched + 1)
+                                                       ++ " times (withMaxRelaunches "
+                                                       ++ String.fromInt
+                                                              s.maxRelaunches
+                                                       ++ ")"
+                                               , logTail = seen.message
+                                               }))
+
+                               else
+                                   launchAttempt ctx job st (attempt + 1)
+                                       |> Task.andThen
+                                              (\_ ->
+                                                  watchLoop
+                                                      ctx
+                                                      job
+                                                      st
+                                                      (attempt + 1)
+                                                      (relaunched + 1)
+                                                      0
+                                                      seen.offset))
+
+
+-- What a watch saw. The outcome is the attempt's terminal line, else
+-- `running` while the trainer lives, `cancelling` when a cancel was asked
+-- for and the trainer is gone, and `dead` otherwise.
+seenOf : Int -> RawWatched -> Seen
+seenOf from w =
+    let
+        start0 =
+            { offset = w.offset
+            , outcome = ""
+            , step = 0
+            , code = ""
+            , message = ""
+            , trainLoss = 0.0
+            , valLoss = 0.0
+            , peft = ""
+            , relaunches = 0
+            , resumedFrom = 0
+            }
+        folded =
+            List.foldl
+                (\line acc ->
+                    if not (String.isEmpty acc.outcome) then
+                        acc
+
+                    else
+                        case decodeEvent line of
+
+                            Ok (Just ev) ->
+                                seeEvent ev acc
+
+                            Ok Nothing ->
+                                acc
+
+                            Err e ->
+                                { acc
+                                    | outcome = "error"
+                                    , code = "ToolchainFailed"
+                                    , message = Error.toString e
+                                })
+                start0
+                w.lines
+    in
+        if not (String.isEmpty folded.outcome) then
+            folded
+
+        else if w.alive then
+            { folded | outcome = "running" }
+
+        else if w.cancelRequested then
+            { folded | outcome = "cancelling" }
+
+        else
+            { folded | outcome = "dead", message = w.stderrTail }
+
+
+seeEvent : Event -> Seen -> Seen
+seeEvent ev acc =
+    case ev of
+
+        Hello h ->
+            { acc | resumedFrom = h.resumeFrom }
+
+        StepProgress p ->
+            { acc | step = p.step, trainLoss = p.loss }
+
+        Metric m ->
+            if m.name == "val_loss" then
+                { acc | valLoss = m.value }
+
+            else
+                acc
+
+        Checkpoint _ ->
+            acc
+
+        Artefact a ->
+            if a.kind == "peft" then
+                { acc | peft = a.sha256 }
+
+            else
+                acc
+
+        DoneEvent d ->
+            { acc
+                | outcome = "done"
+                , step = d.step
+                , trainLoss = d.trainLoss
+                , valLoss = d.valLoss
+            }
+
+        CancelledEvent c ->
+            { acc | outcome = "cancelled", step = c.step }
+
+        DriverError e ->
+            { acc | outcome = "error", code = e.code, message = e.message }
+
+
+cancelled : Job -> Int -> Error
+cancelled job step =
+    Failure.toError (TrainingCancelled { runId = runId job, step = step })
+
+
+-- A driver's error line as the typed failure its code names.
+driverFailure : Job -> Seen -> Error
+driverFailure job seen =
+    case seen.code of
+
+        "ModelTooLarge" ->
+            Failure.toError
+                (ModelTooLarge { needBytes = 0, availableBytes = 0 })
+
+        "NoAccelerator" ->
+            Failure.toError (NoAccelerator { wanted = seen.message })
+
+        "DatasetInvalid" ->
+            Failure.toError
+                (DatasetInvalid
+                    { dataset = (settings job).dataset, reasons = seen.message })
+
+        "ToolchainFailed" ->
+            Failure.toError
+                (ToolchainFailed { tool = "trainer", logTail = seen.message })
+
+        _ ->
+            Failure.toError
+                (TrainingFailed
+                    { runId = runId job
+                    , step = seen.step
+                    , reason = seen.message
+                    , logTail = ""
+                    })
+
+
+-- Collect, convert, merge, register, and write the result.
+finish : Durable.Ctx -> Job -> ( Setup, Seen ) -> Task Error Adapter
+finish ctx job ( st, seen ) =
+    let
+        s = settings job
+        dir = runDir job
+        peftPath = dir ++ "/adapter/adapter_model.safetensors"
+    in
+        Durable.step
+            ctx
+            Codec.string
+            "collect"
+            (digestRaw peftPath |> Task.map .sha256
+                |> Task.andThen
+                       (\sum ->
+                           if not (String.isEmpty seen.peft) && sum /= seen.peft then
+                               Task.fail
+                                   (Failure.toError
+                                       (ChecksumMismatch
+                                           { expected = seen.peft
+                                           , actual = sum
+                                           }))
+
+                           else
+                               Task.succeed sum))
+            |> Task.andThen
+                   (\peftSum ->
+                       optionalStep
+                           ctx
+                           s.ggufExport
+                           "convert"
+                           (convertRaw dir s.serving s.baseId)
+                           |> Task.andThen
+                                  (\gguf ->
+                                      optionalStep
+                                          ctx
+                                          s.mergedExport
+                                          "merge"
+                                          (mergeRaw dir s.serving)
+                                          |> Task.map
+                                                 (\merged ->
+                                                     adapterOf
+                                                         job
+                                                         st
+                                                         seen
+                                                         { path = peftPath
+                                                         , sha256 = peftSum
+                                                         }
+                                                         gguf
+                                                         merged)))
+            |> Task.andThen (\a -> registerStep ctx job a)
+            |> Task.andThen
+                   (\a ->
+                       finishRaw
+                           dir
+                           (JsonE.encode
+                               0
+                               (JsonE.object
+                                   [ ( "adapter"
+                                     , Result.withDefault
+                                           JsonE.null
+                                           (JsonE.raw
+                                               (Codec.toJson adapterCodec a))
+                                     )
+                                   , ( "status", JsonE.string "done" )
+                                   ]))
+                           |> Task.map (\_ -> a))
+
+
+optionalStep : Durable.Ctx -> Bool -> String -> Task Error RawConverted -> Task Error (Maybe Artefact)
+optionalStep ctx wanted id task =
+    if wanted then
+        Durable.step
+            ctx
+            convertedCodec
+            id
+            (task |> Task.map (\c -> { path = c.path, sha256 = c.sha256 }))
+            |> Task.map Just
+
+    else
+        Task.succeed Nothing
+
+
+adapterOf : Job -> Setup -> Seen -> Artefact -> Maybe Artefact -> Maybe Artefact -> Adapter
+adapterOf job st seen peft gguf merged =
+    let
+        s = settings job
+    in
+        { name = s.name
+        , runId = runId job
+        , baseId = s.baseId
+        , serving = s.serving
+        , dataset = s.dataset
+        , datasetDigest = s.datasetDigest
+        , backend = st.backend
+        , toolchain = st.tool.name ++ "@" ++ st.tool.id
+        , method =
+            if s.quantised then
+                "qlora"
+
+            else
+                "lora"
+        , seed = s.seed
+        , steps = seen.step
+        , peft = peft
+        , gguf = gguf
+        , merged = merged
+        , trainLoss = seen.trainLoss
+        , valLoss = seen.valLoss
+        , relaunches = seen.relaunches
+        , resumedFrom = seen.resumedFrom
+        , registered = Nothing
+        , job = jobJson job
+        }
+
+
+registerStep : Durable.Ctx -> Job -> Adapter -> Task Error Adapter
+registerStep ctx job a =
+    case registryOf job of
+
+        Nothing ->
+            Task.succeed a
+
+        Just reg ->
+            Durable.step
+                ctx
+                Codec.string
+                "register"
+                (Registry.register
+                    reg
+                    (settings job).name
+                    (registryAdapter a)
+                    (lineage a)
+                    |> Task.map Registry.label)
+                |> Task.map (\label -> { a | registered = Just label })

@@ -14,7 +14,12 @@ server, which answers the second with HTTP 429, so it is `Overloaded`), and
 one Std.Ai.Eval run of two cases (one passes, one fails). It then gives the
 panel's registry view a model: `fixture-lora` with two versions (each with
 eval evidence), promoted to `prod` twice and rolled back to v1, and v2 forced
-to `qa` with a reason.
+to `qa` with a reason. Last, it writes two training run directories under
+`.sky/ai/runs` in its working directory, where the console reads them: run
+`fixture-train-0001` finished (40 steps, relaunched once from the checkpoint
+at step 10, registered as `fixture-lora@v3`) and run `fixture-train-0002`
+failed at step 3 with an OutOfMemory error line. No trainer runs: the files
+are the protocol lines a trainer writes.
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -36,6 +41,8 @@ import Sky.Core.File as File
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Encoding as Encoding
 import Sky.Core.Result as Result
+import Sky.Core.List as List
+import Sky.Core.String as String
 
 type Page
     = Home
@@ -123,6 +130,80 @@ runAi =
         |> Task.andThen (\_ -> Db.open "sqlite" ":memory:")
         |> Task.andThen (\db -> Eval.runAs "fake-model" db chat fixtureSuite)
         |> Task.andThen (\_ -> registryStory)
+        |> Task.andThen (\_ -> trainingStory)
+
+
+-- The training view's data: two run directories in the default work
+-- directory. A loss is written in thousandths ("500e-3") so the lines need no
+-- float formatting.
+trainingStory : Task Error ()
+trainingStory =
+    writeRun
+        "fixture-train-0001"
+        (List.concat
+            [ [ lineHello 0 0 ]
+            , List.map lineProgress (List.range 1 20)
+            , [ lineCheckpoint 10, lineHello 1 10 ]
+            , List.map lineProgress (List.range 21 40)
+            , [ "{\"v\":1,\"type\":\"metric\",\"step\":40,\"name\":\"val_loss\",\"value\":700e-3}"
+              , "{\"v\":1,\"type\":\"done\",\"step\":40,\"trainLoss\":50e-3,\"valLoss\":700e-3}"
+              ]
+            ])
+        |> Task.andThen
+               (\_ ->
+                   File.writeFile
+                       ".sky/ai/runs/fixture-train-0001/result.json"
+                       "{\"status\":\"done\",\"adapter\":{\"registered\":\"fixture-lora@v3\"}}")
+        |> Task.andThen
+               (\_ ->
+                   writeRun
+                       "fixture-train-0002"
+                       (lineHello 0 0 :: List.map lineProgress (List.range 1 3)
+                           ++ [ "{\"v\":1,\"type\":\"error\",\"code\":\"OutOfMemory\",\"message\":\"the device ran out of memory\"}"
+                              ]))
+
+
+writeRun : String -> List String -> Task Error ()
+writeRun run lines =
+    let
+        dir = ".sky/ai/runs/" ++ run
+    in
+        File.mkdirAll dir
+            |> Task.andThen
+                   (\_ ->
+                       File.writeFile
+                           (dir ++ "/job.json")
+                           ("{\"name\":\"" ++ run ++ "\"}"))
+            |> Task.andThen
+                   (\_ ->
+                       File.writeFile
+                           (dir ++ "/events.jsonl")
+                           (String.join "\n" lines ++ "\n"))
+
+
+lineHello : Int -> Int -> String
+lineHello attempt resumeFrom =
+    "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":"
+        ++ String.fromInt attempt
+        ++ ",\"resumeFrom\":"
+        ++ String.fromInt resumeFrom
+        ++ ",\"totalSteps\":40}"
+
+
+lineProgress : Int -> String
+lineProgress step =
+    "{\"v\":1,\"type\":\"progress\",\"step\":" ++ String.fromInt step
+        ++ ",\"total\":40,\"loss\":"
+        ++ String.fromInt (2000 // step)
+        ++ "e-3}"
+
+
+lineCheckpoint : Int -> String
+lineCheckpoint step =
+    "{\"v\":1,\"type\":\"checkpoint\",\"step\":" ++ String.fromInt step
+        ++ ",\"path\":\"checkpoints/"
+        ++ String.fromInt step
+        ++ "\"}"
 
 
 -- The registry view's data. The evidence runs on a provider in code (no slot),

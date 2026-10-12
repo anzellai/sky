@@ -64,6 +64,14 @@
     }
   },
   "gates": {
+    "ai-train-resume": {
+      "expected_assertions": 8,
+      "falsifier_mutation": "",
+      "falsifier_proven": false,
+      "summary": "a Std.Ai.Train relaunch resumes from the newest verified checkpoint, skipping a torn one",
+      "surfaces": [],
+      "tier": "T1"
+    },
     "analytics-prune-errors-are-reported": {
       "expected_assertions": 3,
       "falsifier_mutation": "analytics-prune.discard-the-exec-error",
@@ -608,6 +616,12 @@
           "flow:ai_memory_pg_flow"
         ]
       },
+      "Std.Ai.Train": {
+        "path": "sky-bundled",
+        "units": [
+          "apps:bundled"
+        ]
+      },
       "Std.Compression": {
         "path": "tests/conformance",
         "units": [
@@ -666,13 +680,13 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2549,
-    "stdlib_modules": 122,
-    "surfaces_covered": 179,
+    "stdlib_entries": 2637,
+    "stdlib_modules": 123,
+    "surfaces_covered": 180,
     "surfaces_covered_pct": 94.2,
     "surfaces_equal": 16,
-    "surfaces_stronger": 174,
-    "surfaces_total": 190,
+    "surfaces_stronger": 175,
+    "surfaces_total": 191,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
@@ -4660,6 +4674,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -6120,6 +6139,11 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -9453,6 +9477,28 @@
       },
       "description": "the Std.Ai.Trace public API",
       "id": "stdlib.Std.Ai.Trace",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "None",
+        "evidence": [],
+        "strength": 0
+      },
+      "description": "the Std.Ai.Train public API",
+      "id": "stdlib.Std.Ai.Train",
       "verdict": "stronger"
     },
     {
@@ -16106,7 +16152,7 @@
         "Std.Tui",
         "Std.Webview"
       ],
-      "pct_of_denominator": 7.4
+      "pct_of_denominator": 7.3
     },
     "modules_imported_only_by_root_test_suites": {
       "_note": "imported ONLY by the root tests/<Sub> suites — the ones no runner executed before this overhaul. They are gated now (`sky-suites`), but their sole owner is still a suite, not an application: nothing builds or runs these modules in a real program.",
@@ -16197,9 +16243,8 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 5,
+          "count": 4,
           "symbols": [
-            "copy",
             "exists",
             "isDir",
             "readDir",
@@ -16324,14 +16369,13 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 7,
+          "count": 6,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
             "andMap",
             "lazy",
             "map5",
-            "mapError",
             "retryAlways"
           ]
         },
@@ -16564,6 +16608,63 @@
           "count": 1,
           "symbols": [
             "Trace"
+          ]
+        },
+        "Std.Ai.Train": {
+          "count": 52,
+          "symbols": [
+            "Artefact",
+            "BaseModel",
+            "Batch",
+            "Event",
+            "Host",
+            "LossPoint",
+            "ModelShape",
+            "Plan",
+            "RunRequest",
+            "Settings",
+            "Snapshot",
+            "SnapshotFile",
+            "Status",
+            "Toolchain",
+            "ToolchainVersion",
+            "adapterCodec",
+            "adapterRef",
+            "backendName",
+            "baseId",
+            "baseModel",
+            "baseServing",
+            "baseWeights",
+            "cancel",
+            "check",
+            "decodeEvent",
+            "emptyProgress",
+            "estimateMemory",
+            "fakeCrashAt",
+            "fakeStepMs",
+            "foldProgress",
+            "host",
+            "jobJson",
+            "lineage",
+            "plan",
+            "registryAdapter",
+            "result",
+            "resume",
+            "settings",
+            "shapeOf",
+            "toolchainStatus",
+            "totalSteps",
+            "withAlpha",
+            "withBatch",
+            "withEpochs",
+            "withLearningRate",
+            "withMaxRelaunches",
+            "withSequenceLength",
+            "withServing",
+            "withTargets",
+            "withWeights",
+            "workflow",
+            "workflows"
           ]
         },
         "Std.Analytics": {
@@ -17333,8 +17434,8 @@
           ]
         }
       },
-      "count": 740,
-      "pct_of_denominator": 29.0
+      "count": 790,
+      "pct_of_denominator": 30.0
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -17407,10 +17508,9 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 6,
+          "count": 5,
           "symbols": [
             "FileKind",
-            "copy",
             "exists",
             "isDir",
             "readDir",
@@ -17552,7 +17652,7 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
@@ -17560,7 +17660,6 @@
             "andMap",
             "lazy",
             "map5",
-            "mapError",
             "retryAlways"
           ]
         },
@@ -17813,6 +17912,64 @@
           "count": 1,
           "symbols": [
             "Trace"
+          ]
+        },
+        "Std.Ai.Train": {
+          "count": 53,
+          "symbols": [
+            "Artefact",
+            "Backend",
+            "BaseModel",
+            "Batch",
+            "Event",
+            "Host",
+            "LossPoint",
+            "ModelShape",
+            "Plan",
+            "RunRequest",
+            "Settings",
+            "Snapshot",
+            "SnapshotFile",
+            "Status",
+            "Toolchain",
+            "ToolchainVersion",
+            "adapterCodec",
+            "adapterRef",
+            "backendName",
+            "baseId",
+            "baseModel",
+            "baseServing",
+            "baseWeights",
+            "cancel",
+            "check",
+            "decodeEvent",
+            "emptyProgress",
+            "estimateMemory",
+            "fakeCrashAt",
+            "fakeStepMs",
+            "foldProgress",
+            "host",
+            "jobJson",
+            "lineage",
+            "plan",
+            "registryAdapter",
+            "result",
+            "resume",
+            "settings",
+            "shapeOf",
+            "toolchainStatus",
+            "totalSteps",
+            "withAlpha",
+            "withBatch",
+            "withEpochs",
+            "withLearningRate",
+            "withMaxRelaunches",
+            "withSequenceLength",
+            "withServing",
+            "withTargets",
+            "withWeights",
+            "workflow",
+            "workflows"
           ]
         },
         "Std.Analytics": {
@@ -18667,8 +18824,8 @@
           ]
         }
       },
-      "count": 843,
-      "pct_of_denominator": 33.1
+      "count": 894,
+      "pct_of_denominator": 33.9
     }
   },
   "units": [
@@ -18676,10 +18833,10 @@
       "db_drivers": [],
       "gate": "apps-bundled",
       "id": "apps:bundled",
-      "modules_imported": 33,
+      "modules_imported": 34,
       "path": "sky-bundled",
-      "refs_generous": 209,
-      "refs_qualified": 203,
+      "refs_generous": 264,
+      "refs_qualified": 258,
       "role": "Layer2",
       "sky_files": 16,
       "sky_toml_sections": []
@@ -18807,10 +18964,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/console-controls-e2e.sh",
-      "modules_imported": 18,
+      "modules_imported": 20,
       "path": "scripts/console-controls-e2e.sh",
-      "refs_generous": 61,
-      "refs_qualified": 55,
+      "refs_generous": 67,
+      "refs_qualified": 61,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []

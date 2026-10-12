@@ -89,6 +89,9 @@ const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 // run offline by rust/crates/sky/tests/ai_dataset_flow.rs. 71-ai-registry uses
 // Std.Ai.Registry, which the legacy compiler does not have either; its stdout
 // is pinned by `rust/crates/sky/tests/ai_registry_flow.rs` instead.
+// 73-ai-train uses Std.Ai.Train (no legacy oracle either); its page and its
+// training workflow are pinned by its own `sky test` suite, run offline by
+// `rust/crates/sky/tests/ai_train_flow.rs`.
 const NONDETERMINISTIC_OUTPUT: &[&str] = &[
     "02-go-stdlib",
     "67-durable-counter",
@@ -96,6 +99,7 @@ const NONDETERMINISTIC_OUTPUT: &[&str] = &[
     "69-ai-scrub",
     "70-ai-synthetic",
     "71-ai-registry",
+    "73-ai-train",
 ];
 
 /// Hand-authored multi-project splits — an example that is NOT a single project

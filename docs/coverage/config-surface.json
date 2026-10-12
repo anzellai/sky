@@ -55,21 +55,21 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:13710 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:13728 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
     ],
     "database.path": [
       "rust/crates/sky/src/db_cluster.rs:1742 (sky_toml_section_key)",
-      "rust/crates/sky/src/main.rs:11639 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:11657 (sky_toml_section_key)"
     ],
     "database.postgresVersion": [
       "rust/crates/sky/src/db_provision.rs:158 (sky_toml_section_key)"
     ],
     "database.url": [
       "rust/crates/sky/src/db_cluster.rs:1746 (sky_toml_section_key)",
-      "rust/crates/sky/src/main.rs:11636 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:11654 (sky_toml_section_key)"
     ],
     "dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — reads the whole table. `sky add`/`remove`/`install`/`update` and the LSP's unfetched-dep hints all run with no binary in existence."
@@ -80,7 +80,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:13595 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:13613 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
@@ -187,6 +187,7 @@
     "AI_HOME",
     "AI_LLAMA_BIN",
     "AI_REGISTRY",
+    "AI_TRAIN_BACKEND",
     "ALLOWED_HOSTS",
     "ANALYTICS_DB_PATH",
     "ANALYTICS_RETENTION",
@@ -261,12 +262,12 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 151,
+    "documented_names": 152,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 17,
     "read_without_doc": 25,
     "runtime_read_literal_sky_names": 46,
-    "runtime_read_suffixes": 54,
+    "runtime_read_suffixes": 55,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,

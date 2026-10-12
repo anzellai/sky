@@ -1215,6 +1215,73 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
+  # gate-ai-train — Std.Ai.Train with a real trainer under the managed Python
+  # (rust/crates/sky/tests/ai_train_live.rs). Same job as rust-ci.yml
+  # `ai-train-live`.
+  gate-ai-train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: core-sky
+          install-compiler: 'false'
+      - name: Cache the Std.Ai home (engine, model, managed Python)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/tools
+            ${{ github.workspace }}/.sky-ai/python
+            ${{ github.workspace }}/.sky-ai/toolchains
+          key: sky-ai-train-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**') }}
+      - name: Std.Ai.Train live (Fake trainer under the managed Python)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_train_live -- --nocapture
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  # gate-ai-train-mlx — a real MLX QLoRA run, killed and resumed, served and
+  # evaluated (rust/crates/sky/tests/ai_train_mlx_live.rs). MLX runs on the
+  # CPU (SKY_AI_ACCEL=cpu): the runner has no usable Metal device. Same job as
+  # rust-ci.yml `ai-train-mlx-live`.
+  gate-ai-train-mlx:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      SKY_AI_HOME: ${{ github.workspace }}/.sky-ai
+      SKY_AI_ACCEL: cpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Cache the Std.Ai home (engine, model, MLX toolchain, base)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.sky-ai/engines
+            ${{ github.workspace }}/.sky-ai/models
+            ${{ github.workspace }}/.sky-ai/tools
+            ${{ github.workspace }}/.sky-ai/python
+            ${{ github.workspace }}/.sky-ai/toolchains
+            ${{ github.workspace }}/.sky-ai/bases
+          key: sky-ai-train-mlx-${{ runner.os }}-${{ hashFiles('runtime-go/rt/ai_pins.go', 'runtime-go/rt/ai_train_assets/**', 'sky-stdlib/Std/Ai/Train.sky') }}
+      - name: Std.Ai.Train live (MLX on Apple silicon)
+        working-directory: rust
+        env:
+          SKY_LIVE_TESTS: require
+        run: cargo test -p sky --locked --test ai_train_mlx_live -- --nocapture
+
   gate-race:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1648,6 +1715,8 @@ jobs:
       - gate-t2-rest
       - gate-app
       - gate-ai-local
+      - gate-ai-train
+      - gate-ai-train-mlx
       - gate-falsifiers-1
       - gate-falsifiers-2
       - gate-falsifiers-3

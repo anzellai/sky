@@ -51,6 +51,11 @@ const (
 	// aiDatasetInvalid is a dataset that cannot be read, parsed or validated
 	// (Std.Ai.Dataset). Its reasons name a file and a line, never row text.
 	aiDatasetInvalid aiFailCode = "DatasetInvalid"
+	// TrainingFailed and TrainingCancelled end a Std.Ai.Train run: the trainer
+	// reported an error or died more often than the job allows relaunches, or
+	// the run was cancelled. Both name the run and the last step it reached.
+	aiTrainingFailed    aiFailCode = "TrainingFailed"
+	aiTrainingCancelled aiFailCode = "TrainingCancelled"
 )
 
 // aiDomain is the DomainFailure domain of every AI failure.
@@ -95,6 +100,8 @@ var aiFailSpecs = map[aiFailCode]aiFailSpec{
 	aiPromotionConflict: {errKindConflict, false, [][2]string{{"ref", ""}, {"expected", ""}, {"actual", ""}}},
 	aiAdapterMismatch:   {errKindInvalidInput, false, [][2]string{{"adapter", ""}, {"adapterBase", ""}, {"engineBase", ""}}},
 	aiDatasetInvalid:    {errKindInvalidInput, false, [][2]string{{"dataset", ""}, {"reasons", ""}}},
+	aiTrainingFailed:    {errKindUnavailable, false, [][2]string{{"runId", ""}, {"step", "0"}, {"reason", ""}, {"logTail", ""}}},
+	aiTrainingCancelled: {errKindConflict, false, [][2]string{{"runId", ""}, {"step", "0"}}},
 }
 
 // aiFailure is a classified AI failure before it becomes a Sky value. Go code

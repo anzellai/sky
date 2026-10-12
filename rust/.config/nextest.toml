@@ -34,11 +34,12 @@ serial-servers = { max-threads = 1 }
 # hard-kills a truly wedged test at 8 min (well above any legitimate slow test)
 # so it is retried fast instead of eating the whole 45-min job budget.
 [profile.default]
-# The Std.Ai live test fetches and caches a ~430 MB model; it runs in its own
+# The Std.Ai live tests fetch and cache a ~430 MB model (and, for training, a
+# managed Python and the MLX toolchain); each runs in its own
 # CI job (rust-ci.yml `ai-local-live`, release.yml `gate-ai-local`) with that
 # cache, not in every `test-sky` slice. `cargo test` ignores this filter, so a
 # local `cargo test --workspace` still runs it.
-default-filter = 'not binary(ai_local_live)'
+default-filter = 'not (binary(ai_local_live) | binary(ai_train_live) | binary(ai_train_mlx_live))'
 retries = 2
 slow-timeout = { period = "120s", terminate-after = 4 }
 

@@ -34,11 +34,12 @@
 -- | `NotConfigured`, `InvalidSetting`, `ModelTooLarge`, `DatasetInvalid` | `InvalidInput` | no |
 -- | `Unreachable`, `Overloaded` | `Unavailable` | yes |
 -- | `TimedOut` | `Timeout` | yes |
--- | `EngineCrashed`, `EngineFailed`, `NoAccelerator`, `ToolchainFailed` | `Unavailable` | no |
+-- | `EngineCrashed`, `EngineFailed`, `NoAccelerator`, `ToolchainFailed`, `TrainingFailed` | `Unavailable` | no |
 -- | `NotProvisioned` | `NotFound` | no |
 -- | `ChecksumMismatch` | `Conflict` | no |
 -- | `BudgetExceeded`, `GateFailed`, `NotPromotable` | `PermissionDenied` | no |
 -- | `NotRegistered` | `NotFound` | no |
+-- | `TrainingCancelled` | `Conflict` | no |
 -- | `PromotionConflict` | `Conflict` | no |
 -- | `AdapterMismatch` | `InvalidInput` | no |
 -- | `RemoteRejected` | by status: 400 / 422 `InvalidInput`, 401 / 403 `PermissionDenied`, 404 `NotFound`, 5xx `Unavailable`, else `Unexpected` | 5xx only |
@@ -105,6 +106,14 @@ type Failure
 }
     | DatasetInvalid { dataset : String
 , reasons : String
+}
+    | TrainingFailed { runId : String
+, step : Int
+, reason : String
+, logTail : String
+}
+    | TrainingCancelled { runId : String
+, step : Int
 }
 
 
@@ -180,6 +189,12 @@ code f =
         DatasetInvalid _ ->
             "DatasetInvalid"
 
+        TrainingFailed _ ->
+            "TrainingFailed"
+
+        TrainingCancelled _ ->
+            "TrainingCancelled"
+
 
 -- | The `ErrorKind` a failure sets.
 kind : Failure -> ErrorKind
@@ -215,6 +230,12 @@ kind f =
 
         ToolchainFailed _ ->
             Unavailable
+
+        TrainingFailed _ ->
+            Unavailable
+
+        TrainingCancelled _ ->
+            Conflict
 
         TimedOut _ ->
             Timeout
@@ -410,6 +431,16 @@ attrsOf f =
         DatasetInvalid r ->
             [ ( "dataset", r.dataset ), ( "reasons", r.reasons ) ]
 
+        TrainingFailed r ->
+            [ ( "runId", r.runId )
+            , ( "step", String.fromInt r.step )
+            , ( "reason", r.reason )
+            , ( "logTail", r.logTail )
+            ]
+
+        TrainingCancelled r ->
+            [ ( "runId", r.runId ), ( "step", String.fromInt r.step ) ]
+
 
 optInt : String -> Maybe Int -> List ( String, String )
 optInt key m =
@@ -490,6 +521,16 @@ describe f =
 
         DatasetInvalid r ->
             "the dataset " ++ r.dataset ++ " is not valid: " ++ r.reasons
+
+        TrainingFailed r ->
+            "the training run " ++ r.runId ++ " failed at step "
+                ++ String.fromInt r.step
+                ++ ": "
+                ++ r.reason
+
+        TrainingCancelled r ->
+            "the training run " ++ r.runId ++ " was cancelled at step "
+                ++ String.fromInt r.step
 
 
 -- Money as "<ISO code> <exact decimal>", for example "USD 40.00".
@@ -684,6 +725,35 @@ decode df =
                     (\d r -> DatasetInvalid { dataset = d, reasons = r })
                     (str "dataset")
                     (str "reasons")
+
+            -- A `case` over the attributes rather than `Maybe.map4`: each
+            -- attribute is read typed, with no runtime narrowing of the
+            -- polymorphic mapper's arguments.
+            "TrainingFailed" ->
+                case ( ( str "runId", int "step" )
+                     , ( str "reason", str "logTail" )
+                     ) of
+
+                    ( ( Just r, Just s ), ( Just why, Just l ) ) ->
+                        Just
+                            (TrainingFailed
+                                { runId = r
+                                , step = s
+                                , reason = why
+                                , logTail = l
+                                })
+
+                    _ ->
+                        Nothing
+
+            "TrainingCancelled" ->
+                case ( str "runId", int "step" ) of
+
+                    ( Just r, Just s ) ->
+                        Just (TrainingCancelled { runId = r, step = s })
+
+                    _ ->
+                        Nothing
 
             _ ->
                 Nothing

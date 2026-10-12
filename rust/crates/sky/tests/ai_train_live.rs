@@ -1,0 +1,251 @@
+//! LIVE: `Std.Ai.Train` with a real trainer process under the managed Python.
+//!
+//! The Fake backend runs the Sky-shipped driver (`sky_train.py`) in the pinned
+//! CPython that the runtime installs with the pinned uv. The first trainer is
+//! made to die after step 3; the durable workflow relaunches it from the newest
+//! verified checkpoint and the run finishes. The adapter is converted to GGUF
+//! and loaded by the real llama-server on the development model, and the same
+//! adapter registered as trained on another base is refused (AdapterMismatch).
+//! The driver's own Python suites (the protocol, MLX to PEFT, the batch order,
+//! the Unsloth fixture) run under the managed CPython too.
+//!
+//! It needs Go, the engine and the dev model, and uv plus CPython in the
+//! Std.Ai home, or the network to fetch them. Without them it FAILS naming
+//! `sky ai provision --train fake` (`live_gate`, `Need::AiTrainToolchain`). CI
+//! runs it in `.github/workflows/rust-ci.yml`, job `ai-train-live`, with the
+//! Std.Ai home cached on `runtime-go/rt/ai_pins.go` and the training assets.
+
+use std::net::{TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::time::Duration;
+
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
+
+const SKY: &str = env!("CARGO_BIN_EXE_sky");
+const DEV_MODEL_SHA256: &str = "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed";
+
+fn have_go() -> bool {
+    Command::new("go")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
+
+fn ai_home() -> PathBuf {
+    if let Ok(h) = std::env::var("SKY_AI_HOME") {
+        if !h.is_empty() {
+            return PathBuf::from(h);
+        }
+    }
+    if let Ok(h) = std::env::var("SKY_HOME") {
+        if !h.is_empty() {
+            return PathBuf::from(h).join("ai");
+        }
+    }
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()));
+    if cfg!(target_os = "macos") {
+        return home.join("Library/Caches/sky/ai");
+    }
+    match std::env::var("XDG_CACHE_HOME") {
+        Ok(x) if !x.is_empty() => PathBuf::from(x).join("sky/ai"),
+        _ => home.join(".cache/sky/ai"),
+    }
+}
+
+fn has_child(dir: &Path, rel: &str) -> bool {
+    std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().any(|e| e.path().join(rel).exists()))
+        .unwrap_or(false)
+}
+
+fn provisioned(home: &Path) -> bool {
+    has_child(&home.join("engines/llama"), "llama-server")
+        && home
+            .join("models/sha256")
+            .join(format!("{DEV_MODEL_SHA256}.gguf"))
+            .is_file()
+        && has_child(&home.join("toolchains/fake"), "ok.json")
+}
+
+fn reachable(host: &str) -> bool {
+    format!("{host}:443")
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+        .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(5)).is_ok())
+        .unwrap_or(false)
+}
+
+fn scratch(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!(
+        "sky-train-live-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let dest = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &dest);
+        } else {
+            std::fs::copy(entry.path(), dest).unwrap();
+        }
+    }
+}
+
+fn text(out: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+fn json(out: &Output) -> serde_json::Value {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.trim().lines().last().unwrap_or("");
+    serde_json::from_str(line).unwrap_or_else(|e| panic!("not JSON ({e}):\n{}", text(out)))
+}
+
+/// Build the fixture project into a fresh directory and return it.
+fn fixture() -> PathBuf {
+    let project = scratch("project");
+    copy_dir(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ai-train"),
+        &project,
+    );
+    let out = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "sky build: {}", text(&out));
+    project
+}
+
+/// Run the fixture with no training or slot variable of the caller's.
+fn app(project: &Path, args: &[&str]) -> Output {
+    let mut cmd = Command::new(project.join("sky-out/app"));
+    cmd.args(args)
+        .current_dir(project)
+        .env_remove("ENV")
+        .env_remove("SKY_TEST_MODE");
+    for (k, _) in std::env::vars() {
+        if k.starts_with("SKY_AI_") && k != "SKY_AI_HOME" && k != "SKY_AI_ACCEL" {
+            cmd.env_remove(k);
+        }
+    }
+    cmd.output().unwrap()
+}
+
+fn gate() -> bool {
+    if !required(Need::Go, have_go()) {
+        return false;
+    }
+    let available =
+        provisioned(&ai_home()) || (reachable("github.com") && reachable("huggingface.co"));
+    required(Need::AiTrainToolchain, available)
+}
+
+#[test]
+fn fake_trains_under_the_managed_python_relaunches_and_serves_on_the_real_engine() {
+    if !gate() {
+        return;
+    }
+    let project = fixture();
+    let work = scratch("work");
+    let w = work.to_string_lossy().to_string();
+
+    let out = app(&project, &["drive", "fake", &w]);
+    assert!(out.status.success(), "drive: {}", text(&out));
+    let a = json(&out);
+    assert_eq!(a["backend"], "fake", "{a}");
+    assert_eq!(a["steps"], 10, "{a}");
+    assert_eq!(
+        a["relaunches"], 1,
+        "the first trainer died after step 3: {a}"
+    );
+    assert_eq!(
+        a["resumedFrom"], 2,
+        "the relaunch resumes from checkpoint 2: {a}"
+    );
+    assert!(a["toolchain"].as_str().unwrap().starts_with("fake@"), "{a}");
+    let run_dir = work.join("runs").join(a["run"].as_str().unwrap());
+    let events = std::fs::read_to_string(run_dir.join("events.jsonl")).unwrap();
+    assert_eq!(events.matches("\"type\":\"hello\"").count(), 2, "{events}");
+    for line in events.lines() {
+        let v: serde_json::Value = serde_json::from_str(line).expect("only protocol lines");
+        assert_eq!(v["v"], 1, "{line}");
+    }
+    let trainer: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(run_dir.join("trainer.json")).unwrap())
+            .unwrap();
+    assert_eq!(trainer["simulated"], false, "a real trainer ran: {trainer}");
+
+    // The GGUF adapter loads in the real llama-server on the dev model.
+    let gguf = a["gguf"].as_str().unwrap().to_string();
+    let sha = a["ggufSha256"].as_str().unwrap().to_string();
+    assert!(Path::new(&gguf).is_file());
+    let out = app(&project, &["serve", &gguf, &sha]);
+    assert!(out.status.success(), "serve: {}", text(&out));
+    assert!(
+        !json(&out)["answer"].as_str().unwrap().is_empty(),
+        "{}",
+        text(&out)
+    );
+
+    // Registered as trained on another base, it is refused before it loads.
+    let out = app(&project, &["mismatch", &gguf, &sha, &w]);
+    assert!(out.status.success(), "mismatch: {}", text(&out));
+    assert_eq!(json(&out)["outcome"], "AdapterMismatch", "{}", text(&out));
+
+    let _ = std::fs::remove_dir_all(&project);
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[test]
+fn the_driver_suites_pass_under_the_managed_cpython() {
+    if !gate() {
+        return;
+    }
+    let out = Command::new(SKY)
+        .args(["ai", "provision", "--train", "fake", "--format", "json"])
+        .current_dir(scratch("provision"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "provision: {}", text(&out));
+    let python = PathBuf::from(json(&out)["python"].as_str().unwrap());
+    assert!(python.is_file(), "{}", python.display());
+    let suites = repo_root().join("runtime-go/rt/testdata/train_driver_tests");
+    let out = Command::new(&python)
+        .args(["-I", "-B", "-m", "unittest", "discover", "-s"])
+        .arg(&suites)
+        .current_dir(&suites)
+        .output()
+        .unwrap();
+    let report = text(&out);
+    assert!(
+        out.status.success(),
+        "the driver's Python suites:\n{report}"
+    );
+    assert!(report.contains("OK"), "{report}");
+}

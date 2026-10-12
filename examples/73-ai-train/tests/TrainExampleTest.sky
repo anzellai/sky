@@ -1,0 +1,182 @@
+module TrainExampleTest exposing (tests)
+
+-- The whole training lifecycle, offline. The project has a `.env.test`, so
+-- `sky test` runs in test mode with SKY_AI_TRAIN_BACKEND=fake: the durable
+-- workflow runs for real on SQLite, and the Fake trainer writes its protocol,
+-- checkpoints and a real (no-op) adapter without Python or a model. The job is
+-- the app's own, with the first trainer made to die after step 3, so the run
+-- shows the relaunch from the newest checkpoint. Then the adapter is
+-- registered, `dev` points at it, and the slot that serves `support@dev`
+-- sends its served name (the fixture in tests/mocks/ answers only that name).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Provider as Provider
+import Std.Ai.Registry as Registry
+import Std.Ai.Train as Train exposing (Status(..))
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Support
+
+
+dir : String
+dir =
+    File.tempDir "ai-train-example-test" |> Task.run
+        |> Result.withDefault "/tmp"
+
+
+-- The app's job, with a checkpoint every 2 steps, 12 steps, and a first
+-- trainer that dies after step 3.
+crashy : Support.World -> Train.Job
+crashy w =
+    Support.job w |> Train.withMaxSteps 12 |> Train.withCheckpointEvery 2
+        |> Train.fakeCrashAt 3
+
+
+trained : Result Error ( Train.Adapter, Train.Progress, String )
+trained =
+    Support.openIn dir
+        |> Task.andThen
+               (\w ->
+                   Train.drive w.db (crashy w)
+                       |> Task.andThen
+                              (\a ->
+                                  Train.progress (crashy w)
+                                      |> Task.andThen
+                                             (\p ->
+                                                 Support.promoteDev w a
+                                                     |> Task.map
+                                                            (\label ->
+                                                                ( a, p, label )))))
+        |> Task.run
+
+
+served : Result Error String
+served =
+    trained
+        |> Result.andThen
+               (\_ ->
+                   Provider.chat
+                       (Endpoint.provider (Support.chatSlotIn dir))
+                       [ Provider.user "How do I get a refund?" ]
+                       |> Task.map .content
+                       |> Task.run)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "the dataset freezes into a version with train and eval rows"
+          (\_ ->
+              case Task.run (Support.freeze dir) of
+
+                  Ok v ->
+                      let
+                          m = Dataset.manifest v
+                      in
+                          Test.equal
+                              ( m.name, m.rows, m.train > 0 && m.eval > 0 )
+                              ( "support", 40, True )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the run trains, survives its trainer dying, and resumes from the newest checkpoint"
+          (\_ ->
+              case trained of
+
+                  Ok ( a, p, _ ) ->
+                      Test.equal
+                          ( ( a.backend, a.steps, a.relaunches, a.resumedFrom )
+                          , ( p.status, p.step, p.totalSteps, p.relaunches )
+                          , a.method
+                          )
+                          ( ( "fake", 12, 1, 2 ), ( Done, 12, 12, 1 ), "qlora" )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the adapter is converted to GGUF and registered with its lineage"
+          (\_ ->
+              case trained of
+
+                  Ok ( a, _, label ) ->
+                      Test.equal
+                          ( a.gguf /= Nothing
+                          , a.registered
+                          , label
+                          , String.length a.peft.sha256
+                          , a.dataset
+                          )
+                          ( True
+                          , Just "support@v1"
+                          , "support@v1"
+                          , 64
+                          , "support"
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "driving the finished run again returns the same adapter without training"
+          (\_ ->
+              case trained of
+
+                  Ok ( a, _, _ ) ->
+                      case Support.openIn dir
+                               |> Task.andThen
+                                      (\w -> Train.drive w.db (crashy w))
+                               |> Task.run of
+
+                          Ok again ->
+                              Test.equal
+                                  ( again.runId, again.peft.sha256 )
+                                  ( a.runId, a.peft.sha256 )
+
+                          Err e ->
+                              Test.fail (Error.toString e)
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the slot serves support@dev: the version's served name reaches the model"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      "Open the order, choose Return items, and the refund reaches your card within five working days. Anything else? (support-v1)")
+                  served)
+    , Test.test
+          "the registry's lineage of the version names the run and the dataset digest"
+          (\_ ->
+              case trained of
+
+                  Ok ( a, _, _ ) ->
+                      case Support.openIn dir
+                               |> Task.andThen
+                                      (\w -> Registry.lineage w.reg "support@dev")
+                               |> Task.run of
+
+                          Ok l ->
+                              Test.equal
+                                  ( l.version.datasetDigest
+                                  , List.member
+                                        ( "runId", a.runId )
+                                        l.version.metadata
+                                  , l.aliases
+                                  )
+                                  ( a.datasetDigest, True, [ "dev" ] )
+
+                          Err e ->
+                              Test.fail (Error.toString e)
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    ]

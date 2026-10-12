@@ -1,0 +1,6 @@
+# The Unsloth training toolchain (Linux x86_64, NVIDIA CUDA 13, Python 3.12).
+# Unsloth core is Apache-2.0; the AGPL Unsloth Studio is never installed. The
+# PyPI torch wheels for Linux x86_64 carry CUDA 13, which needs an NVIDIA
+# driver 580 or newer. scripts/ai/lock-toolchains.sh compiles this into the
+# hashed lock.
+unsloth==2026.9.11

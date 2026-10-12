@@ -88,6 +88,7 @@ type Mode
 -- The record the runtime reads. An unset number is -1, an unset text "".
 type alias RawLocal =
     { model : String
+    , adapter : String
     , context : Int
     , gpu : String
     , parallel : Int
@@ -167,6 +168,7 @@ endpoint slot =
         , hasLocal = False
         , local =
             { model = ""
+            , adapter = ""
             , context = -1
             , gpu = ""
             , parallel = -1
@@ -273,12 +275,23 @@ withLocal : LocalEngine.Spec -> Endpoint -> Endpoint
 withLocal spec (Endpoint c) =
     let
         s = LocalEngine.settings spec
+        -- A `case`, not `Maybe.withDefault`: the payload is read typed,
+        -- with no runtime narrowing of the polymorphic default's result.
+        adapter =
+            case s.adapter of
+
+                Just path ->
+                    path
+
+                Nothing ->
+                    ""
     in
         Endpoint
             { c
                 | hasLocal = True
                 , local =
                     { model = s.model
+                    , adapter = adapter
                     , context = Maybe.withDefault (-1) s.context
                     , gpu = Maybe.withDefault "" (Maybe.map gpuText s.gpu)
                     , parallel = Maybe.withDefault (-1) s.parallel

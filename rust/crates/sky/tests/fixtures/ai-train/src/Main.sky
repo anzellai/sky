@@ -1,0 +1,310 @@
+module Main exposing (main)
+
+{-| Fixture for the live training tests (ai_train_live.rs, ai_train_mlx_live.rs).
+
+    app drive fake <dir>      train with the Fake trainer under the managed
+                              Python: 10 steps, a checkpoint every 2, the
+                              first trainer dies after step 3
+    app drive mlx <dir>       train with MLX on the dev base: 12 steps of 2
+                              rows of 256 tokens, rank 4 on 4 layers, a
+                              checkpoint every 4, an evaluation every 6
+    app serve <gguf> <sha>    serve the adapter on the dev model and ask it
+    app mismatch <gguf> <sha> <dir>
+                              register the adapter as trained on another base
+                              and serve it: AdapterMismatch
+    app eval <gguf> <sha> <dir>
+                              the same three cases on the dev model with and
+                              without the adapter, and their comparison
+
+Each mode prints one JSON line.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.System as System
+import Sky.Core.Json.Encode as JsonE
+import Std.Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Endpoint as Endpoint
+import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Local as Local
+import Std.Ai.Provider as Provider
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+import Std.Ai.Store as Store
+import Std.Ai.Train as Train exposing (Backend(..))
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+
+run : List String -> Task Error ()
+run args =
+    case args of
+
+        ["drive", backend, dir] ->
+            drive backend dir
+
+        ["serve", gguf, sha] ->
+            serve gguf sha
+
+        ["mismatch", gguf, sha, dir] ->
+            mismatch gguf sha dir
+
+        ["eval", gguf, sha, dir] ->
+            evaluate gguf sha dir
+
+        _ ->
+            Task.fail
+                (Error.invalidInput "usage: app drive|serve|mismatch|eval …")
+
+
+emit : List ( String, JsonE.Value ) -> Task Error ()
+emit fields =
+    println (JsonE.encode 0 (JsonE.object fields))
+
+
+version : String -> Task Error (Dataset.Version Dataset.Chat)
+version dir =
+    Dataset.fromJsonl Dataset.chatCodec "data/support.jsonl"
+        |> Dataset.split
+               { train = 80, eval = 20, test = 0, seed = 7 }
+               (\r -> String.join "\n" (List.map .content r.messages))
+        |> Dataset.freeze
+               (Dataset.folder (dir ++ "/datasets") "support")
+               Dataset.chatCodec
+
+
+job : String -> String -> Dataset.Version Dataset.Chat -> Train.Job
+job backend dir v =
+    let
+        common =
+            Train.lora Train.devBase v |> Train.withName "live"
+                |> Train.withQuantisedBase
+                |> Train.withGgufExport
+                |> Train.withWorkDir (dir ++ "/runs")
+                |> Train.withSeed 7
+    in
+        if backend == "mlx" then
+            common |> Train.withBackend Mlx |> Train.withMaxSteps 12
+                |> Train.withBatch { perDevice = 2, accumulate = 1 }
+                |> Train.withSequenceLength 256
+                |> Train.withRank 4
+                |> Train.withLayers 4
+                |> Train.withLearningRate 2.0e-4
+                |> Train.withCheckpointEvery 4
+                |> Train.withEvalEvery 6
+                |> Train.withWatchWindow 2000
+
+        else
+            common |> Train.withBackend Fake |> Train.withMaxSteps 10
+                |> Train.withBatch { perDevice = 2, accumulate = 1 }
+                |> Train.withRank 2
+                |> Train.withLayers 2
+                |> Train.withCheckpointEvery 2
+                |> Train.withEvalEvery 5
+                |> Train.fakeCrashAt 3
+                |> Train.fakeStepMs 50
+
+
+drive : String -> String -> Task Error ()
+drive backend dir =
+    Db.open "sqlite" (dir ++ "/train.db")
+        |> Task.andThen
+               (\db ->
+                   version dir
+                       |> Task.andThen
+                              (\v -> Train.drive db (job backend dir v)))
+        |> Task.andThen
+               (\a ->
+                   emit
+                       [ ( "run", JsonE.string a.runId )
+                       , ( "backend", JsonE.string a.backend )
+                       , ( "toolchain", JsonE.string a.toolchain )
+                       , ( "steps", JsonE.int a.steps )
+                       , ( "relaunches", JsonE.int a.relaunches )
+                       , ( "resumedFrom", JsonE.int a.resumedFrom )
+                       , ( "trainLoss", JsonE.float a.trainLoss )
+                       , ( "valLoss", JsonE.float a.valLoss )
+                       , ( "peft", JsonE.string a.peft.path )
+                       , ( "gguf"
+                         , JsonE.string
+                               (Maybe.withDefault "" (Maybe.map .path a.gguf))
+                         )
+                       , ( "ggufSha256"
+                         , JsonE.string
+                               (Maybe.withDefault "" (Maybe.map .sha256 a.gguf))
+                         )
+                       ])
+
+
+adapterSpec : String -> String -> Local.Spec
+adapterSpec gguf sha =
+    Local.model Local.devModel |> Local.withContext 1024
+        |> Local.withAdapter (Local.file { path = gguf, sha256 = sha })
+
+
+ask : Provider.Provider -> Task Error String
+ask p =
+    Provider.chat p [ Provider.user "How do I get a refund?" ]
+        |> Task.map .content
+
+
+serve : String -> String -> Task Error ()
+serve gguf sha =
+    Local.start (adapterSpec gguf sha)
+        |> Task.andThen
+               (\engine ->
+                   ask (Local.provider engine)
+                       |> Task.andThen
+                              (\answer ->
+                                  Local.stop engine
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 emit
+                                                     [ ( "answer"
+                                                       , JsonE.string answer
+                                                       )
+                                                     ])))
+
+
+-- The adapter registered as if it had been trained on another base: the slot
+-- resolves it, checks its base against the engine's model and refuses it.
+mismatch : String -> String -> String -> Task Error ()
+mismatch gguf sha dir =
+    Db.open "sqlite" (dir ++ "/mismatch.db")
+        |> Task.andThen
+               (\db -> Registry.open db (Store.local (dir ++ "/mismatch-store")))
+        |> Task.andThen
+               (\reg ->
+                   Registry.register
+                       reg
+                       "forged"
+                       { path = gguf, format = Gguf, method = Qlora }
+                       { base =
+                           Local.huggingFace
+                               { repo = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+                               , file = "other.gguf"
+                               , sha256 = String.repeat 64 "0"
+                               }
+                       , dataset = "support"
+                       , datasetDigest = String.repeat 64 "1"
+                       , metadata = []
+                       }
+                       |> Task.andThen
+                              (\v ->
+                                  Registry.forcePromote
+                                      reg
+                                      "dev"
+                                      v
+                                      "live test of the base check")
+                       |> Task.map (\_ -> reg))
+        |> Task.andThen
+               (\reg ->
+                   Endpoint.endpoint "forged"
+                       |> Endpoint.withLocal
+                              (Local.model Local.devModel
+                                  |> Local.withContext 1024)
+                       |> Endpoint.fromRegistry
+                              (Registry.resolver (Task.succeed reg))
+                       |> Endpoint.withAdapter "registry:forged@dev"
+                       |> Endpoint.provider
+                       |> ask)
+        |> Task.map (\_ -> "served")
+        |> Task.onError
+               (\e ->
+                   case Failure.fromError e of
+
+                       Just f ->
+                           Task.succeed (Failure.code f)
+
+                       Nothing ->
+                           Task.succeed (Error.toString e))
+        |> Task.andThen
+               (\outcome -> emit [ ( "outcome", JsonE.string outcome ) ])
+
+
+suite : Eval.Suite String
+suite =
+    Eval.suite
+        "support-style"
+        (\q -> [ Provider.user q ])
+        [ { id = "refund"
+          , input = "How do I get a refund?"
+          , expect = Matches "(?i)refund"
+          , tags = []
+          }
+        , { id = "address"
+          , input = "Can I change my delivery address?"
+          , expect = Matches "(?i)address"
+          , tags = []
+          }
+        , { id = "invoice"
+          , input = "Can I get an invoice?"
+          , expect = Matches "(?i)invoice"
+          , tags = []
+          }
+        ]
+
+
+evaluate : String -> String -> String -> Task Error ()
+evaluate gguf sha dir =
+    Db.open "sqlite" (dir ++ "/eval.db")
+        |> Task.andThen
+               (\db ->
+                   Local.start
+                       (Local.model Local.devModel |> Local.withContext 1024)
+                       |> Task.andThen
+                              (\baseEngine ->
+                                  Eval.runAs
+                                      "base"
+                                      db
+                                      (Local.provider baseEngine)
+                                      suite
+                                      |> Task.andThen
+                                             (\baseReport ->
+                                                 Local.stop baseEngine
+                                                     |> Task.map
+                                                            (\_ -> baseReport)))
+                       |> Task.andThen
+                              (\baseReport ->
+                                  Local.start (adapterSpec gguf sha)
+                                      |> Task.andThen
+                                             (\engine ->
+                                                 Eval.runAs
+                                                     "adapter"
+                                                     db
+                                                     (Local.provider engine)
+                                                     suite
+                                                     |> Task.andThen
+                                                            (\report ->
+                                                                Local.stop
+                                                                    engine
+                                                                    |> Task.map
+                                                                           (\_ ->
+                                                                               ( baseReport
+                                                                               , report
+                                                                               ))))))
+        |> Task.andThen
+               (\( base, cand ) ->
+                   let
+                       c = Eval.compare base cand
+                   in
+                       emit
+                           [ ( "baseCases", JsonE.int (List.length base.cases) )
+                           , ( "adapterCases"
+                             , JsonE.int (List.length cand.cases)
+                             )
+                           , ( "basePassed", JsonE.int base.passed )
+                           , ( "adapterPassed", JsonE.int cand.passed )
+                           , ( "adapterErrors", JsonE.int cand.errors )
+                           , ( "regressions", JsonE.int c.regressions )
+                           , ( "improvements", JsonE.int c.improvements )
+                           ])

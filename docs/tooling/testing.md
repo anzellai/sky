@@ -265,6 +265,23 @@ database. A DSN in the environment (`DATABASE_URL`) opts back out — the test t
 targets that database. An empty `DATABASE_URL` (`DATABASE_URL=`, the usual way to
 clear one in CI) is no DSN: the run still gets its throwaway database.
 
+### Training runs (`Std.Ai.Train`)
+
+In test mode a `Std.Ai.Train` run starts no trainer, installs no toolchain and
+downloads nothing. The durable workflow runs for real on the test database,
+and its launch step writes what the scripted Fake trainer writes: the protocol
+lines, verified checkpoints and a real, no-op PEFT adapter. The GGUF
+conversion and the registry steps run too. So `Train.drive` returns an
+adapter in milliseconds, and a test can assert the steps, the losses, the
+relaunches and the registered version.
+
+Put `SKY_AI_TRAIN_BACKEND=fake` in `.env.test`, so the test does not depend on
+the host's accelerator. `Train.fakeCrashAt n` makes the first attempt stop
+after step n with no terminal line, so a test sees the relaunch from the newest
+checkpoint. `examples/73-ai-train/tests/TrainExampleTest.sky` trains, crashes,
+resumes, registers and serves an adapter this way. See
+[`../ai/train.md`](../ai/train.md#tests).
+
 ### Log capture
 
 Set **`SKY_TEST_LOG_CAPTURE=<path>`** and the app's `Std.Log` output is written

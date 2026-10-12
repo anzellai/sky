@@ -1,0 +1,555 @@
+module Std.Ai.TrainTest exposing (tests)
+
+-- Std.Ai.Train without a trainer: the job's defaults and its canonical JSON,
+-- the run id, the pure checks, the memory estimate, the driver protocol and
+-- the progress fold, and a run directory read back from files. The durable
+-- workflow itself runs end to end in examples/73-ai-train (its own `sky test`,
+-- in test mode) and in rust/crates/sky/tests/ai_train_flow.rs; the runtime
+-- half in runtime-go/rt/ai_train_test.go.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Provider as Provider
+import Std.Ai.Local as Local
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Train as Train exposing (Backend(..), Event(..), Status(..))
+
+
+-- ── Fixtures ────────────────────────────────────────────────────────
+row : Int -> Dataset.Chat
+row n =
+    { messages =
+        [ Provider.user ("Where is order " ++ String.fromInt n ++ "?")
+        , Provider.assistant "It ships tomorrow."
+        ]
+    }
+
+
+keyOf : Dataset.Chat -> String
+keyOf r =
+    String.join "|" (List.map .content r.messages)
+
+
+-- A frozen chat version in a fresh directory.
+frozen : Dataset.SplitSpec -> Task Error (Dataset.Version Dataset.Chat)
+frozen spec =
+    File.tempDir "sky-train-test"
+        |> Task.andThen
+               (\dir ->
+                   Dataset.fromList (List.map row (List.range 1 30))
+                       |> Dataset.split spec keyOf
+                       |> Dataset.freeze
+                              (Dataset.folder dir "orders")
+                              Dataset.chatCodec)
+
+
+halves : Dataset.SplitSpec
+halves =
+    { train = 70, eval = 30, test = 0, seed = 0 }
+
+
+withVersion : (Dataset.Version Dataset.Chat -> TestResult) -> TestResult
+withVersion check =
+    case Task.run (frozen halves) of
+
+        Ok v ->
+            check v
+
+        Err e ->
+            Test.fail ("could not freeze the fixture: " ++ Error.toString e)
+
+
+failure : Result Error a -> Maybe Failure
+failure r =
+    case r of
+
+        Err e ->
+            Failure.fromError e
+
+        Ok _ ->
+            Nothing
+
+
+settingOf : Result Error () -> String
+settingOf r =
+    case failure r of
+
+        Just (InvalidSetting s) ->
+            s.setting
+
+        _ ->
+            "no InvalidSetting"
+
+
+shape : Train.ModelShape
+shape =
+    { architecture = "qwen2"
+    , layers = 24
+    , hidden = 896
+    , intermediate = 4864
+    , qDim = 896
+    , kvDim = 128
+    , vocab = 151936
+    , parameters = 494032768
+    }
+
+
+decoded : String -> Maybe Event
+decoded line =
+    Train.decodeEvent line |> Result.withDefault Nothing
+
+
+fold : List String -> Train.Progress
+fold lines =
+    List.foldl
+        (\l p ->
+            case decoded l of
+
+                Just ev ->
+                    Train.foldProgress ev p
+
+                Nothing ->
+                    p)
+        (Train.emptyProgress "r")
+        lines
+
+
+-- ── Tests ───────────────────────────────────────────────────────────
+tests : List Test
+tests =
+    [ Test.test
+          "a job's defaults"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      let
+                          s = Train.settings (Train.lora Train.devBase v)
+                      in
+                          Test.equal
+                              ( ( s.name, s.rank, s.alpha, s.layers )
+                              , ( s.batch.perDevice
+                                , s.batch.accumulate
+                                , s.sequenceLength
+                                , s.seed
+                                )
+                              , ( s.checkpointEvery
+                                , s.evalEvery
+                                , s.workDir
+                                , s.maxRelaunches
+                                )
+                              , ( s.format
+                                , s.backend
+                                , s.ggufExport
+                                , s.watchWindowMs
+                                )
+                              )
+                              ( ( "adapter", 8, 0, 16 )
+                              , ( 4, 1, 1024, 0 )
+                              , ( 100, 50, ".sky/ai/runs", 3 )
+                              , ( "chat", Nothing, False, 300000 )
+                              )))
+    , Test.test
+          "the job records the frozen version and the base"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      let
+                          s = Train.settings (Train.lora Train.devBase v)
+                      in
+                          Test.equal
+                              ( s.dataset
+                              , s.datasetDigest
+                              , s.trainRows + s.evalRows
+                              , s.serving
+                              )
+                              ( "orders"
+                              , Dataset.digest v
+                              , 30
+                              , Local.reference Local.devModel
+                              )))
+    , Test.test
+          "jobJson is canonical: sorted keys, the settings that decide the adapter"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      Test.equal
+                          ("{\"alpha\":32,\"base\":\"Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775\",\"batch\":{\"accumulate\":2,\"perDevice\":1},\"checkpointEvery\":100,\"dataset\":{\"digest\":\""
+                              ++ Dataset.digest v
+                              ++ "\",\"name\":\"orders\"},\"epochs\":1,\"evalEvery\":50,\"format\":\"chat\",\"gguf\":true,\"layers\":4,\"learningRate\":0.0002,\"maxSteps\":12,\"merged\":false,\"name\":\"orders\",\"quantised\":true,\"rank\":16,\"seed\":7,\"sequenceLength\":256,\"serving\":\"hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF/qwen2.5-0.5b-instruct-q4_0.gguf#sha256=7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed\",\"targets\":[\"self_attn.q_proj\",\"self_attn.k_proj\",\"self_attn.v_proj\",\"self_attn.o_proj\"]}")
+                          (Train.jobJson
+                              (Train.lora Train.devBase v
+                                  |> Train.withName "orders"
+                                  |> Train.withQuantisedBase
+                                  |> Train.withRank 16
+                                  |> Train.withLayers 4
+                                  |> Train.withLearningRate 2.0e-4
+                                  |> Train.withMaxSteps 12
+                                  |> Train.withBatch
+                                         { perDevice = 1, accumulate = 2 }
+                                  |> Train.withSequenceLength 256
+                                  |> Train.withSeed 7
+                                  |> Train.withGgufExport))))
+    , Test.test
+          "the run id is the name and the job's digest; the backend and the work directory do not change it"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      let
+                          j =
+                              Train.lora Train.devBase v
+                                  |> Train.withName "orders"
+                          id = Train.runId j
+                      in
+                          Test.equal
+                              ( String.startsWith "orders-" id
+                              , String.length id
+                              , Train.runId
+                                    (j |> Train.withBackend Fake
+                                        |> Train.withWorkDir "/elsewhere")
+                              , Train.runId (j |> Train.withSeed 1) /= id
+                              , Train.runDir (j |> Train.withWorkDir "/w")
+                              )
+                              ( True, 19, id, True, "/w/" ++ id )))
+    , Test.test
+          "check accepts the defaults and names the setting it refuses"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      let
+                          j = Train.lora Train.devBase v
+                      in
+                          Test.equal
+                              ( Train.check j
+                              , ( settingOf
+                                      (Train.check (j |> Train.withRank 0))
+                                , settingOf
+                                      (Train.check
+                                          (j |> Train.withName "Bad Name"))
+                                , settingOf
+                                      (Train.check
+                                          (j |> Train.withTargets [ "lm_head" ]))
+                                )
+                              , ( settingOf
+                                      (Train.check (j |> Train.withLayers 0))
+                                , settingOf
+                                      (Train.check
+                                          (j |> Train.withSequenceLength 8))
+                                , settingOf
+                                      (Train.check
+                                          (j |> Train.withLearningRate 0.0))
+                                )
+                              )
+                              ( Ok ()
+                              , ( "rank", "name", "targets" )
+                              , ( "layers", "sequenceLength", "learningRate" )
+                              )))
+    , Test.test
+          "an empty eval split is DatasetInvalid (InvalidInput)"
+          (\_ ->
+              case Task.run
+                       (frozen { train = 100, eval = 0, test = 0, seed = 0 }) of
+
+                  Ok v ->
+                      case Train.check (Train.lora Train.devBase v) of
+
+                          Err e ->
+                              case Failure.fromError e of
+
+                                  Just (DatasetInvalid d) ->
+                                      Test.equal
+                                          ( Failure.kind (DatasetInvalid d)
+                                          , String.contains "0 eval" d.reasons
+                                          )
+                                          ( InvalidInput, True )
+
+                                  _ ->
+                                      Test.fail (Error.toString e)
+
+                          Ok _ ->
+                              Test.fail "an empty eval split passed the check"
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "total steps: whole epochs rounded up, or maxSteps"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      let
+                          j = Train.lora Train.devBase v
+                          rows = (Train.settings j).trainRows
+                      in
+                          Test.equal
+                              ( Train.totalSteps (j |> Train.withEpochs 2)
+                              , Train.totalSteps (j |> Train.withMaxSteps 5)
+                              )
+                              ( (2 * rows + 3) // 4, 5 )))
+    , Test.test
+          "estimateMemory follows its documented formula"
+          (\_ ->
+              withVersion
+                  (\v ->
+                      let
+                          j =
+                              Train.lora Train.devBase v
+                                  |> Train.withQuantisedBase
+                                  |> Train.withRank 4
+                                  |> Train.withLayers 2
+                                  |> Train.withTargets
+                                         [ "self_attn.q_proj"
+                                         , "self_attn.v_proj"
+                                         ]
+                                  |> Train.withBatch
+                                         { perDevice = 2, accumulate = 1 }
+                                  |> Train.withSequenceLength 256
+                          weights = 494032768 * 9 // 16
+                          adapter =
+                              2 * (4 * (896 + 896) + 4 * (896 + 128)) * 16
+                          activations =
+                              2 * 256 * 2 * (16 * 896 + 4 * 4864) * 2
+                          logits = 2 * 256 * 151936 * 8
+                      in
+                          Test.equal
+                              (Train.estimateMemory shape j)
+                              (weights + adapter + activations + logits
+                                  + 536870912)))
+    , Test.test
+          "decodeEvent reads every protocol line"
+          (\_ ->
+              Test.equal
+                  [ decoded
+                        "{\"v\":1,\"type\":\"hello\",\"backend\":\"mlx\",\"attempt\":1,\"resumeFrom\":4,\"totalSteps\":12}"
+                  , decoded
+                        "{\"v\":1,\"type\":\"progress\",\"step\":5,\"total\":12,\"loss\":1.5,\"tokensPerSecond\":800.0}"
+                  , decoded
+                        "{\"v\":1,\"type\":\"metric\",\"step\":6,\"name\":\"val_loss\",\"value\":1.25}"
+                  , decoded
+                        "{\"v\":1,\"type\":\"checkpoint\",\"step\":8,\"path\":\"checkpoints/0000008\"}"
+                  , decoded
+                        "{\"v\":1,\"type\":\"artefact\",\"kind\":\"peft\",\"path\":\"adapter\",\"sha256\":\"ab\"}"
+                  , decoded
+                        "{\"v\":1,\"type\":\"done\",\"step\":12,\"trainLoss\":0.5,\"valLoss\":0.75}"
+                  , decoded "{\"v\":1,\"type\":\"cancelled\",\"step\":3}"
+                  , decoded
+                        "{\"v\":1,\"type\":\"error\",\"code\":\"ModelTooLarge\",\"message\":\"oom\"}"
+                  ]
+                  [ Just
+                        (Hello
+                            { backend = "mlx"
+                            , attempt = 1
+                            , resumeFrom = 4
+                            , totalSteps = 12
+                            })
+                  , Just
+                        (StepProgress
+                            { step = 5
+                            , total = 12
+                            , loss = 1.5
+                            , tokensPerSecond = 800.0
+                            })
+                  , Just (Metric { step = 6, name = "val_loss", value = 1.25 })
+                  , Just (Checkpoint { step = 8, path = "checkpoints/0000008" })
+                  , Just
+                        (Artefact
+                            { kind = "peft", path = "adapter", sha256 = "ab" })
+                  , Just
+                        (DoneEvent { step = 12, trainLoss = 0.5, valLoss = 0.75 })
+                  , Just (CancelledEvent { step = 3 })
+                  , Just
+                        (DriverError { code = "ModelTooLarge", message = "oom" })
+                  ])
+    , Test.test
+          "an unknown type is skipped; a non-finite loss reads as -1"
+          (\_ ->
+              Test.equal
+                  ( Train.decodeEvent "{\"v\":1,\"type\":\"telemetry\",\"x\":1}"
+                  , decoded
+                        "{\"v\":1,\"type\":\"progress\",\"step\":1,\"loss\":null}"
+                  )
+                  ( Ok Nothing
+                  , Just
+                        (StepProgress
+                            { step = 1
+                            , total = 0
+                            , loss = -1.0
+                            , tokensPerSecond = -1.0
+                            })
+                  ))
+    , Test.test
+          "protocol version 2, a non-JSON line and a line without its fields are ToolchainFailed"
+          (\_ ->
+              let
+                  code r =
+                      case failure r of
+
+                          Just f ->
+                              Failure.code f
+
+                          Nothing ->
+                              "none"
+              in
+                  Test.equal
+                      [ code
+                            (Train.decodeEvent
+                                "{\"v\":2,\"type\":\"progress\",\"step\":1}")
+                      , code (Train.decodeEvent "Loading weights...")
+                      , code
+                            (Train.decodeEvent
+                                "{\"v\":1,\"type\":\"checkpoint\"}")
+                      ]
+                      [ "ToolchainFailed"
+                      , "ToolchainFailed"
+                      , "ToolchainFailed"
+                      ])
+    , Test.test
+          "foldProgress: steps, losses, the relaunch and the resume point"
+          (\_ ->
+              let
+                  p =
+                      fold
+                          [ "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":0,\"resumeFrom\":0,\"totalSteps\":6}"
+                          , "{\"v\":1,\"type\":\"progress\",\"step\":1,\"total\":6,\"loss\":2.0,\"tokensPerSecond\":10.0}"
+                          , "{\"v\":1,\"type\":\"progress\",\"step\":2,\"total\":6,\"loss\":1.8,\"tokensPerSecond\":10.0}"
+                          , "{\"v\":1,\"type\":\"checkpoint\",\"step\":2,\"path\":\"checkpoints/0000002\"}"
+                          , "{\"v\":1,\"type\":\"progress\",\"step\":3,\"total\":6,\"loss\":1.7,\"tokensPerSecond\":10.0}"
+                          , "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":1,\"resumeFrom\":2,\"totalSteps\":6}"
+                          , "{\"v\":1,\"type\":\"progress\",\"step\":3,\"total\":6,\"loss\":1.7,\"tokensPerSecond\":12.0}"
+                          , "{\"v\":1,\"type\":\"metric\",\"step\":3,\"name\":\"val_loss\",\"value\":1.9}"
+                          ]
+              in
+                  Test.equal
+                      ( ( p.status, p.step, p.totalSteps, p.attempt )
+                      , ( p.relaunches
+                        , p.resumedFrom
+                        , p.lastCheckpoint
+                        , p.valLoss
+                        )
+                      , ( List.length p.losses, p.loss, p.backend )
+                      )
+                      ( ( Running, 3, 6, 1 )
+                      , ( 1, 2, 2, Just 1.9 )
+                      , ( 4, Just 1.7, "fake" )
+                      ))
+    , Test.test
+          "a long curve is thinned to at most 200 points, keeping the newest"
+          (\_ ->
+              let
+                  lines =
+                      List.map
+                          (\n ->
+                              "{\"v\":1,\"type\":\"progress\",\"step\":"
+                                  ++ String.fromInt n
+                                  ++ ",\"total\":1000,\"loss\":1.0}")
+                          (List.range 1 1000)
+                  p = fold lines
+                  last =
+                      List.reverse p.losses |> List.head |> Maybe.map .step
+              in
+                  Test.equal
+                      ( List.length p.losses <= 200
+                      , List.length p.losses > 100
+                      , last
+                      )
+                      ( True, True, Just 1000 ))
+    , Test.test
+          "terminal lines: done, cancelled, an error"
+          (\_ ->
+              Test.equal
+                  ( (fold
+                        [ "{\"v\":1,\"type\":\"done\",\"step\":6,\"trainLoss\":0.5,\"valLoss\":0.6}"
+                        ]).status
+                  , (fold [ "{\"v\":1,\"type\":\"cancelled\",\"step\":2}" ]).status
+                  , (fold
+                        [ "{\"v\":1,\"type\":\"error\",\"code\":\"TrainingFailed\",\"message\":\"nan loss\"}"
+                        ]).message
+                  )
+                  ( Converting, Cancelled, "TrainingFailed: nan loss" ))
+    , Test.test
+          "progressAt reads a finished run directory"
+          (\_ ->
+              let
+                  setupRun =
+                      File.tempDir "sky-train-progress"
+                          |> Task.andThen
+                                 (\dir ->
+                                     File.writeFile (dir ++ "/job.json") "{}"
+                                         |> Task.andThen
+                                                (\_ ->
+                                                    File.writeFile
+                                                        (dir ++ "/events.jsonl")
+                                                        "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":0,\"resumeFrom\":0,\"totalSteps\":2}\n{\"v\":1,\"type\":\"progress\",\"step\":2,\"total\":2,\"loss\":0.5}\n{\"v\":1,\"type\":\"done\",\"step\":2,\"trainLoss\":0.5,\"valLoss\":0.6}\n")
+                                         |> Task.andThen
+                                                (\_ ->
+                                                    File.writeFile
+                                                        (dir ++ "/result.json")
+                                                        "{\"status\":\"done\",\"adapter\":{\"name\":\"a\",\"runId\":\"a-1\",\"baseId\":\"b\",\"serving\":\"s\",\"dataset\":\"d\",\"datasetDigest\":\"e\",\"backend\":\"fake\",\"toolchain\":\"fake@t\",\"method\":\"lora\",\"seed\":0,\"steps\":2,\"peft\":{\"path\":\"p\",\"sha256\":\"h\"},\"gguf\":null,\"merged\":null,\"trainLoss\":0.5,\"valLoss\":0.6,\"relaunches\":0,\"resumedFrom\":0,\"registered\":\"a@v1\",\"job\":\"{}\"}}")
+                                         |> Task.andThen
+                                                (\_ -> Train.progressAt dir))
+              in
+                  case Task.run setupRun of
+
+                      Ok p ->
+                          Test.equal
+                              ( p.status, p.step, p.message )
+                              ( Done, 2, "registered a@v1" )
+
+                      Err e ->
+                          Test.fail (Error.toString e))
+    , Test.test
+          "the backend names SKY_AI_TRAIN_BACKEND reads"
+          (\_ ->
+              Test.equal
+                  (List.map Train.backendName [ Mlx, Unsloth, Fake ])
+                  [ "mlx", "unsloth", "fake" ])
+    , Test.test
+          "the registry view of an adapter: the GGUF file when there is one"
+          (\_ ->
+              let
+                  a =
+                      { name = "orders"
+                      , runId = "orders-1"
+                      , baseId = "b"
+                      , serving = Local.reference Local.devModel
+                      , dataset = "orders"
+                      , datasetDigest = "0123456789abcdef"
+                      , backend = "fake"
+                      , toolchain = "fake@x"
+                      , method = "qlora"
+                      , seed = 7
+                      , steps = 12
+                      , peft =
+                          { path = "run/adapter/adapter_model.safetensors"
+                          , sha256 = "p"
+                          }
+                      , gguf = Just { path = "run/adapter.gguf", sha256 = "g" }
+                      , merged = Nothing
+                      , trainLoss = 0.5
+                      , valLoss = 0.6
+                      , relaunches = 1
+                      , resumedFrom = 4
+                      , registered = Nothing
+                      , job = "{}"
+                      }
+                  r = Train.registryAdapter a
+                  l = Train.lineage a
+              in
+                  Test.equal
+                      ( r.path
+                      , l.dataset
+                      , l.datasetDigest
+                      , Local.reference l.base
+                      )
+                      ( "run/adapter.gguf"
+                      , "orders@0123456789ab"
+                      , "0123456789abcdef"
+                      , Local.reference Local.devModel
+                      ))
+    ]

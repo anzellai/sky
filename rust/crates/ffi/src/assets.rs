@@ -216,8 +216,8 @@ mod tests {
     #[test]
     fn bundled_apps_embedded_source_only() {
         let b = embedded_bundled().expect("sky-bundled embedded");
-        // Both bundled apps' entry source + sky.toml present.
-        for name in ["console", "doc"] {
+        // Every bundled app's entry source + sky.toml present.
+        for name in ["console", "doc", "ai", "ai-train"] {
             assert!(
                 b.get_file(format!("sky-bundled/{name}/src/Main.sky"))
                     .is_some(),

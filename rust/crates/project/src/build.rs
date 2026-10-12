@@ -2864,6 +2864,14 @@ fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Resu
             if name_s == "console_app" && !console_needed {
                 continue;
             }
+            // `ai_train_assets` holds the Std.Ai.Train driver (Python) and
+            // its hash locks, which `rt` embeds with `go:embed`: every file
+            // in it is a build input, not only the `.go` ones.
+            if name_s == "ai_train_assets" {
+                materialise_assets(&path, &dst.join(&name_s))?;
+                produced.insert(name_s);
+                continue;
+            }
             materialise_rt(&path, &dst.join(&name_s), console_needed)?;
             produced.insert(name_s);
         } else if name_s.ends_with("_test.go") {
@@ -2875,6 +2883,29 @@ fn materialise_rt(src: &Path, dst: &Path, console_needed: bool) -> std::io::Resu
     }
     prune_stale_rt(dst, &produced)?;
     Ok(())
+}
+
+/// Copy an embedded-asset tree whole (every file, any extension), pruning
+/// what the source no longer has. Hidden files are never copied, as staging
+/// never embeds them.
+fn materialise_assets(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    let mut produced: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name_s = entry.file_name().to_string_lossy().to_string();
+        if name_s.starts_with('.') || name_s == "__pycache__" {
+            continue;
+        }
+        if path.is_dir() {
+            materialise_assets(&path, &dst.join(&name_s))?;
+        } else {
+            std::fs::copy(&path, dst.join(&name_s))?;
+        }
+        produced.insert(name_s);
+    }
+    prune_stale_rt(dst, &produced)
 }
 
 /// Delete anything in a materialised `rt/` directory that this build did not

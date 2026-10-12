@@ -15,6 +15,10 @@ module AiTab exposing (aiView)
 --   * a registry model's row opens its versions, alias log and eval history
 --     (`model=<name>`), and a second click closes them.
 --
+-- The Training section lists the Std.Ai.Train runs (status, steps, losses,
+-- relaunches, the registered version) with a small loss curve. It has no
+-- control and holds no dataset text.
+--
 -- Palette mirrors ErrorsTab.sky so the tab is visually consistent with the
 -- rest of the console.
 
@@ -26,6 +30,7 @@ import Std.Ui exposing (Element)
 import Std.Ui.Background as Background
 import Std.Ui.Border as Border
 import Std.Ui.Font as Font
+import Std.Ui.Chart as Chart
 import State exposing (..)
 
 
@@ -86,6 +91,7 @@ aiView filter data =
     , enginesPanel data.engines
     , callsPanel filter data.calls
     , evalsPanel filter data.evals
+    , trainingPanel data.training
     , registryPanel filter data.registry
     ]
 
@@ -381,6 +387,194 @@ caseRow c =
               [ Font.size 12, Font.color textSecondary ]
               [ Ui.text c.reason ]
         ]
+
+
+-- ─── Training runs ──────────────────────────────────────────────
+trainingPanel : List AiTrainingRun -> Element Msg
+trainingPanel runs =
+    panel
+        "Training"
+        (if List.isEmpty runs then
+            [ emptyState
+                  "No Std.Ai.Train run in this process or in .sky/ai/runs yet."
+            ]
+
+        else
+            List.map trainingRow runs)
+
+
+trainingRow : AiTrainingRun -> Element Msg
+trainingRow r =
+    Ui.row
+        [ Ui.width Ui.fill
+        , Ui.paddingXY 0 6
+        , Ui.spacing 12
+        , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+        , Border.color borderSoft
+        , Ui.htmlAttribute "data-ai-training" r.run
+        ]
+        [ Ui.column
+              [ Ui.width Ui.fill, Ui.spacing 4 ]
+              [ Ui.row
+                    [ Ui.spacing 12, Ui.width Ui.fill ]
+                    [ Ui.el
+                          [ Font.bold, Font.size 13 ]
+                          (Ui.text ("run " ++ r.run))
+                    , Ui.el
+                          [ Font.size 12
+                          , Font.bold
+                          , Font.color (statusColour r.status)
+                          , Ui.htmlAttribute "data-ai-train-status" r.status
+                          ]
+                          (Ui.text r.status)
+                    , muted
+                          (if r.backend == "" then
+                              "backend pending"
+
+                          else
+                              "backend " ++ r.backend)
+                    , Ui.el
+                          [ Font.size 12
+                          , Ui.htmlAttribute
+                                "data-ai-train-step"
+                                (String.fromInt r.step)
+                          ]
+                          (Ui.text (stepText r))
+                    ]
+              , Ui.row
+                    [ Ui.spacing 12 ]
+                    [ muted ("loss " ++ maybeLoss r.loss)
+                    , muted ("eval loss " ++ maybeLoss r.valLoss)
+                    , muted (relaunchText r)
+                    , muted
+                          (if r.lastCheckpoint > 0 then
+                              "checkpoint at step "
+                                  ++ String.fromInt r.lastCheckpoint
+
+                          else
+                              "no checkpoint")
+                    , if r.registered == "" then
+                          Ui.none
+
+                      else
+                          Ui.el
+                              [ Font.size 12
+                              , Font.color ok
+                              , Ui.htmlAttribute
+                                    "data-ai-train-registered"
+                                    r.registered
+                              ]
+                              (Ui.text ("registered " ++ r.registered))
+                    ]
+              , if r.message /= ""
+                    && (r.status == "failed" || r.status == "cancelled") then
+                    Ui.paragraph
+                        [ Font.size 12, Font.color err ]
+                        [ Ui.text r.message ]
+
+                else
+                    Ui.none
+              ]
+        , lossCurve r.losses
+        ]
+
+
+stepText : AiTrainingRun -> String
+stepText r =
+    if r.totalSteps > 0 then
+        "step " ++ String.fromInt r.step ++ " of "
+            ++ String.fromInt r.totalSteps
+
+    else
+        "step " ++ String.fromInt r.step
+
+
+relaunchText : AiTrainingRun -> String
+relaunchText r =
+    if r.relaunches == 0 then
+        "no relaunch"
+
+    else
+        String.fromInt r.relaunches
+            ++ (if r.relaunches == 1 then
+                   " relaunch"
+
+               else
+                   " relaunches")
+            ++ ", resumed from step "
+            ++ String.fromInt r.resumedFrom
+
+
+statusColour : String -> Ui.Color
+statusColour status =
+    if status == "done" then
+        ok
+
+    else if status == "failed" then
+        err
+
+    else if status == "cancelled" then
+        textMuted
+
+    else
+        accent
+
+
+maybeLoss : Maybe Float -> String
+maybeLoss m =
+    case m of
+
+        Just v ->
+            lossText v
+
+        Nothing ->
+            "-"
+
+
+-- A loss with four decimals: 0.0042 → "0.0042", 2 → "2.0000".
+lossText : Float -> String
+lossText f =
+    let
+        scaled = Math.round (f * 10000.0)
+        whole = scaled // 10000
+        frac = modBy 10000 scaled
+    in
+        String.fromInt whole ++ "."
+            ++ String.padLeft 4 '0' (String.fromInt frac)
+
+
+-- The training loss over the run's steps (the runtime thins it to at most
+-- 200 points). A run with fewer than two points has no curve yet.
+lossCurve : List Float -> Element Msg
+lossCurve values =
+    let
+        cfg =
+            Chart.defaultCfg |> Chart.withWidth 160 |> Chart.withHeight 36
+                |> Chart.withColor accent
+                |> Chart.withGridLines False
+    in
+        if List.length values < 2 then
+            Ui.el
+                [ Ui.width (Ui.px 164)
+                , Background.color bgCode
+                , Border.rounded 3
+                , Ui.paddingXY 6 6
+                , Font.color textMuted
+                , Font.size 10
+                ]
+                (Ui.text "no loss curve yet")
+
+        else
+            Ui.el
+                [ Ui.width (Ui.px 164)
+                , Background.color bgCode
+                , Border.rounded 3
+                , Ui.padding 2
+                , Ui.htmlAttribute
+                      "data-ai-train-curve"
+                      (String.fromInt (List.length values))
+                ]
+                (Chart.sparkline cfg values)
 
 
 -- ─── Model registry ─────────────────────────────────────────────

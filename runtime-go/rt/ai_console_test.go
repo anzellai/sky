@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -167,5 +169,49 @@ func TestConsoleAIShowsTheRegistry(t *testing.T) {
 	b, _ := json.Marshal(snap)
 	if !strings.Contains(string(b), `"registry":[`) || !strings.Contains(string(b), `"action":"rollback"`) {
 		t.Fatalf("the API does not carry the registry: %s", b)
+	}
+}
+
+func TestConsoleAIShowsTrainingRuns(t *testing.T) {
+	aiResetTrainConsole()
+	t.Cleanup(aiResetTrainConsole)
+	dir := filepath.Join(t.TempDir(), "orders-0123456789ab")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, aiTrainJobFile), []byte(`{"name":"orders"}`), 0o644)
+	var lines []string
+	lines = append(lines, `{"v":1,"type":"hello","backend":"fake","attempt":0,"resumeFrom":0,"totalSteps":500}`)
+	for i := 1; i <= 500; i++ {
+		lines = append(lines, fmt.Sprintf(`{"v":1,"type":"progress","step":%d,"total":500,"loss":%g}`, i, 2.0/float64(i)))
+	}
+	lines = append(lines, `{"v":1,"type":"checkpoint","step":400,"path":"checkpoints/0000400"}`,
+		`{"v":1,"type":"hello","backend":"fake","attempt":1,"resumeFrom":400,"totalSteps":500}`,
+		`{"v":1,"type":"metric","step":500,"name":"val_loss","value":0.7}`,
+		`{"v":1,"type":"done","step":500,"trainLoss":0.004,"valLoss":0.7}`)
+	os.WriteFile(filepath.Join(dir, aiTrainEventsFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	aiTrainNoteRun(dir)
+
+	resp := aiConsoleSnapshot("", "")
+	if len(resp.Training) != 1 {
+		t.Fatalf("training rows %d", len(resp.Training))
+	}
+	r := resp.Training[0]
+	if r.Status != "converting" || r.Step != 500 || r.Relaunches != 1 || r.ResumedFrom != 400 || r.LastCheckpoint != 400 || *r.ValLoss != 0.7 {
+		t.Fatalf("%+v", r)
+	}
+	if len(r.Losses) != aiTrainConsolePoints || r.Losses[len(r.Losses)-1][0] != 500 {
+		t.Fatalf("losses %d, last %v", len(r.Losses), r.Losses[len(r.Losses)-1])
+	}
+	os.WriteFile(filepath.Join(dir, aiTrainResultFile), []byte(`{"status":"done","adapter":{"registered":"orders@v2"}}`), 0o644)
+	r = aiConsoleSnapshot("", "").Training[0]
+	if r.Status != "done" || r.Registered != "orders@v2" {
+		t.Fatalf("%+v", r)
+	}
+	os.WriteFile(filepath.Join(dir, aiTrainResultFile), []byte(`{"status":"failed","message":"Std.Ai TrainingCancelled: the training run orders was cancelled at step 3"}`), 0o644)
+	if r = aiConsoleSnapshot("", "").Training[0]; r.Status != "cancelled" {
+		t.Fatalf("%+v", r)
+	}
+	b, _ := json.Marshal(aiConsoleSnapshot("", ""))
+	if !strings.Contains(string(b), `"training":[{"run":"orders-0123456789ab"`) {
+		t.Fatalf("%s", b)
 	}
 }

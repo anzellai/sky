@@ -212,6 +212,7 @@ tests =
                 (\_ ->
                     Test.equal
                         { model = "file:/m#sha256=ab"
+                        , adapter = Nothing
                         , context = Nothing
                         , gpu = Nothing
                         , parallel = Nothing

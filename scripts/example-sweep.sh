@@ -308,6 +308,12 @@ declare -a EXAMPLES=(
     # model and no network. Its stdout and its test-mode serving test are
     # pinned by rust/crates/sky/tests/ai_registry_flow.rs.
     "71-ai-registry:cli"
+    # 73 — Std.Ai.Train in a full-stack app (Sky.Live, Std.Ui): the page
+    # freezes its dataset and shows the training run; nothing trains until
+    # "Train" is pressed, so serving `/` needs no model, no Python and no
+    # network. The training workflow itself runs offline in its `sky test`
+    # suite (rust/crates/sky/tests/ai_train_flow.rs).
+    "73-ai-train:server:8073:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

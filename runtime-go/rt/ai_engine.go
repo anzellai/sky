@@ -313,6 +313,14 @@ func (e *aiEngine) start(ctx context.Context) error {
 			return aiFailf(aiChecksumMismatch, "the adapter %s at %s does not hash to sha256 %s (got %q); nothing was loaded", a.label, a.path, a.sha256, got).
 				with("expected", a.sha256).with("actual", got)
 		}
+		// An adapter Std.Ai.Train converted records the serving model it was
+		// converted for; loaded on any other model it would answer nonsense.
+		if want := aiAdapterServingSha(a.path); want != "" && want != e.spec.model.sha256 {
+			return aiFailf(aiAdapterMismatch,
+				"the adapter %s was converted for the model sha256 %s, and this engine runs sha256 %s; serve it on its own base model",
+				a.label, want, e.spec.model.sha256).
+				with("adapter", a.label).with("adapterBase", want).with("engineBase", e.spec.model.sha256)
+		}
 	}
 	port := e.spec.port
 	if port == 0 {

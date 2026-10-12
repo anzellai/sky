@@ -166,6 +166,28 @@ rows, `fromVersion` streams one part as a dataset, and `versions target` lists
 every version's manifest, newest first. `freezeJson` and `loadJson` do the
 same for rows held as JSON text.
 
+### Training takes a frozen version
+
+`Std.Ai.Train` trains on a frozen `Version`, never on a live dataset:
+`Train.lora base version` takes a `Version Chat`, and
+`Train.loraOnInstructions base version` a `Version Instruction`. So the exact
+rows behind an adapter are fixed by the type. The training run stages the
+version's `Train` part as the train split and its `Eval` part as the eval split
+(the `Test` part is not read), and hashes the data file first: a file that
+changed after it was frozen is `ChecksumMismatch`. A version with an empty
+`Train` or `Eval` part is `DatasetInvalid`, because the eval split measures the
+adapter. The adapter records the version's name and digest, and
+`Train.withRegistry` registers it with that lineage, so
+`Registry.trainedOn reg digest` finds every adapter trained on a version
+([`train.md`](train.md)). `examples/73-ai-train` freezes a support dataset and
+trains an adapter on it.
+
+```bash
+sky ai data freeze data/support.jsonl --name support
+sky ai train --data .sky/ai/datasets/support          # the newest version
+sky ai train --data .sky/ai/datasets/support@<sha256> # one version
+```
+
 ### `sky ai data freeze`
 
 ```
@@ -311,9 +333,13 @@ per topic and two judge fixtures. In a unit test, `withTeacher name
 
 ## Not yet
 
-These parts of §8.4 are later work: the registry (`Std.Ai.Registry`) that
-stores versions in a file store, GCS or S3 and records their lineage next to
-the models trained on them; counting tokens through the local engine's
-tokenizer route (use `withTokenizer` for exact counts until then); spilling the
-dedupe key set to disk past a bound; and journalling each teacher and judge
-call as a `Std.Durable` step so a resumed generation does not pay twice.
+These parts of §8.4 are later work:
+
+- keeping frozen versions in a `Std.Ai.Store` (GCS or S3) next to the adapters
+  trained on them. The registry records each adapter's dataset name and digest
+  today ([`registry.md`](registry.md)).
+- counting tokens through the local engine's tokenizer route. Use
+  `withTokenizer` for exact counts until then.
+- spilling the dedupe key set to disk past a bound.
+- journalling each teacher and judge call as a `Std.Durable` step, so a
+  resumed generation does not pay twice.

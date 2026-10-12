@@ -22,6 +22,8 @@ each verb is a call to the Std.Ai API a user's own program can make.
                 [--split <train>/<eval>/<test>] [--seed <n>]
                 [--consent <basis>] [--retention <period>]
                                                  Dataset.fromJsonLines, split, freezeJson
+    sky ai provision --train … | train … | export …
+                                                 sky-bundled/ai-train
 
 The registry verbs open the registry on the database `--db <dsn>` names, else
 the app's own (`SKY_DB_PATH`, else `DATABASE_URL`; the CLI passes the
@@ -323,8 +325,17 @@ start json slot opts =
 
             else
                 identity
+        adapter =
+            case flag "--adapter" opts of
+
+                Just ref ->
+                    Local.withAdapter (Local.fromReference ref)
+
+                Nothing ->
+                    identity
         spec =
-            Local.model model |> sized |> embedding |> Local.withIdleUnload 0
+            Local.model model |> sized |> embedding |> adapter
+                |> Local.withIdleUnload 0
     in
         Endpoint.endpoint slot |> Endpoint.withLocal spec |> Endpoint.warm
             |> Task.andThen (\d -> emit json (describeValue d) (describeText d))

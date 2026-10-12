@@ -778,7 +778,12 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **691 since the merge of the two v0.28.0 phase 2 parts** (measured by
 /// `xtask corpus` on the merged tree: the part B and part A surfaces together).
-pub const CORPUS_EXPECTED: u64 = 691;
+///
+/// **693 since v0.28.0 phase 3** (+2, Family S: the `aitrain` surface, its
+/// nominal and failure edges, for `Std.Ai.Train`; measured by the
+/// `corpus-manifest` gate, "693 cases; generator and corpus/manifest.toml
+/// agree").
+pub const CORPUS_EXPECTED: u64 = 693;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -1032,7 +1037,8 @@ pub fn shared_world(ctx: &GateCtx) -> GateOutcome {
 // ---------------------------------------------------------------------------
 
 /// Member F: `sky-bundled/console` + `sky-bundled/doc` + `sky-bundled/ai`
-/// (v0.28.0, the program behind `sky ai`).
+/// (v0.28.0, the program behind `sky ai`) + `sky-bundled/ai-train` (v0.28.0
+/// phase 3, the program behind the training verbs of `sky ai`).
 ///
 /// Two assertions per project — the build's exit status, and the artifact it
 /// was supposed to leave behind. The artifact half is not redundant: a builder
@@ -1054,7 +1060,12 @@ pub const APPS_BUNDLED_EXPECTED: u64 = 6;
 pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
     use super::layer2;
 
-    let projects = ["sky-bundled/console", "sky-bundled/doc", "sky-bundled/ai"];
+    let projects = [
+        "sky-bundled/console",
+        "sky-bundled/doc",
+        "sky-bundled/ai",
+        "sky-bundled/ai-train",
+    ];
     let mut assertions = 0u64;
     let mut failures: Vec<String> = Vec::new();
     let mut timings: Vec<String> = Vec::new();
@@ -3441,7 +3452,11 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// and `stdlib.Std.Ai.Dataset`, `stdlib.Std.Ai.Dataset.Scrub` and
 /// `stdlib.Std.Ai.Dataset.Synthetic` (phase 2, dataset part). Each is covered
 /// by its `tests/Std/Ai/*Test.sky` suite and its Family-S corpus surface.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 194;
+///
+/// 194 -> 195: measured by the `coverage-ledger` gate in v0.28.0 phase 3:
+/// `stdlib.Std.Ai.Train`, covered by `tests/Std/Ai/TrainTest.sky` and the
+/// `aitrain` corpus surface.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 195;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3804,6 +3819,21 @@ pub fn jobs_complete_failure_is_reported(ctx: &GateCtx) -> GateOutcome {
         "./rt/jobs/",
         "TestJobsCompleteFailureIsReported",
         JOBS_COMPLETE_FAILURE_EXPECTED,
+    )
+}
+
+/// Eight: the crashed attempt left no terminal line, the checkpoints list
+/// newest first, a torn checkpoint is skipped, the relaunch starts (not
+/// attaches) from step 4, its hello says so, it finishes, and driver.json
+/// names the checkpoint. Fixed by the test, not by the tree's size.
+pub const AI_TRAIN_RESUME_EXPECTED: u64 = 8;
+
+pub fn ai_train_resumes_from_the_newest_checkpoint(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestTrainResumesFromNewestVerifiedCheckpoint",
+        AI_TRAIN_RESUME_EXPECTED,
     )
 }
 

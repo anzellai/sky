@@ -298,18 +298,48 @@ type alias AiModel =
     , reports : List AiReportLink
     }
 
+-- One Std.Ai.Train run (`aiTrainRun` in runtime-go/rt/ai_train_console.go):
+-- its status, steps, latest losses, relaunches and the registered version.
+-- `loss` / `valLoss` are Nothing before the trainer reports one. `losses` and
+-- `valLosses` are the curve values in step order (at most 200 points each);
+-- the runtime sends them as [step, value] pairs and the console keeps the
+-- values. A row holds no dataset text.
+type alias AiTrainingRun =
+    { run : String
+    , status : String
+    , backend : String
+    , step : Int
+    , totalSteps : Int
+    , loss : Maybe Float
+    , valLoss : Maybe Float
+    , relaunches : Int
+    , resumedFrom : Int
+    , lastCheckpoint : Int
+    , message : String
+    , registered : String
+    , losses : List Float
+    , valLosses : List Float
+    }
+
 type alias AiData =
     { slots : List AiSlot
     , engines : List AiEngine
     , calls : List AiCall
     , evals : List AiEval
     , registry : List AiModel
+    , training : List AiTrainingRun
     }
 
 
 emptyAiData : AiData
 emptyAiData =
-    { slots = [], engines = [], calls = [], evals = [], registry = [] }
+    { slots = []
+    , engines = []
+    , calls = []
+    , evals = []
+    , registry = []
+    , training = []
+    }
 
 -- The AI panel's controls. `failedOnly` and `slot` filter the recent
 -- calls on the server (`calls=failed`, `slot=<name>`); `openEval` is the

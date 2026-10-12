@@ -11,12 +11,13 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets and the model registry (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry) (unreleased)
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals, datasets, the model registry and adapter training (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset, Std.Ai.Registry, Std.Ai.Train) (unreleased)
 
-Phase 1 and phase 2 (the dataset part and the registry part) of the Std.Ai
-lifecycle design (`docs/design/std-ai-lifecycle.md`). The user guides are
-`docs/ai/local.md`, `docs/ai/eval.md`, `docs/ai/dataset.md` and
-`docs/ai/registry.md`.
+Phase 1, phase 2 (the dataset part and the registry part) and phase 3 (local
+training and GGUF export) of the Std.Ai lifecycle design
+(`docs/design/std-ai-lifecycle.md`). The user guides are `docs/ai/local.md`,
+`docs/ai/eval.md`, `docs/ai/dataset.md`, `docs/ai/registry.md` and
+`docs/ai/train.md`.
 
 ### Added
 
@@ -260,6 +261,106 @@ lifecycle design (`docs/design/std-ai-lifecycle.md`). The user guides are
   back and read the lineage, with no model and no network; its test serves the
   promoted adapter through a slot in test mode.
 
+#### Std.Ai.Train (phase 3)
+
+- **`Std.Ai.Train`: fine-tune a LoRA or QLoRA adapter from Sky code.**
+  `lora base version` (chat rows) and `loraOnInstructions base version`
+  (instruction rows) take a frozen `Dataset.Version`, so the lineage is fixed
+  by the type. Builders `withName`, `withQuantisedBase`, `withRank` (8),
+  `withAlpha` (twice the rank), `withLayers` (16), `withTargets` (the four
+  attention projections), `withLearningRate` (1e-4), `withEpochs` (1),
+  `withMaxSteps`, `withBatch` (4 rows), `withSequenceLength` (1024),
+  `withSeed` (0), `withCheckpointEvery` (100), `withEvalEvery` (50),
+  `withBackend`, `withGgufExport`, `withMergedExport`, `withWorkDir`
+  (`.sky/ai/runs`), `withRegistry`, `withMaxRelaunches` (3) and
+  `withWatchWindow`. `check` refuses a bad setting (`InvalidSetting`) and an
+  empty train or eval split (`DatasetInvalid`) without I/O. The run's id is
+  the name and the digest of the job's canonical JSON, so the same job is the
+  same run.
+- **Base models.** `baseModel`, `withWeights` and `withServing` pin a Hugging
+  Face snapshot per backend (a repository at one commit, with the SHA-256 of
+  every file) and the GGUF model that serves the adapter. `devBase` is
+  Qwen2.5 0.5B Instruct: the `mlx-community` 4-bit snapshot for Mlx, the
+  `unsloth` bnb 4-bit snapshot for Unsloth, served on `Local.devModel`.
+- **Backends `Mlx`, `Unsloth` and `Fake`.** The backend is not in the code:
+  `SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`) wins over `withBackend`,
+  which wins over detection (Mlx on Apple silicon, Unsloth on Linux with an
+  NVIDIA GPU). A host that cannot run the backend is `NoAccelerator`, never a
+  fallback. `vertex` and `sagemaker` are `InvalidSetting` (phase 4). One
+  Sky-shipped driver runs every backend with its own loop, data order,
+  protocol and safetensors checkpoints: MLX-LM as a library with Adam, Unsloth
+  core with `FastLanguageModel`, `get_peft_model` and AdamW, and a
+  standard-library Fake that writes a real no-op adapter.
+- **Managed Python toolchains.** `provision backend` (`sky ai provision --train
+  mlx|unsloth|fake`) installs a pinned uv 0.12.16, a pinned CPython 3.12.14
+  (python-build-standalone 20260924) and a virtual environment from a hash
+  lock (`uv pip sync --require-hashes --only-binary :all:`) under the AI home,
+  with a cleared environment, a self-check, an SBOM and an id that is the
+  digest of every pinned input. The Mlx lock pins 34 packages (mlx 0.32.2,
+  mlx-lm 0.31.3, transformers 5.17.0). The Unsloth lock targets Linux x86_64
+  with CUDA 13 (NVIDIA driver 580 or newer). `scripts/ai/lock-toolchains.sh`
+  makes the locks. With fetching off, a missing toolchain or base is
+  `NotProvisioned`, naming the command. `provisionBase` and
+  `toolchainStatus`.
+- **`plan` and `estimateMemory`.** `plan` checks the job, resolves the backend,
+  reads the host and the serving model's shape, and refuses a job that will
+  not fit (`ModelTooLarge`) before anything is downloaded. The estimate is a
+  documented formula on the high side.
+- **A durable training workflow.** `workflow`, `workflows`, `start`, `poll` and
+  `drive` run the steps resolve, stage, toolchain, base, shape, launch, watch,
+  collect, convert, merge and register as `Std.Durable` steps. The trainer is a
+  detached process in its own session, so it outlives the program that
+  started it (a Ctrl-C in `sky ai train` detaches the watcher only), and its
+  launch token keeps a recycled pid from being attached to. A trainer that dies
+  is relaunched from its newest checkpoint whose files match its manifest, up
+  to `withMaxRelaunches` times, and reads exactly the batches the first run
+  would have read. Each watch lasts at most five minutes, so no step outlives
+  its lease.
+- **Checkpoints, cancel and resume.** A checkpoint is
+  `checkpoints/<step>/` with the adapter and the optimiser state as
+  safetensors, a state file and a manifest of digests, written to a temporary
+  directory and renamed. `cancel` writes a cancel file and sends SIGTERM to the
+  trainer's process group (SIGKILL after 60 s), and the run ends with the new
+  failure `TrainingCancelled`. `resume` starts a failed or cancelled run again
+  from its newest checkpoint. A run that fails is `TrainingFailed` (new).
+  `progress`, `result`, `runs` and the `...At` forms read the run directory.
+- **The driver protocol.** One JSON line per event (`hello`, `progress`,
+  `metric`, `checkpoint`, `artefact`, `cancelled`, `done`, `error`) with
+  `"v": 1`, read from a file at an offset. `decodeEvent` skips an unknown type
+  and refuses another version (`ToolchainFailed`). `foldProgress`.
+- **GGUF export in Go.** `withGgufExport` converts the PEFT adapter with a Go
+  converter in the runtime (F32 tensors, the layout llama.cpp writes), so no
+  toolchain carries PyTorch for it. The adapter records
+  `sky.adapter.base_id` and `sky.adapter.serving_sha256`. `withMergedExport`
+  folds it into the serving model with `llama-export-lora` from the pinned
+  engine build. `exportAt` and `sky ai export <run> [--merged]`.
+- **Registration and serving.** `withRegistry` registers the adapter with its
+  lineage (the dataset version and digest, the base, the run). `adapterRef`,
+  `registryAdapter`, `lineage`, `adapterCodec`.
+- **`Local.withAdapter`** loads a GGUF LoRA adapter pinned by its digest with
+  the model, and refuses an adapter converted for another model
+  (`AdapterMismatch`). `sky ai start <slot> --adapter
+  file:<path>#sha256=<hex>`.
+- **`sky ai train`**, `sky ai train status | runs | resume | cancel` and
+  `sky ai export`, each with `--format json`, run by their own bundled program
+  (`sky-bundled/ai-train`), so the engine and registry program stays small.
+- **Test mode simulates the trainer**: no Python, no model, no network, so a
+  program's own `sky test` runs the whole workflow, including a relaunch
+  (`fakeCrashAt`).
+- **The console's AI tab has a Training section**: each run's status, steps,
+  losses, relaunches, checkpoint, registered version and a loss curve, with no
+  dataset text.
+- New variable: `SKY_AI_TRAIN_BACKEND`.
+- `examples/73-ai-train`: a web app that freezes a dataset, trains a support
+  adapter with a live progress bar and loss curve, registers it, points `dev`
+  at it and answers questions with it. Its test trains offline with a killed
+  first trainer and checks the relaunch, the GGUF adapter, the registry and the
+  served name.
+- Measured on an Apple M-series Mac with 16 GB: a direct MLX run of the driver
+  on the dev base (12 steps, 2 rows of 256 tokens, rank 4 on 4 layers, 4-bit
+  base) took 8.5 s with a peak memory footprint of 2.24 GB, and a resume from
+  the step-8 checkpoint gave bit-identical losses and the same adapter digest.
+
 ### Fixed
 
 - **A judge that answers `5` instead of `SCORE: 5` no longer fails every
@@ -273,6 +374,41 @@ lifecycle design (`docs/design/std-ai-lifecycle.md`). The user guides are
 - `docs/tooling/testing.md` said a test-mode HTTP fixture cannot tell two
   requests to the same URL apart by body. It can: `match.bodyContains` has
   been read for some time, and the page now documents it.
+- **Two `sky ai` processes that met a cold cache could break each other's
+  build.** Both built the bundled app in the same directory, and one could
+  delete the source the other was reading ("could not materialise bundled
+  source"). `rust/crates/sky/src/bundled.rs` now builds in a staging directory
+  of its own and renames it into place. The first rename wins, and the other
+  process uses that build.
+- **The GGUF reader dropped float32 metadata values.** A `float32` key (for
+  example a LoRA adapter's `adapter.lora.alpha`) read as no value
+  (`runtime-go/rt/ai_gguf.go`). It now reads as its number.
+- **`Just`, `Ok` and `Err` around the result of a polymorphic function failed
+  `go build`.** `Result.andThen f r |> Just` at a `Maybe (Result Error Rec)`
+  slot passed `sky check`, but the erased `rt.SkyResult[any, any]` reached
+  `rt.Just[rt.SkyResult[…, Main_Rec_R]]` with no narrowing. The constructor
+  argument is now narrowed to the payload type, as a user constructor's is.
+  The same holds for a record whose alias has the same fields as the
+  payload's alias in another module.
+- **A function defined with fewer parameters than its type returned a zero
+  value when passed as a function.** `withRank : Int -> Job -> Job` defined as
+  `withRank n = update (…)` and passed to an `(Int -> Job -> Job)` parameter
+  dropped its second argument at run time, and the next `case` panicked. The
+  compiler now adapts the currying in the emitted Go.
+- **A record-update lambda at an anonymous record type failed `go build`.**
+  `update (\s -> { s | rank = n }) job`, where `update` takes a
+  `{ name : String, rank : Int } -> { name : String, rank : Int }`, now builds,
+  as it already did with a `type alias`.
+- **The runtime function adapter returned a zero value for a curried
+  function.** A Go func of shape `func(int) func(Job) Job` reaching a
+  `func(int, Job) Job` slot through `rt.Coerce` now gets every argument group.
+  A shape that cannot be adapted fails as a classified `CoerceFailure`.
+- **Fewer runtime narrowings in emitted Go.** A union over a type its own
+  module declares stays sealed when another module, the stdlib included,
+  declares the same name. `String.fromInt`, `modBy` and the `Math` functions
+  `round`, `floor`, `ceil`, `sqrt`, `pow`, `sin`, `cos`, `tan` and `log` over
+  typed arguments call the runtime's typed functions. An empty list at a
+  typed slot is built at that type.
 
 ### Tests
 

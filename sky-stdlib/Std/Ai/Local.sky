@@ -14,6 +14,7 @@ module Std.Ai.Local exposing
     , withIdleUnload
     , withEmbeddings
     , withPort
+    , withAdapter
     , Settings
     , settings
     , Fit
@@ -158,6 +159,7 @@ type Gpu
 is `Nothing`; the engine then uses its default (shown on each builder). -}
 type alias Settings =
     { model : String
+    , adapter : Maybe String
     , context : Maybe Int
     , gpu : Maybe Gpu
     , parallel : Maybe Int
@@ -176,6 +178,7 @@ model : ModelRef -> Spec
 model ref =
     Spec
         { model = reference ref
+        , adapter = Nothing
         , context = Nothing
         , gpu = Nothing
         , parallel = Nothing
@@ -225,6 +228,16 @@ withPort n (Spec s) =
     Spec { s | port = Just n }
 
 
+{-| Load a LoRA adapter with the model: a GGUF adapter file pinned by digest,
+`Local.file { path, sha256 }` (`Std.Ai.Train.adapterRef` gives one for a
+trained adapter). The file is hashed before each load. An adapter that
+`Std.Ai.Train` converted records the model it was converted for, and loading
+it on another model fails with `AdapterMismatch`. -}
+withAdapter : ModelRef -> Spec -> Spec
+withAdapter ref (Spec s) =
+    Spec { s | adapter = Just (reference ref) }
+
+
 {-| Read back what a spec holds. -}
 settings : Spec -> Settings
 settings (Spec s) =
@@ -234,6 +247,7 @@ settings (Spec s) =
 -- (which means something for idle unload and port) is kept.
 type alias RawSpec =
     { model : String
+    , adapter : String
     , context : Int
     , gpu : String
     , parallel : Int
@@ -246,6 +260,7 @@ type alias RawSpec =
 raw : Spec -> RawSpec
 raw (Spec s) =
     { model = s.model
+    , adapter = Maybe.withDefault "" s.adapter
     , context = Maybe.withDefault (-1) s.context
     , gpu = Maybe.withDefault "" (Maybe.map gpuText s.gpu)
     , parallel = Maybe.withDefault (-1) s.parallel
