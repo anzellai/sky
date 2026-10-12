@@ -48,6 +48,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -1254,18 +1255,35 @@ const (
 	logLevelError = 3
 )
 
+// logThreshold and logJSON are atomics because the env-prefix refresh hooks
+// write them while other goroutines log: the hooks run from SetSkyDefault and
+// SetEnvPrefix (generated init) and from ApplyConfig, which
+// `Sky.Config.apply` (Config_apply) calls from a running Task. A plain int and
+// bool here were a data race with every concurrent log line.
 var (
-	logThreshold = logLevelFromEnv()
-	logJSON      = skyGetenv("LOG_FORMAT") == "json"
+	logThreshold = atomicInt32Of(logLevelFromEnv())
+	logJSON      = atomicBoolOf(skyGetenv("LOG_FORMAT") == "json")
 )
+
+func atomicInt32Of(v int) *atomic.Int32 {
+	a := new(atomic.Int32)
+	a.Store(int32(v))
+	return a
+}
+
+func atomicBoolOf(v bool) *atomic.Bool {
+	a := new(atomic.Bool)
+	a.Store(v)
+	return a
+}
 
 // Re-read log config when the env prefix changes (compiler-emitted
 // rt.SetEnvPrefix runs in main.init(), AFTER these package-level
 // vars were first evaluated against the default "SKY" prefix).
 func init() {
 	onEnvPrefixChange(func() {
-		logThreshold = logLevelFromEnv()
-		logJSON = skyGetenv("LOG_FORMAT") == "json"
+		logThreshold.Store(int32(logLevelFromEnv()))
+		logJSON.Store(skyGetenv("LOG_FORMAT") == "json")
 	})
 }
 
@@ -1283,7 +1301,7 @@ func logLevelFromEnv() int {
 }
 
 func logEmit(level int, levelName string, msg string, ctx any) {
-	if level < logThreshold {
+	if int32(level) < logThreshold.Load() {
 		return
 	}
 	now := time.Now()
@@ -1338,7 +1356,7 @@ func logEmit(level int, levelName string, msg string, ctx any) {
 	// tag: the push exporter is server-only (observability_push.go is
 	// //go:build !js), so under js/wasm this is a no-op.
 	pushLogEntryToParent(entry)
-	if logJSON {
+	if logJSON.Load() {
 		entryMap := map[string]any{
 			"time":  ts,
 			"level": levelName,

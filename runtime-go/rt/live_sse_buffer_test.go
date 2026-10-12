@@ -50,8 +50,8 @@ func withUnsetEnv(t *testing.T, name string) {
 func TestSseChanBuffer_DefaultIs16(t *testing.T) {
 	withUnsetEnv(t, "SKY_LIVE_SSE_BUFFER")
 	loadSseChanBuffer()
-	if sseChanBuffer != 16 {
-		t.Fatalf("default sseChanBuffer: want 16, got %d", sseChanBuffer)
+	if sseBufferSize() != 16 {
+		t.Fatalf("default sseChanBuffer: want 16, got %d", sseBufferSize())
 	}
 }
 
@@ -60,14 +60,14 @@ func TestSseChanBuffer_DefaultIs16(t *testing.T) {
 func TestSseChanBuffer_EnvOverride(t *testing.T) {
 	t.Setenv("SKY_LIVE_SSE_BUFFER", "4")
 	loadSseChanBuffer()
-	if sseChanBuffer != 4 {
-		t.Fatalf("SKY_LIVE_SSE_BUFFER=4: want 4, got %d", sseChanBuffer)
+	if sseBufferSize() != 4 {
+		t.Fatalf("SKY_LIVE_SSE_BUFFER=4: want 4, got %d", sseBufferSize())
 	}
 	// And the value flows to channel creation. Direct construction
 	// here because the production code paths require a full liveApp
 	// to exercise; the per-call capacity assertion is sufficient to
 	// pin the value-flow contract.
-	ch := make(chan sseFrame, sseChanBuffer)
+	ch := make(chan sseFrame, sseBufferSize())
 	if cap(ch) != 4 {
 		t.Fatalf("chan capacity from env: want 4, got %d", cap(ch))
 	}
@@ -80,24 +80,24 @@ func TestSseChanBuffer_ClampLow(t *testing.T) {
 	loadSseChanBuffer()
 	// "0" → parsePositiveInt-style fallback to default. Refusing 0
 	// outright matches every other live_* env-knob.
-	if sseChanBuffer != 16 {
-		t.Fatalf("SKY_LIVE_SSE_BUFFER=0: want fallback to 16, got %d", sseChanBuffer)
+	if sseBufferSize() != 16 {
+		t.Fatalf("SKY_LIVE_SSE_BUFFER=0: want fallback to 16, got %d", sseBufferSize())
 	}
 }
 
 func TestSseChanBuffer_ClampHigh(t *testing.T) {
 	t.Setenv("SKY_LIVE_SSE_BUFFER", "9999")
 	loadSseChanBuffer()
-	if sseChanBuffer != 1024 {
-		t.Fatalf("SKY_LIVE_SSE_BUFFER=9999: want clamp to 1024, got %d", sseChanBuffer)
+	if sseBufferSize() != 1024 {
+		t.Fatalf("SKY_LIVE_SSE_BUFFER=9999: want clamp to 1024, got %d", sseBufferSize())
 	}
 }
 
 func TestSseChanBuffer_BogusFallback(t *testing.T) {
 	t.Setenv("SKY_LIVE_SSE_BUFFER", "not-a-number")
 	loadSseChanBuffer()
-	if sseChanBuffer != 16 {
-		t.Fatalf("SKY_LIVE_SSE_BUFFER=bogus: want fallback to 16, got %d", sseChanBuffer)
+	if sseBufferSize() != 16 {
+		t.Fatalf("SKY_LIVE_SSE_BUFFER=bogus: want fallback to 16, got %d", sseBufferSize())
 	}
 }
 
@@ -110,15 +110,15 @@ func TestSseChanBuffer_PrefixHookReloads(t *testing.T) {
 	withUnsetEnv(t, "SKY_LIVE_SSE_BUFFER")
 	t.Setenv("FENCE_LIVE_SSE_BUFFER", "32")
 	SetEnvPrefix("FENCE")
-	if sseChanBuffer != 32 {
-		t.Fatalf("after SetEnvPrefix(FENCE) + FENCE_LIVE_SSE_BUFFER=32: want 32, got %d", sseChanBuffer)
+	if sseBufferSize() != 32 {
+		t.Fatalf("after SetEnvPrefix(FENCE) + FENCE_LIVE_SSE_BUFFER=32: want 32, got %d", sseBufferSize())
 	}
 	// Restore default prefix; the unset SKY_LIVE_SSE_BUFFER should
 	// drop the buffer back to the default. Pins that the hook
 	// re-runs in BOTH directions.
 	SetEnvPrefix("SKY")
-	if sseChanBuffer != 16 {
-		t.Fatalf("after SetEnvPrefix(SKY) with unset env: want default 16, got %d", sseChanBuffer)
+	if sseBufferSize() != 16 {
+		t.Fatalf("after SetEnvPrefix(SKY) with unset env: want default 16, got %d", sseBufferSize())
 	}
 }
 
@@ -176,7 +176,7 @@ func TestRunPerformBody_DropIncrementsCounter(t *testing.T) {
 	app := dropCounterApp(bumpView)
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan sseFrame, sseChanBuffer),
+		sseCh:     make(chan sseFrame, sseBufferSize()),
 		model:     "initial",
 		sid:       sid,
 	}
@@ -215,7 +215,7 @@ func TestDispatchBatched_DropIncrementsCounter(t *testing.T) {
 	})
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
-		sseCh:     make(chan sseFrame, sseChanBuffer),
+		sseCh:     make(chan sseFrame, sseBufferSize()),
 		model:     "initial",
 		sid:       sid,
 		handlers:  map[string]any{},
@@ -277,7 +277,7 @@ func TestSetupSubscriptions_TickDropIncrementsCounter(t *testing.T) {
 	sess := &liveSession{
 		cancelSub: make(chan struct{}),
 		done:      make(chan struct{}),
-		sseCh:     make(chan sseFrame, sseChanBuffer),
+		sseCh:     make(chan sseFrame, sseBufferSize()),
 		model:     "initial",
 		sid:       sid,
 	}

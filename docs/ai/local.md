@@ -301,7 +301,7 @@ answers both kinds.
 | `sky ai provision [--variant cpu\|metal] [--dev-model] [--model <ref>]` | `Local.provision ()`, then `Local.fetch` for each model |
 | `sky ai pull <org>/<repo> <file>` | `Local.pull`; prints the `Local.huggingFace { … }` value with its digest |
 | `sky ai ps [--all]` | `Local.engines ()`: running and orphaned engines (`--all` adds stale entries) |
-| `sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]` | `Endpoint.warm`, then holds the engine until Ctrl-C or `sky ai stop` |
+| `sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]` | `Endpoint.warm`, then holds the engine until Ctrl-C, SIGTERM or `sky ai stop`; each stops the engine and removes its `engines.json` entry |
 | `sky ai stop <slot>` / `--all` | `Local.stopSlot` |
 | `sky ai promote <name> <version> --to <alias>` | `Registry.promoteChecked` (`--force --reason`, `--expect`, `--min-pass-rate`; [`registry.md`](registry.md)) |
 | `sky ai rollback <name>@<alias>` | `Registry.rollback` |
@@ -313,6 +313,21 @@ builds a bundled Sky program (`sky-bundled/ai`) once per Sky build and runs it,
 and the program calls the API above. `sky ai start` uses `Local.devModel`
 unless `--model` (or the slot's `SKY_AI_<SLOT>_MODEL`) names another model.
 A program whose slot has the same model and settings uses the held engine.
+
+Stopping. Ctrl-C (SIGINT) or SIGTERM on `sky ai start` stops the engine,
+removes its `engines.json` entry and exits 130 or 143. `sky ai stop <slot>`
+sends the holder SIGTERM, so it ends the same way. A second Ctrl-C during that
+cleanup exits at once. Any program that starts a local engine (or a
+`Process.spawn` child) gets the same handling, unless a Sky.Live, HTTP or
+terminal app in it already owns the signals: its shutdown then stops the
+engine. An engine whose holder was killed outright (SIGKILL) is ended by the
+next program that starts an engine on the machine.
+
+The start proves the engine it waits for is its own. `/health` needs no key,
+so a 200 there proves only that something listens on the port. The engine
+must also accept the launch's fresh API key on `/props` and refuse any other
+key. Another process on the port (always possible with a fixed
+`Local.withPort`) fails the start with `EngineFailed`, naming the port.
 
 ## Registry adapters
 

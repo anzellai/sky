@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -967,6 +968,41 @@ func TestAiStopSlotEndsAnOrphanedEngine(t *testing.T) {
 	}
 }
 
+// The exit path of a program (killAllChildProcesses, from generated main's
+// defer, ExitProcess and the shutdown drain) stops its engines as engines
+// BEFORE it kills the children. Before, it killed the engine like any other
+// child: the supervisor saw an unexpected exit, counted a crash (in
+// production: exited the app; in development: queued a restart), and only
+// its goroutine removed the registry entry, in a race with the process exit.
+// When the process won, `engines.json` kept an entry for an engine that was
+// gone (ai_cli_flow.rs endpoint test, about 1 run in 35 under load).
+func TestAiExitPathStopsEnginesBeforeKillingChildren(t *testing.T) {
+	dir, model := aiTestEnv(t, nil)
+	s := localSlot(t, model, nil)
+	if _, err := s.post("/chat/completions", chatBody("x")); err != nil {
+		t.Fatal(err)
+	}
+	pid := s.engine.pid
+	killAllChildProcesses()
+	// The process would end here: what is on disk now is what it leaves.
+	if list := aiRegistryList(); len(list) != 0 {
+		t.Fatalf("the exit path left registry entries: %v", list)
+	}
+	if !aiWaitGone(pid, 5*time.Second) {
+		t.Fatal("the exit path left the engine running")
+	}
+	// The stop was intentional: no crash is recorded and nothing restarts.
+	time.Sleep(300 * time.Millisecond)
+	st := s.engine.status().(map[string]any)
+	if st["state"] != "stopped" || st["lastCrash"] != "" {
+		t.Fatalf("the exit path was taken for a crash: %v", st)
+	}
+	launch, _ := os.ReadFile(filepath.Join(dir, "launches.log"))
+	if n := strings.Count(string(launch), "\n"); n != 1 {
+		t.Fatalf("%d launches, want 1", n)
+	}
+}
+
 // A holder killed without running its exit path (SIGKILL, SIGPIPE) leaves its
 // engine running in its own process group. The next program that starts an
 // engine ends it, and only it: an entry whose pid now names another process
@@ -1123,5 +1159,37 @@ func TestAiDownloadResumesAPartialFile(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(dest); !bytes.Equal(b, payload) {
 		t.Fatal("the resumed file differs")
+	}
+}
+
+// TestAiForeignListenerOnTheEnginePortIsEngineFailed is the regression for a
+// start that accepted another process as its engine. /health needs no key,
+// so with a fixed port (`Local.withPort`) any server already listening there
+// answered the readiness check, the engine that could not bind exited unseen,
+// and every call went to the foreign server. The readiness check must prove
+// the listener is the engine this program started: it must accept the
+// launch's fresh key and refuse any other. A listener that does not is an
+// EngineFailed start.
+func TestAiForeignListenerOnTheEnginePortIsEngineFailed(t *testing.T) {
+	_, model := aiTestEnv(t, nil)
+	// A keyless server that answers every path with 200, as a llama-server
+	// started without --api-key does.
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/chat/completions" {
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"foreign"}}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer foreign.Close()
+	port := foreign.Listener.Addr().(*net.TCPAddr).Port
+	s := localSlot(t, model, func(b *aiEndpointBuilder) { b.local.port = port })
+	out, err := s.post("/chat/completions", chatBody("x"))
+	if failCode(err) != aiEngineFailed {
+		t.Fatalf("a foreign listener on the engine port was accepted as the engine: out=%q err=%v", out, err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(port)) {
+		t.Fatalf("the failure does not name the port: %v", err)
 	}
 }

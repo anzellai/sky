@@ -96,3 +96,9 @@ func procKillVerified(p procInfo) {
 	}
 	_ = syscall.Kill(p.pid, procKillSignal)
 }
+
+// procIsZombie reports whether pid has exited but is not reaped yet (SZOMB).
+func procIsZombie(pid int) bool {
+	k, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	return err == nil && int(k.Proc.P_pid) == pid && k.Proc.P_stat == 5 // SZOMB
+}

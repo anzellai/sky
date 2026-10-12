@@ -595,6 +595,9 @@ func serverListenRun(port any, routes any) any {
 	// signal. Still install a SIGINT/SIGTERM/SIGHUP handler so the
 	// server closes gracefully (drains in-flight requests) rather
 	// than dropping connections.
+	// The drain below ends the children, so this handler owns the
+	// termination sequence while it is installed (child_signal.go).
+	releaseSignals := acquireSignalOwner()
 	srvSigCh := make(chan os.Signal, 2)
 	signal.Notify(srvSigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
@@ -612,6 +615,7 @@ func serverListenRun(port any, routes any) any {
 	printStartupReport(p) // see startup_report.go — added under, never in place of
 	err := srv.ListenAndServe()
 	signal.Stop(srvSigCh)
+	releaseSignals()
 	// If the listener closed because the embedded-PostgreSQL supervisor is
 	// mid-shutdown, returning here would let main exit and take the database
 	// down with a kill instead of a clean stop. It exits the process itself

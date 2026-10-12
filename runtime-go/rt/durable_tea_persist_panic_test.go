@@ -60,6 +60,13 @@ func TestDurablePersist_PanicSuspendsTheRunAndKeepsTheProcess(t *testing.T) {
 	if !d.isSuspended("sid-c1c") {
 		t.Fatal("a persist that panicked did not suspend its run")
 	}
+	// The run is marked suspended BEFORE the panic is logged, inside the
+	// persist goroutine, which holds the run's stripe until it returns. Take
+	// the stripe so the goroutine has finished (the log line written) before
+	// the log is read, and so it does not outlive this test.
+	stripe := durableStripe("sid-c1c")
+	stripe.Lock()
+	stripe.Unlock()
 	logs := durablePanicLogs(marker)
 	if len(logs) != 1 || logs[0].Fields["panicKind"] != "JsonEncodeFailure" {
 		t.Fatalf("want one JsonEncodeFailure panic log, got %d: %+v", len(logs), logs)

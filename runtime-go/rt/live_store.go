@@ -1919,7 +1919,7 @@ func decodeSession(blob []byte) (*liveSession, error) {
 		boundAt:       st.BoundAt,
 		prevTree:      nil, // rebuilt on next render via handleEvent
 		handlers:      map[string]any{},
-		sseCh:         make(chan sseFrame, sseChanBuffer),
+		sseCh:         make(chan sseFrame, sseBufferSize()),
 		cancelSub:     make(chan struct{}),
 		// Cycle 3 P36 / Gap C4: provision the terminal-teardown
 		// channel so persistent-store rehydrates can also be cleanly

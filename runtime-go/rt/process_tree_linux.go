@@ -112,3 +112,18 @@ func procStartTime(pid int) uint64 {
 	}
 	return 0
 }
+
+// procIsZombie reports whether pid has exited but is not reaped yet: state
+// Z (zombie) or X (dead) in /proc/<pid>/stat.
+func procIsZombie(pid int) bool {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	i := bytes.LastIndexByte(b, ')')
+	if i < 0 || i+2 >= len(b) {
+		return false
+	}
+	f := strings.Fields(string(b[i+2:]))
+	return len(f) > 0 && (f[0] == "Z" || f[0] == "X")
+}

@@ -1,7 +1,7 @@
 // Command fakellama is a stand-in for llama-server in the Std.Ai.Local tests.
 //
 // It accepts the launch arguments the supervisor passes, serves /health,
-// /v1/chat/completions and /v1/embeddings behind the API key from
+// and /props, /v1/chat/completions and /v1/embeddings behind the API key from
 // --api-key-file, and misbehaves on request through a `fake.json` file in
 // its own directory, so a test can drive a crash, a slow start or a slow
 // answer without a real model:
@@ -119,6 +119,15 @@ func main() {
 			return
 		}
 		fmt.Fprint(w, `{"status":"ok"}`)
+	})
+	// /props needs the key, as on llama-server (only /health is public).
+	mux.HandleFunc("/props", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(r) {
+			w.WriteHeader(401)
+			fmt.Fprint(w, `{"error":{"message":"Invalid API Key","type":"authentication_error","code":401}}`)
+			return
+		}
+		fmt.Fprint(w, `{"default_generation_settings":{},"total_slots":1}`)
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		if !authed(r) {

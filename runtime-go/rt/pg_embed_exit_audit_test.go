@@ -56,6 +56,9 @@ import (
 var exitAuditAllowed = map[string]string{
 	"pg_embed.go":      "defines ExitProcess; its other exits fire when the database is already gone",
 	"panic_recover.go": "runs as main's FIRST defer, so StopEmbeddedPostgres (registered second) has already run",
+	"child_signal.go": "the second-signal force exit runs only while no signal owner is registered, and an embedded " +
+		"database's supervisor is always one (installSignalHandler runs whenever a supervisor starts), so there is no " +
+		"database to stop; its first signal leaves through ExitProcess",
 }
 
 // exitAuditBanned are the process-ending members, per package. syscall.Exit is

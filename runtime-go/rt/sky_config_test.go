@@ -205,12 +205,12 @@ func TestBehaviouralOracleLegacyVsMigratedLogFormat(t *testing.T) {
 	effectiveJSONUnderLegacy := func() bool {
 		resetEnvFor(t, suffix)
 		seedLegacy(suffix, "json") // the sky.toml path
-		return logJSON
+		return logJSON.Load()
 	}
 	effectiveJSONUnderMigrated := func() bool {
 		resetEnvFor(t, suffix)
 		applyWithLogFormat("json") // the withX path
-		return logJSON
+		return logJSON.Load()
 	}
 
 	legacy := effectiveJSONUnderLegacy()
@@ -229,10 +229,10 @@ func TestBehaviouralOracleLegacyVsMigratedLogFormat(t *testing.T) {
 	// is not vacuously true (both always JSON).
 	resetEnvFor(t, suffix)
 	seedLegacy(suffix, "text")
-	legacyText := logJSON
+	legacyText := logJSON.Load()
 	resetEnvFor(t, suffix)
 	applyWithLogFormat("text")
-	migratedText := logJSON
+	migratedText := logJSON.Load()
 	if legacyText || migratedText {
 		t.Fatalf("format=text must disable JSON on both paths; legacy=%v migrated=%v",
 			legacyText, migratedText)

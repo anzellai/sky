@@ -11,11 +11,12 @@ import (
 // evaluated, so without the re-sync a `[log] format = "json"` seed was ignored.
 func TestSetSkyDefaultResyncsLogConfig(t *testing.T) {
 	// Save + restore the globals + env this test perturbs.
-	origJSON, origThreshold := logJSON, logThreshold
+	origJSON, origThreshold := logJSON.Load(), logThreshold.Load()
 	origEnv, hadEnv := os.LookupEnv("SKY_LOG_FORMAT")
 	origLvl, hadLvl := os.LookupEnv("SKY_LOG_LEVEL")
 	t.Cleanup(func() {
-		logJSON, logThreshold = origJSON, origThreshold
+		logJSON.Store(origJSON)
+		logThreshold.Store(origThreshold)
 		if hadEnv {
 			os.Setenv("SKY_LOG_FORMAT", origEnv)
 		} else {
@@ -31,17 +32,17 @@ func TestSetSkyDefaultResyncsLogConfig(t *testing.T) {
 	// Simulate the pre-init state: unset env, vars captured as plain/info.
 	os.Unsetenv("SKY_LOG_FORMAT")
 	os.Unsetenv("SKY_LOG_LEVEL")
-	logJSON = false
-	logThreshold = logLevelInfo
+	logJSON.Store(false)
+	logThreshold.Store(logLevelInfo)
 
 	// The generated init() seeds the sky.toml defaults via SetSkyDefault.
 	SetSkyDefault("LOG_FORMAT", "json")
 	SetSkyDefault("LOG_LEVEL", "debug")
 
-	if !logJSON {
+	if !logJSON.Load() {
 		t.Fatalf("SetSkyDefault(LOG_FORMAT, json) did not re-sync logJSON (still plain)")
 	}
-	if logThreshold != logLevelDebug {
-		t.Fatalf("SetSkyDefault(LOG_LEVEL, debug) did not re-sync logThreshold, got %d", logThreshold)
+	if logThreshold.Load() != logLevelDebug {
+		t.Fatalf("SetSkyDefault(LOG_LEVEL, debug) did not re-sync logThreshold, got %d", logThreshold.Load())
 	}
 }

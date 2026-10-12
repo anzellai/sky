@@ -14,3 +14,6 @@ func procSnapshot() ([]procInfo, error)                { return nil, errNoProces
 func procEnvValue(pid int, name string) (string, bool) { return "", false }
 func procStartTime(pid int) uint64                     { return 0 }
 func procKillVerified(p procInfo)                      {}
+
+// procIsZombie: no process listing here, so a zombie cannot be told apart.
+func procIsZombie(pid int) bool { return false }
