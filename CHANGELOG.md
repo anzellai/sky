@@ -347,6 +347,16 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   This is compatibility for projects that still keep these tables: settings
   belong in code (`Sky.Config.withDatabase` and the other `withX` builders),
   with the operator's variable winning, and the split carries code as it is.
+- **A Sky.Spa split backend ignored the app's code configuration.** The
+  `--target web:app` synthesis dropped `App.withConfig` and `App.withBase`, so
+  the backend took its session store, TTL and CSRF switch only from
+  `sky.toml` `[live]` or the environment, and its log, database and telemetry
+  from `sky.toml`. Both builders are now carried into a `spaServerConfig_`
+  boot task (`App.applyServerConfig`, new) that the backend runs before it
+  listens, in the builder layer: operator env > code > default, as in the
+  Sky.Live build. The boot line names `App.withConfig` as the store's source
+  (`Spa_applyServerSettings`; test
+  `a_spa_backend_honours_the_store_the_app_names_with_with_config`).
 - **`sky ai rollback` and `sky ai lineage` read the database from `sky.toml`.**
   The CLI passed the project's `[database]` path or url to the bundled
   program. In a project with a pipeline (`src/Ai.sky`) these verbs now run

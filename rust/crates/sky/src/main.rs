@@ -2150,6 +2150,14 @@ struct AppFields {
     /// `Server.setConsoleAuth` before `Server.listen`. It is server-only: the
     /// console is mounted by the backend, and the wasm client never calls it.
     console_auth: Option<String>,
+    /// `App.withConfig` arguments (in order) and the last `App.withBase`
+    /// argument: the server side of the app's code configuration. Carried
+    /// into a `spaServerConfig_` boot task the split backend runs before it
+    /// listens (`App.applyServerConfig`), so the backend honours the session
+    /// store, TTL, CSRF switch, log, database and telemetry the code names, as
+    /// the Sky.Live build does (operator env > code > default).
+    server_configs: Vec<String>,
+    server_base: Option<String>,
     /// `App.withClientCrypto` — the typed opt-in that keeps end-to-end key
     /// material (Std.Crypto.Noise / Cpace / Kx / Sign / Kdf) in the wasm client.
     /// It takes no argument; the synthesis carries it as
@@ -2187,6 +2195,8 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
     "withGuard",
     "withRpcError",
     "withConsoleAuth",
+    "withConfig",
+    "withBase",
 ];
 
 /// `Std.App` builders that do not apply to a Sky.Spa client build: terminal /
@@ -2195,11 +2205,9 @@ const SPA_CARRIED_BUILDERS: &[&str] = &[
 /// durable-model hooks. Reported by name as a warning, never silent. Any
 /// `with…` builder in NEITHER list fails the build (fail closed).
 const SPA_IGNORED_BUILDERS: &[&str] = &[
-    "withConfig",
     "withInput",
     "withWindow",
     "withOnKey",
-    "withBase",
     "withDurable",
     "withDurableId",
 ];
@@ -2263,6 +2271,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
     let (mut on_navigate, mut on_request, mut guard) = (None, None, None);
     let mut rpc_error = None;
     let mut console_auth = None;
+    let mut server_configs: Vec<String> = Vec::new();
+    let mut server_base: Option<String> = None;
     let mut client_crypto = false;
     let mut dropped_builders: Vec<String> = Vec::new();
     for step in &value.steps {
@@ -2323,6 +2333,12 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
             "withGuard" => guard = Some(place("guard", arg)),
             "withRpcError" => rpc_error = Some(place("rpcError", arg)),
             "withConsoleAuth" => console_auth = Some(place("consoleAuth", arg)),
+            // Server-side code configuration (see `AppFields::server_configs`).
+            "withConfig" => {
+                let n = server_configs.len();
+                server_configs.push(place(&format!("config{n}"), arg));
+            }
+            "withBase" => server_base = Some(place("base", arg)),
             _ => unreachable!("carried builder list and match disagree: {name}"),
         }
     }
@@ -2339,6 +2355,8 @@ fn extract_app_fields(src: &str) -> Result<AppFields, String> {
         guard,
         rpc_error,
         console_auth,
+        server_configs,
+        server_base,
         client_crypto,
         dropped_builders,
         hoisted,
@@ -2975,9 +2993,10 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
             "sky build --target <spa>: warning: {n} `App.with…` builder step(s) were NOT carried \
              into the synthesised client entry: {list}.\n  \
              `withRoutes` + `withNotFound` + `withHead` + `withOnNavigate` + `withRequest` + \
-             `withGuard` + `withRpcError` + `withConsoleAuth` cross the App→Spa synthesis \
-             (guard/request/console auth enforced server-side). The steps listed here (terminal / desktop input and window \
-             knobs, per-target config, base config, durable-model hooks) do not apply to a \
+             `withGuard` + `withRpcError` + `withConsoleAuth` + `withConfig` + `withBase` cross \
+             the App→Spa synthesis (guard/request/console auth and the code configuration \
+             enforced server-side). The steps listed here (terminal / desktop input and window \
+             knobs, durable-model hooks) do not apply to a \
              Sky.Spa client build; any other `App.with…` step fails the build.",
             n = fields.dropped_builders.len(),
             list = fields.dropped_builders.join(", "),
@@ -3204,6 +3223,24 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
     // dispatches into `update`, so a failed RPC reaches the app's own error
     // handling instead of being silently kept. Emitted only when the app
     // declares it; the default keeps the loud-log floor.
+    // Carry `App.withConfig` / `App.withBase` (configuration is code). A NAMED
+    // `spaServerConfig_` task the split backend runs at boot, before it
+    // listens; it reaches a server-only kernel, so the split keeps it out of
+    // the wasm client.
+    let server_config_binding = if fields.server_configs.is_empty() && fields.server_base.is_none()
+    {
+        String::new()
+    } else {
+        let aq = fields.import.qualifier_or_default();
+        format!(
+            "spaServerConfig_ =\n    {aq}.applyServerConfig [ {} ] {}\n\n\n",
+            fields.server_configs.join(", "),
+            fields
+                .server_base
+                .clone()
+                .unwrap_or_else(|| format!("{aq}.baseDefaults"))
+        )
+    };
     let rpc_error_binding = match &fields.rpc_error {
         Some(f) => format!("spaRpcError_ =\n    ({f})\n\n\n"),
         None => String::new(),
@@ -3281,6 +3318,7 @@ fn synthesize_spa_source(src: &str, quiet: bool) -> Result<String, String> {
          {guard_binding}\
          {rpc_error_binding}\
          {console_auth_binding}\
+         {server_config_binding}\
          spaSubscriptions_ model_ =\n    ({subscriptions}) model_\n\n\n\
          spaView_ model_ =\n    \
          {spa_view_body}\n\n\n\

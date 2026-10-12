@@ -91,6 +91,7 @@ module Std.App exposing
     , runLive
     , runLiveWindow
     , runSpa
+    , applyServerConfig
     , runTui
     , runCli
     , runWebview
@@ -1266,6 +1267,49 @@ applyBase_ base boot =
 applyWebBase_ : WebOpts -> BaseConfig -> Task Error () -> Task Error ()
 applyWebBase_ w base boot =
     Task.andThen (\_ -> boot) (Config.apply (webBaseToConfig_ w base))
+
+
+-- | Apply the server side of an app's [`withConfig`] / [`withBase`] now: the
+-- [`BaseConfig`] (log, database, telemetry, through `Sky.Config.apply`) and
+-- the web settings a server reads (the session `store`, its `ttl` and
+-- `idleEvict`, `maxBodyBytes`, `csrf`). Each value lands in the same layer as
+-- a `withX` builder, so an operator's variable still wins and a `sky.toml`
+-- default does not. The Sky.Spa split backend runs it at boot: the
+-- `--target web:app` synthesis carries `withConfig` and `withBase` into it,
+-- so a client build honours the code configuration a Sky.Live build does.
+-- `port` is not applied: the split backend listens on `PORT` (default 8951).
+applyServerConfig : List Config -> BaseConfig -> Task Error ()
+applyServerConfig configs base =
+    let
+        w = findWeb configs
+        set suffix value =
+            case value of
+
+                Just v ->
+                    [ ( suffix, v ) ]
+
+                Nothing ->
+                    []
+        settings =
+            set "LIVE_STORE" w.store ++ set "LIVE_TTL" w.ttl
+                ++ set "LIVE_IDLE_EVICT" w.idleEvict
+                ++ set
+                       "LIVE_MAX_BODY_BYTES"
+                       (case w.maxBodyBytes of
+
+                           Just n ->
+                               Just (String.fromInt n)
+
+                           Nothing ->
+                               Nothing)
+    in
+        Config.apply (webBaseToConfig_ w base)
+            |> Task.andThen (\_ -> applyServerSettings_ settings)
+
+
+applyServerSettings_ : List ( String, String ) -> Task Error ()
+applyServerSettings_ =
+    Ffi.kernel "Spa_applyServerSettings"
 
 
 webBaseToConfig_ : WebOpts -> BaseConfig -> Config.Config
