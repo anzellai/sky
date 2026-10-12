@@ -208,20 +208,48 @@
 #   instead of `rt.Coerce` to an unrelated stdlib alias (`Std.Durable.ResultRow`,
 #   `Std.Ai.Provider.RawChoice`); ledger's `addAccount` form parameter is now
 #   `any` because another nominal collects the same three fields and more.
-# ── Recorded transition, 2026-10-12 — merge of the two v0.28.0 phase 2
-#    parts (Std.Ai.Dataset and Std.Ai.Registry) ──
-#   narrow over 6 rows, adapter 0, dispatch 0, every other row unchanged (77 of
-#   80 measured; 05-mux-server, 08-notes-app and 13-skyshop have no generated
-#   FFI surface in this tree). Rows new on one side are measured on the merged
-#   tree: 68-ai-dataset 591 -> 626, 69-ai-scrub 99, 70-ai-synthetic 735 -> 769,
-#   71-ai-registry (was 68-ai-registry) 1040 -> 1057. Two rows that both sides
-#   held at one value rise because the merge joins both sides' code:
-#   sky-bundled/ai 527 (registry side) / 354 (dataset side) -> 734 (both CLI
-#   verb sets in one program), sky-bundled/console 292 -> 330. Each of these
-#   rows imports Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Registry or
-#   Std.Ai.Dataset, which carry both sides' constructors and functions after
-#   the merge. Not traced site by site. 09-live-counter 126, 66-slack-agent
-#   160 and apps/relay 179 measure at the values already recorded here.
+# ── Recorded transition, 2026-10-12 — v0.28.0 Std.Ai lifecycle, traced ──
+#   Measured against origin/main 03d61922f (76 of 80 rows; 03-tea-external,
+#   05-mux-server, 08-notes-app and 13-skyshop are UNMEASURED under
+#   SKY_LIVE_TESTS=skip). adapter 0, dispatch 0. Rows at or below origin/main:
+#   09-live-counter 125 (= origin): the wider-nominal check on an open row
+#     (goty.rs `wider_nominal_could_carry`, doc 14 §9.8, R10/R11) now counts
+#     only record aliases of modules the program loads (lower.rs
+#     `program_type_closure`). `Std.Ai.Eval.ScorerScore { scorer, mean, count }`
+#     no longer widens the unannotated `viewCounter` row `{ count | r }`.
+#   apps/relay 175 (origin 176): `Error.isRetryable` / `domain` / `retryAfter`
+#     are typed runtime kernels (rt/error_kernels.go) reached through
+#     `kernel_typed_return_twin` (lower.rs, R5, lever §5.3): no Sky payload
+#     read of the erased `Sky_Core_Error` ADT, no narrowed kernel return.
+#   Rows new since origin/main (measured here, no origin value):
+#   68-ai-dataset 548, 69-ai-scrub 99, 70-ai-synthetic 696, 71-ai-registry 956,
+#   sky-bundled/ai 656. They fell from 626 / 99 / 769 / 1057 / 734, mostly
+#   because `Std.Ai.Failure` reads each constructor payload once (`facts`, one
+#   match for the message and the attributes, R6) and decodes through
+#   monomorphic helpers instead of `Maybe.map` lambdas (R12 via R1); the Error
+#   kernels and the Provider rewrite below account for the rest.
+#   Rows still above origin/main, per cause:
+#   66-slack-agent 147 (origin 142, +5). The `Std.Ai.Provider` rewrite: the
+#     request body is built with `Json.Encode` so that an unset option is not
+#     sent, where origin used `Codec.toJson` for a fixed shape: the
+#     `JsonEnc_encode` return (R5) and the `JsonE.list messageValue` callback
+#     narrow (R1, erased kernel HOF) are +2. The built-in backends are now one
+#     `Wire` transport, so `embeddingsUrl` is reachable from `chat`:
+#     `String.endsWith` and `String.dropRight` returns (R5) are +2. Decoding
+#     after the transport adds one `Task.andThen` callback narrow (R5) +1. Not
+#     closed now: each needs a typed kernel return (R5, §5.3) for a Json /
+#     String / Task kernel, which is a change to every row.
+#   sky-bundled/console 330 (origin/main 292, recorded but never measured on
+#     either parent; the origin sources measure 276 with this compiler). +54
+#     is the new AI tab (AiTab.sky, State.sky, View.encodeFilters), and no
+#     token is an open row: 28 `String.fromInt`, 3 `String.left`, 3
+#     `Encoding.urlEncode`, 2 `String.toUpper`, 1 `String.join`, 1
+#     `Basics.not` and 8 `::` / `List.concat` returns (R5, 46); 5 empty list
+#     literals in the annotated `emptyAiData` (R1, primitive join); 3
+#     `List.map` callback narrows in the panels (R1). Not closed now: R5 needs
+#     typed kernel returns (`rt.String_fromIntT` exists and takes an `int`, not
+#     the `any` the twin route passes), and the empty-literal R1 needs
+#     slot-typed construction of `[]` (§5.2).
 00-standard-libs	adapter=0	dispatch=0	narrow=164
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
@@ -231,7 +259,7 @@
 06-json	adapter=0	dispatch=0	narrow=70
 07-todo-cli	adapter=0	dispatch=0	narrow=170
 08-notes-app	adapter=0	dispatch=0	narrow=403
-09-live-counter	adapter=0	dispatch=0	narrow=126
+09-live-counter	adapter=0	dispatch=0	narrow=125
 10-live-component	adapter=0	dispatch=0	narrow=129
 12-skyvote	adapter=0	dispatch=0	narrow=442
 13-skyshop	adapter=0	dispatch=0	narrow=1260
@@ -281,24 +309,24 @@
 63-app-chat	adapter=0	dispatch=0	narrow=427
 64-app-native	adapter=0	dispatch=0	narrow=271
 65-metadata-service	adapter=0	dispatch=0	narrow=26
-66-slack-agent	adapter=0	dispatch=0	narrow=160
+66-slack-agent	adapter=0	dispatch=0	narrow=147
 67-durable-counter	adapter=0	dispatch=0	narrow=77
-68-ai-dataset	adapter=0	dispatch=0	narrow=626
+68-ai-dataset	adapter=0	dispatch=0	narrow=548
 69-ai-scrub	adapter=0	dispatch=0	narrow=99
-70-ai-synthetic	adapter=0	dispatch=0	narrow=769
-71-ai-registry	adapter=0	dispatch=0	narrow=1057
+70-ai-synthetic	adapter=0	dispatch=0	narrow=696
+71-ai-registry	adapter=0	dispatch=0	narrow=956
 apps/dispatch	adapter=0	dispatch=0	narrow=399
 apps/fieldbook	adapter=0	dispatch=0	narrow=657
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=497
-apps/relay	adapter=0	dispatch=0	narrow=179
+apps/relay	adapter=0	dispatch=0	narrow=175
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=67
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=67
 examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=260
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=211
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=734
+sky-bundled/ai	adapter=0	dispatch=0	narrow=656
 sky-bundled/console	adapter=0	dispatch=0	narrow=330
 sky-bundled/doc	adapter=0	dispatch=0	narrow=55
 test_pkg	adapter=0	dispatch=0	narrow=1
