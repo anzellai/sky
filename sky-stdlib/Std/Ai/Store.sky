@@ -299,7 +299,7 @@ slashPrefix p =
         "/" ++ p
 
 -- ── Putting and fetching ────────────────────────────────────────────
-type alias Request =
+type alias HttpCall =
     { method : String
     , url : String
     , headers : List ( String, String )
@@ -322,12 +322,12 @@ localGetRaw =
     Ffi.kernel "Ai_storeLocalGet"
 
 
-httpPutRaw : Request -> String -> Task Error Int
+httpPutRaw : HttpCall -> String -> Task Error Int
 httpPutRaw =
     Ffi.kernel "Ai_storeHttpPut"
 
 
-httpGetRaw : Request -> String -> Task Error String
+httpGetRaw : HttpCall -> String -> Task Error String
 httpGetRaw =
     Ffi.kernel "Ai_storeHttpGet"
 
@@ -386,7 +386,7 @@ blobKey c sha =
         c.prefix ++ "/blobs/sha256/" ++ sha
 
 
-putRequest : Config -> Blob -> Task Error Request
+putRequest : Config -> Blob -> Task Error HttpCall
 putRequest c blob =
     case c.kind of
 
@@ -417,7 +417,7 @@ putRequest c blob =
                 [ ( "if-none-match", "*" ) ]
 
 
-getRequest : Config -> String -> Task Error Request
+getRequest : Config -> String -> Task Error HttpCall
 getRequest c sha =
     case c.kind of
 
@@ -636,7 +636,7 @@ hostOf url =
             url
 
 
-s3Request : Config -> String -> String -> String -> List ( String, String ) -> Task Error Request
+s3Request : Config -> String -> String -> String -> List ( String, String ) -> Task Error HttpCall
 s3Request c method key payloadHash extra =
     awsKeys c
         |> Task.andThen
