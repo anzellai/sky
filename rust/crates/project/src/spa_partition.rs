@@ -215,6 +215,10 @@ const KNOWN_PURE_KERNELS: &[&str] = &[
     // `Debug_show` / `Debug_toString`: pure formatting of a value (the v0.27.0
     // Sky value printer); no effect, no secret, builds for wasm.
     "Debug",
+    // `Error_isRetryable` / `Error_domain` / `Error_retryAfter`: pure reads of
+    // a `Sky.Core.Error` value (runtime-go/rt/error_kernels.go); an `Error`
+    // crosses the RPC, so a client branch reads it too. Builds for wasm.
+    "Error",
     "String",
     "List",
     "Dict",

@@ -29,6 +29,12 @@ fn repo_root() -> PathBuf {
 /// Canonical kernel-only modules migrated to Layer-3 `.sky`, with the bindings
 /// each MUST expose. Add a row here when a new kernel-only module is migrated.
 const KERNEL_SURFACE: &[(&str, &[&str])] = &[
+    // Not a kernel-only module: three readers of the erased `Error` ADT are
+    // typed runtime kernels (runtime-go/rt/error_kernels.go).
+    (
+        "sky-stdlib/Sky/Core/Error.sky",
+        &["isRetryable", "domain", "retryAfter"],
+    ),
     (
         "sky-stdlib/Std/Jobs.sky",
         &["define", "enqueue", "enqueueIn", "cancel"],

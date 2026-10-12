@@ -5824,6 +5824,19 @@ impl<'a> Ctx<'a> {
                 self.widen(e)
             })
             .collect();
+        // A kernel whose runtime twin already returns the Sky result's Go type
+        // is called through that twin, so its result needs no narrowing. See
+        // `kernel_typed_return_twin`.
+        if let Some((typed, ret)) = kernel_typed_return_twin(go, largs.len()) {
+            let call = GoExpr::new(
+                GoExprKind::Call(
+                    Box::new(GoExpr::new(GoExprKind::Ident(typed.into()), GoTy::Any)),
+                    largs,
+                ),
+                ret,
+            );
+            return self.coerce_if_needed(call, actual);
+        }
         self.kernel_call_lowered(go, largs, actual)
     }
 
@@ -9365,6 +9378,30 @@ const SKY_LIST_HOF_TWINS: &[(&str, &str, &str, usize)] = &[
 /// measurement. It is deliberately left for a later tranche.
 ///
 /// Fields: `(typed runtime symbol, the twin's Go return type)`.
+/// A kernel whose runtime has a TYPED twin taking the same `any` arguments and
+/// returning the Sky result's Go type directly, keyed by the erased symbol and
+/// the full argument count. A direct, fully applied call goes to the twin, so
+/// the call site narrows nothing; a value reference or a partial application
+/// keeps the erased symbol.
+///
+/// Doc 14: origin R5 (the kernel return, `kernel_call_lowered`), lever §5.3
+/// (a typed kernel entry point). Floor check (§1): the twin's Go result type
+/// is fixed in `runtime-go/rt` and the slot's is the call's own lowered type,
+/// so both are known at emit time. The three `Sky.Core.Error` readers read
+/// the erased stdlib ADT inside the runtime (one reflective walk, `DomainOf`)
+/// instead of through three Sky payload narrowings (R6, §4.5); the ADT's
+/// representation is unchanged. Verified by `coerce-floor` (apps/relay) and
+/// `runtime-go/rt/error_kernels_test.go`.
+fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<(&'static str, GoTy)> {
+    let maybe = |t: GoTy| GoTy::Named("rt.SkyMaybe".into(), vec![t]);
+    match (go, nargs) {
+        ("rt.Error_isRetryable", 1) => Some(("rt.Error_isRetryableT", GoTy::Bare(Prim::Bool))),
+        ("rt.Error_domain", 1) => Some(("rt.Error_domainT", maybe(GoTy::Bare(Prim::Str)))),
+        ("rt.Error_retryAfter", 1) => Some(("rt.Error_retryAfterT", maybe(GoTy::Bare(Prim::Int)))),
+        _ => None,
+    }
+}
+
 fn list_unary_prim_twin(go: &str) -> Option<(&'static str, GoTy)> {
     match go {
         "rt.List_isEmpty" => Some(("rt.List_isEmptyT", GoTy::Bare(Prim::Bool))),

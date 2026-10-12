@@ -65,6 +65,7 @@ module Sky.Core.Error exposing
     )
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Ffi as Ffi
 import Sky.Core.String as String
 import Sky.Core.Maybe exposing (Maybe(..))
 
@@ -256,35 +257,13 @@ toString err =
 -- retryable flag decides (a crashed engine is `Unavailable` but must not be
 -- retried blindly). Otherwise the kind decides: `Timeout`, `Network` and
 -- `Unavailable` are transient.
+-- The runtime reads the whole error in one pass and returns a `Bool`
+-- (`rt.Error_isRetryableT`, runtime-go/rt/error_kernels.go): written in Sky,
+-- each of the three payload reads was a runtime narrowing of the erased
+-- stdlib ADT.
 isRetryable : Error -> Bool
-isRetryable err =
-    case failureOf err of
-
-        Just f ->
-            failureRetryable f
-
-        Nothing ->
-            kindIsRetryable err
-
-
-kindIsRetryable : Error -> Bool
-kindIsRetryable err =
-    case err of
-
-        Error kind _ ->
-            case kind of
-
-                Timeout ->
-                    True
-
-                Network ->
-                    True
-
-                Unavailable ->
-                    True
-
-                _ ->
-                    False
+isRetryable =
+    Ffi.kernel "Error_isRetryable"
 
 
 -- ── Domain failures ─────────────────────────────────────────────────
@@ -434,23 +413,11 @@ failureOf err =
 -- | The domain of the failure an error carries (`Just "ai"`), or `Nothing`
 -- for an error that carries no domain failure.
 domain : Error -> Maybe String
-domain err =
-    case failureOf err of
-
-        Just f ->
-            Just (failureDomain f)
-
-        Nothing ->
-            Nothing
+domain =
+    Ffi.kernel "Error_domain"
 
 
 -- | The retry delay in milliseconds that the error's domain failure names.
 retryAfter : Error -> Maybe Int
-retryAfter err =
-    case failureOf err of
-
-        Just f ->
-            failureRetryAfter f
-
-        Nothing ->
-            Nothing
+retryAfter =
+    Ffi.kernel "Error_retryAfter"

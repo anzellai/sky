@@ -432,6 +432,15 @@ into every binary and unreachable" condition Stage 2 and Stage 3 found:
   unexported `asList` and therefore reflect-walks the list and boxes every
   element in order to compute `len(items) == 0`.
 
+A third instance, `kernel_typed_return_twin` (`lower.rs`), routes a fully
+applied call of `Error.isRetryable` / `Error.domain` / `Error.retryAfter` to
+`rt.Error_isRetryableT` / `Error_domainT` / `Error_retryAfterT`
+(`runtime-go/rt/error_kernels.go`). They take the erased `Error` and return
+`bool` / `SkyMaybe[string]` / `SkyMaybe[int]`, so the call site narrows
+nothing, and the read of the stdlib ADT (R6, §4.5) happens once inside the
+runtime instead of as three Sky payload narrowings. The ADT's representation
+is unchanged. A value reference keeps the erased symbol.
+
 `list_unary_prim_twin` (`lower.rs`) stops at twins returning a Go **primitive**,
 and that boundary is load-bearing rather than a convenient stopping point:
 `bool` and `int` need no container rebuilt on the way out, so the twin is a
