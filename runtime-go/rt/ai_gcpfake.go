@@ -62,6 +62,7 @@ type aiFakeJob struct {
 	labels                    map[string]string
 	state                     string
 	create, start, end        time.Time
+	timeout                   time.Duration // scheduling.timeout: Vertex cancels the job there
 	errCode                   int
 	errMsg                    string
 	machine                   string
@@ -609,6 +610,9 @@ func (f *aiFakeGCP) createJob(w http.ResponseWriter, project, region string, bod
 	j := &aiFakeJob{name: name, id: id, project: project, region: region, displayName: spec.DisplayName,
 		labels: spec.Labels, state: "JOB_STATE_QUEUED", create: f.now(), machine: pool.MachineSpec.MachineType,
 		args: pool.ContainerSpec.Args}
+	if d, err := time.ParseDuration(spec.JobSpec.Scheduling.Timeout); err == nil {
+		j.timeout = d
+	}
 	for i := 0; i+1 < len(j.args); i++ {
 		switch j.args[i] {
 		case "--inputs":
@@ -701,6 +705,12 @@ func (f *aiFakeGCP) advance(j *aiFakeJob) {
 	}
 	if j.forceFail != "" && j.forceFail != "stockout" {
 		end("JOB_STATE_FAILED", 13, j.forceFail)
+		return
+	}
+	// The scheduling timeout: Vertex AI cancels the job, as a live run showed
+	// (2026-10-12: JOB_STATE_CANCELLED, no terminal line from the trainer).
+	if j.timeout > 0 && j.state == "JOB_STATE_RUNNING" && f.reported(j.start).Before(now.Add(-j.timeout)) {
+		end("JOB_STATE_CANCELLED", 1, "")
 		return
 	}
 	cancelKey := strings.TrimSuffix(j.runPrefix, "/") + "/cancel"

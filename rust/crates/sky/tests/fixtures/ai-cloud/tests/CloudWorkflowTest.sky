@@ -256,6 +256,38 @@ stopped =
         |> Task.run
 
 
+-- Vertex AI cancels a job at its scheduling timeout (a live run, 2026-10-12).
+-- Nobody asked to cancel it, so the run must not say TrainingCancelled: the
+-- emulator reports job time 1000 times faster, so the one-minute ceiling of
+-- `withMaxRuntimeMinutes 1` passes within the 200 steps.
+ceiling : Result Error Train.Adapter
+ceiling =
+    fresh "ceiling"
+        |> Task.andThen
+               (\w ->
+                   Fixture.control "clockscale?x=1000"
+                       |> Task.andThen
+                              (\_ ->
+                                  Train.drive
+                                      w.db
+                                      (Fixture.job "ceiling" w
+                                          |> Train.withMaxSteps 200
+                                          |> Train.fakeStepMs 50
+                                          |> Train.withMaxRuntimeMinutes 1)
+                                      |> Task.onError
+                                             (\e ->
+                                                 Fixture.control
+                                                     "clockscale?x=1"
+                                                     |> Task.andThen
+                                                            (\_ -> Task.fail e))
+                                      |> Task.andThen
+                                             (\a ->
+                                                 Fixture.control
+                                                     "clockscale?x=1"
+                                                     |> Task.map (\_ -> a))))
+        |> Task.run
+
+
 -- ── Typed cloud failures ────────────────────────────────────────────
 stockout : Result Error Train.Adapter
 stockout =
@@ -398,6 +430,22 @@ tests =
 
                   _ ->
                       Test.fail ("not BudgetExceeded: " ++ codeOf stopped))
+    , Test.test
+          "a job Vertex stops at its runtime ceiling is TrainingFailed, not TrainingCancelled"
+          (\_ ->
+              case failureOf ceiling of
+
+                  Just (TrainingFailed f) ->
+                      Test.equal
+                          ( String.contains
+                                "runtime ceiling of 1 minutes"
+                                f.reason
+                          , f.step < 200
+                          )
+                          ( True, True )
+
+                  _ ->
+                      Test.fail ("not TrainingFailed: " ++ codeOf ceiling))
     , Test.test
           "a stockout is CapacityUnavailable"
           (\_ -> Test.equal "CapacityUnavailable" (codeOf stockout))

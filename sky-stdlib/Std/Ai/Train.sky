@@ -3165,6 +3165,27 @@ cancelled job step =
     Failure.toError (TrainingCancelled { runId = runId job, step = step })
 
 
+-- A Vertex job stopped at its scheduling timeout, which nobody asked to
+-- cancel: BudgetExceeded when the budget set the ceiling and is spent, else
+-- TrainingFailed naming the ceiling (`withMaxRuntimeMinutes`).
+ceilingReached : Job -> CloudSettings -> CloudPlan -> Money -> Int -> Error
+ceilingReached job cs p spent step =
+    if Money.gte (Money.add spent (perMinutes cs.perHour 1)) cs.budget then
+        Failure.toError (BudgetExceeded { budget = cs.budget, estimate = spent })
+
+    else
+        Failure.toError
+            (TrainingFailed
+                { runId = runId job
+                , step = step
+                , reason =
+                    "Vertex AI stopped the job at its runtime ceiling of "
+                        ++ String.fromInt (p.timeoutSeconds // 60)
+                        ++ " minutes (withMaxRuntimeMinutes) before it finished"
+                , logTail = ""
+                })
+
+
 -- A driver's error line as the typed failure its code names.
 driverFailure : Job -> Seen -> Error
 driverFailure job seen =
@@ -4956,7 +4977,21 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                            })
 
                                "cancelled" ->
-                                   Task.fail (cancelled job w.step)
+                                   -- Vertex also cancels a job that reached
+                                   -- its scheduling timeout (the runtime
+                                   -- ceiling). Only a cancel Sky asked for
+                                   -- (`cancel`, or the budget stop) writes
+                                   -- the run's cancel object.
+                                   Store.getAt store (runPath key ++ "/cancel")
+                                       |> Task.andThen
+                                              (\asked ->
+                                                  case asked of
+
+                                                      Just _ ->
+                                                          Task.fail (cancelled job w.step)
+
+                                                      Nothing ->
+                                                          Task.fail (ceilingReached job cs p spent w.step))
 
                                "dead" ->
                                    case Google.jobFailure cs.region job0 of
