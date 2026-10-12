@@ -5070,6 +5070,40 @@ pub fn bake_built_wasm_name(backend_src: &str, wasm_name: &str) -> Option<String
     ))
 }
 
+/// The generated backend's baked `sky-ai-engine` meta content, as the
+/// generator writes it (empty). [`bake_built_ai_engine`] fills it from the
+/// built frontend's `index.html` after the frontend leg.
+const SPA_BUILT_AI_ENGINE_EMPTY: &str = "spaBuiltAiEngine_ : String\nspaBuiltAiEngine_ =\n    \"\"";
+
+/// Write the frontend's `sky-ai-engine` meta content (the attribute value,
+/// already `&quot;`-escaped) into a generated backend source, so the
+/// server-rendered page names the same engines as the frontend's own
+/// `index.html`. Returns `None` when the source has no empty binding or the
+/// content holds a character outside the engine-name JSON alphabet (nothing
+/// but names the build itself wrote is written into source).
+pub fn bake_built_ai_engine(backend_src: &str, content: &str) -> Option<String> {
+    let safe = !content.is_empty()
+        && content
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "{}:,/._-&;".contains(c));
+    if !safe || !backend_src.contains(SPA_BUILT_AI_ENGINE_EMPTY) {
+        return None;
+    }
+    Some(backend_src.replacen(
+        SPA_BUILT_AI_ENGINE_EMPTY,
+        &format!("spaBuiltAiEngine_ : String\nspaBuiltAiEngine_ =\n    \"{content}\""),
+        1,
+    ))
+}
+
+/// The `sky-ai-engine` meta content of a built frontend's `index.html`.
+pub fn built_ai_engine(dist: &Path) -> Option<String> {
+    let html = std::fs::read_to_string(dist.join("index.html")).ok()?;
+    let at = html.find("<meta name=\"sky-ai-engine\" content=\"")?;
+    let rest = &html[at + "<meta name=\"sky-ai-engine\" content=\"".len()..];
+    Some(rest[..rest.find('"')?].to_string())
+}
+
 /// Whether a generated backend source carries the empty baked wasm-name
 /// binding, so its build must wait for the frontend's wasm name.
 pub fn needs_built_wasm_name(backend_src: &str) -> bool {
@@ -8254,6 +8288,25 @@ fn gen_backend(
              -- memoised CAF).\n",
         );
         handlers.push_str(SPA_BUILT_WASM_NAME_EMPTY);
+        // Std.Ai.Device: the `sky-ai-engine` meta the frontend leg staged
+        // (the content-hashed engine names), baked the same way. Without it
+        // the server-rendered page names no engine and the client offers no
+        // device backend.
+        handlers.push_str(
+            "\n\n\n\
+             -- The browser engines' `sky-ai-engine` meta content, written by\n\
+             -- `sky build` after the frontend leg (empty: the app has none).\n",
+        );
+        handlers.push_str(SPA_BUILT_AI_ENGINE_EMPTY);
+        handlers.push_str(
+            "\n\n\n\
+             spaAiEngineMeta_ : String\n\
+             spaAiEngineMeta_ =\n\
+             \x20   if spaBuiltAiEngine_ == \"\" then\n\
+             \x20       \"\"\n\n\
+             \x20   else\n\
+             \x20       \"<meta name=\\\"sky-ai-engine\\\" content=\\\"\" ++ spaBuiltAiEngine_ ++ \"\\\">\"\n",
+        );
         handlers.push_str(
             "\n\n\n\
              spaWasmName : String\n\
@@ -8500,7 +8553,7 @@ fn gen_backend(
              \x20   Task.succeed\n\
              \x20       (Server.html\n\
              \x20           (spaSsrPageSeeded\n\
-             \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaSsrRenderHead spaHead_ resolved)\n\
+             \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaAiEngineMeta_ ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\
              \x20               spaWasmName\n\
              \x20               modelJson\n\
@@ -10364,6 +10417,32 @@ mod fix7_tests {
             bake_built_wasm_name(&src, "main.wasm").map(|s| s.contains("\"main.wasm\"")),
             Some(true)
         );
+    }
+
+    #[test]
+    fn the_ai_engine_meta_is_baked_into_the_backend_once() {
+        // v0.28.0: the server-rendered page names the browser engines the
+        // frontend leg staged; before, it named none and a device was never
+        // offered on a page with routes (examples/75-ai-everywhere).
+        let src = format!("module Main\n\n{SPA_BUILT_AI_ENGINE_EMPTY}\n\n\nx = 1\n");
+        let content =
+            "{&quot;cpu&quot;:{&quot;mjs&quot;:&quot;/sky-ai-cpu.0123456789ab.mjs&quot;}}";
+        let baked = bake_built_ai_engine(&src, content).expect("bakes");
+        assert!(baked.contains(&format!("spaBuiltAiEngine_ =\n    \"{content}\"")));
+        assert!(bake_built_ai_engine(&baked, content).is_none());
+        // Nothing but the engine-name alphabet reaches source.
+        assert!(bake_built_ai_engine(&src, "\" ++ x").is_none());
+        assert!(bake_built_ai_engine(&src, "<script>").is_none());
+        assert!(bake_built_ai_engine(&src, "").is_none());
+        let dir = std::env::temp_dir().join(format!("sky-ai-engine-meta-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("index.html"),
+            format!("<head>\n    <meta name=\"sky-ai-engine\" content=\"{content}\" />\n</head>"),
+        )
+        .unwrap();
+        assert_eq!(built_ai_engine(&dir).as_deref(), Some(content));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

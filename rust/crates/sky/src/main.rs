@@ -3780,7 +3780,16 @@ fn bake_backend_wasm_name(backend_main: &Path, dist: &Path) {
     let Ok(src) = std::fs::read_to_string(backend_main) else {
         return;
     };
-    if let Some(baked) = project::spa_split::bake_built_wasm_name(&src, &name) {
+    let mut out = project::spa_split::bake_built_wasm_name(&src, &name);
+    // Std.Ai.Device: the engines the frontend leg staged, for the
+    // server-rendered page's `sky-ai-engine` meta.
+    if let Some(content) = project::spa_split::built_ai_engine(dist) {
+        let base = out.clone().unwrap_or_else(|| src.clone());
+        if let Some(b) = project::spa_split::bake_built_ai_engine(&base, &content) {
+            out = Some(b);
+        }
+    }
+    if let Some(baked) = out {
         if let Err(e) = std::fs::write(backend_main, baked) {
             eprintln!(
                 "sky spa-split --build: could not write the wasm name into {}: {e}",

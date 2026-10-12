@@ -497,6 +497,18 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 - **A large response was cut at the server's 30-second write deadline** on a
   slow link: an Android emulator's model download ended with "unexpected end
   of stream". A blob's deadline now moves with its size.
+- **A Sky.Spa server arm whose task asks a device slot did not split.** A
+  task that opens a server effect and then calls `Device.provider` (the
+  self-check of `examples/75-ai-everywhere`) was read as a `Std.Native`
+  client effect, and the build failed with "returns a Std.Native client
+  effect, but its module does not import Std.Native". Such a task now runs on
+  the server, where `Std.Ai.Device` answers as the slot. A task that asks the
+  device alone stays in the client
+  (`rust/crates/project/tests/spa_ai_device_mixed.rs`).
+- **The server-rendered page of a Sky.Spa app named no browser engine.** The
+  `sky-ai-engine` meta was only in the static `index.html`, so an app with
+  routes never offered the device. `sky build` now writes it into the backend
+  with the wasm name (`spa_split::bake_built_ai_engine`).
 - **A Sky.Spa split app whose `init` command reaches the server failed to
   build.** `update` arms that return `Cmd.perform <server task> ToMsg` were
   rewritten into an RPC, but `init` was copied into the wasm client verbatim,
