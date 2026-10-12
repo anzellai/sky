@@ -91,6 +91,22 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     "value open",
     "value put",
     "value register",
+    // v0.28.0 phase 2: Std.Ai.Dataset and Std.Ai.Dataset.Scrub, named by the
+    // design (docs/design/std-ai-lifecycle.md §8.4): a dataset has `map`,
+    // `filter`, `filterMap`, `fromList`, `rows` and `split` like a list, and
+    // the scrub rules are `email`, `pattern` and `custom`. The guides import
+    // them qualified (`Dataset.map`, `Scrub.email`). Names the design does not
+    // give were chosen not to collide (`countRows`, `upTo`, `folder`,
+    // `scrubText`, `forChat`, `scrubRows`, `Synthetic.Call`).
+    "value custom",
+    "value email",
+    "value filter",
+    "value filterMap",
+    "value fromList",
+    "value map",
+    "value pattern",
+    "value rows",
+    "value split",
 ];
 
 fn repo_root() -> PathBuf {

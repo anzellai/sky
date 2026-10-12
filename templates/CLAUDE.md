@@ -114,3 +114,11 @@ a threshold to make a run pass.
 (or `sky ai promote --force`) to get past a failing gate unless the user asks,
 and never `block` or `rollback` a production alias on your own. Read with
 `sky ai lineage <name>@<alias>` first.
+
+`Std.Ai.Dataset.Synthetic.run` calls a teacher slot (`"teacher"`) and,
+with `withJudge`, the judge slot, once per planned call: both are the local
+pinned model by default, so a real generation starts an engine and can make
+many calls. Bound it with `withTarget`, `withMaxCalls` and `withCostBudget`,
+and test it under `sky test` with `tests/mocks/` fixtures (`match.bodyContains`
+picks the answer for a topic). Never print scrubbed or raw dataset rows to a
+log: `Scrub` reports counts only, and so should your code.

@@ -435,9 +435,11 @@ pub static GATES: &[Gate] = &[
                 // 616 → 676), and the v0.28.0 Std.Ai.Local surface (+2 cases,
                 // 676 → 678), and the v0.28.0 Std.Ai.Failure and
                 // Std.Ai.Eval surfaces (+4 cases, 678 → 682), and the v0.28.0
-                // Std.Ai.Store and Std.Ai.Registry surfaces (+3 cases, 682 → 685).
-                from: "n_min = 685",
-                to: "n_min = 686",
+                // Std.Ai.Store and Std.Ai.Registry surfaces (+3 cases, 682 → 685),
+                // and the v0.28.0 Std.Ai.Dataset, Scrub and Synthetic surfaces
+                // (+6 cases, 685 → 691).
+                from: "n_min = 691",
+                to: "n_min = 692",
             },
         }]),
         body: bodies::corpus_manifest,

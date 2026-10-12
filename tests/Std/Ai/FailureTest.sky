@@ -47,6 +47,10 @@ every =
           { ref = "support-lora@prod", expected = "v2", actual = "v3" }
     , AdapterMismatch
           { adapter = "support-lora@v3", adapterBase = "aa", engineBase = "bb" }
+    , DatasetInvalid
+          { dataset = "data/support.jsonl"
+          , reasons = "line 7: not JSON (byte 12)"
+          }
     ]
 
 
@@ -153,6 +157,10 @@ tests =
                  "AdapterMismatch"
                  (AdapterMismatch
                      { adapter = "a", adapterBase = "b", engineBase = "c" })
+                 InvalidInput
+           , kindCase
+                 "DatasetInvalid"
+                 (DatasetInvalid { dataset = "d", reasons = "r" })
                  InvalidInput
            , kindCase
                  "RemoteRejected 400"

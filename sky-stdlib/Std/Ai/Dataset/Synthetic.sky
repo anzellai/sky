@@ -1,0 +1,807 @@
+module Std.Ai.Dataset.Synthetic exposing
+    ( Generator
+    , Call
+    , Generated
+    , Report
+    , Stop(..)
+    , generator
+    , teacherSlot
+    , defaultTemplate
+    , defaultSystemPrompt
+    , withTeacher
+    , withTeacherSlot
+    , withTemplate
+    , withSystemPrompt
+    , withPersonas
+    , withTopics
+    , withExamples
+    , withPerCall
+    , withTarget
+    , withSeed
+    , withTemperature
+    , withMaxTokens
+    , withMaxCalls
+    , withCostBudget
+    , withDedupe
+    , withFilter
+    , withJudge
+    , plan
+    , parseRows
+    , run
+    , toDataset
+    )
+
+{-| `Std.Ai.Dataset.Synthetic` — generate a dataset with a teacher model.
+
+    import Std.Ai.Dataset as Dataset exposing (Instruction)
+    import Std.Ai.Dataset.Synthetic as Synthetic
+
+    faq : Synthetic.Generator Instruction
+    faq =
+        Synthetic.generator "support-faq" Dataset.instructionCodec
+            |> Synthetic.withTopics [ "refunds", "delivery", "passwords" ]
+            |> Synthetic.withPersonas [ "a first-time customer", "a busy shop owner" ]
+            |> Synthetic.withTarget 30
+            |> Synthetic.withSeed 7
+            |> Synthetic.withDedupe .prompt
+            |> Synthetic.withFilter "short answer" (\r -> String.length r.completion >= 20)
+
+    Synthetic.run faq
+        |> Task.map Synthetic.toDataset
+
+The teacher is a model slot, `"teacher"`: the local pinned development model
+(Qwen2.5 0.5B Instruct) by default, so a fresh clone generates with no
+configuration. An operator moves it to a larger or remote model with the
+slot's variables (`SKY_AI_TEACHER_*`, the `SKY_AI_<SLOT>_<KEY>` names in
+`docs/ai/local.md`), and `withTeacher` gives any `Provider`.
+
+A run is planned before it calls anything (`plan` is pure). Call `i` asks for
+`withPerCall` rows about one topic for one persona: the run walks every topic
+and persona combination from a starting point the seed picks, and call `i`
+uses the sampling seed `seed + i`. The same generator, teacher and seed ask
+the same questions in the same order, so a run is repeatable where the teacher
+is.
+
+Each call's answer must be a JSON array of rows in the codec's shape. Rows
+that do not parse, repeat an earlier row (`withDedupe`), fail a filter
+(`withFilter`) or fail the judge (`withJudge`, scored by `Std.Ai.Eval`'s judge)
+are dropped and counted. The run stops when it has `withTarget` rows, when it
+has made `withMaxCalls` calls, or when the teacher's spend reaches
+`withCostBudget`, whichever comes first, and the `Report` says which.
+
+A teacher call that fails ends the run with its typed error (the slot already
+retries an overloaded or unreachable server). Under `sky test` in test mode no
+model runs: the teacher's and the judge's calls are answered by fixtures under
+`tests/mocks/`, and a fixture's `match.bodyContains` can pick the answer for a
+topic. See `docs/ai/dataset.md`.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Result as Result
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Set as Set exposing (Set)
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Char as Char
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Std.Codec as Codec exposing (Codec)
+import Std.Money as Money exposing (Money)
+import Std.Ai.Provider as Provider exposing (Provider, Message, PriceBook)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Eval as Eval
+import Std.Ai.Dataset as Dataset exposing (Dataset)
+
+-- ── The generator ───────────────────────────────────────────────────
+-- | How to generate rows of one type.
+type Generator row
+    = Generator { name : String
+, codec : Codec row
+, teacher : Provider
+, endpoint : Maybe Endpoint
+, teacherName : String
+, template : String
+, system : String
+, personas : List String
+, topics : List String
+, examples : List row
+, perCall : Int
+, target : Int
+, seed : Int
+, temperature : Float
+, maxTokens : Int
+, maxCalls : Maybe Int
+, budget : Maybe ( PriceBook, Money )
+, dedupe : Maybe (row -> String)
+, filters : List ( String, row -> Bool )
+, judge : Maybe { judge : Eval.Judge
+      , rubric : String
+      , show : row -> ( String, String )
+      }
+}
+
+
+-- | The teacher's model slot, `"teacher"`: the local pinned development model
+-- by default, moved with `SKY_AI_TEACHER_*`.
+teacherSlot : Endpoint
+teacherSlot =
+    Endpoint.endpoint "teacher"
+        |> Endpoint.withLocal
+               (Local.model Local.devModel |> Local.withContext 4096)
+
+
+-- | The system message of every teacher call unless `withSystemPrompt` sets
+-- another.
+defaultSystemPrompt : String
+defaultSystemPrompt =
+    "You write realistic, varied training examples for a dataset. Answer with only a JSON array of objects and no other text."
+
+
+-- | The user message of every teacher call unless `withTemplate` sets
+-- another. The placeholders `{name}`, `{persona}`, `{topic}`, `{count}`,
+-- `{fields}` and `{examples}` are filled in for each call.
+defaultTemplate : String
+defaultTemplate =
+    "Dataset: {name}\nThe person asking: {persona}\nTopic: {topic}\nWrite {count} different examples. Each example is a JSON object with exactly these fields: {fields}.{examples}"
+
+
+-- | A generator for the dataset `name`, with rows in the codec's shape. It
+-- asks the default teacher for 20 rows, 4 per call, seed 0, temperature 0.7,
+-- at most 1024 tokens per answer and at most three times as many calls as
+-- the target needs.
+generator : String -> Codec row -> Generator row
+generator name codec =
+    Generator
+        { name = name
+        , codec = codec
+        , teacher = Endpoint.provider teacherSlot
+        , endpoint = Just teacherSlot
+        , teacherName = "slot:teacher"
+        , template = defaultTemplate
+        , system = defaultSystemPrompt
+        , personas = []
+        , topics = []
+        , examples = []
+        , perCall = 4
+        , target = 20
+        , seed = 0
+        , temperature = 0.7
+        , maxTokens = 1024
+        , maxCalls = Nothing
+        , budget = Nothing
+        , dedupe = Nothing
+        , filters = []
+        , judge = Nothing
+        }
+
+
+-- | Use this provider as the teacher. `name` is what the report and the
+-- dataset's lineage record (for example the model's name and version).
+withTeacher : String -> Provider -> Generator row -> Generator row
+withTeacher name p (Generator g) =
+    Generator { g | teacher = p, endpoint = Nothing, teacherName = name }
+
+
+-- | Use this slot as the teacher. The report records the slot's resolved mode
+-- and model.
+withTeacherSlot : Endpoint -> Generator row -> Generator row
+withTeacherSlot e (Generator g) =
+    Generator
+        { g
+            | teacher = Endpoint.provider e
+            , endpoint = Just e
+            , teacherName = "slot"
+        }
+
+
+-- | The user message template (see `defaultTemplate`).
+withTemplate : String -> Generator row -> Generator row
+withTemplate t (Generator g) =
+    Generator { g | template = t }
+
+
+-- | The system message of every call.
+withSystemPrompt : String -> Generator row -> Generator row
+withSystemPrompt t (Generator g) =
+    Generator { g | system = t }
+
+
+-- | Who the examples are written for or by. Each call uses one.
+withPersonas : List String -> Generator row -> Generator row
+withPersonas ps (Generator g) =
+    Generator { g | personas = ps }
+
+
+-- | What the examples are about. Each call uses one.
+withTopics : List String -> Generator row -> Generator row
+withTopics ts (Generator g) =
+    Generator { g | topics = ts }
+
+
+-- | Rows shown to the teacher as examples of the format (few-shot).
+withExamples : List row -> Generator row -> Generator row
+withExamples rs (Generator g) =
+    Generator { g | examples = rs }
+
+
+-- | How many rows each call asks for (at least 1).
+withPerCall : Int -> Generator row -> Generator row
+withPerCall n (Generator g) =
+    Generator { g | perCall = max 1 n }
+
+
+-- | How many rows to keep.
+withTarget : Int -> Generator row -> Generator row
+withTarget n (Generator g) =
+    Generator { g | target = max 0 n }
+
+
+-- | The run's seed: it picks the first topic and persona and the sampling
+-- seed of every call.
+withSeed : Int -> Generator row -> Generator row
+withSeed n (Generator g) =
+    Generator { g | seed = n }
+
+
+-- | The teacher's sampling temperature (default 0.7: varied rows, and still
+-- repeatable with a seed on an engine that honours it).
+withTemperature : Float -> Generator row -> Generator row
+withTemperature t (Generator g) =
+    Generator { g | temperature = t }
+
+
+-- | The most tokens one answer may have.
+withMaxTokens : Int -> Generator row -> Generator row
+withMaxTokens n (Generator g) =
+    Generator { g | maxTokens = n }
+
+
+-- | The most teacher calls the run makes.
+withMaxCalls : Int -> Generator row -> Generator row
+withMaxCalls n (Generator g) =
+    Generator { g | maxCalls = Just (max 0 n) }
+
+
+-- | Stop before a call once the teacher's spend, priced by the book, reaches
+-- the budget. The judge's calls are counted in the report, not priced.
+withCostBudget : PriceBook -> Money -> Generator row -> Generator row
+withCostBudget book money (Generator g) =
+    Generator { g | budget = Just ( book, money ) }
+
+
+-- | Drop a row whose key repeats an earlier row's key. Without it, a row that
+-- repeats an earlier row exactly (as canonical JSON) is dropped.
+withDedupe : (row -> String) -> Generator row -> Generator row
+withDedupe key (Generator g) =
+    Generator { g | dedupe = Just key }
+
+
+-- | Keep only rows the predicate holds for; the rest count under `name`.
+withFilter : String -> (row -> Bool) -> Generator row -> Generator row
+withFilter name keep (Generator g) =
+    Generator { g | filters = g.filters ++ [ ( name, keep ) ] }
+
+
+-- | Keep only rows the judge passes against the rubric. `show` turns a row
+-- into the question and the answer the judge sees.
+--
+--     |> Synthetic.withJudge Eval.defaultJudge "The answer is correct and polite." (\r -> ( r.prompt, r.completion ))
+withJudge : Eval.Judge -> String -> (row -> ( String, String )) -> Generator row -> Generator row
+withJudge j rubric show (Generator g) =
+    Generator { g | judge = Just { judge = j, rubric = rubric, show = show } }
+
+-- ── The plan ────────────────────────────────────────────────────────
+-- | One teacher call: its index, persona, topic, sampling seed and messages.
+type alias Call =
+    { index : Int
+    , persona : String
+    , topic : String
+    , seed : Int
+    , messages : List Message
+    }
+
+
+callLimit : { perCall : Int
+, target : Int
+, maxCalls : Maybe Int
+} -> Int
+callLimit g =
+    case g.maxCalls of
+
+        Just n ->
+            n
+
+        Nothing ->
+            3 * ((g.target + g.perCall - 1) // g.perCall)
+
+
+-- | Every call the run may make, in order. Pure: it calls nothing.
+plan : Generator row -> List Call
+plan (Generator g) =
+    let
+        topics = orNone g.topics
+        personas = orNone g.personas
+        combos = List.length topics * List.length personas
+        start =
+            modBy combos (hashInt (String.fromInt g.seed ++ ":" ++ g.name))
+        request i =
+            let
+                c = modBy combos (start + i)
+                topic = nth (modBy (List.length topics) c) topics
+                persona =
+                    nth
+                        (modBy (List.length personas) (c // List.length topics))
+                        personas
+            in
+                { index = i
+                , persona = persona
+                , topic = topic
+                , seed = g.seed + i
+                , messages =
+                    [ Provider.system g.system
+                    , Provider.user (render g topic persona)
+                    ]
+                }
+    in
+        List.map request (List.range 0 (callLimit g - 1))
+
+
+orNone : List String -> List String
+orNone xs =
+    if List.isEmpty xs then
+        [ "" ]
+
+    else
+        xs
+
+
+nth : Int -> List String -> String
+nth i xs =
+    Maybe.withDefault "" (List.head (List.drop i xs))
+
+
+hashInt : String -> Int
+hashInt s =
+    String.toList (String.left 7 (Crypto.sha256 s))
+        |> List.foldl
+               (\c acc ->
+                   let
+                       code = Char.toCode c
+                   in
+                       acc * 16
+                           + (if code >= 97 then
+                                 code - 87
+
+                             else
+                                 code - 48))
+               0
+
+
+render : { a | name : String
+, template : String
+, codec : Codec row
+, examples : List row
+, perCall : Int
+} -> String -> String -> String
+render g topic persona =
+    let
+        fields =
+            case Codec.shape g.codec of
+
+                Codec.SRecord fs ->
+                    String.join
+                        ", "
+                        (List.map (\( f, _ ) -> "\"" ++ f ++ "\"") fs)
+
+                _ ->
+                    "one JSON value"
+        examples =
+            if List.isEmpty g.examples then
+                ""
+
+            else
+                "\nExamples of the format:\n"
+                    ++ String.join
+                           "\n"
+                           (List.map (Codec.toJson g.codec) g.examples)
+    in
+        g.template |> String.replace "{name}" g.name
+            |> String.replace "{persona}" (orAnyone persona)
+            |> String.replace "{topic}" (orAnything topic)
+            |> String.replace "{count}" (String.fromInt g.perCall)
+            |> String.replace "{fields}" fields
+            |> String.replace "{examples}" examples
+
+
+orAnyone : String -> String
+orAnyone s =
+    if s == "" then
+        "anyone"
+
+    else
+        s
+
+
+orAnything : String -> String
+orAnything s =
+    if s == "" then
+        "any topic that fits the dataset"
+
+    else
+        s
+
+
+-- ── Parsing ─────────────────────────────────────────────────────────
+-- | The rows in a teacher's answer: a JSON array of rows (or one row), in a
+-- code fence or with text around it. Returns the rows that decode with the
+-- codec and how many items did not.
+parseRows : Codec row -> String -> ( List row, Int )
+parseRows codec answer =
+    let
+        body = between "[" "]" answer
+        decoded =
+            case JsonD.decodeString (JsonD.list JsonD.value) body of
+
+                Ok items ->
+                    Just items
+
+                Err _ ->
+                    case JsonD.decodeString JsonD.value (between "{" "}" answer) of
+
+                        Ok item ->
+                            Just [ item ]
+
+                        Err _ ->
+                            Nothing
+    in
+        case decoded of
+
+            Nothing ->
+                ( [], 1 )
+
+            Just items ->
+                List.foldl
+                    (\v ( ok, bad ) ->
+                        case Codec.fromJson codec (JsonE.encode 0 v) of
+
+                            Ok r ->
+                                ( ok ++ [ r ], bad )
+
+                            Err _ ->
+                                ( ok, bad + 1 ))
+                    ( [], 0 )
+                    items
+
+
+-- The text from the first `open` to the last `close`, or the whole text.
+between : String -> String -> String -> String
+between open close s =
+    case String.split open s of
+
+        before :: rest ->
+            if List.isEmpty rest then
+                s
+
+            else
+                let
+                    fromOpen = open ++ String.join open rest
+                    parts = String.split close fromOpen
+                in
+                    if List.length parts < 2 then
+                        fromOpen
+
+                    else
+                        String.join
+                            close
+                            (List.take (List.length parts - 1) parts)
+                            ++ close
+
+        [] ->
+            s
+
+-- ── The run ─────────────────────────────────────────────────────────
+-- | Why a run stopped.
+type Stop
+    = TargetReached
+    | CallLimit
+    | BudgetReached
+
+-- | What a run did. `teacher` names the teacher (a slot's resolved mode and
+-- model, or the name `withTeacher` gave). `cost` is the teacher's spend when
+-- `withCostBudget` priced it.
+type alias Report =
+    { name : String
+    , teacher : String
+    , seed : Int
+    , calls : Int
+    , judgeCalls : Int
+    , generated : Int
+    , kept : Int
+    , unparsed : Int
+    , duplicates : Int
+    , filtered : Dict String Int
+    , judgedOut : Int
+    , promptTokens : Int
+    , completionTokens : Int
+    , cost : Maybe Money
+    , stop : Stop
+    }
+
+-- | The kept rows, in the order they were generated, and the report.
+type alias Generated row =
+    { rows : List row
+    , report : Report
+    }
+
+type alias State row =
+    { kept : List row
+    , seen : Set String
+    , report : Report
+    }
+
+
+-- | Run the plan until the target, the call limit or the budget stops it.
+run : Generator row -> Task Error (Generated row)
+run (Generator g) =
+    teacherLabel g.endpoint g.teacherName
+        |> Task.andThen
+               (\label ->
+                   let
+                       initial =
+                           { kept = []
+                           , seen = Set.empty
+                           , report =
+                               { name = g.name
+                               , teacher = label
+                               , seed = g.seed
+                               , calls = 0
+                               , judgeCalls = 0
+                               , generated = 0
+                               , kept = 0
+                               , unparsed = 0
+                               , duplicates = 0
+                               , filtered = Dict.empty
+                               , judgedOut = 0
+                               , promptTokens = 0
+                               , completionTokens = 0
+                               , cost =
+                                   Maybe.map
+                                       (\( _, m ) ->
+                                           Money.zero (Money.currency m))
+                                       g.budget
+                               , stop = CallLimit
+                               }
+                           }
+                   in
+                       loop (Generator g) (plan (Generator g)) initial)
+        |> Task.map
+               (\st ->
+                   let
+                       r = st.report
+                   in
+                       { rows = List.reverse st.kept
+                       , report = { r | kept = List.length st.kept }
+                       })
+
+
+teacherLabel : Maybe Endpoint -> String -> Task Error String
+teacherLabel endpoint name =
+    case endpoint of
+
+        Just e ->
+            Endpoint.describe e
+                |> Task.map (\d -> d.slot ++ " " ++ d.mode ++ " " ++ d.target)
+
+        Nothing ->
+            Task.succeed name
+
+
+overBudget : Maybe ( PriceBook, Money ) -> Maybe Money -> Bool
+overBudget budget spent =
+    case ( budget, spent ) of
+
+        ( Just ( _, limit ), Just s ) ->
+            Money.gte s limit
+
+        _ ->
+            False
+
+
+loop : Generator row -> List Call -> State row -> Task Error (State row)
+loop (Generator g) requests st =
+    let
+        report = st.report
+    in
+        if List.length st.kept >= g.target then
+            Task.succeed { st | report = { report | stop = TargetReached } }
+
+        else if overBudget g.budget report.cost then
+            Task.succeed { st | report = { report | stop = BudgetReached } }
+
+        else
+            case requests of
+
+                [] ->
+                    Task.succeed { st | report = { report | stop = CallLimit } }
+
+                req :: rest ->
+                    Provider.chatWith
+                        { temperature = Just g.temperature
+                        , seed = Just req.seed
+                        , maxTokens = Just g.maxTokens
+                        , adapter = Nothing
+                        }
+                        g.teacher
+                        req.messages
+                        |> Task.andThen
+                               (\response ->
+                                   let
+                                       ( parsed, bad ) =
+                                           parseRows g.codec response.content
+                                       priced =
+                                           case ( g.budget, report.cost ) of
+
+                                               ( Just ( book, _ ), Just spent ) ->
+                                                   Just
+                                                       (Money.add
+                                                           spent
+                                                           (Provider.cost
+                                                               book
+                                                               response.usage))
+
+                                               _ ->
+                                                   report.cost
+                                       counted =
+                                           { report
+                                               | calls = report.calls + 1
+                                               , generated =
+                                                   report.generated
+                                                       + List.length parsed
+                                               , unparsed =
+                                                   report.unparsed + bad
+                                               , promptTokens =
+                                                   report.promptTokens
+                                                       + response.usage.promptTokens
+                                               , completionTokens =
+                                                   report.completionTokens
+                                                       + response.usage.completionTokens
+                                               , cost = priced
+                                           }
+                                   in
+                                       admitAll
+                                           (Generator g)
+                                           req
+                                           parsed
+                                           { st | report = counted })
+                        |> Task.andThen (loop (Generator g) rest)
+
+
+admitAll : Generator row -> Call -> List row -> State row -> Task Error (State row)
+admitAll (Generator g) req candidates st =
+    case candidates of
+
+        [] ->
+            Task.succeed st
+
+        r :: more ->
+            if List.length st.kept >= g.target then
+                Task.succeed st
+
+            else
+                admit (Generator g) req r st
+                    |> Task.andThen (admitAll (Generator g) req more)
+
+
+admit : Generator row -> Call -> row -> State row -> Task Error (State row)
+admit (Generator g) req r st =
+    let
+        report = st.report
+        key =
+            case g.dedupe of
+
+                Just f ->
+                    Crypto.sha256 (f r)
+
+                Nothing ->
+                    Crypto.sha256 (Codec.toJson g.codec r)
+        failed = List.find (\( _, keep ) -> not (keep r)) g.filters
+    in
+        if Set.member key st.seen then
+            Task.succeed
+                { st
+                    | report = { report | duplicates = report.duplicates + 1 }
+                }
+
+        else
+            case failed of
+
+                Just ( name, _ ) ->
+                    Task.succeed
+                        { st
+                            | report =
+                                { report
+                                    | filtered =
+                                        Dict.insert
+                                            name
+                                            (1
+                                                + Maybe.withDefault
+                                                      0
+                                                      (Dict.get
+                                                          name
+                                                          report.filtered))
+                                            report.filtered
+                                }
+                        }
+
+                Nothing ->
+                    case g.judge of
+
+                        Nothing ->
+                            Task.succeed
+                                { st
+                                    | kept = r :: st.kept
+                                    , seen = Set.insert key st.seen
+                                }
+
+                        Just j ->
+                            let
+                                ( question, answer ) = j.show r
+                            in
+                                Eval.judgeAnswer
+                                    j.judge
+                                    req.seed
+                                    j.rubric
+                                    question
+                                    answer
+                                    |> Task.map
+                                           (\score ->
+                                               let
+                                                   judged =
+                                                       { report
+                                                           | judgeCalls =
+                                                               report.judgeCalls
+                                                                   + 1
+                                                       }
+                                               in
+                                                   if score.passed then
+                                                       { st
+                                                           | kept = r :: st.kept
+                                                           , seen =
+                                                               Set.insert
+                                                                   key
+                                                                   st.seen
+                                                           , report = judged
+                                                       }
+
+                                                   else
+                                                       { st
+                                                           | report =
+                                                               { judged
+                                                                   | judgedOut =
+                                                                       judged.judgedOut
+                                                                           + 1
+                                                               }
+                                                       })
+
+
+-- | The kept rows as a dataset whose lineage names the generator, the
+-- teacher, the seed and the counts.
+toDataset : Generated row -> Dataset row
+toDataset gen =
+    let
+        r = gen.report
+    in
+        Dataset.fromList gen.rows
+            |> Dataset.withSource
+                   ("synthetic:" ++ r.name ++ " teacher=" ++ r.teacher
+                       ++ " seed="
+                       ++ String.fromInt r.seed
+                       ++ " calls="
+                       ++ String.fromInt r.calls
+                       ++ " kept="
+                       ++ String.fromInt r.kept)

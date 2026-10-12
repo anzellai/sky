@@ -11525,6 +11525,10 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
                      move a registry alias back to the version before the current one
   lineage <name>@<alias>|<name>@v<n> | --dataset <sha256>
                      print a version's lineage, or the versions trained on a dataset
+  data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>]
+              [--split <train>/<eval>/<test>] [--seed <n>]
+              [--consent <basis>] [--retention <period>]
+                     freeze a JSONL file into a content-addressed dataset version
 The registry verbs take --db <dsn> (else SKY_DB_PATH, DATABASE_URL, or the project's
 [database] path or url) and --registry <url> (else SKY_AI_REGISTRY).
 A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
@@ -11551,6 +11555,7 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         ["rollback", reference, ..] => reference.contains('@'),
         ["lineage", "--dataset", digest, ..] => !digest.starts_with('-'),
         ["lineage", reference, ..] => reference.contains('@'),
+        ["data", "freeze", file, ..] => !file.starts_with('-'),
         _ => false,
     };
     if !shape_ok {

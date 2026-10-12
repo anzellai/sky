@@ -699,6 +699,37 @@ tests =
                               (Maybe.map .reason (resultOf "silent-judge" r))))
                   (runOn (table toneAnswers) tone))
     , Test.test
+          "a judge that answers with a bare score is read (small models drop the SCORE: label)"
+          (\_ ->
+              let
+                  bare reply =
+                      Eval.judge
+                          (Provider.custom (\_ -> Task.succeed (answer reply)))
+                          "bare"
+                  verdict reply =
+                      case Task.run
+                               (Eval.judgeAnswer (bare reply) 1 "Polite." "Q" "A") of
+
+                          Ok sc ->
+                              ( sc.passed, sc.value )
+
+                          Err _ ->
+                              ( False, -1.0 )
+              in
+                  Test.equal
+                      [ ( True, 1.0 )
+                      , ( True, 0.75 )
+                      , ( False, 0.25 )
+                      , ( False, 0.0 )
+                      , ( False, 0.0 )
+                      ]
+                      [ verdict "5"
+                      , verdict " 4 - polite enough"
+                      , verdict "2."
+                      , verdict "I give it 10/10"
+                      , verdict "No."
+                      ])
+    , Test.test
           "the report names the judge's rubric version"
           (\_ ->
               onReport

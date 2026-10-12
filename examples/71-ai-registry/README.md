@@ -1,4 +1,4 @@
-# 68 · The model registry
+# 71 · The model registry
 
 `Std.Ai.Registry` in one program: two versions of a fine-tuned adapter, each
 registered with its lineage, gated on an eval suite, promoted, refused, forced

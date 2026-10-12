@@ -37,7 +37,12 @@ use std::process::Command;
 /// **187 since 2026-08-24**: the v0.22.0 Sky.Spa release added examples
 /// `61-app-kanban`, `62-app-notes`, `63-app-chat` and `64-app-native` (+9 `.sky`
 /// files across their `src/`); all still reprint byte-exact with zero ERROR nodes.
-pub const ROUNDTRIP_EXPECTED: u64 = 190; // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo)
+/// **202 at the merge of the two v0.28.0 phase 2 parts**, measured by the
+/// `roundtrip` gate: the 9 files of `68-ai-dataset`, `69-ai-scrub` and
+/// `70-ai-synthetic`, and the 3 files of `71-ai-registry` (`src/Main.sky`,
+/// `src/Support.sky`, `tests/RegistryExampleTest.sky`), which the registry part
+/// added as `68-ai-registry` without moving this count.
+pub const ROUNDTRIP_EXPECTED: u64 = 202; // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -762,7 +767,18 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// **682 since v0.28.0 phase 1 part B** (+4, Family S: the `aifailure` and
 /// `aieval` surfaces, nominal and failure edges each, for `Std.Ai.Failure` and
 /// `Std.Ai.Eval`).
-pub const CORPUS_EXPECTED: u64 = 685; // +3: stdlib_edge nominal/failure-aistore, nominal-airegistry (Std.Ai.Store / Registry, v0.28.0);
+///
+/// **685 since v0.28.0 phase 2 part B** (+3, Family S: the `aistore` surface,
+/// nominal and failure edges, and the `airegistry` surface, nominal edge, for
+/// `Std.Ai.Store` and `Std.Ai.Registry`).
+///
+/// **688 since v0.28.0 phase 2 part A** (+6, Family S: the `aiscrub`,
+/// `aidataset` and `aisynthetic` surfaces, nominal and failure edges each, for
+/// `Std.Ai.Dataset.Scrub`, `Std.Ai.Dataset` and `Std.Ai.Dataset.Synthetic`).
+///
+/// **691 since the merge of the two v0.28.0 phase 2 parts** (measured by
+/// `xtask corpus` on the merged tree: the part B and part A surfaces together).
+pub const CORPUS_EXPECTED: u64 = 691;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -804,7 +820,16 @@ pub const CORPUS_EXPECTED: u64 = 685; // +3: stdlib_edge nominal/failure-aistore
 ///
 /// **536 since v0.28.0 phase 1 part B** (+4, the `aifailure` and `aieval`
 /// stdlib surfaces, all built and run).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 539; // +3: stdlib_edge nominal/failure-aistore, nominal-airegistry (Std.Ai.Store / Registry, v0.28.0);
+///
+/// **539 since v0.28.0 phase 2 part B** (+3, the `aistore` and `airegistry`
+/// stdlib surfaces, all built and run).
+///
+/// **542 since v0.28.0 phase 2 part A** (+6, the `aiscrub`, `aidataset` and
+/// `aisynthetic` stdlib surfaces, all built and run).
+///
+/// **545 since the merge of the two v0.28.0 phase 2 parts** (measured by
+/// `xtask corpus` on the merged tree: both sets of surfaces, built and run).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 545;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -845,7 +870,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 156; // +1 dir: examples/68-ai-registry (Std.Ai.Registry); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 159; // measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2871,7 +2896,13 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 ///   (+11) and the registry failures of `FailureTest` (+8).
 ///
 /// 806 + 56 = 862.
-pub const SKY_SUITES_EXPECTED: u64 = 862;
+///
+/// 932 at the merge of the two v0.28.0 phase 2 parts, measured by the
+/// `sky-suites` gate (36 suites). The dataset part adds `Std/Ai/DatasetTest`
+/// (+25), `Std/Ai/ScrubTest` (+25), `Std/Ai/SyntheticTest` (+17), the bare
+/// judge score case of `EvalTest` (+1) and the `DatasetInvalid` cases of
+/// `FailureTest` (+2): 862 + 70 = 932.
+pub const SKY_SUITES_EXPECTED: u64 = 932;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -3401,7 +3432,16 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// client in node), the split tests in `rust/crates/sky/tests/spa_split_flow.rs`
 /// (`a_server_arm_navigation_*`) and the browser e2e `scripts/nav-e2e.sh`
 /// (Sky.Live and web:app, Chrome and WebKit).
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 184;
+///
+/// 184 -> 194: measured by the `coverage-ledger` gate at the merge of the two
+/// v0.28.0 phase 2 parts (`surfaces_total` 180 -> 190). The v0.28.0 Std.Ai
+/// modules add one surface each, and this count had not recorded them: the
+/// phase 1 modules (the ledger at the base of the merge had 185 surfaces),
+/// `stdlib.Std.Ai.Registry` and `stdlib.Std.Ai.Store` (phase 2, registry part),
+/// and `stdlib.Std.Ai.Dataset`, `stdlib.Std.Ai.Dataset.Scrub` and
+/// `stdlib.Std.Ai.Dataset.Synthetic` (phase 2, dataset part). Each is covered
+/// by its `tests/Std/Ai/*Test.sky` suite and its Family-S corpus surface.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 194;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

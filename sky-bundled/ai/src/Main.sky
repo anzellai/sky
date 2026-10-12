@@ -18,6 +18,10 @@ each verb is a call to the Std.Ai API a user's own program can make.
     sky ai rollback <name>@<alias>               Registry.rollback
     sky ai lineage <name>@<alias>|<name>@v<n>    Registry.lineage
     sky ai lineage --dataset <sha256>            Registry.trainedOn
+    sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>]
+                [--split <train>/<eval>/<test>] [--seed <n>]
+                [--consent <basis>] [--retention <period>]
+                                                 Dataset.fromJsonLines, split, freezeJson
 
 The registry verbs open the registry on the database `--db <dsn>` names, else
 the app's own (`SKY_DB_PATH`, else `DATABASE_URL`; the CLI passes the
@@ -43,6 +47,9 @@ import Std.Ai.Local as Local
 import Std.Ai.Eval as Eval
 import Std.Ai.Registry as Registry
 import Std.Db as Db exposing (Db)
+import Std.Ai.Dataset as Dataset
+import Sky.Core.Json.Decode as JsonD
+import Sky.Core.Result as Result
 
 
 main : Task Error ()
@@ -88,13 +95,16 @@ run args =
             "lineage" :: ref :: opts ->
                 lineage json ref opts
 
+            "data" :: "freeze" :: file :: opts ->
+                freeze json file opts
+
             _ ->
                 Task.fail (Error.invalidInput usage)
 
 
 usage : String
 usage =
-    "usage: sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>] | pull <org>/<repo> <file> | ps [--all] | start <slot> [--model <ref>] [--context <n>] [--embeddings] | stop <slot>|--all | promote <name> <version> --to <alias> | rollback <name>@<alias> | lineage <name>@<alias> | lineage --dataset <sha256>  (each takes --format json; the registry verbs take --db <dsn> and --registry <url>)"
+    "usage: sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>] | pull <org>/<repo> <file> | ps [--all] | start <slot> [--model <ref>] [--context <n>] [--embeddings] | stop <slot>|--all | promote <name> <version> --to <alias> | rollback <name>@<alias> | lineage <name>@<alias> | lineage --dataset <sha256> | data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split 80/10/10] [--seed <n>] [--consent <basis>] [--retention <period>]  (each takes --format json; the registry verbs take --db <dsn> and --registry <url>)"
 
 
 -- The value after a flag, if the flag is there.
@@ -609,3 +619,148 @@ trainedOn json digest opts =
                                                   Nothing ->
                                                       ""))
                                    vs)))
+
+
+-- ─── data freeze ────────────────────────────────────────────────────────
+-- Freeze a JSONL file into a content-addressed dataset version: canonical
+-- rows, a seeded split by a key field (or by the whole row), the SHA-256 of
+-- the data and a manifest. The same rows give the same digest.
+freeze : Bool -> String -> List String -> Task Error ()
+freeze json file opts =
+    case splitSpec opts of
+
+        Err e ->
+            Task.fail e
+
+        Ok spec ->
+            let
+                name =
+                    Maybe.withDefault (baseName file) (flag "--name" opts)
+                out =
+                    Maybe.withDefault ".sky/ai/datasets" (flag "--out" opts)
+                withConsent =
+                    case flag "--consent" opts of
+
+                        Just c ->
+                            Dataset.withConsentBasis c
+
+                        Nothing ->
+                            identity
+                withRetention =
+                    case flag "--retention" opts of
+
+                        Just r ->
+                            Dataset.withRetention r
+
+                        Nothing ->
+                            identity
+                tgt =
+                    Dataset.folder out name |> withConsent |> withRetention
+            in
+                Dataset.fromJsonLines file
+                    |> Dataset.split spec (keyOf (flag "--key" opts))
+                    |> Dataset.freezeJson tgt
+                    |> Task.andThen (\v -> reportFreeze json out v)
+
+
+-- The split key: a top-level string field when --key names one (a row
+-- without it uses its whole text), else the whole canonical row.
+keyOf : Maybe String -> String -> String
+keyOf field row =
+    case field of
+
+        Just f ->
+            Result.withDefault
+                row
+                (JsonD.decodeString (JsonD.field f JsonD.string) row)
+
+        Nothing ->
+            row
+
+
+splitSpec : List String -> Result Error Dataset.SplitSpec
+splitSpec opts =
+    let
+        seed =
+            Maybe.withDefault
+                0
+                (Maybe.andThen String.toInt (flag "--seed" opts))
+    in
+        case flag "--split" opts of
+
+            Nothing ->
+                Ok { train = 80, eval = 10, test = 10, seed = seed }
+
+            Just text ->
+                case List.map String.toInt (String.split "/" text) of
+
+                    [Just t, Just e, Just x] ->
+                        if t < 0 || e < 0 || x < 0 || t + e + x == 0 then
+                            Err
+                                (Error.invalidInput
+                                    ("sky ai data freeze: --split " ++ text
+                                        ++ " needs three non-negative weights, not all 0"))
+
+                        else
+                            Ok { train = t, eval = e, test = x, seed = seed }
+
+                    _ ->
+                        Err
+                            (Error.invalidInput
+                                ("sky ai data freeze: --split takes <train>/<eval>/<test>, for example 80/10/10, not "
+                                    ++ text))
+
+
+baseName : String -> String
+baseName path =
+    let
+        last =
+            Maybe.withDefault
+                path
+                (List.head (List.reverse (String.split "/" path)))
+    in
+        if String.endsWith ".jsonl" last then
+            String.dropRight 6 last
+
+        else
+            last
+
+
+reportFreeze : Bool -> String -> Dataset.Version String -> Task Error ()
+reportFreeze json out v =
+    let
+        m = Dataset.manifest v
+    in
+        emit
+            json
+            (JsonE.object
+                [ ( "name", JsonE.string m.name )
+                , ( "digest", JsonE.string m.digest )
+                , ( "rows", JsonE.int m.rows )
+                , ( "train", JsonE.int m.train )
+                , ( "eval", JsonE.int m.eval )
+                , ( "test", JsonE.int m.test )
+                , ( "seed", JsonE.int m.splitSeed )
+                , ( "data", JsonE.string (Dataset.blobPath v) )
+                , ( "manifest"
+                  , JsonE.string
+                        (out ++ "/" ++ m.name ++ "/" ++ m.digest ++ ".json")
+                  )
+                ])
+            (String.join
+                "\n"
+                [ "froze " ++ m.name ++ ": " ++ String.fromInt m.rows
+                      ++ " rows (train "
+                      ++ String.fromInt m.train
+                      ++ ", eval "
+                      ++ String.fromInt m.eval
+                      ++ ", test "
+                      ++ String.fromInt m.test
+                      ++ ", seed "
+                      ++ String.fromInt m.splitSeed
+                      ++ ")"
+                , "sha256:" ++ m.digest
+                , "data     " ++ Dataset.blobPath v
+                , "manifest " ++ out ++ "/" ++ m.name ++ "/" ++ m.digest
+                      ++ ".json"
+                ])

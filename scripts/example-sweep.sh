@@ -296,11 +296,18 @@ declare -a EXAMPLES=(
     # first render (a build + clean-exit assertion; the restart behaviour is
     # proven behaviourally by rust/crates/sky/tests/durable_tea_cli_flow.rs).
     "67-durable-counter:cli"
-    # 68 — the model registry (Std.Ai.Registry): register, evaluate, promote,
+    # 68 / 69 / 70 — Std.Ai.Dataset, Scrub and Synthetic (v0.28.0). All three
+    # run offline: 68 freezes a dataset version under .sky/ai/datasets, 69 is
+    # pure, and 70 with no arguments prints its generation plan (the teacher
+    # runs only with `-- generate`; its offline run is its `sky test` suite).
+    "68-ai-dataset:cli"
+    "69-ai-scrub:cli"
+    "70-ai-synthetic:cli"
+    # 71 — the model registry (Std.Ai.Registry): register, evaluate, promote,
     # roll back and read the lineage, in a fresh temporary directory, with no
     # model and no network. Its stdout and its test-mode serving test are
     # pinned by rust/crates/sky/tests/ai_registry_flow.rs.
-    "68-ai-registry:cli"
+    "71-ai-registry:cli"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

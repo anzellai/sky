@@ -811,7 +811,7 @@ fn the_registry_runs_unchanged_on_postgres() {
     assert!(log.contains("ALL-REGISTRY-CHECKS-DONE"), "{log}");
 }
 
-/// The registry example (`examples/68-ai-registry`): its program runs the
+/// The registry example (`examples/71-ai-registry`): its program runs the
 /// lifecycle with no model and no network, and its `sky test` (test mode)
 /// serves the promoted adapter through a model slot, answered by its fixture.
 #[test]
@@ -820,7 +820,7 @@ fn the_registry_example_runs_and_serves_offline() {
         return;
     }
     let project = temp_dir("example");
-    copy_dir(&repo_root().join("examples/68-ai-registry"), &project);
+    copy_dir(&repo_root().join("examples/71-ai-registry"), &project);
     let home = temp_dir("example-home");
     let run = |args: &[&str]| {
         Command::new(SKY)

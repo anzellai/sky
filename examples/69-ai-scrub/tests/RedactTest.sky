@@ -1,0 +1,70 @@
+module RedactTest exposing (tests)
+
+-- The scrubber leaves no personal data or secret in the kept tickets, drops
+-- the staff note, and counts every replacement.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Tuple as Tuple
+import Sky.Test as Test exposing (Test)
+import Std.Ai.Dataset.Scrub as Scrub
+import Redact
+
+
+scrubbed : ( List Redact.Ticket, Scrub.Report )
+scrubbed =
+    Scrub.scrubRows Redact.scrubber Redact.tickets
+
+
+text : String
+text =
+    String.join
+        " "
+        (List.concatMap (\t -> [ t.subject, t.body ]) (Tuple.first scrubbed))
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "nothing personal or secret survives"
+          (\_ ->
+              Test.equal
+                  []
+                  (List.filter
+                      (\needle -> String.contains needle text)
+                      [ "ada@example.com"
+                      , "4111"
+                      , "GB82"
+                      , "7946"
+                      , "555-0132"
+                      , "Zx9Qw8"
+                      , "ORD-1"
+                      , "ORD-2"
+                      ]))
+    , Test.test
+          "the date is not mistaken for a phone number"
+          (\_ -> Test.isTrue (String.contains "2024-06-01" text))
+    , Test.test
+          "the staff note is dropped and counted"
+          (\_ ->
+              Test.equal
+                  ( 3, 1 )
+                  ( List.length (Tuple.first scrubbed)
+                  , Scrub.countOf "internal" (Tuple.second scrubbed)
+                  ))
+    , Test.test
+          "every replacement is counted by rule"
+          (\_ ->
+              Test.equal
+                  [ ( "card", 1 )
+                  , ( "email", 1 )
+                  , ( "iban", 1 )
+                  , ( "internal", 1 )
+                  , ( "order_id", 2 )
+                  , ( "phone", 2 )
+                  , ( "secret", 1 )
+                  ]
+                  (Dict.toList (Tuple.second scrubbed)))
+    ]

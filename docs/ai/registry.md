@@ -8,7 +8,7 @@ evaluation, and the type system enforces it: `Registry.promote` takes an
 
 The design is [`../design/std-ai-lifecycle.md`](../design/std-ai-lifecycle.md)
 §8.7. The live API is `sky doc Std.Ai.Registry` and `sky doc Std.Ai.Store`.
-`examples/68-ai-registry` runs the whole lifecycle with no model and no
+`examples/71-ai-registry` runs the whole lifecycle with no model and no
 network.
 
 ## Two halves: the records and the artefacts

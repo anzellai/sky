@@ -208,6 +208,20 @@
 #   instead of `rt.Coerce` to an unrelated stdlib alias (`Std.Durable.ResultRow`,
 #   `Std.Ai.Provider.RawChoice`); ledger's `addAccount` form parameter is now
 #   `any` because another nominal collects the same three fields and more.
+# ── Recorded transition, 2026-10-12 — merge of the two v0.28.0 phase 2
+#    parts (Std.Ai.Dataset and Std.Ai.Registry) ──
+#   narrow over 6 rows, adapter 0, dispatch 0, every other row unchanged (77 of
+#   80 measured; 05-mux-server, 08-notes-app and 13-skyshop have no generated
+#   FFI surface in this tree). Rows new on one side are measured on the merged
+#   tree: 68-ai-dataset 591 -> 626, 69-ai-scrub 99, 70-ai-synthetic 735 -> 769,
+#   71-ai-registry (was 68-ai-registry) 1040 -> 1057. Two rows that both sides
+#   held at one value rise because the merge joins both sides' code:
+#   sky-bundled/ai 527 (registry side) / 354 (dataset side) -> 734 (both CLI
+#   verb sets in one program), sky-bundled/console 292 -> 330. Each of these
+#   rows imports Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Registry or
+#   Std.Ai.Dataset, which carry both sides' constructors and functions after
+#   the merge. Not traced site by site. 09-live-counter 126, 66-slack-agent
+#   160 and apps/relay 179 measure at the values already recorded here.
 00-standard-libs	adapter=0	dispatch=0	narrow=164
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
@@ -269,7 +283,10 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=26
 66-slack-agent	adapter=0	dispatch=0	narrow=160
 67-durable-counter	adapter=0	dispatch=0	narrow=77
-68-ai-registry	adapter=0	dispatch=0	narrow=1040
+68-ai-dataset	adapter=0	dispatch=0	narrow=626
+69-ai-scrub	adapter=0	dispatch=0	narrow=99
+70-ai-synthetic	adapter=0	dispatch=0	narrow=769
+71-ai-registry	adapter=0	dispatch=0	narrow=1057
 apps/dispatch	adapter=0	dispatch=0	narrow=399
 apps/fieldbook	adapter=0	dispatch=0	narrow=657
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
@@ -281,7 +298,7 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=260
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=211
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=527
-sky-bundled/console	adapter=0	dispatch=0	narrow=292
+sky-bundled/ai	adapter=0	dispatch=0	narrow=734
+sky-bundled/console	adapter=0	dispatch=0	narrow=330
 sky-bundled/doc	adapter=0	dispatch=0	narrow=55
 test_pkg	adapter=0	dispatch=0	narrow=1

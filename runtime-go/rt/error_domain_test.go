@@ -146,7 +146,7 @@ var aiAllCodes = []aiFailCode{
 	aiEngineCrashed, aiEngineFailed, aiModelTooLarge, aiNoAccelerator,
 	aiNotProvisioned, aiChecksumMismatch, aiRemoteRejected, aiBudgetExceeded,
 	aiToolchainFailed, aiGateFailed, aiNotRegistered, aiNotPromotable,
-	aiPromotionConflict, aiAdapterMismatch,
+	aiPromotionConflict, aiAdapterMismatch, aiDatasetInvalid,
 }
 
 func TestAiErrorValueIsATypedDomainFailureForEveryCode(t *testing.T) {
@@ -161,6 +161,7 @@ func TestAiErrorValueIsATypedDomainFailureForEveryCode(t *testing.T) {
 		aiBudgetExceeded: errKindPermissionDenied, aiRemoteRejected: errKindUnexpected, aiGateFailed: errKindPermissionDenied,
 		aiNotRegistered: errKindNotFound, aiNotPromotable: errKindPermissionDenied,
 		aiPromotionConflict: errKindConflict, aiAdapterMismatch: errKindInvalidInput,
+		aiDatasetInvalid: errKindInvalidInput,
 	}
 	wantRetry := map[aiFailCode]bool{aiUnreachable: true, aiOverloaded: true, aiTimedOut: true}
 	for _, code := range aiAllCodes {

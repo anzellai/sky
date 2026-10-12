@@ -1,0 +1,87 @@
+module Main exposing (main)
+
+{-| Load support tickets from JSONL, scrub personal data, drop repeats,
+validate them, split them by a seeded hash, freeze a content-addressed version
+and load it back. Runs offline: no model is involved.
+
+    sky run src/Main.sky
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Std.Log exposing (println)
+import Std.Ai.Dataset as Dataset exposing (Chat, Split(..))
+import Tickets
+
+
+main : Task Error ()
+main =
+    Dataset.validate Tickets.limits Tickets.tickets |> Task.andThen showReport
+        |> Task.andThen (\_ -> freezeTickets)
+        |> Task.andThen showVersion
+        |> Task.andThen reload
+        |> Task.andThen showParts
+
+
+showReport : Dataset.Report -> Task Error ()
+showReport r =
+    println
+        ("valid: " ++ String.fromInt r.rows ++ " conversations, at most "
+            ++ String.fromInt r.maxTokens
+            ++ " tokens each (estimated)")
+
+
+freezeTickets : Task Error (Dataset.Version Chat)
+freezeTickets =
+    Tickets.tickets |> Dataset.split Tickets.splitSpec Tickets.firstQuestion
+        |> Dataset.freeze Tickets.versions Dataset.chatCodec
+
+
+showVersion : Dataset.Version Chat -> Task Error (Dataset.Version Chat)
+showVersion v =
+    let
+        m = Dataset.manifest v
+        scrubbed =
+            Dict.toList m.scrub
+                |> List.map (\( rule, n ) -> rule ++ " " ++ String.fromInt n)
+                |> String.join ", "
+    in
+        println
+            (String.join
+                "\n"
+                [ "froze " ++ m.name ++ " sha256:" ++ m.digest
+                , "rows " ++ String.fromInt m.rows ++ " (train "
+                      ++ String.fromInt m.train
+                      ++ ", eval "
+                      ++ String.fromInt m.eval
+                      ++ ", test "
+                      ++ String.fromInt m.test
+                      ++ ")"
+                , "scrubbed " ++ scrubbed
+                , "duplicates removed " ++ String.fromInt m.duplicatesRemoved
+                , "steps " ++ String.join " > " m.steps
+                ])
+            |> Task.map (\_ -> v)
+
+
+-- Load the version by its digest: the data file is checked against it.
+reload : Dataset.Version Chat -> Task Error (Dataset.Version Chat)
+reload v =
+    Dataset.load Tickets.versions (Dataset.digest v) Dataset.chatCodec
+
+
+showParts : Dataset.Version Chat -> Task Error ()
+showParts v =
+    Dataset.versionPart Eval v
+        |> Task.andThen
+               (\evalRows ->
+                   println
+                       ("loaded sha256:" ++ String.left 12 (Dataset.digest v)
+                           ++ "…, eval questions: "
+                           ++ String.join
+                                  " | "
+                                  (List.map Tickets.firstQuestion evalRows)))

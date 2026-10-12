@@ -1,0 +1,9 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/teacher/",
+    "bodyContains": "Topic: refunds"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"content\": \"```json\\n[\\n {\\n  \\\"prompt\\\": \\\"How long does a refund take?\\\",\\n  \\\"completion\\\": \\\"We refund to the card you paid with within five working days of receiving the return.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"Can I get a refund without the receipt?\\\",\\n  \\\"completion\\\": \\\"Yes. Give us your order number and we find the payment, so no receipt is needed.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"Will I get my delivery fee back?\\\",\\n  \\\"completion\\\": \\\"I guess you might, it depends.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"Refund?\\\",\\n  \\\"completion\\\": \\\"Yes.\\\"\\n }\\n]\\n```\"}}], \"usage\": {\"prompt_tokens\": 180, \"completion_tokens\": 220, \"total_tokens\": 400}}"
+}

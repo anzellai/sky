@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 685
+n_min = 691
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 684
+class_v = 690
 class_d = 1
-family_S = 179
+family_S = 185
 family_L = 361
 family_E = 10
 family_R = 135
@@ -4540,6 +4540,84 @@ axes       = { edge = "nominal", surface = "airegistry" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "support-lora@v3 support-lora-v3"
+
+[[case]]
+id         = "stdlib_edge/nominal-aiscrub"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aiscrub" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "mail [EMAIL], card [CARD], iban [IBAN]|2|T|T|[EMAIL];internal=1,email=1"
+
+[[case]]
+id         = "stdlib_edge/failure-aiscrub"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aiscrub" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "order 4111 1111 1111 1112|F|InvalidInput|0"
+
+[[case]]
+id         = "stdlib_edge/nominal-aidataset"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aidataset" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "TTTTTXXTTTTXTTTTTTTT|EEXTXXTTXTETTTXXXTTX|3|{"completion":"c","prompt":"p"}|T/2/0"
+
+[[case]]
+id         = "stdlib_edge/failure-aidataset"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aidataset" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "DatasetInvalid/InvalidInput|DatasetInvalid"
+
+[[case]]
+id         = "stdlib_edge/nominal-aisynthetic"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aisynthetic" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "9:10,11,12|4/4/3/target|1/0;0/1"
+
+[[case]]
+id         = "stdlib_edge/failure-aisynthetic"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aisynthetic" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "0/2/calls|Unavailable"
 
 [[case]]
 id         = "stdlib_edge/nominal-canvas"

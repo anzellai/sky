@@ -275,6 +275,7 @@ whether to retry needs no typed view: `Error.isRetryable err` and
 | `BudgetExceeded` | `PermissionDenied` | no | `budget`, `estimate` (`Std.Money`) |
 | `ToolchainFailed` | `Unavailable` | no | `tool`, `logTail` |
 | `GateFailed` | `PermissionDenied` | no | `suite`, `reasons` (`Std.Ai.Eval`, [`eval.md`](eval.md)) |
+| `DatasetInvalid` | `InvalidInput` | no | `dataset`, `reasons`: a file and a line or row, never the row's text (`Std.Ai.Dataset`, [`dataset.md`](dataset.md)) |
 
 A crashed engine is not retryable even though it is `Unavailable`: the
 engine's supervisor restarts it, and a crash loop must not be retried blindly.
@@ -305,6 +306,7 @@ answers both kinds.
 | `sky ai promote <name> <version> --to <alias>` | `Registry.promoteChecked` (`--force --reason`, `--expect`, `--min-pass-rate`; [`registry.md`](registry.md)) |
 | `sky ai rollback <name>@<alias>` | `Registry.rollback` |
 | `sky ai lineage <name>@<alias>` / `--dataset <sha256>` | `Registry.lineage` / `Registry.trainedOn` |
+| `sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split <t>/<e>/<x>] [--seed <n>] [--consent <basis>] [--retention <period>]` | `Dataset.fromJsonLines`, `split`, `freezeJson`; prints the digest and the counts per split ([`dataset.md`](dataset.md)) |
 
 Every verb takes `--format json`. The verbs hold no logic of their own: the CLI
 builds a bundled Sky program (`sky-bundled/ai`) once per Sky build and runs it,

@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 187 |
-| covered by the new corpus (>= Asserted) | 176 |
-| verdict `stronger` | 171 |
+| surfaces | 190 |
+| covered by the new corpus (>= Asserted) | 179 |
+| verdict `stronger` | 174 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 132 |
-| stdlib modules (denominator) | 119 |
-| stdlib entries (denominator) | 2418 |
+| corpus units | 137 |
+| stdlib modules (denominator) | 122 |
+| stdlib entries (denominator) | 2549 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 7.6% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 836 | 34.6% |
-| symbols unreferenced under the generous rule | 739 | 30.6% |
+| stdlib modules imported by nothing | 9 | 7.4% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 843 | 33.1% |
+| symbols unreferenced under the generous rule | 740 | 29.0% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -57,8 +57,8 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 24 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one `examples/*` | 29 |
+| stdlib modules owned by exactly one unit of any role | 12 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -188,15 +188,18 @@ None.
 | `stdlib.Sky.Http.Server.WebSocket` | stdlib | Runs | Falsified | stronger |
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Agent` | stdlib | None | Asserted | stronger |
-| `stdlib.Std.Ai.Endpoint` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Eval` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Failure` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Local` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Dataset` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Dataset.Scrub` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Dataset.Synthetic` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Endpoint` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Eval` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Failure` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Local` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Policy` | stdlib | Runs | Asserted | stronger |
-| `stdlib.Std.Ai.Provider` | stdlib | Runs | Falsified | stronger |
-| `stdlib.Std.Ai.Registry` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Store` | stdlib | None | Asserted | stronger |
+| `stdlib.Std.Ai.Provider` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Registry` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Store` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Tool` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Trace` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Asserted | stronger |

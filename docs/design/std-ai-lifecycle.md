@@ -601,6 +601,28 @@ Design points:
   counts what it changed, and the counts go into the manifest. Scrubbing is a
   hook the user composes, not a guarantee of anonymity, and the document for it
   says so.
+- **Synthetic data** (`Std.Ai.Dataset.Synthetic`). A generator asks a teacher
+  model, the slot `"teacher"` (the local pinned model by default), for rows in
+  a codec's shape, about topics, for personas, with few-shot examples. The plan
+  is pure and seeded (call `i` uses seed `seed + i` and walks every topic and
+  persona), quality filters drop unparsed rows, duplicates, rows a predicate
+  rejects and rows the eval judge fails, and the run stops at a target, a call
+  limit or a money budget. `toDataset` records the generator, teacher and seed
+  as the dataset's source.
+
+*(Phase 2 part A ships this section: `Std.Ai.Dataset`, `Scrub` and
+`Synthetic`, the typed `DatasetInvalid` failure, and `sky ai data freeze`,
+which runs a bundled program over a JSONL file because the project's
+`src/Ai.sky` entry arrives with `Std.Ai.Pipeline`. Changes from the sketch:
+`freeze` and `load` take a `Folder` (a directory and a name) instead of a
+registry, and the manifest is the lineage the registry records; `split` takes
+a seed (`{ train, eval, test, seed }`) and `freeze` takes the `Splits`, so
+the counts per split are in the manifest; `validate` estimates tokens unless
+`withTokenizer` is given; scrub rules also cover IBANs, US SSNs, UK NINOs and
+secrets, and `Scrub.pattern` returns a `Result`. Still later: storing versions
+in the registry, the engine tokenizer route, spilling the dedupe set to disk,
+and journalled teacher and judge calls. User guide:
+[`../ai/dataset.md`](../ai/dataset.md).)*
 
 ### 8.5 `Std.Ai.Train`
 

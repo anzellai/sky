@@ -1,0 +1,86 @@
+module TicketsTest exposing (tests)
+
+-- The ticket dataset: scrubbed, deduplicated, valid, split the same way on
+-- every run, and frozen to the same digest from the same rows.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Dataset as Dataset exposing (Chat)
+import Tickets
+
+
+ok : Task Error a -> (a -> TestResult) -> TestResult
+ok task check =
+    case Task.run task of
+
+        Ok v ->
+            check v
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+allText : List Chat -> String
+allText rows =
+    String.join " " (List.concatMap (\c -> List.map .content c.messages) rows)
+
+
+freezeInto : String -> Task Error (Dataset.Version Chat)
+freezeInto dir =
+    Tickets.tickets |> Dataset.split Tickets.splitSpec Tickets.firstQuestion
+        |> Dataset.freeze (Dataset.folder dir "tickets") Dataset.chatCodec
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "no email, phone or card number survives the scrub"
+          (\_ ->
+              ok
+                  (Dataset.rows Tickets.tickets)
+                  (\rows ->
+                      Test.equal
+                          ( False, False, False, True )
+                          ( String.contains "ada@example.com" (allText rows)
+                          , String.contains "7946" (allText rows)
+                          , String.contains "4111" (allText rows)
+                          , String.contains "[EMAIL]" (allText rows)
+                          )))
+    , Test.test
+          "the repeated refund question is dropped"
+          (\_ -> ok (Dataset.countRows Tickets.tickets) (Test.equal 7))
+    , Test.test
+          "the tickets pass validation"
+          (\_ ->
+              ok
+                  (Dataset.validate Tickets.limits Tickets.tickets)
+                  (\r -> Test.equal ( True, 0 ) ( r.passed, r.issueCount )))
+    , Test.test
+          "the same rows freeze to the same digest, with the scrub counts"
+          (\_ ->
+              ok
+                  (File.tempDir "tickets"
+                      |> Task.andThen
+                             (\dir ->
+                                 freezeInto dir
+                                     |> Task.andThen
+                                            (\a ->
+                                                freezeInto dir
+                                                    |> Task.map (\b -> ( a, b )))))
+                  (\( a, b ) ->
+                      Test.equal
+                          ( True
+                          , [ ( "card", 1 ), ( "email", 1 ), ( "phone", 1 ) ]
+                          , 1
+                          )
+                          ( Dataset.digest a == Dataset.digest b
+                          , Dict.toList (Dataset.manifest a).scrub
+                          , (Dataset.manifest a).duplicatesRemoved
+                          )))
+    ]

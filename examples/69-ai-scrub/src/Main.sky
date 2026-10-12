@@ -1,0 +1,40 @@
+module Main exposing (main)
+
+{-| Scrub personal data and secrets out of support tickets, and print what
+was replaced. The report holds counts only, never the replaced text. Runs
+offline: no model is involved.
+
+    sky run src/Main.sky
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Std.Log exposing (println)
+import Std.Ai.Dataset.Scrub as Scrub
+import Redact
+
+
+main : Task Error ()
+main =
+    let
+        ( kept, report ) = Scrub.scrubRows Redact.scrubber Redact.tickets
+        lines = List.map (\t -> "- " ++ t.subject ++ ": " ++ t.body) kept
+        counts =
+            Dict.toList report
+                |> List.map (\( rule, n ) -> rule ++ " " ++ String.fromInt n)
+    in
+        println
+            (String.join
+                "\n"
+                ([ "kept " ++ String.fromInt (List.length kept) ++ " of "
+                      ++ String.fromInt (List.length Redact.tickets)
+                      ++ " tickets"
+                ]
+                    ++ lines
+                    ++ [ "replaced: " ++ String.join ", " counts
+                       , "total: " ++ String.fromInt (Scrub.total report)
+                       ]))

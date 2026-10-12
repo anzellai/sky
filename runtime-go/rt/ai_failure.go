@@ -48,6 +48,9 @@ const (
 	aiNotPromotable     aiFailCode = "NotPromotable"
 	aiPromotionConflict aiFailCode = "PromotionConflict"
 	aiAdapterMismatch   aiFailCode = "AdapterMismatch"
+	// aiDatasetInvalid is a dataset that cannot be read, parsed or validated
+	// (Std.Ai.Dataset). Its reasons name a file and a line, never row text.
+	aiDatasetInvalid aiFailCode = "DatasetInvalid"
 )
 
 // aiDomain is the DomainFailure domain of every AI failure.
@@ -91,6 +94,7 @@ var aiFailSpecs = map[aiFailCode]aiFailSpec{
 	aiNotPromotable:     {errKindPermissionDenied, false, [][2]string{{"ref", ""}, {"reason", ""}}},
 	aiPromotionConflict: {errKindConflict, false, [][2]string{{"ref", ""}, {"expected", ""}, {"actual", ""}}},
 	aiAdapterMismatch:   {errKindInvalidInput, false, [][2]string{{"adapter", ""}, {"adapterBase", ""}, {"engineBase", ""}}},
+	aiDatasetInvalid:    {errKindInvalidInput, false, [][2]string{{"dataset", ""}, {"reasons", ""}}},
 }
 
 // aiFailure is a classified AI failure before it becomes a Sky value. Go code

@@ -79,6 +79,7 @@ module Std.Ai.Eval exposing
     , withCalibration
     , calibrate
     , pairwise
+    , judgeAnswer
     , setup
     , run
     , runAs
@@ -369,6 +370,21 @@ defaultJudge =
 judgeVersion : Judge -> String
 judgeVersion (Judge j) =
     j.version
+
+
+-- | Ask the judge to score one answer against a rubric, outside a suite: the
+-- same prompt, temperature 0 and pass mark a `Rubric` case uses, with the
+-- seed you give. `Std.Ai.Dataset.Synthetic` filters generated rows with it.
+-- It has no database, so the call does not go through the judge journal.
+--
+--     Eval.judgeAnswer Eval.defaultJudge 42 "Polite and correct." question answer
+judgeAnswer : Judge -> Int -> String -> String -> String -> Task Error Score
+judgeAnswer (Judge j) seed rubric question answer =
+    Provider.chatWith
+        (judgeOptions seed 64)
+        j.provider
+        (judgePrompt (Judge j) [ Provider.user question ] rubric answer)
+        |> Task.map (\r -> readJudge j.passAt r.content)
 
 -- ── Reports ─────────────────────────────────────────────────────────
 -- | One case at one sample. `score` is the mean of its scorers; `scores`
@@ -940,26 +956,43 @@ judgeScore ctx seed messages rubric answer =
     case ctx.judge of
 
         Judge j ->
-            let
-                question =
-                    messages |> List.filter (\m -> m.role == "user")
-                        |> List.reverse
-                        |> List.head
-                        |> Maybe.map .content
-                        |> Maybe.withDefault ""
-                prompt =
-                    [ Provider.system
-                          ("You are a strict evaluator (" ++ j.version
-                              ++ "). Score the RESPONSE against the RUBRIC from 1 (fails it) to 5 (fully meets it). "
-                              ++ "Reply with one line: SCORE: <1-5> - <one short reason>.")
-                    , Provider.user
-                          ("RUBRIC:\n" ++ rubric ++ "\n\nQUESTION:\n" ++ question
-                              ++ "\n\nRESPONSE:\n"
-                              ++ answer)
-                    ]
-            in
-                journalled ctx seed 64 prompt
-                    |> Task.map (\reply -> readJudge j.passAt reply)
+            journalled
+                ctx
+                seed
+                64
+                (judgePrompt ctx.judge messages rubric answer)
+                |> Task.map (\reply -> readJudge j.passAt reply)
+
+
+-- The judge's prompt for one answer: the last user message is the question.
+judgePrompt : Judge -> List Message -> String -> String -> List Message
+judgePrompt (Judge j) messages rubric answer =
+    let
+        question =
+            messages |> List.filter (\m -> m.role == "user") |> List.reverse
+                |> List.head
+                |> Maybe.map .content
+                |> Maybe.withDefault ""
+    in
+        [ Provider.system
+              ("You are a strict evaluator (" ++ j.version
+                  ++ "). Score the RESPONSE against the RUBRIC from 1 (fails it) to 5 (fully meets it). "
+                  ++ "Reply with one line: SCORE: <1-5> - <one short reason>.")
+        , Provider.user
+              ("RUBRIC:\n" ++ rubric ++ "\n\nQUESTION:\n" ++ question
+                  ++ "\n\nRESPONSE:\n"
+                  ++ answer)
+        ]
+
+
+-- A judge call's options: temperature 0, the seed and a token limit.
+judgeOptions : Int -> Int -> Provider.Options
+judgeOptions seed maxTokens =
+    { temperature = Just 0.0
+    , seed = Just seed
+    , maxTokens = Just maxTokens
+    , adapter = Nothing
+    }
 
 
 -- One judge call through the journal: an entry for the same judge identity,
@@ -982,14 +1015,11 @@ journalled ctx seed maxTokens prompt =
                             , String.fromInt maxTokens
                             , JsonE.encode 0 (JsonE.list messageValue prompt)
                             ])
-                opts =
-                    { temperature = Just 0.0
-                    , seed = Just seed
-                    , maxTokens = Just maxTokens
-                    , adapter = Nothing
-                    }
                 ask =
-                    Provider.chatWith opts j.provider prompt
+                    Provider.chatWith
+                        (judgeOptions seed maxTokens)
+                        j.provider
+                        prompt
                         |> Task.andThen
                                (\r ->
                                    remember ctx key r.content
@@ -1063,27 +1093,42 @@ judgeIdentity (Judge j) =
             Task.succeed ""
 
 
+-- The score is `SCORE: <1-5>` anywhere in the reply, or, when the label is
+-- missing, a reply that starts with a single digit 1 to 5 (`5`, `4 - polite`):
+-- small judge models often drop the label. A reply such as `10/10` or `No.`
+-- has no score.
 readJudge : Int -> String -> Score
 readJudge passAt reply =
-    case Regex.find "SCORE:\\s*[1-5]" (String.toUpper reply) of
+    let
+        labelled = Regex.find "SCORE:\\s*[1-5]" (String.toUpper reply)
+        bare = Regex.find "^\\s*[1-5](\\D|$)" reply
+        found =
+            case labelled of
 
-        Just found ->
-            let
-                n =
-                    Maybe.withDefault 1 (String.toInt (String.right 1 found))
-            in
-                { value = intToFloat (n - 1) / 4.0
-                , passed = n >= passAt
-                , reason =
-                    "judge " ++ String.fromInt n ++ "/5: "
-                        ++ clip (String.trim reply)
+                Just f ->
+                    Just (String.right 1 f)
+
+                Nothing ->
+                    Maybe.map (\b -> String.left 1 (String.trim b)) bare
+    in
+        case found of
+
+            Just digit ->
+                let
+                    n = Maybe.withDefault 1 (String.toInt digit)
+                in
+                    { value = intToFloat (n - 1) / 4.0
+                    , passed = n >= passAt
+                    , reason =
+                        "judge " ++ String.fromInt n ++ "/5: "
+                            ++ clip (String.trim reply)
+                    }
+
+            Nothing ->
+                { value = 0.0
+                , passed = False
+                , reason = "the judge gave no SCORE: " ++ quote (clip reply)
                 }
-
-        Nothing ->
-            { value = 0.0
-            , passed = False
-            , reason = "the judge gave no SCORE: " ++ quote (clip reply)
-            }
 
 
 -- ── Calibration ─────────────────────────────────────────────────────

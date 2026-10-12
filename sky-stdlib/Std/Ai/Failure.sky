@@ -31,7 +31,7 @@
 --
 -- | Failure | `ErrorKind` | retryable |
 -- |---|---|---|
--- | `NotConfigured`, `InvalidSetting`, `ModelTooLarge` | `InvalidInput` | no |
+-- | `NotConfigured`, `InvalidSetting`, `ModelTooLarge`, `DatasetInvalid` | `InvalidInput` | no |
 -- | `Unreachable`, `Overloaded` | `Unavailable` | yes |
 -- | `TimedOut` | `Timeout` | yes |
 -- | `EngineCrashed`, `EngineFailed`, `NoAccelerator`, `ToolchainFailed` | `Unavailable` | no |
@@ -102,6 +102,9 @@ type Failure
     | AdapterMismatch { adapter : String
 , adapterBase : String
 , engineBase : String
+}
+    | DatasetInvalid { dataset : String
+, reasons : String
 }
 
 
@@ -174,6 +177,9 @@ code f =
         AdapterMismatch _ ->
             "AdapterMismatch"
 
+        DatasetInvalid _ ->
+            "DatasetInvalid"
+
 
 -- | The `ErrorKind` a failure sets.
 kind : Failure -> ErrorKind
@@ -187,6 +193,9 @@ kind f =
             InvalidInput
 
         ModelTooLarge _ ->
+            InvalidInput
+
+        DatasetInvalid _ ->
             InvalidInput
 
         Unreachable _ ->
@@ -398,6 +407,9 @@ attrsOf f =
             , ( "engineBase", r.engineBase )
             ]
 
+        DatasetInvalid r ->
+            [ ( "dataset", r.dataset ), ( "reasons", r.reasons ) ]
+
 
 optInt : String -> Maybe Int -> List ( String, String )
 optInt key m =
@@ -475,6 +487,9 @@ describe f =
             r.adapter ++ " was trained on base sha256 " ++ r.adapterBase
                 ++ ", but the engine runs base sha256 "
                 ++ r.engineBase
+
+        DatasetInvalid r ->
+            "the dataset " ++ r.dataset ++ " is not valid: " ++ r.reasons
 
 
 -- Money as "<ISO code> <exact decimal>", for example "USD 40.00".
@@ -663,6 +678,12 @@ decode df =
                     (str "adapter")
                     (str "adapterBase")
                     (str "engineBase")
+
+            "DatasetInvalid" ->
+                Maybe.map2
+                    (\d r -> DatasetInvalid { dataset = d, reasons = r })
+                    (str "dataset")
+                    (str "reasons")
 
             _ ->
                 Nothing
