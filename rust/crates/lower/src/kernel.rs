@@ -389,6 +389,15 @@ static KERNEL_TABLE: &[(&str, &str, &str)] = &[
     ("Ai", "trainMerge", "rt.Ai_trainMerge"),
     ("Ai", "toolchainEnsure", "rt.Ai_toolchainEnsure"),
     ("Ai", "toolchainStatus", "rt.Ai_toolchainStatus"),
+    // Std.Ai.Device: client effects in a Sky.Spa client (spa_partition.rs
+    // CLIENT_EFFECT_KERNELS), the server slot elsewhere.
+    ("AiDevice", "offer", "rt.AiDevice_offer"),
+    ("AiDevice", "capabilities", "rt.AiDevice_capabilities"),
+    ("AiDevice", "run", "rt.AiDevice_run"),
+    ("AiDevice", "server", "rt.AiDevice_server"),
+    ("AiDevice", "prepare", "rt.AiDevice_prepare"),
+    ("AiDevice", "progress", "rt.AiDevice_progress"),
+    ("AiDevice", "evict", "rt.AiDevice_evict"),
     ("File", "readFile", "rt.File_readFile"),
     ("File", "readFileLimit", "rt.File_readFileLimit"),
     ("File", "readFileBytes", "rt.File_readFileBytes"),

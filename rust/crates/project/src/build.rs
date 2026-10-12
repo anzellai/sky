@@ -737,6 +737,29 @@ fn assemble_and_emit_with(
     // it is memoised (re-demand is a cache hit) and invalidated natively by any
     // `SourceFile` edit (the LSP/incremental path). Emitted bytes are byte-for-byte
     // the prior eager `lower_program_cfg` + `emit_program` pair.
+    // The Std.Ai device slots (`Endpoint.withDevice`): rooted and registered
+    // by the lowering (`LowerConfig.device_slots`). A misuse is a build error
+    // (ai_slots::device_slots_for_entry). A generated Sky.Spa half is checked
+    // without the cross-half rule, and only the server half registers slots:
+    // the client half runs in the browser and holds none.
+    {
+        let generated = is_spa_generated_project(example_dir);
+        let (device_slots, device_errors) = crate::ai_slots::device_slots_for_entry(
+            example_dir,
+            extra_dirs,
+            entry_module.unwrap_or("Main"),
+            !generated,
+        );
+        if !device_errors.is_empty() {
+            return Err(device_errors.join("\n").into());
+        }
+        if !generated || spa_role(example_dir).as_deref() == Some("backend") {
+            cfg.device_slots = device_slots
+                .into_iter()
+                .map(|d| (d.module, d.binding, d.slot))
+                .collect();
+        }
+    }
     let t_lower = crate::timings::phase("lower + emit Go");
     let config = skydb::BuildConfig::new(&db, cfg);
     let prog = skydb::go_program(&db, entry, config);
@@ -2491,6 +2514,16 @@ pub fn bundled_source_texts(repo_root: &Path) -> std::collections::HashSet<Strin
 /// `[spa] generated = true` in the project's `sky.toml`: the Sky.Spa split
 /// wrote this project (the same marker `sky build` keys its no-re-split guard
 /// on).
+/// The `[spa] role` of a generated Sky.Spa half (`frontend` or `backend`).
+fn spa_role(example_dir: &Path) -> Option<String> {
+    let s = std::fs::read_to_string(example_dir.join("sky.toml")).ok()?;
+    s.lines().find_map(|l| {
+        let l = l.trim();
+        let rest = l.strip_prefix("role")?.trim_start().strip_prefix('=')?;
+        Some(rest.trim().trim_matches('"').to_string())
+    })
+}
+
 pub fn is_spa_generated_project(example_dir: &Path) -> bool {
     std::fs::read_to_string(example_dir.join("sky.toml"))
         .map(|s| s.contains("[spa]") && s.contains("generated = true"))

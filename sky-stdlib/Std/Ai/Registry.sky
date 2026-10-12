@@ -1732,6 +1732,7 @@ adapterFor reg ref localEngine =
                            , baseDigest = v.baseDigest
                            , format = v.format
                            , path = path
+                           , onDevice = False
                            }
                    in
                        if not localEngine then

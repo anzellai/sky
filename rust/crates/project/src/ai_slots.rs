@@ -341,6 +341,309 @@ fn valid_slot(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
+/// One Std.Ai device slot: a top-level zero-parameter binding whose value is
+/// an `Std.Ai.Endpoint` given `Endpoint.withDevice`. The lowering roots the
+/// binding and `main` registers it (`rt.AiDeviceRegister`), so the server
+/// answers `/_sky/ai/device/<slot>` and a server-side `Device.provider` finds
+/// it (`docs/ai/device.md`).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DeviceSlot {
+    pub module: String,
+    pub binding: String,
+    pub slot: String,
+}
+
+/// The device slots and the `Device.provider` slot names of the modules an
+/// entry reaches, with the build errors they raise:
+///
+/// 1. `Endpoint.withDevice` outside a top-level zero-parameter binding, or in
+///    a binding that does not name its slot with `Endpoint.endpoint "<lit>"`
+///    (the build must know the slot without running the program);
+/// 2. two device slots with one name;
+/// 3. `Device.provider` with a slot that is not a literal (or a top-level
+///    `String` constant), and, when `require_server` is set, a
+///    `Device.provider "x"` with no device slot `"x"` in the program.
+///
+/// `require_server` is off for a generated Sky.Spa half: the client half
+/// holds the `Device.provider` calls and the server half the slots, and the
+/// user's own source is checked whole before the split.
+pub fn device_slots_for_entry(
+    project_dir: &Path,
+    extra_roots: &[PathBuf],
+    entry: &str,
+    require_server: bool,
+) -> (Vec<DeviceSlot>, Vec<String>) {
+    let mut slots: Vec<DeviceSlot> = Vec::new();
+    let mut wanted: Vec<(String, String)> = Vec::new(); // (where, slot)
+    let mut errors: BTreeSet<String> = BTreeSet::new();
+    for (module, f, src) in reached_sources(project_dir, extra_roots, entry) {
+        let shown = f
+            .strip_prefix(project_dir)
+            .unwrap_or(&f)
+            .display()
+            .to_string();
+        let (found, used, errs) = scan_device(&module, &src);
+        for e in errs {
+            errors.insert(format!("{shown}: {e}"));
+        }
+        slots.extend(found);
+        wanted.extend(used.into_iter().map(|u| (shown.clone(), u)));
+    }
+    slots.sort();
+    slots.dedup();
+    for w in slots.windows(2) {
+        if w[0].slot == w[1].slot {
+            errors.insert(format!(
+                "two device slots are named {:?}: {}.{} and {}.{}; a slot name names one slot",
+                w[0].slot, w[0].module, w[0].binding, w[1].module, w[1].binding
+            ));
+        }
+    }
+    if require_server {
+        for (shown, slot) in &wanted {
+            if !slots.iter().any(|d| &d.slot == slot) {
+                errors.insert(format!(
+                    "{shown}: Device.provider {slot:?} has no server slot: give an \
+                     `Endpoint.endpoint {slot:?}` binding `Endpoint.withDevice` in a module the \
+                     program imports"
+                ));
+            }
+        }
+    }
+    (slots, errors.into_iter().collect())
+}
+
+/// Every module the entry reaches through `import`, with its file and source.
+/// Every module when no module is the entry.
+fn reached_sources(
+    project_dir: &Path,
+    extra_roots: &[PathBuf],
+    entry: &str,
+) -> Vec<(String, PathBuf, String)> {
+    let root = project_dir.join(crate::build::configured_source_root(project_dir));
+    let mut files = Vec::new();
+    collect_sky_files(&root, &mut files);
+    for r in extra_roots {
+        collect_sky_files(r, &mut files);
+    }
+    let mut by_name: std::collections::BTreeMap<String, Vec<(PathBuf, String)>> =
+        std::collections::BTreeMap::new();
+    for f in files {
+        let Ok(src) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let Some(name) = module_name_of(&src) else {
+            continue;
+        };
+        by_name.entry(name).or_default().push((f, src));
+    }
+    let mut stack: Vec<String> = by_name
+        .keys()
+        .filter(|n| {
+            n.as_str() == entry
+                || (entry == "Main" && (n.ends_with(".Main") || n.as_str() == "main"))
+        })
+        .cloned()
+        .collect();
+    if stack.is_empty() {
+        stack = by_name.keys().cloned().collect();
+    }
+    let mut reached = BTreeSet::new();
+    let mut out = Vec::new();
+    while let Some(name) = stack.pop() {
+        if !reached.insert(name.clone()) {
+            continue;
+        }
+        let Some(mods) = by_name.get(&name) else {
+            continue;
+        };
+        for (f, src) in mods {
+            for imported in imports_of(src) {
+                if !reached.contains(&imported) {
+                    stack.push(imported);
+                }
+            }
+            out.push((name.clone(), f.clone(), src.clone()));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The names a module reaches a member of `module` by: `<module>.<member>`,
+/// `<alias>.<member>`, and the bare member when the import exposes it.
+fn member_names(src: &str, module: &str, member: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in src.lines() {
+        let Some(rest) = line.trim().strip_prefix("import ") else {
+            continue;
+        };
+        let Some(after) = rest.trim().strip_prefix(module) else {
+            continue;
+        };
+        if !(after.is_empty() || after.starts_with(char::is_whitespace)) {
+            continue;
+        }
+        names.push(format!("{module}.{member}"));
+        let words: Vec<&str> = after.split_whitespace().collect();
+        if let Some(i) = words.iter().position(|w| *w == "as") {
+            if let Some(alias) = words.get(i + 1) {
+                names.push(format!("{alias}.{member}"));
+            }
+        }
+        if let Some(exp) = after.split_once("exposing").map(|(_, e)| e) {
+            let exp = exp.replace(['(', ')', ','], " ");
+            if exp.split_whitespace().any(|w| w == ".." || w == member) {
+                names.push(member.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// The byte offsets just after each whole-word use of one of `names` in
+/// `text` that is a call or a reference (not its own definition or
+/// annotation).
+fn uses_of(text: &str, names: &[String]) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    for name in names {
+        let mut from = 0;
+        while let Some(pos) = text[from..].find(name.as_str()) {
+            let at = from + pos;
+            from = at + name.len();
+            if at > 0 {
+                let prev = bytes[at - 1] as char;
+                if prev.is_ascii_alphanumeric() || prev == '_' || prev == '.' {
+                    continue;
+                }
+            }
+            if from < bytes.len() {
+                let next = bytes[from] as char;
+                if next.is_ascii_alphanumeric() || next == '_' || next == '.' {
+                    continue;
+                }
+            }
+            let rest = text[from..].trim_start();
+            if rest.starts_with(':') || (rest.starts_with('=') && !rest.starts_with("==")) {
+                continue;
+            }
+            out.push(from);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// One module's device slots, its `Device.provider` slot names, and its
+/// errors.
+fn scan_device(module: &str, src: &str) -> (Vec<DeviceSlot>, Vec<String>, Vec<String>) {
+    let mut slots = Vec::new();
+    let mut used = Vec::new();
+    let mut errors = Vec::new();
+    let with_device = member_names(src, "Std.Ai.Endpoint", "withDevice");
+    let device_provider = member_names(src, "Std.Ai.Device", "provider");
+    let endpoints = endpoint_names(src);
+    if with_device.is_empty() && device_provider.is_empty() {
+        return (slots, used, errors);
+    }
+    // `Device.provider "x"` anywhere in the module.
+    for at in uses_of(src, &device_provider) {
+        let rest = src[at..].trim_start();
+        let slot = first_argument(rest).and_then(|arg| {
+            let text = crate::app_entry::ArgText { text: arg, col: 0 };
+            crate::app_entry::static_string(src, &text).ok()
+        });
+        match slot {
+            Some(s) if valid_slot(&s) && !RESERVED_SLOTS.contains(&s.as_str()) => used.push(s),
+            Some(s) => errors.push(format!("Device.provider {s:?}: {}", slot_problem(&s))),
+            None => errors.push(
+                "Device.provider needs its slot as a string literal or a top-level String \
+                 constant, so the build can find the server slot"
+                    .to_string(),
+            ),
+        }
+    }
+    if with_device.is_empty() {
+        return (slots, used, errors);
+    }
+    // `Endpoint.withDevice` only in a top-level zero-parameter binding that
+    // names its slot.
+    let file = crate::app_entry::parse_source(src);
+    let mut covered: Vec<(usize, usize)> = Vec::new();
+    for d in file.decls() {
+        let syntax::ast::Decl::Value(v) = d else {
+            continue;
+        };
+        let Some(name) = v.name() else {
+            continue;
+        };
+        let range = syntax::ast::AstNode::syntax(&v).text_range();
+        let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+        let body = &src[start..end];
+        if uses_of(body, &with_device).is_empty() {
+            continue;
+        }
+        covered.push((start, end));
+        let binding = name.text().to_string();
+        let has_params = v
+            .params()
+            .map(|p| {
+                syntax::ast::AstNode::syntax(&p)
+                    .text()
+                    .to_string()
+                    .trim()
+                    .len()
+                    > 0
+            })
+            .unwrap_or(false);
+        if has_params {
+            errors.push(format!(
+                "{binding}: Endpoint.withDevice is only allowed in a top-level binding without \
+                 parameters (`chatSlot = Endpoint.endpoint \"chat\" |> Endpoint.withDevice …`), \
+                 so the server can register the slot when it starts"
+            ));
+            continue;
+        }
+        let mut slot = None;
+        for at in uses_of(body, &endpoints) {
+            let rest = body[at..].trim_start();
+            if let Some(arg) = first_argument(rest) {
+                let text = crate::app_entry::ArgText { text: arg, col: 0 };
+                if let Ok(s) = crate::app_entry::static_string(src, &text) {
+                    slot = Some(s);
+                    break;
+                }
+            }
+        }
+        match slot {
+            Some(s) if valid_slot(&s) && !RESERVED_SLOTS.contains(&s.as_str()) => {
+                slots.push(DeviceSlot {
+                    module: module.to_string(),
+                    binding,
+                    slot: s,
+                })
+            }
+            Some(s) => errors.push(format!("{binding}: slot {s:?}: {}", slot_problem(&s))),
+            None => errors.push(format!(
+                "{binding}: a binding with Endpoint.withDevice names its slot in the same \
+                 binding with Endpoint.endpoint and a string literal"
+            )),
+        }
+    }
+    for at in uses_of(src, &with_device) {
+        if !covered.iter().any(|(s, e)| *s <= at && at <= *e) {
+            errors.push(
+                "Endpoint.withDevice is only allowed in a top-level binding without parameters"
+                    .to_string(),
+            );
+            break;
+        }
+    }
+    (slots, used, errors)
+}
+
 /// Write [`SLOTS_GO_FILE`] into the build directory, or remove a stale one
 /// when the project declares no slot.
 pub fn write_go(out_dir: &Path, slots: &[String]) -> Result<(), String> {

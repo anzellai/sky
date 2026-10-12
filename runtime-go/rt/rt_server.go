@@ -301,6 +301,9 @@ func serverRouteMux(routeList []any) (mux *http.ServeMux, rootFiles http.Handler
 	// content-hashed name: the backend serves it itself, so the page boots
 	// whether or not the frontend dist is reachable from its directory.
 	registerSpaBootLoader(mux, routeList)
+	// The Std.Ai.Device routes, when the program has a device slot
+	// (ai_device_serve.go).
+	registerAiDeviceRoutes(mux)
 
 	// v0.16.3 #466 follow-up: count paths so we know when to apply
 	// method-aware registration. Method-aware patterns ("GET /api/x")

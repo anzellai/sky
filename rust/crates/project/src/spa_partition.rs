@@ -559,7 +559,12 @@ fn classify_kernel_in(client_crypto: bool, module: &str, func: &str) -> KernelCl
 /// An arm that reaches one is never settled on the server; a server arm's
 /// navigation leaf is run by the client when it sends the RPC
 /// (`spa_split::nav_residual`).
-const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket", "Nav"];
+///
+/// `AiDevice` (`Std.Ai.Device`, kernel prefix `AiDevice_`) is here since
+/// v0.28.0: a device model runs in the client (the browser worker or the
+/// native shell), and its fallback to the server is the client's own call to
+/// `/_sky/ai/device/<slot>/call`, never a server arm.
+const CLIENT_EFFECT_KERNELS: &[&str] = &["Native", "WebSocket", "Nav", "AiDevice"];
 
 /// Classify a kernel pseudo-module + function. `module` is the pseudo name
 /// (`Db`, `Http`, `System`, …) as produced by the resolver's `Res::Kernel`, or

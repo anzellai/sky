@@ -1810,6 +1810,12 @@ impl<'a> Resolver<'a> {
         // separate `Decl::TypeAnno` (never a `Decl::Value`), so it never
         // trips this.
         let mut seen_values: HashSet<String> = HashSet::new();
+        // A constructor names one variant of one type in a module. Two types
+        // that share a constructor name used to bind the name twice: the
+        // later binding won for patterns and the earlier one for some
+        // expressions, which surfaced as a confusing type mismatch or as a
+        // Go build error, never as the naming error it is.
+        let mut seen_ctors: HashMap<String, String> = HashMap::new();
         for decl in tree.decls() {
             match decl {
                 ast::Decl::Value(v) => {
@@ -1869,6 +1875,23 @@ impl<'a> Resolver<'a> {
                                 &cn,
                                 var.name().map(|t| t.text_range()),
                             );
+                        }
+                        if let Some(first) = seen_ctors.get(&cn) {
+                            let msg = if first == &tn {
+                                format!("`{cn}` is a constructor of `{tn}` more than once")
+                            } else {
+                                format!(
+                                    "`{cn}` is a constructor of both `{first}` and `{tn}`; a module defines each constructor name once"
+                                )
+                            };
+                            let mut diag = Diagnostic::error("E1002", msg);
+                            if let Some(t) = var.name() {
+                                diag =
+                                    diag.with_label(self.span_of(t.text_range()), "redefined here");
+                            }
+                            self.result.diagnostics.push(diag);
+                        } else {
+                            seen_ctors.insert(cn.clone(), tn.clone());
                         }
                         let cargs = cst::child_types(var.syntax()).len() as u16;
                         let d = self.def(self.module, &cn, DefKind::Ctor);

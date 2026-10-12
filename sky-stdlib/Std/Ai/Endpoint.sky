@@ -12,6 +12,7 @@ module Std.Ai.Endpoint exposing
     , Adapter
     , Resolver
     , withLocal
+    , withDevice
     , withTimeout
     , withMaxInFlight
     , withQueue
@@ -81,6 +82,7 @@ import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Sky.Core.Secret as Secret exposing (Secret)
 import Std.Ai.Provider as Provider exposing (Provider)
 import Std.Ai.Local as LocalEngine
+import Std.Ai.Device as Device
 import Sky.Core.List as List
 import Sky.Core.Json.Encode as JsonE
 import Sky.Core.Json.Decode as JsonD
@@ -122,6 +124,8 @@ type alias Config =
     , resolverName : String
     , resolve : String -> Bool -> Task Error Adapter
     , adapterRefreshS : Int
+    , hasDevice : Bool
+    , device : Device.RawSpec
     }
 
 {-| A registry adapter, as a resolver hands it to the slot: the reference it
@@ -137,6 +141,7 @@ type alias Adapter =
     , baseDigest : String
     , format : String
     , path : String
+    , onDevice : Bool
     }
 
 {-| How a slot turns `registry:<name>@<alias>` into a concrete adapter.
@@ -186,6 +191,8 @@ endpoint slot =
         , resolverName = ""
         , resolve = noResolver
         , adapterRefreshS = -1
+        , hasDevice = False
+        , device = Device.raw (Device.spec Device.ServerOnly)
         }
 
 
@@ -306,6 +313,19 @@ withLocal spec (Endpoint c) =
                     , port = Maybe.withDefault (-1) s.port
                     }
             }
+
+
+{-| Let devices run this slot: a Sky.Spa client's `Device.provider "<slot>"`
+runs the call on the device when the spec allows it and the device can,
+and on this slot otherwise. The slot must be a top-level binding without
+parameters that names its slot with a literal, so the server registers it
+when it starts and answers `GET /_sky/ai/device/<slot>` (the build checks
+both). The placement, device model and device adapter fall back to
+`<PREFIX>_AI_<SLOT>_PLACEMENT`, `_DEVICE_MODEL` and `_DEVICE_ADAPTER`. See
+`docs/ai/device.md`. -}
+withDevice : Device.Spec -> Endpoint -> Endpoint
+withDevice d (Endpoint c) =
+    Endpoint { c | hasDevice = True, device = Device.raw d }
 
 
 gpuText : LocalEngine.Gpu -> String

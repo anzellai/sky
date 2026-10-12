@@ -1,0 +1,424 @@
+module Std.Ai.DeviceTest exposing (tests)
+
+-- The pure core of Std.Ai.Device: the decision (every rule, in order), the
+-- status a decision gives, the wire values the server and the device send,
+-- the spec builders behind Endpoint.withDevice, and record / replay for one
+-- eval suite on the device and on the server. The kernels are covered by
+-- runtime-go/rt/ai_device_*_test.go and the browser and native flows by
+-- scripts/ai-device-e2e.sh and rust/crates/sky/tests/ai_device_*.rs.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Result exposing (Result(..))
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Test as Test exposing (Test)
+import Std.Ai.Provider as Provider
+import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Device as Device exposing (Backend(..), Decision(..), Placement(..), Reason(..), Status(..))
+
+
+model : Device.OfferFile
+model =
+    { label = "qwen.gguf", sha256 = "aa", bytes = 400, url = "/_sky/ai/blob/aa" }
+
+
+adapter : Device.OfferFile
+adapter =
+    { label = "support-lora@v3", sha256 = "bb", bytes = 20, url = "/_sky/ai/blob/bb" }
+
+
+offer : Device.Offer
+offer =
+    { slot = "chat"
+    , placement = Auto
+    , model = model
+    , adapter = Just adapter
+    , context = 2048
+    , maxDownloadBytes = 1000
+    , backends = [ Native, WebGpu, WasmCpu ]
+    , metered = False
+    , server = True
+    , here = False
+    , refused = Nothing
+    }
+
+
+deviceOnly : Device.Offer
+deviceOnly =
+    { offer | placement = DeviceOnly, server = False }
+
+
+browser : Device.Capabilities
+browser =
+    { platform = "browser"
+    , backends =
+        [ { backend = WebGpu, maxModelBytes = 1000 }
+        , { backend = WasmCpu, maxModelBytes = 1000 }
+        ]
+    , unsupported = [ ( Native, "a browser has no native shell" ) ]
+    , storageAvailableBytes = 10000
+    , metered = False
+    , ready = [ "aa", "bb" ]
+    , failed = []
+    }
+
+
+notStored : Device.Capabilities
+notStored =
+    { browser | ready = [] }
+
+
+decided : Decision -> Decision -> Test.TestResult
+decided want got =
+    Test.equal want got
+
+
+tests : List Test
+tests =
+    [ Test.suite
+          "Std.Ai.Device.decide"
+          [ Test.test
+                "a ServerOnly placement runs on the server"
+                (\_ ->
+                    decided
+                        (OnServer OperatorChoice)
+                        (Device.decide browser { offer | placement = ServerOnly } 10))
+          , Test.test
+                "code on the server is the server slot"
+                (\_ ->
+                    decided
+                        (OnServer OnTheServer)
+                        (Device.decide browser { offer | here = True } 10))
+          , Test.test
+                "a refused offer runs on the server for Auto"
+                (\_ ->
+                    decided
+                        (OnServer (OfferRefused "not cleared"))
+                        (Device.decide browser { offer | refused = Just "not cleared" } 10))
+          , Test.test
+                "a refused offer is NotPromotable for DeviceOnly"
+                (\_ ->
+                    decided
+                        (Refused
+                            (NotPromotable
+                                { ref = "support-lora@v3", reason = "not cleared" }))
+                        (Device.decide
+                            browser
+                            { deviceOnly | refused = Just "not cleared" }
+                            10))
+          , Test.test
+                "the first backend of the offer the device has wins"
+                (\_ -> decided (OnDevice WebGpu) (Device.decide browser offer 10))
+          , Test.test
+                "the offer's order decides, not the device's"
+                (\_ ->
+                    decided
+                        (OnDevice WasmCpu)
+                        (Device.decide browser { offer | backends = [ WasmCpu, WebGpu ] } 10))
+          , Test.test
+                "a backend that failed this session is skipped"
+                (\_ ->
+                    decided
+                        (OnDevice WasmCpu)
+                        (Device.decide { browser | failed = [ WebGpu ] } offer 10))
+          , Test.test
+                "a backend too small for model and adapter is skipped"
+                (\_ ->
+                    decided
+                        (OnDevice WasmCpu)
+                        (Device.decide
+                            { browser
+                                | backends =
+                                    [ { backend = WebGpu, maxModelBytes = 410 }
+                                    , { backend = WasmCpu, maxModelBytes = 1000 }
+                                    ]
+                            }
+                            offer
+                            10))
+          , Test.test
+                "no backend runs on the server for Auto"
+                (\_ ->
+                    case Device.decide { browser | backends = [] } offer 10 of
+
+                        OnServer (NoBackend _) ->
+                            Test.pass
+
+                        _ ->
+                            Test.fail "another decision")
+          , Test.test
+                "no backend is DeviceUnsupported for DeviceOnly, naming why"
+                (\_ ->
+                    decided
+                        (Refused
+                            (DeviceUnsupported
+                                { backend = "native"
+                                , reason = "native: a browser has no native shell"
+                                }))
+                        (Device.decide { browser | backends = [] } deviceOnly 10))
+          , Test.test
+                "a model larger than the slot's download limit is never offered"
+                (\_ ->
+                    case Device.decide browser { deviceOnly | maxDownloadBytes = 100 } 10 of
+
+                        Refused (DeviceUnsupported r) ->
+                            Test.equal
+                                "the model is 420 bytes and the slot offers at most 100"
+                                r.reason
+
+                        _ ->
+                            Test.fail "another decision")
+          , Test.test
+                "files not stored need 1.1 times their size free (Auto: server)"
+                (\_ ->
+                    decided
+                        (OnServer NoStorage)
+                        (Device.decide { notStored | storageAvailableBytes = 461 } offer 10))
+          , Test.test
+                "files not stored need 1.1 times their size free (DeviceOnly: StorageDenied)"
+                (\_ ->
+                    decided
+                        (Refused (StorageDenied { needBytes = 462, availableBytes = 461 }))
+                        (Device.decide { notStored | storageAvailableBytes = 461 } deviceOnly 10))
+          , Test.test
+                "exactly enough storage is enough"
+                (\_ ->
+                    decided
+                        (NeedsDownload WebGpu 420)
+                        (Device.decide { notStored | storageAvailableBytes = 462 } offer 10))
+          , Test.test
+                "only the files not stored are downloaded"
+                (\_ ->
+                    decided
+                        (NeedsDownload WebGpu 20)
+                        (Device.decide { browser | ready = [ "aa" ] } offer 10))
+          , Test.test
+                "a prompt longer than three quarters of the context runs on the server"
+                (\_ ->
+                    decided (OnServer PromptTooLong) (Device.decide browser offer 1537))
+          , Test.test
+                "a prompt of three quarters of the context runs on the device"
+                (\_ -> decided (OnDevice WebGpu) (Device.decide browser offer 1536))
+          , Test.test
+                "a prompt too long is InvalidSetting for DeviceOnly"
+                (\_ ->
+                    case Device.decide browser deviceOnly 5000 of
+
+                        Refused (InvalidSetting r) ->
+                            Test.equal "context" r.setting
+
+                        _ ->
+                            Test.fail "another decision")
+          , Test.test
+                "a slot without an adapter needs the model only"
+                (\_ ->
+                    decided
+                        (NeedsDownload WebGpu 400)
+                        (Device.decide notStored { offer | adapter = Nothing } 10))
+          , Test.test
+                "a native shell runs Native first"
+                (\_ ->
+                    decided
+                        (OnDevice Native)
+                        (Device.decide
+                            { browser
+                                | platform = "ios"
+                                , backends = [ { backend = Native, maxModelBytes = 4000 } ]
+                            }
+                            offer
+                            10))
+          , Test.test
+                "the token estimate is a byte count over three"
+                (\_ -> Test.equal 4 (Device.estimateTokens "abcdefghijkl"))
+          ]
+    , Test.suite
+          "Std.Ai.Device.statusOf"
+          [ Test.test
+                "on the device is Ready"
+                (\_ ->
+                    Test.equal
+                        (Ready { backend = WasmCpu })
+                        (Device.statusOf (OnDevice WasmCpu) idle))
+          , Test.test
+                "a download not started is the consent point"
+                (\_ ->
+                    Test.equal
+                        (NotDownloaded { backend = WebGpu, bytes = 420 })
+                        (Device.statusOf (NeedsDownload WebGpu 420) idle))
+          , Test.test
+                "a running download reports its progress"
+                (\_ ->
+                    Test.equal
+                        (Downloading { backend = WebGpu, doneBytes = 64, totalBytes = 420 })
+                        (Device.statusOf
+                            (NeedsDownload WebGpu 420)
+                            { state = "downloading", doneBytes = 64, totalBytes = 420 }))
+          , Test.test
+                "a server decision is ServerSide with its reason"
+                (\_ ->
+                    Test.equal
+                        (ServerSide NoStorage)
+                        (Device.statusOf (OnServer NoStorage) idle))
+          ]
+    , Test.suite
+          "Std.Ai.Device wire values"
+          [ Test.test
+                "an offer decodes"
+                (\_ ->
+                    Test.equal
+                        (Ok offer)
+                        (Device.decodeOffer offerJson))
+          , Test.test
+                "an offer without an adapter or a refusal decodes"
+                (\_ ->
+                    Test.equal
+                        (Ok { offer | adapter = Nothing })
+                        (Device.decodeOffer
+                            (String.replace
+                                ",\"adapter\":{\"label\":\"support-lora@v3\",\"sha256\":\"bb\",\"bytes\":20,\"url\":\"/_sky/ai/blob/bb\"}"
+                                ""
+                                offerJson)))
+          , Test.test
+                "an unknown backend is refused, not ignored"
+                (\_ ->
+                    Test.err
+                        (Device.decodeOffer (String.replace "\"wasm-cpu\"" "\"tpu\"" offerJson)))
+          , Test.test
+                "capabilities decode"
+                (\_ -> Test.equal (Ok browser) (Device.decodeCapabilities capsJson))
+          , Test.test
+                "a backend names round trip"
+                (\_ ->
+                    Test.equal
+                        [ Just Native, Just WebGpu, Just WasmCpu ]
+                        (List.map
+                            (\b -> Device.backendFromText (Device.backendText b))
+                            [ Native, WebGpu, WasmCpu ]))
+          ]
+    , Test.suite
+          "Std.Ai.Device.Spec"
+          [ Test.test
+                "a spec's defaults leave every setting to the server"
+                (\_ ->
+                    Test.equal
+                        { placement = "auto"
+                        , model = ""
+                        , adapter = ""
+                        , context = -1
+                        , maxDownloadBytes = -1
+                        , backends = []
+                        , metered = False
+                        }
+                        (Device.raw (Device.spec Auto)))
+          , Test.test
+                "the builders set each field"
+                (\_ ->
+                    Test.equal
+                        { placement = "device"
+                        , model = "hf:Qwen/x/y.gguf#sha256=aa"
+                        , adapter = "registry:support-lora@prod"
+                        , context = 1024
+                        , maxDownloadBytes = 500
+                        , backends = [ "wasm-cpu", "native" ]
+                        , metered = True
+                        }
+                        (Device.spec DeviceOnly
+                            |> Device.withModel "hf:Qwen/x/y.gguf#sha256=aa"
+                            |> Device.withAdapter "registry:support-lora@prod"
+                            |> Device.withContext 1024
+                            |> Device.withMaxDownload 500
+                            |> Device.withBackends [ WasmCpu, Native ]
+                            |> Device.withMetered True
+                            |> Device.raw))
+          , Test.test
+                "the placement words are the operator's"
+                (\_ ->
+                    Test.equal
+                        [ "auto", "device", "server" ]
+                        (List.map Device.placementText [ Auto, DeviceOnly, ServerOnly ]))
+          ]
+    , Test.suite
+          "Std.Ai.Device record and replay"
+          [ Test.test
+                "a replay answers each recorded prompt as recorded"
+                (\_ ->
+                    Test.equal
+                        (Ok [ "echo: one", "echo: two" ])
+                        (Device.record "device:wasm-cpu" echo prompts
+                            |> Task.andThen
+                                   (\rec ->
+                                       Task.sequence
+                                           (List.map
+                                               (\p ->
+                                                   Provider.chat (Device.replay rec) p
+                                                       |> Task.map .content)
+                                               prompts))
+                            |> Task.run))
+          , Test.test
+                "a prompt that was not recorded is NotConfigured"
+                (\_ ->
+                    case
+                        Device.record "device:wasm-cpu" echo prompts
+                            |> Task.andThen
+                                   (\rec ->
+                                       Provider.chat
+                                           (Device.replay rec)
+                                           [ Provider.user "three" ])
+                            |> Task.run
+                    of
+
+                        Err e ->
+                            Test.equal (Just "NotConfigured") (Maybe.map Failure.code (Failure.fromError e))
+
+                        Ok _ ->
+                            Test.fail "a missing prompt was answered")
+          , Test.test
+                "a recording round trips through JSON"
+                (\_ ->
+                    let
+                        rec =
+                            { label = "device:webgpu"
+                            , entries =
+                                [ { request = "[]", content = "a \"quoted\" answer", promptTokens = 3, completionTokens = 4 } ]
+                            }
+                    in
+                        Test.equal (Ok rec) (Device.decodeRecording (Device.encodeRecording rec)))
+          ]
+    ]
+
+
+idle : { state : String, doneBytes : Int, totalBytes : Int }
+idle =
+    { state = "idle", doneBytes = 0, totalBytes = 0 }
+
+
+prompts : List (List Provider.Message)
+prompts =
+    [ [ Provider.user "one" ], [ Provider.system "terse", Provider.user "two" ] ]
+
+
+echo : Provider.Provider
+echo =
+    Provider.custom
+        (\messages ->
+            Task.succeed
+                { content =
+                    "echo: "
+                        ++ (List.reverse messages
+                                |> List.head
+                                |> Maybe.map .content
+                                |> Maybe.withDefault "")
+                , usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+                })
+
+
+offerJson : String
+offerJson =
+    "{\"slot\":\"chat\",\"placement\":\"auto\",\"model\":{\"label\":\"qwen.gguf\",\"sha256\":\"aa\",\"bytes\":400,\"url\":\"/_sky/ai/blob/aa\"},\"adapter\":{\"label\":\"support-lora@v3\",\"sha256\":\"bb\",\"bytes\":20,\"url\":\"/_sky/ai/blob/bb\"},\"context\":2048,\"maxDownloadBytes\":1000,\"backends\":[\"native\",\"webgpu\",\"wasm-cpu\"],\"metered\":false,\"server\":true,\"here\":false}"
+
+
+capsJson : String
+capsJson =
+    "{\"platform\":\"browser\",\"backends\":[{\"backend\":\"webgpu\",\"maxModelBytes\":1000},{\"backend\":\"wasm-cpu\",\"maxModelBytes\":1000}],\"unsupported\":[{\"backend\":\"native\",\"reason\":\"a browser has no native shell\"}],\"storageAvailableBytes\":10000,\"metered\":false,\"ready\":[\"aa\",\"bb\"],\"failed\":[]}"

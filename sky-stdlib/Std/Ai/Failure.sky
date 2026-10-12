@@ -36,6 +36,8 @@
 -- | `TimedOut` | `Timeout` | yes |
 -- | `EngineCrashed`, `EngineFailed`, `NoAccelerator`, `ToolchainFailed`, `TrainingFailed` | `Unavailable` | no |
 -- | `NotProvisioned` | `NotFound` | no |
+-- | `DeviceUnsupported` | `Unavailable` | no |
+-- | `StorageDenied` | `PermissionDenied` | no |
 -- | `ChecksumMismatch` | `Conflict` | no |
 -- | `BudgetExceeded`, `GateFailed`, `NotPromotable` | `PermissionDenied` | no |
 -- | `NotRegistered` | `NotFound` | no |
@@ -114,6 +116,12 @@ type Failure
 }
     | TrainingCancelled { runId : String
 , step : Int
+}
+    | DeviceUnsupported { backend : String
+, reason : String
+}
+    | StorageDenied { needBytes : Int
+, availableBytes : Int
 }
 
 
@@ -195,6 +203,12 @@ code f =
         TrainingCancelled _ ->
             "TrainingCancelled"
 
+        DeviceUnsupported _ ->
+            "DeviceUnsupported"
+
+        StorageDenied _ ->
+            "StorageDenied"
+
 
 -- | The `ErrorKind` a failure sets.
 kind : Failure -> ErrorKind
@@ -236,6 +250,12 @@ kind f =
 
         TrainingCancelled _ ->
             Conflict
+
+        DeviceUnsupported _ ->
+            Unavailable
+
+        StorageDenied _ ->
+            PermissionDenied
 
         TimedOut _ ->
             Timeout
@@ -499,6 +519,21 @@ facts f =
                 , [ ( "runId", r.runId ), ( "step", step ) ]
                 )
 
+        DeviceUnsupported r ->
+            ( "this device cannot run the model on " ++ r.backend ++ ": " ++ r.reason
+            , [ ( "backend", r.backend ), ( "reason", r.reason ) ]
+            )
+
+        StorageDenied r ->
+            let
+                need = String.fromInt r.needBytes
+                available = String.fromInt r.availableBytes
+            in
+                ( "the device model needs " ++ need ++ " bytes of storage and "
+                      ++ available ++ " are available"
+                , [ ( "needBytes", need ), ( "availableBytes", available ) ]
+                )
+
 
 optInt : String -> Maybe Int -> List ( String, String )
 optInt key m =
@@ -705,6 +740,21 @@ decode df =
 
                 ( Just r, Just st ) ->
                     Just (TrainingCancelled { runId = r, step = st })
+
+                _ ->
+                    Nothing
+
+        "DeviceUnsupported" ->
+            two
+                (\b r -> DeviceUnsupported { backend = b, reason = r })
+                (str df "backend")
+                (str df "reason")
+
+        "StorageDenied" ->
+            case ( int df "needBytes", int df "availableBytes" ) of
+
+                ( Just n, Just a ) ->
+                    Just (StorageDenied { needBytes = n, availableBytes = a })
 
                 _ ->
                     Nothing

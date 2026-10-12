@@ -91,7 +91,7 @@ const (
 	skyNamespaceAsset
 	// skyDistAsset — a root-level name the Sky.Spa build writes to the
 	// frontend dist: wasm_exec.js, main.wasm, main.<hash>.wasm,
-	// spa-boot.<hash>.js.
+	// spa-boot.<hash>.js, and the Std.Ai.Device worker and engines.
 	skyDistAsset
 )
 
@@ -110,6 +110,13 @@ func classifySkyAsset(p string) skyAssetKind {
 	}
 	if name == "wasm_exec.js" || name == "main.wasm" ||
 		isHashedName(name, "main.", ".wasm") || isHashedName(name, "spa-boot.", ".js") {
+		return skyDistAsset
+	}
+	// The Std.Ai.Device browser files: the worker and the engines the build
+	// staged with --ai-web-engine.
+	if isHashedName(name, "sky-ai-worker.", ".js") ||
+		isHashedName(name, "sky-ai-cpu.", ".mjs") || isHashedName(name, "sky-ai-cpu.", ".wasm") ||
+		isHashedName(name, "sky-ai-webgpu.", ".mjs") || isHashedName(name, "sky-ai-webgpu.", ".wasm") {
 		return skyDistAsset
 	}
 	return notSkyAsset
