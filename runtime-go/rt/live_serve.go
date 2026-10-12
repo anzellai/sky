@@ -509,7 +509,11 @@ func liveAppRun(cfg any) any {
 	// accepts a connection, a signal must already be ours. A signal that
 	// arrives during the build waits in the buffered channel.
 	var sigCh chan os.Signal
+	releaseSignals := func() {}
 	if !embedded {
+		// This handler's drain ends the children, so it owns the
+		// termination sequence while it is installed (child_signal.go).
+		releaseSignals = acquireSignalOwner()
 		sigCh = make(chan os.Signal, 2)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	}
@@ -517,6 +521,7 @@ func liveAppRun(cfg any) any {
 	if err != nil {
 		if sigCh != nil {
 			signal.Stop(sigCh)
+			releaseSignals()
 		}
 		var inUse errLivePortInUse
 		if errors.As(err, &inUse) {
@@ -546,6 +551,7 @@ func liveAppRun(cfg any) any {
 	serr := srv.Serve(ls.ln)
 	if sigCh != nil {
 		signal.Stop(sigCh)
+		releaseSignals()
 	}
 	// See the note in Server_listen: exiting here mid-shutdown would kill the
 	// embedded database instead of stopping it.

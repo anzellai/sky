@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1158,5 +1159,37 @@ func TestAiDownloadResumesAPartialFile(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(dest); !bytes.Equal(b, payload) {
 		t.Fatal("the resumed file differs")
+	}
+}
+
+// TestAiForeignListenerOnTheEnginePortIsEngineFailed is the regression for a
+// start that accepted another process as its engine. /health needs no key,
+// so with a fixed port (`Local.withPort`) any server already listening there
+// answered the readiness check, the engine that could not bind exited unseen,
+// and every call went to the foreign server. The readiness check must prove
+// the listener is the engine this program started: it must accept the
+// launch's fresh key and refuse any other. A listener that does not is an
+// EngineFailed start.
+func TestAiForeignListenerOnTheEnginePortIsEngineFailed(t *testing.T) {
+	_, model := aiTestEnv(t, nil)
+	// A keyless server that answers every path with 200, as a llama-server
+	// started without --api-key does.
+	foreign := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/chat/completions" {
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"foreign"}}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer foreign.Close()
+	port := foreign.Listener.Addr().(*net.TCPAddr).Port
+	s := localSlot(t, model, func(b *aiEndpointBuilder) { b.local.port = port })
+	out, err := s.post("/chat/completions", chatBody("x"))
+	if failCode(err) != aiEngineFailed {
+		t.Fatalf("a foreign listener on the engine port was accepted as the engine: out=%q err=%v", out, err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(port)) {
+		t.Fatalf("the failure does not name the port: %v", err)
 	}
 }

@@ -86,6 +86,13 @@ type procSpec struct {
 	cols     int
 	rows     int
 	ringSize int
+	// guestOwned marks a child started on behalf of a Sky.Live session's
+	// call although the spawn runs on another goroutine (a managed AI
+	// engine). Such a child, like one spawned on the session itself, does
+	// not install the lazy signal handler (child_signal.go): the Live app
+	// that owns the session either owns the signals or, embedded, promised
+	// to install no handler.
+	guestOwned bool
 }
 
 type procHandle struct {
@@ -418,6 +425,12 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 	procExitOnce.Do(func() {
 		RegisterResourceCloser("process.children", killAllChildProcesses)
 	})
+	// The first child of the program itself (not of a Sky.Live session)
+	// installs the SIGINT / SIGTERM handler that ends the children, so a
+	// Ctrl-C does not leave them running (child_signal.go).
+	if h.sess == nil && !s.guestOwned {
+		ensureChildSignalHandler()
+	}
 	if sess := h.sess; sess != nil {
 		sess.addOwned(h.ownedKey(), func() { h.shutdown() })
 	}

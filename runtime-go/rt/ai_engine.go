@@ -287,7 +287,9 @@ func (e *aiEngine) start(ctx context.Context) error {
 	if ent, ok := aiRegistryFindLive(e.key); ok {
 		if key, err := os.ReadFile(ent.KeyFile); err == nil {
 			k := strings.TrimSpace(string(key))
-			if aiHealthy(ent.Port, k) {
+			// The recorded engine, proven by its key: a port reused by
+			// another process since the entry was written is not attached.
+			if aiHealthy(ent.Port, k) && aiEngineOwnsPort(ent.Port, k) {
 				e.mu.Lock()
 				e.attached, e.port, e.apiKey, e.pid = true, ent.Port, k, ent.Pid
 				e.fit = aiFit{accelerator: ent.Accelerator, contextTokens: ent.Context}
@@ -355,7 +357,12 @@ func (e *aiEngine) start(ctx context.Context) error {
 		k, v, _ := strings.Cut(kv, "=")
 		env = append(env, [2]string{k, v})
 	}
-	spec := procSpec{program: bin.path, args: args, env: env, clearEnv: true, ringSize: 256 << 10}
+	// An engine started by a Sky.Live session's call belongs to the app, so
+	// it spawns off the session's goroutine below. It still must not install
+	// the lazy signal handler there: that app owns the signals or, embedded,
+	// promised to install none (child_signal.go).
+	spec := procSpec{program: bin.path, args: args, env: env, clearEnv: true, ringSize: 256 << 10,
+		guestOwned: currentLiveSession() != nil}
 
 	// Spawn on a goroutine of its own: spawnProcess ties a child to the
 	// Sky.Live session of the calling goroutine, and an engine belongs to
@@ -443,8 +450,49 @@ func aiHealthy(port int, key string) bool {
 	return resp.StatusCode == 200
 }
 
+// aiEngineOwnsPort proves that the listener on port is the engine that holds
+// key. /health needs no key on llama-server, so a 200 there proves only that
+// SOMETHING listens: with a fixed port (`Local.withPort`), or a port another
+// process took between aiFreePort and the engine's bind, that something is a
+// foreign process. llama-server checks the key on every other route (only
+// /health, /v1/health and the web UI are public), so the listener must answer
+// /props with the launch's fresh random key and refuse it with any other key.
+// A keyless server accepts both, one with another key refuses both: neither
+// can pass without knowing this launch's key.
+func aiEngineOwnsPort(port int, key string) bool {
+	return aiPropsStatus(port, key) == 200 && aiPropsStatus(port, "sky-not-the-key-"+aiRandomHex(16)) == 401
+}
+
+func aiPropsStatus(port int, key string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://127.0.0.1:%d/props", port), nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := aiEngineClient.Do(req)
+	if err != nil {
+		return 0
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+// aiForeignListener is the failure for a port whose listener is not the
+// engine this program started (or recorded). logTail is the engine's own
+// output, when it has any ("address already in use").
+func aiForeignListener(port int, logTail string) error {
+	msg := fmt.Sprintf("127.0.0.1:%d answers, but not as the engine this program started: another process listens on that port "+
+		"(free it, or choose another port with Local.withPort)", port)
+	if logTail != "" {
+		msg += ": " + logTail
+	}
+	return aiFailf(aiEngineFailed, "%s", msg).
+		with("reason", fmt.Sprintf("port %d is held by another process", port))
+}
+
 // aiWaitHealthy polls /health until the engine answers 200, the child exits
-// (EngineCrashed with its log tail) or the deadline passes.
+// (EngineCrashed with its log tail) or the deadline passes. A 200 must then
+// come from our engine (aiEngineOwnsPort), or the start is EngineFailed.
 func aiWaitHealthy(ctx context.Context, h *procHandle, port int, key string) error {
 	k := aiK()
 	deadline := time.Now().Add(k.healthTimeout)
@@ -452,12 +500,20 @@ func aiWaitHealthy(ctx context.Context, h *procHandle, port int, key string) err
 		select {
 		case <-h.exited:
 			code, _ := h.exitInfo()
+			// An engine that exited while another process answers on its
+			// port lost the bind to that process: the port is the fault.
+			if aiHealthy(port, key) {
+				return aiForeignListener(port, h.logTail(1500))
+			}
 			return aiFailf(aiEngineCrashed, "llama-server exited with code %d while loading the model: %s", code, h.logTail(1500)).
 				withInt("exitCode", code).with("logTail", h.logTail(1500))
 		default:
 		}
 		if aiHealthy(port, key) {
-			return nil
+			if aiEngineOwnsPort(port, key) {
+				return nil
+			}
+			return aiForeignListener(port, h.logTail(1500))
 		}
 		if time.Now().After(deadline) {
 			return aiFailf(aiTimedOut, "llama-server did not report healthy within %s: %s", k.healthTimeout, h.logTail(1500)).

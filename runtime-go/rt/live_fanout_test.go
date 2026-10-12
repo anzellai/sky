@@ -26,7 +26,7 @@ import (
 // metric label).
 func newFanoutSession() *liveSession {
 	return &liveSession{
-		sseCh: make(chan sseFrame, sseChanBuffer),
+		sseCh: make(chan sseFrame, sseBufferSize()),
 		done:  make(chan struct{}),
 	}
 }
@@ -156,7 +156,7 @@ func TestFanOutFrame_DropOnFullConnBufferDoesNotBlock(t *testing.T) {
 	_, chFast, _ := sess.registerSSEConn("fast")
 
 	// Fill the slow connection's buffer without draining it.
-	for i := 0; i < sseChanBuffer; i++ {
+	for i := 0; i < sseBufferSize(); i++ {
 		chSlow <- sseFrame{event: "patch", data: "filler"}
 	}
 

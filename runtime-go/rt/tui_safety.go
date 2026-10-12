@@ -261,6 +261,9 @@ func safeGo(name string, fn func()) {
 // next session that opens that tty.
 func installCleanShutdown() chan struct{} {
 	done := make(chan struct{})
+	// ExitProcess below ends the children, so this handler owns the
+	// termination sequence while it is installed (child_signal.go).
+	releaseSignals := acquireSignalOwner()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT)
 	go func() {
@@ -286,6 +289,7 @@ func installCleanShutdown() chan struct{} {
 			ExitProcess(128 + num)
 		case <-done:
 			signal.Stop(sigCh)
+			releaseSignals()
 		}
 	}()
 	return done

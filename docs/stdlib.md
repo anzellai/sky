@@ -1155,6 +1155,16 @@ command with `command` and the `with*` helpers:
 | `withPty { cols, rows }` | run on a pseudo-terminal (Linux and macOS) |
 | `withBufferSize bytes` | the output ring size per stream (default 1 MiB) |
 
+A child runs in a process group of its own, so the terminal's Ctrl-C does not
+reach it. The runtime ends every child when the program exits. When a program
+that is not a Sky.Live session starts its first child, the runtime also takes
+SIGINT, SIGTERM and SIGHUP: it ends the children (managed AI engines first)
+and exits 130, 143 or 129. A second signal during that cleanup exits at once.
+A program with no child keeps the default signal actions. A Sky.Live,
+Sky.Http.Server or Sky.Tui app, and an `--embed` database, already own these
+signals, and their shutdown ends the children. An `App.withEmbedded` app
+installs no handler of its own.
+
 Output goes into a bounded ring per stream. Every byte has an absolute offset,
 so a reader keeps its own position and can stop and resume. The child never
 waits for a slow reader: when the ring is full the oldest bytes are

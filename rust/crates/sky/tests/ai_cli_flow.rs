@@ -188,15 +188,24 @@ fn sky_ai_start_ps_stop_drive_an_engine() {
     assert_eq!(engines[0]["holderPid"], start.id());
     let engine_pid = engines[0]["pid"].as_u64().unwrap();
 
+    let stop_began = Instant::now();
     let out = fake
         .sky(&cwd)
         .args(["ai", "stop", "chat"])
         .output()
         .unwrap();
+    let stop_took = stop_began.elapsed();
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("stopped 1 engine(s)"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
+    );
+    // The holder ends its engine and exits on the SIGTERM `sky ai stop`
+    // sends. It stays a zombie until this test reaps it, and a zombie is
+    // gone: `stop` must not wait out its 10 s budget on it.
+    assert!(
+        stop_took < Duration::from_secs(8),
+        "sky ai stop took {stop_took:?}: it waited out its budget on a holder that had exited"
     );
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -216,6 +225,97 @@ fn sky_ai_start_ps_stop_drive_an_engine() {
     let out = fake.sky(&cwd).args(["ai", "ps"]).output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("no engines are running"));
     assert_eq!(launches(&fake), 1);
+    let _ = std::fs::remove_dir_all(&cwd);
+}
+
+/// Ctrl-C on `sky ai start` stops its engine. The start message says so,
+/// and before the fix it was false: the program had no signal handler, the
+/// SIGINT killed it at once, and the engine kept running under pid 1 with its
+/// `engines.json` entry left behind.
+#[cfg(unix)]
+#[test]
+fn sky_ai_start_ends_its_engine_on_ctrl_c() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let fake = fake_engine();
+    let cwd = temp_dir("cwd-sigint");
+    let mut start = fake
+        .sky(&cwd)
+        .args(["ai", "start", "chat", "--model", &fake.model_ref])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    let mut reader = BufReader::new(start.stdout.take().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while !line.contains("ready") {
+        line.clear();
+        if reader.read_line(&mut line).unwrap() == 0 || Instant::now() > deadline {
+            let _ = start.kill();
+            panic!("sky ai start never reported ready");
+        }
+    }
+    let out = fake
+        .sky(&cwd)
+        .args(["ai", "ps", "--format", "json"])
+        .output()
+        .unwrap();
+    let ps: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("ps json: {e}: {}", String::from_utf8_lossy(&out.stdout)));
+    let engine_pid = ps[0]["pid"].as_u64().expect("engine pid") as i32;
+    assert!(pid_alive(engine_pid));
+
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(start.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = start.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() > deadline {
+            let _ = start.kill();
+            panic!("sky ai start did not exit on SIGINT");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let engine_gone = {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if !pid_alive(engine_pid) {
+                break true;
+            }
+            if Instant::now() > deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    if !engine_gone {
+        // Ours to end: the engine this test's `sky ai start` launched.
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(engine_pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+    }
+    assert!(engine_gone, "the engine outlived Ctrl-C on sky ai start");
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "sky ai start exit on SIGINT: {status:?} (signal {:?})",
+        status.signal()
+    );
+    let registry = std::fs::read_to_string(fake.home.join("engines.json")).unwrap_or_default();
+    let engines = serde_json::from_str::<serde_json::Value>(&registry)
+        .ok()
+        .and_then(|v| v["engines"].as_array().map(|a| a.len()))
+        .unwrap_or(0);
+    assert_eq!(engines, 0, "engines.json keeps an entry: {registry}");
     let _ = std::fs::remove_dir_all(&cwd);
 }
 
