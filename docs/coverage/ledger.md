@@ -34,8 +34,8 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 7.7% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 828 | 35.3% |
-| symbols unreferenced under the generous rule | 734 | 31.3% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 800 | 34.1% |
+| symbols unreferenced under the generous rule | 705 | 30.1% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -58,7 +58,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 24 |
-| stdlib modules owned by exactly one unit of any role | 16 |
+| stdlib modules owned by exactly one unit of any role | 14 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -189,8 +189,8 @@ None.
 | `stdlib.Sky.Test` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Agent` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Endpoint` | stdlib | None | Falsified | stronger |
-| `stdlib.Std.Ai.Eval` | stdlib | None | Asserted | stronger |
-| `stdlib.Std.Ai.Failure` | stdlib | None | Asserted | stronger |
+| `stdlib.Std.Ai.Eval` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Failure` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Local` | stdlib | None | Falsified | stronger |
 | `stdlib.Std.Ai.Memory.Pg` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Policy` | stdlib | Runs | Asserted | stronger |
