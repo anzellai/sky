@@ -1409,11 +1409,13 @@ sky ai stop <slot> | --all
 
 ### `sky ai promote | rollback | lineage` *(v0.28.0)*
 
-The `Std.Ai.Registry` verbs, run by the same bundled program. Each opens the
-registry on the app's database (`--db <dsn>`, else `SKY_DB_PATH`, else
-`DATABASE_URL`, else the project's `[database]` `url` or `path`) with the
-artefact store at `--registry <url>`, else `SKY_AI_REGISTRY`. Every verb takes
-`--format json`.
+The `Std.Ai.Registry` verbs. In a project with a pipeline (`src/Ai.sky`) they
+run through it, on the database and registry its code names
+(`Pipeline.withDb`, `Pipeline.withRegistry`); elsewhere the bundled program
+runs them. `--db <dsn>` wins over the code, then `SKY_DB_PATH`, then
+`DATABASE_URL`; the artefact store is `--registry <url>`, else
+`SKY_AI_REGISTRY`, else the code's. Nothing is read from `sky.toml`. Every verb
+takes `--format json`.
 
 ```
 sky ai promote <name> <version> --to <alias> [--min-pass-rate <x>] [--expect <n>|none]

@@ -31,7 +31,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe
-import Std.Db as Db
+import Tickets
 import Std.Ai.Provider as Provider exposing (Message)
 import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
 import Std.Ai.Local as Local
@@ -61,7 +61,7 @@ registryUrl =
 -- in, so the CLI and the app read one set of versions and aliases.
 openRegistry : Task Error Registry.Registry
 openRegistry =
-    Db.connect ()
+    Tickets.connect
         |> Task.andThen (\db -> Registry.openConfigured db registryUrl)
 
 

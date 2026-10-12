@@ -1641,7 +1641,7 @@ pub fn migration_hint_for(project_dir: &Path) -> Option<String> {
 /// never touches the project's real database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OfflineDbPlan {
-    /// No `[database]` — nothing to provision.
+    /// No database, in `sky.toml` or in code — nothing to provision.
     None,
     /// SQLite (an explicit `sqlite` driver, or a file-shaped DSN): redirect the
     /// DB to a scratch file. The field is the env-var NAME to set
@@ -1655,8 +1655,10 @@ pub enum OfflineDbPlan {
     Postgres,
 }
 
-/// Classify how a project's `[database]` should be provisioned for an offline
-/// test / fuzz run. See [`OfflineDbPlan`]. Reads `sky.toml` only — no DB, no Go.
+/// Classify how a project's database should be provisioned for an offline
+/// test / fuzz run. See [`OfflineDbPlan`]. Reads a legacy `sky.toml`
+/// `[database]`, else the `Config.withDatabase` the code names
+/// ([`code_database_engine`]) — no DB, no Go.
 pub fn offline_db_plan(project_dir: &Path) -> OfflineDbPlan {
     let sky_toml = project_dir.join("sky.toml");
     let Ok(text) = std::fs::read_to_string(&sky_toml) else {
@@ -1669,17 +1671,20 @@ pub fn offline_db_plan(project_dir: &Path) -> OfflineDbPlan {
         .lines()
         .map(str::trim)
         .any(|l| l == "[database]" || l.starts_with("[database]"));
-    if !declares {
-        return OfflineDbPlan::None;
-    }
     let cfg = read_sky_toml_config(&sky_toml);
-    let prefix = cfg
-        .env_prefix
-        .as_deref()
-        .map(|p| p.trim().trim_end_matches('_'))
-        .filter(|p| !p.is_empty())
-        .unwrap_or("SKY");
-    let db_path_env = format!("{prefix}_DB_PATH");
+    if !declares {
+        // Configuration is code: a project that names its database with
+        // `Sky.Config.withDatabase (Sqlite …)` / `(Postgres …)` declares it
+        // there, and gets the same throwaway database as a `[database]` one.
+        return match code_database_engine(project_dir) {
+            Some("pgx") => OfflineDbPlan::Postgres,
+            Some(_) => OfflineDbPlan::Sqlite {
+                db_path_env: format!("{}_DB_PATH", env_prefix_of(&cfg)),
+            },
+            None => OfflineDbPlan::None,
+        };
+    }
+    let db_path_env = format!("{}_DB_PATH", env_prefix_of(&cfg));
     // Decide the engine. An explicit `driver` wins; else infer from the DSN
     // shape; else a bare `[database]` (DSN supplied at run time) is the ephemeral
     // embedded Postgres, which is what the phase-3b proof (`dbdemo`) exercised.
@@ -1702,6 +1707,75 @@ pub fn offline_db_plan(project_dir: &Path) -> OfflineDbPlan {
     } else {
         OfflineDbPlan::Postgres
     }
+}
+
+/// The `[env] prefix` every `SKY_*` read is renamed with (default `SKY`).
+fn env_prefix_of(cfg: &lower::LowerConfig) -> String {
+    cfg.env_prefix
+        .as_deref()
+        .map(|p| p.trim().trim_end_matches('_'))
+        .filter(|p| !p.is_empty())
+        .unwrap_or("SKY")
+        .to_string()
+}
+
+/// The engine of a database the project's CODE names with
+/// `Sky.Config.withDatabase (Sqlite …)` / `(Postgres …)`: `"pgx"` when any
+/// names PostgreSQL, else `"sqlite"`, else `None` (no such call). A static
+/// scan of the project's `.sky` sources, comments dropped: the constructor
+/// that follows `withDatabase` decides.
+pub fn code_database_engine(project_dir: &Path) -> Option<&'static str> {
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || matches!(name.as_str(), "sky-out" | "tests" | "target") {
+                continue;
+            }
+            if p.is_dir() {
+                walk(&p, out);
+            } else if name.ends_with(".sky") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(
+        &project_dir.join(configured_source_root(project_dir)),
+        &mut files,
+    );
+    let mut found: Option<&'static str> = None;
+    for f in files {
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        let code: String = text
+            .lines()
+            .map(|l| match l.find("--") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut rest = code.as_str();
+        while let Some(i) = rest.find("withDatabase") {
+            let after = &rest[i + "withDatabase".len()..];
+            let window: String = after.chars().take(80).collect();
+            let pg = window.find("Postgres");
+            let lite = window.find("Sqlite");
+            match (pg, lite) {
+                (Some(a), Some(b)) if a < b => return Some("pgx"),
+                (Some(_), None) => return Some("pgx"),
+                (_, Some(_)) => found = Some("sqlite"),
+                (None, None) => {}
+            }
+            rest = after;
+        }
+    }
+    found
 }
 
 pub(crate) fn read_sky_toml_config(path: &Path) -> lower::LowerConfig {
@@ -4596,6 +4670,48 @@ mod offline_db_plan_tests {
     #[test]
     fn no_database_section_is_none() {
         let p = plan_for("nodb", "name = \"a\"\nversion = \"0.1.0\"\n");
+        assert_eq!(p, OfflineDbPlan::None);
+    }
+
+    fn plan_with_code(tag: &str, main_sky: &str) -> OfflineDbPlan {
+        let d = scratch(tag);
+        std::fs::write(
+            d.join("sky.toml"),
+            "name = \"a\"\nversion = \"0.1.0\"\n\n[source]\nroot = \"src\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/Main.sky"), main_sky).unwrap();
+        let p = offline_db_plan(&d);
+        let _ = std::fs::remove_dir_all(&d);
+        p
+    }
+
+    /// Configuration is code (v0.28.0): a database named with
+    /// `Config.withDatabase` and no `[database]` table still gets the throwaway
+    /// test database. Before, `sky test` on examples/72-ai-support-desk (no
+    /// `[database]`) wrote the project's real `support-desk.db`.
+    #[test]
+    fn a_database_named_in_code_gets_the_throwaway_database() {
+        let p = plan_with_code(
+            "codesqlite",
+            "module Main exposing (main)\n\ndatabase =\n    Config.default\n        |> Config.withDatabase (Config.Sqlite \"desk.db\")\n",
+        );
+        assert_eq!(
+            p,
+            OfflineDbPlan::Sqlite {
+                db_path_env: "SKY_DB_PATH".to_string()
+            }
+        );
+        let p = plan_with_code(
+            "codepg",
+            "module Main exposing (main)\n\nconfig =\n    Config.default |> Config.withDatabase (Postgres \"postgres://db/app\")\n",
+        );
+        assert_eq!(p, OfflineDbPlan::Postgres);
+        let p = plan_with_code(
+            "codecomment",
+            "module Main exposing (main)\n\n-- Config.withDatabase (Sqlite \"x.db\")\nmain = ()\n",
+        );
         assert_eq!(p, OfflineDbPlan::None);
     }
 

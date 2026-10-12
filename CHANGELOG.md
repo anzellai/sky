@@ -305,8 +305,9 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   asks the judge in both orders and counts a win only when both agree.
   `encodeReport` / `decodeReport`. The eval tables are now created through the
   migration ledger (`_sky_ai_eval_*`).
-- **`sky ai promote | rollback | lineage`**, on the app's database (`--db`,
-  else `SKY_DB_PATH`, `DATABASE_URL`, or the project's `[database]`), each
+- **`sky ai promote | rollback | lineage`**, on the app's database (in a
+  project, the pipeline's `withDb`; `--db`, else `SKY_DB_PATH`,
+  `DATABASE_URL`, wins; nothing is read from `sky.toml`), each
   with `--format json`; `promote` takes `--min-pass-rate`, `--expect`,
   `--force --reason`; `lineage --dataset <sha256>`.
 - **Startup report and `sky doctor` for AI slots.** The build lists the slots
@@ -343,6 +344,30 @@ Phase 1 and phase 2 of the Std.Ai lifecycle design
   "db.connect: no path given". The backend now carries the runtime tables the
   build bakes into the binary (`[database]`, `[log]`, `[analytics]`, `[jobs]`,
   `[env]`, `[security]`) verbatim (`spa_split::emit_backend_runtime_sections`).
+  This is compatibility for projects that still keep these tables: settings
+  belong in code (`Sky.Config.withDatabase` and the other `withX` builders),
+  with the operator's variable winning, and the split carries code as it is.
+- **`sky ai rollback` and `sky ai lineage` read the database from `sky.toml`.**
+  The CLI passed the project's `[database]` path or url to the bundled
+  program. In a project with a pipeline (`src/Ai.sky`) these verbs now run
+  through it, as `promote` does, on the database and registry its code names
+  (`Pipeline.withDb`, `Pipeline.withRegistry`); `--db`, `SKY_DB_PATH` and
+  `DATABASE_URL` still win. Nothing in `sky ai` reads `sky.toml` settings
+  (test `registry_verbs_use_the_database_the_project_code_names`).
+- **`sky test` gave a database named in code no throwaway copy.** The
+  offline test database was planned from `sky.toml` `[database]` only, so a
+  project that names its database with `Config.withDatabase` ran its tests on
+  the real file (`examples/72-ai-support-desk` wrote `support-desk.db`). The
+  plan now also reads the `Config.withDatabase (Sqlite …)` / `(Postgres …)`
+  the code names (`project::code_database_engine`; test
+  `a_database_named_in_code_gets_the_throwaway_database`).
+- **`examples/72-ai-support-desk` names its database in code.** Its
+  `sky.toml` holds only the name, entry and source root; `Tickets.database`
+  is `Config.withDatabase (Config.Sqlite "support-desk.db")`, and the app,
+  the pipeline (`Pipeline.withDb Tickets.connect`) and the registry connect
+  through it. `SKY_DB_PATH` replaces it. `Db.connect`'s documentation and its
+  "no path given" error now name `Config.withDatabase` and `SKY_DB_PATH`
+  instead of `sky.toml`.
 - **The memoised-binding lint warned about every top-level AI slot that serves
   registry adapters.** `chatSlot = Endpoint.endpoint "chat" |>
   Endpoint.fromRegistry (Registry.resolver openRegistry)` only STORES the

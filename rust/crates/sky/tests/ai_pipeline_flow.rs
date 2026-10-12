@@ -171,6 +171,55 @@ fn the_flagship_passes_its_suites_offline() {
     }
 }
 
+/// Configuration is code (v0.28.0): the flagship's sky.toml names no database,
+/// and the registry verbs of a project run through its pipeline, so they open
+/// the database its code names (`Tickets.database`, `support-desk.db` in the
+/// project) with no SKY_DB_PATH. Before, `rollback` and `lineage` ran in the
+/// bundled program on a DSN the CLI read from sky.toml `[database]`, and
+/// without that table the verb failed with "no path given".
+#[test]
+fn registry_verbs_use_the_database_the_project_code_names() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let project = temp_dir("code-db");
+    let home = temp_dir("code-db-home");
+    copy_project(&repo_root().join("examples/72-ai-support-desk"), &project);
+    let toml = std::fs::read_to_string(project.join("sky.toml")).unwrap();
+    assert!(
+        !toml.contains("[database]"),
+        "the flagship's sky.toml names no database:\n{toml}"
+    );
+    let out = Command::new(SKY)
+        .args(["ai", "lineage", "support-lora@prod"])
+        .current_dir(&project)
+        .env("SKY_AI_HOME", &home)
+        .env("SKY_AI_FETCH", "off")
+        .env("XDG_CACHE_HOME", home.join("xdg-cache"))
+        .env(
+            "SKY_AI_REGISTRY",
+            format!("file://{}", home.join("store").display()),
+        )
+        .env_remove("SKY_DB_PATH")
+        .env_remove("DATABASE_URL")
+        .env_remove("ENV")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run sky ai lineage");
+    let report = text(&out);
+    let opened = project.join("support-desk.db").is_file();
+    let _ = std::fs::remove_dir_all(&project);
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(
+        !report.contains("no path given"),
+        "the verb must open the database the code names:\n{report}"
+    );
+    assert!(
+        opened,
+        "the registry verb must open support-desk.db, the code's database:\n{report}"
+    );
+}
+
 // ── The lifecycle through the CLI, on the fake engine ────────────────────
 
 struct World {

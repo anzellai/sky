@@ -11542,8 +11542,9 @@ The project's AI pipeline (src/Ai.sky, Std.Ai.Pipeline):
                      run one of the pipeline's tasks
   members            list the pipeline's datasets, suites, slots and tasks
 The pipeline verbs take --test-mode (answer model calls from tests/mocks/, as sky test does).
-The registry verbs take --db <dsn> (else SKY_DB_PATH, DATABASE_URL, or the project's
-[database] path or url) and --registry <url> (else SKY_AI_REGISTRY).
+The registry verbs (promote, rollback, lineage) use the pipeline's database and registry
+in a project; each takes --db <dsn> (else SKY_DB_PATH, DATABASE_URL) and --registry <url>
+(else SKY_AI_REGISTRY).
 A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
 
 /// How a `sky ai` verb is run.
@@ -11590,9 +11591,15 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         {
             Some(AiMode::PipelineIfAny)
         }
-        ["rollback", reference, ..] if reference.contains('@') => Some(AiMode::Bundled),
-        ["lineage", "--dataset", digest, ..] if !digest.starts_with('-') => Some(AiMode::Bundled),
-        ["lineage", reference, ..] if reference.contains('@') => Some(AiMode::Bundled),
+        // The registry verbs run through the project's pipeline when there is
+        // one, so they act on the database and registry its code names
+        // (`Pipeline.withDb`, `withRegistry`); else the bundled program, on
+        // `--db` / `SKY_DB_PATH` / `DATABASE_URL`.
+        ["rollback", reference, ..] if reference.contains('@') => Some(AiMode::PipelineIfAny),
+        ["lineage", "--dataset", digest, ..] if !digest.starts_with('-') => {
+            Some(AiMode::PipelineIfAny)
+        }
+        ["lineage", reference, ..] if reference.contains('@') => Some(AiMode::PipelineIfAny),
         ["data", "freeze", arg, ..] if !arg.starts_with('-') => {
             if ai_project::freeze_names_a_dataset(arg, &cwd) {
                 Some(AiMode::Pipeline)
@@ -11635,7 +11642,7 @@ fn cmd_ai(args: &[String]) -> ExitCode {
             _ => {}
         }
     }
-    cmd_ai_bundled(args.clone(), &positional, &cwd, test_mode)
+    cmd_ai_bundled(args.clone(), &cwd, test_mode)
 }
 
 /// A pipeline verb: build (or reuse) the project's pipeline program and run
@@ -11663,7 +11670,7 @@ fn cmd_ai_pipeline(
             Ok(slots) if slots.iter().any(|s| s == slot) => {}
             Ok(_) => {
                 let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                return cmd_ai_bundled(args.to_vec(), positional, &cwd, test_mode);
+                return cmd_ai_bundled(args.to_vec(), &cwd, test_mode);
             }
             Err(e) => {
                 eprintln!("{e}");
@@ -11708,21 +11715,7 @@ fn run_ai_binary(bin: &Path, args: &[String], cwd: &Path, test_project: Option<&
 }
 
 /// A bundled verb: build (once per Sky build) and run `sky-bundled/ai`.
-fn cmd_ai_bundled(
-    mut args: Vec<String>,
-    positional: &[&str],
-    cwd: &Path,
-    test_mode: bool,
-) -> ExitCode {
-    if matches!(
-        positional.first().copied(),
-        Some("promote" | "rollback" | "lineage")
-    ) {
-        if let Some(dsn) = ai_registry_db_default(&args) {
-            args.push("--db".to_string());
-            args.push(dsn);
-        }
-    }
+fn cmd_ai_bundled(args: Vec<String>, cwd: &Path, test_mode: bool) -> ExitCode {
     let Some(repo_root) = assets_root_for(cwd) else {
         return ExitCode::FAILURE;
     };
@@ -11746,33 +11739,6 @@ fn cmd_ai_bundled(
     let bin = out_dir.join("app");
     let project = test_mode.then(|| locate_project_root(cwd)).flatten();
     run_ai_binary(&bin, &args, cwd, project.as_deref())
-}
-
-/// The database a registry verb (`sky ai promote | rollback | lineage`) opens
-/// when it names none: the project's own, as the app reads it. An explicit
-/// `--db`, `SKY_DB_PATH` or `DATABASE_URL` wins (the program reads the
-/// variables itself), so the CLI adds the project's `[database]` `url` or
-/// `path` only when none of them is set. A relative SQLite path is relative to
-/// the project directory, where the app runs.
-fn ai_registry_db_default(args: &[String]) -> Option<String> {
-    if args.iter().any(|a| a == "--db") {
-        return None;
-    }
-    let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
-    if set("SKY_DB_PATH") || set("DATABASE_URL") {
-        return None;
-    }
-    let cwd = std::env::current_dir().ok()?;
-    let root = locate_project_root(&cwd)?;
-    let value = project::sky_toml_section_key(&root, "database", "url")
-        .filter(|v| !v.is_empty())
-        .or_else(|| {
-            project::sky_toml_section_key(&root, "database", "path").filter(|v| !v.is_empty())
-        })?;
-    if value.contains("://") || Path::new(&value).is_absolute() {
-        return Some(value);
-    }
-    Some(root.join(value).to_string_lossy().into_owned())
 }
 
 // ---- bundled-app helpers -------------------------------------------------

@@ -1,4 +1,15 @@
-module Tickets exposing (Ticket, store, open, all, seed, saveReply, send, accepted)
+module Tickets exposing
+    ( Ticket
+    , store
+    , database
+    , connect
+    , open
+    , all
+    , seed
+    , saveReply
+    , send
+    , accepted
+    )
 
 {-| The support tickets: a `Std.Db.Store` on the app's own SQLite file.
 
@@ -13,6 +24,7 @@ import Sky.Core.Error as Error exposing (Error)
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
 import Std.Codec as Codec
+import Sky.Config as Config
 import Std.Db as Db exposing (Db)
 import Std.Db.Store as Store exposing (Store)
 import Std.Ai.Provider as Provider
@@ -44,10 +56,25 @@ store =
         |> Store.serial "id"
 
 
+-- | Where the app's data lives, in code: `support-desk.db` in the working
+-- directory. The operator's SKY_DB_PATH wins over it (a SQLite file, or a
+-- `postgres://` URL).
+database : Config.Config
+database =
+    Config.default |> Config.withDatabase (Config.Sqlite "support-desk.db")
+
+
+-- | The app's database: the app, the AI pipeline (src/Ai.sky) and the
+-- registry all connect through here, so they read one set of records.
+connect : Task Error Db
+connect =
+    Config.apply database |> Task.andThen (\_ -> Db.connect ())
+
+
 -- | The app's database, with the tickets table created (idempotent).
 open : Task Error Db
 open =
-    Db.connect ()
+    connect
         |> Task.andThen (\db -> Store.create db store |> Task.map (\_ -> db))
 
 

@@ -161,8 +161,14 @@ SKY_AI_CHAT_URL=https://gpu.internal:8443/v1
 SKY_AI_CHAT_KEY=...                       # a secret, never in code
 SKY_AI_JUDGE_URL=https://judge.internal/v1
 SKY_AI_REGISTRY=gs://my-bucket/registry
-DATABASE_URL=postgres://...               # the registry's records and the eval history
+SKY_DB_PATH=postgres://...                # tickets, the registry's records, the eval history
 ```
+
+Every setting is in code, with the operator's variable winning over it: the
+slots are `withX` builders (src/Assist.sky, src/Suites.sky, src/Data.sky), and
+the database is `Tickets.database` (`Config.withDatabase (Config.Sqlite
+"support-desk.db")`), which `SKY_DB_PATH` replaces. `sky.toml` holds only the
+project's name, entry and source root.
 
 `sky doctor` checks every slot (the pipeline's are marked `(pipeline)`) before
 you deploy.
