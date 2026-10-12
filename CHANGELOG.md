@@ -380,6 +380,11 @@ training and GGUF export) of the Std.Ai lifecycle design
   source"). `rust/crates/sky/src/bundled.rs` now builds in a staging directory
   of its own and renames it into place. The first rename wins, and the other
   process uses that build.
+- **Two Std.Ai flow tests could share a scratch directory.** Their names came
+  from the clock, which macOS gives in microseconds, so two tests that started
+  together got the same directory and one fake engine. `ai_cli_flow` then
+  counted another test's engine launches and failed about half the time. The
+  Std.Ai flow and live tests now add a per-process counter to the name.
 - **The GGUF reader dropped float32 metadata values.** A `float32` key (for
   example a LoRA adapter's `adapter.lora.alpha`) read as no value
   (`runtime-go/rt/ai_gguf.go`). It now reads as its number.

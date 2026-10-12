@@ -717,6 +717,18 @@ fn go_runtime_live_probes_go_through_the_go_live_gate() {
 /// file is the test's file and its text occurs on the skip's line.
 const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
     (
+        "ai_train_test.go",
+        "process group handling is Unix",
+        "a platform fact, not an environment: the trainer runs in a session of its \
+         own and is signalled by process group, which Windows does not have",
+    ),
+    (
+        "ai_toolchain_test.go",
+        "fake tools are shell scripts",
+        "a platform fact, not an environment: the stand-in uv and CPython are POSIX \
+         shell scripts, which Windows cannot execute",
+    ),
+    (
         "console_boot_test.go",
         "subprocess helper",
         "a helper test that only runs when its parent re-executes the binary",

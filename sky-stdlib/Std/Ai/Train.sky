@@ -2279,15 +2279,19 @@ progressOf id state =
                     { folded | status = Running }
 
                 else if not state.launched then
-                    -- Staged; the toolchain and the base are on their way.
-                    { folded | status = Provisioning }
+                    { folded
+                        -- Staged; the toolchain and the base are on their way.
+                        | status = Provisioning
+                    }
 
                 else if folded.status == Running then
                     { folded | status = Relaunching }
 
                 else if folded.status == Converting && state.converted then
-                    -- The GGUF adapter is written: the run is registering.
-                    { folded | status = Registering }
+                    { folded
+                        -- The GGUF adapter is written: the run is registering.
+                        | status = Registering
+                    }
 
                 else
                     folded
@@ -2407,7 +2411,11 @@ shapeStep ctx job ( backend, tool, weights ) =
                                   (\h ->
                                       fitPlan
                                           job
-                                          { key = "", name = "", value = backend, source = "" }
+                                          { key = ""
+                                          , name = ""
+                                          , value = backend
+                                          , source = ""
+                                          }
                                           h
                                           shape)
                            |> Task.map .estimateBytes)
@@ -2822,6 +2830,23 @@ driverFailure job seen =
 -- Collect, convert, merge, register, and write the result.
 finish : Durable.Ctx -> Job -> ( Setup, Seen ) -> Task Error Adapter
 finish ctx job ( st, seen ) =
+    -- The checkpoint the last attempt resumed from, read from every protocol
+    -- line of the run: the watch that saw `done` may not have seen that
+    -- attempt's `hello`, which came in an earlier watch window.
+    Durable.step
+        ctx
+        Codec.int
+        "resumed"
+        (readRaw (runDir job)
+            |> Task.map
+                   (\state ->
+                       (foldLines state.lines (emptyProgress "")).resumedFrom))
+        |> Task.andThen
+               (\r -> finishWith ctx job ( st, { seen | resumedFrom = r } ))
+
+
+finishWith : Durable.Ctx -> Job -> ( Setup, Seen ) -> Task Error Adapter
+finishWith ctx job ( st, seen ) =
     let
         s = settings job
         dir = runDir job

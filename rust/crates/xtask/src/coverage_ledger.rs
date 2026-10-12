@@ -551,6 +551,9 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
         "periodic-loops-recover-per-cycle",
         &["runtime.periodic-goroutines"],
     ),
+    // v0.28.0 phase 3: a relaunched Std.Ai.Train trainer resumes from the
+    // newest verified checkpoint (runtime-go/rt/ai_train.go).
+    ("ai-train-resume", &["stdlib.Std.Ai.Train"]),
     (
         "live-time-every-mutex-survives-a-panic",
         &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],

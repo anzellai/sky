@@ -112,6 +112,10 @@ job backend dir v =
                 |> Train.withEvalEvery 5
                 |> Train.fakeCrashAt 3
                 |> Train.fakeStepMs 50
+                |> Train.withWatchWindow 150
+                -- Short watch windows: the relaunched trainer's `hello` and its
+                -- `done` arrive in different windows (the resume point must
+                -- still reach the adapter record).
 
 
 drive : String -> String -> Task Error ()

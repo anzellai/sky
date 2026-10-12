@@ -19,6 +19,24 @@ use live_gate::{required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
+/// A unique suffix for a scratch directory. The clock alone is not unique:
+/// macOS gives microseconds, so two tests that start together got the SAME
+/// directory and shared one fake engine (ai_cli_flow counted another test's
+/// launches). The counter makes every name distinct within the process.
+fn unique_suffix() -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 fn have_go() -> bool {
     Command::new("go")
         .arg("version")
@@ -34,14 +52,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "sky-ai-train-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let d = std::env::temp_dir().join(format!("sky-ai-train-{tag}-{}", unique_suffix()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }

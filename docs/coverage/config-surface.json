@@ -55,21 +55,21 @@
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:13728 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:13735 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
     ],
     "database.path": [
       "rust/crates/sky/src/db_cluster.rs:1742 (sky_toml_section_key)",
-      "rust/crates/sky/src/main.rs:11657 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:11664 (sky_toml_section_key)"
     ],
     "database.postgresVersion": [
       "rust/crates/sky/src/db_provision.rs:158 (sky_toml_section_key)"
     ],
     "database.url": [
       "rust/crates/sky/src/db_cluster.rs:1746 (sky_toml_section_key)",
-      "rust/crates/sky/src/main.rs:11654 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:11661 (sky_toml_section_key)"
     ],
     "dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — reads the whole table. `sky add`/`remove`/`install`/`update` and the LSP's unfetched-dep hints all run with no binary in existence."
@@ -80,7 +80,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:13613 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:13620 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
