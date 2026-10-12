@@ -60,3 +60,34 @@ fn an_empty_list_in_a_typed_field_is_built_at_the_field_type() {
     let f = func_debug(SRC, "Main_emptyBox");
     assert!(!f.contains("Coerce"), "`[]` must not be narrowed: {f}");
 }
+
+const MATH_SRC: &str = "module Main exposing (main)\n\n\
+                        root : Float -> Float\nroot x =\n    Math.sqrt x\n\n\
+                        wrap : Int -> Int\nwrap n =\n    modBy 7 n\n\n\
+                        lesser : Float -> Float -> Float\nlesser a b =\n    Math.min a b\n\n\
+                        fewer : Int -> Int -> Int\nfewer a b =\n    Math.min a b\n\n\
+                        main =\n    ( root 2.0, wrap 3, ( lesser 1.0 2.0, fewer 1 2 ) )\n";
+
+#[test]
+fn a_typed_float_argument_uses_the_math_twin() {
+    let f = func_debug(MATH_SRC, "Main_root");
+    assert!(f.contains("rt.Math_sqrtT"), "{f}");
+    assert!(!f.contains("Coerce"), "{f}");
+}
+
+#[test]
+fn mod_by_on_ints_uses_its_twin() {
+    let f = func_debug(MATH_SRC, "Main_wrap");
+    assert!(f.contains("rt.Basics_modByT"), "{f}");
+    assert!(!f.contains("Coerce"), "{f}");
+}
+
+#[test]
+fn min_picks_the_twin_for_its_argument_types() {
+    let f = func_debug(MATH_SRC, "Main_lesser");
+    assert!(f.contains("rt.Math_minFloatT"), "{f}");
+    assert!(!f.contains("Coerce"), "{f}");
+    let g = func_debug(MATH_SRC, "Main_fewer");
+    assert!(g.contains("rt.Math_minT"), "{g}");
+    assert!(!g.contains("Coerce"), "{g}");
+}

@@ -5851,13 +5851,21 @@ impl<'a> Ctx<'a> {
         // argument already lowers to exactly that type (doc 14 §1: both shapes
         // known at emit time); otherwise the erased call stays. See
         // `kernel_typed_return_twin`.
-        if let Some(twin) = kernel_typed_return_twin(go, lowered.len()) {
-            let fits = twin
-                .params
+        let fits = |twin: &TypedTwin| {
+            twin.params
                 .iter()
                 .zip(&lowered)
-                .all(|(p, e)| p.as_ref().is_none_or(|want| *want == e.ty));
-            if fits {
+                .all(|(p, e)| p.as_ref().is_none_or(|want| *want == e.ty))
+        };
+        let primary = kernel_typed_return_twin(go, lowered.len());
+        let chosen = match primary {
+            Some(t) if !fits(&t) => kernel_typed_return_alt(go, lowered.len())
+                .filter(|a| fits(a))
+                .or(Some(t)),
+            other => other,
+        };
+        if let Some(twin) = chosen {
+            if fits(&twin) {
                 let targs: Vec<GoExpr> = twin
                     .params
                     .iter()
@@ -9448,6 +9456,7 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
     let int = || GoTy::Bare(Prim::Int);
     let str_ = || GoTy::Bare(Prim::Str);
     let bool_ = || GoTy::Bare(Prim::Bool);
+    let float = || GoTy::Bare(Prim::Float);
     let maybe = |t: GoTy| GoTy::Named("rt.SkyMaybe".into(), vec![t]);
     let twin = |symbol: &'static str, params: Vec<Option<GoTy>>, ret: GoTy| {
         Some(TypedTwin {
@@ -9494,6 +9503,51 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ("rt.String_dropLeft", 2) => twin("rt.String_dropLeftT", vec![None, None], str_()),
         ("rt.String_dropRight", 2) => twin("rt.String_dropRightT", vec![None, None], str_()),
         ("rt.JsonEnc_encode", 2) => twin("rt.JsonEnc_encodeT", vec![None, None], str_()),
+        ("rt.String_fromFloat", 1) => twin("rt.String_fromFloatAnyT", vec![None], str_()),
+        // Typed Math / Basics / List / Regex companions (P8), checked against
+        // the erased kernels in kernel_twins_test.go.
+        ("rt.Math_sqrt", 1) => twin("rt.Math_sqrtT", vec![Some(float())], float()),
+        ("rt.Math_sin", 1) => twin("rt.Math_sinT", vec![Some(float())], float()),
+        ("rt.Math_cos", 1) => twin("rt.Math_cosT", vec![Some(float())], float()),
+        ("rt.Math_tan", 1) => twin("rt.Math_tanT", vec![Some(float())], float()),
+        ("rt.Math_log", 1) => twin("rt.Math_logT", vec![Some(float())], float()),
+        ("rt.Math_exp", 1) => twin("rt.Math_expT", vec![Some(float())], float()),
+        ("rt.Math_pow", 2) => twin("rt.Math_powT", vec![Some(float()), Some(float())], float()),
+        ("rt.Math_floor", 1) => twin("rt.Math_floorT", vec![Some(float())], int()),
+        ("rt.Math_ceil", 1) => twin("rt.Math_ceilT", vec![Some(float())], int()),
+        ("rt.Math_round", 1) => twin("rt.Math_roundT", vec![Some(float())], int()),
+        ("rt.Math_abs", 1) => twin("rt.Math_absT", vec![Some(int())], int()),
+        ("rt.Math_min", 2) => twin("rt.Math_minT", vec![Some(int()), Some(int())], int()),
+        ("rt.Math_max", 2) => twin("rt.Math_maxT", vec![Some(int()), Some(int())], int()),
+        ("rt.Basics_modBy", 2) => twin("rt.Basics_modByT", vec![Some(int()), Some(int())], int()),
+        ("rt.List_range", 2) => twin(
+            "rt.List_rangeT",
+            vec![Some(int()), Some(int())],
+            GoTy::Slice(Box::new(int())),
+        ),
+        ("rt.Regex_replace", 3) => twin(
+            "rt.Regex_replaceT",
+            vec![Some(str_()), Some(str_()), Some(str_())],
+            str_(),
+        ),
+        _ => None,
+    }
+}
+
+/// A second typed twin for a kernel whose first one takes other argument
+/// types: `Math.min` / `Math.max` over two `Float`s.
+fn kernel_typed_return_alt(go: &str, nargs: usize) -> Option<TypedTwin> {
+    let float = || GoTy::Bare(Prim::Float);
+    let twin = |symbol: &'static str, ret: GoTy| {
+        Some(TypedTwin {
+            symbol,
+            params: vec![Some(float()), Some(float())],
+            ret,
+        })
+    };
+    match (go, nargs) {
+        ("rt.Math_min", 2) => twin("rt.Math_minFloatT", float()),
+        ("rt.Math_max", 2) => twin("rt.Math_maxFloatT", float()),
         _ => None,
     }
 }

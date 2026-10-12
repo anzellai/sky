@@ -456,6 +456,14 @@ result type, so their semantics are the erased kernel's by construction.
 Measured: narrow 14423 -> 12669 over all 80 coerce-floor rows, adapter 0.
 `::` stays untouched, as above.
 
+The table also covers the typed Math companions (`Math_sqrtT` … `Math_roundT`,
+`Math_absT`, `Math_minT` / `Math_maxT`), `Basics_modByT`, `List_rangeT`,
+`Regex_replaceT` and `String_fromFloatAnyT`. A kernel with two typed shapes
+(`Math.min` over two `Int`s or two `Float`s) has a second entry
+(`kernel_typed_return_alt`), and the call site takes the one whose parameter
+types the lowered arguments match. `String_fromFloatT` is NOT used: it formats
+with `'g'` where the erased kernel uses `'f'`, so it is a different function.
+
 An empty list literal `[]` in a typed slot is built at the slot's slice type
 (`lower_expr_at`, lever §5.2): it carries no element, so `[]T{}` is exactly the
 value the former `rt.AsListT[T]([]any{})` produced.

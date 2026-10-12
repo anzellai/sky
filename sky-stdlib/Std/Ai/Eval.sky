@@ -1978,30 +1978,14 @@ alone r =
 compare : Report -> Report -> Comparison
 compare base cand =
     let
-        key c = c.id ++ "#" ++ String.fromInt c.sample
-        paired =
-            List.filterMap
-                (\c ->
-                    case List.find (\b -> key b == key c) base.cases of
-
-                        Just b ->
-                            Just ( b, c )
-
-                        Nothing ->
-                            Nothing)
-                cand.cases
+        paired = pairCases base.cases cand.cases
         regressions =
             List.length
                 (List.filter (\( b, c ) -> b.passed && not c.passed) paired)
         improvements =
             List.length
                 (List.filter (\( b, c ) -> not b.passed && c.passed) paired)
-        names =
-            uniqueSorted
-                ("pass"
-                    :: List.concatMap
-                           (\( _, c ) -> List.map (\( n, _ ) -> n) c.scores)
-                           paired)
+        names = uniqueSorted ([ "pass" ] ++ scorerNames paired)
     in
         { candidate = cand
         , baseline = Just base
@@ -2023,8 +2007,86 @@ scorerValueOf name c =
                 0.0)
 
     else
-        List.find (\( n, _ ) -> n == name) c.scores
-            |> Maybe.map (\( _, v ) -> v)
+        lookupScore name c.scores
+
+
+-- The paired-comparison helpers below recurse over typed lists instead of
+-- passing lambdas to the generic `List` functions, whose parameters are
+-- erased and narrowed back one by one (doc 14 R1 / R12).
+caseKey : CaseResult -> String
+caseKey c =
+    c.id ++ "#" ++ String.fromInt c.sample
+
+
+-- Each candidate case with the baseline case of the same id and sample, in
+-- candidate order; a candidate case with no baseline is left out.
+pairCases : List CaseResult -> List CaseResult -> List ( CaseResult, CaseResult )
+pairCases base cands =
+    case cands of
+
+        [] ->
+            []
+
+        c :: rest ->
+            case findCase (caseKey c) base of
+
+                Just b ->
+                    [ ( b, c ) ] ++ pairCases base rest
+
+                Nothing ->
+                    pairCases base rest
+
+
+findCase : String -> List CaseResult -> Maybe CaseResult
+findCase key cases =
+    case cases of
+
+        [] ->
+            Nothing
+
+        c :: rest ->
+            if caseKey c == key then
+                Just c
+
+            else
+                findCase key rest
+
+
+scorerNames : List ( CaseResult, CaseResult ) -> List String
+scorerNames paired =
+    case paired of
+
+        [] ->
+            []
+
+        ( _, c ) :: rest ->
+            scoreNames c.scores ++ scorerNames rest
+
+
+scoreNames : List ( String, Float ) -> List String
+scoreNames scores =
+    case scores of
+
+        [] ->
+            []
+
+        ( n, _ ) :: rest ->
+            [ n ] ++ scoreNames rest
+
+
+lookupScore : String -> List ( String, Float ) -> Maybe Float
+lookupScore name scores =
+    case scores of
+
+        [] ->
+            Nothing
+
+        ( n, v ) :: rest ->
+            if n == name then
+                Just v
+
+            else
+                lookupScore name rest
 
 
 scorerDelta : Int -> String -> List ( CaseResult, CaseResult ) -> ScorerDelta
@@ -2060,41 +2122,73 @@ bootstrap : Int -> List Float -> ( Float, Float )
 bootstrap seed xs =
     let
         n = List.length xs
-        arr = List.indexedMap (\i x -> ( i, x )) xs
-        at i =
-            List.find (\( j, _ ) -> j == i) arr |> Maybe.map (\( _, x ) -> x)
-                |> Maybe.withDefault 0.0
-        step s = modBy 2147483648 (s * 1103515245 + 12345)
-        resample s =
-            List.foldl
-                (\_ ( st, acc ) ->
-                    let
-                        st2 = step st
-                    in
-                        ( st2, acc + at (modBy n st2) ))
-                ( s, 0.0 )
-                (List.range 1 n)
-        means =
-            List.foldl
-                (\_ ( st, acc ) ->
-                    let
-                        ( st2, total ) = resample st
-                    in
-                        ( st2, (total / intToFloat n) :: acc ))
-                ( modBy 2147483648 (abs seed) + 1, [] )
-                (List.range 1 1000)
-                |> (\( _, ms ) -> List.sort ms)
     in
         if n == 0 then
             ( 0.0, 0.0 )
 
         else
-            ( nth 24 means, nth 974 means )
+            let
+                means =
+                    List.sort
+                        (resampleMeans
+                            xs
+                            n
+                            1000
+                            (modBy 2147483648 (abs seed) + 1)
+                            [])
+            in
+                ( nth 24 means, nth 974 means )
+
+
+lcgStep : Int -> Int
+lcgStep s =
+    modBy 2147483648 (s * 1103515245 + 12345)
+
+
+-- `left` more resample means, each prepended to `acc`.
+resampleMeans : List Float -> Int -> Int -> Int -> List Float -> List Float
+resampleMeans xs n left st acc =
+    if left <= 0 then
+        acc
+
+    else
+        case resampleSum xs n n st 0.0 of
+
+            ( st2, total ) ->
+                resampleMeans
+                    xs
+                    n
+                    (left - 1)
+                    st2
+                    ([ total / intToFloat n ] ++ acc)
+
+
+-- The sum of `left` draws with replacement, and the generator state after them.
+resampleSum : List Float -> Int -> Int -> Int -> Float -> ( Int, Float )
+resampleSum xs n left st acc =
+    if left <= 0 then
+        ( st, acc )
+
+    else
+        let
+            st2 = lcgStep st
+        in
+            resampleSum xs n (left - 1) st2 (acc + nth (modBy n st2) xs)
 
 
 nth : Int -> List Float -> Float
 nth i xs =
-    List.drop i xs |> List.head |> Maybe.withDefault 0.0
+    case xs of
+
+        [] ->
+            0.0
+
+        x :: rest ->
+            if i <= 0 then
+                x
+
+            else
+                nth (i - 1) rest
 
 
 -- The exact two-sided McNemar p-value for b and c discordant pairs.
@@ -2102,26 +2196,36 @@ mcnemar : Int -> Int -> Float
 mcnemar b c =
     let
         n = b + c
-        k = min b c
-        logHalf = Math.log 0.5
-        terms =
-            List.foldl
-                (\i ( logT, acc ) ->
-                    let
-                        next =
-                            logT + Math.log (intToFloat (n - i))
-                                - Math.log (intToFloat (i + 1))
-                    in
-                        ( next, acc + Math.exp logT ))
-                ( intToFloat n * logHalf, 0.0 )
-                (List.range 0 k)
-                |> (\( _, s ) -> s)
     in
         if n == 0 then
             1.0
 
         else
-            min 1.0 (2.0 * terms)
+            Math.min
+                1.0
+                (2.0
+                    * mcnemarTerms
+                          n
+                          (Math.min b c)
+                          0
+                          (intToFloat n * Math.log 0.5)
+                          0.0)
+
+
+-- The binomial tail sum for i = 0 .. k, with log C(n, i) / 2^n carried in
+-- `logT` from one term to the next.
+mcnemarTerms : Int -> Int -> Int -> Float -> Float -> Float
+mcnemarTerms n k i logT acc =
+    if i > k then
+        acc
+
+    else
+        mcnemarTerms
+            n
+            k
+            (i + 1)
+            (logT + Math.log (intToFloat (n - i)) - Math.log (intToFloat (i + 1)))
+            (acc + Math.exp logT)
 
 -- ── Thresholds and the gate ─────────────────────────────────────────
 -- | The rules `gate` applies. Build them from `thresholds` with the
@@ -2520,7 +2624,18 @@ mean xs =
             0.0
 
         _ ->
-            List.foldl (\x acc -> x + acc) 0.0 xs / intToFloat (List.length xs)
+            sumFloats 0.0 xs / intToFloat (List.length xs)
+
+
+sumFloats : Float -> List Float -> Float
+sumFloats acc xs =
+    case xs of
+
+        [] ->
+            acc
+
+        x :: rest ->
+            sumFloats (acc + x) rest
 
 
 ratio : Int -> Int -> Float
@@ -2571,16 +2686,29 @@ meanMoney ms =
 
 uniqueSorted : List String -> List String
 uniqueSorted xs =
-    List.foldl
-        (\x acc ->
-            if List.any (\y -> y == x) acc then
-                acc
+    case List.sort xs of
+
+        [] ->
+            []
+
+        x :: rest ->
+            [ x ] ++ dropRepeats x rest
+
+
+-- A sorted list without the entries equal to the one before them.
+dropRepeats : String -> List String -> List String
+dropRepeats prev xs =
+    case xs of
+
+        [] ->
+            []
+
+        x :: rest ->
+            if x == prev then
+                dropRepeats prev rest
 
             else
-                x :: acc)
-        []
-        xs
-        |> List.sort
+                [ x ] ++ dropRepeats x rest
 
 
 moneyText : Money -> String

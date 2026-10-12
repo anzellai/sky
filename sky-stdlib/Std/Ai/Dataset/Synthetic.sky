@@ -103,33 +103,39 @@ import Sky.Ffi as Ffi
 import Sky.Core.Time as Time
 
 -- ── The generator ───────────────────────────────────────────────────
+-- The generator's settings. A named record, so a function that matches
+-- `Generator g` reads the stdlib constructor's payload with one runtime
+-- narrowing (doc 14 §4.5, R6) instead of one per field.
+type alias Spec row =
+    { name : String
+    , codec : Codec row
+    , teacher : Provider
+    , endpoint : Maybe Endpoint
+    , teacherName : String
+    , template : String
+    , system : String
+    , personas : List String
+    , topics : List String
+    , examples : List row
+    , perCall : Int
+    , target : Int
+    , seed : Int
+    , temperature : Float
+    , maxTokens : Int
+    , maxCalls : Maybe Int
+    , budget : Maybe ( PriceBook, Money )
+    , dedupe : Maybe (row -> String)
+    , filters : List ( String, row -> Bool )
+    , judge : Maybe { judge : Eval.Judge
+          , rubric : String
+          , show : row -> ( String, String )
+          }
+    , journal : Maybe Journal
+    }
+
 -- | How to generate rows of one type.
 type Generator row
-    = Generator { name : String
-, codec : Codec row
-, teacher : Provider
-, endpoint : Maybe Endpoint
-, teacherName : String
-, template : String
-, system : String
-, personas : List String
-, topics : List String
-, examples : List row
-, perCall : Int
-, target : Int
-, seed : Int
-, temperature : Float
-, maxTokens : Int
-, maxCalls : Maybe Int
-, budget : Maybe ( PriceBook, Money )
-, dedupe : Maybe (row -> String)
-, filters : List ( String, row -> Bool )
-, judge : Maybe { judge : Eval.Judge
-      , rubric : String
-      , show : row -> ( String, String )
-      }
-, journal : Maybe Journal
-}
+    = Generator (Spec row)
 
 
 -- | The teacher's model slot, `"teacher"`: the local pinned development model

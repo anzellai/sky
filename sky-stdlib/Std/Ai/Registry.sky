@@ -118,10 +118,16 @@ import Std.Ai.Failure as Failure exposing (Failure(..))
 
 -- ── Types ───────────────────────────────────────────────────────────
 -- | The registry: a database for the records and a store for the artefacts.
+-- The registry's connection and store. A named record, so a function that
+-- matches `Registry r` reads the stdlib constructor's payload with one
+-- runtime narrowing (doc 14 §4.5, R6) instead of one per field.
+type alias Handle =
+    { db : Db
+    , store : Store
+    }
+
 type Registry
-    = Registry { db : Db
-, store : Store
-}
+    = Registry Handle
 
 -- | The file format of an adapter: GGUF (what llama.cpp loads) or
 -- safetensors (what training and vLLM use).

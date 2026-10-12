@@ -89,3 +89,76 @@ func TestJsonEncodeTwinMatchesErased(t *testing.T) {
 	}()
 	JsonEnc_encodeT(0, JsonEnc_float(math.NaN()))
 }
+
+func TestMathAndListTwinsMatchErased(t *testing.T) {
+	floats := []float64{0, 1, -1, 0.5, 2.75, -3.5, 1e9, math.Inf(1), math.Inf(-1), math.NaN()}
+	same := func(a, b float64) bool { return a == b || (math.IsNaN(a) && math.IsNaN(b)) }
+	for _, x := range floats {
+		pairs := []struct {
+			name string
+			typ  float64
+			era  any
+		}{
+			{"sqrt", Math_sqrtT(x), Math_sqrt(x)},
+			{"sin", Math_sinT(x), Math_sin(x)},
+			{"cos", Math_cosT(x), Math_cos(x)},
+			{"tan", Math_tanT(x), Math_tan(x)},
+			{"log", Math_logT(x), Math_log(x)},
+			{"exp", Math_expT(x), Math_exp(x)},
+		}
+		for _, p := range pairs {
+			if !same(p.typ, p.era.(float64)) {
+				t.Errorf("%s %v: %v vs %v", p.name, x, p.typ, p.era)
+			}
+		}
+		if !math.IsNaN(x) && !math.IsInf(x, 0) {
+			if Math_floorT(x) != Math_floor(x) || Math_ceilT(x) != Math_ceil(x) || Math_roundT(x) != Math_round(x) {
+				t.Errorf("floor/ceil/round %v", x)
+			}
+		}
+		for _, y := range floats {
+			if !same(Math_powT(x, y), Math_pow(x, y).(float64)) {
+				t.Errorf("pow %v %v", x, y)
+			}
+			if !same(Math_minFloatT(x, y), Math_min(x, y).(float64)) || !same(Math_maxFloatT(x, y), Math_max(x, y).(float64)) {
+				t.Errorf("min/max %v %v", x, y)
+			}
+		}
+	}
+	ints := []int{0, 1, -1, 3, -7, 100, math.MaxInt32}
+	for _, a := range ints {
+		if Math_absT(a) != Math_abs(a) {
+			t.Errorf("abs %d", a)
+		}
+		for _, b := range ints {
+			if Math_minT(a, b) != Math_min(a, b) || Math_maxT(a, b) != Math_max(a, b) {
+				t.Errorf("min/max %d %d", a, b)
+			}
+			if Basics_modByT(a, b) != Basics_modBy(a, b) {
+				t.Errorf("modBy %d %d", a, b)
+			}
+		}
+	}
+	for _, r := range [][2]int{{1, 5}, {0, 0}, {3, 1}, {-2, 2}} {
+		got := List_rangeT(r[0], r[1])
+		want := List_range(r[0], r[1]).([]any)
+		if len(got) != len(want) {
+			t.Fatalf("range %v: %v vs %v", r, got, want)
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("range %v: %v vs %v", r, got, want)
+			}
+		}
+	}
+	for _, f := range []float64{0, 1.5, -2.25, 1e21, 123456789.125} {
+		if String_fromFloatAnyT(f) != String_fromFloat(f) {
+			t.Errorf("fromFloat %v", f)
+		}
+	}
+	for _, c := range [][3]string{{"a+", "X", "caaab"}, {"(", "x", "a(b"}, {"```\\w*", "", "```json {}```"}} {
+		if Regex_replaceT(c[0], c[1], c[2]) != Regex_replace(c[0], c[1], c[2]) {
+			t.Errorf("regex replace %v", c)
+		}
+	}
+}
