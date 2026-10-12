@@ -10,6 +10,7 @@
 // partial application. A private copy of that scan in the test would be a
 // second definition of "the runtime's arity", and second definitions drift.
 pub mod abi_guard;
+pub mod ai_slots;
 pub mod app_entry;
 mod build;
 pub mod build_stamp;

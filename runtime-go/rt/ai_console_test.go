@@ -133,3 +133,39 @@ func TestConsoleAIRingsAreBounded(t *testing.T) {
 		t.Fatalf("p50 = %d", p)
 	}
 }
+
+// The registry section: each model Std.Ai.Registry published, with its
+// aliases, versions, alias log and eval history, sorted by name. A state that
+// does not parse, or names no model, is refused.
+func TestConsoleAIShowsTheRegistry(t *testing.T) {
+	aiResetRegistryConsole()
+	t.Cleanup(aiResetRegistryConsole)
+	state := `{"name":"support-lora","store":"file://.sky/ai/registry",
+		"aliases":[{"alias":"prod","number":2,"generation":3,"updatedAt":1}],
+		"versions":[{"label":"support-lora@v2","number":2,"digest":"aa","baseDigest":"bb","dataset":"support@3","method":"lora","format":"gguf","blocked":null}],
+		"events":[{"alias":"prod","seq":3,"action":"rollback","from":3,"to":2,"report":"","reason":"","at":1}],
+		"reports":[{"suite":"support","number":2,"digest":"d2","passRate":1,"verdict":"passed"}]}`
+	if r := Ai_recordRegistry(state).(func() any)(); !isOkResult(r) {
+		t.Fatalf("recordRegistry: %v", r)
+	}
+	if r := Ai_recordRegistry(`{"name":"another"}`).(func() any)(); !isOkResult(r) {
+		t.Fatalf("recordRegistry: %v", r)
+	}
+	for _, bad := range []string{"{not json", `{"aliases":[]}`} {
+		if r := Ai_recordRegistry(bad).(func() any)(); isOkResult(r) {
+			t.Fatalf("a bad state was accepted: %s", bad)
+		}
+	}
+	snap := aiConsoleSnapshot("", "")
+	if len(snap.Registry) != 2 || snap.Registry[0].Name != "another" || snap.Registry[1].Name != "support-lora" {
+		t.Fatalf("registry %+v", snap.Registry)
+	}
+	m := snap.Registry[1]
+	if len(m.Aliases) != 1 || len(m.Versions) != 1 || len(m.Events) != 1 || len(m.Reports) != 1 {
+		t.Fatalf("model %+v", m)
+	}
+	b, _ := json.Marshal(snap)
+	if !strings.Contains(string(b), `"registry":[`) || !strings.Contains(string(b), `"action":"rollback"`) {
+		t.Fatalf("the API does not carry the registry: %s", b)
+	}
+}

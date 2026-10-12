@@ -434,9 +434,10 @@ pub static GATES: &[Gate] = &[
                 // 614 → 616), and the v0.27.7 adt_equality stratum (+60 cases,
                 // 616 → 676), and the v0.28.0 Std.Ai.Local surface (+2 cases,
                 // 676 → 678), and the v0.28.0 Std.Ai.Failure and
-                // Std.Ai.Eval surfaces (+4 cases, 678 → 682).
-                from: "n_min = 682",
-                to: "n_min = 683",
+                // Std.Ai.Eval surfaces (+4 cases, 678 → 682), and the v0.28.0
+                // Std.Ai.Store and Std.Ai.Registry surfaces (+3 cases, 682 → 685).
+                from: "n_min = 685",
+                to: "n_min = 686",
             },
         }]),
         body: bodies::corpus_manifest,

@@ -790,7 +790,7 @@ func TestAiEngineCrashOutsideDevelopmentExitsTheApp(t *testing.T) {
 	exited := make(chan string, 1)
 	aiSetKnobs(func(k *aiKnobs) { k.fatalExit = func(msg string) { exited <- msg } })
 	s := localSlot(t, model, nil)
-	if _, err := s.ensureEngine(context.Background()); err != nil {
+	if _, err := s.ensureEngine(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("ENV", "production")
@@ -861,7 +861,7 @@ func TestAiIdleUnloadStopsAndRestarts(t *testing.T) {
 func TestAiLocalSlotQueueBoundsTheEngine(t *testing.T) {
 	_, model := aiTestEnv(t, map[string]any{"slowMs": 300})
 	s := localSlot(t, model, func(b *aiEndpointBuilder) { b.maxInFlight, b.queue, b.queueWaitMs = 1, 0, 50 })
-	if err := func() error { _, err := s.ensureEngine(context.Background()); return err }(); err != nil {
+	if err := func() error { _, err := s.ensureEngine(context.Background(), nil); return err }(); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup

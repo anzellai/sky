@@ -1133,6 +1133,16 @@ fn build_inner(
         report.warnings.push(format!("embed migrations: {e}"));
     }
 
+    // The Std.Ai slots the source names (`Endpoint.endpoint "chat"`), for the
+    // startup report: a generated `ai_slots_gen.go` beside main.go, removed
+    // when the project declares none (ai_slots.rs). Best-effort like the
+    // migrations: a failure warns.
+    let (slots, slot_problems) = crate::ai_slots::discover_with_problems(&opts.example_dir);
+    report.warnings.extend(slot_problems);
+    if let Err(e) = crate::ai_slots::write_go(&out_dir, &slots) {
+        report.warnings.push(format!("ai slots: {e}"));
+    }
+
     // The build identity (/_sky/buildinfo, the Console header) as generated Go
     // source beside main.go, so ANY `go build` of this directory carries it — a
     // manual cross-compile, a Dockerfile, a custom CI. Resolved at the user's

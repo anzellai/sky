@@ -41,6 +41,13 @@ const (
 	// aiGateFailed is raised by Std.Ai.Eval (Sky), never by the runtime; it
 	// is in the table so the two sides stay one list.
 	aiGateFailed aiFailCode = "GateFailed"
+	// NotRegistered, NotPromotable and PromotionConflict are raised by
+	// Std.Ai.Registry (Sky). AdapterMismatch is raised here, when a slot's
+	// registry adapter was trained on another base than its engine runs.
+	aiNotRegistered     aiFailCode = "NotRegistered"
+	aiNotPromotable     aiFailCode = "NotPromotable"
+	aiPromotionConflict aiFailCode = "PromotionConflict"
+	aiAdapterMismatch   aiFailCode = "AdapterMismatch"
 )
 
 // aiDomain is the DomainFailure domain of every AI failure.
@@ -65,21 +72,25 @@ type aiFailSpec struct {
 // usual convention. EngineCrashed is not: a crash loop must not be retried
 // blindly, and the engine's own supervisor restarts it.
 var aiFailSpecs = map[aiFailCode]aiFailSpec{
-	aiNotConfigured:    {errKindInvalidInput, false, [][2]string{{"setting", ""}}},
-	aiInvalidSetting:   {errKindInvalidInput, false, [][2]string{{"setting", ""}, {"reason", ""}}},
-	aiUnreachable:      {errKindUnavailable, true, [][2]string{{"target", ""}}},
-	aiOverloaded:       {errKindUnavailable, true, nil},                           // "status" is optional
-	aiTimedOut:         {errKindTimeout, true, nil},                               // "afterMs" is optional
-	aiEngineCrashed:    {errKindUnavailable, false, [][2]string{{"logTail", ""}}}, // "exitCode" is optional
-	aiEngineFailed:     {errKindUnavailable, false, [][2]string{{"reason", ""}}},
-	aiModelTooLarge:    {errKindInvalidInput, false, [][2]string{{"needBytes", "0"}, {"availableBytes", "0"}}},
-	aiNoAccelerator:    {errKindUnavailable, false, [][2]string{{"wanted", ""}}},
-	aiNotProvisioned:   {errKindNotFound, false, [][2]string{{"what", ""}, {"command", ""}}},
-	aiChecksumMismatch: {errKindConflict, false, [][2]string{{"expected", ""}, {"actual", ""}}},
-	aiRemoteRejected:   {errKindUnexpected, false, [][2]string{{"status", "0"}}},
-	aiBudgetExceeded:   {errKindPermissionDenied, false, [][2]string{{"budget", ""}, {"estimate", ""}}},
-	aiToolchainFailed:  {errKindUnavailable, false, [][2]string{{"tool", ""}, {"logTail", ""}}},
-	aiGateFailed:       {errKindPermissionDenied, false, [][2]string{{"suite", ""}, {"reasons", ""}}},
+	aiNotConfigured:     {errKindInvalidInput, false, [][2]string{{"setting", ""}}},
+	aiInvalidSetting:    {errKindInvalidInput, false, [][2]string{{"setting", ""}, {"reason", ""}}},
+	aiUnreachable:       {errKindUnavailable, true, [][2]string{{"target", ""}}},
+	aiOverloaded:        {errKindUnavailable, true, nil},                           // "status" is optional
+	aiTimedOut:          {errKindTimeout, true, nil},                               // "afterMs" is optional
+	aiEngineCrashed:     {errKindUnavailable, false, [][2]string{{"logTail", ""}}}, // "exitCode" is optional
+	aiEngineFailed:      {errKindUnavailable, false, [][2]string{{"reason", ""}}},
+	aiModelTooLarge:     {errKindInvalidInput, false, [][2]string{{"needBytes", "0"}, {"availableBytes", "0"}}},
+	aiNoAccelerator:     {errKindUnavailable, false, [][2]string{{"wanted", ""}}},
+	aiNotProvisioned:    {errKindNotFound, false, [][2]string{{"what", ""}, {"command", ""}}},
+	aiChecksumMismatch:  {errKindConflict, false, [][2]string{{"expected", ""}, {"actual", ""}}},
+	aiRemoteRejected:    {errKindUnexpected, false, [][2]string{{"status", "0"}}},
+	aiBudgetExceeded:    {errKindPermissionDenied, false, [][2]string{{"budget", ""}, {"estimate", ""}}},
+	aiToolchainFailed:   {errKindUnavailable, false, [][2]string{{"tool", ""}, {"logTail", ""}}},
+	aiGateFailed:        {errKindPermissionDenied, false, [][2]string{{"suite", ""}, {"reasons", ""}}},
+	aiNotRegistered:     {errKindNotFound, false, [][2]string{{"ref", ""}}},
+	aiNotPromotable:     {errKindPermissionDenied, false, [][2]string{{"ref", ""}, {"reason", ""}}},
+	aiPromotionConflict: {errKindConflict, false, [][2]string{{"ref", ""}, {"expected", ""}, {"actual", ""}}},
+	aiAdapterMismatch:   {errKindInvalidInput, false, [][2]string{{"adapter", ""}, {"adapterBase", ""}, {"engineBase", ""}}},
 }
 
 // aiFailure is a classified AI failure before it becomes a Sky value. Go code
@@ -200,6 +211,9 @@ func (f *aiFailure) attrValue(key string) (string, bool) {
 // `Domain` failure. The message starts with the code, so a log line names
 // the failure class.
 func aiErrorValue(err error) any {
+	if se, ok := err.(*aiSkyError); ok {
+		return se.v
+	}
 	f, ok := err.(*aiFailure)
 	if !ok {
 		return ErrUnexpected("Std.Ai: " + err.Error())

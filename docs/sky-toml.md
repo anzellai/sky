@@ -314,11 +314,13 @@ variables are:
 | `SKY_AI_LLAMA_BIN` | the directory of your own `llama-server` build, instead of the pinned one |
 | `SKY_AI_FETCH` | `on` / `off`: may a missing engine or model be downloaded at run time (default on in development, off otherwise) |
 | `SKY_AI_ACCEL` | force the accelerator the fit plan assumes: `cpu`, `metal`, `cuda`, `rocm`, `vulkan` |
+| `SKY_AI_REGISTRY` | where the model registry's artefacts live: `file://<dir>`, `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` (default: the location in code, else `file://.sky/ai/registry`); the registry's records are rows in the app's own database |
 
 The per-slot variables (`SKY_AI_<SLOT>_MODE`, `_URL`, `_KEY`, `_MODEL`,
 `_ADAPTER`, `_TIMEOUT_MS`, `_MAX_INFLIGHT`, `_QUEUE`, `_QUEUE_WAIT_MS`,
-`_RETRIES`, `_CONTEXT`, `_GPU`, `_PARALLEL`, `_IDLE_UNLOAD_S`, `_PORT`) and
-their defaults are in [`ai/local.md`](ai/local.md).
+`_RETRIES`, `_CONTEXT`, `_GPU`, `_PARALLEL`, `_IDLE_UNLOAD_S`, `_PORT`,
+`_ADAPTER_REFRESH_S`) and their defaults are in [`ai/local.md`](ai/local.md).
+The registry is [`ai/registry.md`](ai/registry.md).
 
 ## `[database]`
 

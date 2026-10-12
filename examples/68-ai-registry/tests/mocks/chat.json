@@ -1,0 +1,5 @@
+{
+  "match": { "method": "POST", "urlContains": "sky-ai-local.invalid/chat/", "bodyContains": "\"model\":\"support-lora-v1\"" },
+  "status": 200,
+  "body": "{\"choices\":[{\"message\":{\"content\":\"Ask for a refund within 30 days. (support-lora-v1)\"}}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":12,\"total_tokens\":32}}"
+}

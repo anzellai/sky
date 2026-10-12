@@ -281,3 +281,45 @@ fn doctor_reports_an_embedded_project_with_no_postgres() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A project with a Std.Ai slot: `sky doctor` applies the runtime's
+/// resolution rule to the operator's environment, so a deploy that would fail
+/// at the slot's first call fails here first, and the message never shows the
+/// URL beyond its scheme, host and port.
+#[test]
+fn doctor_checks_the_ai_slots_the_source_declares() {
+    let dir = scratch_dir("ai");
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"doctor-ai\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src").join("Main.sky"),
+        "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\nimport Sky.Core.Task as Task\nimport Std.Ai.Endpoint as Endpoint exposing (Endpoint)\n\nchat : Endpoint\nchat =\n    Endpoint.endpoint \"chat\"\n\nmain : Task Error ()\nmain =\n    Task.succeed ()\n",
+    )
+    .unwrap();
+    let out = Command::new(SKY)
+        .arg("doctor")
+        .current_dir(&dir)
+        .env("SKY_AI_CHAT_MODE", "local")
+        .env(
+            "SKY_AI_CHAT_URL",
+            "https://user:pw@gpu.example.test/v1?key=s3cret",
+        )
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("spawn sky doctor");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("slot chat: SKY_AI_CHAT_MODE=local and SKY_AI_CHAT_URL is set"),
+        "{text}"
+    );
+    assert!(!text.contains("s3cret") && !text.contains("pw@"), "{text}");
+}

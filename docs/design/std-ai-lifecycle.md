@@ -1,6 +1,12 @@
 # The AI application lifecycle in Sky: build, data, train, eval, registry, serve
 
-> Status: **phase 1 part A implemented (v0.28.0); the rest is design.**
+> Status: **phase 1 and the registry part of phase 2 implemented (v0.28.0);
+> the rest is design.** Phase 2 adds `Std.Ai.Registry` and `Std.Ai.Store`
+> (section 8.7, with the record store moved to the app's database by the
+> user's decision), judge calibration, pairwise judging and the judge journal
+> (section 8.6), the startup-report lines and `sky doctor` checks (section
+> 5.5), the registry view in the console (section 8.10) and `sky ai promote |
+> rollback | lineage` (section 9). User guide: [`../ai/registry.md`](../ai/registry.md).
 > `Std.Ai.Endpoint` (section 8.1), `Std.Ai.Local` (section 8.2, without
 > adapters, draft models and registry references), the `Provider` additions
 > `chatWith` and `embed` (section 8.3), and `sky ai provision | pull | ps |
@@ -238,6 +244,12 @@ ai embed  local   llama-server b<pinned> metal    small-embed Q8_0  ctx 2048    
 
 `sky doctor` checks the same list: every slot resolves, every local model is
 provisioned when fetch is off, every remote URL answers its health probe.
+
+*(Implemented in phase 2. The build reads the slot literals
+(`project/src/ai_slots.rs`) into a generated `ai_slots_gen.go`; at startup a
+slot has not resolved yet, so a line says what the environment decides and
+that the code decides the rest at the first call. The health probe is a TCP
+connection to the URL's host and port, a warning when it fails.)*
 
 ### 5.6 Why not `Sky.Config`
 
@@ -753,6 +765,13 @@ seed, so the result is reproducible. `gate` fails when:
 - p95 latency or mean cost exceeds its budget, or
 - the judge failed calibration.
 
+*(Phase 2 ships `withCalibration` (with `calibrate`, Cohen's kappa and a
+gate refusal below the agreement, plus `withCalibratedJudge`), `pairwise`
+in both orders, and the judge journal. The journal is a table in the run's
+database keyed by the judge's identity, version and exact prompt, not a
+`Durable.step`: the property (an unchanged judge call is answered once) is
+the same, and it needs no durable run around `Eval.run`.)*
+
 *(Phase 1 part B ships the core: suites, every scorer above, the judge as the
 `"judge"` slot with the local pinned model by default, seeded samples, the
 typed `Report`, latency and cost budgets, `compare` with the exact McNemar
@@ -798,6 +817,19 @@ resolve : Registry -> String -> Task Error Version       -- "support-lora@prod"
 fetch : Registry -> Version -> Task Error String         -- verified local path
 history : Registry -> String -> Task Error (List AliasEvent)
 ```
+
+*(Implemented in phase 2 with one change, the user's decision: the records
+(versions, aliases, the alias log and attached reports) are rows in the app's
+own database through `Std.Db`, applied as `_sky_ai_registry_*` migrations in
+the `_sky_migrations` ledger, so the same code runs on SQLite and PostgreSQL
+and an alias move is a database compare-and-swap in one transaction. The
+object store (`Std.Ai.Store`) holds the artefacts only, under
+`blobs/sha256/<hex>`. `open` takes the `Db` and the store; `promote` returns
+the `AliasEvent`; `rollback` takes `"<name>@<alias>"`; `promoteIf`,
+`promoteChecked`, `evidence`, `block`, `trainedOn`, `lineage` and the
+resolver for `Endpoint.fromRegistry` complete it. Request signing for S3 is
+Sky (`Store.signV4`); the byte transfers are runtime kernels that stream a
+file and check its digest. See [`../ai/registry.md`](../ai/registry.md).)*
 
 **Layout.** The registry is plain objects, so it works on a local directory, a
 GCS bucket and an S3 bucket with one code path:
@@ -918,8 +950,9 @@ setting, in-flight and waiting calls, failures, `Overloaded` count, p50 and
 p95 latency), the local engines, the recent calls (filtered by outcome and by
 slot) and the eval runs (each case's verdict and reason). It reads
 `/_sky/console/api/ai` (`runtime-go/rt/ai_console.go`), whose rings hold no
-prompt, no answer and no secret. The GPU tier, training and registry views
-arrive with their phases.)*
+prompt, no answer and no secret. The GPU tier and training views
+arrive with their phases. Phase 2 adds the registry view: each model's
+aliases, versions, alias log and eval history.)*
 
 ## 9. CLI verbs
 

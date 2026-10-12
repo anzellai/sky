@@ -189,10 +189,19 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          time (aiSlotSuffix) and read through configLayers. The KEY set is \
          closed and literal in that file (MODE / URL / KEY / MODEL / ADAPTER / \
          TIMEOUT_MS / MAX_INFLIGHT / QUEUE / QUEUE_WAIT_MS / RETRIES / CONTEXT / \
-         GPU / PARALLEL / IDLE_UNLOAD_S / PORT), each documented in \
-         docs/ai/local.md as SKY_AI_<SLOT>_<KEY>. The machine-wide AI_HOME / \
-         AI_LLAMA_BIN / AI_FETCH / AI_ACCEL are literal skyGetenv reads in \
-         ai_fetch.go / ai_gguf.go and are counted normally",
+         GPU / PARALLEL / IDLE_UNLOAD_S / PORT / ADAPTER_REFRESH_S), each \
+         documented in docs/ai/local.md as SKY_AI_<SLOT>_<KEY>. The \
+         machine-wide AI_HOME / AI_LLAMA_BIN / AI_FETCH / AI_ACCEL are literal \
+         skyGetenv reads in ai_fetch.go / ai_gguf.go, and AI_REGISTRY a \
+         literal skyEnvName read in ai_store.go; all are counted normally",
+    ),
+    (
+        "runtime-go/rt/ai_startup.go",
+        "the startup report's AI lines (v0.28.0) print each declared slot's \
+         variable NAMES, built with skyEnvName(aiSlotSuffix(slot, key)) for \
+         the same closed KEY set ai_config.go reads (MODE / URL / KEY / MODEL / \
+         ADAPTER). The slot is the app's own literal, so the suffix is built at \
+         run time; it reads no suffix ai_config.go does not",
     ),
     (
         "runtime-go/rt/sky_config.go",

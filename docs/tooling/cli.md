@@ -1407,6 +1407,35 @@ sky ai stop <slot> | --all
   with the same model and settings use it instead of loading the model again.
   `stop` ends it.
 
+### `sky ai promote | rollback | lineage` *(v0.28.0)*
+
+The `Std.Ai.Registry` verbs, run by the same bundled program. Each opens the
+registry on the app's database (`--db <dsn>`, else `SKY_DB_PATH`, else
+`DATABASE_URL`, else the project's `[database]` `url` or `path`) with the
+artefact store at `--registry <url>`, else `SKY_AI_REGISTRY`. Every verb takes
+`--format json`.
+
+```
+sky ai promote <name> <version> --to <alias> [--min-pass-rate <x>] [--expect <n>|none]
+sky ai promote <name> <version> --to <alias> --force --reason <text>
+sky ai rollback <name>@<alias>
+sky ai lineage <name>@<alias> | <name>@v<n>
+sky ai lineage --dataset <sha256>
+```
+
+- `promote` re-applies the eval gate to the version's attached reports and
+  moves the alias on the first that passes (`Registry.promoteChecked`).
+  `--expect` moves it only while it still points at that version
+  (`PromotionConflict` otherwise). `--force --reason` moves it without eval
+  evidence and records the reason. A refused promotion exits non-zero with the
+  typed failure (`NotPromotable`, `GateFailed`, `PromotionConflict`).
+- `rollback` returns the alias to the version before the current one.
+- `lineage` prints the version, its base model, dataset, metadata, aliases,
+  attached reports and alias moves; `--dataset` lists every version trained on
+  a dataset digest.
+
+See [`../ai/registry.md`](../ai/registry.md).
+
 A model `<ref>` is `hf:<org>/<repo>/<file>#sha256=<hex>` or
 `file:<path>#sha256=<hex>`. See [`../ai/local.md`](../ai/local.md).
 

@@ -198,8 +198,10 @@ The **AI** tab (v0.28.0) reads `/_sky/console/api/ai`: the `Std.Ai` slots the
 process resolved (each setting with its source, `env`, `code` or `default`;
 a key shows as `(secret)` and a URL as scheme, host and port), its local
 engines, its last 200 model calls (slot, kind, outcome, latency, token counts)
-and its last 50 `Std.Ai.Eval` runs. The rings hold no prompt, no answer and
-no secret. The hub has no AI data, so its AI tab is empty. Guide:
+and its last 50 `Std.Ai.Eval` runs, and the model registry: each
+`Std.Ai.Registry` model the process read or changed, with its aliases, and on
+a click (`model=<name>` in the URL) its versions, alias log and eval history.
+The rings hold no prompt, no answer and no secret. The hub has no AI data, so its AI tab is empty. Guide:
 [`ai/local.md`](ai/local.md#in-the-sky-console).
 
 `scripts/console-controls-e2e.sh` operates every control above in Chromium and

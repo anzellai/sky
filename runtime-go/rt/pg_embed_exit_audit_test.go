@@ -273,6 +273,13 @@ func TestNoRuntimeCodeExitsWithoutStoppingTheEmbeddedDatabase(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
+			// A `testdata` directory is not part of any package the go tool
+			// builds (it ignores the name), so nothing in it is linked into an
+			// app: testdata/fakellama is a stand-in llama-server, its own
+			// program, and its os.Exit is how a fake engine dies.
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") {

@@ -78,7 +78,9 @@ pub fn ensure_built(
     materialise(src_dir, &app_dir, keep_entry)
         .map_err(|e| format!("sky {name}: could not materialise bundled source: {e}"))?;
 
-    println!(
+    // Progress goes to stderr: a verb's stdout may be machine output
+    // (`sky ai lineage --format json`), and a cold cache must not prefix it.
+    eprintln!(
         "sky {name}: building bundled app (one-time per version, into {})...",
         app_dir.display()
     );

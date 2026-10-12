@@ -296,6 +296,11 @@ declare -a EXAMPLES=(
     # first render (a build + clean-exit assertion; the restart behaviour is
     # proven behaviourally by rust/crates/sky/tests/durable_tea_cli_flow.rs).
     "67-durable-counter:cli"
+    # 68 — the model registry (Std.Ai.Registry): register, evaluate, promote,
+    # roll back and read the lineage, in a fresh temporary directory, with no
+    # model and no network. Its stdout and its test-mode serving test are
+    # pinned by rust/crates/sky/tests/ai_registry_flow.rs.
+    "68-ai-registry:cli"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

@@ -11,7 +11,9 @@ module AiTab exposing (aiView)
 --   * "All" / "Failed" chips filter the recent calls by outcome
 --     (`calls=failed`);
 --   * an eval run's row opens its cases (`eval=<id>`), and a second click
---     closes them.
+--     closes them;
+--   * a registry model's row opens its versions, alias log and eval history
+--     (`model=<name>`), and a second click closes them.
 --
 -- Palette mirrors ErrorsTab.sky so the tab is visually consistent with the
 -- rest of the console.
@@ -84,6 +86,7 @@ aiView filter data =
     , enginesPanel data.engines
     , callsPanel filter data.calls
     , evalsPanel filter data.evals
+    , registryPanel filter data.registry
     ]
 
 
@@ -377,6 +380,186 @@ caseRow c =
         , Ui.paragraph
               [ Font.size 12, Font.color textSecondary ]
               [ Ui.text c.reason ]
+        ]
+
+
+-- ─── Model registry ─────────────────────────────────────────────
+registryPanel : AiFilter -> List AiModel -> Element Msg
+registryPanel filter models =
+    panel
+        "Model registry"
+        (if List.isEmpty models then
+            [ emptyState
+                  "No Std.Ai.Registry model has been read or changed by this process yet."
+            ]
+
+        else
+            List.map (modelRow filter) models)
+
+
+modelRow : AiFilter -> AiModel -> Element Msg
+modelRow filter m =
+    let
+        open = filter.openModel == m.name
+    in
+        Ui.column
+            [ Ui.width Ui.fill
+            , Ui.paddingXY 0 6
+            , Ui.spacing 4
+            , Border.widthEach { top = 0, right = 0, bottom = 1, left = 0 }
+            , Border.color borderSoft
+            , Ui.htmlAttribute "data-ai-model" m.name
+            ]
+            (Ui.row
+                [ Ui.spacing 12
+                , Ui.width Ui.fill
+                , Ui.pointer
+                , Ui.onClick (AiOpenModel m.name)
+                ]
+                ([ Ui.el
+                      [ Font.bold, Font.size 13 ]
+                      (Ui.text ("model " ++ m.name))
+                ]
+                    ++ List.map aliasChip m.aliases
+                    ++ [ Ui.el [ Ui.width Ui.fill ] (Ui.text "")
+                       , muted m.store
+                       , muted
+                             (if open then
+                                 "hide versions"
+
+                             else
+                                 "show versions")
+                       ])
+                :: (if open then
+                       List.concat
+                           [ sectionTitle "versions"
+                                 :: List.map versionRow m.versions
+                           , sectionTitle "alias log"
+                                 :: List.map eventRow m.events
+                           , sectionTitle "eval history"
+                                 :: List.map reportRow m.reports
+                           ]
+
+                   else
+                       []))
+
+
+aliasChip : AiAlias -> Element Msg
+aliasChip a =
+    Ui.el
+        [ Ui.paddingXY 8 2
+        , Border.rounded 10
+        , Border.width 1
+        , Border.color accent
+        , Font.size 12
+        , Font.color accent
+        , Ui.htmlAttribute "data-ai-alias" a.aliasName
+        ]
+        (Ui.text (a.aliasName ++ " → v" ++ String.fromInt a.number))
+
+
+sectionTitle : String -> Element Msg
+sectionTitle t =
+    Ui.el
+        [ Font.size 11, Font.bold, Font.color textMuted, Ui.paddingXY 12 4 ]
+        (Ui.text (String.toUpper t))
+
+
+versionRow : AiVersion -> Element Msg
+versionRow v =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.paddingXY 12 2
+        , Ui.htmlAttribute "data-ai-version" v.label
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 150), Font.size 12, Font.bold ]
+              (Ui.text v.label)
+        , Ui.el
+              [ Ui.width (Ui.px 110), Font.size 12, Font.color textMuted ]
+              (Ui.text (v.method ++ " · " ++ v.format))
+        , mono ("sha256:" ++ String.left 12 v.digest)
+        , muted ("base " ++ String.left 12 v.baseDigest)
+        , muted ("data " ++ v.dataset)
+        , if v.blocked == "" then
+              Ui.none
+
+          else
+              Ui.el
+                  [ Font.size 12, Font.color err ]
+                  (Ui.text ("blocked: " ++ v.blocked))
+        ]
+
+
+eventRow : AiAliasEvent -> Element Msg
+eventRow e =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.paddingXY 12 2
+        , Ui.htmlAttribute
+              "data-ai-event"
+              (e.aliasName ++ "#" ++ String.fromInt e.seq)
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 150), Font.size 12 ]
+              (Ui.text (e.aliasName ++ " #" ++ String.fromInt e.seq))
+        , Ui.el
+              [ Ui.width (Ui.px 70)
+              , Font.size 12
+              , Font.bold
+              , Font.color
+                    (if e.action == "promote" then
+                        ok
+
+                    else
+                        textSecondary)
+              ]
+              (Ui.text e.action)
+        , Ui.el
+              [ Font.size 12 ]
+              (Ui.text
+                  ((if e.from == 0 then
+                      "(none)"
+
+                  else
+                      "v" ++ String.fromInt e.from)
+                      ++ " → v"
+                      ++ String.fromInt e.to))
+        , muted
+              (if e.reason /= "" then
+                  "reason: " ++ e.reason
+
+              else if e.report /= "" then
+                  "report " ++ e.report
+
+              else
+                  "")
+        ]
+
+
+reportRow : AiReportLink -> Element Msg
+reportRow r =
+    Ui.row
+        [ Ui.spacing 12
+        , Ui.paddingXY 12 2
+        , Ui.htmlAttribute "data-ai-report" r.digest
+        ]
+        [ Ui.el
+              [ Ui.width (Ui.px 150), Font.size 12 ]
+              (Ui.text (r.suite ++ " on v" ++ String.fromInt r.number))
+        , Ui.el [ Font.size 12 ] (Ui.text (percent r.passRate ++ " passed"))
+        , Ui.el
+              [ Font.size 12
+              , Font.bold
+              , Font.color
+                    (if r.verdict == "passed" then
+                        ok
+
+                    else
+                        err)
+              ]
+              (Ui.text ("gate " ++ r.verdict))
+        , muted r.digest
         ]
 
 

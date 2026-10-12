@@ -11,6 +11,19 @@ each verb is a call to the Std.Ai API a user's own program can make.
     sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]
                                                  Endpoint.warm, then hold
     sky ai stop <slot> | --all                   Local.stopSlot
+    sky ai promote <name> <version> --to <alias> [--min-pass-rate <x>]
+                   [--expect <n>|none] [--force --reason <text>]
+                                                 Registry.promoteChecked,
+                                                 promoteIf, forcePromote
+    sky ai rollback <name>@<alias>               Registry.rollback
+    sky ai lineage <name>@<alias>|<name>@v<n>    Registry.lineage
+    sky ai lineage --dataset <sha256>            Registry.trainedOn
+
+The registry verbs open the registry on the database `--db <dsn>` names, else
+the app's own (`SKY_DB_PATH`, else `DATABASE_URL`; the CLI passes the
+project's `[database]` path or url when neither is set), with the artefact
+store at `--registry <url>`, else `SKY_AI_REGISTRY`, else
+`file://.sky/ai/registry`.
 
 Every verb takes `--format json`.
 -}
@@ -27,6 +40,9 @@ import Sky.Core.Json.Encode as JsonE
 import Std.Log exposing (println)
 import Std.Ai.Endpoint as Endpoint
 import Std.Ai.Local as Local
+import Std.Ai.Eval as Eval
+import Std.Ai.Registry as Registry
+import Std.Db as Db exposing (Db)
 
 
 main : Task Error ()
@@ -60,13 +76,25 @@ run args =
             ["stop", slot] ->
                 stop json slot
 
+            "promote" :: name :: number :: opts ->
+                promote json name number opts
+
+            "rollback" :: ref :: opts ->
+                rollback json ref opts
+
+            "lineage" :: "--dataset" :: digest :: opts ->
+                trainedOn json digest opts
+
+            "lineage" :: ref :: opts ->
+                lineage json ref opts
+
             _ ->
                 Task.fail (Error.invalidInput usage)
 
 
 usage : String
 usage =
-    "usage: sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>] | pull <org>/<repo> <file> | ps [--all] | start <slot> [--model <ref>] [--context <n>] [--embeddings] | stop <slot>|--all  (each takes --format json)"
+    "usage: sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>] | pull <org>/<repo> <file> | ps [--all] | start <slot> [--model <ref>] [--context <n>] [--embeddings] | stop <slot>|--all | promote <name> <version> --to <alias> | rollback <name>@<alias> | lineage <name>@<alias> | lineage --dataset <sha256>  (each takes --format json; the registry verbs take --db <dsn> and --registry <url>)"
 
 
 -- The value after a flag, if the flag is there.
@@ -323,3 +351,261 @@ stop json slot =
                            , ( "stopped", JsonE.int n )
                            ])
                        ("stopped " ++ String.fromInt n ++ " engine(s)"))
+
+
+-- ─── the registry: promote / rollback / lineage ─────────────────────────
+openRegistry : List String -> Task Error Registry.Registry
+openRegistry opts =
+    let
+        db =
+            case flag "--db" opts of
+
+                Just dsn ->
+                    if String.startsWith "postgres://" dsn
+                        || String.startsWith "postgresql://" dsn then
+                        Db.open "postgres" dsn
+
+                    else
+                        Db.open "sqlite" dsn
+
+                Nothing ->
+                    Db.connect ()
+    in
+        db
+            |> Task.andThen
+                   (\conn ->
+                       Registry.openConfigured
+                           conn
+                           (Maybe.withDefault "" (flag "--registry" opts)))
+
+
+versionNumber : String -> Task Error Int
+versionNumber text =
+    let
+        digits =
+            if String.startsWith "v" text then
+                String.dropLeft 1 text
+
+            else
+                text
+    in
+        case String.toInt digits of
+
+            Just n ->
+                Task.succeed n
+
+            Nothing ->
+                Task.fail
+                    (Error.invalidInput
+                        ("sky ai promote: " ++ text
+                            ++ " is not a version number (write 3 or v3)"))
+
+
+thresholdsFrom : List String -> Task Error Eval.Thresholds
+thresholdsFrom opts =
+    case flag "--min-pass-rate" opts of
+
+        Just text ->
+            case String.toFloat text of
+
+                Just x ->
+                    Task.succeed (Eval.thresholds |> Eval.withMinPassRate x)
+
+                Nothing ->
+                    Task.fail
+                        (Error.invalidInput
+                            ("sky ai promote: --min-pass-rate " ++ text
+                                ++ " is not a number from 0 to 1"))
+
+        Nothing ->
+            Task.succeed Eval.thresholds
+
+
+promote : Bool -> String -> String -> List String -> Task Error ()
+promote json name number opts =
+    case flag "--to" opts of
+
+        Nothing ->
+            Task.fail
+                (Error.invalidInput
+                    "sky ai promote: name the alias with --to <alias>")
+
+        Just aliasName ->
+            Task.map3
+                (\reg n t -> ( reg, n, t ))
+                (openRegistry opts)
+                (versionNumber number)
+                (thresholdsFrom opts)
+                |> Task.andThen
+                       (\( reg, n, t ) ->
+                           Registry.version reg name n
+                               |> Task.andThen
+                                      (\v -> promoteHow reg aliasName v t opts))
+                |> Task.andThen
+                       (\ev ->
+                           emit
+                               json
+                               (Registry.eventValue ev)
+                               (eventText name ev))
+
+
+promoteHow : Registry.Registry -> String -> Registry.Version -> Eval.Thresholds -> List String -> Task Error Registry.AliasEvent
+promoteHow reg aliasName v t opts =
+    if List.member "--force" opts then
+        Registry.forcePromote
+            reg
+            aliasName
+            v
+            (Maybe.withDefault "" (flag "--reason" opts))
+
+    else
+        case flag "--expect" opts of
+
+            Just "none" ->
+                promoteExpecting reg aliasName Nothing v t
+
+            Just text ->
+                versionNumber text
+                    |> Task.andThen (\n -> Registry.version reg v.name n)
+                    |> Task.andThen
+                           (\expected ->
+                               promoteExpecting
+                                   reg
+                                   aliasName
+                                   (Just expected)
+                                   v
+                                   t)
+
+            Nothing ->
+                Registry.promoteChecked reg aliasName v t
+
+
+-- `--expect`: promote only while the alias still points where the caller
+-- saw it (`promoteIf`), on the attached evidence.
+promoteExpecting : Registry.Registry -> String -> Maybe Registry.Version -> Registry.Version -> Eval.Thresholds -> Task Error Registry.AliasEvent
+promoteExpecting reg aliasName expected v t =
+    Registry.evidence reg v t
+        |> Task.andThen
+               (\passed -> Registry.promoteIf reg aliasName expected v passed)
+
+
+eventText : String -> Registry.AliasEvent -> String
+eventText name ev =
+    name ++ "@" ++ ev.aliasName ++ ": " ++ ev.action ++ " "
+        ++ (if ev.from == 0 then
+               "(none)"
+
+           else
+               "v" ++ String.fromInt ev.from)
+        ++ " -> v"
+        ++ String.fromInt ev.to
+        ++ (if ev.reason == "" then
+               ""
+
+           else
+               " (reason: " ++ ev.reason ++ ")")
+        ++ (if ev.report == "" then
+               ""
+
+           else
+               " (report " ++ ev.report ++ ")")
+
+
+rollback : Bool -> String -> List String -> Task Error ()
+rollback json ref opts =
+    openRegistry opts |> Task.andThen (\reg -> Registry.rollback reg ref)
+        |> Task.andThen
+               (\ev ->
+                   emit
+                       json
+                       (Registry.eventValue ev)
+                       (eventText
+                           (Maybe.withDefault
+                               ref
+                               (List.head (String.split "@" ref)))
+                           ev))
+
+
+lineage : Bool -> String -> List String -> Task Error ()
+lineage json ref opts =
+    openRegistry opts |> Task.andThen (\reg -> Registry.lineage reg ref)
+        |> Task.andThen
+               (\l -> emit json (Registry.lineageValue l) (lineageText l))
+
+
+lineageText : Registry.LineageReport -> String
+lineageText l =
+    let
+        v = l.version
+    in
+        String.join
+            "\n"
+            ([ Registry.label v ++ "  (" ++ v.method ++ " adapter, " ++ v.format
+                  ++ ", "
+                  ++ String.fromInt v.size
+                  ++ " bytes)"
+            , "  served as   " ++ Registry.servedName v
+            , "  adapter     sha256:" ++ v.digest
+            , "  base        " ++ v.base
+            , "  dataset     " ++ v.dataset ++ "  sha256:" ++ v.datasetDigest
+            , "  aliases     "
+                  ++ (if List.isEmpty l.aliases then
+                         "(none)"
+
+                     else
+                         String.join ", " l.aliases)
+            ]
+                ++ (case v.blocked of
+
+                       Just why ->
+                           [ "  BLOCKED     " ++ why ]
+
+                       Nothing ->
+                           [])
+                ++ List.map
+                       (\( k, value ) ->
+                           "  " ++ String.padRight 11 ' ' k ++ " " ++ value)
+                       v.metadata
+                ++ ("  reports" :: List.map reportLine l.reports)
+                ++ ("  events"
+                       :: List.map (\e -> "    " ++ eventText v.name e) l.events))
+
+
+reportLine : Registry.ReportLink -> String
+reportLine r =
+    "    " ++ r.suite ++ "  " ++ r.verdict ++ "  pass rate "
+        ++ String.fromInt (Math.round (r.passRate * 100.0))
+        ++ "%  ("
+        ++ String.fromInt r.passed
+        ++ " passed, "
+        ++ String.fromInt r.failed
+        ++ " failed)  digest "
+        ++ r.digest
+
+
+trainedOn : Bool -> String -> List String -> Task Error ()
+trainedOn json digest opts =
+    openRegistry opts |> Task.andThen (\reg -> Registry.trainedOn reg digest)
+        |> Task.andThen
+               (\vs ->
+                   emit
+                       json
+                       (JsonE.list Registry.versionValue vs)
+                       (if List.isEmpty vs then
+                           "no version was trained on sha256:" ++ digest
+
+                       else
+                           String.join
+                               "\n"
+                               (List.map
+                                   (\v ->
+                                       Registry.label v
+                                           ++ (case v.blocked of
+
+                                                  Just why ->
+                                                      "  (blocked: " ++ why
+                                                          ++ ")"
+
+                                                  Nothing ->
+                                                      ""))
+                                   vs)))

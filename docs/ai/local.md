@@ -105,7 +105,8 @@ because they name global variables: `home`, `offline`, `fetch`, `llama`, `vllm`,
 | `Endpoint.withUrl` | `SKY_AI_<SLOT>_URL`, the OpenAI-compatible base ending `/v1` | none |
 | `Endpoint.withKey` (a `Secret`) | `SKY_AI_<SLOT>_KEY` | no key |
 | `Endpoint.withModel` | `SKY_AI_<SLOT>_MODEL`: remote, the served model name; local, a model reference | the `withLocal` model |
-| `Endpoint.withAdapter` | `SKY_AI_<SLOT>_ADAPTER`, sent as the request's model name | none |
+| `Endpoint.withAdapter` | `SKY_AI_<SLOT>_ADAPTER`, sent as the request's model name; `registry:<name>@<alias>` is resolved through the slot's registry ([`registry.md`](registry.md)) | none |
+| `Endpoint.withAdapterRefresh` | `SKY_AI_<SLOT>_ADAPTER_REFRESH_S`: how often a registry adapter is resolved again (`0` once, at start) | 30 |
 | `Endpoint.withTimeout` | `SKY_AI_<SLOT>_TIMEOUT_MS` | 120000 |
 | `Endpoint.withMaxInFlight` | `SKY_AI_<SLOT>_MAX_INFLIGHT` | local: the engine's parallel slots; remote: 16 |
 | `Endpoint.withQueue` | `SKY_AI_<SLOT>_QUEUE` (waiting calls) | 4 x max in flight |
@@ -134,6 +135,7 @@ unpinned model cannot be loaded. `Local.reference` gives the string of a
 | `SKY_AI_LLAMA_BIN` | the directory of your own `llama-server` build. Set but without `llama-server` in it is an error | the pinned build |
 | `SKY_AI_FETCH` | `on` or `off`: may a missing engine or model be downloaded at run time | `on` in development, `off` otherwise |
 | `SKY_AI_ACCEL` | force `cpu`, `metal`, `cuda`, `rocm` or `vulkan` for the fit plan | the engine build's accelerator |
+| `SKY_AI_REGISTRY` | where the model registry's artefacts live: `file://<dir>`, `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` ([`registry.md`](registry.md)) | `Store.configured`'s value in code, else `file://.sky/ai/registry` |
 
 "Development" means what it means everywhere in Sky: `ENV` unset, or `dev`,
 `development` or `local`. With fetching off, a missing engine or model fails
@@ -300,6 +302,9 @@ answers both kinds.
 | `sky ai ps [--all]` | `Local.engines ()`: running and orphaned engines (`--all` adds stale entries) |
 | `sky ai start <slot> [--model <ref>] [--context <n>] [--embeddings]` | `Endpoint.warm`, then holds the engine until Ctrl-C or `sky ai stop` |
 | `sky ai stop <slot>` / `--all` | `Local.stopSlot` |
+| `sky ai promote <name> <version> --to <alias>` | `Registry.promoteChecked` (`--force --reason`, `--expect`, `--min-pass-rate`; [`registry.md`](registry.md)) |
+| `sky ai rollback <name>@<alias>` | `Registry.rollback` |
+| `sky ai lineage <name>@<alias>` / `--dataset <sha256>` | `Registry.lineage` / `Registry.trainedOn` |
 
 Every verb takes `--format json`. The verbs hold no logic of their own: the CLI
 builds a bundled Sky program (`sky-bundled/ai`) once per Sky build and runs it,
@@ -307,13 +312,50 @@ and the program calls the API above. `sky ai start` uses `Local.devModel`
 unless `--model` (or the slot's `SKY_AI_<SLOT>_MODEL`) names another model.
 A program whose slot has the same model and settings uses the held engine.
 
+## Registry adapters
+
+`Endpoint.fromRegistry (Registry.resolver registry)` with
+`Endpoint.withAdapter "registry:support-lora@prod"` (or
+`SKY_AI_<SLOT>_ADAPTER=registry:support-lora@prod`) serves the adapter a
+registry alias points at. A remote slot sends the version's served name as
+the model; a local slot loads the version's GGUF file into its engine with
+`--lora`, after checking the file's digest and that the adapter was trained
+on the engine's base model (`AdapterMismatch` otherwise). The slot resolves
+the alias at start and again as it moves, so serving follows promote and
+rollback. See [`registry.md`](registry.md).
+
+## At startup and in `sky doctor`
+
+The build reads the slots the source names (a string literal or a top-level
+`String` constant given to `Endpoint.endpoint`; a project that imports
+`Std.Ai.Eval` also has the `judge` slot). A server prints one line per slot
+under its `listening` line, in production too:
+
+```
+  ai chat      remote  https://gpu.internal:8443  (url: env, key: env, model: env, adapter: env)
+  ai judge     set in code, resolved at the first call
+```
+
+A line names the mode, the target (scheme, host and port only) and which
+settings the environment sets, never a value of a key. A slot the environment
+does not touch is decided by its code at the first call.
+
+`sky doctor` applies the slot rule to the operator's environment, so a deploy
+that would fail at the first call fails there first: a `MODE` that is not
+`local` or `remote`, `MODE=local` with a `URL`, `MODE=remote` without one, a
+URL that is not `http(s)://`, a `registry:` adapter without an alias, an
+unpinned local `MODEL`, a remote target that does not accept a connection
+(a warning). It checks the machine settings (`SKY_AI_FETCH`, `SKY_AI_ACCEL`,
+`SKY_AI_REGISTRY`, `SKY_AI_LLAMA_BIN`), and with fetching off it reports a
+local slot whose engine or model is not provisioned.
+
 ## Not yet
 
-These parts of the design are later work: adapters and draft models in
-`Local` (`withAdapters`, `withDraft`), registry model references
-(`fromRegistry`), the startup-report lines and `sky doctor` checks for slots,
-the build-time check that a slot name is a literal, and Sky's own published
-engine bundles (the pins use the upstream llama.cpp release assets today).
+These parts of the design are later work: draft models in `Local`
+(`withDraft`), several resident adapters per local engine, and Sky's own
+published engine bundles (the pins use the upstream llama.cpp release assets
+today). A slot name computed at run time works, but the build cannot list it
+for the startup report.
 
 ## In the Sky Console
 
@@ -323,5 +365,6 @@ each setting came from, never a key), its local engines (state, model,
 accelerator, context, restarts, idle time, last crash), its recent model calls
 (slot, kind, outcome, latency, token counts; "Failed" shows only failures, and
 a slot's chip shows only that slot) and its `Std.Ai.Eval` runs (pass rate,
-gate verdict, and each case's verdict and reason). It holds no prompt and no
-answer.
+gate verdict, and each case's verdict and reason), and the model registry
+(each model's aliases, and on a click its versions, alias log and eval
+history). It holds no prompt and no answer.

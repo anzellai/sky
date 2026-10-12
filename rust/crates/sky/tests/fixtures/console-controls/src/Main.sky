@@ -11,7 +11,10 @@ and the analytics store, so each range of the console shows a different set.
 A press on "Run AI" gives the console's AI panel its data: two calls through
 the `chat` slot (the e2e points `SKY_AI_CHAT_URL` at a fake OpenAI-compatible
 server, which answers the second with HTTP 429, so it is `Overloaded`), and
-one Std.Ai.Eval run of two cases (one passes, one fails).
+one Std.Ai.Eval run of two cases (one passes, one fails). It then gives the
+panel's registry view a model: `fixture-lora` with two versions (each with
+eval evidence), promoted to `prod` twice and rolled back to v1, and v2 forced
+to `qa` with a reason.
 -}
 
 import Sky.Core.Prelude exposing (..)
@@ -26,6 +29,13 @@ import Std.Db as Db
 import Std.Ai.Provider as Provider exposing (Provider)
 import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
 import Std.Ai.Eval as Eval exposing (Expect(..))
+import Std.Ai.Local as Local
+import Std.Ai.Store as Store
+import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
+import Sky.Core.File as File
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Encoding as Encoding
+import Sky.Core.Result as Result
 
 type Page
     = Home
@@ -112,6 +122,120 @@ runAi =
         ]
         |> Task.andThen (\_ -> Db.open "sqlite" ":memory:")
         |> Task.andThen (\db -> Eval.runAs "fake-model" db chat fixtureSuite)
+        |> Task.andThen (\_ -> registryStory)
+
+
+-- The registry view's data. The evidence runs on a provider in code (no slot),
+-- so the recent-calls list keeps exactly the calls above.
+registryStory : Task Error ()
+registryStory =
+    File.tempDir "console-registry"
+        |> Task.andThen
+               (\dir ->
+                   Db.open "sqlite" (dir ++ "/registry.db")
+                       |> Task.andThen
+                              (\db ->
+                                  Registry.open
+                                      db
+                                      (Store.local (dir ++ "/store"))
+                                      |> Task.andThen
+                                             (\reg -> versionsFor db reg dir)))
+
+
+adapterBytes : String -> String
+adapterBytes tag =
+    let
+        header = "{\"t\":\"" ++ tag ++ "\"}"
+    in
+        (Encoding.hexDecode "0900000000000000" |> Result.withDefault "")
+            ++ header
+
+
+evidenceProvider : Provider
+evidenceProvider =
+    Provider.custom
+        (\_ ->
+            Task.succeed
+                { content = "hello"
+                , usage =
+                    { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+                })
+
+
+evidenceSuite : Eval.Suite String
+evidenceSuite =
+    Eval.suite
+        "registry-evidence"
+        (\q -> [ Provider.user q ])
+        [ { id = "greet"
+          , input = "say hello"
+          , expect = Contains "hello"
+          , tags = []
+          }
+        ]
+
+
+registerOne : Db.Db -> Registry.Registry -> String -> String -> Task Error Registry.Version
+registerOne db reg dir tag =
+    File.writeFile (dir ++ "/" ++ tag) (adapterBytes tag)
+        |> Task.andThen
+               (\_ ->
+                   Registry.register
+                       reg
+                       "fixture-lora"
+                       { path = dir ++ "/" ++ tag
+                       , format = Safetensors
+                       , method = Lora
+                       }
+                       { base = Local.devModel
+                       , dataset = "fixture@1"
+                       , datasetDigest = Crypto.sha256 "fixture dataset"
+                       , metadata = [ ( "seed", "1" ) ]
+                       })
+        |> Task.andThen
+               (\v ->
+                   Eval.runAs
+                       (Registry.label v)
+                       db
+                       evidenceProvider
+                       evidenceSuite
+                       |> Task.andThen
+                              (\report -> Registry.attachReport reg v report)
+                       |> Task.map (\_ -> v))
+
+
+versionsFor : Db.Db -> Registry.Registry -> String -> Task Error ()
+versionsFor db reg dir =
+    registerOne db reg dir "a"
+        |> Task.andThen
+               (\v1 ->
+                   registerOne db reg dir "b"
+                       |> Task.andThen
+                              (\v2 ->
+                                  Registry.promoteChecked
+                                      reg
+                                      "prod"
+                                      v1
+                                      Eval.thresholds
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.promoteChecked
+                                                     reg
+                                                     "prod"
+                                                     v2
+                                                     Eval.thresholds)
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.rollback
+                                                     reg
+                                                     "fixture-lora@prod")
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.forcePromote
+                                                     reg
+                                                     "qa"
+                                                     v2
+                                                     "e2e check")))
         |> Task.map (\_ -> ())
 
 

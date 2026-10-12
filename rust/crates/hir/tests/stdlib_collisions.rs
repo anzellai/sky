@@ -79,6 +79,18 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     "value run",
     "value setup",
     "value suite",
+    // v0.28.0: Std.Ai.Registry and Std.Ai.Store, named by the design
+    // (docs/design/std-ai-lifecycle.md §8.7): `Registry.open`, `register`,
+    // `label`, the adapter `Format`, `Store.put` and the `Store` type are verbs
+    // and types on their own values; the guide imports both modules `as
+    // Registry` / `as Store` and reads them qualified, so `Std.Db.open`,
+    // `Std.Db.Store.Store` and the rest stay unambiguous.
+    "type Format",
+    "type Store",
+    "value label",
+    "value open",
+    "value put",
+    "value register",
 ];
 
 fn repo_root() -> PathBuf {
