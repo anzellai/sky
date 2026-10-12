@@ -387,6 +387,9 @@ pub enum Entitlement {
     /// `true` for production, `false` for development.
     PushNotifications(bool),
     ICloudContainer(String),
+    /// `com.apple.developer.kernel.increased-memory-limit`: an on-device
+    /// model (`Std.Ai.Device`) needs more memory than iOS grants by default.
+    IncreasedMemoryLimit,
 }
 
 const ENTITLEMENT_CTORS: &[&str] = &[
@@ -395,6 +398,7 @@ const ENTITLEMENT_CTORS: &[&str] = &[
     "AssociatedDomain",
     "PushNotifications",
     "ICloudContainer",
+    "IncreasedMemoryLimit",
 ];
 
 /// The entitlements the entry source declares with `withEntitlement`, in
@@ -422,7 +426,9 @@ pub fn scan_entitlements(src: &str) -> Result<Vec<Entitlement>, String> {
             ));
         }
         let rest = rest.trim_start();
-        let e = if ctor == "PushNotifications" {
+        let e = if ctor == "IncreasedMemoryLimit" {
+            Entitlement::IncreasedMemoryLimit
+        } else if ctor == "PushNotifications" {
             let (env, _) = ctor_prefix(rest.trim_start_matches('('));
             match env.as_str() {
                 "PushProduction" => Entitlement::PushNotifications(true),
@@ -748,6 +754,12 @@ pub fn entitlement_entries(ents: &[Entitlement]) -> Vec<(String, Value)> {
                 let v = Value::String(if *prod { "production" } else { "development" }.into());
                 if !out.iter().any(|(k, _)| k == "aps-environment") {
                     out.push(("aps-environment".to_string(), v));
+                }
+            }
+            Entitlement::IncreasedMemoryLimit => {
+                let key = "com.apple.developer.kernel.increased-memory-limit";
+                if !out.iter().any(|(k, _)| k == key) {
+                    out.push((key.to_string(), Value::Bool(true)));
                 }
             }
             Entitlement::ICloudContainer(c) => {

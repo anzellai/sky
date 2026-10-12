@@ -126,8 +126,24 @@ build_android() {
     (cd "$OUT" && tar -czf "sky-llama-$BUILD-android.tar.gz" android)
 }
 
-build_ios() {
-    command -v xcodebuild >/dev/null || { echo "Xcode is required for the iOS engine" >&2; exit 2; }
+build_ios() (
+    # Apple's own tools, by absolute path: another clang or xcrun earlier on
+    # PATH (a Nix or Homebrew toolchain) targets macOS and cannot build iOS.
+    local xcrun=/usr/bin/xcrun
+    [ -x /usr/bin/xcodebuild ] || { echo "Xcode is required for the iOS engine" >&2; exit 2; }
+    # Full Xcode: a DEVELOPER_DIR another toolchain set (a Nix Apple SDK, the
+    # Command Line Tools) has no iOS SDK.
+    if [ -d /Applications/Xcode.app/Contents/Developer ]; then
+        export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+    else
+        DEVELOPER_DIR="$(/usr/bin/xcode-select -p)"
+        export DEVELOPER_DIR
+    fi
+    unset SDKROOT || true
+    export PATH="/usr/bin:/bin:$PATH"
+    local cc cxx
+    cc="$("$xcrun" -f clang)"
+    cxx="$("$xcrun" -f clang++)"
     local slices=()
     for sdk in iphoneos iphonesimulator; do
         local metal=OFF
@@ -135,24 +151,27 @@ build_ios() {
         # translation that ggml does not support.
         [ "$sdk" = iphoneos ] && metal=ON
         local dir="$WORK/ios-$sdk"
+        local sysroot
+        sysroot="$("$xcrun" --sdk "$sdk" --show-sdk-path)"
         cmake_build "$dir" -DSKY_TARGET=ios -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_OSX_SYSROOT="$sdk" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_C_COMPILER="$cc" -DCMAKE_CXX_COMPILER="$cxx" \
+            -DCMAKE_OSX_SYSROOT="$sysroot" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
             -DGGML_METAL="$metal" -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_BLAS=OFF -DGGML_NATIVE=OFF
         # One static library per slice: the core and every llama/ggml archive.
         local libs
         libs="$(find "$dir" -name '*.a' | sort)"
         # shellcheck disable=SC2086
-        xcrun libtool -static -o "$dir/libskyllama.a" $libs 2>/dev/null
+        "$xcrun" libtool -static -o "$dir/libskyllama.a" $libs 2>/dev/null
         mkdir -p "$dir/headers"
         cp -f "$HERE/sky_llama.h" "$HERE/module.modulemap" "$dir/headers/"
         slices+=(-library "$dir/libskyllama.a" -headers "$dir/headers")
     done
     rm -rf "$OUT/ios" && mkdir -p "$OUT/ios"
-    with_timeout 600 xcodebuild -create-xcframework "${slices[@]}" -output "$OUT/ios/SkyLlama.xcframework" > "$WORK/xcframework.log" 2>&1 \
+    with_timeout 600 /usr/bin/xcodebuild -create-xcframework "${slices[@]}" -output "$OUT/ios/SkyLlama.xcframework" > "$WORK/xcframework.log" 2>&1 \
         || { tail -20 "$WORK/xcframework.log"; exit 1; }
     notice "$OUT/ios"
     (cd "$OUT" && tar -czf "sky-llama-$BUILD-ios.tar.gz" ios)
-}
+)
 
 case "$TARGET" in
     web) build_web ;;

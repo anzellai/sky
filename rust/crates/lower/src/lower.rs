@@ -2972,6 +2972,15 @@ impl<'a> Ctx<'a> {
                 GoTy::Unit,
             )));
         }
+        // `sky build --ai-embed <slot>` runs the built server once with
+        // `--sky-ai-export <slot> <dir>`: it resolves the slot's offer as it
+        // would serve it, writes the files and exits.
+        if !self.device_regs.is_empty() {
+            stmts.push(GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("rt.AiDeviceExportIfAsked()".into()),
+                GoTy::Unit,
+            )));
+        }
         // Bring up telemetry console-DB persistence AFTER ApplyConfig — so a
         // `Sky.Config.withTelemetry*` value is in the environment before the
         // flusher latches the aggregation windows / synchronous-commit at enable

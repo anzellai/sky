@@ -24,6 +24,7 @@ package rt
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -513,4 +514,9 @@ func AiDevice_evict(slotArg, offerArg any) any {
 		aiDeviceWorkerMu.Unlock()
 		return aiDeviceOkString("")
 	}
+}
+
+// aiDeviceDesktopDispatch is the desktop shell's handler; a browser has none.
+func aiDeviceDesktopDispatch(op string, _ map[string]string) (string, error) {
+	return "", errors.New("invalid: unknown op " + op)
 }

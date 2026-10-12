@@ -28,6 +28,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -669,4 +670,80 @@ func AiDevice_progress(_, _ any) any {
 // AiDevice_evict : String -> String -> Task Error String
 func AiDevice_evict(_, _ any) any {
 	return func() any { return Ok[any, any]("") }
+}
+
+// AiDeviceExportIfAsked handles `--sky-ai-export <slot> <dir>`, which `sky
+// build --ai-embed <slot>` passes to the built server: it resolves the slot's
+// offer exactly as the server would serve it (operator variables and the
+// registry included), copies the model and the adapter into dir as
+// `<sha256>.gguf`, writes the offer to `dir/offer.json` and exits. A native
+// shell then carries the files in its bundle and never downloads them.
+func AiDeviceExportIfAsked() {
+	if len(os.Args) < 4 || os.Args[1] != "--sky-ai-export" {
+		return
+	}
+	slot, dir := os.Args[2], os.Args[3]
+	if err := aiDeviceExport(slot, dir); err != nil {
+		fmt.Fprintf(os.Stderr, "sky --ai-embed %s: %v\n", slot, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func aiDeviceExport(slot, dir string) error {
+	e, err := aiDeviceEntryFor(slot)
+	if err != nil {
+		return err
+	}
+	o, err := e.offerNow(context.Background())
+	if err != nil {
+		return err
+	}
+	if o.Placement == "server" {
+		return aiFailf(aiInvalidSetting, "slot %q runs on the server; there is nothing to embed", slot).with("setting", "placement")
+	}
+	if o.Refused != "" {
+		return aiFailf(aiNotPromotable, "slot %q: %s", slot, o.Refused).with("ref", slot).with("reason", o.Refused)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	files := []aiDeviceFile{o.Model}
+	if o.Adapter != nil {
+		files = append(files, *o.Adapter)
+	}
+	for _, f := range files {
+		src := e.fileFor(f.Sha256)
+		if src == "" {
+			return aiFailf(aiNotProvisioned, "%s is not on this host", f.Label).with("what", f.Label).with("command", "sky ai provision")
+		}
+		if err := aiCopyFile(src, filepath.Join(dir, f.Sha256+".gguf")); err != nil {
+			return err
+		}
+	}
+	b, _ := json.Marshal(o)
+	return os.WriteFile(filepath.Join(dir, "offer.json"), b, 0o644)
+}
+
+func aiCopyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp := dst + ".tmp-" + aiRandomHex(4)
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
 }

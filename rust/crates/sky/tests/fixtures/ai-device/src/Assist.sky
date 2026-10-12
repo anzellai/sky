@@ -1,0 +1,23 @@
+module Assist exposing (probeSlot, assistant)
+
+-- The device slot the probe runs: the development model, plus the adapter a
+-- test writes into `adapter.ref` (a `Std.Ai.Local` file reference) through
+-- SKY_AI_PROBE_DEVICE_ADAPTER, the operator variable a deployment would set.
+
+import Sky.Core.Prelude exposing (..)
+import Std.Ai.Endpoint as Endpoint exposing (Endpoint)
+import Std.Ai.Local as Local
+import Std.Ai.Device as Device
+import Std.Ai.Provider exposing (Provider)
+
+
+probeSlot : Endpoint
+probeSlot =
+    Endpoint.endpoint "probe"
+        |> Endpoint.withLocal (Local.model Local.devModel)
+        |> Endpoint.withDevice (Device.spec Device.Auto |> Device.withContext 2048)
+
+
+assistant : Provider
+assistant =
+    Device.provider "probe"
