@@ -103,6 +103,7 @@ module Std.Ai.Train exposing
     , Toolchain
     , provision
     , provisionBase
+    , provisionSnapshot
     , toolchainStatus
     , Event(..)
     , decodeEvent
@@ -2089,6 +2090,14 @@ provisionBase backend base =
                             (baseId base ++ " has no weights for the "
                                 ++ backendName backend
                                 ++ " backend; give it Train.withWeights"))
+
+
+-- | Download and verify a pinned snapshot below the AI home and return its
+-- directory (`<home>/bases/<org>--<repo>@<commit>`). `Std.Ai.Serve` stages
+-- its base this way.
+provisionSnapshot : Snapshot -> Task Error String
+provisionSnapshot snap =
+    baseRaw (snapshotJson snap)
 
 
 snapshotJson : Snapshot -> String
