@@ -347,8 +347,14 @@ plan (Generator g) =
                     , Provider.user (render g topic persona)
                     ]
                 }
+        limit =
+            callLimit
+                { perCall = g.perCall
+                , target = g.target
+                , maxCalls = g.maxCalls
+                }
     in
-        List.map request (List.range 0 (callLimit g - 1))
+        List.map request (List.range 0 (limit - 1))
 
 
 orNone : List String -> List String
