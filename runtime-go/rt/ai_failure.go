@@ -41,6 +41,9 @@ const (
 	// aiGateFailed is raised by Std.Ai.Eval (Sky), never by the runtime; it
 	// is in the table so the two sides stay one list.
 	aiGateFailed aiFailCode = "GateFailed"
+	// aiDatasetInvalid is a dataset that cannot be read, parsed or validated
+	// (Std.Ai.Dataset). Its reasons name a file and a line, never row text.
+	aiDatasetInvalid aiFailCode = "DatasetInvalid"
 )
 
 // aiDomain is the DomainFailure domain of every AI failure.
@@ -80,6 +83,7 @@ var aiFailSpecs = map[aiFailCode]aiFailSpec{
 	aiBudgetExceeded:   {errKindPermissionDenied, false, [][2]string{{"budget", ""}, {"estimate", ""}}},
 	aiToolchainFailed:  {errKindUnavailable, false, [][2]string{{"tool", ""}, {"logTail", ""}}},
 	aiGateFailed:       {errKindPermissionDenied, false, [][2]string{{"suite", ""}, {"reasons", ""}}},
+	aiDatasetInvalid:   {errKindInvalidInput, false, [][2]string{{"dataset", ""}, {"reasons", ""}}},
 }
 
 // aiFailure is a classified AI failure before it becomes a Sky value. Go code

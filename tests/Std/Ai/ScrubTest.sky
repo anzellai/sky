@@ -1,0 +1,322 @@
+module Std.Ai.ScrubTest exposing (tests)
+
+-- Std.Ai.Dataset.Scrub: every built-in rule finds what it names and leaves
+-- look-alikes alone (a number that fails the Luhn or mod-97 check, a date, a
+-- decimal), the report counts without holding the replaced text, row
+-- scrubbers reach every text field, and a bad user pattern is an error, not a
+-- rule that matches nothing. The test values are published test numbers
+-- (card test numbers, the ISO 13616 example IBANs, invalid-by-construction
+-- SSN and NINO prefixes), not real data.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error, ErrorKind(..))
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Sky.Core.Tuple as Tuple
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Provider as Provider
+import Std.Ai.Dataset.Scrub as Scrub
+
+
+scrubbed : List Scrub.Rule -> String -> String
+scrubbed rules s =
+    Tuple.first (Scrub.text rules s)
+
+
+counted : List Scrub.Rule -> String -> String -> Int
+counted rules name s =
+    Scrub.countOf name (Tuple.second (Scrub.text rules s))
+
+
+same : List Scrub.Rule -> String -> TestResult
+same rules s =
+    Test.equal s (scrubbed rules s)
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "email addresses become [EMAIL] and are counted"
+          (\_ ->
+              Test.equal
+                  ( "Write to [EMAIL] or [EMAIL].", 2 )
+                  ( scrubbed
+                        [ Scrub.email ]
+                        "Write to ada@example.com or bob.smith+tag@mail.example.co.uk."
+                  , counted
+                        [ Scrub.email ]
+                        "email"
+                        "Write to ada@example.com or bob.smith+tag@mail.example.co.uk."
+                  ))
+    , Test.test
+          "card numbers that pass the Luhn check become [CARD]"
+          (\_ ->
+              Test.equal
+                  "Paid with [CARD] and [CARD] and [CARD]."
+                  (scrubbed
+                      [ Scrub.cardNumber ]
+                      "Paid with 4111 1111 1111 1111 and 5500-0000-0000-0004 and 378282246310005."))
+    , Test.test
+          "a 16-digit number that fails the Luhn check is kept"
+          (\_ -> same [ Scrub.cardNumber ] "Order 4111 1111 1111 1112 shipped.")
+    , Test.test
+          "isCardNumber is the Luhn check over 13 to 19 digits"
+          (\_ ->
+              Test.equal
+                  [ True, False, False, True ]
+                  [ Scrub.isCardNumber "4111111111111111"
+                  , Scrub.isCardNumber "4111111111111112"
+                  , Scrub.isCardNumber "411111111111"
+                  , Scrub.isCardNumber "6011-1111-1111-1117"
+                  ])
+    , Test.test
+          "IBANs that pass mod 97 become [IBAN], with or without spaces"
+          (\_ ->
+              Test.equal
+                  "To [IBAN] or [IBAN] AND today."
+                  (scrubbed
+                      [ Scrub.iban ]
+                      "To GB82 WEST 1234 5698 7654 32 or DE89370400440532013000 AND today."))
+    , Test.test
+          "an IBAN with a wrong check digit is kept"
+          (\_ -> same [ Scrub.iban ] "To GB83 WEST 1234 5698 7654 32 today.")
+    , Test.test
+          "isIban checks the country, the length and mod 97"
+          (\_ ->
+              Test.equal
+                  [ True, True, False, False ]
+                  [ Scrub.isIban "GB82WEST12345698765432"
+                  , Scrub.isIban "fr14 2004 1010 0505 0001 3m02 606"
+                  , Scrub.isIban "GB82WEST12345698765433"
+                  , Scrub.isIban "GB82"
+                  ])
+    , Test.test
+          "phone numbers in international and national formats become [PHONE]"
+          (\_ ->
+              Test.equal
+                  "[PHONE], [PHONE], [PHONE], [PHONE], [PHONE] and [PHONE]."
+                  (scrubbed
+                      [ Scrub.phone ]
+                      "+44 20 7946 0958, +14155550132, (415) 555-0132, 415.555.0132, 020 7946 0958 and 07700 900123."))
+    , Test.test
+          "dates, times, decimals and plain digit runs are not phone numbers"
+          (\_ ->
+              same
+                  [ Scrub.phone ]
+                  "On 2024-01-01 at 12:30:45 pi was 3.14159265 and order 123456789 shipped.")
+    , Test.test
+          "US social security numbers become [SSN]; unissuable ones are kept"
+          (\_ ->
+              Test.equal
+                  "SSN [SSN], not 000-12-3456, 666-12-3456, 912-12-3456 or 123-00-4567."
+                  (scrubbed
+                      [ Scrub.usSsn ]
+                      "SSN 123-45-6789, not 000-12-3456, 666-12-3456, 912-12-3456 or 123-00-4567."))
+    , Test.test
+          "UK national insurance numbers become [NINO]; invalid prefixes are kept"
+          (\_ ->
+              Test.equal
+                  "NI [NINO] and [NINO], not GB123456A or QQ123456E."
+                  (scrubbed
+                      [ Scrub.ukNino ]
+                      "NI AB 12 34 56 C and JK123456D, not GB123456A or QQ123456E."))
+    , Test.test
+          "secret-shaped values become [SECRET]; a labelled value keeps its label"
+          (\_ ->
+              Test.equal
+                  "key [SECRET], [SECRET], [SECRET], [SECRET] and api_key=[SECRET] end"
+                  (scrubbed
+                      [ Scrub.secrets ]
+                      "key sk-abcdefghijklmnopqrstuvwxyz012345, ghp_abcdefghijklmnopqrstuvwxyz0123456789, AKIAABCDEFGHIJKLMNOP, eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop and api_key=Zx9Qw8Er7Ty6Ui5Op end"))
+    , Test.test
+          "a PEM private key is one [SECRET]"
+          (\_ ->
+              Test.equal
+                  ( "before [SECRET] after", 1 )
+                  ( scrubbed
+                        [ Scrub.secrets ]
+                        "before -----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34\nGkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY----- after"
+                  , counted
+                        [ Scrub.secrets ]
+                        "secret"
+                        "before -----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34\n-----END RSA PRIVATE KEY----- after"
+                  ))
+    , Test.test
+          "defaults keep the rules apart: a card is not a phone, a key is not a card"
+          (\_ ->
+              let
+                  ( out, report ) =
+                      Scrub.text
+                          Scrub.defaults
+                          "Card 4111 1111 1111 1111, call +44 20 7946 0958, mail ada@example.com, key sk-abcdefghijklmnopqrstuvwxyz012345, IBAN GB82 WEST 1234 5698 7654 32."
+              in
+                  Test.equal
+                      ( "Card [CARD], call [PHONE], mail [EMAIL], key [SECRET], IBAN [IBAN]."
+                      , [ ( "card", 1 )
+                        , ( "email", 1 )
+                        , ( "iban", 1 )
+                        , ( "phone", 1 )
+                        , ( "secret", 1 )
+                        ]
+                      )
+                      ( out, Dict.toList report ))
+    , Test.test
+          "the report holds counts only, never the replaced text"
+          (\_ ->
+              let
+                  ( _, report ) =
+                      Scrub.text
+                          Scrub.defaults
+                          "ada@example.com 4111111111111111"
+                  shown =
+                      String.join
+                          ","
+                          (List.map
+                              (\( k, n ) -> k ++ "=" ++ String.fromInt n)
+                              (Dict.toList report))
+              in
+                  Test.isFalse
+                      (String.contains "ada@" shown
+                          || String.contains "4111" shown))
+    , Test.test
+          "text with nothing to scrub is unchanged and the report is empty"
+          (\_ ->
+              Test.equal
+                  ( "Plain text, 42 apples.", 0 )
+                  (Tuple.mapSecond
+                      Scrub.total
+                      (Scrub.text Scrub.defaults "Plain text, 42 apples.")))
+    , Test.test
+          "a user pattern replaces with its upper-case name"
+          (\_ ->
+              case Scrub.pattern "order_id" "ORD-[0-9]{6}" of
+
+                  Ok rule ->
+                      Test.equal
+                          ( "Order [ORDER_ID] and [ORDER_ID].", 2 )
+                          ( scrubbed [ rule ] "Order ORD-123456 and ORD-654321."
+                          , counted
+                                [ rule ]
+                                "order_id"
+                                "Order ORD-123456 and ORD-654321."
+                          )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a user pattern that does not compile is an InvalidInput error"
+          (\_ ->
+              Test.expectErrorKind InvalidInput (Scrub.pattern "broken" "([a-z"))
+    , Test.test
+          "a custom rule reports its own count"
+          (\_ ->
+              let
+                  shout =
+                      Scrub.custom
+                          "shout"
+                          (\s ->
+                              ( String.replace "Ada" "[NAME]" s
+                              , List.length (String.split "Ada" s) - 1
+                              ))
+              in
+                  Test.equal
+                      ( "[NAME] met [NAME].", 2 )
+                      ( scrubbed [ shout ] "Ada met Ada."
+                      , counted [ shout ] "shout" "Ada met Ada."
+                      ))
+    , Test.test
+          "an instruction scrubber reaches the prompt and the completion"
+          (\_ ->
+              Test.equal
+                  ( Just
+                        { prompt = "I am [EMAIL]"
+                        , completion = "Hi, we called [PHONE]."
+                        }
+                  , 2
+                  )
+                  (Tuple.mapSecond
+                      Scrub.total
+                      (Scrub.apply
+                          (Scrub.instruction Scrub.defaults)
+                          { prompt = "I am ada@example.com"
+                          , completion = "Hi, we called +44 20 7946 0958."
+                          })))
+    , Test.test
+          "a chat scrubber reaches every message and keeps the roles"
+          (\_ ->
+              case Scrub.apply
+                       (Scrub.chat Scrub.defaults)
+                       { messages =
+                           [ Provider.system "Be brief."
+                           , Provider.user "Card 4111111111111111"
+                           , Provider.assistant "Thanks ada@example.com"
+                           ]
+                       } of
+
+                  ( Just r, report ) ->
+                      Test.equal
+                          ( [ "system:Be brief."
+                            , "user:Card [CARD]"
+                            , "assistant:Thanks [EMAIL]"
+                            ]
+                          , 2
+                          )
+                          ( List.map
+                                (\m -> m.role ++ ":" ++ m.content)
+                                r.messages
+                          , Scrub.total report
+                          )
+
+                  ( Nothing, _ ) ->
+                      Test.fail "the row was dropped")
+    , Test.test
+          "a preference scrubber reaches all three fields"
+          (\_ ->
+              Test.equal
+                  (Just
+                      { prompt = "[EMAIL]"
+                      , chosen = "[EMAIL]"
+                      , rejected = "[EMAIL]"
+                      })
+                  (Tuple.first
+                      (Scrub.apply
+                          (Scrub.preference [ Scrub.email ])
+                          { prompt = "a@b.io"
+                          , chosen = "c@d.io"
+                          , rejected = "e@f.io"
+                          })))
+    , Test.test
+          "dropIf drops a row, counts it under its name, and scrubs the rest"
+          (\_ ->
+              let
+                  sc =
+                      Scrub.string [ Scrub.email ]
+                          |> Scrub.dropIf
+                                 "internal"
+                                 (String.contains "INTERNAL")
+                  ( kept, report ) =
+                      Scrub.applyAll sc [ "a@b.io", "INTERNAL note", "plain" ]
+              in
+                  Test.equal
+                      ( [ "[EMAIL]", "plain" ]
+                      , [ ( "email", 1 ), ( "internal", 1 ) ]
+                      )
+                      ( kept, Dict.toList report ))
+    , Test.test
+          "merge adds counts rule by rule"
+          (\_ ->
+              Test.equal
+                  [ ( "card", 1 ), ( "email", 3 ) ]
+                  (Dict.toList
+                      (Scrub.merge
+                          (Dict.fromList [ ( "email", 1 ) ])
+                          (Dict.fromList [ ( "email", 2 ), ( "card", 1 ) ]))))
+    , Test.test
+          "rule names are the report keys"
+          (\_ ->
+              Test.equal
+                  [ "secret", "email", "iban", "card", "ssn", "nino", "phone" ]
+                  (List.map Scrub.ruleName Scrub.defaults))
+    ]

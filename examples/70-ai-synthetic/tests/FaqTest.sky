@@ -1,0 +1,119 @@
+module FaqTest exposing (tests)
+
+-- The FAQ generator end to end, offline: in test mode the teacher's and the
+-- judge's calls are answered by tests/mocks/ (one teacher fixture per topic,
+-- picked by `bodyContains`; the judge fails any answer that says "guess"),
+-- so the counts below follow from the fixtures.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.File as File
+import Sky.Test as Test exposing (Test, TestResult)
+import Std.Ai.Dataset as Dataset exposing (Instruction)
+import Std.Ai.Dataset.Scrub as Scrub
+import Std.Ai.Dataset.Synthetic as Synthetic exposing (Stop(..))
+import Faq
+
+
+generated : (Synthetic.Generated Instruction -> TestResult) -> TestResult
+generated check =
+    case Task.run (Synthetic.generate Faq.generator) of
+
+        Ok gen ->
+            check gen
+
+        Err e ->
+            Test.fail (Error.toString e)
+
+
+freezeOnce : String -> Task Error String
+freezeOnce dir =
+    Synthetic.generate Faq.generator
+        |> Task.andThen
+               (\gen ->
+                   Synthetic.toDataset gen
+                       |> Dataset.scrub (Scrub.instruction Scrub.defaults)
+                       |> Dataset.split Dataset.defaultSplit .prompt
+                       |> Dataset.freeze
+                              (Dataset.target dir "support-faq")
+                              Dataset.instructionCodec)
+        |> Task.map Dataset.digest
+
+
+tests : List Test
+tests =
+    [ Test.test
+          "the run reaches its target of six rows in three teacher calls"
+          (\_ ->
+              generated
+                  (\gen ->
+                      Test.equal
+                          ( 6, 3, TargetReached )
+                          ( List.length gen.rows
+                          , gen.report.calls
+                          , gen.report.stop
+                          )))
+    , Test.test
+          "the filter and the judge drop the weak rows"
+          (\_ ->
+              generated
+                  (\gen ->
+                      Test.equal
+                          ( [ ( "answer too short", 2 ) ], 2, 8 )
+                          ( Dict.toList gen.report.filtered
+                          , gen.report.judgedOut
+                          , gen.report.judgeCalls
+                          )))
+    , Test.test
+          "no kept answer is a guess or too short"
+          (\_ ->
+              generated
+                  (\gen ->
+                      Test.equal
+                          []
+                          (List.filter
+                              (\r ->
+                                  String.contains "guess" r.completion
+                                      || String.length r.completion
+                                      < 30)
+                              gen.rows)))
+    , Test.test
+          "the frozen dataset is scrubbed and its digest is stable"
+          (\_ ->
+              case Task.run
+                       (File.tempDir "faq"
+                           |> Task.andThen
+                                  (\dir ->
+                                      freezeOnce dir
+                                          |> Task.andThen
+                                                 (\a ->
+                                                     freezeOnce dir
+                                                         |> Task.map
+                                                                (\b -> ( a, b ))))) of
+
+                  Ok ( a, b ) ->
+                      Test.equal ( True, 64 ) ( a == b, String.length a )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "the lineage names the generator and the seed"
+          (\_ ->
+              generated
+                  (\gen ->
+                      case Dataset.sources (Synthetic.toDataset gen) of
+
+                          [source] ->
+                              Test.isTrue
+                                  (String.startsWith
+                                      "synthetic:support-faq teacher=teacher "
+                                      source
+                                      && String.contains "seed=7" source)
+
+                          other ->
+                              Test.fail (String.join "," other)))
+    ]

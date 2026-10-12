@@ -88,6 +88,11 @@ and names your own rubric prompt version, which the report records. The judge
 answers with `SCORE: <1-5>`; an answer without a score fails the case and says
 so. `Eval.withPassScore` moves the pass mark.
 
+`Eval.judgeAnswer judge seed rubric question answer` asks the judge about one
+answer outside a suite, with the same prompt, temperature 0 and pass mark.
+`Std.Ai.Dataset.Synthetic.withJudge` uses it to keep only the generated rows
+the judge passes ([`dataset.md`](dataset.md)).
+
 ## Repeatable runs
 
 Every call uses temperature 0 and a seed. The suite's seed is 42 unless

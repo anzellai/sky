@@ -31,7 +31,7 @@
 --
 -- | Failure | `ErrorKind` | retryable |
 -- |---|---|---|
--- | `NotConfigured`, `InvalidSetting`, `ModelTooLarge` | `InvalidInput` | no |
+-- | `NotConfigured`, `InvalidSetting`, `ModelTooLarge`, `DatasetInvalid` | `InvalidInput` | no |
 -- | `Unreachable`, `Overloaded` | `Unavailable` | yes |
 -- | `TimedOut` | `Timeout` | yes |
 -- | `EngineCrashed`, `EngineFailed`, `NoAccelerator`, `ToolchainFailed` | `Unavailable` | no |
@@ -86,6 +86,9 @@ type Failure
 , logTail : String
 }
     | GateFailed { suite : String
+, reasons : String
+}
+    | DatasetInvalid { dataset : String
 , reasons : String
 }
 
@@ -147,6 +150,9 @@ code f =
         GateFailed _ ->
             "GateFailed"
 
+        DatasetInvalid _ ->
+            "DatasetInvalid"
+
 
 -- | The `ErrorKind` a failure sets.
 kind : Failure -> ErrorKind
@@ -160,6 +166,9 @@ kind f =
             InvalidInput
 
         ModelTooLarge _ ->
+            InvalidInput
+
+        DatasetInvalid _ ->
             InvalidInput
 
         Unreachable _ ->
@@ -341,6 +350,9 @@ attrsOf f =
         GateFailed r ->
             [ ( "suite", r.suite ), ( "reasons", r.reasons ) ]
 
+        DatasetInvalid r ->
+            [ ( "dataset", r.dataset ), ( "reasons", r.reasons ) ]
+
 
 optInt : String -> Maybe Int -> List ( String, String )
 optInt key m =
@@ -404,6 +416,9 @@ describe f =
 
         GateFailed r ->
             "the eval gate for " ++ r.suite ++ " failed: " ++ r.reasons
+
+        DatasetInvalid r ->
+            "the dataset " ++ r.dataset ++ " is not valid: " ++ r.reasons
 
 
 -- Money as "<ISO code> <exact decimal>", for example "USD 40.00".
@@ -565,6 +580,12 @@ decode df =
                 Maybe.map2
                     (\s r -> GateFailed { suite = s, reasons = r })
                     (str "suite")
+                    (str "reasons")
+
+            "DatasetInvalid" ->
+                Maybe.map2
+                    (\d r -> DatasetInvalid { dataset = d, reasons = r })
+                    (str "dataset")
                     (str "reasons")
 
             _ ->

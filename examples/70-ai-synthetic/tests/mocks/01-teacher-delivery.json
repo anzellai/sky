@@ -1,0 +1,9 @@
+{
+  "match": {
+    "method": "POST",
+    "urlContains": "sky-ai-local.invalid/teacher/",
+    "bodyContains": "Topic: delivery"
+  },
+  "status": 200,
+  "body": "{\"choices\": [{\"message\": {\"content\": \"```json\\n[\\n {\\n  \\\"prompt\\\": \\\"How do I track my parcel?\\\",\\n  \\\"completion\\\": \\\"Open the order and choose Track parcel. The link shows each step until delivery.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"Can someone else sign for my parcel?\\\",\\n  \\\"completion\\\": \\\"Yes. Add their name under Delivery notes before the order ships, and they can sign.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"When will my parcel arrive?\\\",\\n  \\\"completion\\\": \\\"Hard to say, just guess a week or so.\\\"\\n },\\n {\\n  \\\"prompt\\\": \\\"Lost?\\\",\\n  \\\"completion\\\": \\\"Call us.\\\"\\n }\\n]\\n```\"}}], \"usage\": {\"prompt_tokens\": 180, \"completion_tokens\": 220, \"total_tokens\": 400}}"
+}

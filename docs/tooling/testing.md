@@ -209,6 +209,10 @@ A fixture is one JSON file under `tests/mocks/` (or the dir named by
   (case-insensitive otherwise).
 - **`match.urlContains`** — optional substring of the full URL. Empty or absent
   matches any URL, so one fixture can cover a whole host or path prefix.
+- **`match.bodyContains`** — optional substring of the request body. Empty or
+  absent matches any body. It tells apart two calls to the same URL: the turns
+  of a model tool loop, or a teacher model asked about different topics
+  (`"bodyContains": "Topic: refunds"`, [`../ai/dataset.md`](../ai/dataset.md)).
 - **`status`** — the response status; `0` or absent means `200`.
 - **`body`** — the response body, verbatim. Paste a real captured payload here.
 
@@ -227,15 +231,18 @@ fail-closed error names the method, the URL, the mocks dir, and the exact
   case (a `create` call and a `retrieve` call have different URLs).
 - **The failure outcome comes for free** — omit the fixture (fail-closed), or
   give it a `status` of `402`/`500` with an error `body`.
-- **The same URL, different outcomes** — keep separate mock directories
+- **The same URL, a different request body** — one fixture each, with
+  `match.bodyContains`. Put the more specific fixture first (the first match
+  wins, in filename order).
+- **The same URL and body, different outcomes** — keep separate mock directories
   (`tests/mocks/success/`, `tests/mocks/pending/`, `tests/mocks/failure/`) and
   select one per run with `SKY_TEST_MOCKS_DIR`. Fixtures load once per process,
   so this switch is per-run.
 
 Two shapes are **not** expressible today, and are worth knowing before you design
-around them: two responses for the **same** method+URL told apart by request
-**body**/query/headers (the matcher does not read the body), and a **sequenced**
-response (first call `pending`, second `succeeded`). Use distinct URLs or
+around them: two responses told apart by request **query/headers** alone (the
+matcher reads the method, the URL and the body), and a **sequenced** response
+(first call `pending`, second `succeeded`). Use distinct URLs, distinct bodies or
 separate directories until the matcher grows those fields.
 
 ### Determinism (opt-in, decoupled from test mode)

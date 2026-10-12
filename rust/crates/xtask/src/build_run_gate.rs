@@ -83,7 +83,17 @@ const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 // (67 by the behavioural restart test `durable_tea_cli_flow.rs`). A durable
 // example also cannot get an ORACLE-verified golden — the frozen legacy compiler
 // has no `App.withDurable` — which is a second, independent reason it is here.
-const NONDETERMINISTIC_OUTPUT: &[&str] = &["02-go-stdlib", "67-durable-counter"];
+// 68-ai-dataset, 69-ai-scrub and 70-ai-synthetic (v0.28.0) use Std.Ai.Dataset,
+// which the frozen legacy oracle does not have, so no oracle-verified golden
+// can exist for them; their behaviour is pinned by their own `sky test` suites,
+// run offline by rust/crates/sky/tests/ai_dataset_flow.rs.
+const NONDETERMINISTIC_OUTPUT: &[&str] = &[
+    "02-go-stdlib",
+    "67-durable-counter",
+    "68-ai-dataset",
+    "69-ai-scrub",
+    "70-ai-synthetic",
+];
 
 /// Hand-authored multi-project splits — an example that is NOT a single project
 /// under a top-level `src/` but several sibling projects (a `Spa.app` client, a

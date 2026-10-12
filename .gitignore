@@ -28,6 +28,9 @@ node_modules/
 .env
 .env.*
 !.env.example
+# An example's test-mode file is committed config, not a secret: `sky test`
+# runs in test mode only when the project has one (docs/tooling/testing.md).
+!examples/*/.env.test
 firebaseadminsdk*.json
 
 # AI agent config. Use `.claude/*` (contents), NOT `.claude/` (the dir), so the

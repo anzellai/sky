@@ -40,6 +40,10 @@ every =
           }
     , ToolchainFailed { tool = "mlx", logTail = "out of memory" }
     , GateFailed { suite = "support", reasons = "pass rate 50% is below 90%" }
+    , DatasetInvalid
+          { dataset = "data/support.jsonl"
+          , reasons = "line 7: not JSON (byte 12)"
+          }
     ]
 
 
@@ -133,6 +137,10 @@ tests =
                  "GateFailed"
                  (GateFailed { suite = "s", reasons = "r" })
                  PermissionDenied
+           , kindCase
+                 "DatasetInvalid"
+                 (DatasetInvalid { dataset = "d", reasons = "r" })
+                 InvalidInput
            , kindCase
                  "RemoteRejected 400"
                  (RemoteRejected { status = 400 })

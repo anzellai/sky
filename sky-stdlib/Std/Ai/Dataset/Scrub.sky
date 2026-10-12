@@ -1,0 +1,647 @@
+module Std.Ai.Dataset.Scrub exposing
+    ( Rule
+    , Report
+    , Scrubber
+    , email
+    , phone
+    , cardNumber
+    , iban
+    , usSsn
+    , ukNino
+    , secrets
+    , pattern
+    , custom
+    , defaults
+    , ruleName
+    , text
+    , scrubber
+    , string
+    , instruction
+    , chat
+    , preference
+    , dropIf
+    , apply
+    , applyAll
+    , emptyReport
+    , merge
+    , total
+    , countOf
+    , isCardNumber
+    , isIban
+    )
+
+{-| `Std.Ai.Dataset.Scrub` — find personal data and secrets in dataset text and
+replace them with a placeholder, and count what was replaced.
+
+    rules : List Scrub.Rule
+    rules =
+        Scrub.defaults
+
+    Scrub.text rules "Mail ada@example.com or call +44 20 7946 0958"
+    --> ( "Mail [EMAIL] or call [PHONE]", Dict.fromList [ ( "email", 1 ), ( "phone", 1 ) ] )
+
+A rule finds candidates with a regular expression and, where a format has a
+check, keeps only the candidates that pass it: a card number must pass the
+Luhn check, an IBAN its mod-97 check, a US social security number and a UK
+national insurance number their issuing rules. A number that only looks like a
+card number is left alone, so ordinary numbers in the data survive.
+
+A `Scrubber row` applies rules to the text fields of a row (`instruction`,
+`chat`, `preference` and `string` for the built-in shapes, `scrubber` for your
+own) and can drop whole rows (`dropIf`). `Std.Ai.Dataset.scrub` runs one over
+a dataset, and the counts go into the frozen version's manifest.
+
+The report holds counts only, never the text that was replaced, and nothing
+here logs a value. Scrubbing is a hook you compose, not a guarantee of
+anonymity: a name, an address or a free-text description can still identify a
+person. Review a sample of the scrubbed data before you train on it.
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe exposing (Maybe(..))
+import Sky.Core.Dict as Dict exposing (Dict)
+import Sky.Core.Regex as Regex
+import Sky.Core.Char as Char
+import Sky.Ffi as Ffi
+import Std.Ai.Provider exposing (Message)
+
+-- ── Rules ───────────────────────────────────────────────────────────
+-- | A text rule: a name (the key in the report) and a function that returns
+-- the scrubbed text and how many values it replaced.
+type Rule
+    = Rule { name : String
+, run : String -> ( String, Int )
+}
+
+-- | What a scrub replaced: rule name to count. Rows dropped by `dropIf` count
+-- under the drop's name. It never holds the replaced text.
+type alias Report =
+    Dict String Int
+
+
+-- | The name a rule reports under.
+ruleName : Rule -> String
+ruleName (Rule r) =
+    r.name
+
+
+-- A rule that replaces every match of `re` with `token`.
+plain : String -> String -> String -> Rule
+plain name token re =
+    Rule
+        { name = name
+        , run =
+            \s ->
+                let
+                    n = List.length (Regex.findAll re s)
+                in
+                    if n == 0 then
+                        ( s, 0 )
+
+                    else
+                        ( Regex.replace re token s, n )
+        }
+
+
+-- A rule that replaces the candidates `accept` keeps. `accept` returns the
+-- exact text to replace (a candidate may be trimmed), so a candidate that
+-- fails its check stays in the text.
+validated : String -> String -> String -> (String -> Maybe String) -> Rule
+validated name token re accept =
+    Rule
+        { name = name
+        , run =
+            \s ->
+                let
+                    found = List.filterMap accept (Regex.findAll re s)
+                in
+                    ( List.foldl (\m acc -> String.replace m token acc) s found
+                    , List.length found
+                    )
+        }
+
+
+-- | Email addresses, replaced with `[EMAIL]`.
+email : Rule
+email =
+    plain
+        "email"
+        "[EMAIL]"
+        "[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}"
+
+
+-- | Telephone numbers, replaced with `[PHONE]`: an international number
+-- (`+44 20 7946 0958`, `+14155550132`), a number with an area code in
+-- brackets (`(415) 555-0132`), a North American number with separators
+-- (`415-555-0132`, `415.555.0132`), or a national number with a leading 0
+-- (`020 7946 0958`, `07700 900123`). It has 9 to 15 digits. A date, a time,
+-- a decimal number or an unformatted run of digits is not a phone number.
+phone : Rule
+phone =
+    validated "phone" "[PHONE]" "\\+?\\(?\\d[\\d ().-]{6,20}\\d" acceptPhone
+
+
+acceptPhone : String -> Maybe String
+acceptPhone candidate =
+    let
+        c = String.trim candidate
+        n = String.length (digitsOf c)
+        shaped =
+            String.startsWith "+" c
+                || Regex.match "^\\(\\d{2,5}\\)[ .-]?\\d{3,4}[ .-]?\\d{3,4}$" c
+                || Regex.match "^\\d{3}[-. ]\\d{3}[-. ]\\d{4}$" c
+                || Regex.match "^0\\d{2,4}[ -]?\\d{3,4}[ -]?\\d{3,4}$" c
+        plusShaped =
+            not (String.startsWith "+" c)
+                || Regex.match
+                       "^\\+\\d{1,3}(?:[ .-]?\\(?\\d{1,5}\\)?)(?:[ .-]?\\d{2,5}){1,5}$"
+                       c
+    in
+        if n >= 9 && n <= 15 && shaped && plusShaped then
+            Just c
+
+        else
+            Nothing
+
+
+digitsOf : String -> String
+digitsOf s =
+    String.fromList (List.filter Char.isDigit (String.toList s))
+
+
+-- | Payment card numbers that pass the Luhn check (13 to 19 digits, with or
+-- without spaces or dashes), replaced with `[CARD]`.
+cardNumber : Rule
+cardNumber =
+    validated
+        "card"
+        "[CARD]"
+        "\\b(?:\\d[ -]?){12,18}\\d\\b"
+        (\c ->
+            if isCardNumber c then
+                Just c
+
+            else
+                Nothing)
+
+
+-- | Whether a string is a payment card number: 13 to 19 digits once spaces
+-- and dashes are removed, and the Luhn check passes.
+isCardNumber : String -> Bool
+isCardNumber s =
+    let
+        compact = String.replace " " "" (String.replace "-" "" s)
+        ds = digitsOf compact
+    in
+        String.length ds == String.length compact && String.length ds >= 13
+            && String.length ds
+            <= 19
+            && luhn ds
+
+
+luhn : String -> Bool
+luhn ds =
+    let
+        step i d =
+            if modBy 2 i == 1 then
+                if d * 2 > 9 then
+                    d * 2 - 9
+
+                else
+                    d * 2
+
+            else
+                d
+        sum =
+            String.toList ds |> List.reverse
+                |> List.indexedMap
+                       (\i c ->
+                           step
+                               i
+                               (Maybe.withDefault
+                                   0
+                                   (String.toInt (String.fromChar c))))
+                |> List.foldl (\d acc -> acc + d) 0
+    in
+        modBy 10 sum == 0
+
+
+-- | International bank account numbers that pass the mod-97 check (with or
+-- without spaces in groups of four), replaced with `[IBAN]`.
+iban : Rule
+iban =
+    validated
+        "iban"
+        "[IBAN]"
+        "\\b[A-Z]{2}\\d{2}(?: ?[A-Z0-9]){11,30}\\b"
+        acceptIban
+
+
+-- The candidate may run into a following upper-case word ("GB82 WEST … AND");
+-- drop trailing groups until the rest is a valid IBAN.
+acceptIban : String -> Maybe String
+acceptIban candidate =
+    let
+        try groups =
+            case groups of
+
+                [] ->
+                    Nothing
+
+                _ ->
+                    let
+                        joined = String.join " " groups
+                    in
+                        if isIban joined then
+                            Just joined
+
+                        else
+                            try (List.take (List.length groups - 1) groups)
+    in
+        try (String.split " " (String.trim candidate))
+
+
+-- | Whether a string is an IBAN: a country code, two check digits and 11 to 30
+-- letters or digits (spaces ignored), and the ISO 13616 mod-97 check gives 1.
+isIban : String -> Bool
+isIban s =
+    let
+        compact = String.toUpper (String.replace " " "" s)
+        rearranged = String.dropLeft 4 compact ++ String.left 4 compact
+    in
+        String.length compact >= 15 && String.length compact <= 34
+            && Regex.match "^[A-Z]{2}\\d{2}[A-Z0-9]+$" compact
+            && mod97 rearranged
+            == 1
+
+
+-- The remainder of a long number written in base 36 letters (A = 10) mod 97,
+-- one character at a time, so no big integer is needed.
+mod97 : String -> Int
+mod97 s =
+    String.toList s
+        |> List.foldl
+               (\c acc ->
+                   let
+                       code = Char.toCode c
+                   in
+                       if code >= 48 && code <= 57 then
+                           modBy 97 (acc * 10 + (code - 48))
+
+                       else
+                           modBy 97 (acc * 100 + (code - 55)))
+               0
+
+
+-- | US social security numbers written `123-45-6789`, replaced with `[SSN]`.
+-- A number that cannot be issued (area 000, 666 or 900 to 999, group 00,
+-- serial 0000) is left alone.
+usSsn : Rule
+usSsn =
+    validated
+        "ssn"
+        "[SSN]"
+        "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        (\c ->
+            case String.split "-" c of
+
+                [area, group, serial] ->
+                    let
+                        a = Maybe.withDefault 0 (String.toInt area)
+                    in
+                        if a == 0 || a == 666 || a >= 900 || group == "00"
+                            || serial
+                            == "0000" then
+                            Nothing
+
+                        else
+                            Just c
+
+                _ ->
+                    Nothing)
+
+
+-- | UK national insurance numbers (`QQ 12 34 56 C`, with or without spaces),
+-- replaced with `[NINO]`. The prefix letters follow the issuing rules: no D,
+-- F, I, Q, U or V, no O second, and not BG, GB, KN, NK, NT, TN or ZZ.
+ukNino : Rule
+ukNino =
+    validated
+        "nino"
+        "[NINO]"
+        "\\b[A-Z]{2} ?\\d{2} ?\\d{2} ?\\d{2} ?[A-D]\\b"
+        (\c ->
+            let
+                prefix = String.left 2 c
+                first = String.left 1 prefix
+                second = String.right 1 prefix
+            in
+                if List.member first [ "D", "F", "I", "Q", "U", "V" ]
+                    || List.member second [ "D", "F", "I", "O", "Q", "U", "V" ]
+                    || List.member
+                           prefix
+                           [ "BG", "GB", "KN", "NK", "NT", "TN", "ZZ" ] then
+                    Nothing
+
+                else
+                    Just c)
+
+
+-- | Secrets with a recognisable shape, replaced with `[SECRET]`: API keys with
+-- a known prefix (`sk-…`, `sk_live_…`, `rk_live_…`, `ghp_…`, `github_pat_…`,
+-- `glpat-…`, `hf_…`, `xoxb-…`, `AIza…`, `AKIA…` / `ASIA…`), JSON web tokens,
+-- PEM private keys, and a long value after `api_key`, `apikey`, `secret`,
+-- `token` or `password` with `=` or `:` (the label is kept).
+secrets : Rule
+secrets =
+    let
+        shapes =
+            [ "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+            , "\\bsk-[A-Za-z0-9_-]{20,}"
+            , "\\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"
+            , "\\bgh[pousr]_[A-Za-z0-9]{36,}"
+            , "\\bgithub_pat_[A-Za-z0-9_]{22,}"
+            , "\\bglpat-[A-Za-z0-9_-]{20,}"
+            , "\\bhf_[A-Za-z0-9]{30,}"
+            , "\\bxox[abprs]-[A-Za-z0-9-]{10,}"
+            , "\\bAIza[0-9A-Za-z_-]{35}"
+            , "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"
+            , "\\beyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}"
+            ]
+        labelled =
+            "((?i:api[_-]?key|secret|token|password)\\s*[:=]\\s*[\"']?)[A-Za-z0-9_\\-./+=]{12,}"
+    in
+        Rule
+            { name = "secret"
+            , run =
+                \s ->
+                    let
+                        ( afterShapes, n ) =
+                            List.foldl
+                                (\re ( acc, count ) ->
+                                    let
+                                        k =
+                                            List.length (Regex.findAll re acc)
+                                    in
+                                        if k == 0 then
+                                            ( acc, count )
+
+                                        else
+                                            ( Regex.replace re "[SECRET]" acc
+                                            , count + k
+                                            ))
+                                ( s, 0 )
+                                shapes
+                        k2 =
+                            List.length (Regex.findAll labelled afterShapes)
+                    in
+                        if k2 == 0 then
+                            ( afterShapes, n )
+
+                        else
+                            ( Regex.replace labelled "${1}[SECRET]" afterShapes
+                            , n + k2
+                            )
+            }
+
+
+-- | Your own pattern: every match of the RE2 regular expression is replaced
+-- with `[NAME]` (the name in upper case) and counted under the name. A
+-- pattern that does not compile is an `InvalidInput` error here, not a rule
+-- that silently matches nothing.
+pattern : String -> String -> Result Error Rule
+pattern name re =
+    case checkPattern re of
+
+        Ok _ ->
+            Ok
+                (validated
+                    name
+                    ("[" ++ String.toUpper name ++ "]")
+                    re
+                    (\m ->
+                        if m == "" then
+                            Nothing
+
+                        else
+                            Just m))
+
+        Err e ->
+            Err e
+
+
+checkPattern : String -> Result Error ()
+checkPattern =
+    Ffi.kernel "Ai_datasetCheckPattern"
+
+
+-- | Your own rule: a function from text to the scrubbed text and the number of
+-- values it replaced.
+custom : String -> (String -> ( String, Int )) -> Rule
+custom name f =
+    Rule { name = name, run = f }
+
+
+-- | Every built-in rule, in the order that keeps them apart: secrets first
+-- (a key can contain digits), then email, IBAN, card number, US SSN, UK NINO,
+-- and phone last.
+defaults : List Rule
+defaults =
+    [ secrets, email, iban, cardNumber, usSsn, ukNino, phone ]
+
+
+-- | Apply rules to one string, in order.
+text : List Rule -> String -> ( String, Report )
+text rules s =
+    List.foldl
+        (\(Rule r) ( acc, report ) ->
+            let
+                ( out, n ) = r.run acc
+            in
+                ( out, add r.name n report ))
+        ( s, emptyReport )
+        rules
+
+
+-- ── Reports ─────────────────────────────────────────────────────────
+-- | The report with nothing replaced.
+emptyReport : Report
+emptyReport =
+    Dict.empty
+
+
+add : String -> Int -> Report -> Report
+add name n report =
+    if n <= 0 then
+        report
+
+    else
+        Dict.insert name (n + Maybe.withDefault 0 (Dict.get name report)) report
+
+
+-- | Two reports added together.
+merge : Report -> Report -> Report
+merge a b =
+    Dict.foldl add b a
+
+
+-- | Every replacement and dropped row in a report.
+total : Report -> Int
+total report =
+    Dict.foldl (\_ n acc -> acc + n) 0 report
+
+
+-- | The count for one rule (0 when it replaced nothing).
+countOf : String -> Report -> Int
+countOf name report =
+    Maybe.withDefault 0 (Dict.get name report)
+
+-- ── Scrubbers ───────────────────────────────────────────────────────
+-- | Rules applied to the text fields of a row, and rows to drop.
+type Scrubber row
+    = Scrubber { rules : List Rule
+, get : row -> List String
+, set : List String -> row -> row
+, drops : List ( String, row -> Bool )
+}
+
+
+-- | A scrubber for your own row type: `get` lists the row's text fields and
+-- `set` puts the scrubbed texts back in the same order.
+--
+--     ticket : Scrubber Ticket
+--     ticket =
+--         Scrub.scrubber Scrub.defaults
+--             (\t -> [ t.subject, t.body ])
+--             (\texts t ->
+--                 case texts of
+--                     [ subject, body ] -> { t | subject = subject, body = body }
+--                     _ -> t)
+scrubber : List Rule -> (row -> List String) -> (List String -> row -> row) -> Scrubber row
+scrubber rules get set =
+    Scrubber { rules = rules, get = get, set = set, drops = [] }
+
+
+-- | A scrubber for plain strings.
+string : List Rule -> Scrubber String
+string rules =
+    scrubber
+        rules
+        (\s -> [ s ])
+        (\texts s ->
+            case texts of
+
+                [t] ->
+                    t
+
+                _ ->
+                    s)
+
+
+-- | A scrubber for instruction rows (`Std.Ai.Dataset.Instruction`).
+instruction : List Rule -> Scrubber { prompt : String
+, completion : String
+}
+instruction rules =
+    scrubber
+        rules
+        (\r -> [ r.prompt, r.completion ])
+        (\texts r ->
+            case texts of
+
+                [p, c] ->
+                    { r | prompt = p, completion = c }
+
+                _ ->
+                    r)
+
+
+-- | A scrubber for chat rows (`Std.Ai.Dataset.Chat`): every message's content.
+chat : List Rule -> Scrubber { messages : List Message }
+chat rules =
+    scrubber
+        rules
+        (\r -> List.map .content r.messages)
+        (\texts r ->
+            if List.length texts == List.length r.messages then
+                { r
+                    | messages =
+                        List.map
+                            (\( m, t ) -> { m | content = t })
+                            (List.zip r.messages texts)
+                }
+
+            else
+                r)
+
+
+-- | A scrubber for preference rows (`Std.Ai.Dataset.Preference`).
+preference : List Rule -> Scrubber { prompt : String
+, chosen : String
+, rejected : String
+}
+preference rules =
+    scrubber
+        rules
+        (\r -> [ r.prompt, r.chosen, r.rejected ])
+        (\texts r ->
+            case texts of
+
+                [p, c, x] ->
+                    { r | prompt = p, chosen = c, rejected = x }
+
+                _ ->
+                    r)
+
+
+-- | Drop every row the predicate holds for, counted under `name`. A dropped
+-- row is not scrubbed.
+dropIf : String -> (row -> Bool) -> Scrubber row -> Scrubber row
+dropIf name predicate (Scrubber s) =
+    Scrubber { s | drops = s.drops ++ [ ( name, predicate ) ] }
+
+
+-- | Scrub one row: `Nothing` when a drop rule removed it.
+apply : Scrubber row -> row -> ( Maybe row, Report )
+apply (Scrubber s) row =
+    case List.find (\( _, p ) -> p row) s.drops of
+
+        Just ( name, _ ) ->
+            ( Nothing, add name 1 emptyReport )
+
+        Nothing ->
+            let
+                ( texts, report ) =
+                    List.foldl
+                        (\t ( acc, rep ) ->
+                            let
+                                ( out, r ) = text s.rules t
+                            in
+                                ( acc ++ [ out ], merge rep r ))
+                        ( [], emptyReport )
+                        (s.get row)
+            in
+                ( Just (s.set texts row), report )
+
+
+-- | Scrub a list of rows: the rows kept, in order, and the summed report.
+applyAll : Scrubber row -> List row -> ( List row, Report )
+applyAll sc rows =
+    let
+        ( kept, report ) =
+            List.foldl
+                (\row ( acc, rep ) ->
+                    case apply sc row of
+
+                        ( Just r, rr ) ->
+                            ( r :: acc, merge rep rr )
+
+                        ( Nothing, rr ) ->
+                            ( acc, merge rep rr ))
+                ( [], emptyReport )
+                rows
+    in
+        ( List.reverse kept, report )

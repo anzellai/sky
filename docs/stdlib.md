@@ -2456,7 +2456,7 @@ Every AI failure is an `Error` with an existing `ErrorKind` and a typed
 Failure` reads it (`NotConfigured`, `InvalidSetting`, `Unreachable`,
 `Overloaded`, `TimedOut`, `EngineCrashed`, `EngineFailed`, `ModelTooLarge`,
 `NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `RemoteRejected`,
-`BudgetExceeded`, `ToolchainFailed`, `GateFailed`); match it with a `_ ->`
+`BudgetExceeded`, `ToolchainFailed`, `GateFailed`, `DatasetInvalid`); match it with a `_ ->`
 branch.
 
 `Std.Ai.Eval` evaluates a model with Sky values: a `Suite` of `Case`s, scorers
@@ -2468,9 +2468,39 @@ return an opaque `Passed` or a `GateFailed` error.
 | Module | Main functions |
 |---|---|
 | `Std.Ai.Failure` | `Failure(..)`, `fromError`, `toError`, `code`, `kind`, `retryable` |
-| `Std.Ai.Eval` | `suite`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `withPassScore`, `judgeSlot`, `defaultJudge`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown` |
+| `Std.Ai.Eval` | `suite`, `withSamples`, `withConcurrency`, `withJudge`, `withLatencyBudget`, `withCostBudget`, `withOptions`, `withSeed`, `withPriceBook`, `withTools`, `judge`, `withPassScore`, `judgeSlot`, `defaultJudge`, `judgeAnswer`, `setup`, `run`, `runAs`, `history`, `compare`, `alone`, `thresholds`, `withMinPassRate`, `withFloor`, `withMaxRegression`, `gate`, `check`, `passedSuite`, `passedCandidate`, `passedDigest`, `toJunit`, `toMarkdown` |
 
 Guides: [`ai/local.md`](ai/local.md#failures) and [`ai/eval.md`](ai/eval.md).
+
+### `Std.Ai.Dataset`, `Scrub` and `Synthetic` — training data (v0.28.0)
+
+A dataset is a lazy description of typed rows (`Chat`, `Instruction`,
+`Preference`, or your own record) from JSONL, CSV, a `Std.Db.Store` table or a
+list. Steps (`map`, `filter`, `dedupeBy`, `scrub`, `take`) run chunk by chunk,
+so a large JSONL file never sits in memory. `split` assigns each row to
+`Train`, `Eval` or `Test` by a seeded SHA-256 of its key, so a row never moves
+between parts. `validate` checks chat rows (empty turns, role order, tokens,
+turns, duplicates) and fails with the typed `DatasetInvalid`. `freeze` writes
+canonical JSONL named by its SHA-256 with a manifest (sources, steps, counts
+per split, scrub report, schema, consent basis, retention); the same rows give
+the same digest, and `load` checks it (`ChecksumMismatch`). `sky ai data
+freeze <file.jsonl>` does the same from the command line.
+
+`Std.Ai.Dataset.Scrub` replaces secrets, email addresses, IBANs (mod 97), card
+numbers (Luhn), US SSNs, UK NINOs and phone numbers with placeholders and
+counts them; the report never holds the replaced text. `Std.Ai.Dataset.Synthetic`
+generates rows with a teacher model (the `"teacher"` slot, the local pinned
+model by default): a pure seeded `plan` over topics and personas, dedupe,
+filters, `Std.Ai.Eval`'s judge, a call limit and a cost budget, and a `Report`
+of what was kept and dropped.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Dataset` | `fromJsonl`, `fromJsonLines`, `fromCsv`, `fromStore`, `fromList`, `withSource`, `map`, `filter`, `filterMap`, `dedupeBy`, `scrub`, `take`, `toChat`, `toInstruction`, `rows`, `count`, `toJsonl`, `writeJsonl`, `split`, `unsplit`, `splitOf`, `part`, `limits`, `inspect`, `validate`, `target`, `withConsentBasis`, `withRetention`, `freeze`, `freezeJson`, `load`, `loadJson`, `versions`, `manifest`, `digest`, `versionRows`, `versionPart`, `fromVersion`, `manifestJson`, `manifestFromJson` |
+| `Std.Ai.Dataset.Scrub` | `email`, `phone`, `cardNumber`, `iban`, `usSsn`, `ukNino`, `secrets`, `pattern`, `custom`, `defaults`, `text`, `scrubber`, `string`, `instruction`, `chat`, `preference`, `dropIf`, `apply`, `applyAll`, `merge`, `total`, `countOf`, `isCardNumber`, `isIban` |
+| `Std.Ai.Dataset.Synthetic` | `generator`, `teacherSlot`, `withTeacher`, `withTeacherSlot`, `withTemplate`, `withSystemPrompt`, `withPersonas`, `withTopics`, `withExamples`, `withPerCall`, `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`, `withMaxCalls`, `withCostBudget`, `withDedupe`, `withFilter`, `withJudge`, `plan`, `parseRows`, `generate`, `toDataset` |
+
+Guide: [`ai/dataset.md`](ai/dataset.md).
 
 ## The Prelude
 

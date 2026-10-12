@@ -11517,6 +11517,10 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
                      start a slot's local engine and hold it (Ctrl-C stops it)
   stop <slot> | --all
                      stop the engines of a slot
+  data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>]
+              [--split <train>/<eval>/<test>] [--seed <n>]
+              [--consent <basis>] [--retention <period>]
+                     freeze a JSONL file into a content-addressed dataset version
 A model <ref> is hf:<org>/<repo>/<file>#sha256=<hex> or file:<path>#sha256=<hex>.";
 
 /// `sky ai <verb>`: the Std.Ai engine verbs. The CLI holds no logic of its
@@ -11535,6 +11539,7 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         ["pull", repo, file] => repo.contains('/') && !file.is_empty(),
         ["start", slot, ..] => !slot.starts_with('-'),
         ["stop", _] => true,
+        ["data", "freeze", file, ..] => !file.starts_with('-'),
         _ => false,
     };
     if !shape_ok {

@@ -59,6 +59,7 @@ module Std.Ai.Eval exposing
     , withPassScore
     , judgeSlot
     , defaultJudge
+    , judgeAnswer
     , setup
     , run
     , runAs
@@ -296,6 +297,16 @@ defaultJudge =
 judgeVersion : Judge -> String
 judgeVersion (Judge j) =
     j.version
+
+
+-- | Ask the judge to score one answer against a rubric, outside a suite: the
+-- same prompt, temperature 0 and pass mark a `Rubric` case uses, with the
+-- seed you give. `Std.Ai.Dataset.Synthetic` filters generated rows with it.
+--
+--     Eval.judgeAnswer Eval.defaultJudge 42 "Polite and correct." question answer
+judgeAnswer : Judge -> Int -> String -> String -> String -> Task Error Score
+judgeAnswer j seed rubric question answer =
+    judgeScore j seed [ Provider.user question ] rubric answer
 
 -- ── Reports ─────────────────────────────────────────────────────────
 -- | One case at one sample. `score` is the mean of its scorers; `scores`

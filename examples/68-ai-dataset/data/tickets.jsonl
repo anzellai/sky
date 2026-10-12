@@ -1,0 +1,9 @@
+{"messages":[{"role":"system","content":"You are the support assistant for a small online shop."},{"role":"user","content":"How do I get a refund?"},{"role":"assistant","content":"Open your order, choose Return items, and we refund the card you paid with within five working days."}]}
+{"messages":[{"role":"user","content":"My parcel has not arrived. I am ada@example.com, call me on +44 20 7946 0958."},{"role":"assistant","content":"Sorry about that. I have opened a delivery claim and we will reply by email today."}]}
+{"messages":[{"content":"Can I change my delivery address?","role":"user"},{"content":"Yes, until the order ships. Open the order and choose Change address.","role":"assistant"}]}
+
+{"messages":[{"role":"user","content":"How do I get a refund?"},{"role":"assistant","content":"Open your order, choose Return items, and we refund the card you paid with within five working days."}]}
+{"messages":[{"role":"user","content":"Do you ship to Ireland?"},{"role":"assistant","content":"Yes. Delivery to Ireland takes three to five working days."}]}
+{"messages":[{"role":"user","content":"I paid with 4111 1111 1111 1111 twice, please fix it."},{"role":"assistant","content":"I can see two payments. I have refunded the second one."}]}
+{"messages":[{"role":"user","content":"Is there a student discount?"},{"role":"assistant","content":"Not at the moment, but we send discount codes to our newsletter."}]}
+{"messages":[{"role":"user","content":"How long is the warranty?"},{"role":"assistant","content":"Two years from the delivery date, for every product we sell."}]}

@@ -11,12 +11,72 @@ Notable user-visible changes. Keep this file additive — never rewrite history.
 > (e.g. `### ⚠ Breaking changes`, `### Migration`). Keep migration steps concrete
 > and copy-pasteable — this is the text a user sees the moment they upgrade.
 
-## v0.28.0 — Model slots, a managed local model engine, typed AI failures and evals (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval) (unreleased)
+## v0.28.0 — Model slots, a managed local model engine, typed AI failures, evals and datasets (Std.Ai.Endpoint, Std.Ai.Local, Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Dataset) (unreleased)
 
-Phase 1 of the Std.Ai lifecycle design (`docs/design/std-ai-lifecycle.md`).
-The user guides are `docs/ai/local.md` and `docs/ai/eval.md`.
+Phase 1 and the dataset part of phase 2 of the Std.Ai lifecycle design
+(`docs/design/std-ai-lifecycle.md`). The user guides are `docs/ai/local.md`,
+`docs/ai/eval.md` and `docs/ai/dataset.md`.
 
 ### Added
+
+- **`Std.Ai.Dataset`: training and eval data as Sky values.** Typed rows
+  (`Chat`, `Instruction`, `Preference`, with `chatCodec`, `instructionCodec`,
+  `preferenceCodec`) from `fromJsonl` (read 1000 lines at a time, so a large
+  file never sits in memory), `fromJsonLines`, `fromCsv`, `fromStore` and
+  `fromList`. Steps `map`, `filter`, `filterMap`, `dedupeBy` (one SHA-256 per
+  distinct key), `scrub`, `take`, `toChat`, `toInstruction`, recorded with the
+  sources for lineage. `split` puts each row in `Train`, `Eval` or `Test` by
+  the first 28 bits of `sha256 "<seed>:<key>"`, so the same row is in the same
+  part in every version (`splitOf` is the pure function). `inspect` and
+  `validate` check chat rows (empty turns, role order, token estimate or your
+  `withTokenizer`, turn counts, duplicates) against `limits`. `freeze` writes
+  canonical JSONL (sorted keys, no spacing, `\n` endings) named by its SHA-256,
+  atomically, plus a manifest (sources, steps, rows per split, split weights
+  and seed, scrub report, duplicates and filtered counts, codec schema,
+  creation time, `withConsentBasis`, `withRetention`); the same rows frozen
+  twice give the same digest and the first manifest. `load` re-checks the
+  digest (`ChecksumMismatch`); `versions`, `versionPart`, `versionRows`,
+  `fromVersion`, `manifestJson`, `manifestFromJson`, `freezeJson`, `loadJson`,
+  `toJsonl`, `writeJsonl`. A file, line or row that cannot be read is the new
+  typed failure `Std.Ai.Failure.DatasetInvalid { dataset, reasons }`
+  (`InvalidInput`), which names the file and line and never the row's text.
+  (`sky-stdlib/Std/Ai/Dataset.sky`; kernels `Ai_datasetReadLines`,
+  `Ai_datasetCanonical`, `Ai_datasetSha256File` in
+  `runtime-go/rt/ai_dataset.go`.)
+- **`Std.Ai.Dataset.Scrub`: personal data and secrets out of training text.**
+  Rules `secrets` (known key prefixes, JSON web tokens, PEM private keys,
+  labelled values), `email`, `iban` (mod 97), `cardNumber` (Luhn), `usSsn`,
+  `ukNino`, `phone`, `pattern` (a `Result`: a pattern that does not compile is
+  an error, kernel `Ai_datasetCheckPattern`) and `custom`; `defaults` in the
+  order that keeps them apart. Scrubbers for `instruction`, `chat`,
+  `preference`, `string` and your own rows (`scrubber`), `dropIf`, `apply`,
+  `applyAll`. The report is a count per rule and never holds the replaced
+  text. (`sky-stdlib/Std/Ai/Dataset/Scrub.sky`.)
+- **`Std.Ai.Dataset.Synthetic`: generate a dataset with a teacher model.** The
+  teacher is the slot `"teacher"`, the local pinned model by default, moved
+  with `SKY_AI_TEACHER_*`. `generator` with `withTopics`, `withPersonas`,
+  `withExamples`, `withTemplate`, `withSystemPrompt`, `withPerCall`,
+  `withTarget`, `withSeed`, `withTemperature`, `withMaxTokens`; a pure `plan`
+  (call `i` has seed `seed + i` and walks every topic and persona); quality
+  filters `withDedupe`, `withFilter` and `withJudge` (`Std.Ai.Eval`'s judge,
+  through the new `Eval.judgeAnswer`); stops at the target, `withMaxCalls` or
+  `withCostBudget` (exact `Std.Money`). The `Report` counts calls, judge calls,
+  tokens, cost and every dropped row by reason; `toDataset` records the
+  generator, teacher and seed as the dataset's source. In test mode the
+  teacher's and judge's calls are answered by `tests/mocks/`.
+  (`sky-stdlib/Std/Ai/Dataset/Synthetic.sky`.)
+- **`sky ai data freeze <file.jsonl>`** freezes a JSONL file into a
+  content-addressed version from the command line (`--name`, `--out`,
+  `--key`, `--split`, `--seed`, `--consent`, `--retention`, `--format json`).
+- **Examples** `68-ai-dataset`, `69-ai-scrub` and `70-ai-synthetic`. Each runs
+  offline and passes its own `sky test` suite in test mode
+  (`rust/crates/sky/tests/ai_dataset_flow.rs`).
+
+### Fixed
+
+- `docs/tooling/testing.md` said a test-mode HTTP fixture cannot tell two
+  requests to the same URL apart by body. It can: `match.bodyContains` has
+  been read for some time, and the page now documents it.
 
 - **One open variant for every domain's failures: `Sky.Core.Error.Domain
   DomainFailure`.** `ErrorDetails` gains its last variant. A `DomainFailure`

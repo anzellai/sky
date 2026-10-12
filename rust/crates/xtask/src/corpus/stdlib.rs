@@ -393,6 +393,47 @@ pub const SURFACES: &[Surface] = &[
             "Sky.Core.Error as Error",
         ],
     ),
+    // v0.28.0 Std.Ai.Dataset.Scrub: pure text rules. The expected values are
+    // published test numbers (card test numbers pass Luhn, the ISO 13616
+    // example IBAN passes mod 97) and the documented placeholders, not
+    // observations of this runtime.
+    sf2(
+        "aiscrub",
+        "Std.Ai.Dataset.Scrub",
+        &[
+            "Sky.Core.Dict as Dict",
+            "Sky.Core.Tuple as Tuple",
+            "Sky.Core.Error as Error",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Dataset: the split is a documented pure function (the
+    // first 28 bits of sha256 "<seed>:<key>" modulo the weights), so the
+    // expected parts are computed outside Sky; canonical JSONL has sorted keys;
+    // a chat that breaks the limits is the typed DatasetInvalid.
+    sf2(
+        "aidataset",
+        "Std.Ai.Dataset",
+        &[
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+            "Sky.Core.Result as Result",
+            "Std.Ai.Failure as Failure",
+        ],
+    ),
+    // v0.28.0 Std.Ai.Dataset.Synthetic: a plan is pure, and a run against a
+    // `Provider.custom` teacher that answers from the request gives counts that
+    // follow from the generator, not from a model.
+    sf2(
+        "aisynthetic",
+        "Std.Ai.Dataset.Synthetic",
+        &[
+            "Std.Ai.Provider as Provider",
+            "Std.Ai.Dataset as Dataset",
+            "Sky.Core.Task as Task",
+            "Sky.Core.Error as Error",
+            "Sky.Core.Dict as Dict",
+        ],
+    ),
     // v0.27.0 Std.Ui.Canvas and Std.Ui.Terminal. A scene is asserted as the
     // SVG it renders (`Html.render (Canvas.toSvg …)`), which is exactly what
     // every web backend draws; the terminal as the island element it renders
@@ -727,6 +768,11 @@ pub const ASSERTED_MODULES: &[&str] = &[
     "Std.Ai.Failure",
     // v0.28.0: Std.Ai.Eval lands covered (`aieval` surface).
     "Std.Ai.Eval",
+    // v0.28.0: Std.Ai.Dataset, its Scrub and Synthetic modules land covered
+    // (`aidataset`, `aiscrub`, `aisynthetic` surfaces).
+    "Std.Ai.Dataset",
+    "Std.Ai.Dataset.Scrub",
+    "Std.Ai.Dataset.Synthetic",
     // v0.27.0: Std.Ui.Canvas (its SVG) and Std.Ui.Terminal (its widget
     // payloads) land covered, not dark.
     "Std.Ui.Canvas",
@@ -1340,6 +1386,9 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "ailocal" => ailocal_battery(edge),
         "aifailure" => aifailure_battery(edge),
         "aieval" => aieval_battery(edge),
+        "aiscrub" => aiscrub_battery(edge),
+        "aidataset" => aidataset_battery(edge),
+        "aisynthetic" => aisynthetic_battery(edge),
         "canvas" => canvas_battery(edge),
         "terminal" => terminal_battery(edge),
         other => panic!("no battery for surface {other:?}"),
@@ -3922,6 +3971,130 @@ fn aieval_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Dataset.Scrub --------------------------------------------------
+//
+// Each rule replaces what it names with its documented placeholder and leaves
+// a look-alike that fails its check (Luhn, mod 97) alone; the report counts by
+// rule name; a user pattern that does not compile is an error.
+fn aiscrub_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Scrub.text", "Scrub.defaults"],
+                "Tuple.first (Scrub.text Scrub.defaults \"mail ada@example.com, card 4111 1111 1111 1111, iban GB82 WEST 1234 5698 7654 32\")",
+                "mail [EMAIL], card [CARD], iban [IBAN]",
+            ),
+            i(
+                &["Scrub.text", "Scrub.total", "Scrub.phone"],
+                "Scrub.total (Tuple.second (Scrub.text [ Scrub.phone ] \"+44 20 7946 0958 or (415) 555-0132\"))",
+                2,
+            ),
+            bo(&["Scrub.isCardNumber"], "Scrub.isCardNumber \"378282246310005\"", true),
+            bo(&["Scrub.isIban"], "Scrub.isIban \"DE89 3704 0044 0532 0130 00\"", true),
+            s(
+                &["Scrub.applyAll", "Scrub.string", "Scrub.dropIf", "Scrub.email"],
+                "aiScrubDrop",
+                "[EMAIL];internal=1,email=1",
+            ),
+        ],
+        "failure" => vec![
+            s(
+                &["Scrub.text", "Scrub.cardNumber"],
+                "Tuple.first (Scrub.text [ Scrub.cardNumber ] \"order 4111 1111 1111 1112\")",
+                "order 4111 1111 1111 1112",
+            ),
+            bo(&["Scrub.isIban"], "Scrub.isIban \"GB83WEST12345698765432\"", false),
+            s(&["Scrub.pattern"], "aiScrubBadPattern", "InvalidInput"),
+            i(
+                &["Scrub.text", "Scrub.total"],
+                "Scrub.total (Tuple.second (Scrub.text Scrub.defaults \"on 2024-01-01 at 12:30 pi is 3.14159265\"))",
+                0,
+            ),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Dataset ---------------------------------------------------------
+//
+// Splits are a pure, documented function of seed and key; dedupe and take
+// run in order; canonical JSONL sorts keys; a chat that breaks the limits is
+// a typed DatasetInvalid.
+fn aidataset_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &["Dataset.splitOf", "Dataset.defaultSplit"],
+                "aiSplitLetters Dataset.defaultSplit",
+                "TTTTTXXTTTTXTTTTTTTT",
+            ),
+            s(
+                &["Dataset.splitOf"],
+                "aiSplitLetters { train = 1, eval = 1, test = 1, seed = 5 }",
+                "EEXTXXTTXTETTTXXXTTX",
+            ),
+            i(
+                &["Dataset.fromList", "Dataset.dedupeBy", "Dataset.take", "Dataset.count"],
+                "Result.withDefault -1 (Task.run (Dataset.count (Dataset.fromList [ \"a\", \"b\", \"a\", \"c\", \"d\" ] |> Dataset.dedupeBy identity |> Dataset.take 3)))",
+                3,
+            ),
+            s(
+                &["Dataset.toJsonl", "Dataset.instructionCodec"],
+                "String.trim (Result.withDefault \"E\" (Dataset.toJsonl Dataset.instructionCodec [ { prompt = \"p\", completion = \"c\" } ]))",
+                "{\"completion\":\"c\",\"prompt\":\"p\"}",
+            ),
+            s(&["Dataset.inspect", "Dataset.limits"], "aiInspect", "T/2/0"),
+        ],
+        "failure" => vec![
+            s(&["Dataset.validate", "Dataset.limits"], "aiValidateBad", "DatasetInvalid/InvalidInput"),
+            s(&["Dataset.count", "Dataset.fromJsonLines"], "aiMissingFile", "DatasetInvalid"),
+        ],
+        _ => vec![],
+    }
+}
+
+// --- Std.Ai.Dataset.Synthetic -----------------------------------------------
+//
+// A plan is pure (call i has seed `seed + i`, the default call limit is three
+// times the calls the target needs); a run against a table teacher keeps,
+// drops and stops by the documented rules.
+fn aisynthetic_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(
+                &[
+                    "Synthetic.plan",
+                    "Synthetic.generator",
+                    "Synthetic.withSeed",
+                    "Synthetic.withTarget",
+                    "Synthetic.withPerCall",
+                ],
+                "aiPlanSeeds",
+                "9:10,11,12",
+            ),
+            s(
+                &[
+                    "Synthetic.generate",
+                    "Synthetic.withTeacher",
+                    "Synthetic.withFilter",
+                ],
+                "aiSynthRun 4",
+                "4/4/3/target",
+            ),
+            s(&["Synthetic.parseRows"], "aiParse", "1/0;0/1"),
+        ],
+        "failure" => vec![
+            s(
+                &["Synthetic.generate", "Synthetic.withMaxCalls"],
+                "aiSynthProse",
+                "0/2/calls",
+            ),
+            s(&["Synthetic.generate"], "aiSynthDown", "Unavailable"),
+        ],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -5885,6 +6058,181 @@ termFresh =
                     "N"
     in
     p ++ "/" ++ e
+"#
+        }
+        "aiscrub" => {
+            r#"aiKind : Error.Error -> String
+aiKind e =
+    case e of
+        Error.Error k _ ->
+            Error.kindLabel k
+
+
+aiScrubDrop : String
+aiScrubDrop =
+    let
+        ( kept, report ) =
+            Scrub.applyAll (Scrub.string [ Scrub.email ] |> Scrub.dropIf "internal" (String.startsWith "INTERNAL")) [ "INTERNAL x", "a@b.io" ]
+    in
+    String.join "," kept ++ ";" ++ String.join "," (List.map (\k -> k ++ "=" ++ String.fromInt (Scrub.countOf k report)) [ "internal", "email" ])
+
+
+aiScrubBadPattern : String
+aiScrubBadPattern =
+    case Scrub.pattern "x" "([a-z" of
+        Ok _ ->
+            "compiled"
+
+        Err e ->
+            aiKind e
+"#
+        }
+        "aidataset" => {
+            r#"aiKind : Error.Error -> String
+aiKind e =
+    case e of
+        Error.Error k _ ->
+            Error.kindLabel k
+
+
+aiSplitLetters : Dataset.SplitSpec -> String
+aiSplitLetters spec =
+    List.range 1 20
+        |> List.map
+            (\i ->
+                case Dataset.splitOf spec ("k" ++ String.fromInt i) of
+                    Dataset.Train ->
+                        "T"
+
+                    Dataset.Eval ->
+                        "E"
+
+                    Dataset.Test ->
+                        "X"
+            )
+        |> String.concat
+
+
+aiChat : List ( String, String ) -> Dataset.Chat
+aiChat turns =
+    { messages = List.map (\( r, c ) -> { role = r, content = c }) turns }
+
+
+aiInspect : String
+aiInspect =
+    case Task.run (Dataset.inspect Dataset.limits (Dataset.fromList [ aiChat [ ( "user", "Hi" ), ( "assistant", "Hello" ) ], aiChat [ ( "user", "Bye" ), ( "assistant", "Goodbye" ) ] ])) of
+        Ok r ->
+            (if r.passed then "T" else "F") ++ "/" ++ String.fromInt r.rows ++ "/" ++ String.fromInt r.issueCount
+
+        Err _ ->
+            "E"
+
+
+aiValidateBad : String
+aiValidateBad =
+    case Task.run (Dataset.validate Dataset.limits (Dataset.fromList [ aiChat [ ( "assistant", "first" ), ( "user", "" ) ] ])) of
+        Ok _ ->
+            "passed"
+
+        Err e ->
+            Maybe.withDefault "none" (Maybe.map Failure.code (Failure.fromError e)) ++ "/" ++ aiKind e
+
+
+aiMissingFile : String
+aiMissingFile =
+    case Task.run (Dataset.count (Dataset.fromJsonLines "/no/such/dir/rows.jsonl")) of
+        Ok _ ->
+            "read"
+
+        Err e ->
+            Maybe.withDefault "none" (Maybe.map Failure.code (Failure.fromError e))
+"#
+        }
+        "aisynthetic" => {
+            r#"aiKind : Error.Error -> String
+aiKind e =
+    case e of
+        Error.Error k _ ->
+            Error.kindLabel k
+
+
+aiTable : List Provider.Message -> Task Error Provider.ChatResponse
+aiTable messages =
+    let
+        n =
+            List.length messages
+    in
+    Task.succeed
+        { content = "[{\"prompt\":\"q" ++ String.fromInt (String.length (String.concat (List.map .content messages))) ++ "\",\"completion\":\"a long enough answer\"},{\"prompt\":\"short " ++ String.fromInt n ++ "\",\"completion\":\"no\"}]"
+        , usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 }
+        }
+
+
+aiGen : Synthetic.Generator Dataset.Instruction
+aiGen =
+    Synthetic.generator "corpus" Dataset.instructionCodec
+        |> Synthetic.withTopics [ "a", "bb", "ccc", "dddd" ]
+        |> Synthetic.withPerCall 2
+        |> Synthetic.withSeed 10
+        |> Synthetic.withTarget 6
+
+
+aiPlanSeeds : String
+aiPlanSeeds =
+    let
+        planned =
+            Synthetic.plan aiGen
+    in
+    String.fromInt (List.length planned) ++ ":" ++ String.join "," (List.map (\r -> String.fromInt r.seed) (List.take 3 planned))
+
+
+aiSynthRun : Int -> String
+aiSynthRun target =
+    case Task.run (Synthetic.generate (aiGen |> Synthetic.withTarget target |> Synthetic.withTeacher "table" (Provider.custom aiTable) |> Synthetic.withFilter "short" (\r -> String.length r.completion > 5))) of
+        Ok g ->
+            String.fromInt (List.length g.rows) ++ "/" ++ String.fromInt g.report.calls ++ "/" ++ String.fromInt (Dict.foldl (\_ v acc -> acc + v) 0 g.report.filtered) ++ "/" ++ (case g.report.stop of
+                Synthetic.TargetReached -> "target"
+                Synthetic.CallLimit -> "calls"
+                Synthetic.BudgetReached -> "budget")
+
+        Err _ ->
+            "E"
+
+
+aiSynthProse : String
+aiSynthProse =
+    case Task.run (Synthetic.generate (aiGen |> Synthetic.withMaxCalls 2 |> Synthetic.withTeacher "prose" (Provider.custom (\_ -> Task.succeed { content = "no json", usage = { promptTokens = 1, completionTokens = 1, totalTokens = 2 } })))) of
+        Ok g ->
+            String.fromInt (List.length g.rows) ++ "/" ++ String.fromInt g.report.unparsed ++ "/" ++ (case g.report.stop of
+                Synthetic.TargetReached -> "target"
+                Synthetic.CallLimit -> "calls"
+                Synthetic.BudgetReached -> "budget")
+
+        Err _ ->
+            "E"
+
+
+aiSynthDown : String
+aiSynthDown =
+    case Task.run (Synthetic.generate (aiGen |> Synthetic.withTeacher "down" (Provider.custom (\_ -> Task.fail (Error.unavailable "down"))))) of
+        Ok _ ->
+            "ok"
+
+        Err e ->
+            aiKind e
+
+
+aiParse : String
+aiParse =
+    let
+        count text =
+            let
+                ( rows, bad ) =
+                    Synthetic.parseRows Dataset.instructionCodec text
+            in
+            String.fromInt (List.length rows) ++ "/" ++ String.fromInt bad
+    in
+    count "```json [{\"prompt\":\"a\",\"completion\":\"b\"}] ```" ++ ";" ++ count "no rows"
 "#
         }
         "aieval" => {
