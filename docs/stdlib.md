@@ -2454,7 +2454,7 @@ to the local engine.
 | Module | Main functions |
 |---|---|
 | `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe`, `inspect`, `tokenize`, `slotName` |
-| `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
+| `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withAdapter`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
 | `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire` |
 
 The full guide, every variable and the failure kinds: [`ai/local.md`](ai/local.md).
@@ -2467,7 +2467,8 @@ Failure` reads it (`NotConfigured`, `InvalidSetting`, `Unreachable`,
 `Overloaded`, `TimedOut`, `EngineCrashed`, `EngineFailed`, `ModelTooLarge`,
 `NoAccelerator`, `NotProvisioned`, `ChecksumMismatch`, `RemoteRejected`,
 `BudgetExceeded`, `ToolchainFailed`, `GateFailed`, `NotRegistered`,
-`NotPromotable`, `PromotionConflict`, `AdapterMismatch`, `DatasetInvalid`);
+`NotPromotable`, `PromotionConflict`, `AdapterMismatch`, `DatasetInvalid`,
+`TrainingFailed`, `TrainingCancelled`);
 match it with a `_ ->` branch.
 
 `Std.Ai.Eval` evaluates a model with Sky values: a `Suite` of `Case`s, scorers
@@ -2556,6 +2557,31 @@ name, its database, its registry and the arguments). Inside `sky test`,
 
 Guide: [`ai/pipeline.md`](ai/pipeline.md); example
 `examples/72-ai-support-desk`.
+
+### `Std.Ai.Train`: fine-tune LoRA and QLoRA adapters (v0.28.0)
+
+A job trains a base model on a frozen `Dataset.Version` (`lora` for chat rows,
+`loraOnInstructions` for instruction rows) with `withX` builders for the rank,
+alpha, layers, targets, learning rate, steps, batch, sequence length, seed and
+checkpoint interval. The backend is not in the code: `Mlx` on Apple silicon,
+`Unsloth` on Linux with an NVIDIA GPU, and `SKY_AI_TRAIN_BACKEND` (`mlx`,
+`unsloth`, `fake`) overrides `withBackend` and detection. The trainer is a
+Sky-shipped driver in a toolchain Sky installs under the AI home (a pinned uv,
+a pinned CPython and hash-locked wheels), so no Python is visible to the user.
+The run is a `Std.Durable` workflow: the trainer runs detached, a trainer that
+dies is relaunched from its newest verified checkpoint (safetensors with a
+manifest of digests, never a pickle), and the adapter is converted to GGUF by a
+Go converter, optionally merged into the serving model, and registered with its
+lineage. `plan` refuses a job that will not fit (`ModelTooLarge`). Under
+`sky test` in test mode the trainer is simulated, so a program's tests run the
+whole workflow offline. `Local.withAdapter` serves the adapter.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Train` | `devBase`, `baseModel`, `withWeights`, `withServing`, `lora`, `loraOnInstructions`, `withName`, `withQuantisedBase`, `withRank`, `withAlpha`, `withLayers`, `withTargets`, `withLearningRate`, `withEpochs`, `withMaxSteps`, `withBatch`, `withSequenceLength`, `withSeed`, `withCheckpointEvery`, `withEvalEvery`, `withBackend`, `withGgufExport`, `withMergedExport`, `withWorkDir`, `withRegistry`, `withMaxRelaunches`, `withWatchWindow`, `fakeCrashAt`, `fakeStepMs`, `check`, `jobJson`, `runId`, `runDir`, `totalSteps`, `host`, `shapeOf`, `estimateMemory`, `plan`, `workflow`, `workflows`, `start`, `poll`, `drive`, `progress`, `result`, `cancel`, `resume`, `runs`, `progressAt`, `cancelAt`, `resumeAt`, `exportAt`, `adapterRef`, `registryAdapter`, `lineage`, `adapterCodec`, `provision`, `provisionBase`, `toolchainStatus`, `decodeEvent`, `foldProgress` |
+
+Guide: [`ai/train.md`](ai/train.md). CLI: `sky ai provision --train`,
+`sky ai train`, `sky ai train status | runs | resume | cancel`, `sky ai export`.
 
 ## The Prelude
 

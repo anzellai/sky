@@ -204,6 +204,11 @@ terminal appears too; each run says `process` or `database`), and the model
 registry: each
 `Std.Ai.Registry` model the process read or changed, with its aliases, and on
 a click (`model=<name>` in the URL) its versions, alias log and eval history.
+A Training section lists the `Std.Ai.Train` runs the process touched and the
+runs under `.sky/ai/runs`: each with its status, its step of the total, its
+latest loss and eval loss, its relaunches (and the step it resumed from), its
+last checkpoint, the version it registered, the error of a failed or cancelled
+run, and a small loss curve (at most 200 points). A row holds no dataset text.
 The rings hold no prompt, no answer and no secret. The hub has no AI data, so its AI tab is empty. Guide:
 [`ai/local.md`](ai/local.md#in-the-sky-console).
 

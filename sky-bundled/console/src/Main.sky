@@ -190,6 +190,33 @@ aiDecoder =
         |> Pipeline.optional "calls" (Decode.list aiCallDecoder) []
         |> Pipeline.optional "evals" (Decode.list aiEvalDecoder) []
         |> Pipeline.optional "registry" (Decode.list aiModelDecoder) []
+        |> Pipeline.optional "training" (Decode.list aiTrainingDecoder) []
+
+
+-- A training run. An older runtime sends no `training` key, so the list is
+-- empty; a field the runtime leaves out (or sends as null) takes its default.
+aiTrainingDecoder : Decode.Decoder AiTrainingRun
+aiTrainingDecoder =
+    Decode.succeed AiTrainingRun |> Pipeline.optional "run" Decode.string ""
+        |> Pipeline.optional "status" Decode.string ""
+        |> Pipeline.optional "backend" Decode.string ""
+        |> Pipeline.optional "step" intFromFloat 0
+        |> Pipeline.optional "totalSteps" intFromFloat 0
+        |> Pipeline.optional "loss" (Decode.map Just Decode.float) Nothing
+        |> Pipeline.optional "valLoss" (Decode.map Just Decode.float) Nothing
+        |> Pipeline.optional "relaunches" intFromFloat 0
+        |> Pipeline.optional "resumedFrom" intFromFloat 0
+        |> Pipeline.optional "lastCheckpoint" intFromFloat 0
+        |> Pipeline.optional "message" Decode.string ""
+        |> Pipeline.optional "registered" Decode.string ""
+        |> Pipeline.optional "losses" (Decode.list curvePoint) []
+        |> Pipeline.optional "valLosses" (Decode.list curvePoint) []
+
+
+-- A curve point is `[step, value]`; the console keeps the value.
+curvePoint : Decode.Decoder Float
+curvePoint =
+    Decode.index 1 Decode.float
 
 
 aiModelDecoder : Decode.Decoder AiModel

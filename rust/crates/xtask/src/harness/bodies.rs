@@ -44,7 +44,10 @@ use std::process::Command;
 /// added as `68-ai-registry` without moving this count.
 /// **211 since v0.28.0 phase 2 part C**, measured by the `roundtrip` gate:
 /// the 9 files of `examples/72-ai-support-desk` (7 under `src/`, 2 suites).
-pub const ROUNDTRIP_EXPECTED: u64 = 211; // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
+/// **214 at the merge of v0.28.0 phase 3** (+3, examples/73-ai-train:
+/// src/Main.sky, src/Support.sky, tests/TrainExampleTest.sky), measured by the
+/// `roundtrip` gate.
+pub const ROUNDTRIP_EXPECTED: u64 = 214; // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -786,7 +789,10 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 ///
 /// **693 since v0.28.0 phase 2 part C** (+2, the `aipipeline` surface,
 /// nominal and failure, measured by the `corpus-manifest` gate).
-pub const CORPUS_EXPECTED: u64 = 693;
+/// **695 at the merge of v0.28.0 phase 3** (+2, Family S: the `aitrain`
+/// surface, nominal and failure, for `Std.Ai.Train`), measured by the
+/// `corpus-manifest` gate.
+pub const CORPUS_EXPECTED: u64 = 695;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -840,7 +846,10 @@ pub const CORPUS_EXPECTED: u64 = 693;
 ///
 /// **547 since v0.28.0 phase 2 part C** (+2, the `aipipeline` surface, built
 /// and run; measured by the `corpus` gate).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 547;
+///
+/// **549 at the merge of v0.28.0 phase 3** (+2, the `aitrain` surface, built
+/// and run; measured by the `corpus` gate).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 549;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -881,7 +890,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 161; // measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 162; // measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -1043,13 +1052,17 @@ pub fn shared_world(ctx: &GateCtx) -> GateOutcome {
 // ---------------------------------------------------------------------------
 
 /// Member F: `sky-bundled/console` + `sky-bundled/doc` + `sky-bundled/ai`
-/// (v0.28.0, the program behind `sky ai`).
+/// (v0.28.0, the program behind `sky ai`) + `sky-bundled/ai-train` (v0.28.0
+/// phase 3, the program behind the training verbs of `sky ai`).
 ///
 /// Two assertions per project — the build's exit status, and the artifact it
 /// was supposed to leave behind. The artifact half is not redundant: a builder
 /// that exits 0 having emitted nothing is exactly the shape of the "could never
 /// pass on a clean checkout" defect, inverted.
-pub const APPS_BUNDLED_EXPECTED: u64 = 6;
+///
+/// 6 -> 8: measured by the `apps-bundled` gate in v0.28.0 phase 3, which
+/// adds `sky-bundled/ai-train` (its build and its binary).
+pub const APPS_BUNDLED_EXPECTED: u64 = 8;
 
 /// The single largest Sky application the project ships, gated by nothing.
 ///
@@ -1065,7 +1078,12 @@ pub const APPS_BUNDLED_EXPECTED: u64 = 6;
 pub fn apps_bundled(ctx: &GateCtx) -> GateOutcome {
     use super::layer2;
 
-    let projects = ["sky-bundled/console", "sky-bundled/doc", "sky-bundled/ai"];
+    let projects = [
+        "sky-bundled/console",
+        "sky-bundled/doc",
+        "sky-bundled/ai",
+        "sky-bundled/ai-train",
+    ];
     let mut assertions = 0u64;
     let mut failures: Vec<String> = Vec::new();
     let mut timings: Vec<String> = Vec::new();
@@ -2919,7 +2937,10 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// `EvalTest`: `JsonShape` reads a fenced answer), then 958 (+1
 /// `DatasetTest`: `inspect` finds duplicates through the bounded spill set),
 /// measured by the `sky-suites` gate (37 suites).
-pub const SKY_SUITES_EXPECTED: u64 = 958;
+/// 958 -> 979 at the merge of v0.28.0 phase 3 (+17 `tests/Std/Ai/TrainTest.sky`,
+/// +4 `FailureTest`: the round trip and the kind of `TrainingFailed` and
+/// `TrainingCancelled`), measured by the `sky-suites` gate.
+pub const SKY_SUITES_EXPECTED: u64 = 979;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -3463,7 +3484,9 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// C (`surfaces_total` 190 -> 191, the `stdlib.Std.Ai.Pipeline` surface,
 /// covered by `tests/Std/Ai/PipelineTest.sky` and the `aipipeline` corpus
 /// surface).
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 195;
+/// 195 -> 196 at the merge of v0.28.0 phase 3: `stdlib.Std.Ai.Train`, covered
+/// by `tests/Std/Ai/TrainTest.sky` and the `aitrain` corpus surface.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 196;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3826,6 +3849,21 @@ pub fn jobs_complete_failure_is_reported(ctx: &GateCtx) -> GateOutcome {
         "./rt/jobs/",
         "TestJobsCompleteFailureIsReported",
         JOBS_COMPLETE_FAILURE_EXPECTED,
+    )
+}
+
+/// Eight: the crashed attempt left no terminal line, the checkpoints list
+/// newest first, a torn checkpoint is skipped, the relaunch starts (not
+/// attaches) from step 4, its hello says so, it finishes, and driver.json
+/// names the checkpoint. Fixed by the test, not by the tree's size.
+pub const AI_TRAIN_RESUME_EXPECTED: u64 = 8;
+
+pub fn ai_train_resumes_from_the_newest_checkpoint(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestTrainResumesFromNewestVerifiedCheckpoint",
+        AI_TRAIN_RESUME_EXPECTED,
     )
 }
 

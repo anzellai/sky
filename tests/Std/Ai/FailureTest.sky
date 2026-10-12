@@ -51,6 +51,13 @@ every =
           { dataset = "data/support.jsonl"
           , reasons = "line 7: not JSON (byte 12)"
           }
+    , TrainingFailed
+          { runId = "support-0123456789ab"
+          , step = 120
+          , reason = "the trainer died without finishing 4 times"
+          , logTail = "Killed"
+          }
+    , TrainingCancelled { runId = "support-0123456789ab", step = 40 }
     ]
 
 
@@ -162,6 +169,15 @@ tests =
                  "DatasetInvalid"
                  (DatasetInvalid { dataset = "d", reasons = "r" })
                  InvalidInput
+           , kindCase
+                 "TrainingFailed"
+                 (TrainingFailed
+                     { runId = "r", step = 1, reason = "x", logTail = "" })
+                 Unavailable
+           , kindCase
+                 "TrainingCancelled"
+                 (TrainingCancelled { runId = "r", step = 1 })
+                 Conflict
            , kindCase
                  "RemoteRejected 400"
                  (RemoteRejected { status = 400 })

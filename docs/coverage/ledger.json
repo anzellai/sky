@@ -52,7 +52,7 @@
     "database_drivers": {
       "sqlite": 15
     },
-    "paths_with_sky_toml": 63,
+    "paths_with_sky_toml": 64,
     "sections": {
       "[\"go.dependencies\"]": 11,
       "[analytics]": 1,
@@ -60,10 +60,20 @@
       "[database]": 15,
       "[dependencies]": 1,
       "[live]": 2,
-      "[source]": 59
+      "[source]": 60
     }
   },
   "gates": {
+    "ai-train-resume": {
+      "expected_assertions": 8,
+      "falsifier_mutation": "",
+      "falsifier_proven": false,
+      "summary": "a Std.Ai.Train relaunch resumes from the newest verified checkpoint, skipping a torn one",
+      "surfaces": [
+        "stdlib.Std.Ai.Train"
+      ],
+      "tier": "T1"
+    },
     "analytics-prune-errors-are-reported": {
       "expected_assertions": 3,
       "falsifier_mutation": "analytics-prune.discard-the-exec-error",
@@ -85,7 +95,7 @@
       "tier": "T1"
     },
     "apps-bundled": {
-      "expected_assertions": 6,
+      "expected_assertions": 8,
       "falsifier_mutation": "apps-bundled.reintroduce-missing-field",
       "falsifier_proven": true,
       "summary": "member F — the Sky apps shipped inside the compiler build from a wiped slate",
@@ -289,7 +299,7 @@
       "tier": "T1"
     },
     "corpus": {
-      "expected_assertions": 547,
+      "expected_assertions": 549,
       "falsifier_mutation": "corpus.wrong-expected-value",
       "falsifier_proven": true,
       "summary": "every generated case built + run; values compared against the generator's own",
@@ -349,7 +359,7 @@
       "tier": "T2"
     },
     "corpus-manifest": {
-      "expected_assertions": 693,
+      "expected_assertions": 695,
       "falsifier_mutation": "corpus-manifest.drift",
       "falsifier_proven": true,
       "summary": "the generator and corpus/manifest.toml declare the same membership",
@@ -382,7 +392,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 195,
+      "expected_assertions": 196,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -464,7 +474,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 211,
+      "expected_assertions": 214,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -475,7 +485,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 161,
+      "expected_assertions": 162,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
@@ -486,7 +496,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 958,
+      "expected_assertions": 979,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -562,7 +572,9 @@
       "Sky.Http.Server.WebSocket": "examples/33-websocket-echo",
       "Std.Ai.Pipeline": "examples/72-ai-support-desk",
       "Std.Ai.Policy": "examples/66-slack-agent",
+      "Std.Ai.Store": "examples/73-ai-train",
       "Std.Ai.Trace": "examples/66-slack-agent",
+      "Std.Ai.Train": "examples/73-ai-train",
       "Std.Bundle": "examples/64-app-native",
       "Std.Cache": "examples/36-composite-server",
       "Std.Csv": "examples/36-composite-server",
@@ -662,23 +674,23 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2605,
-    "stdlib_modules": 123,
-    "surfaces_covered": 180,
-    "surfaces_covered_pct": 94.2,
+    "stdlib_entries": 2693,
+    "stdlib_modules": 124,
+    "surfaces_covered": 181,
+    "surfaces_covered_pct": 94.3,
     "surfaces_equal": 16,
-    "surfaces_stronger": 175,
-    "surfaces_total": 191,
+    "surfaces_stronger": 176,
+    "surfaces_total": 192,
     "surfaces_weaker": 0,
     "units_by_role": {
       "Conformance": 1,
-      "Example": 69,
+      "Example": 70,
       "FlowTest": 50,
       "Layer1": 1,
       "Layer2": 8,
       "SkySuite": 9
     },
-    "units_total": 138
+    "units_total": 139
   },
   "surfaces": [
     {
@@ -2719,6 +2731,11 @@
             "by": "examples/72-ai-support-desk (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
           }
         ],
         "strength": 4
@@ -2763,6 +2780,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           }
@@ -3661,6 +3683,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -3957,6 +3984,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Auth — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
@@ -4059,6 +4091,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:json_format_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -4106,6 +4143,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -4706,6 +4748,11 @@
             "strength": 4
           },
           {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/islands-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -4892,6 +4939,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
           },
@@ -5177,6 +5229,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Core — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
@@ -5239,6 +5296,11 @@
             "strength": 2
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/conformance (gate `conformance`)",
             "class": "Falsified",
             "strength": 4
@@ -5268,6 +5330,11 @@
             "by": "examples/64-app-native (built + run by scripts/example-sweep.sh + xtask build-run --run)",
             "class": "Runs",
             "strength": 2
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "tests/conformance (scripts/conformance.sh: counted Sky.Test assertions)",
@@ -5387,6 +5454,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -5499,6 +5571,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -5854,6 +5931,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_native_tools_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -5991,6 +6073,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -6196,6 +6283,11 @@
             "by": "apps:storefront (gate `apps-ffi-scale`)",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "e2e:scripts/console-controls-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": "e2e:scripts/header-session-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
@@ -6509,6 +6601,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
           },
@@ -6910,6 +7007,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -7504,6 +7606,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "examples/simple (retained; built + run by gate `build-run` + the sweep)",
             "class": "Runs",
             "strength": 2
@@ -7841,6 +7948,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -8652,6 +8764,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Auth (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -8759,6 +8876,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -8882,6 +9004,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -8904,6 +9031,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9061,6 +9193,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -9093,6 +9230,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9197,6 +9339,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -9229,6 +9376,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9270,6 +9422,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -9297,6 +9454,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9436,6 +9598,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_cli_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -9522,6 +9689,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
@@ -9559,6 +9731,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_registry_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -9581,6 +9758,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -9612,6 +9794,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -9620,15 +9807,20 @@
         "strength": 4
       },
       "cover_today": {
-        "class": "None",
+        "class": "Asserted",
         "evidence": [
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
           {
             "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
             "class": "None",
             "strength": 0
           }
         ],
-        "strength": 0
+        "strength": 3
       },
       "description": "the Std.Ai.Store public API",
       "id": "stdlib.Std.Ai.Store",
@@ -9702,6 +9894,54 @@
       },
       "description": "the Std.Ai.Trace public API",
       "id": "stdlib.Std.Ai.Trace",
+      "verdict": "stronger"
+    },
+    {
+      "category": "stdlib",
+      "cover_new": {
+        "class": "Falsified",
+        "evidence": [
+          {
+            "by": "apps:bundled (gate `apps-bundled`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "tests/Std (gate `sky-suites`)",
+            "class": "Falsified",
+            "strength": 4
+          },
+          {
+            "by": "gate `ai-train-resume`",
+            "class": "Asserted",
+            "strength": 3
+          }
+        ],
+        "strength": 4
+      },
+      "cover_today": {
+        "class": "Asserted",
+        "evidence": [
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "tests/Std — NO PRE-OVERHAUL RUNNER: scripts/conformance.sh globs tests/*Test.sky relative to tests/conformance, so tests/<Sub>/*Test.sky was never executed",
+            "class": "None",
+            "strength": 0
+          }
+        ],
+        "strength": 3
+      },
+      "description": "the Std.Ai.Train public API",
+      "id": "stdlib.Std.Ai.Train",
       "verdict": "stronger"
     },
     {
@@ -10028,6 +10268,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -10235,6 +10480,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -10651,6 +10901,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -10838,6 +11093,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -11648,6 +11908,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:ai_memory_pg_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -11820,6 +12085,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -14274,6 +14544,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14471,6 +14746,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -14856,6 +15136,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:app_serve_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -14988,6 +15273,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -15157,6 +15447,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -15239,6 +15534,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -15345,6 +15645,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -15417,6 +15722,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -15682,6 +15992,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "tests/Std (gate `sky-suites`)",
             "class": "Falsified",
             "strength": 4
@@ -15769,6 +16084,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -15903,6 +16223,11 @@
             "strength": 3
           },
           {
+            "by": "examples/73-ai-train (retained; tests/ suite run by gate `sky-verify`)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "flow:spa_split_flow (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -15955,6 +16280,11 @@
           },
           {
             "by": "examples/72-ai-support-desk (built + run by the example sweep; owns a tests/ suite with real assertions)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "examples/73-ai-train (built + run by the example sweep; owns a tests/ suite with real assertions)",
             "class": "Asserted",
             "strength": 3
           },
@@ -16565,9 +16895,8 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 3,
+          "count": 2,
           "symbols": [
-            "copy",
             "isDir",
             "readFileBytes"
           ]
@@ -16690,14 +17019,13 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 7,
+          "count": 6,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
             "andMap",
             "lazy",
             "map5",
-            "mapError",
             "retryAlways"
           ]
         },
@@ -16770,9 +17098,8 @@
           ]
         },
         "Std.Ai.Dataset": {
-          "count": 14,
+          "count": 13,
           "symbols": [
-            "Manifest",
             "Preference",
             "dedupeMemoryKeys",
             "estimateTokens",
@@ -16840,9 +17167,8 @@
           ]
         },
         "Std.Ai.Failure": {
-          "count": 2,
+          "count": 1,
           "symbols": [
-            "kind",
             "retryable"
           ]
         },
@@ -16915,10 +17241,9 @@
           ]
         },
         "Std.Ai.Store": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "Signature",
-            "Store",
             "configured",
             "gcs",
             "s3",
@@ -16940,6 +17265,39 @@
           "count": 1,
           "symbols": [
             "Trace"
+          ]
+        },
+        "Std.Ai.Train": {
+          "count": 28,
+          "symbols": [
+            "Artefact",
+            "BaseModel",
+            "Batch",
+            "Host",
+            "Plan",
+            "RunRequest",
+            "Settings",
+            "Snapshot",
+            "SnapshotFile",
+            "Toolchain",
+            "ToolchainVersion",
+            "adapterCodec",
+            "adapterRef",
+            "baseId",
+            "baseModel",
+            "baseServing",
+            "baseWeights",
+            "fakeStepMs",
+            "host",
+            "plan",
+            "shapeOf",
+            "toolchainStatus",
+            "withAlpha",
+            "withMaxRelaunches",
+            "withServing",
+            "withWeights",
+            "workflow",
+            "workflows"
           ]
         },
         "Std.Analytics": {
@@ -17491,7 +17849,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 58,
+          "count": 57,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -17501,7 +17859,6 @@
             "PseudoClass",
             "VAlign",
             "above",
-            "alignBottom",
             "animateRaw",
             "behind",
             "bgColor",
@@ -17709,8 +18066,8 @@
           ]
         }
       },
-      "count": 742,
-      "pct_of_denominator": 28.5
+      "count": 764,
+      "pct_of_denominator": 28.4
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -17782,10 +18139,9 @@
           ]
         },
         "Sky.Core.File": {
-          "count": 4,
+          "count": 3,
           "symbols": [
             "FileKind",
-            "copy",
             "isDir",
             "readFileBytes"
           ]
@@ -17925,7 +18281,7 @@
           ]
         },
         "Sky.Core.Task": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "RetryPolicy",
             "ShouldRetry",
@@ -17933,7 +18289,6 @@
             "andMap",
             "lazy",
             "map5",
-            "mapError",
             "retryAlways"
           ]
         },
@@ -18011,12 +18366,10 @@
           ]
         },
         "Std.Ai.Dataset": {
-          "count": 18,
+          "count": 16,
           "symbols": [
-            "Chat",
             "Instruction",
             "Issue",
-            "Manifest",
             "Preference",
             "Split",
             "dedupeMemoryKeys",
@@ -18088,10 +18441,9 @@
           ]
         },
         "Std.Ai.Failure": {
-          "count": 3,
+          "count": 2,
           "symbols": [
             "Failure",
-            "kind",
             "retryable"
           ]
         },
@@ -18196,6 +18548,42 @@
           "count": 1,
           "symbols": [
             "Trace"
+          ]
+        },
+        "Std.Ai.Train": {
+          "count": 31,
+          "symbols": [
+            "Artefact",
+            "Backend",
+            "BaseModel",
+            "Batch",
+            "Event",
+            "Host",
+            "Plan",
+            "RunRequest",
+            "Settings",
+            "Snapshot",
+            "SnapshotFile",
+            "Status",
+            "Toolchain",
+            "ToolchainVersion",
+            "adapterCodec",
+            "adapterRef",
+            "baseId",
+            "baseModel",
+            "baseServing",
+            "baseWeights",
+            "fakeStepMs",
+            "host",
+            "plan",
+            "shapeOf",
+            "toolchainStatus",
+            "withAlpha",
+            "withMaxRelaunches",
+            "withServing",
+            "withWeights",
+            "workflow",
+            "workflows"
           ]
         },
         "Std.Analytics": {
@@ -18818,7 +19206,7 @@
           ]
         },
         "Std.Ui": {
-          "count": 58,
+          "count": 57,
           "symbols": [
             "AnimationEntry",
             "Breakpoint",
@@ -18828,7 +19216,6 @@
             "PseudoClass",
             "VAlign",
             "above",
-            "alignBottom",
             "animateRaw",
             "behind",
             "bgColor",
@@ -19050,8 +19437,8 @@
           ]
         }
       },
-      "count": 845,
-      "pct_of_denominator": 32.4
+      "count": 870,
+      "pct_of_denominator": 32.3
     }
   },
   "units": [
@@ -19059,12 +19446,12 @@
       "db_drivers": [],
       "gate": "apps-bundled",
       "id": "apps:bundled",
-      "modules_imported": 34,
+      "modules_imported": 35,
       "path": "sky-bundled",
-      "refs_generous": 212,
-      "refs_qualified": 206,
+      "refs_generous": 266,
+      "refs_qualified": 260,
       "role": "Layer2",
-      "sky_files": 16,
+      "sky_files": 17,
       "sky_toml_sections": []
     },
     {
@@ -19190,10 +19577,10 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/console-controls-e2e.sh",
-      "modules_imported": 18,
+      "modules_imported": 20,
       "path": "scripts/console-controls-e2e.sh",
-      "refs_generous": 61,
-      "refs_qualified": 55,
+      "refs_generous": 67,
+      "refs_qualified": 61,
       "role": "FlowTest",
       "sky_files": 1,
       "sky_toml_sections": []
@@ -20389,6 +20776,20 @@
     {
       "db_drivers": [],
       "gate": null,
+      "id": "examples/73-ai-train",
+      "modules_imported": 27,
+      "path": "examples/73-ai-train",
+      "refs_generous": 139,
+      "refs_qualified": 130,
+      "role": "Example",
+      "sky_files": 3,
+      "sky_toml_sections": [
+        "[source]"
+      ]
+    },
+    {
+      "db_drivers": [],
+      "gate": null,
       "id": "examples/simple",
       "modules_imported": 2,
       "path": "examples/simple",
@@ -20887,12 +21288,12 @@
       "db_drivers": [],
       "gate": "sky-suites",
       "id": "tests/Std",
-      "modules_imported": 42,
+      "modules_imported": 43,
       "path": "tests/Std",
-      "refs_generous": 481,
-      "refs_qualified": 465,
+      "refs_generous": 518,
+      "refs_qualified": 500,
       "role": "SkySuite",
-      "sky_files": 17,
+      "sky_files": 18,
       "sky_toml_sections": []
     },
     {

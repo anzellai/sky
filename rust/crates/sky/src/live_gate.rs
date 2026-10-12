@@ -85,6 +85,14 @@ pub enum Need {
     /// Std.Ai home, or the network to fetch them (`sky ai provision
     /// --dev-model` fills the home; CI caches it).
     AiEngine,
+    /// The Std.Ai.Train Fake toolchain (the pinned uv and CPython, installed
+    /// by `sky ai provision --train fake`) plus the engine and the dev model,
+    /// or the network to fetch them. CI caches the Std.Ai home.
+    AiTrainToolchain,
+    /// The Std.Ai.Train Mlx toolchain and the dev base's MLX weights on Apple
+    /// silicon (`sky ai provision --train mlx --base dev`), or the network to
+    /// fetch them.
+    AiTrainMlx,
 }
 
 impl Need {
@@ -124,6 +132,17 @@ impl Need {
                  and the Qwen development model into the Std.Ai home), or give the test \
                  network access to github.com and huggingface.co"
             }
+            Need::AiTrainToolchain => {
+                "run `sky ai provision --dev-model` and `sky ai provision --train fake` once \
+                 (the pinned engine, the dev model, uv and CPython into the Std.Ai home), or \
+                 give the test network access to github.com and huggingface.co"
+            }
+            Need::AiTrainMlx => {
+                "on Apple silicon, run `sky ai provision --dev-model` and `sky ai provision \
+                 --train mlx --base dev` once (the MLX toolchain from PyPI by hash, and the \
+                 4-bit Qwen dev weights), or give the test network access to github.com, \
+                 pypi.org, files.pythonhosted.org and huggingface.co"
+            }
         }
     }
 
@@ -138,6 +157,8 @@ impl Need {
             Need::AndroidEmulator => "the Android emulator with an AVD",
             Need::Node => "Node.js",
             Need::AiEngine => "the Std.Ai engine and development model",
+            Need::AiTrainToolchain => "the Std.Ai.Train Fake toolchain and the dev model",
+            Need::AiTrainMlx => "the Std.Ai.Train Mlx toolchain and the dev base weights",
         }
     }
 }

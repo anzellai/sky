@@ -134,8 +134,9 @@ unpinned model cannot be loaded. `Local.reference` gives the string of a
 | `SKY_AI_HOME` | the engine, model and registry directory, one per user | `$SKY_HOME/ai`, else the user cache directory (`~/Library/Caches/sky/ai` on macOS, `$XDG_CACHE_HOME/sky/ai` or `~/.cache/sky/ai` on Linux) |
 | `SKY_AI_LLAMA_BIN` | the directory of your own `llama-server` build. Set but without `llama-server` in it is an error | the pinned build |
 | `SKY_AI_FETCH` | `on` or `off`: may a missing engine or model be downloaded at run time | `on` in development, `off` otherwise |
-| `SKY_AI_ACCEL` | force `cpu`, `metal`, `cuda`, `rocm` or `vulkan` for the fit plan | the engine build's accelerator |
+| `SKY_AI_ACCEL` | force `cpu`, `metal`, `cuda`, `rocm` or `vulkan` for the fit plan. `cpu` also runs MLX training on the CPU ([`train.md`](train.md)) | the engine build's accelerator |
 | `SKY_AI_REGISTRY` | where the model registry's artefacts live: `file://<dir>`, `gs://<bucket>/<prefix>` or `s3://<bucket>/<prefix>` ([`registry.md`](registry.md)) | `Store.configured`'s value in code, else `file://.sky/ai/registry` |
+| `SKY_AI_TRAIN_BACKEND` | the `Std.Ai.Train` backend: `mlx`, `unsloth` or `fake` ([`train.md`](train.md#backends)) | `Train.withBackend` in code, else detected |
 
 "Development" means what it means everywhere in Sky: `ENV` unset, or `dev`,
 `development` or `local`. With fetching off, a missing engine or model fails
@@ -214,6 +215,44 @@ embedSlot =
         |> Endpoint.withLocal (Local.model Local.devModel |> Local.withEmbeddings)
 ```
 
+## A LoRA adapter on a local engine
+
+`Local.withAdapter ref spec` loads a GGUF LoRA adapter with the model. The
+reference is a file pinned by its digest, `Local.file { path, sha256 }`
+(`file:<path>#sha256=<hex>`). Another kind of reference is `InvalidSetting`.
+`Std.Ai.Train.adapterRef` gives the reference of a trained adapter
+([`train.md`](train.md#registry-and-serving)):
+
+```elm
+supportSlot : Train.Adapter -> Endpoint
+supportSlot adapter =
+    let
+        base =
+            Local.model Local.devModel
+    in
+    Endpoint.endpoint "support"
+        |> Endpoint.withLocal
+            (case Train.adapterRef adapter of
+                Just ref ->
+                    Local.withAdapter ref base
+
+                Nothing ->
+                    base
+            )
+```
+
+The engine hashes the file before each load and starts `llama-server` with
+`--lora <file>`. An adapter that `Std.Ai.Train` converted records the digest
+of the model it was converted for (`sky.adapter.serving_sha256` in its GGUF
+header). Loaded on another model it is `AdapterMismatch`, never a model that
+answers nonsense. An adapter from elsewhere that records no model is loaded
+as it is.
+
+`sky ai start <slot> --adapter file:<path>#sha256=<hex>` serves an adapter
+from the command line. A registry adapter (`registry:<name>@<alias>`) is the
+other way, and serving then follows the alias ([Registry
+adapters](#registry-adapters)).
+
 ## Provider additions
 
 `Provider.chatWith options provider messages` sends per-call options:
@@ -276,6 +315,12 @@ whether to retry needs no typed view: `Error.isRetryable err` and
 | `ToolchainFailed` | `Unavailable` | no | `tool`, `logTail` |
 | `GateFailed` | `PermissionDenied` | no | `suite`, `reasons` (`Std.Ai.Eval`, [`eval.md`](eval.md)) |
 | `DatasetInvalid` | `InvalidInput` | no | `dataset`, `reasons`: a file and a line or row, never the row's text (`Std.Ai.Dataset`, [`dataset.md`](dataset.md)) |
+| `NotRegistered` | `NotFound` | no | `ref`: an unknown registry version or alias, or a training run directory with no run |
+| `NotPromotable` | `PermissionDenied` | no | `ref`, `reason` ([`registry.md`](registry.md)) |
+| `PromotionConflict` | `Conflict` | no | `ref`, `expected`, `actual` ([`registry.md`](registry.md)) |
+| `AdapterMismatch` | `InvalidInput` | no | `adapter`, `adapterBase`, `engineBase`: an adapter for another base model |
+| `TrainingFailed` | `Unavailable` | no | `runId`, `step`, `reason`, `logTail`: the trainer reported an error or died more often than the job allows ([`train.md`](train.md#failures)) |
+| `TrainingCancelled` | `Conflict` | no | `runId`, `step`: the training run was cancelled |
 
 A crashed engine is not retryable even though it is `Unavailable`: the
 engine's supervisor restarts it, and a crash loop must not be retried blindly.
@@ -307,6 +352,11 @@ answers both kinds.
 | `sky ai rollback <name>@<alias>` | `Registry.rollback` |
 | `sky ai lineage <name>@<alias>` / `--dataset <sha256>\|<name>@<n>` | `Registry.lineage` / `Registry.trainedOn` |
 | `sky ai data freeze <file.jsonl> [--name <n>] [--out <dir>] [--key <field>] [--split <t>/<e>/<x>] [--seed <n>] [--consent <basis>] [--retention <period>]` | `Dataset.fromJsonLines`, `split`, `freezeJson`; prints the digest and the counts per split ([`dataset.md`](dataset.md)) |
+| `sky ai provision --train mlx\|unsloth\|fake [--base dev]` | `Train.provision`, and `Train.provisionBase` for the dev base ([`train.md`](train.md)) |
+| `sky ai train --data <dir>/<name>[@<digest>] [options]` | `Train.drive` (`Train.start` with `--detach`) |
+| `sky ai train status [<run>] \| runs \| resume <run> \| cancel <run>` | `Train.progressAt`, `Train.runs`, `Train.resumeAt`, `Train.cancelAt` |
+| `sky ai export <run> [--out <file>] [--merged]` | `Train.exportAt` |
+| `sky ai start <slot> ... --adapter file:<path>#sha256=<hex>` | `Local.withAdapter`: the slot's model with a GGUF LoRA adapter |
 
 Every verb takes `--format json`. The verbs hold no logic of their own: the CLI
 builds a bundled Sky program (`sky-bundled/ai`) once per Sky build and runs it,
@@ -385,7 +435,8 @@ local slot whose engine or model is not provisioned.
 ## Not yet
 
 These parts of the design are later work: draft models in `Local`
-(`withDraft`), several resident adapters per local engine, and Sky's own
+(`withDraft`), several resident adapters per local engine (one engine loads
+one adapter today), and Sky's own
 published engine bundles (the pins use the upstream llama.cpp release assets
 today). A slot name computed at run time works, but the build cannot list it
 for the startup report.

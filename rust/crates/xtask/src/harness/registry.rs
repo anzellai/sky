@@ -437,10 +437,11 @@ pub static GATES: &[Gate] = &[
                 // Std.Ai.Eval surfaces (+4 cases, 678 → 682), and the v0.28.0
                 // Std.Ai.Store and Std.Ai.Registry surfaces (+3 cases, 682 → 685),
                 // and the v0.28.0 Std.Ai.Dataset, Scrub and Synthetic surfaces
-                // (+6 cases, 685 → 691), and the v0.28.0 Std.Ai.Pipeline
-                // surface (+2 cases, 691 → 693).
-                from: "n_min = 693",
-                to: "n_min = 694",
+                // (+6 cases, 685 → 691), the v0.28.0 Std.Ai.Pipeline surface
+                // (+2 cases, 691 → 693) and the v0.28.0 Std.Ai.Train surface
+                // (+2 cases, 693 → 695).
+                from: "n_min = 695",
+                to: "n_min = 696",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -1093,6 +1094,31 @@ pub static GATES: &[Gate] = &[
             },
         }]),
         body: bodies::periodic_loops_recover_per_cycle,
+    },
+    // ---- Std.Ai.Train: a relaunched trainer resumes from the newest
+    // verified checkpoint ---------------------------------------------------
+    Gate {
+        name: "ai-train-resume",
+        tier: Tier::T1,
+        // The test runs a real trainer process (testdata/faketrainer) in its
+        // own session and signals its process group: Unix.
+        platforms: UNIX,
+        budget_s: 600,
+        expected: bodies::AI_TRAIN_RESUME_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a Std.Ai.Train relaunch resumes from the newest verified checkpoint, skipping a torn one",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-train-resume.from-the-oldest-checkpoint",
+            description: "sort the verified checkpoints oldest first, so a relaunched \
+                          trainer resumes from the first checkpoint and repeats every step \
+                          after it; the newest-first assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_train.go",
+                from: "sort.Slice(out, func(i, j int) bool { return out[i].step > out[j].step })",
+                to: "sort.Slice(out, func(i, j int) bool { return out[i].step < out[j].step })",
+            },
+        }]),
+        body: bodies::ai_train_resumes_from_the_newest_checkpoint,
     },
     Gate {
         name: "live-time-every-mutex-survives-a-panic",

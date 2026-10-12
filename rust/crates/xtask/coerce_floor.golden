@@ -304,6 +304,38 @@
 #   `Task.andThen` chain, and each erased Task callback narrows its argument
 #   (R5). 72-ai-support-desk 465 -> 466: the app connects its database in code
 #   (`Tickets.sky`) instead of through sky.toml.
+# ── Recorded transition, 2026-10-12 — merge of the two v0.28.0 phase 2
+#    parts (Std.Ai.Dataset and Std.Ai.Registry) ──
+#   narrow over 6 rows, adapter 0, dispatch 0, every other row unchanged (77 of
+#   80 measured; 05-mux-server, 08-notes-app and 13-skyshop have no generated
+#   FFI surface in this tree). Rows new on one side are measured on the merged
+#   tree: 68-ai-dataset 591 -> 626, 69-ai-scrub 99, 70-ai-synthetic 735 -> 769,
+#   71-ai-registry (was 68-ai-registry) 1040 -> 1057. Two rows that both sides
+#   held at one value rise because the merge joins both sides' code:
+#   sky-bundled/ai 527 (registry side) / 354 (dataset side) -> 734 (both CLI
+#   verb sets in one program), sky-bundled/console 292 -> 330. Each of these
+#   rows imports Std.Ai.Failure, Std.Ai.Eval, Std.Ai.Registry or
+#   Std.Ai.Dataset, which carry both sides' constructors and functions after
+#   the merge. Not traced site by site. 09-live-counter 126, 66-slack-agent
+#   160 and apps/relay 179 measure at the values already recorded here.
+# ── Recorded transition, 2026-10-12 — merge of feat/std-ai-p3 (Std.Ai.Train) ──
+#   All 83 rows measured. Two new rows: 73-ai-train 1056 and
+#   sky-bundled/ai-train 916 (phase 3 recorded 1238 and 1072 before the typed
+#   kernel returns applied to it). apps/fieldbook 480 -> 479. Six rows that
+#   load Std.Ai.Failure rise, all new since origin/main: 68-ai-dataset
+#   496 -> 503, 70-ai-synthetic 415 -> 422, 71-ai-registry 839 -> 846,
+#   72-ai-support-desk 466 -> 473, sky-bundled/ai 586 -> 596 (+2
+#   `start --adapter`, +1 `Local.withAdapter`), sky-bundled/console
+#   178 -> 185 (the new Training section of the AI tab; `AiTab.lossText` alone
+#   is 3: `Math.round` on an erased argument, an `//` on erased operands and a
+#   `String.padLeft` return). The Failure part is +8 in `facts`, the
+#   payload reads of the two new constructors `TrainingFailed { runId, step,
+#   reason, logTail }` and `TrainingCancelled { runId, step }` (R6: a stdlib
+#   ADT payload is narrowed once per field), less 1 in `optInt`, whose
+#   `String.fromInt` now reaches the typed twin. Naming those two payloads
+#   would make each read one narrowing; not done here, because a new record
+#   alias joins the structural resolution of every program that loads the
+#   module.
 00-standard-libs	adapter=0	dispatch=0	narrow=130
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=8
@@ -365,13 +397,14 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=16
 66-slack-agent	adapter=0	dispatch=0	narrow=136
 67-durable-counter	adapter=0	dispatch=0	narrow=73
-68-ai-dataset	adapter=0	dispatch=0	narrow=496
+68-ai-dataset	adapter=0	dispatch=0	narrow=503
 69-ai-scrub	adapter=0	dispatch=0	narrow=78
-70-ai-synthetic	adapter=0	dispatch=0	narrow=415
-71-ai-registry	adapter=0	dispatch=0	narrow=839
-72-ai-support-desk	adapter=0	dispatch=0	narrow=466
+70-ai-synthetic	adapter=0	dispatch=0	narrow=422
+71-ai-registry	adapter=0	dispatch=0	narrow=846
+72-ai-support-desk	adapter=0	dispatch=0	narrow=473
+73-ai-train	adapter=0	dispatch=0	narrow=1056
 apps/dispatch	adapter=0	dispatch=0	narrow=341
-apps/fieldbook	adapter=0	dispatch=0	narrow=480
+apps/fieldbook	adapter=0	dispatch=0	narrow=479
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
 apps/ledger	adapter=0	dispatch=0	narrow=426
 apps/relay	adapter=0	dispatch=0	narrow=141
@@ -381,7 +414,8 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=198
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=195
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=586
-sky-bundled/console	adapter=0	dispatch=0	narrow=178
+sky-bundled/ai	adapter=0	dispatch=0	narrow=596
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=916
+sky-bundled/console	adapter=0	dispatch=0	narrow=185
 sky-bundled/doc	adapter=0	dispatch=0	narrow=51
 test_pkg	adapter=0	dispatch=0	narrow=1

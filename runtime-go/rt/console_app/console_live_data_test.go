@@ -123,7 +123,7 @@ func TestConsoleStore_ReadsHostTelemetryUnderTokenAuth(t *testing.T) {
 	}
 
 	// The reply feeds update; the model the view renders holds the values.
-	next := Main_update(State_Msg_GotOverview(any(ov)), model).V0
+	next := Main_update(State_Msg_GotOverview(ov), model).V0
 	if next.Overview.RequestsTotal != o.RequestsTotal || next.LastError != "" {
 		t.Errorf("update did not take the overview: requests=%d lastError=%q", next.Overview.RequestsTotal, next.LastError)
 	}

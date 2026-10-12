@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 191 |
-| covered by the new corpus (>= Asserted) | 180 |
-| verdict `stronger` | 175 |
+| surfaces | 192 |
+| covered by the new corpus (>= Asserted) | 181 |
+| verdict `stronger` | 176 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 138 |
-| stdlib modules (denominator) | 123 |
-| stdlib entries (denominator) | 2605 |
+| corpus units | 139 |
+| stdlib modules (denominator) | 124 |
+| stdlib entries (denominator) | 2693 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 7.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 845 | 32.4% |
-| symbols unreferenced under the generous rule | 742 | 28.5% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 870 | 32.3% |
+| symbols unreferenced under the generous rule | 764 | 28.4% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -57,7 +57,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 
 | table | entries |
 |---|---|
-| stdlib modules owned by exactly one `examples/*` | 25 |
+| stdlib modules owned by exactly one `examples/*` | 27 |
 | stdlib modules owned by exactly one unit of any role | 12 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
@@ -200,9 +200,10 @@ None.
 | `stdlib.Std.Ai.Policy` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.Ai.Provider` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Registry` | stdlib | Asserted | Falsified | stronger |
-| `stdlib.Std.Ai.Store` | stdlib | None | Falsified | stronger |
+| `stdlib.Std.Ai.Store` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Tool` | stdlib | None | Asserted | stronger |
 | `stdlib.Std.Ai.Trace` | stdlib | Runs | Asserted | stronger |
+| `stdlib.Std.Ai.Train` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Analytics` | stdlib | Runs | Asserted | stronger |
 | `stdlib.Std.App` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Auth` | stdlib | Asserted | Falsified | stronger |
@@ -277,6 +278,7 @@ None.
 
 | gate | tier | falsifier | surfaces |
 |---|---|---|---|
+| `ai-train-resume` | T1 | not proven | `stdlib.Std.Ai.Train` |
 | `analytics-prune-errors-are-reported` | T1 | PROVEN | `observability.analytics-store` |
 | `analytics-retention-survives-a-panic` | T1 | PROVEN | `observability.analytics-store` |
 | `apps-bundled` | T1 | PROVEN | `observability.console` · `skylive.session-sse-csrf` |

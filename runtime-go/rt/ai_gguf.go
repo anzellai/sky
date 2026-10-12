@@ -198,7 +198,7 @@ func ggufValue(r io.Reader, typ uint32, depth int) (any, error) {
 	case 6:
 		var v float32
 		err := read(&v)
-		return nil, err
+		return v, err
 	case 8:
 		return ggufString(r)
 	case 9:

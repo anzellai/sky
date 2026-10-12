@@ -315,6 +315,12 @@ declare -a EXAMPLES=(
     # serve) is proven by rust/crates/sky/tests/ai_pipeline_flow.rs. Port 8072
     # (App.withConfig) so the parallel sweep does not collide.
     "72-ai-support-desk:server:8072:/"
+    # 73 — Std.Ai.Train in a full-stack app (Sky.Live, Std.Ui): the page
+    # freezes its dataset and shows the training run; nothing trains until
+    # "Train" is pressed, so serving `/` needs no model, no Python and no
+    # network. The training workflow itself runs offline in its `sky test`
+    # suite (rust/crates/sky/tests/ai_train_flow.rs).
+    "73-ai-train:server:8073:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

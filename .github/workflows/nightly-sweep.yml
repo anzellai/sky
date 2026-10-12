@@ -25,7 +25,7 @@ on:
         # Every job's `if:` names itself here. `behaviour-corpus` gated on a
         # value this list did not offer, so it could never be dispatched alone —
         # the dropdown had no way to say it, and any other value skipped it.
-        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix]
+        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix, ai-unsloth-toolchain]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -737,6 +737,44 @@ jobs:
           name: nightly-sbom-linux-amd64
           path: ${{ runner.temp }}/bundles/*/sbom.json
           if-no-files-found: warn
+
+  # The Std.Ai.Train Unsloth toolchain, installed for real from its hash lock
+  # (runtime-go/rt/ai_train_assets/locks/unsloth-linux-x86_64-cuda13.txt):
+  # `sky ai provision --train unsloth` downloads the pinned uv and CPython,
+  # installs every wheel with `uv pip sync --require-hashes --only-binary
+  # :all:`, checks the installed versions against the lock, and runs the
+  # driver's self-check (which reads the Unsloth and torch versions from their
+  # metadata without importing them: the runner has no GPU). The driver's side
+  # of the Unsloth contract is the GPU-free fixture test in
+  # runtime-go/rt/testdata/train_driver_tests/test_unsloth_fixture.py.
+  # Nightly, not per commit: the lock is several GB of CUDA wheels.
+  ai-unsloth-toolchain:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "ai-unsloth-toolchain"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      # `runner` may not appear in a job-level `env:` (GitHub then refuses the
+      # whole file); the shell has RUNNER_TEMP.
+      - name: The Std.Ai home under the runner's temp directory
+        run: echo "SKY_AI_HOME=$RUNNER_TEMP/sky-ai" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Free disk for the CUDA wheels
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Build the compiler
+        run: bash scripts/build.sh
+      - name: Install the Unsloth toolchain from its hash lock
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/provision" && cd "$RUNNER_TEMP/provision"
+          "$GITHUB_WORKSPACE/sky-out/sky" ai provision --train unsloth --format json | tee provision.json
+          grep -q '"toolchain":"unsloth"' provision.json
 
   # The Nix package, through both entry points: the stable `nix-build`
   # (default.nix, no flakes) and the flake (`nix build .#sky`), plus both dev

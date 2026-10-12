@@ -10,9 +10,10 @@ sky test                 # serve the promoted adapter through a model slot (test
 ```
 
 - `src/Support.sky` holds the suite, the stand-in answers of each version,
-  the adapter files (two small GGUF LoRA files the example writes itself; the
-  training phase of the lifecycle makes real ones), the lineage, and the
-  `chat` slot that serves `registry:support-lora@prod`.
+  the adapter files, the lineage, and the `chat` slot that serves
+  `registry:support-lora@prod`. The adapter files are two small GGUF LoRA
+  files that the example writes itself. `examples/73-ai-train` trains real
+  ones with `Std.Ai.Train`.
 - `src/Main.sky` runs the story in a fresh temporary directory: a SQLite file
   for the records and a local store for the files. A real app opens the
   registry on its own database (`Db.connect ()`), and the store moves to GCS

@@ -1385,7 +1385,9 @@ only the entry-point module switches between `Live.app` and
 Drive the managed local model engines of `Std.Ai.Local`. The verbs hold no
 logic of their own: `sky ai` builds a bundled Sky program (`sky-bundled/ai`)
 once per Sky build and runs it, and the program calls the `Std.Ai.Local` and
-`Std.Ai.Endpoint` API a user's program has. Every verb takes `--format json`.
+`Std.Ai.Endpoint` API a user's program has. The training verbs run a second
+bundled program, `sky-bundled/ai-train`, over `Std.Ai.Train`. Every verb takes
+`--format json`.
 
 ```
 sky ai provision [--variant cpu|metal] [--dev-model] [--model <ref>]
@@ -1474,6 +1476,50 @@ sky ai members
   does). Without `src/Ai.sky` these verbs exit 2 and build nothing.
 
 See [`../ai/pipeline.md`](../ai/pipeline.md).
+
+### `sky ai provision --train | train | export` *(v0.28.0)*
+
+The `Std.Ai.Train` verbs, run by the same bundled program. Every verb takes
+`--format json`.
+
+```
+sky ai provision --train mlx|unsloth|fake [--base dev]
+sky ai train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>]
+             [--steps <n>] [--rank <r>] [--seed <s>] [--layers <n>]
+             [--checkpoint-every <n>] [--eval-every <n>]
+             [--backend mlx|unsloth|fake] [--gguf] [--merged] [--register]
+             [--detach] [--work-dir <dir>] [--db <dsn>]
+sky ai train status [<run>] | runs | resume <run> | cancel <run>
+sky ai export <run> [--out <file>] [--merged]
+sky ai start <slot> ... --adapter file:<path>#sha256=<hex>
+```
+
+- `provision --train` installs a training toolchain (a pinned uv, a pinned
+  CPython and a hash-locked set of wheels) under the AI home. `--base dev`
+  also downloads and verifies the development base's weights for that backend.
+  Run it in an image or at deploy, where fetching at run time is off.
+- `train` fine-tunes a LoRA adapter on the frozen dataset version `--data`
+  names (the newest when no digest is given) and the development base, in the
+  foreground. Without `--format json` it prints the run id first. A Ctrl-C stops the watcher
+  only: the trainer keeps training, and the same command, or
+  `train resume <run>`, attaches to it again. `--gguf` converts the adapter
+  to GGUF, `--merged` also writes a merged model, and `--register` registers
+  the adapter in the registry (`--db`, `--registry`). `--detach` returns once
+  the trainer runs. The durable journal is `.sky/ai/train.db` unless `--db`
+  names another database.
+- `train status <run>` prints a run's status, step, losses, relaunches and
+  last checkpoint. `train status` or `train runs` lists every run in the work
+  directory (`--work-dir`, default `.sky/ai/runs`). `train resume <run>`
+  starts a failed or cancelled run again from its newest checkpoint.
+  `train cancel <run>` asks the trainer to write a checkpoint and stop (it is
+  killed after 60 seconds).
+- `export <run>` writes the run's adapter as GGUF, or with `--merged` the
+  merged model, and `--out` copies it to a file.
+- `start <slot> --adapter` serves a GGUF LoRA adapter, pinned by its digest,
+  with the slot's model.
+
+`SKY_AI_TRAIN_BACKEND` (`mlx`, `unsloth`, `fake`) wins over `--backend`. See
+[`../ai/train.md`](../ai/train.md).
 
 A model `<ref>` is `hf:<org>/<repo>/<file>#sha256=<hex>` or
 `file:<path>#sha256=<hex>`. See [`../ai/local.md`](../ai/local.md).

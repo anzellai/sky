@@ -399,6 +399,22 @@ pub const SURFACES: &[Surface] = &[
     // candidate a suite runs under) and its served name (the model a server
     // knows the adapter by).
     sf2("airegistry", "Std.Ai.Registry", &[]),
+    // v0.28.0 Std.Ai.Train: the trainer's protocol and the progress fold are
+    // pure. A protocol line decodes to its event, a run's lines fold into its
+    // progress (steps, a relaunch and the step it resumed from), and a line of
+    // another protocol version is the typed ToolchainFailed. The expected
+    // values follow from the documented protocol (docs/ai/train.md), not from
+    // a trainer.
+    sf2(
+        "aitrain",
+        "Std.Ai.Train",
+        &[
+            "Std.Ai.Failure as Failure",
+            "Sky.Core.String as String",
+            "Sky.Core.List as List",
+            "Sky.Core.Maybe as Maybe",
+        ],
+    ),
     sf2(
         "aieval",
         "Std.Ai.Eval",
@@ -804,6 +820,8 @@ pub const ASSERTED_MODULES: &[&str] = &[
     // `airegistry` surfaces).
     "Std.Ai.Store",
     "Std.Ai.Registry",
+    // v0.28.0: Std.Ai.Train lands covered (`aitrain` surface).
+    "Std.Ai.Train",
     // v0.28.0: Std.Ai.Dataset, its Scrub and Synthetic modules land covered
     // (`aidataset`, `aiscrub`, `aisynthetic` surfaces).
     "Std.Ai.Dataset",
@@ -1426,6 +1444,7 @@ pub fn battery(slug: &str, edge: &str) -> Vec<Check> {
         "aieval" => aieval_battery(edge),
         "aistore" => aistore_battery(edge),
         "airegistry" => airegistry_battery(edge),
+        "aitrain" => aitrain_battery(edge),
         "aiscrub" => aiscrub_battery(edge),
         "aidataset" => aidataset_battery(edge),
         "aisynthetic" => aisynthetic_battery(edge),
@@ -4201,6 +4220,27 @@ fn aisynthetic_battery(edge: &str) -> Vec<Check> {
     }
 }
 
+// --- Std.Ai.Train ---------------------------------------------------------
+fn aitrain_battery(edge: &str) -> Vec<Check> {
+    match edge {
+        "nominal" => vec![
+            s(&["Train.decodeEvent"], "aiTrainStep", "7/12"),
+            s(
+                &["Train.foldProgress", "Train.emptyProgress", "Train.statusText"],
+                "aiTrainFold",
+                "converting 4 1 2",
+            ),
+            s(
+                &["Train.backendName"],
+                "String.join \",\" (List.map Train.backendName [ Train.Mlx, Train.Unsloth, Train.Fake ])",
+                "mlx,unsloth,fake",
+            ),
+        ],
+        "failure" => vec![s(&["Train.decodeEvent"], "aiTrainRefused", "ToolchainFailed")],
+        _ => vec![],
+    }
+}
+
 // --- Sky.Core.Secret -------------------------------------------------------
 //
 // The wrap/reveal boundary is a pure, deterministic value crossing:
@@ -6549,6 +6589,61 @@ aiRegistryVersion =
 aiRegistryNames : String
 aiRegistryNames =
     Registry.label aiRegistryVersion ++ " " ++ Registry.servedName aiRegistryVersion
+"#
+        }
+        "aitrain" => {
+            r#"aiTrainStep : String
+aiTrainStep =
+    case Train.decodeEvent "{\"v\":1,\"type\":\"progress\",\"step\":7,\"total\":12,\"loss\":1.5}" of
+
+        Ok (Just (Train.StepProgress p)) ->
+            String.fromInt p.step ++ "/" ++ String.fromInt p.total
+
+        _ ->
+            "none"
+
+
+aiTrainLines : List String
+aiTrainLines =
+    [ "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":0,\"resumeFrom\":0,\"totalSteps\":4}"
+    , "{\"v\":1,\"type\":\"progress\",\"step\":3,\"total\":4,\"loss\":1.0}"
+    , "{\"v\":1,\"type\":\"hello\",\"backend\":\"fake\",\"attempt\":1,\"resumeFrom\":2,\"totalSteps\":4}"
+    , "{\"v\":1,\"type\":\"progress\",\"step\":4,\"total\":4,\"loss\":0.5}"
+    , "{\"v\":1,\"type\":\"done\",\"step\":4,\"trainLoss\":0.5,\"valLoss\":0.6}"
+    ]
+
+
+aiTrainFold : String
+aiTrainFold =
+    let
+        p =
+            List.foldl
+                (\l acc ->
+                    case Train.decodeEvent l of
+
+                        Ok (Just ev) ->
+                            Train.foldProgress ev acc
+
+                        _ ->
+                            acc)
+                (Train.emptyProgress "r")
+                aiTrainLines
+    in
+        Train.statusText p.status ++ " " ++ String.fromInt p.step ++ " "
+            ++ String.fromInt p.relaunches
+            ++ " "
+            ++ String.fromInt p.resumedFrom
+
+
+aiTrainRefused : String
+aiTrainRefused =
+    case Train.decodeEvent "{\"v\":2,\"type\":\"progress\",\"step\":1}" of
+
+        Err e ->
+            Maybe.withDefault "none" (Maybe.map Failure.code (Failure.fromError e))
+
+        Ok _ ->
+            "accepted"
 "#
         }
         "aistore" => {

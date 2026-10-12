@@ -18,7 +18,9 @@ package rt
 //     a `sky ai eval` run in another process appears too;
 //   - the model registry: each Std.Ai.Registry model this process read or
 //     changed, with its aliases, newest versions, alias log and attached eval
-//     reports (ai_model_registry.go).
+//     reports (ai_model_registry.go);
+//   - training runs: each Std.Ai.Train run, its status, steps and loss
+//     curves (ai_train_console.go).
 //
 // The rings are in-process and bounded. They hold no prompt, no answer and no
 // secret: a call row is metadata, and an eval row carries the case ids, scores
@@ -198,6 +200,8 @@ type AiConsoleResponse struct {
 	Calls    []aiCallRecord    `json:"calls"`
 	Evals    []aiEvalRecord    `json:"evals"`
 	Registry []aiRegistryModel `json:"registry"`
+	// Training is the Std.Ai.Train runs (ai_train_console.go).
+	Training []aiTrainRun `json:"training"`
 }
 
 // aiConsoleSnapshot builds the panel's data. outcome is "" (every call) or
@@ -209,7 +213,7 @@ func aiConsoleSnapshot(outcome, slot string) AiConsoleResponse {
 	evals := append([]aiEvalRecord(nil), aiEvalRing...)
 	aiConsoleMu.Unlock()
 
-	resp := AiConsoleResponse{Slots: []aiConsoleSlot{}, Engines: []map[string]any{}, Calls: []aiCallRecord{}, Evals: []aiEvalRecord{}, Registry: aiRegistrySnapshot()}
+	resp := AiConsoleResponse{Slots: []aiConsoleSlot{}, Engines: []map[string]any{}, Calls: []aiCallRecord{}, Evals: []aiEvalRecord{}, Registry: aiRegistrySnapshot(), Training: aiTrainConsoleRuns()}
 
 	aiSlotsMu.Lock()
 	seen := map[string]bool{}

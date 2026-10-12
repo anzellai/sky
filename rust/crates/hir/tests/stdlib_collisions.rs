@@ -107,6 +107,24 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     "value pattern",
     "value rows",
     "value split",
+    // v0.28.0 phase 3: Std.Ai.Train, named by the design and the plan
+    // (docs/design/std-ai-lifecycle.md §8.5): a training `Job` (Std.Jobs has
+    // its own), the driver protocol's `Event`, the run's `Status` with `Done`
+    // and `Failed` (Task.Done and Sky.Test.Failed), and the verbs `cancel`,
+    // `progress`, `poll`, `result`, `runId` and `withName` on a job. The guide and the example
+    // import it `as Train exposing (Status(..))` and read the rest qualified.
+    // Names the design does not give were chosen not to collide (`LossPoint`,
+    // `RunRequest`, `DoneEvent`, `CancelledEvent`, `DriverError`).
+    "ctor Done",
+    "ctor Failed",
+    "type Event",
+    "type Job",
+    "value cancel",
+    "value poll",
+    "value progress",
+    "value result",
+    "value runId",
+    "value withName",
 ];
 
 fn repo_root() -> PathBuf {

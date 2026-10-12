@@ -11570,6 +11570,20 @@ const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
               [--split <train>/<eval>/<test>] [--seed <n>]
               [--consent <basis>] [--retention <period>]
                      freeze a JSONL file into a content-addressed dataset version
+  provision --train mlx|unsloth|fake [--base dev]
+                     install a training toolchain (managed Python) and the dev base weights
+  train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>] [--steps <n>] [--rank <r>]
+        [--seed <s>] [--layers <n>] [--checkpoint-every <n>] [--eval-every <n>]
+        [--backend mlx|unsloth|fake] [--gguf] [--merged]
+        [--register] [--detach] [--work-dir <dir>] [--db <dsn>]
+                     fine-tune a LoRA adapter on a frozen dataset version (Ctrl-C detaches;
+                     the trainer keeps training)
+  train status [<run>] | runs | resume <run> | cancel <run>
+                     follow, list, restart or cancel training runs
+  export <run> [--out <file>] [--merged]
+                     write a run's adapter as GGUF (or the merged model)
+  start <slot> ... [--adapter file:<path>#sha256=<hex>]
+                     serve a GGUF LoRA adapter with the slot's model
 The project's AI pipeline (src/Ai.sky, Std.Ai.Pipeline):
   eval <suite> [--against <alias>] [--candidate <model>@v<n>] [--promote-to <alias>]
        [--junit <file>] [--markdown <file>] [--min-pass-rate <x>] [--max-regression <x>]
@@ -11648,6 +11662,12 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         ["eval", suite, ..] if !suite.starts_with('-') => Some(AiMode::Pipeline),
         ["run", task, ..] if !task.starts_with('-') => Some(AiMode::Pipeline),
         ["members"] => Some(AiMode::Pipeline),
+        // The training verbs run the bundled training program
+        // (`sky-bundled/ai-train`, `cmd_ai_bundled`).
+        ["train", "status", ..] | ["train", "runs", ..] => Some(AiMode::Bundled),
+        ["train", "resume" | "cancel", run, ..] if !run.starts_with('-') => Some(AiMode::Bundled),
+        ["train", rest @ ..] if rest.contains(&"--data") => Some(AiMode::Bundled),
+        ["export", run, ..] if !run.starts_with('-') => Some(AiMode::Bundled),
         _ => None,
     };
     let Some(mode) = mode else {
@@ -11757,13 +11777,23 @@ fn cmd_ai_bundled(args: Vec<String>, cwd: &Path, test_mode: bool) -> ExitCode {
     let Some(repo_root) = assets_root_for(cwd) else {
         return ExitCode::FAILURE;
     };
-    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, "ai") else {
-        return bundled_missing("ai");
+    // The training verbs live in their own bundled program
+    // (sky-bundled/ai-train): the engine and registry program stays small, and
+    // the training code builds only the first time a training verb runs.
+    let first = args
+        .iter()
+        .map(String::as_str)
+        .find(|a| *a != "--format" && *a != "json");
+    let training = matches!(first, Some("train" | "export"))
+        || (first == Some("provision") && args.iter().any(|a| a == "--train"));
+    let bundle = if training { "ai-train" } else { "ai" };
+    let Some(src_dir) = bundled::bundled_src_dir(&repo_root, bundle) else {
+        return bundled_missing(bundle);
     };
     let out_dir = match bundled::ensure_built(
         &repo_root,
         &src_dir,
-        "ai",
+        bundle,
         "cli",
         bundled::ENTRY_LIVE,
         &bundled_cache_slug(),

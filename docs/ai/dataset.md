@@ -181,6 +181,28 @@ rows, `fromVersion` streams one part as a dataset, and `versions target` lists
 every version's manifest, newest first. `freezeJson` and `loadJson` do the
 same for rows held as JSON text.
 
+### Training takes a frozen version
+
+`Std.Ai.Train` trains on a frozen `Version`, never on a live dataset:
+`Train.lora base version` takes a `Version Chat`, and
+`Train.loraOnInstructions base version` a `Version Instruction`. So the exact
+rows behind an adapter are fixed by the type. The training run stages the
+version's `Train` part as the train split and its `Eval` part as the eval split
+(the `Test` part is not read), and hashes the data file first: a file that
+changed after it was frozen is `ChecksumMismatch`. A version with an empty
+`Train` or `Eval` part is `DatasetInvalid`, because the eval split measures the
+adapter. The adapter records the version's name and digest, and
+`Train.withRegistry` registers it with that lineage, so
+`Registry.trainedOn reg digest` finds every adapter trained on a version
+([`train.md`](train.md)). `examples/73-ai-train` freezes a support dataset and
+trains an adapter on it.
+
+```bash
+sky ai data freeze data/support.jsonl --name support
+sky ai train --data .sky/ai/datasets/support          # the newest version
+sky ai train --data .sky/ai/datasets/support@<sha256> # one version
+```
+
 ### `sky ai data freeze`
 
 ```

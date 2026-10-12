@@ -16,6 +16,7 @@ package rt
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -124,6 +125,7 @@ func aiDefaultIdleUnload() time.Duration {
 // -1 (so a deliberate 0, which means something, is kept) and unset strings "".
 type aiLocalBuilder struct {
 	model      string
+	adapter    string // Local.withAdapter: `file:<path>#sha256=<hex>` of a GGUF LoRA adapter
 	context    int
 	gpu        string
 	parallel   int
@@ -135,6 +137,7 @@ type aiLocalBuilder struct {
 func parseAiLocalBuilder(v any) aiLocalBuilder {
 	return aiLocalBuilder{
 		model:      aiStrField(v, "Model", "model"),
+		adapter:    aiStrField(v, "Adapter", "adapter"),
 		context:    aiIntField(v, "Context", "context"),
 		gpu:        aiStrField(v, "Gpu", "gpu"),
 		parallel:   aiIntField(v, "Parallel", "parallel"),
@@ -221,6 +224,16 @@ func resolveAiLocal(slot string, b aiLocalBuilder, modelOverride string, record 
 		return spec, err
 	}
 	spec.model = m
+	if b.adapter != "" {
+		a, err := aiParseModelRef(b.adapter)
+		if err != nil {
+			return spec, err
+		}
+		if a.kind != "file" {
+			return spec, aiFailf(aiInvalidSetting, "adapter %q: a local adapter is a file, file:<path>#sha256=<hex>", b.adapter).with("setting", "adapter")
+		}
+		spec.adapter = aiLocalAdapter{path: a.file, sha256: a.sha256, label: filepath.Base(a.file)}
+	}
 
 	if v := get("CONTEXT", itoaSet(b.context), aiPositiveInt); v != "" {
 		spec.context = aiAtoi(v)

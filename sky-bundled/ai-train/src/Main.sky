@@ -1,0 +1,732 @@
+module Main exposing (main)
+
+{-| The program behind `sky ai train`, `sky ai export` and
+`sky ai provision --train`. The CLI holds no logic of its own: it builds this
+program once per Sky version and runs it with the verb's arguments, and each
+verb is a call to the Std.Ai.Train API a user's own program can make. It is
+apart from the `sky ai` engine and registry program (sky-bundled/ai) so that
+program stays small and the training verbs build only when they are used.
+
+    sky ai provision --train mlx|unsloth|fake [--base dev]
+                                                 Train.provision, Train.provisionBase
+    sky ai train --data <dir>/<name>[@<digest>] [--base dev] [--name <n>]
+                 [--steps <n>] [--rank <r>] [--seed <s>] [--layers <n>]
+                 [--checkpoint-every <n>] [--eval-every <n>]
+                 [--backend mlx|unsloth|fake] [--gguf] [--merged] [--register]
+                 [--detach] [--work-dir <dir>] [--db <dsn>]
+                                                 Train.drive (Train.start with --detach)
+    sky ai train status [<run>] | runs | resume <run> | cancel <run>
+                                                 Train.progressAt, runs, resumeAt, cancelAt
+    sky ai export <run> [--out <file>] [--merged]
+                                                 Train.exportAt
+
+Every verb takes `--format json`. `--register` opens the registry as the
+registry verbs do (`--db <dsn>`, else the app's own database, and
+`--registry <url>`, else `SKY_AI_REGISTRY`).
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Sky.Core.System as System
+import Sky.Core.Json.Encode as JsonE
+import Sky.Core.Json.Decode as JsonD
+import Sky.Core.Result as Result
+import Sky.Core.File as File
+import Std.Log as Log exposing (println)
+import Std.Db as Db exposing (Db)
+import Std.Ai.Dataset as Dataset
+import Std.Ai.Registry as Registry
+import Std.Ai.Train as Train exposing (Backend(..))
+
+
+main : Task Error ()
+main =
+    System.args () |> Task.andThen run
+
+
+run : List String -> Task Error ()
+run args =
+    let
+        json = List.member "--format" args && List.member "json" args
+        rest = List.filter (\a -> a /= "--format" && a /= "json") args
+    in
+        case rest of
+
+            "provision" :: opts ->
+                case flag "--train" opts of
+
+                    Just name ->
+                        provisionTrain json name opts
+
+                    Nothing ->
+                        Task.fail (Error.invalidInput usage)
+
+            "train" :: opts ->
+                trainVerb json opts
+
+            "export" :: runId :: opts ->
+                export json runId opts
+
+            _ ->
+                Task.fail (Error.invalidInput usage)
+
+
+usage : String
+usage =
+    "usage: sky ai provision --train mlx|unsloth|fake [--base dev] | train --data <dir>/<name>[@<digest>] [options] | train status [<run>] | train runs | train resume <run> | train cancel <run> | export <run> [--out <file>] [--merged]  (each takes --format json)"
+
+
+flag : String -> List String -> Maybe String
+flag name opts =
+    case opts of
+
+        a :: b :: more ->
+            if a == name then
+                Just b
+
+            else
+                flag name (b :: more)
+
+        _ ->
+            Nothing
+
+
+-- Every value given to a repeatable flag.
+flags : String -> List String -> List String
+flags name opts =
+    case opts of
+
+        a :: b :: more ->
+            if a == name then
+                b :: flags name more
+
+            else
+                flags name (b :: more)
+
+        _ ->
+            []
+
+
+emit : Bool -> JsonE.Value -> String -> Task Error ()
+emit json value text =
+    if json then
+        println (JsonE.encode 0 value)
+
+    else
+        println text
+
+
+openRegistry : List String -> Task Error Registry.Registry
+openRegistry opts =
+    let
+        db =
+            case flag "--db" opts of
+
+                Just dsn ->
+                    if String.startsWith "postgres://" dsn
+                        || String.startsWith "postgresql://" dsn then
+                        Db.open "postgres" dsn
+
+                    else
+                        Db.open "sqlite" dsn
+
+                Nothing ->
+                    Db.connect ()
+    in
+        db
+            |> Task.andThen
+                   (\conn ->
+                       Registry.openConfigured
+                           conn
+                           (Maybe.withDefault "" (flag "--registry" opts)))
+
+
+-- ─── training: provision --train / train / export ──────────────────────
+backendOf : String -> Result Error Backend
+backendOf name =
+    case name of
+
+        "mlx" ->
+            Ok Mlx
+
+        "unsloth" ->
+            Ok Unsloth
+
+        "fake" ->
+            Ok Fake
+
+        _ ->
+            Err
+                (Error.invalidInput
+                    ("sky ai: the training backend " ++ name
+                        ++ " is not one of mlx, unsloth, fake"))
+
+
+provisionTrain : Bool -> String -> List String -> Task Error ()
+provisionTrain json name opts =
+    Task.fromResult (backendOf name)
+        |> Task.andThen
+               (\backend ->
+                   Train.provision backend
+                       |> Task.andThen
+                              (\tc ->
+                                  (if flag "--base" opts == Just "dev" then
+                                      Train.provisionBase backend Train.devBase
+
+                                  else
+                                      Task.succeed "")
+                                      |> Task.map (\weights -> ( tc, weights ))))
+        |> Task.andThen
+               (\( tc, weights ) ->
+                   emit
+                       json
+                       (JsonE.object
+                           [ ( "toolchain", JsonE.string tc.name )
+                           , ( "id", JsonE.string tc.id )
+                           , ( "python", JsonE.string tc.python )
+                           , ( "dir", JsonE.string tc.dir )
+                           , ( "packages", JsonE.int tc.packages )
+                           , ( "versions"
+                             , JsonE.object
+                                   (List.map
+                                       (\v -> ( v.name, JsonE.string v.version ))
+                                       tc.versions)
+                             )
+                           , ( "base", JsonE.string weights )
+                           ])
+                       (String.join
+                           "\n"
+                           ([ "toolchain " ++ tc.name ++ " " ++ tc.id ++ " ("
+                                 ++ String.fromInt tc.packages
+                                 ++ " locked packages)"
+                           , "python    " ++ tc.python
+                           ]
+                               ++ (if String.isEmpty weights then
+                                      []
+
+                                  else
+                                      [ "base      " ++ weights ]))))
+
+
+workDirOf : List String -> String
+workDirOf opts =
+    Maybe.withDefault ".sky/ai/runs" (flag "--work-dir" opts)
+
+
+runDirOf : List String -> String -> String
+runDirOf opts run =
+    if String.contains "/" run then
+        run
+
+    else
+        workDirOf opts ++ "/" ++ run
+
+
+trainVerb : Bool -> List String -> Task Error ()
+trainVerb json opts =
+    case opts of
+
+        ["status"] ->
+            trainRuns json []
+
+        "status" :: run :: rest ->
+            if String.startsWith "--" run then
+                trainRuns json (run :: rest)
+
+            else
+                Train.progressAt (runDirOf rest run)
+                    |> Task.andThen
+                           (\p -> emit json (progressValue p) (progressText p))
+
+        "runs" :: rest ->
+            trainRuns json rest
+
+        "resume" :: run :: rest ->
+            trainResume json (runDirOf rest run) rest
+
+        "cancel" :: run :: rest ->
+            Train.cancelAt (runDirOf rest run)
+                |> Task.andThen
+                       (\signalled ->
+                           emit
+                               json
+                               (JsonE.object
+                                   [ ( "run", JsonE.string run )
+                                   , ( "signalled", JsonE.bool signalled )
+                                   ])
+                               (if signalled then
+                                   "cancelled " ++ run
+                                       ++ ": the trainer wrote a checkpoint and stopped"
+
+                               else
+                                   "cancelled " ++ run
+                                       ++ ": no trainer was running; the run ends as cancelled"))
+
+        _ ->
+            trainRun json opts
+
+
+trainRuns : Bool -> List String -> Task Error ()
+trainRuns json opts =
+    Train.runs (workDirOf opts)
+        |> Task.andThen
+               (\ps ->
+                   emit
+                       json
+                       (JsonE.list progressValue ps)
+                       (if List.isEmpty ps then
+                           "no training runs in " ++ workDirOf opts
+
+                       else
+                           String.join "\n" (List.map progressText ps)))
+
+
+progressValue : Train.Progress -> JsonE.Value
+progressValue p =
+    JsonE.object
+        [ ( "run", JsonE.string p.runId )
+        , ( "status", JsonE.string (Train.statusText p.status) )
+        , ( "backend", JsonE.string p.backend )
+        , ( "step", JsonE.int p.step )
+        , ( "totalSteps", JsonE.int p.totalSteps )
+        , ( "loss"
+          , Maybe.withDefault JsonE.null (Maybe.map JsonE.float p.loss)
+          )
+        , ( "valLoss"
+          , Maybe.withDefault JsonE.null (Maybe.map JsonE.float p.valLoss)
+          )
+        , ( "attempt", JsonE.int p.attempt )
+        , ( "relaunches", JsonE.int p.relaunches )
+        , ( "resumedFrom", JsonE.int p.resumedFrom )
+        , ( "lastCheckpoint", JsonE.int p.lastCheckpoint )
+        , ( "message", JsonE.string p.message )
+        ]
+
+
+progressText : Train.Progress -> String
+progressText p =
+    p.runId ++ "  " ++ Train.statusText p.status ++ "  step "
+        ++ String.fromInt p.step
+        ++ "/"
+        ++ String.fromInt p.totalSteps
+        ++ (case p.loss of
+
+               Just l ->
+                   "  loss " ++ String.fromFloat l
+
+               Nothing ->
+                   "")
+        ++ (if String.isEmpty p.message then
+               ""
+
+           else
+               "  " ++ p.message)
+
+-- `--data <dir>/<name>[@<digest>]`: the dataset folder, the name, and the
+-- version (the newest when no digest is given).
+type alias DataRef =
+    { dir : String
+    , name : String
+    , digest : Maybe String
+    }
+
+
+dataRef : String -> Result Error DataRef
+dataRef text =
+    let
+        ( path, digest ) =
+            case String.split "@" text of
+
+                [p, d] ->
+                    ( p, Just d )
+
+                _ ->
+                    ( text, Nothing )
+        parts = String.split "/" path
+        name = Maybe.withDefault "" (List.head (List.reverse parts))
+        dir =
+            String.join "/" (List.reverse (List.drop 1 (List.reverse parts)))
+    in
+        if String.isEmpty name || String.isEmpty dir then
+            Err
+                (Error.invalidInput
+                    ("sky ai train: --data takes <dir>/<name>[@<digest>] (a dataset `sky ai data freeze` wrote), not "
+                        ++ text))
+
+        else
+            Ok { dir = dir, name = name, digest = digest }
+
+
+newestDigest : DataRef -> Task Error String
+newestDigest ref =
+    case ref.digest of
+
+        Just d ->
+            Task.succeed d
+
+        Nothing ->
+            Dataset.versions (Dataset.folder ref.dir ref.name)
+                |> Task.andThen
+                       (\ms ->
+                           case List.sortBy .createdMs ms |> List.reverse
+                                    |> List.head of
+
+                               Just m ->
+                                   Task.succeed m.digest
+
+                               Nothing ->
+                                   Task.fail
+                                       (Error.invalidInput
+                                           ("sky ai train: there is no frozen version of "
+                                               ++ ref.name
+                                               ++ " in "
+                                               ++ ref.dir
+                                               ++ "; run `sky ai data freeze` first")))
+
+
+intFlag : String -> List String -> (Int -> Train.Job -> Train.Job) -> Train.Job -> Train.Job
+intFlag name opts set job =
+    case Maybe.andThen String.toInt (flag name opts) of
+
+        Just n ->
+            set n job
+
+        Nothing ->
+            job
+
+
+applyIf : Bool -> (Train.Job -> Train.Job) -> Train.Job -> Train.Job
+applyIf cond f job =
+    if cond then
+        f job
+
+    else
+        job
+
+
+-- The job a command line describes, on the frozen version it names. The
+-- version's first row says its format: `messages` is chat, else instructions.
+trainJob : List String -> Task Error Train.Job
+trainJob opts =
+    case flag "--data" opts of
+
+        Nothing ->
+            Task.fail
+                (Error.invalidInput
+                    "sky ai train: name the dataset with --data <dir>/<name>[@<digest>]")
+
+        Just text ->
+            Task.fromResult (dataRef text)
+                |> Task.andThen
+                       (\ref ->
+                           newestDigest ref
+                               |> Task.andThen
+                                      (\digest -> jobOn ref digest opts))
+
+
+jobOn : DataRef -> String -> List String -> Task Error Train.Job
+jobOn ref digest opts =
+    let
+        folder = Dataset.folder ref.dir ref.name
+        tune base =
+            base
+                |> Train.withName
+                       (Maybe.withDefault ref.name (flag "--name" opts))
+                |> intFlag "--steps" opts (\n j -> Train.withMaxSteps n j)
+                |> intFlag "--rank" opts (\n j -> Train.withRank n j)
+                |> intFlag "--seed" opts (\n j -> Train.withSeed n j)
+                |> intFlag "--layers" opts (\n j -> Train.withLayers n j)
+                |> intFlag
+                       "--checkpoint-every"
+                       opts
+                       (\n j -> Train.withCheckpointEvery n j)
+                |> intFlag "--eval-every" opts (\n j -> Train.withEvalEvery n j)
+                |> Train.withWorkDir (workDirOf opts)
+                |> applyIf (List.member "--gguf" opts) Train.withGgufExport
+                |> applyIf (List.member "--merged" opts) Train.withMergedExport
+                |> Train.withQuantisedBase
+        withBackend job =
+            case Maybe.map backendOf (flag "--backend" opts) of
+
+                Just (Ok b) ->
+                    Task.succeed (Train.withBackend b job)
+
+                Just (Err e) ->
+                    Task.fail e
+
+                Nothing ->
+                    Task.succeed job
+        base =
+            case flag "--base" opts of
+
+                Nothing ->
+                    Task.succeed Train.devBase
+
+                Just "dev" ->
+                    Task.succeed Train.devBase
+
+                Just other ->
+                    Task.fail
+                        (Error.invalidInput
+                            ("sky ai train: --base " ++ other
+                                ++ " is not a base the CLI knows; use --base dev, or train any base from a program with Train.baseModel"))
+    in
+        base
+            |> Task.andThen
+                   (\b ->
+                       Dataset.loadJson folder digest
+                           |> Task.andThen
+                                  (\raw ->
+                                      Dataset.versionPart Dataset.Train raw
+                                          |> Task.map List.head)
+                           |> Task.andThen
+                                  (\first ->
+                                      if String.contains
+                                          "\"messages\""
+                                          (Maybe.withDefault "" first) then
+                                          Dataset.load
+                                              folder
+                                              digest
+                                              Dataset.chatCodec
+                                              |> Task.map
+                                                     (\v -> tune (Train.lora b v))
+
+                                      else
+                                          Dataset.load
+                                              folder
+                                              digest
+                                              Dataset.instructionCodec
+                                              |> Task.map
+                                                     (\v ->
+                                                         tune
+                                                             (Train.loraOnInstructions
+                                                                 b
+                                                                 v))))
+            |> Task.andThen withBackend
+
+
+trainDb : List String -> Task Error Db
+trainDb opts =
+    case flag "--db" opts of
+
+        Just dsn ->
+            if String.startsWith "postgres://" dsn
+                || String.startsWith "postgresql://" dsn then
+                Db.open "postgres" dsn
+
+            else
+                Db.open "sqlite" dsn
+
+        Nothing ->
+            File.mkdirAll ".sky/ai"
+                |> Task.andThen (\_ -> Db.open "sqlite" ".sky/ai/train.db")
+
+
+trainRun : Bool -> List String -> Task Error ()
+trainRun json opts =
+    trainJob opts
+        |> Task.andThen
+               (\job ->
+                   (if List.member "--register" opts then
+                       openRegistry opts
+                           |> Task.map (\reg -> Train.withRegistry reg job)
+
+                   else
+                       Task.succeed job)
+                       |> Task.andThen
+                              (\j -> rememberArgs j opts |> Task.map (\_ -> j)))
+        |> Task.andThen
+               (\job ->
+                   trainDb opts
+                       |> Task.andThen
+                              (\db ->
+                                  if List.member "--detach" opts then
+                                      detach json db job
+
+                                  else
+                                      notice json job
+                                          |> Task.andThen
+                                                 (\_ -> Train.drive db job)
+                                          |> Task.andThen
+                                                 (\a ->
+                                                     emit
+                                                         json
+                                                         (adapterValue a)
+                                                         (adapterText a))))
+
+
+-- The arguments that made the run, so `sky ai train resume <run>` can
+-- describe the same job again.
+rememberArgs : Train.Job -> List String -> Task Error ()
+rememberArgs job opts =
+    File.mkdirAll (Train.runDir job)
+        |> Task.andThen
+               (\_ ->
+                   File.writeFile
+                       (Train.runDir job ++ "/cli.json")
+                       (JsonE.encode
+                           0
+                           (JsonE.list
+                               JsonE.string
+                               (List.filter (\a -> a /= "--detach") opts))))
+
+
+notice : Bool -> Train.Job -> Task Error ()
+notice json job =
+    if json then
+        Task.succeed ()
+
+    else
+        Log.println
+            ("training run " ++ Train.runId job ++ " (" ++ Train.runDir job
+                ++ "). Ctrl-C stops watching only: the trainer keeps training. Cancel it with `sky ai train cancel "
+                ++ Train.runId job
+                ++ "`; pick it up again with the same command or `sky ai train resume "
+                ++ Train.runId job
+                ++ "`.")
+
+
+-- Start the run and advance it until the trainer runs, then return; the
+-- trainer keeps training, and `sky ai train resume <run>` (or the same
+-- command again) collects the adapter.
+detach : Bool -> Db -> Train.Job -> Task Error ()
+detach json db job =
+    let
+        quick = Train.withWatchWindow 1000 job
+    in
+        Train.start db quick |> Task.andThen (\_ -> Train.poll db [ quick ])
+            |> Task.andThen (\_ -> Train.progress quick)
+            |> Task.andThen
+                   (\p ->
+                       emit
+                           json
+                           (progressValue p)
+                           ("started " ++ Train.runId job ++ " ("
+                               ++ Train.statusText p.status
+                               ++ "); follow it with `sky ai train status "
+                               ++ Train.runId job
+                               ++ "`"))
+
+
+trainResume : Bool -> String -> List String -> Task Error ()
+trainResume json dir opts =
+    File.readFile (dir ++ "/cli.json")
+        |> Task.mapError
+               (\_ ->
+                   Error.invalidInput
+                       ("sky ai train resume: " ++ dir
+                           ++ " has no cli.json (it was not started by `sky ai train`); resume it from the program that started it with Train.resume"))
+        |> Task.andThen
+               (\text ->
+                   Task.fromResult
+                       (JsonD.decodeString (JsonD.list JsonD.string) text))
+        |> Task.andThen
+               (\args ->
+                   Train.resumeAt dir
+                       |> Task.andThen
+                              (\_ -> trainRun json (args ++ keepFormat opts)))
+
+
+keepFormat : List String -> List String
+keepFormat opts =
+    if List.member "--detach" opts then
+        [ "--detach" ]
+
+    else
+        []
+
+
+adapterValue : Train.Adapter -> JsonE.Value
+adapterValue a =
+    JsonE.object
+        [ ( "run", JsonE.string a.runId )
+        , ( "name", JsonE.string a.name )
+        , ( "backend", JsonE.string a.backend )
+        , ( "toolchain", JsonE.string a.toolchain )
+        , ( "steps", JsonE.int a.steps )
+        , ( "trainLoss", JsonE.float a.trainLoss )
+        , ( "valLoss", JsonE.float a.valLoss )
+        , ( "relaunches", JsonE.int a.relaunches )
+        , ( "resumedFrom", JsonE.int a.resumedFrom )
+        , ( "peft", JsonE.string a.peft.path )
+        , ( "peftSha256", JsonE.string a.peft.sha256 )
+        , ( "gguf"
+          , Maybe.withDefault
+                JsonE.null
+                (Maybe.map (\g -> JsonE.string g.path) a.gguf)
+          )
+        , ( "ggufSha256"
+          , Maybe.withDefault
+                JsonE.null
+                (Maybe.map (\g -> JsonE.string g.sha256) a.gguf)
+          )
+        , ( "merged"
+          , Maybe.withDefault
+                JsonE.null
+                (Maybe.map (\g -> JsonE.string g.path) a.merged)
+          )
+        , ( "registered"
+          , Maybe.withDefault JsonE.null (Maybe.map JsonE.string a.registered)
+          )
+        , ( "dataset", JsonE.string a.dataset )
+        , ( "datasetDigest", JsonE.string a.datasetDigest )
+        ]
+
+
+adapterText : Train.Adapter -> String
+adapterText a =
+    String.join
+        "\n"
+        ([ "trained " ++ a.name ++ " (" ++ a.runId ++ ") on " ++ a.backend
+              ++ ": "
+              ++ String.fromInt a.steps
+              ++ " steps, train loss "
+              ++ String.fromFloat a.trainLoss
+              ++ ", eval loss "
+              ++ String.fromFloat a.valLoss
+        , "adapter " ++ a.peft.path
+        ]
+            ++ (case a.gguf of
+
+                   Just g ->
+                       [ "gguf    " ++ g.path ++ "  sha256:" ++ g.sha256 ]
+
+                   Nothing ->
+                       [])
+            ++ (case a.registered of
+
+                   Just label ->
+                       [ "registered " ++ label ]
+
+                   Nothing ->
+                       []))
+
+
+export : Bool -> String -> List String -> Task Error ()
+export json run opts =
+    Train.exportAt (runDirOf opts run) (List.member "--merged" opts)
+        |> Task.andThen
+               (\art ->
+                   (case flag "--out" opts of
+
+                       Just out ->
+                           File.copy art.path out |> Task.map (\_ -> out)
+
+                       Nothing ->
+                           Task.succeed art.path)
+                       |> Task.andThen
+                              (\path ->
+                                  emit
+                                      json
+                                      (JsonE.object
+                                          [ ( "path", JsonE.string path )
+                                          , ( "sha256"
+                                            , JsonE.string art.sha256
+                                            )
+                                          ])
+                                      ("exported " ++ path ++ "  sha256:"
+                                          ++ art.sha256)))

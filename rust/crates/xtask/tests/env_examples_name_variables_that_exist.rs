@@ -71,7 +71,9 @@ fn repo_root() -> PathBuf {
 /// removed, and changing it is a one-line edit next to the change that caused
 /// it. `>= n` is how `ty/tests/reject.rs` came to assert 13 against an actual
 /// 63, where deleting 50 corpus files kept it green.
-const EXPECTED_ASSIGNMENTS: usize = 17;
+// 17 -> 18: examples/73-ai-train/.env.test sets SKY_AI_TRAIN_BACKEND=fake
+// (v0.28.0 phase 3), measured by this test.
+const EXPECTED_ASSIGNMENTS: usize = 18;
 
 /// Names that legitimately appear in a `.env` while nothing in `runtime-go/`,
 /// `rust/` or the project's own Sky source reads them. Each needs a reason,
