@@ -542,3 +542,19 @@ func TestTrainEnvCarriesNoSecret(t *testing.T) {
 }
 
 var _ = syscall.SIGTERM
+
+// The cloud trainer image's runtime stage installs a C compiler: Triton,
+// under Unsloth, compiles its GPU launcher with it on the first training
+// step. A live L4 run without one failed at step 0 ("Failed to find C
+// compiler").
+func TestTrainerImageRuntimeStageHasACCompiler(t *testing.T) {
+	b, err := os.ReadFile("ai_train_assets/image/trainer.dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stages := strings.Split(string(b), "\nFROM ")
+	runtime := stages[len(stages)-1]
+	if !strings.Contains(runtime, "apt-get install") || !strings.Contains(runtime, " gcc ") || !strings.Contains(runtime, "libc6-dev") {
+		t.Fatalf("the runtime stage installs no C compiler:\n%s", runtime)
+	}
+}

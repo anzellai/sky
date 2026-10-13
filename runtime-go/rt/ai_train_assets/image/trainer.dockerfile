@@ -81,7 +81,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
     SKY_CLOUD_WORK=/tmp/sky-run
 
+# A C compiler: Triton (under Unsloth) builds its GPU launcher with the
+# system's C compiler on the first step. Without one the first step fails with
+# "Failed to find C compiler" (a live run on an L4, 2026-10-13). From the
+# Ubuntu archive of the pinned base, not from an image registry.
 RUN set -eu; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc libc6-dev; \
+    rm -rf /var/lib/apt/lists/*; \
     useradd --uid 10001 --create-home --home-dir /home/sky --shell /usr/sbin/nologin sky; \
     chmod -R a+rX /opt/sky
 

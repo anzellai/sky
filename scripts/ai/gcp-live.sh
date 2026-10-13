@@ -196,8 +196,15 @@ teardown() {
     fi
     gcloud artifacts repositories delete "$REPO" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
     has_stage l5 && gcloud artifacts repositories delete "$REMOTE" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
-    gcloud storage rm -r "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
-    gcloud storage buckets delete "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
+    # A cancelled job's container can still write its last event segment
+    # after Vertex reports it ended (seen live, 2026-10-13: one 494-byte file
+    # kept the bucket alive). Empty and delete again until the bucket is gone.
+    for i in 1 2 3 4 5 6; do
+        gcloud storage rm -r "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
+        gcloud storage buckets delete "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
+        gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1 || break
+        sleep 20
+    done
     leak_check
     local leak_code=$?
     "$PY" -I - "$LEDGER" "$RUN_ID" "$STARTED" "$STAGES" "$RUN_WORST" "$LEAK" "$PROJECT_TAG" "$STAGE_LOG" "$TEST_STATUS" "$(git -C "$ROOT" rev-parse --short HEAD)" <<'PYEOF'
