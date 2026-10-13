@@ -110,7 +110,7 @@ fn the_vertex_workflow_suite_passes_against_the_in_process_emulator() {
         .expect("sky test");
     let t = text(&out);
     assert!(out.status.success(), "the workflow suite:\n{t}");
-    assert!(t.contains("11 passed, 0 failed"), "every case ran:\n{t}");
+    assert!(t.contains("12 passed, 0 failed"), "every case ran:\n{t}");
 
     let out = Command::new(SKY)
         .args(["test", "tests/GoogleAuthTest.sky"])
