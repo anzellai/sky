@@ -356,6 +356,29 @@
 #   sky-bundled/ai-train 916 -> 872, 72-ai-support-desk 473 -> 434. The
 #   streaming providers (Provider.wireStreaming in Endpoint, Local and Device)
 #   left every existing row unchanged.
+# ── Recorded transition, 2026-10-13 — merge of v0.28.0 phase 4 (training on
+#    Vertex AI, Std.Ai.Serve, Std.Ai.Cloud.Google) with phase 5 ──
+#   80 of 84 rows measured; 03-tea-external, 05-mux-server, 08-notes-app and
+#   13-skyshop are carried forward (SKY_LIVE_TESTS=skip): they import no
+#   Std.Ai module, and installing their FFI surfaces would take the disk under
+#   its 60 GB floor. Two new rows: 74-ai-cloud 1589 and sky-bundled/ai-cloud
+#   634. Nine rows rise, each because the program now compiles more Std.Ai
+#   code, not because existing code got less typed: 73-ai-train 1007 -> 1462,
+#   sky-bundled/ai-train 872 -> 1360, sky-bundled/ai 552 -> 731,
+#   71-ai-registry 790 -> 907, 72-ai-support-desk 434 -> 514, 70-ai-synthetic
+#   408 -> 479, 75-ai-everywhere 855 -> 926, 68-ai-dataset 489 -> 500,
+#   sky-bundled/console 182 -> 183. The new code is the Vertex backend in
+#   Std.Ai.Train (cloud settings, plan, launch, watch, mirror, cleanup), all of
+#   Std.Ai.Cloud.Google, Store's generation-guarded object operations,
+#   Registry's companions and pointer objects, three Failure codes and the
+#   Endpoint's Google auth. In 73-ai-train's emitted Go the narrowing sites by
+#   module are Std.Ai.Train 473, Std.Ai.Store 134, Std.Ai.Registry 131,
+#   Std.Ai.Cloud.Google 127 and Std.Ai.Failure 88; by kind, rt.Field on an
+#   erased record (128), ADT payload reads (`_subj.Fields`, R6, about 140) and
+#   Coerce at call and pattern sites. No single kernel dominates, so no §5.3
+#   twin closes a large share; the largest twin candidates are
+#   `AsListT(String.split …)` (29) and `AsBool(String.isEmpty …)` (10). Not
+#   traced site by site.
 00-standard-libs	adapter=0	dispatch=0	narrow=122
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=7
@@ -417,13 +440,14 @@
 65-metadata-service	adapter=0	dispatch=0	narrow=16
 66-slack-agent	adapter=0	dispatch=0	narrow=135
 67-durable-counter	adapter=0	dispatch=0	narrow=73
-68-ai-dataset	adapter=0	dispatch=0	narrow=489
+68-ai-dataset	adapter=0	dispatch=0	narrow=500
 69-ai-scrub	adapter=0	dispatch=0	narrow=62
-70-ai-synthetic	adapter=0	dispatch=0	narrow=408
-71-ai-registry	adapter=0	dispatch=0	narrow=790
-72-ai-support-desk	adapter=0	dispatch=0	narrow=434
-73-ai-train	adapter=0	dispatch=0	narrow=1007
-75-ai-everywhere	adapter=0	dispatch=0	narrow=855
+70-ai-synthetic	adapter=0	dispatch=0	narrow=479
+71-ai-registry	adapter=0	dispatch=0	narrow=907
+72-ai-support-desk	adapter=0	dispatch=0	narrow=514
+73-ai-train	adapter=0	dispatch=0	narrow=1462
+74-ai-cloud	adapter=0	dispatch=0	narrow=1589
+75-ai-everywhere	adapter=0	dispatch=0	narrow=926
 apps/dispatch	adapter=0	dispatch=0	narrow=326
 apps/fieldbook	adapter=0	dispatch=0	narrow=468
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
@@ -435,8 +459,9 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=192
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=195
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=552
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=872
-sky-bundled/console	adapter=0	dispatch=0	narrow=182
+sky-bundled/ai	adapter=0	dispatch=0	narrow=731
+sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=634
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1360
+sky-bundled/console	adapter=0	dispatch=0	narrow=183
 sky-bundled/doc	adapter=0	dispatch=0	narrow=51
 test_pkg	adapter=0	dispatch=0	narrow=1
