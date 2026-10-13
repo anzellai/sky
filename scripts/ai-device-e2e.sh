@@ -24,7 +24,8 @@
 # SKY_AI_PROBE_MODEL / SKY_AI_PROBE_DEVICE_ADAPTER, so a CI runner needs no
 # 430 MB download; --dev-model uses the development model (Qwen2.5 0.5B).
 #
-# Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright, the
+# Prereqs (all fail loudly): a fresh sky-out/sky, go, node + playwright (`npm ci`
+# in the repo root, then `npx playwright install chromium webkit`), the
 # web engines (`sky ai provision --device web`) and the server's engine
 # (`sky ai provision`).
 set -euo pipefail
@@ -48,6 +49,15 @@ while [ $# -gt 0 ]; do
     *) echo "usage: ai-device-e2e.sh [--dev-model] [--webgpu] [--scenarios a,b]" >&2; exit 2 ;;
   esac
 done
+
+# The browsers the chosen scenarios launch: the webkit-* scenarios and
+# device-only-private WebKit, the others Chromium. Checked before the build, so a worktree without
+# `npm ci` fails naming the install, not with a Node stack trace afterwards.
+BROWSERS=""
+case ",$SCENARIOS," in *,webkit-*|*,device-only-private,*) BROWSERS="webkit" ;; esac
+case ",$SCENARIOS," in *,chromium-*|*,server-placement,*) BROWSERS="chromium $BROWSERS" ;; esac
+# shellcheck disable=SC2086
+require_playwright "$ROOT" $BROWSERS
 
 source "$ROOT/scripts/lib/gate-build-cache.sh"
 _gc_compiler_hash "$SKY" >/dev/null
