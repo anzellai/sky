@@ -179,7 +179,10 @@ managed engine. The WebGPU answer with the adapter matched the server's word
 for word. In `examples/75-ai-everywhere` a note's summary took 10.1 s on the
 CPU build and 0.8 s on WebGPU, and the self-check (three prompts on the
 device, scored on the server) took 27.1 s and 2.8 s, with both pass rates at
-100%.
+100%. Streamed (`Provider.stream`), the development model's answer to the
+probe's question arrived in 7 pieces that joined to the same text in
+Chromium (CPU and WebGPU), in WebKit, from the server, and in the Android
+emulator with the model carried in the app.
 
 ## Streaming
 

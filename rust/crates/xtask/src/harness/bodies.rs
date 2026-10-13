@@ -47,7 +47,7 @@ use std::process::Command;
 /// **214 at the merge of v0.28.0 phase 3** (+3, examples/73-ai-train:
 /// src/Main.sky, src/Support.sky, tests/TrainExampleTest.sky), measured by the
 /// `roundtrip` gate.
-pub const ROUNDTRIP_EXPECTED: u64 = 214; // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
+pub const ROUNDTRIP_EXPECTED: u64 = 219; // +5: examples/75-ai-everywhere (four src modules and one tests suite, v0.28.0 phase 5); +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -896,7 +896,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 162; // measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 163; // measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2946,7 +2946,12 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// 958 -> 979 at the merge of v0.28.0 phase 3 (+17 `tests/Std/Ai/TrainTest.sky`,
 /// +4 `FailureTest`: the round trip and the kind of `TrainingFailed` and
 /// `TrainingCancelled`), measured by the `sky-suites` gate.
-pub const SKY_SUITES_EXPECTED: u64 = 979;
+/// 979 -> 1032 in v0.28.0 phase 5 (+38 `tests/Std/Ai/DeviceTest.sky`, +5
+/// `RegistryTest`: `allowOnDevice`, +4 `FailureTest`: the round trip and the
+/// kind of `DeviceUnsupported` and `StorageDenied`, +6
+/// `ProviderEndpointTest`: `chatStream`, `stream` and `read`), measured by the
+/// `sky-suites` gate.
+pub const SKY_SUITES_EXPECTED: u64 = 1032;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -3492,7 +3497,10 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// surface).
 /// 195 -> 196 at the merge of v0.28.0 phase 3: `stdlib.Std.Ai.Train`, covered
 /// by `tests/Std/Ai/TrainTest.sky` and the `aitrain` corpus surface.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 196;
+/// 196 -> 197 in v0.28.0 phase 5: `stdlib.Std.Ai.Device`, covered by
+/// `tests/Std/Ai/DeviceTest.sky`, the `aidevice` corpus surface and the
+/// `ai-device-*` gates.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 197;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

@@ -92,6 +92,17 @@ async function runProbe(app, engine, mode) {
       window.__csp = [];
       document.addEventListener("securitypolicyviolation", (e) => window.__csp.push(e.violatedDirective + " " + e.blockedURI));
     });
+    // Start from an empty device store: WebKit keeps a persistent context's
+    // origin-private file system across profiles, so a model an earlier run
+    // stored would make this one skip the download. The offer route is the
+    // same origin and runs no page script.
+    await page.goto(`http://127.0.0.1:${PORT}/_sky/ai/device/probe`);
+    await page.evaluate(async () => {
+      try {
+        const root = await navigator.storage.getDirectory();
+        for await (const [name] of root.entries()) await root.removeEntry(name, { recursive: true });
+      } catch (e) { /* a store-less context has nothing to clear */ }
+    });
     await page.goto(`http://127.0.0.1:${PORT}/`);
     const deadline = Date.now() + 15 * 60 * 1000;
     while (!/SKY-PROBE stream=/.test(app.log().slice(from)) && Date.now() < deadline) {

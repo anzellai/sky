@@ -439,10 +439,11 @@ pub static GATES: &[Gate] = &[
                 // Std.Ai.Store and Std.Ai.Registry surfaces (+3 cases, 682 → 685),
                 // and the v0.28.0 Std.Ai.Dataset, Scrub and Synthetic surfaces
                 // (+6 cases, 685 → 691), the v0.28.0 Std.Ai.Pipeline surface
-                // (+2 cases, 691 → 693) and the v0.28.0 Std.Ai.Train surface
-                // (+2 cases, 693 → 695).
-                from: "n_min = 695",
-                to: "n_min = 696",
+                // (+2 cases, 691 → 693), the v0.28.0 Std.Ai.Train surface
+                // (+2 cases, 693 → 695) and the v0.28.0 Std.Ai.Device surface
+                // (+2 cases, 695 → 697).
+                from: "n_min = 697",
+                to: "n_min = 698",
             },
         }]),
         body: bodies::corpus_manifest,

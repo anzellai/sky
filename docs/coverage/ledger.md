@@ -20,22 +20,22 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 
 | metric | value |
 |---|---|
-| surfaces | 192 |
-| covered by the new corpus (>= Asserted) | 181 |
-| verdict `stronger` | 176 |
+| surfaces | 193 |
+| covered by the new corpus (>= Asserted) | 182 |
+| verdict `stronger` | 177 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 139 |
-| stdlib modules (denominator) | 124 |
-| stdlib entries (denominator) | 2693 |
+| corpus units | 143 |
+| stdlib modules (denominator) | 125 |
+| stdlib entries (denominator) | 2743 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
-| stdlib modules imported by nothing | 9 | 7.3% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 870 | 32.3% |
-| symbols unreferenced under the generous rule | 764 | 28.4% |
+| stdlib modules imported by nothing | 9 | 7.2% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 877 | 32.0% |
+| symbols unreferenced under the generous rule | 769 | 28.0% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -191,6 +191,7 @@ None.
 | `stdlib.Std.Ai.Dataset` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Dataset.Scrub` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Dataset.Synthetic` | stdlib | Asserted | Falsified | stronger |
+| `stdlib.Std.Ai.Device` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Endpoint` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Eval` | stdlib | Asserted | Falsified | stronger |
 | `stdlib.Std.Ai.Failure` | stdlib | Asserted | Falsified | stronger |
@@ -278,6 +279,15 @@ None.
 
 | gate | tier | falsifier | surfaces |
 |---|---|---|---|
+| `ai-device-blob-allowlist` | T1 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-device-csp` | T4 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-device-decide` | T1 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-device-digest` | T1 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-device-ios-sim` | T4 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-device-no-silent-fallback` | T1 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-device-partition` | T2 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-device-privacy` | T4 | not proven | `stdlib.Std.Ai.Device` |
+| `ai-stream-pieces` | T1 | not proven | `stdlib.Std.Ai.Provider` · `stdlib.Std.Ai.Endpoint` · `stdlib.Std.Ai.Device` |
 | `ai-train-resume` | T1 | not proven | `stdlib.Std.Ai.Train` |
 | `analytics-prune-errors-are-reported` | T1 | PROVEN | `observability.analytics-store` |
 | `analytics-retention-survives-a-panic` | T1 | PROVEN | `observability.analytics-store` |
