@@ -195,7 +195,7 @@ func TestFakeGCPCrashCancelAndStockout(t *testing.T) {
 		fakeDo(t, "GET", srv.URL+"/aiplatform/v1/"+job.Name, "")
 	}
 	_, body, _ = fakeDo(t, "GET", srv.URL+"/aiplatform/v1/"+job.Name, "")
-	if !strings.Contains(body, "JOB_STATE_FAILED") || !strings.Contains(body, "137") {
+	if !strings.Contains(body, "JOB_STATE_FAILED") || !strings.Contains(body, "low on memory") {
 		t.Fatalf("fakeCrashAt fails the first attempt with no terminal line: %s", body)
 	}
 	// The relaunch resumes from the newest checkpoint (step 2) and finishes.
