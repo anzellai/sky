@@ -179,11 +179,14 @@ teardown() {
         sleep 10
     done
     # Job records cost nothing; Sky deletes the ended ones it made (gcloud has no delete).
-    with_timeout 300 "$ROOT/sky-out/sky" ai teardown --all-sky --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 || true
-    gcloud run services delete "$SERVICE" --project "$PROJECT" --region "$REGION" --quiet >/dev/null 2>&1 || true
-    gcloud secrets delete "$SECRET" --project "$PROJECT" --quiet >/dev/null 2>&1 || true
+    # Only this run's: the project may hold other Sky resources.
+    with_timeout 300 "$ROOT/sky-out/sky" ai teardown --all-sky --label "live-run=$RUN_ID" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 || true
+    if has_stage l5; then
+        gcloud run services delete "$SERVICE" --project "$PROJECT" --region "$REGION" --quiet >/dev/null 2>&1 || true
+        gcloud secrets delete "$SECRET" --project "$PROJECT" --quiet >/dev/null 2>&1 || true
+    fi
     gcloud artifacts repositories delete "$REPO" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
-    gcloud artifacts repositories delete "$REMOTE" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
+    has_stage l5 && gcloud artifacts repositories delete "$REMOTE" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
     gcloud storage rm -r "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
     gcloud storage buckets delete "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
     leak_check
@@ -210,7 +213,10 @@ trap 'exit 130' INT TERM HUP
 
 # ─── l0: preflight ───────────────────────────────────────────────────────
 if has_stage l0; then
-    for api in aiplatform run storage artifactregistry secretmanager cloudbuild cloudquotas cloudbilling; do
+    # Only the APIs the asked stages use: Cloud Run and Secret Manager for l5.
+    apis="aiplatform storage artifactregistry cloudbuild cloudquotas"
+    if has_stage l5; then apis="$apis run secretmanager"; fi
+    for api in $apis; do
         gcloud services list --enabled --project "$PROJECT" --format='value(config.name)' | grep -qx "$api.googleapis.com" \
             || { echo "gcp-live: the $api API is off; run scripts/ai/gcp-bootstrap.sh --project <id>" >&2; exit 2; }
     done
@@ -243,24 +249,30 @@ if has_stage l1; then
         --uniform-bucket-level-access --public-access-prevention --soft-delete-duration=0 >/dev/null
     gcloud storage buckets update "gs://$BUCKET" --update-labels="$LABELS,sky-kind=staging" >/dev/null
     gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" --member "serviceAccount:$TRAINER_SA" --role roles/storage.objectAdmin >/dev/null
-    gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" --member "serviceAccount:$SERVE_SA" --role roles/storage.objectViewer >/dev/null
     gcloud artifacts repositories create "$REPO" --project "$PROJECT" --location "$REGION" --repository-format docker \
         --labels "$LABELS,sky-kind=image" >/dev/null
-    gcloud artifacts repositories create "$REMOTE" --project "$PROJECT" --location "$REGION" --repository-format docker \
-        --mode remote-repository --remote-docker-repo DOCKER-HUB --labels "$LABELS,sky-kind=image" >/dev/null
-    openssl rand -hex 32 | tr -d '\n' | gcloud secrets create "$SECRET" --project "$PROJECT" --data-file=- \
-        --labels "$LABELS,sky-kind=secret" >/dev/null
-    gcloud secrets add-iam-policy-binding "$SECRET" --project "$PROJECT" --member "serviceAccount:$SERVE_SA" \
-        --role roles/secretmanager.secretAccessor >/dev/null
-    echo "gcp-live: l1: bucket, repositories and secret are in place"
+    # The tier's resources only when l5 runs: a shared project gets nothing a
+    # stage does not use.
+    if has_stage l5; then
+        gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" --member "serviceAccount:$SERVE_SA" --role roles/storage.objectViewer >/dev/null
+        gcloud artifacts repositories create "$REMOTE" --project "$PROJECT" --location "$REGION" --repository-format docker \
+            --mode remote-repository --remote-docker-repo DOCKER-HUB --labels "$LABELS,sky-kind=image" >/dev/null
+        openssl rand -hex 32 | tr -d '\n' | gcloud secrets create "$SECRET" --project "$PROJECT" --data-file=- \
+            --labels "$LABELS,sky-kind=secret" >/dev/null
+        gcloud secrets add-iam-policy-binding "$SECRET" --project "$PROJECT" --member "serviceAccount:$SERVE_SA" \
+            --role roles/secretmanager.secretAccessor >/dev/null
+    fi
+    echo "gcp-live: l1: the staging bucket and the image repository are in place"
     t0=$(date +%s)
     SKY_AI_TRAIN_IMAGE="$(with_timeout 3600 "$ROOT/sky-out/sky" ai image build --train --project "$PROJECT" --region "$REGION" \
         --repo "$REPO" --staging "gs://$BUCKET/build" | tail -1)"
     export SKY_AI_TRAIN_IMAGE
     t1=$(date +%s)
-    SKY_AI_SERVE_IMAGE="$(with_timeout 1800 "$ROOT/sky-out/sky" ai image build --tier --project "$PROJECT" --region "$REGION" \
-        --repo "$REPO" --staging "gs://$BUCKET/build" | tail -1)"
-    export SKY_AI_SERVE_IMAGE
+    if has_stage l5; then
+        SKY_AI_SERVE_IMAGE="$(with_timeout 1800 "$ROOT/sky-out/sky" ai image build --tier --project "$PROJECT" --region "$REGION" \
+            --repo "$REPO" --staging "gs://$BUCKET/build" | tail -1)"
+        export SKY_AI_SERVE_IMAGE
+    fi
     t2=$(date +%s)
     export SKY_AI_LIVE_ENGINE_IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REMOTE/vllm/vllm-openai@sha256:b18abb2df97b8f798e81862bd93f872ea18613372e2c3adc0cc2ac21e66ac12f"
     "$PY" -I - "$PRICES" "$((t1 - t0))" "$((t2 - t1))" >> "$STAGE_LOG" <<'PYEOF'

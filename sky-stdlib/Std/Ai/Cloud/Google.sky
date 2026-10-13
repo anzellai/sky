@@ -1052,6 +1052,41 @@ skyLabels =
             (one "sky-deployment")
 
 
+-- Every label of a resource. Google allows only lower-case letters, digits,
+-- `-` and `_` in a label's key and value, so the object is flat text with no
+-- escapes; it is read as a value and split (Json.Decode has no dict decoder).
+-- A service keeps all its labels, so `teardown --all-sky --label k=v` can
+-- select by a label Sky does not name.
+allLabels : JsonD.Decoder (List ( String, String ))
+allLabels =
+    JsonD.oneOf
+        [ JsonD.field "labels" JsonD.value
+              |> JsonD.map
+                     (\v ->
+                         JsonE.encode 0 v |> String.replace "{" ""
+                             |> String.replace "}" ""
+                             |> String.replace "\"" ""
+                             |> String.split ","
+                             |> List.filterMap
+                                    (\pair ->
+                                        case String.split ":" pair of
+
+                                            [k, val] ->
+                                                if validLabel (String.trim k) then
+                                                    Just
+                                                        ( String.trim k
+                                                        , String.trim val
+                                                        )
+
+                                                else
+                                                    Nothing
+
+                                            _ ->
+                                                Nothing))
+        , JsonD.succeed []
+        ]
+
+
 decodeJob : String -> Task Error CustomJob
 decodeJob body =
     Task.fromResult (JsonD.decodeString customJobDecoder body)
@@ -1287,7 +1322,7 @@ serviceDecoder =
                               ]))
                 , JsonD.succeed ( "", "" )
                 ])
-            skyLabels)
+            allLabels)
 
 
 servicesUrl : String -> String -> Task Error String

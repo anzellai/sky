@@ -13,7 +13,7 @@ make.
                                                  linux/amd64 tier binary)
     sky ai deploy --service <name> --tier-image <ref> [target flags] [--dry-run]
                                                  Serve.deploy
-    sky ai teardown --service <name> | --run <key> --staging gs://… | --all-sky
+    sky ai teardown --service <name> | --run <key> --staging gs://… | --all-sky [--label k=v]…
                                                  Serve.teardown, Google.delete*
     sky ai cloud ls [--run <key>]                Google.listCustomJobs, listServices
     sky ai cloud prices --service <name> [--match <word>]…
@@ -85,7 +85,7 @@ run args =
 
 usage : String
 usage =
-    "usage: sky ai serve [--adapters <name>@<alias>,…] | serve --image --out <dir> --service <name> [target flags] | deploy --service <name> --tier-image <ref> [target flags] [--dry-run] | teardown --service <name> | --run <key> --staging gs://… | --all-sky | cloud ls [--run <key>] | cloud prices --service <name> [--match <word>] | image build --train|--tier --repo <name> --staging gs://…  (each takes --project, --region and --format json)"
+    "usage: sky ai serve [--adapters <name>@<alias>,…] | serve --image --out <dir> --service <name> [target flags] | deploy --service <name> --tier-image <ref> [target flags] [--dry-run] | teardown --service <name> | --run <key> --staging gs://… | --all-sky [--label k=v]… | cloud ls [--run <key>] | cloud prices --service <name> [--match <word>] | image build --train|--tier --repo <name> --staging gs://…  (each takes --project, --region and --format json)"
 
 
 flag : String -> List String -> Maybe String
@@ -345,6 +345,24 @@ deployVerb json opts =
 
 
 -- ─── teardown and ls ────────────────────────────────────────────────────
+-- `--label k=v` (repeatable): `teardown --all-sky` deletes only the jobs and
+-- services that also carry every one of these labels, so a project that
+-- holds other Sky resources keeps them (the live tests use their run's
+-- `live-run` label).
+labelFilter : List String -> List ( String, String )
+labelFilter opts =
+    flags "--label" opts
+        |> List.filterMap
+               (\kv ->
+                   case String.split "=" kv of
+
+                       [k, v] ->
+                           Just ( k, v )
+
+                       _ ->
+                           Nothing)
+
+
 ended : String -> Bool
 ended state =
     List.member
@@ -458,13 +476,27 @@ teardownVerb json opts =
                                                                  ++ " staging objects deleted"))))
 
         ( Nothing, Nothing, True ) ->
-            projectRegion opts
+            (if List.length (labelFilter opts) /= List.length (flags "--label" opts) then
+                Task.fail
+                    (Error.invalidInput
+                        "sky ai teardown: write each --label as key=value")
+
+            else
+                -- A label that does not parse would widen the deletion.
+                projectRegion opts)
                 |> Task.andThen
                        (\( project, region ) ->
                            clearJobs
                                project
                                region
-                               "labels.sky-managed=\"true\""
+                               (String.join
+                                   " AND "
+                                   ("labels.sky-managed=\"true\""
+                                       :: List.map
+                                              (\( k, v ) ->
+                                                  "labels." ++ k ++ "=\"" ++ v
+                                                      ++ "\"")
+                                              (labelFilter opts)))
                                |> Task.andThen
                                       (\( deleted, cancelled ) ->
                                           Google.listServices project region
@@ -474,11 +506,16 @@ teardownVerb json opts =
                                                              mine =
                                                                  List.filter
                                                                      (\s ->
-                                                                         List.member
-                                                                             ( "sky-managed"
+                                                                         List.all
+                                                                             (\l ->
+                                                                                 List.member
+                                                                                     l
+                                                                                     s.labels)
+                                                                             (( "sky-managed"
                                                                              , "true"
                                                                              )
-                                                                             s.labels)
+                                                                                 :: labelFilter
+                                                                                        opts))
                                                                      svcs
                                                          in
                                                              Task.sequence

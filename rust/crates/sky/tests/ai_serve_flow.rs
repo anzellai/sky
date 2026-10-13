@@ -402,6 +402,53 @@ fn deploy_dry_run_teardown_and_ls_against_the_emulator() {
         text(&out)
     );
 
+    // `teardown --all-sky --label k=v` deletes only what carries the label: a
+    // live run in a shared project must not delete another Sky service. A
+    // second Sky service, made by "another run", carries live-run=r1.
+    let other = r#"{"labels":{"sky-managed":"true","live-run":"r1"},"template":{"nodeSelector":{"accelerator":"nvidia-l4"},"containers":[
+{"name":"tier","image":"r/t@sha256:01","ports":[{"containerPort":8080}]},
+{"name":"engine","image":"r/v@sha256:02","resources":{"limits":{"cpu":"4","memory":"16Gi","nvidia.com/gpu":"1"}}}]}}"#;
+    let (st, body) = http(
+        &gcp_addr,
+        "POST",
+        "/run/v2/projects/p/locations/us-central1/services?serviceId=other-tier",
+        Some("fake"),
+        other,
+    );
+    assert_eq!(st, 200, "create the other service: {body}");
+    let out = sky(&[
+        "teardown",
+        "--all-sky",
+        "--label",
+        "live-run",
+        "--project",
+        "p",
+        "--region",
+        "us-central1",
+    ]);
+    assert!(
+        !out.status.success() && text(&out).contains("key=value"),
+        "a malformed label is refused, not ignored:\n{}",
+        text(&out)
+    );
+    let out = sky(&[
+        "teardown",
+        "--all-sky",
+        "--label",
+        "live-run=r1",
+        "--project",
+        "p",
+        "--region",
+        "us-central1",
+    ]);
+    assert!(out.status.success(), "teardown --label:\n{}", text(&out));
+    let out = sky(&["cloud", "ls", "--project", "p", "--region", "us-central1"]);
+    assert!(
+        text(&out).contains("run-service  support-tier") && !text(&out).contains("other-tier"),
+        "only the labelled service is deleted:\n{}",
+        text(&out)
+    );
+
     for _ in 0..2 {
         let out = sky(&[
             "teardown",
