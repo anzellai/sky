@@ -15,16 +15,20 @@
   "upperBound": true,
   "stageWorstCaseUsd": {
     "l0": 0.0,
-    "l1": 0.30,
+    "l1": 0.3,
     "l2": 0.0,
     "l3": 0.25,
-    "l4": 0.70,
-    "l5": 0.90
+    "l4": 0.7,
+    "l5": 1.1
   },
   "stageWorstCaseBasis": {
     "l1": "two Cloud Build builds of at most 40 minutes together, and about 25 GB of images kept for under a day",
     "l3": "three n2-standard-4 jobs capped at 15 minutes each by their runtime ceiling",
     "l4": "one g2-standard-4 job capped at 40 minutes",
-    "l5": "one Cloud Run L4 instance for at most 45 minutes"
+    "l5": "one Cloud Run L4 instance for at most 45 minutes Plus l5-prep: two Fake n2-standard-4 jobs of at most 15 minutes each (USD 0.07 each)."
+  },
+  "cloudRunL4RegionsChecked": {
+    "us-central1": "2026-10-12",
+    "europe-west4": "2026-10-13: L4 without zonal redundancy 0.0001867 USD/s, CPU 0.000018 USD/s, memory 0.000002 USD/GiB-s (instance-based), the same as us-central1"
   }
 }

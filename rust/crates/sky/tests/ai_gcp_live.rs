@@ -111,9 +111,11 @@ fn scenario(name: &str, extra: &[(&str, String)]) -> Vec<serde_json::Value> {
     cmd.arg(name).current_dir(dir).stdin(Stdio::null());
     // A scenario's own database, run directory and registry prefix: the l3
     // scenarios run at once.
-    cmd.env("SKY_AI_LIVE_DIR", format!(".sky/live/{name}"));
+    // l5-prep registers the versions l5 serves, so the two share one world.
+    let world = if name.starts_with("l5") { "l5" } else { name };
+    cmd.env("SKY_AI_LIVE_DIR", format!(".sky/live/{world}"));
     if let Ok(reg) = std::env::var("SKY_AI_LIVE_REGISTRY") {
-        cmd.env("SKY_AI_LIVE_REGISTRY", format!("{reg}/{name}"));
+        cmd.env("SKY_AI_LIVE_REGISTRY", format!("{reg}/{world}"));
     }
     for (k, v) in extra {
         cmd.env(k, v);
@@ -299,6 +301,28 @@ fn gcp_live_l5_the_gpu_tier_on_cloud_run() {
     if !stage("l5") {
         return;
     }
+    // The versions the tier serves: two small Fake runs on CPU Vertex jobs,
+    // billed as Vertex jobs, not as Cloud Run time.
+    let prep = scenario("l5-prep", &[]);
+    for l in &prep {
+        if l["scenario"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("l5-prep-v")
+        {
+            training("l5", l);
+            assert_eq!(l["ok"], true, "an l5 version trains and registers: {l}");
+        }
+    }
+    let registered: Vec<&str> = prep
+        .iter()
+        .filter_map(|l| l["registered"].as_str())
+        .collect();
+    assert_eq!(
+        registered,
+        vec!["support@v1", "support@v2"],
+        "l5-prep registers support v1 and v2"
+    );
     let t0 = std::time::Instant::now();
     let out = scenario(
         "l5",

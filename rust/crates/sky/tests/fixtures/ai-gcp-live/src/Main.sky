@@ -153,6 +153,10 @@ cpuJob w name rank steps stepMs =
         |> Train.withMachinePrices prices
         |> Train.withWorkDir (liveDir ++ "/runs")
         |> Train.withRegistry w.reg
+        |> Train.withKeepStaging
+        -- Kept, so the report can read the job's run time for the ledger (a
+        -- run deletes its job records after it registers); the wrapper's
+        -- teardown deletes them by the run's label.
 
 
 emit : List ( String, JsonE.Value ) -> Task Error ()
@@ -424,10 +428,36 @@ run args =
                                        |> Train.withMachinePrices prices
                                        |> Train.withWorkDir (liveDir ++ "/runs")
                                        |> Train.withRegistry w.reg
+                                       |> Train.withKeepStaging
                            in
                                result (Train.drive w.db job)
                                    |> Task.andThen
                                           (report "l4" job "g2-standard-4"))
+
+        ["l5-prep"] ->
+            -- The two versions l5 serves: two small Fake runs on CPU Vertex
+            -- jobs (real PEFT files for the base's shapes), registered as
+            -- support v1 and v2 in l5's own world, so l5 needs no other stage.
+            world
+                |> Task.andThen
+                       (\w ->
+                           let
+                               first = cpuJob w "support" 4 6 1000
+                               second = cpuJob w "support" 4 8 1000
+                           in
+                               result (Train.drive w.db first)
+                                   |> Task.andThen
+                                          (report
+                                              "l5-prep-v1"
+                                              first
+                                              "n2-standard-4")
+                                   |> Task.andThen
+                                          (\_ -> result (Train.drive w.db second))
+                                   |> Task.andThen
+                                          (report
+                                              "l5-prep-v2"
+                                              second
+                                              "n2-standard-4"))
 
         ["l5"] ->
             world |> Task.andThen serveScenario
@@ -435,7 +465,7 @@ run args =
         _ ->
             Task.fail
                 (Error.invalidInput
-                    "usage: l2 | l3-once | l3-crash | l3-cancel | l3-budget | l4 | l5")
+                    "usage: l2 | l3-once | l3-crash | l3-cancel | l3-budget | l4 | l5-prep | l5")
 
 
 -- Poll the run until its Vertex job runs (at most ten minutes).

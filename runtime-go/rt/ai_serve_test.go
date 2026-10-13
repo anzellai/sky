@@ -360,3 +360,34 @@ func TestAiTierRefusesToServeOpenWithoutAToken(t *testing.T) {
 		t.Fatalf("NotConfigured, got %+v", df)
 	}
 }
+
+// The Cloud Run region is its own setting: the target's region in code, and
+// SKY_AI_SERVE_REGION over it. The training region (SKY_AI_TRAIN_REGION) does
+// not move it, so a tier can serve in another region than the one it trained
+// in (the live l5 stage serves in europe-west4 and trains in us-central1).
+func TestAiServeTargetRegionIsItsOwnSetting(t *testing.T) {
+	region := func() (string, string) {
+		r := force(t, Ai_serveTarget(map[string]any{"project": "p", "region": "us-central1", "image": "i@sha256:01"}))
+		list, ok := r.([]any)
+		if !ok {
+			t.Fatalf("serveTarget: %#v", r)
+		}
+		for _, s := range list {
+			m := s.(map[string]any)
+			if m["key"] == "REGION" {
+				return m["value"].(string), m["source"].(string)
+			}
+		}
+		t.Fatal("no REGION setting")
+		return "", ""
+	}
+	t.Setenv("SKY_AI_SERVE_REGION", "")
+	t.Setenv("SKY_AI_TRAIN_REGION", "asia-east1")
+	if v, src := region(); v != "us-central1" || src != "code" {
+		t.Fatalf("code region with a training region set: %s (%s)", v, src)
+	}
+	t.Setenv("SKY_AI_SERVE_REGION", "europe-west4")
+	if v, src := region(); v != "europe-west4" || src != "env" {
+		t.Fatalf("env over code: %s (%s)", v, src)
+	}
+}

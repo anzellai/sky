@@ -3,6 +3,7 @@
 # hard spending cap, with teardown and a leak check that ALWAYS run.
 #
 #   scripts/ai/gcp-live.sh --project <id> [--region us-central1]
+#                          [--serve-region <region>]   (Cloud Run, l5; default --region)
 #                          [--stages l0,l1,l2,l3,l4,l5] [--cap 40.00]
 #
 # Stages (each adds to the run's worst-case estimate, docs/ai/deploy-gcp.md):
@@ -59,18 +60,23 @@ fi
 
 PROJECT=""
 REGION="us-central1"
+SERVE_REGION=""
 STAGES="l0,l1,l2,l3"
 CAP="40.00"
 while [ $# -gt 0 ]; do
     case "$1" in
         --project) PROJECT="$2"; shift 2 ;;
         --region) REGION="$2"; shift 2 ;;
+        --serve-region) SERVE_REGION="$2"; shift 2 ;;
         --stages) STAGES="$2"; shift 2 ;;
         --cap) CAP="$2"; shift 2 ;;
         *) echo "gcp-live: unknown option $1" >&2; exit 2 ;;
     esac
 done
 [ -n "$PROJECT" ] || { echo "gcp-live: --project <id> is required" >&2; exit 2; }
+# Training (Vertex, the bucket, the images) runs in --region; the tier
+# (Cloud Run) may run in another region where its L4 quota is.
+SERVE_REGION="${SERVE_REGION:-$REGION}"
 has_stage() { case ",$STAGES," in *",$1,"*) return 0 ;; esac; return 1; }
 
 LEDGER="$ROOT/scripts/ai/live/gcp-ledger.jsonl"
@@ -80,7 +86,7 @@ SUFFIX="${RUN_ID##*-}"
 PROJECT_TAG="$(printf '%s' "$PROJECT" | openssl dgst -sha256 | awk '{print substr($NF,1,8)}')"
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/sky-gcp-live.XXXXXX")"
-echo "gcp-live: run $RUN_ID, stages $STAGES, region $REGION"
+echo "gcp-live: run $RUN_ID, stages $STAGES, region $REGION, serve region $SERVE_REGION"
 
 # ─── the credential ──────────────────────────────────────────────────────
 if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
@@ -142,7 +148,7 @@ leak_check() {
             --filter='labels.sky-managed=true AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED OR state=JOB_STATE_CANCELLING)' \
             --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
         echo "gcp-live: leak check: $n live Vertex jobs"; left=$((left + n))
-        n="$(gcloud run services list --project "$PROJECT" --region "$REGION" --filter='metadata.labels.sky-managed=true' \
+        n="$(gcloud run services list --project "$PROJECT" --region "$SERVE_REGION" --filter='metadata.labels.sky-managed=true' \
             --format='value(metadata.name)' 2>/dev/null | grep -c . || true)"
         echo "gcp-live: leak check: $n Cloud Run services"; left=$((left + n))
         n="$(gcloud artifacts repositories list --project "$PROJECT" --location "$REGION" --filter='labels.sky-managed=true' \
@@ -181,8 +187,11 @@ teardown() {
     # Job records cost nothing; Sky deletes the ended ones it made (gcloud has no delete).
     # Only this run's: the project may hold other Sky resources.
     with_timeout 300 "$ROOT/sky-out/sky" ai teardown --all-sky --label "live-run=$RUN_ID" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 || true
+    if [ "$SERVE_REGION" != "$REGION" ]; then
+        with_timeout 300 "$ROOT/sky-out/sky" ai teardown --all-sky --label "live-run=$RUN_ID" --project "$PROJECT" --region "$SERVE_REGION" >/dev/null 2>&1 || true
+    fi
     if has_stage l5; then
-        gcloud run services delete "$SERVICE" --project "$PROJECT" --region "$REGION" --quiet >/dev/null 2>&1 || true
+        gcloud run services delete "$SERVICE" --project "$PROJECT" --region "$SERVE_REGION" --quiet >/dev/null 2>&1 || true
         gcloud secrets delete "$SECRET" --project "$PROJECT" --quiet >/dev/null 2>&1 || true
     fi
     gcloud artifacts repositories delete "$REPO" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
@@ -228,10 +237,13 @@ print(next((i.get("details",{}).get("value","0") for i in d.get("dimensionsInfos
         --project "$PROJECT" --format=json 2>/dev/null | "$PY" -I -c 'import json,sys
 d=json.load(sys.stdin); r=sys.argv[1]
 v=[i.get("details",{}).get("value") for i in d.get("dimensionsInfos",[]) if i.get("dimensions",{}).get("region") in (r, None)]
-print(next((x for x in v if x), "0"))' "$REGION")"
-    echo "gcp-live: L4 quota in $REGION: Vertex training $train_l4, Cloud Run $run_l4"
+print(next((x for x in v if x), "0"))' "$SERVE_REGION")"
+    echo "gcp-live: L4 quota: Vertex training $train_l4 in $REGION, Cloud Run $run_l4 in $SERVE_REGION"
     if has_stage l4 && [ "${train_l4:-0}" = "0" ]; then
         echo "gcp-live: stage l4 needs the Vertex L4 training quota (it is 0 in $REGION)" >&2; exit 5
+    fi
+    if has_stage l5 && [ "${run_l4:-0}" = "0" ]; then
+        echo "gcp-live: stage l5 needs the Cloud Run L4 quota (it is 0 in $SERVE_REGION)" >&2; exit 5
     fi
     echo '{"stage":"l0","estimateUsd":0}' >> "$STAGE_LOG"
 fi
@@ -239,7 +251,7 @@ fi
 export SKY_AI_LIVE_RUN_ID="$RUN_ID" SKY_AI_LIVE_STAGES="$STAGES" SKY_AI_LIVE_STAGE_LOG="$STAGE_LOG"
 export SKY_AI_TRAIN_PROJECT="$PROJECT" SKY_AI_TRAIN_REGION="$REGION" SKY_AI_TRAIN_STAGING="gs://$BUCKET/train"
 export SKY_AI_TRAIN_SERVICE_ACCOUNT="$TRAINER_SA" SKY_AI_TRAIN_LABELS="live-run=$RUN_ID"
-export SKY_AI_SERVE_PROJECT="$PROJECT" SKY_AI_SERVE_REGION="$REGION"
+export SKY_AI_SERVE_PROJECT="$PROJECT" SKY_AI_SERVE_REGION="$SERVE_REGION"
 export SKY_AI_LIVE_REGISTRY="gs://$BUCKET/registry" SKY_AI_LIVE_SERVICE="$SERVICE" SKY_AI_LIVE_SECRET="$SECRET"
 export SKY_AI_LIVE_SERVE_SA="$SERVE_SA"
 
