@@ -412,7 +412,7 @@
       "tier": "T2"
     },
     "coverage-ledger": {
-      "expected_assertions": 196,
+      "expected_assertions": 198,
       "falsifier_mutation": "coverage-ledger.drop-a-sole-owner-import",
       "falsifier_proven": true,
       "summary": "the coverage ledger is current, and no surface got weaker unaccounted",
@@ -494,7 +494,7 @@
       "tier": "T1"
     },
     "roundtrip": {
-      "expected_assertions": 214,
+      "expected_assertions": 219,
       "falsifier_mutation": "roundtrip.error-node",
       "falsifier_proven": true,
       "summary": "byte-exact reprint + zero ERROR nodes over every corpus .sky file",
@@ -505,7 +505,7 @@
       "tier": "T1"
     },
     "shared-world": {
-      "expected_assertions": 162,
+      "expected_assertions": 163,
       "falsifier_mutation": "shared-world.inject-divergence",
       "falsifier_proven": true,
       "summary": "whole-program vs shared-world: identical verdicts, per item",
