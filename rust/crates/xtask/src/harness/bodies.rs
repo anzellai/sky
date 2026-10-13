@@ -4041,10 +4041,12 @@ pub fn ai_device_ios_sim(ctx: &GateCtx) -> GateOutcome {
         ])
         .current_dir(ctx.repo_root.join("rust"))
         .env_remove("CARGO_TARGET_DIR")
-        .env(
-            "DEVELOPER_DIR",
-            "/Applications/Xcode.app/Contents/Developer",
-        )
+        // No DEVELOPER_DIR here. This cargo run LINKS the test binary with
+        // the caller's C toolchain, and Xcode's SDK under another linker
+        // fails: a Nix shell's `ld` rejects Xcode 27's `libSystem.tbd`
+        // ("unknown architecture"), so every libc symbol is missing. The
+        // steps that need Xcode choose it themselves: `sky build --target
+        // mobile:ios` through `ios_developer_dir`, the test's `simctl`.
         .stdin(std::process::Stdio::null())
         .output();
     cargo_test_outcome(
