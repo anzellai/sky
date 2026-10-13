@@ -50,9 +50,28 @@ func fakeTrainer(t *testing.T) {
 		t.Fatal(fakeTrainerErr)
 	}
 	saved := aiTrainLauncher
+	// The trainer runs detached in a session of its own (aiTrainSysAttr), so
+	// it outlives the test by design; a test that fails mid-run (or a
+	// "hang" / "partial" trainer) would leave it running for up to an hour.
+	// Every trainer this test launches is ended with the test.
+	var launchedMu sync.Mutex
+	var launched []*exec.Cmd
 	aiTrainLauncher = func(python, driverDir, runDir, token string) *exec.Cmd {
-		return exec.Command(fakeTrainerBin, "--run", runDir, "--launch", token)
+		c := exec.Command(fakeTrainerBin, "--run", runDir, "--launch", token)
+		launchedMu.Lock()
+		launched = append(launched, c)
+		launchedMu.Unlock()
+		return c
 	}
+	t.Cleanup(func() {
+		launchedMu.Lock()
+		defer launchedMu.Unlock()
+		for _, c := range launched {
+			if c.Process != nil && processAlive(c.Process.Pid) {
+				_ = procSignalGroup(c.Process, syscall.SIGKILL)
+			}
+		}
+	})
 	savedGrace, savedPoll := aiTrainCancelGrace, aiTrainPollEvery
 	aiTrainPollEvery = 20 * time.Millisecond
 	t.Cleanup(func() {

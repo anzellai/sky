@@ -170,6 +170,16 @@ func aiTestEnv(t *testing.T, knobs map[string]any) (engineDir, modelRef string) 
 	t.Cleanup(func() {
 		aiResetSlots()
 		aiResetEngines()
+		// aiResetEngines stops the engines this process still knows. A test
+		// that forgets one on purpose (the orphan reap test) and then fails
+		// before its reap, or any engine left out of the table, is recorded
+		// in this test's AI home: end every one of those too. The home is
+		// the test's TempDir, so no later start would ever reap them.
+		for _, e := range aiRegistryRead().Engines {
+			if aiIsEngineProcess(e) {
+				aiKillEngineGroup(e.Pid)
+			}
+		}
 		aiSetKnobs(func(k *aiKnobs) { *k = saved })
 	})
 	aiResetSlots()
@@ -1014,6 +1024,13 @@ func TestAiOrphanedEnginesAreReapedByTheNextStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	orphan := s.engine.pid
+	// Ours to end whatever happens below: this test forgets the engine on
+	// purpose, so neither aiResetEngines nor a t.Fatal before the reap would.
+	t.Cleanup(func() {
+		if processAlive(orphan) {
+			aiKillEngineGroup(orphan)
+		}
+	})
 	// A bystander process recorded under a recycled pid must survive.
 	bystander := exec.Command("sleep", "30")
 	if err := bystander.Start(); err != nil {

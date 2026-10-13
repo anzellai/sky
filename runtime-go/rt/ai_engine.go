@@ -113,12 +113,15 @@ type aiEngine struct {
 	slot string
 	spec aiLocalSpec
 
-	mu           sync.Mutex
-	state        string        // "stopped", "starting", "ready", "down"
-	starting     chan struct{} // closed when the current start attempt ends
-	startErr     error
-	proc         *procHandle
-	pid          int
+	mu       sync.Mutex
+	state    string        // "stopped", "starting", "ready", "down"
+	starting chan struct{} // closed when the current start attempt ends
+	startErr error
+	proc     *procHandle
+	pid      int
+	// watch is the write end of the holder watcher's pipe (aiWatchEngine):
+	// closing it, or this process dying, ends the engine's group.
+	watch        *os.File
 	port         int
 	apiKey       string
 	keyFile      string
@@ -390,14 +393,19 @@ func (e *aiEngine) start(ctx context.Context) error {
 		return aiFailf(aiEngineFailed, "cannot start %s: %v", bin.path, sp.err)
 	}
 	h := sp.h
+	// Tie the engine to this process before anything can fail: a holder
+	// that dies from here on takes its engine with it.
+	watch := aiWatchEngine(h.pid)
 	if err := aiWaitHealthy(ctx, h, port, apiKey); err != nil {
 		h.shutdown()
+		aiCloseWatch(watch)
 		os.Remove(keyFile)
 		return err
 	}
 
 	e.mu.Lock()
 	e.proc, e.pid, e.port, e.apiKey, e.keyFile = h, h.pid, port, apiKey, keyFile
+	e.watch = watch
 	e.bin, e.fit, e.attached, e.stopping = bin, fit, false, false
 	e.mu.Unlock()
 	e.regID = aiRegistryAdd(aiRegistryEntry{
@@ -409,6 +417,14 @@ func (e *aiEngine) start(ctx context.Context) error {
 	go e.supervise(h)
 	e.startIdleLoop()
 	return nil
+}
+
+// aiCloseWatch releases a holder watcher: the engine it watched is stopped
+// or gone, so the watcher finds no engine and exits.
+func aiCloseWatch(w *os.File) {
+	if w != nil {
+		_ = w.Close()
+	}
 }
 
 // aiFitFor plans the engine's memory from the model file and the host.
@@ -580,7 +596,10 @@ func (e *aiEngine) supervise(h *procHandle) {
 	intentional := e.stopping || e.retired
 	e.proc = nil
 	keyFile := e.keyFile
+	watch := e.watch
+	e.watch = nil
 	e.mu.Unlock()
+	aiCloseWatch(watch)
 	aiRegistryRemove(e.regID)
 	os.Remove(keyFile)
 	if intentional {
@@ -712,7 +731,10 @@ func (e *aiEngine) stop() {
 		aiRegistryRemove(e.regID)
 		e.mu.Lock()
 		kf := e.keyFile
+		watch := e.watch
+		e.watch = nil
 		e.mu.Unlock()
+		aiCloseWatch(watch)
 		os.Remove(kf)
 	}
 }

@@ -201,10 +201,13 @@ each step has a typed failure:
 
 Engines are recorded in `<AI home>/engines.json`. A program that needs an
 engine with the same model and settings as one already running on the machine
-uses that one instead of loading the model again. An engine whose program was
-killed (for example by `SIGKILL`) keeps running in its own process group. The
-next program that starts an engine ends it. Engines are identified by the key
-file on their command line, so a recycled process id is never killed.
+uses that one instead of loading the model again. An engine runs in its own process group,
+with a small watcher in that group that waits on a pipe only its program
+holds. When the program ends by any means, `SIGKILL` included, the pipe
+closes and the watcher ends the engine (on Linux and macOS). The next program
+that starts an engine also ends any engine whose program is gone. Engines are
+identified by the key file on their command line, so a recycled process id is
+never killed.
 
 `Local.withEmbeddings` serves `/v1/embeddings` for `Provider.embed`. llama.cpp
 then serves embeddings only, so give chat and embeddings separate slots:
@@ -413,8 +416,8 @@ sends the holder SIGTERM, so it ends the same way. A second Ctrl-C during that
 cleanup exits at once. Any program that starts a local engine (or a
 `Process.spawn` child) gets the same handling, unless a Sky.Live, HTTP or
 terminal app in it already owns the signals: its shutdown then stops the
-engine. An engine whose holder was killed outright (SIGKILL) is ended by the
-next program that starts an engine on the machine.
+engine. An engine whose holder was killed outright (SIGKILL) is ended by its
+watcher at once, and otherwise by the next program that starts an engine.
 
 The start proves the engine it waits for is its own. `/health` needs no key,
 so a 200 there proves only that something listens on the port. The engine
