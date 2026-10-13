@@ -198,12 +198,12 @@ the adapter is registered (`Train.withKeepStaging` keeps them).
 
 ## Measured on a real project
 
-Six wrapper runs of stages l0 to l3 in us-central1 on 2026-10-12 and
+Seven wrapper runs of stages l0 to l3 in us-central1 on 2026-10-12 and
 2026-10-13 (`scripts/ai/live/gcp-ledger.jsonl` holds each run's resources
 and cost):
 
-* Cloud Build made the trainer image in 709 to 1131 s (USD 0.07 to 0.11 at
-  the default pool's rate) and the tier image in 17 to 48 s.
+* Cloud Build made the trainer image in 709 to 1176 s (USD 0.07 to 0.12 at
+  the default pool's rate) and the tier image in 17 to 89 s.
 * A Fake-driver job on `n2-standard-4` (20 steps of 3 s) took 329 to 974 s
   from create to end: Vertex provisioning and the pull of the CUDA-based
   trainer image are most of it.
