@@ -30,7 +30,9 @@
 # (`sky ai provision`).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKY="$ROOT/sky-out/sky"
+# SKY_BIN: the compiler to measure (the harness passes one it built from the
+# tree it judges, so a mutation of an embedded input reaches the build).
+SKY="${SKY_BIN:-$ROOT/sky-out/sky}"
 [ -x "$SKY" ] || { echo "ai-device-e2e: $SKY not found — run ./scripts/build.sh first." >&2; exit 1; }
 source "$ROOT/scripts/lib/fresh-compiler.sh"
 require_fresh_compiler "$SKY" "$ROOT"

@@ -933,7 +933,12 @@ fn walk_newest(
 /// tree", so the declared falsifier could only ever be a lie in the gate's own
 /// TOML. Establishing freshness here is what makes a SOURCE mutation a legal
 /// falsifier again.
-fn sky_binary(root: &Path) -> Result<PathBuf, String> {
+///
+/// The `ai-device-privacy` and `ai-device-csp` gates use it for the same
+/// reason: their mutations edit an embedded input (`Std.Ai.Device`, the
+/// device worker), so only a compiler built from the mutated tree can show
+/// the mutation.
+pub(crate) fn sky_binary(root: &Path) -> Result<PathBuf, String> {
     let (newest, witness) = newest_source_mtime(root)?;
 
     let fresh = |p: &Path| -> bool {

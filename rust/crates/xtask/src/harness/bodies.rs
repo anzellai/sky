@@ -4099,9 +4099,20 @@ fn cargo_test_outcome(
 pub const AI_DEVICE_BROWSER_EXPECTED: u64 = 6;
 
 pub fn ai_device_browser(ctx: &GateCtx) -> GateOutcome {
+    // The two mutations edit embedded inputs (`Std.Ai.Device`, the device
+    // worker). `sky-out/sky` is never rebuilt under a mutation, so the script's
+    // freshness check refused it and the mutated run went red on "older than
+    // the source", not on the privacy or policy check: a proof that proved
+    // nothing. The compiler comes from the tree under judgement instead,
+    // rebuilt when any compiler input is newer.
+    let sky = match crate::config_matrix::sky_binary(&ctx.repo_root) {
+        Ok(p) => p,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
     let out = Command::new("bash")
         .args(["scripts/ai-device-e2e.sh", "--scenarios", "chromium-cpu"])
         .current_dir(&ctx.repo_root)
+        .env("SKY_BIN", &sky)
         .stdin(std::process::Stdio::null())
         .output();
     let o = match out {
