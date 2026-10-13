@@ -167,6 +167,7 @@ func main() {
 			Temperature *float64 `json:"temperature"`
 			Seed        *int     `json:"seed"`
 			MaxTokens   *int     `json:"max_tokens"`
+			Stream      bool     `json:"stream"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		last := ""
@@ -189,6 +190,28 @@ func main() {
 				content = rp.Content
 				break
 			}
+		}
+		if req.Stream {
+			// llama-server's stream: a role chunk, the content a word at a
+			// time, the finish reason, the usage, then [DONE].
+			w.Header().Set("Content-Type", "text/event-stream")
+			fl, _ := w.(http.Flusher)
+			send := func(v any) {
+				b, _ := json.Marshal(v)
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				if fl != nil {
+					fl.Flush()
+				}
+			}
+			send(map[string]any{"model": req.Model, "choices": []any{map[string]any{"delta": map[string]any{"role": "assistant"}}}})
+			words := strings.SplitAfter(content, " ")
+			for _, wd := range words {
+				send(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": wd}}}})
+			}
+			send(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}}})
+			send(map[string]any{"choices": []any{}, "usage": map[string]any{"prompt_tokens": 3, "completion_tokens": len(words), "total_tokens": 3 + len(words)}})
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			return
 		}
 		b, _ := json.Marshal(map[string]any{
 			"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": content}}},

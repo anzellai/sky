@@ -192,7 +192,15 @@ endpoint slot =
         , resolve = noResolver
         , adapterRefreshS = -1
         , hasDevice = False
-        , device = Device.raw (Device.spec Device.ServerOnly)
+        , device =
+            { placement = "server"
+            , model = ""
+            , adapter = ""
+            , context = -1
+            , maxDownloadBytes = -1
+            , backends = []
+            , metered = False
+            }
         }
 
 

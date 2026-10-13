@@ -91,11 +91,57 @@ pub fn installed(target: &str) -> bool {
 
 /// The message that names how to install a missing engine.
 pub fn not_provisioned(target: &str) -> String {
+    let how = match published_pin(target) {
+        Ok(_) => format!("run `sky ai provision --device {target}`"),
+        Err(e) => e.to_string(),
+    };
     format!(
-        "the Std.Ai.Device {target} engine (llama.cpp {LLAMA_BUILD}) is not installed in {}; \
-         run `sky ai provision --device {target}`",
+        "the Std.Ai.Device {target} engine (llama.cpp {LLAMA_BUILD}) is not installed in {}; {how}",
         engine_dir(target).display()
     )
+}
+
+/// The workflow that builds and publishes the engine archives.
+pub const WORKFLOW: &str = ".github/workflows/ai-device-bundles.yml";
+
+/// A target whose published archive has no pin yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingPin {
+    pub target: String,
+    pub archive: &'static str,
+}
+
+impl std::fmt::Display for MissingPin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the {target} engine has no published pin: PINS[\"{target}\"] in \
+             rust/crates/sky/src/ai_device.rs is empty, because the {WORKFLOW} workflow has \
+             not published {archive} in the {RELEASE_TAG} release. Run that workflow and pin \
+             the archive's SHA-256 from its SHA256SUMS, or build the engine with \
+             `scripts/ai/device/build-device-bundles.sh {target} --llama-src <dir> --out <dir>` \
+             and install it with `sky ai provision --device {target} --from <dir>`",
+            target = self.target,
+            archive = self.archive,
+        )
+    }
+}
+
+/// The published archive and its pin for a device target, or the typed
+/// reason it cannot be downloaded. Never a silent skip: a caller that needs
+/// the release engine reports this error.
+pub fn published_pin(target: &str) -> Result<(&'static str, &'static str), MissingPin> {
+    match pin_for(target) {
+        Some((file, Some(sum))) => Ok((file, sum)),
+        Some((file, None)) => Err(MissingPin {
+            target: target.to_string(),
+            archive: file,
+        }),
+        None => Err(MissingPin {
+            target: target.to_string(),
+            archive: "",
+        }),
+    }
 }
 
 fn pin_for(target: &str) -> Option<(&'static str, Option<&'static str>)> {
@@ -140,14 +186,7 @@ pub fn provision(target: &str, from: Option<&Path>) -> Result<Installed, String>
                 ))
             }
             None => {
-                let Some(sum) = pin else {
-                    return Err(format!(
-                        "the {RELEASE_TAG} {target} engine is not published yet (its pin in \
-                         rust/crates/sky/src/ai_device.rs is empty); build it with \
-                         `scripts/ai/device/build-device-bundles.sh {target} --llama-src <dir> --out <dir>` \
-                         and install it with `sky ai provision --device {target} --from <dir>`"
-                    ));
-                };
+                let (_, sum) = published_pin(target).map_err(|e| e.to_string())?;
                 let dest = staging.join(file);
                 crate::db_provision::fetch_url(&release_url(file), &dest)?;
                 verify(&dest, sum, &release_url(file))?;
@@ -403,6 +442,35 @@ mod tests {
         assert!(WebEngine::parse("gpu")
             .unwrap_err()
             .contains("webgpu, cpu or both"));
+    }
+
+    #[test]
+    fn a_missing_pin_is_a_typed_error_naming_the_pin_and_the_workflow() {
+        for t in TARGETS {
+            match published_pin(t) {
+                Ok((file, sum)) => {
+                    assert!(file.contains(t));
+                    assert!(crate::db_provision::is_sha256_hex(sum), "{sum}");
+                }
+                Err(e) => {
+                    assert_eq!(e.target, t);
+                    let msg = e.to_string();
+                    for needle in [
+                        &format!("PINS[\"{t}\"]"),
+                        "rust/crates/sky/src/ai_device.rs",
+                        WORKFLOW,
+                        RELEASE_TAG,
+                        e.archive,
+                        "--from",
+                    ] {
+                        assert!(msg.contains(needle), "{needle:?} missing from: {msg}");
+                    }
+                    // A build that cannot stage the engine says why, too.
+                    assert!(not_provisioned(t).contains(WORKFLOW));
+                }
+            }
+        }
+        assert!(published_pin("desktop").is_err());
     }
 
     #[test]

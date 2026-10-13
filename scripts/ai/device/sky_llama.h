@@ -38,6 +38,15 @@ int sky_llama_adapter(const char * path, float scale);
  * {"error":{"code":...,"message":...}}. */
 const char * sky_llama_chat(const char * request_json);
 
+/* Stream one answer. sky_llama_chat_begin decodes the request's prompt and
+ * returns "" (or an error object as sky_llama_chat does). Each
+ * sky_llama_chat_next then returns {"delta":"<text>"} for the next whole UTF-8
+ * text the model wrote, and finally {"done":true,"body":<the same response
+ * sky_llama_chat returns>}. A new begin, a load or an unload ends an answer in
+ * progress. */
+const char * sky_llama_chat_begin(const char * request_json);
+const char * sky_llama_chat_next(void);
+
 /* The number of tokens a text has with the model's tokenizer, or -1. */
 int sky_llama_tokenize(const char * text);
 

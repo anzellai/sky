@@ -32,7 +32,7 @@ if(SKY_TARGET STREQUAL "web")
     -sSTACK_SIZE=1048576
     -lworkerfs.js
     -sEXPORTED_RUNTIME_METHODS=ccall,FS
-    -sEXPORTED_FUNCTIONS=_malloc,_free,_sky_llama_init,_sky_llama_devices,_sky_llama_gpu_devices,_sky_llama_load,_sky_llama_adapter,_sky_llama_chat,_sky_llama_tokenize,_sky_llama_unload,_sky_llama_last_error
+    -sEXPORTED_FUNCTIONS=_malloc,_free,_sky_llama_init,_sky_llama_devices,_sky_llama_gpu_devices,_sky_llama_load,_sky_llama_adapter,_sky_llama_chat,_sky_llama_chat_begin,_sky_llama_chat_next,_sky_llama_tokenize,_sky_llama_unload,_sky_llama_last_error
     ${SKY_EXTRA_LINK})
 elseif(SKY_TARGET STREQUAL "android")
   add_library(skyllama SHARED ${SKY_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/sky_llama_jni.cpp)
@@ -45,6 +45,12 @@ elseif(SKY_TARGET STREQUAL "ios")
   add_library(skyllama_core STATIC ${SKY_SOURCES})
   target_include_directories(skyllama_core PRIVATE ${SKY_INCLUDES})
   target_link_libraries(skyllama_core PRIVATE llama)
+elseif(SKY_TARGET STREQUAL "host")
+  # The engine core's own test on the build machine's CPU
+  # (test-engine-core.sh): the streamed answer equals the one-call answer.
+  add_executable(sky_llama_test ${SKY_SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/test_sky_llama.cpp)
+  target_include_directories(sky_llama_test PRIVATE ${SKY_INCLUDES})
+  target_link_libraries(sky_llama_test PRIVATE llama)
 else()
-  message(FATAL_ERROR "SKY_TARGET must be web, android or ios")
+  message(FATAL_ERROR "SKY_TARGET must be web, android, ios or host")
 endif()

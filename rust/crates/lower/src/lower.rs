@@ -9785,6 +9785,17 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ("rt.Error_isRetryable", 1) => twin("rt.Error_isRetryableT", vec![None], bool_()),
         ("rt.Error_domain", 1) => twin("rt.Error_domainT", vec![None], maybe(str_())),
         ("rt.Error_retryAfter", 1) => twin("rt.Error_retryAfterT", vec![None], maybe(int())),
+        // v0.28.0: the length, trim, replace and match twins
+        // (runtime-go/rt/kernel_twins_test.go checks each against its erased
+        // kernel), used when every argument is a proven string.
+        ("rt.String_length", 1) => twin("rt.String_lengthT", vec![Some(str_())], int()),
+        ("rt.String_trim", 1) => twin("rt.String_trimT", vec![Some(str_())], str_()),
+        ("rt.String_replace", 3) => twin(
+            "rt.String_replaceT",
+            vec![Some(str_()), Some(str_()), Some(str_())],
+            str_(),
+        ),
+        ("rt.Regex_match", 2) => twin("rt.Regex_matchT", vec![Some(str_()), Some(str_())], bool_()),
         // `Std.Db`'s row readers already return their Go type
         // (runtime-go/rt/db_auth.go), so each is its own twin: a column read
         // narrows nothing (doc 14 R5, lever §5.3).

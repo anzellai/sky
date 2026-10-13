@@ -40,6 +40,26 @@ JNIEXPORT jbyteArray JNICALL Java_sky_ai_SkyLlama_chat(JNIEnv * env, jclass, jby
     return arr;
 }
 
+static jbyteArray bytes(JNIEnv * env, const char * out) {
+    jsize m = (jsize) strlen(out);
+    jbyteArray arr = env->NewByteArray(m);
+    env->SetByteArrayRegion(arr, 0, m, reinterpret_cast<const jbyte *>(out));
+    return arr;
+}
+
+// Streaming: begin answers "" or an error object; each next answers one
+// {"delta":…} and finally {"done":true,"body":…} (sky_llama.h).
+JNIEXPORT jbyteArray JNICALL Java_sky_ai_SkyLlama_chatBegin(JNIEnv * env, jclass, jbyteArray request) {
+    jsize n = env->GetArrayLength(request);
+    std::string req((size_t) n, '\0');
+    env->GetByteArrayRegion(request, 0, n, reinterpret_cast<jbyte *>(&req[0]));
+    return bytes(env, sky_llama_chat_begin(req.c_str()));
+}
+
+JNIEXPORT jbyteArray JNICALL Java_sky_ai_SkyLlama_chatNext(JNIEnv * env, jclass) {
+    return bytes(env, sky_llama_chat_next());
+}
+
 JNIEXPORT jint JNICALL Java_sky_ai_SkyLlama_tokenize(JNIEnv * env, jclass, jstring text) {
     return sky_llama_tokenize(str(env, text).c_str());
 }

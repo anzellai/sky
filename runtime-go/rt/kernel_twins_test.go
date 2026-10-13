@@ -162,3 +162,25 @@ func TestMathAndListTwinsMatchErased(t *testing.T) {
 		}
 	}
 }
+
+// v0.28.0: the length, trim, replace and regex-match twins.
+func TestStringLengthTrimReplaceMatchTwinsMatchErased(t *testing.T) {
+	for _, s := range twinStrings {
+		if got, want := String_lengthT(s), String_length(s); got != want {
+			t.Errorf("length %q: %v vs %v", s, got, want)
+		}
+		if got, want := String_trimT(s), String_trim(s); got != want {
+			t.Errorf("trim %q: %q vs %q", s, got, want)
+		}
+		for _, old := range []string{"", "a", "ö", " "} {
+			if got, want := String_replaceT(old, "_", s), String_replace(old, "_", s); got != want {
+				t.Errorf("replace %q in %q: %q vs %q", old, s, got, want)
+			}
+		}
+		for _, re := range []string{"^a", "\\s", "[", "ö", "^$"} {
+			if got, want := Regex_matchT(re, s), Regex_match(re, s); got != want {
+				t.Errorf("match %q %q: %v vs %v", re, s, got, want)
+			}
+		}
+	}
+}
