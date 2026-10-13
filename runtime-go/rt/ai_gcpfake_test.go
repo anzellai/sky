@@ -326,3 +326,28 @@ func TestTestModeReachesTheLoopbackEmulatorOnly(t *testing.T) {
 		t.Fatalf("a non-loopback endpoint passed through test mode")
 	}
 }
+
+// A stockout Vertex waits out: the job is PENDING, with its start time set,
+// until the wait ends, then it runs. Steps and the scheduling timeout count
+// from RUNNING, not from that start.
+func TestFakeGCPPendingThenRunning(t *testing.T) {
+	f, clock, srv := newTestFakeGCP(t)
+	fakeStageRun(t, f, 0)
+	if st, _, _ := fakeDo(t, "POST", srv.URL+"/_fake/pending?ms=1000&run=sky-k", ""); st != 200 {
+		t.Fatalf("pending control: %d", st)
+	}
+	jobs := srv.URL + "/aiplatform/v1/projects/p/locations/us-central1/customJobs"
+	_, body, _ := fakeDo(t, "POST", jobs, fakeJobBody("0", "0"))
+	var job struct{ Name string }
+	json.Unmarshal([]byte(body), &job)
+	clock.t = clock.t.Add(25 * time.Millisecond)
+	_, body, _ = fakeDo(t, "GET", srv.URL+"/aiplatform/v1/"+job.Name, "")
+	if !strings.Contains(body, "JOB_STATE_PENDING") || !strings.Contains(body, "startTime") {
+		t.Fatalf("held PENDING with a start time: %s", body)
+	}
+	clock.t = clock.t.Add(1100 * time.Millisecond)
+	_, body, _ = fakeDo(t, "GET", srv.URL+"/aiplatform/v1/"+job.Name, "")
+	if !strings.Contains(body, "JOB_STATE_RUNNING") {
+		t.Fatalf("runs after the wait: %s", body)
+	}
+}

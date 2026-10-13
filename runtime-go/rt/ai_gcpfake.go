@@ -63,6 +63,9 @@ type aiFakeJob struct {
 	state                     string
 	create, start, end        time.Time
 	timeout                   time.Duration // scheduling.timeout: Vertex cancels the job there
+	pendingUntil              time.Time     // a stockout: PENDING (start set) until then
+	runningAt                 time.Time     // when it began RUNNING: steps and the timeout count from here
+	hello                     bool          // the attempt's hello is written
 	errCode                   int
 	errMsg                    string
 	machine                   string
@@ -116,7 +119,8 @@ type aiFakeGCP struct {
 	builds        map[string]map[string]any // operation → its result
 	quotas        map[string]int            // quotaId|region → limit
 	stockouts     int
-	unaskedCancel map[string]int // run key -> running jobs Vertex cancels on its own
+	unaskedCancel map[string]int           // run key -> running jobs Vertex cancels on its own
+	pendingFor    map[string]time.Duration // run key -> how long its next job waits PENDING
 	listLag       time.Duration
 	// clockScale makes a job's reported times run faster than the wall
 	// clock (a spend test reaches a budget in milliseconds): a reported time
@@ -701,7 +705,22 @@ func (f *aiFakeGCP) advance(j *aiFakeJob) {
 			end("JOB_STATE_FAILED", 8, "Resources are insufficient in region: "+j.region+" (stockout). Please try a different region.")
 			return
 		}
-		j.state, j.start = "JOB_STATE_RUNNING", now
+		// A stockout that Vertex waits out (seen live, 2026-10-13): the job is
+		// PENDING with its start time already set, and nothing is billed.
+		if d := f.pendingFor[aiFakeRunOf(j.displayName)]; d > 0 {
+			delete(f.pendingFor, aiFakeRunOf(j.displayName))
+			j.state, j.start, j.pendingUntil = "JOB_STATE_PENDING", now, now.Add(d)
+			return
+		}
+		j.state, j.start, j.runningAt = "JOB_STATE_RUNNING", now, now
+	} else if j.state == "JOB_STATE_PENDING" {
+		if now.Before(j.pendingUntil) {
+			return
+		}
+		j.state, j.runningAt = "JOB_STATE_RUNNING", now
+	}
+	if j.state == "JOB_STATE_RUNNING" && !j.hello {
+		j.hello = true
 		if !f.load(j) {
 			end("JOB_STATE_FAILED", 3, "sky_cloud: cannot read the run's inputs at gs://"+j.bucket+"/"+j.inputsKey)
 			return
@@ -718,7 +737,7 @@ func (f *aiFakeGCP) advance(j *aiFakeJob) {
 	}
 	// The scheduling timeout: Vertex AI cancels the job, as a live run showed
 	// (2026-10-12: JOB_STATE_CANCELLED, no terminal line from the trainer).
-	if j.timeout > 0 && j.state == "JOB_STATE_RUNNING" && f.reported(j.start).Before(now.Add(-j.timeout)) {
+	if j.timeout > 0 && j.state == "JOB_STATE_RUNNING" && f.reported(j.runningAt).Before(now.Add(-j.timeout)) {
 		end("JOB_STATE_CANCELLED", 1, "")
 		return
 	}
@@ -726,7 +745,7 @@ func (f *aiFakeGCP) advance(j *aiFakeJob) {
 	if _, ok := f.get(j.bucket, cancelKey); ok {
 		j.cancelAsked = true
 	}
-	due := j.resumeFrom + int(now.Sub(j.start)/(time.Duration(j.stepMs)*time.Millisecond))
+	due := j.resumeFrom + int(now.Sub(j.runningAt)/(time.Duration(j.stepMs)*time.Millisecond))
 	if due > j.total {
 		due = j.total
 	}
@@ -1215,6 +1234,13 @@ func (f *aiFakeGCP) control(w http.ResponseWriter, r *http.Request, what string)
 		aiFakeJSON(w, 200, map[string]any{})
 	case "stockout":
 		f.stockouts++
+		aiFakeJSON(w, 200, map[string]any{})
+	case "pending":
+		ms, _ := strconv.Atoi(q.Get("ms"))
+		if f.pendingFor == nil {
+			f.pendingFor = map[string]time.Duration{}
+		}
+		f.pendingFor[q.Get("run")] = time.Duration(ms) * time.Millisecond
 		aiFakeJSON(w, 200, map[string]any{})
 	case "unasked-cancel":
 		if f.unaskedCancel == nil {

@@ -306,6 +306,40 @@ unasked =
         |> Task.run
 
 
+-- A stockout that Vertex waits out: the job stays PENDING, its start time
+-- already set, and nothing is billed (a live run waited an hour and its
+-- USD 1 budget was spent on that wait). The emulator reports job time 1000
+-- times faster and holds the job PENDING for 5 s (83 minutes, more than the
+-- USD 0.30 budget buys); the run must finish, not end BudgetExceeded.
+waited : Result Error Train.Adapter
+waited =
+    fresh "waited"
+        |> Task.andThen
+               (\w ->
+                   let
+                       job =
+                           Fixture.job "waited" w
+                               |> Train.withBudget
+                                      (Money.fromMinor Money.USD 30)
+                   in
+                       Fixture.control "clockscale?x=1000"
+                           |> Task.andThen
+                                  (\_ ->
+                                      Fixture.control
+                                          ("pending?ms=5000&run="
+                                              ++ Train.runKey (Train.runId job)))
+                           |> Task.andThen (\_ -> Train.drive w.db job)
+                           |> Task.onError
+                                  (\e ->
+                                      Fixture.control "clockscale?x=1"
+                                          |> Task.andThen (\_ -> Task.fail e))
+                           |> Task.andThen
+                                  (\a ->
+                                      Fixture.control "clockscale?x=1"
+                                          |> Task.map (\_ -> a)))
+        |> Task.run
+
+
 -- ── Typed cloud failures ────────────────────────────────────────────
 stockout : Result Error Train.Adapter
 stockout =
@@ -473,6 +507,16 @@ tests =
                       Test.equal
                           ( a.relaunches, a.steps, a.resumedFrom > 0 )
                           ( 1, 6, True )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
+    , Test.test
+          "a job that waits PENDING spends nothing until it runs: it finishes under its budget"
+          (\_ ->
+              case waited of
+
+                  Ok a ->
+                      Test.equal a.steps 6
 
                   Err e ->
                       Test.fail (Error.toString e))

@@ -4319,6 +4319,7 @@ type alias CloudFile =
     , staging : String
     , runKey : String
     , spentMinor : Int
+    , runningSinceMs : Int
     }
 
 
@@ -4339,13 +4340,14 @@ readCloudFile dir =
                                       (\text ->
                                           JsonD.decodeString
                                               (JsonD.map2
-                                                  (\( j, s, a ) ( st, k, sm ) ->
+                                                  (\( j, s, a ) ( st, k, ( sm, rs ) ) ->
                                                       { job = j
                                                       , state = s
                                                       , attempt = a
                                                       , staging = st
                                                       , runKey = k
                                                       , spentMinor = sm
+                                                      , runningSinceMs = rs
                                                       })
                                                   (JsonD.map3
                                                       (\j s a -> ( j, s, a ))
@@ -4366,18 +4368,29 @@ readCloudFile dir =
                                                       (JsonD.field
                                                           "runKey"
                                                           JsonD.string)
-                                                      (JsonD.oneOf
-                                                          [ JsonD.field
-                                                                "spentMinor"
-                                                                JsonD.int
-                                                          , JsonD.succeed 0
-                                                          ])))
+                                                      (JsonD.map2
+                                                          (\sm rs -> ( sm, rs ))
+                                                          (JsonD.oneOf
+                                                              [ JsonD.field
+                                                                    "spentMinor"
+                                                                    JsonD.int
+                                                              , JsonD.succeed 0
+                                                              ])
+                                                          (JsonD.oneOf
+                                                              [ JsonD.field
+                                                                    "runningSinceMs"
+                                                                    JsonD.int
+                                                              , JsonD.succeed 0
+                                                              ]))))
                                               text
                                               |> Result.toMaybe))
 
 
-writeCloudFile : String -> CloudSettings -> String -> String -> String -> Int -> Int -> Task Error ()
-writeCloudFile dir cs key jobName state attempt spentMinor =
+-- `runningSinceMs`: when a watch first saw the job RUNNING (0 before), the
+-- start of the time Vertex bills; spend counts from there, not from the
+-- job's start time, which Vertex sets when the job begins PENDING.
+writeCloudFile : String -> CloudSettings -> String -> String -> String -> Int -> Int -> Int -> Task Error ()
+writeCloudFile dir cs key jobName state attempt spentMinor runningSinceMs =
     Time.unixMillis ()
         |> Task.andThen
                (\now ->
@@ -4396,6 +4409,7 @@ writeCloudFile dir cs key jobName state attempt spentMinor =
                                , ( "project", JsonE.string cs.project )
                                , ( "region", JsonE.string cs.region )
                                , ( "runKey", JsonE.string key )
+                               , ( "runningSinceMs", JsonE.int runningSinceMs )
                                , ( "spent"
                                  , JsonE.string
                                        (moneyText
@@ -4711,6 +4725,10 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                            (budgetLeft job cs attempt spentMinor
                                |> Task.andThen
                                       (\_ ->
+                                          -- The first cloud.json is written inside the launch
+                                          -- step, once: written after it, every replay of the
+                                          -- workflow wrote QUEUED over what the watches had
+                                          -- recorded (the watch then never saw its own PENDING).
                                           launchOnce
                                               job
                                               cs
@@ -4719,17 +4737,22 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                                               key
                                               attempt
                                               from
-                                              spentMinor))
+                                              spentMinor)
+                               |> Task.andThen
+                                      (\launched ->
+                                          writeCloudFile
+                                              (runDir job)
+                                              cs
+                                              key
+                                              launched
+                                              "JOB_STATE_QUEUED"
+                                              attempt
+                                              spentMinor
+                                              0
+                                              |> Task.map (\_ -> launched)))
                            |> Task.andThen
                                   (\name ->
-                                      writeCloudFile
-                                          (runDir job)
-                                          cs
-                                          key
-                                          name
-                                          "JOB_STATE_QUEUED"
-                                          attempt
-                                          spentMinor
+                                      Task.succeed ()
                                           |> Task.andThen
                                                  (\_ ->
                                                      cloudWatchLoop
@@ -5235,12 +5258,82 @@ watchCloud job cs store key attempt name after spentBefore =
                                                                 (\_ -> texts))
                                           |> Task.andThen
                                                  (\texts ->
-                                                     Time.unixMillis ()
+                                                     Task.map2
+                                                         (\n pf -> ( n, pf ))
+                                                         (Time.unixMillis ())
+                                                         (readCloudFile dir)
                                                          |> Task.andThen
-                                                                (\now ->
+                                                                (\( now, prevFile ) ->
                                                                     let
+                                                                        -- Vertex bills a job's
+                                                                        -- running time. Its start
+                                                                        -- time is set when it
+                                                                        -- begins PENDING, and a
+                                                                        -- stockout keeps it PENDING
+                                                                        -- for as long as it lasts
+                                                                        -- (an hour, live). Spend
+                                                                        -- counts from the first
+                                                                        -- watch that saw it RUNNING.
+                                                                        pending =
+                                                                            cj.state
+                                                                                == "JOB_STATE_QUEUED"
+                                                                                || cj.state
+                                                                                == "JOB_STATE_PENDING"
+                                                                        samePrev =
+                                                                            case prevFile of
+
+                                                                                Just pf ->
+                                                                                    if pf.job
+                                                                                        == name then
+                                                                                        Just
+                                                                                            pf
+
+                                                                                    else
+                                                                                        Nothing
+
+                                                                                Nothing ->
+                                                                                    Nothing
+                                                                        seenSince =
+                                                                            Maybe.withDefault
+                                                                                0
+                                                                                (Maybe.map
+                                                                                    .runningSinceMs
+                                                                                    samePrev)
+                                                                        sawPending =
+                                                                            Maybe.withDefault
+                                                                                False
+                                                                                (Maybe.map
+                                                                                    (\pf ->
+                                                                                        pf.state
+                                                                                            == "JOB_STATE_PENDING")
+                                                                                    samePrev)
+                                                                        -- Recorded (and kept) only when
+                                                                        -- a watch saw the job wait
+                                                                        -- PENDING and then run.
+                                                                        runningSince =
+                                                                            if pending then
+                                                                                0
+
+                                                                            else if seenSince
+                                                                                > 0 then
+                                                                                seenSince
+
+                                                                            else if sawPending then
+                                                                                now
+
+                                                                            else
+                                                                                0
+                                                                        -- Never seen PENDING: it began
+                                                                        -- running at its start.
                                                                         from =
-                                                                            if cj.startMs
+                                                                            if pending then
+                                                                                0
+
+                                                                            else if runningSince
+                                                                                > 0 then
+                                                                                runningSince
+
+                                                                            else if cj.startMs
                                                                                 > 0 then
                                                                                 cj.startMs
 
@@ -5321,6 +5414,7 @@ watchCloud job cs store key attempt name after spentBefore =
                                                                             cj.state
                                                                             attempt
                                                                             spentMinor
+                                                                            runningSince
                                                                             |> Task.map
                                                                                    (\_ ->
                                                                                        { segment =

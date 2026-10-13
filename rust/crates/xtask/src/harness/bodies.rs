@@ -4160,12 +4160,12 @@ pub fn ai_serve_hot_loads_without_dropping_a_request(ctx: &GateCtx) -> GateOutco
     )
 }
 
-/// Thirteen: the cases of the Vertex workflow suite
+/// Fourteen: the cases of the Vertex workflow suite
 /// (`rust/crates/sky/tests/fixtures/ai-cloud/tests/CloudWorkflowTest.sky`), run
 /// against the runtime's Google Cloud emulator. One of them loses the launch's
 /// journal row after the job was created and requires exactly one create.
 /// Measured by this gate.
-pub const AI_TRAIN_EXACTLY_ONCE_EXPECTED: u64 = 13;
+pub const AI_TRAIN_EXACTLY_ONCE_EXPECTED: u64 = 14;
 
 /// `sky test` of the Vertex workflow suite in place (inside the repo, so the
 /// build reads the tree's stdlib and a mutation of it takes effect), in test
