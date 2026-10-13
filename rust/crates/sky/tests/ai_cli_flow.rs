@@ -272,12 +272,18 @@ fn sky_ai_start_ends_its_engine_on_ctrl_c() {
     }
     let fake = fake_engine();
     let cwd = temp_dir("cwd-sigint");
-    let mut start = ChildGroup::spawn(
+    // SIGINT at its default action in the child, whatever this process
+    // inherited: a shell's background job (a long run started with `&`)
+    // ignores SIGINT, an ignored signal stays ignored across exec, and the
+    // runtime rightly leaves an ignored SIGINT ignored (child_signal.go,
+    // `childSignalSet`). The test then waited 20 s for an exit that a
+    // correct program never makes, and passed when run alone in a terminal.
+    let mut start = ChildGroup::spawn(sigint_default(
         fake.sky(&cwd)
             .args(["ai", "start", "chat", "--model", &fake.model_ref])
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit()),
-    )
+    ))
     .unwrap();
     let mut line = String::new();
     let mut reader = BufReader::new(start.child().stdout.take().unwrap());
@@ -448,6 +454,61 @@ fn busy_server() -> String {
         }
     });
     addr
+}
+
+/// Start `cmd` with SIGINT at its default action. An ignored signal stays
+/// ignored across exec, so a child of a harness that runs as a shell's
+/// background job (which ignores SIGINT) cannot be interrupted at all.
+#[cfg(unix)]
+fn sigint_default(cmd: &mut Command) -> &mut Command {
+    sigint_disposition(cmd, nix::sys::signal::SigHandler::SigDfl)
+}
+
+#[cfg(unix)]
+fn sigint_disposition(cmd: &mut Command, to: nix::sys::signal::SigHandler) -> &mut Command {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: the closure runs between fork and exec. It calls only
+    // signal(2), which is async-signal-safe, and allocates nothing.
+    unsafe {
+        cmd.pre_exec(move || {
+            nix::sys::signal::signal(nix::sys::signal::Signal::SIGINT, to)
+                .map(|_| ())
+                .map_err(std::io::Error::from)
+        });
+    }
+    cmd
+}
+
+/// The Ctrl-C test, run by a harness that ignores SIGINT: the case of a long
+/// `cargo test` started in the background (`&`, or a tool's background
+/// task), where it failed while it passed when run alone. Before the fix the
+/// inner test sent SIGINT to a `sky ai start` that inherited the ignored
+/// disposition, waited 20 s, and failed with "did not exit on SIGINT".
+#[cfg(unix)]
+#[test]
+fn ctrl_c_reaches_sky_ai_start_when_the_harness_ignores_sigint() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let out = sigint_disposition(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "sky_ai_start_ends_its_engine_on_ctrl_c",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .stdin(Stdio::null()),
+        nix::sys::signal::SigHandler::SigIgn,
+    )
+    .output()
+    .expect("run the Ctrl-C test with SIGINT ignored");
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && text.contains("1 passed"),
+        "the Ctrl-C test failed under an ignored SIGINT:\n{text}"
+    );
 }
 
 #[cfg(unix)]
