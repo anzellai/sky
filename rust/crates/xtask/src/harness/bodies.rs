@@ -100,11 +100,12 @@ pub const CONFORMANCE_EXPECTED: u64 = 1496; // +19 CodecConformance + SkyCoreErr
 /// v2's "SKIP counted as pass" defect is closed by making skips invisible to
 /// the assertion count rather than by counting them as successes.
 pub const VERIFY_CLI_EXPECTED: u64 = 13;
-/// `examples/*` projects that own a `tests/` directory. Measured: 11 by the
-/// `sky-verify` gate in v0.28.0 phase 2 part C. The count had been 6 and
-/// stale: the AI examples 68 to 71 each added a `tests/` suite without moving
-/// it (the gate runs only in the release tier), and 72 adds the fifth.
-pub const SKY_VERIFY_EXPECTED: u64 = 11;
+/// `examples/*` projects that own a `tests/` directory. Measured: 14 by the
+/// `sky-verify` gate in v0.28.0 (`--verify-falsifiers`). It was 11 after
+/// v0.28.0 phase 2 part C (examples 68 to 72), and examples 73, 74 and 75
+/// each added a `tests/` suite without moving it. An earlier count of 6 went
+/// stale the same way. A new suite moves this count in the same commit.
+pub const SKY_VERIFY_EXPECTED: u64 = 14;
 
 /// Total checkable branches across the diff-fuzz fixtures. Measured: **10** —
 /// `spa-derived-read` 4 (whole-model reads + the Msg-arg collision),

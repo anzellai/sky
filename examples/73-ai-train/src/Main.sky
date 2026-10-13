@@ -151,14 +151,18 @@ update msg model =
             , Cmd.perform
                   (withJob
                       (\w job ->
-                          (if ended model then
-                               -- A cancelled or failed run starts again from
-                               -- its newest checkpoint.
-                               Train.resume job |> Task.map (\_ -> ())
+                          let
+                              -- A cancelled or failed run starts again from
+                              -- its newest checkpoint.
+                              resumeIfEnded =
+                                  if ended model then
+                                      Train.resume job |> Task.map (\_ -> ())
 
-                           else
-                               Task.succeed ())
-                              |> Task.andThen (\_ -> Train.start w.db job)))
+                                  else
+                                      Task.succeed ()
+                          in
+                              resumeIfEnded
+                                  |> Task.andThen (\_ -> Train.start w.db job)))
                   Started
             )
 
