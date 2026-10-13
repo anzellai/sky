@@ -457,9 +457,9 @@ fn verify_one(
     // mtime back, so that binary looked fresh and the NEXT gate measured the
     // mutated compiler: config-matrix's own baseline came back red on a clean
     // tree (`live.port` builder "ignored", the inverted-provenance mutation).
-    let built_under_mutation = cargo_target_dir_of(&opts.exe)
-        .map(|t| !post_revert_rebuilds(&t, mutation_started).is_empty())
-        .unwrap_or(false);
+    let built_under_mutation = gate_target_dirs(&opts.repo_root, &opts.exe)
+        .iter()
+        .any(|t| !post_revert_rebuilds(t, mutation_started).is_empty());
     let rebuilt_source = rust_source || built_under_mutation;
     // Capture the reverted file + its ORIGINAL mtime before the patch drops. The
     // revert restores byte-identical content AND puts the old mtime back (so a
@@ -570,8 +570,33 @@ fn post_revert_rebuilds(
     out
 }
 
+/// Every cargo target directory a gate may build a `sky` into: the running
+/// `xtask`'s own (the `lsp` and `config-matrix` gates inherit it), and the
+/// repo's default `rust/target`. The `cargo test` gates (`cli-verbs`,
+/// `ai-device-partition`, `ai-device-ios-sim`) remove `CARGO_TARGET_DIR` on
+/// purpose, so they build there. A mutation those gates compiled into
+/// `rust/target` outlived its revert: `ai-device-partition` drops `AiDevice`
+/// from `CLIENT_EFFECT_KERNELS`, its `cargo test` compiled that into
+/// `rust/target`'s `project` crate, the revert put `spa_partition.rs`'s old
+/// mtime back, and `ai-device-ios-sim`'s next `cargo test` reused the mutated
+/// compiler: its baseline went red on a clean tree ("no codec for a field of
+/// type `Status`", a device call carried over the wire).
+fn gate_target_dirs(root: &Path, exe: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = cargo_target_dir_of(exe).into_iter().collect();
+    let default = root.join("rust").join("target");
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    };
+    if !dirs.iter().any(|d| same(d, &default)) {
+        dirs.push(default);
+    }
+    dirs
+}
+
 /// Rebuild what a reverted Rust-source mutation may have compiled into: the
-/// running `xtask`, then every [`post_revert_rebuilds`] artefact.
+/// running `xtask`, then every [`post_revert_rebuilds`] artefact in every
+/// [`gate_target_dirs`] directory.
 fn rebuild_after_revert(
     root: &Path,
     exe: &Path,
@@ -582,11 +607,10 @@ fn rebuild_after_revert(
     if rust_source {
         rebuild_xtask(root, exe, budget)?;
     }
-    let Some(target_dir) = cargo_target_dir_of(exe) else {
-        return Ok(());
-    };
-    for args in post_revert_rebuilds(&target_dir, since) {
-        cargo_build_into(root, exe, args, budget)?;
+    for target_dir in gate_target_dirs(root, exe) {
+        for args in post_revert_rebuilds(&target_dir, since) {
+            cargo_build_in(root, &target_dir, args, budget)?;
+        }
     }
     Ok(())
 }
@@ -598,8 +622,6 @@ fn cargo_build_into(
     args: &[&str],
     budget: Duration,
 ) -> Result<(), String> {
-    use std::process::{Command, Stdio};
-
     // Build into the target directory `exe` lives in, whatever it is called.
     // Neither an inherited CARGO_TARGET_DIR nor the default `rust/target` is
     // right in general: a harness started from `rust/isolated-target` that
@@ -613,10 +635,22 @@ fn cargo_build_into(
             exe.display()
         ));
     };
+    cargo_build_in(root, &target_dir, args, budget)
+}
+
+/// Run `cargo <args>` into `target_dir`, bounded.
+fn cargo_build_in(
+    root: &Path,
+    target_dir: &Path,
+    args: &[&str],
+    budget: Duration,
+) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
     let mut cmd = Command::new("cargo");
     cmd.args(args)
         .current_dir(root.join("rust"))
-        .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_TARGET_DIR", target_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -707,6 +741,33 @@ mod tests {
             "a release sky built during the mutated run is rebuilt too"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The `cargo test` gates remove CARGO_TARGET_DIR and build their `sky` in
+    // the repo's `rust/target`. A mutation they compiled there must be rebuilt
+    // after the revert as well, or the next of them runs the mutated compiler
+    // (ai-device-ios-sim after ai-device-partition). The running binary's own
+    // directory stays first, and is not listed twice when it IS `rust/target`.
+    #[test]
+    fn the_post_revert_rebuild_covers_the_repos_default_target_dir() {
+        assert_eq!(
+            gate_target_dirs(
+                Path::new("/r"),
+                Path::new("/elsewhere/tfinal/release/xtask")
+            ),
+            vec![
+                PathBuf::from("/elsewhere/tfinal"),
+                PathBuf::from("/r/rust/target")
+            ]
+        );
+        assert_eq!(
+            gate_target_dirs(Path::new("/r"), Path::new("/r/rust/target/release/xtask")),
+            vec![PathBuf::from("/r/rust/target")]
+        );
+        assert_eq!(
+            gate_target_dirs(Path::new("/r"), Path::new("xtask")),
+            vec![PathBuf::from("/r/rust/target")]
+        );
     }
 
     // The rebuild targets the directory the RUNNING binary lives in. A harness
