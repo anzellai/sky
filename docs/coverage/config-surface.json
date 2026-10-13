@@ -48,14 +48,14 @@
   ],
   "pre_binary": {
     "bin": [
-      "rust/crates/project/src/build.rs:2412 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:2449 (sky_toml_project_key)"
     ],
     "database.driver": [
       "structural: rust/crates/sky/src/main.rs fn db_driver_label — a THIRD hand-rolled scalar parser, whose doc comment claims to mirror `read_sky_toml_config` and does not (design §1.3: on `driver = \"postgres\"  # prod` it returns `postgres\"  # prod`). Read before the build, for the `sky db reset`/`drop` confirmation prompt."
     ],
     "database.embedded": [
       "rust/crates/sky/src/db_cluster.rs:1657 (sky_toml_flag)",
-      "rust/crates/sky/src/main.rs:15007 (sky_toml_flag)"
+      "rust/crates/sky/src/main.rs:15173 (sky_toml_flag)"
     ],
     "database.maxOpenConns": [
       "rust/crates/sky/src/db_pool_sizing.rs:151 (toml_value)"
@@ -78,7 +78,7 @@
     "env.prefix": [
       "rust/crates/sky/src/db_cluster.rs:1666 (sky_toml_section_key)",
       "rust/crates/sky/src/db_pool_sizing.rs:161 (toml_value)",
-      "rust/crates/sky/src/main.rs:14882 (sky_toml_section_key)"
+      "rust/crates/sky/src/main.rs:15048 (sky_toml_section_key)"
     ],
     "go.dependencies": [
       "structural: rust/crates/project/src/ffi_ops.rs fn read_dependencies — same reader, same verbs; materialises the go.mod pins a build needs before it can start."
@@ -94,7 +94,7 @@
       "rust/crates/sky/src/main.rs:11971 (sky_toml_project_key)"
     ],
     "root": [
-      "rust/crates/project/src/build.rs:2418 (sky_toml_project_key)"
+      "rust/crates/project/src/build.rs:2455 (sky_toml_project_key)"
     ],
     "spa.wire": [
       "rust/crates/sky/src/main.rs:5302 (sky_toml_section_key)"
@@ -182,9 +182,14 @@
     "ADMIN_TOKEN",
     "AI_ACCEL",
     "AI_FETCH",
+    "AI_GCP_ENDPOINT",
     "AI_HOME",
     "AI_LLAMA_BIN",
     "AI_REGISTRY",
+    "AI_SERVE_ADAPTERS",
+    "AI_SERVE_BIND",
+    "AI_SERVE_ENGINE",
+    "AI_SERVE_TOKEN",
     "AI_TRAIN_BACKEND",
     "ALLOWED_HOSTS",
     "ANALYTICS_DB_PATH",
@@ -260,12 +265,12 @@
   "seeded_without_reader": [],
   "summary": {
     "accepted_sky_toml_keys": 27,
-    "documented_names": 152,
+    "documented_names": 175,
     "documented_without_reader": 13,
     "pre_binary_surfaces": 17,
     "read_without_doc": 25,
     "runtime_read_literal_sky_names": 46,
-    "runtime_read_suffixes": 55,
+    "runtime_read_suffixes": 60,
     "seeded_suffixes": 20,
     "seeded_without_reader": 0,
     "unclassified_keys": 0,

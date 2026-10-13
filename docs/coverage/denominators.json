@@ -9,11 +9,11 @@
   "removals_accounted": 76,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 2743,
+    "entries": 2880,
     "explicit_exposing": {
-      "entries": 2565,
-      "modules": 122,
-      "unfiltered_entries": 3628
+      "entries": 2702,
+      "modules": 124,
+      "unfiltered_entries": 3912
     },
     "exposing_all": {
       "_note": "modules whose header is `exposing (..)`: no public-API curation exists, so their filtered count IS their unfiltered count — every top-level declaration, including helpers never intended as API. Migrating these to explicit `exposing` lists is a tracked task.",
@@ -25,16 +25,16 @@
       ],
       "modules": 3
     },
-    "modules": 125,
-    "types": 336,
+    "modules": 127,
+    "types": 363,
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
-      "entries": 3806,
-      "hidden_by_exposing": 1063,
-      "types": 404,
-      "values": 3402
+      "entries": 4090,
+      "hidden_by_exposing": 1210,
+      "types": 445,
+      "values": 3645
     },
-    "values": 2407
+    "values": 2517
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",
@@ -55,20 +55,20 @@
       "vacuous_pass": 7
     },
     "examples": {
-      "assertion_calls_incl_pass": 210,
-      "assertions": 201,
+      "assertion_calls_incl_pass": 222,
+      "assertions": 213,
       "by_assertion_fn": {
-        "equal": 134,
+        "equal": 139,
         "err": 0,
         "expectErrorKind": 0,
-        "fail": 46,
+        "fail": 53,
         "isFalse": 2,
         "isTrue": 19,
         "notEqual": 0,
         "ok": 0
       },
-      "cases": 164,
-      "suites": 13,
+      "cases": 169,
+      "suites": 14,
       "vacuous_pass": 9
     }
   }

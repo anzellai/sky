@@ -17,14 +17,14 @@
 #            (lower/src/lower.rs:246-266).
 
 [corpus]
-n_min = 697
+n_min = 700
 n_iso = 57
 n_iso_ceiling = 58
 n_iso_static = 146
 n_iso_static_ceiling = 300
-class_v = 696
+class_v = 699
 class_d = 1
-family_S = 191
+family_S = 194
 family_L = 361
 family_E = 10
 family_R = 135
@@ -4552,7 +4552,7 @@ witness    = "value"
 axes       = { edge = "nominal", surface = "aitrain" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
-stdout     = "7/12|converting 4 1 2|mlx,unsloth,fake"
+stdout     = "7/12|converting 4 1 2|mlx,unsloth,fake,vertex|sky-2d711642b726b0440162"
 
 [[case]]
 id         = "stdlib_edge/failure-aitrain"
@@ -4566,6 +4566,45 @@ axes       = { edge = "failure", surface = "aitrain" }
 coordinate = "mandate: stdlib behaviour at its edge classes"
 expect     = "accept"
 stdout     = "ToolchainFailed"
+
+[[case]]
+id         = "stdlib_edge/nominal-aiserve"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aiserve" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "--enable-lora --max-loras 3|Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775|projects/p/locations/us-central1/services/t"
+
+[[case]]
+id         = "stdlib_edge/nominal-aigooglecloud"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "nominal", surface = "aigooglecloud" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "NVIDIA_L4 1,NVIDIA_L4 2, 0|TFFF"
+
+[[case]]
+id         = "stdlib_edge/failure-aigooglecloud"
+family     = "S"
+stratum    = "stdlib_edge"
+mode       = "behavioural"
+isolation  = "batch"
+class      = "V"
+witness    = "value"
+axes       = { edge = "failure", surface = "aigooglecloud" }
+coordinate = "mandate: stdlib behaviour at its edge classes"
+expect     = "accept"
+stdout     = "QuotaExceeded CapacityUnavailable RemoteRejected"
 
 [[case]]
 id         = "stdlib_edge/nominal-aidevice"

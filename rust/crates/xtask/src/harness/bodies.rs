@@ -47,7 +47,7 @@ use std::process::Command;
 /// **214 at the merge of v0.28.0 phase 3** (+3, examples/73-ai-train:
 /// src/Main.sky, src/Support.sky, tests/TrainExampleTest.sky), measured by the
 /// `roundtrip` gate.
-pub const ROUNDTRIP_EXPECTED: u64 = 219; // +5: examples/75-ai-everywhere (four src modules and one tests suite, v0.28.0 phase 5); +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
+pub const ROUNDTRIP_EXPECTED: u64 = 224; // +5: examples/74-ai-cloud (src/Main.sky, Cloud.sky, Ai.sky, Suites.sky, tests/CloudTest.sky, v0.28.0 phase 4), measured by the `roundtrip` gate on the merged tree; +5: examples/75-ai-everywhere (four src modules and one tests suite, v0.28.0 phase 5); +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -795,7 +795,11 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// **697 in v0.28.0 phase 5** (+2, Family S: the `aidevice` surface, nominal
 /// and failure, for `Std.Ai.Device`), measured by the generator
 /// (`corpus_count_sync`) and `xtask corpus --emit-manifest`.
-pub const CORPUS_EXPECTED: u64 = 697;
+/// **700 at the merge of v0.28.0 phases 4 and 5** (+3, Family S: the
+/// `aiserve` surface, nominal, and the `aigooglecloud` surface, nominal and
+/// failure), measured by `xtask corpus --emit-manifest` and the
+/// `corpus-manifest` gate.
+pub const CORPUS_EXPECTED: u64 = 700;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -855,7 +859,11 @@ pub const CORPUS_EXPECTED: u64 = 697;
 ///
 /// **551 in v0.28.0 phase 5** (+2, the `aidevice` surface, built and run;
 /// measured by the generator, `corpus_count_sync`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 551;
+///
+/// **554 at the merge of v0.28.0 phases 4 and 5** (+3, the `aiserve` and
+/// `aigooglecloud` surfaces, built and run; phase 4's `xtask corpus --run`
+/// built and ran all of them green).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 554;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -896,7 +904,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 163; // measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 164; // measured 164 by the `shared-world` gate at the merge of v0.28.0 phases 4 and 5: +1 dir examples/74-ai-cloud; measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2951,7 +2959,12 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// kind of `DeviceUnsupported` and `StorageDenied`, +6
 /// `ProviderEndpointTest`: `chatStream`, `stream` and `read`), measured by the
 /// `sky-suites` gate.
-pub const SKY_SUITES_EXPECTED: u64 = 1032;
+///
+/// **1066 at the merge of v0.28.0 phases 4 and 5** (+34: `ServeTest` 9,
+/// `TrainCloudTest` 12, `RegistryStoreTest` 5, and the phase 4 cases added to
+/// `FailureTest` and `RegistryTest`), measured by the `sky-suites` gate (42
+/// suites, every case green).
+pub const SKY_SUITES_EXPECTED: u64 = 1066;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -3500,7 +3513,12 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// 196 -> 197 in v0.28.0 phase 5: `stdlib.Std.Ai.Device`, covered by
 /// `tests/Std/Ai/DeviceTest.sky`, the `aidevice` corpus surface and the
 /// `ai-device-*` gates.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 197;
+/// 197 -> 199 at the merge of v0.28.0 phases 4 and 5, measured by the
+/// `coverage-ledger` gate: `stdlib.Std.Ai.Serve` and
+/// `stdlib.Std.Ai.Cloud.Google`, covered by `tests/Std/Ai/ServeTest.sky`,
+/// `tests/Std/Ai/TrainCloudTest.sky` and the `aiserve` and `aigooglecloud`
+/// corpus surfaces.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 199;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///

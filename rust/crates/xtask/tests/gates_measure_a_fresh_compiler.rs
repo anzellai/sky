@@ -442,8 +442,8 @@ fn the_shell_library_and_config_matrix_measure_the_same_trees() {
         .nth(1)
         .and_then(|s| s.split("];").next())
         .expect("config_matrix.rs must declare MEASURED_SOURCE_ROOTS");
-    let mut rust_roots: Vec<String> = block
-        .lines()
+    let mut rust_roots: Vec<String> = root_tuples(block)
+        .iter()
         .filter_map(|l| {
             let l = l.trim();
             let rest = l.strip_prefix("(\"")?;
@@ -1090,8 +1090,8 @@ fn config_matrix_ext_filters_cover_every_staged_file() {
         .expect("config_matrix.rs must declare MEASURED_SOURCE_ROOTS");
     // ("root", &["a", "b"]),  →  (root, [a, b])
     let mut exts_by_root: Vec<(String, Vec<String>)> = Vec::new();
-    for l in block.lines() {
-        let l = l.trim();
+    for l in root_tuples(block) {
+        let l = l.as_str();
         let Some(rest) = l.strip_prefix("(\"") else {
             continue;
         };
@@ -1363,4 +1363,40 @@ fn a_stale_witness_names_the_newest_changed_file() {
     );
     assert!(stderr.contains("Newest:"), "stderr:\n{stderr}");
     let _ = std::fs::remove_dir_all(&tree);
+}
+
+/// The `("root", &["ext", ...])` tuples of `MEASURED_SOURCE_ROOTS`, one string
+/// each, whatever line breaks `cargo fmt` put inside a tuple. A detector that
+/// matched one line per tuple stopped seeing `runtime-go` the day its ext list
+/// grew past the line width and rustfmt split it (AGENTS.md: a source-scanning
+/// detector must be whitespace-robust).
+fn root_tuples(block: &str) -> Vec<String> {
+    let compact: String = block
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in compact.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+                if depth == 0 {
+                    out.push(cur.trim().replace("( ", "(").to_string());
+                    cur.clear();
+                }
+            }
+            _ if depth > 0 => cur.push(c),
+            _ => {}
+        }
+    }
+    out
 }

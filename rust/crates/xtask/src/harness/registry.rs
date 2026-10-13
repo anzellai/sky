@@ -440,9 +440,10 @@ pub static GATES: &[Gate] = &[
                 // and the v0.28.0 Std.Ai.Dataset, Scrub and Synthetic surfaces
                 // (+6 cases, 685 → 691), the v0.28.0 Std.Ai.Pipeline surface
                 // (+2 cases, 691 → 693), the v0.28.0 Std.Ai.Train surface
-                // (+2 cases, 693 → 695) and the v0.28.0 Std.Ai.Device surface
-                // (+2 cases, 695 → 697).
-                from: "n_min = 697",
+                // (+2 cases, 693 → 695), the v0.28.0 Std.Ai.Device surface
+                // (+2 cases, 695 → 697) and the v0.28.0 Std.Ai.Serve and
+                // Std.Ai.Cloud.Google surfaces (+3 cases, 697 → 700).
+                from: "n_min = 700",
                 to: "n_min = 698",
             },
         }]),
