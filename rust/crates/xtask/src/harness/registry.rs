@@ -1185,6 +1185,26 @@ pub static GATES: &[Gate] = &[
         body: bodies::ai_device_digest,
     },
     Gate {
+        name: "ai-stream-pieces",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 300,
+        expected: bodies::AI_STREAM_PIECES_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a streamed answer arrives piece by piece, from a server slot and from the browser worker",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-stream-pieces.buffer-the-answer",
+            description: "keep every piece of a server's event stream and send none until the \
+                          end (a silent non-stream); the arrived-in-pieces assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_stream.go",
+                from: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\treturn aiDeltaEvent(d), false, nil",
+                to: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\tcontinue",
+            },
+        }]),
+        body: bodies::ai_stream_pieces,
+    },
+    Gate {
         name: "ai-device-blob-allowlist",
         tier: Tier::T1,
         platforms: UNIX,

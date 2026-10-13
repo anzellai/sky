@@ -723,6 +723,26 @@ serverRaw =
     Ffi.kernel "AiDevice_server"
 
 
+streamOpenRaw : String -> String -> String -> String -> String -> Task Error String
+streamOpenRaw =
+    Ffi.kernel "AiDevice_streamOpen"
+
+
+streamServerRaw : String -> String -> String -> Task Error String
+streamServerRaw =
+    Ffi.kernel "AiDevice_streamServer"
+
+
+streamNextRaw : String -> Task Error String
+streamNextRaw =
+    Ffi.kernel "AiDevice_streamNext"
+
+
+streamCloseRaw : String -> Task Error ()
+streamCloseRaw =
+    Ffi.kernel "AiDevice_streamClose"
+
+
 prepareRaw : String -> String -> String -> Task Error String
 prepareRaw =
     Ffi.kernel "AiDevice_prepare"
@@ -743,10 +763,15 @@ evictRaw =
 -- ---------------------------------------------------------------------------
 {-| The slot as a `Provider`: on the device when `decide` says so, on the
 server's slot otherwise. Name the slot with a string literal: the build checks
-that the server has an `Endpoint.withDevice` slot of that name. -}
+that the server has an `Endpoint.withDevice` slot of that name.
+`Provider.chatStream` streams the answer as it is written, on the device and
+from the server alike. -}
 provider : String -> Provider
 provider slot =
-    Provider.wire (transport slot) ""
+    Provider.wireStreaming
+        (transport slot)
+        { open = streamOpen slot, next = streamNextRaw, close = streamCloseRaw }
+        ""
 
 type alias Ctx =
     { slot : String
@@ -754,9 +779,44 @@ type alias Ctx =
     , offer : Offer
     }
 
+-- How one call runs where the decision puts it: a plain call (`transport`)
+-- or the opening of a stream (`streamOpen`). Both answer a String.
+type alias Runner =
+    { device : Backend -> Ctx -> String -> String -> Task Error String
+    , server : String -> String -> String -> Task Error String
+    }
+
+
+callRunner : Runner
+callRunner =
+    { device =
+        \b ctx path body ->
+            runRaw (backendText b) ctx.slot ctx.offerJson path body
+    , server = serverRaw
+    }
+
+
+streamRunner : Runner
+streamRunner =
+    { device =
+        \b ctx path body ->
+            streamOpenRaw (backendText b) ctx.slot ctx.offerJson path body
+    , server = streamServerRaw
+    }
+
 
 transport : String -> String -> String -> Task Error String
 transport slot path body =
+    runOn callRunner slot path body
+
+
+streamOpen : String -> String -> String -> Task Error String
+streamOpen slot path body =
+    runOn streamRunner slot path body
+
+
+runOn : Runner -> String -> String -> String -> Task Error String
+runOn runner slot path body =
     offerRaw slot
         |> Task.andThen
                (\json ->
@@ -764,6 +824,7 @@ transport slot path body =
                        |> Task.andThen
                               (\offer ->
                                   route
+                                      runner
                                       { slot = slot
                                       , offerJson = json
                                       , offer = offer
@@ -776,8 +837,8 @@ transport slot path body =
 -- `retry` is True on the first attempt: a backend that fails to load with
 -- DeviceUnsupported is recorded by the runtime, so a second decision skips
 -- it (the next backend, or the server for `Auto`).
-route : Ctx -> Bool -> String -> String -> Task Error String
-route ctx retry path body =
+route : Runner -> Ctx -> Bool -> String -> String -> Task Error String
+route runner ctx retry path body =
     capabilitiesRaw ctx.slot
         |> Task.andThen (decodeTask "capabilities" decodeCapabilities)
         |> Task.andThen
@@ -785,14 +846,14 @@ route ctx retry path body =
                    case decide caps ctx.offer (estimateTokens body) of
 
                        OnDevice b ->
-                           runRaw
-                               (backendText b)
-                               ctx.slot
-                               ctx.offerJson
-                               path
-                               body
+                           runner.device b ctx path body
                                |> Task.onError
-                                      (afterDeviceFailure ctx retry path body)
+                                      (afterDeviceFailure
+                                          runner
+                                          ctx
+                                          retry
+                                          path
+                                          body)
 
                        NeedsDownload _ _ ->
                            if ctx.offer.placement == DeviceOnly then
@@ -800,22 +861,22 @@ route ctx retry path body =
                                    (Failure.toError (notDownloaded ctx.offer))
 
                            else
-                               serverRaw ctx.slot path body
+                               runner.server ctx.slot path body
 
                        OnServer _ ->
-                           serverRaw ctx.slot path body
+                           runner.server ctx.slot path body
 
                        Refused f ->
                            Task.fail (Failure.toError f))
 
 
-afterDeviceFailure : Ctx -> Bool -> String -> String -> Error -> Task Error String
-afterDeviceFailure ctx retry path body err =
+afterDeviceFailure : Runner -> Ctx -> Bool -> String -> String -> Error -> Task Error String
+afterDeviceFailure runner ctx retry path body err =
     case Failure.fromError err of
 
         Just (DeviceUnsupported _) ->
             if retry then
-                route ctx False path body
+                route runner ctx False path body
 
             else
                 Task.fail err

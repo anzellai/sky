@@ -7055,6 +7055,8 @@ enum SkyAi {
         case "sky:aiEvict": queue.async { done(evict(p["offer"] ?? ""), nil) }
         case "sky:aiPrepare": prepare(p, origin: origin, done)
         case "sky:aiChat": queue.async { let (r, e) = chat(p); done(r, e) }
+        case "sky:aiStreamBegin": queue.async { let (r, e) = streamBegin(p); done(r, e) }
+        case "sky:aiStreamNext": queue.async { let (r, e) = streamNext(); done(r, e) }
         default: done(nil, "invalid: unknown op " + op)
         }
     }
@@ -7237,6 +7239,41 @@ enum SkyAi {
                 return (nil, failure("InvalidSetting", msg, [["setting", "context"], ["reason", msg]]))
             }
             return (nil, failure("EngineFailed", msg, [["reason", msg]]))
+        }
+        return (out, nil)
+    }
+
+    static func engineFailure(_ err: [String: Any]) -> String {
+        let msg = err["message"] as? String ?? "the engine failed"
+        if (err["code"] as? String) == "context" {
+            return failure("InvalidSetting", msg, [["setting", "context"], ["reason", msg]])
+        }
+        return failure("EngineFailed", msg, [["reason", msg]])
+    }
+
+    // Provider.chatStream: begin decodes the prompt, each next answers one
+    // {"delta":…} and last {"done":true,"body":"<the body as a string>"}.
+    static func streamBegin(_ p: [String: String]) -> (Any?, String?) {
+        let o = offer(p["offer"] ?? "")
+        let (_, e) = load(o)
+        if let e = e { return (nil, e) }
+        if (p["path"] ?? "") != "/chat/completions" {
+            return (nil, failure("RemoteRejected", "a device answers chat requests only", [["status", "404"]]))
+        }
+        let out = String(cString: sky_llama_chat_begin(p["body"] ?? "{}"))
+        if !out.isEmpty {
+            let j = (try? JSONSerialization.jsonObject(with: Data(out.utf8))) as? [String: Any] ?? [:]
+            return (nil, engineFailure(j["error"] as? [String: Any] ?? [:]))
+        }
+        return ("", nil)
+    }
+
+    static func streamNext() -> (Any?, String?) {
+        let out = String(cString: sky_llama_chat_next())
+        let j = (try? JSONSerialization.jsonObject(with: Data(out.utf8))) as? [String: Any] ?? [:]
+        if let err = j["error"] as? [String: Any] { return (nil, engineFailure(err)) }
+        if (j["done"] as? Bool) == true, let body = j["body"] {
+            return (json(["done": true, "body": json(body)]), nil)
         }
         return (out, nil)
     }
@@ -8209,7 +8246,8 @@ struct WebView: UIViewRepresentable {
                 let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
                 SkyCodeScanner.run(formats: p["formats"] ?? "", prompt: p["prompt"] ?? "",
                                    from: message.webView) { reply, err in replyHandler(reply, err) }
-            case "sky:aiCaps", "sky:aiPrepare", "sky:aiStatus", "sky:aiChat", "sky:aiEvict":
+            case "sky:aiCaps", "sky:aiPrepare", "sky:aiStatus", "sky:aiChat", "sky:aiEvict",
+                 "sky:aiStreamBegin", "sky:aiStreamNext":
                 // Std.Ai.Device (SkyAi.swift): the slot's model on llama.cpp.
                 let payload = dict["payload"] as? String ?? "{}"
                 SkyAi.handle(type, payload, origin: message.webView?.url) { reply, err in replyHandler(reply, err) }
@@ -8635,6 +8673,8 @@ public class MainActivity extends Activity {
                     case "sky:aiStatus":
                     case "sky:aiChat":
                     case "sky:aiEvict":
+                    case "sky:aiStreamBegin":
+                    case "sky:aiStreamNext":
                         // Std.Ai.Device (sky/ai/SkyAi.java). The client sends the
                         // page's origin, where a device downloads the slot's files
                         // from (a WebView method may not be called on this thread).
@@ -9591,6 +9631,8 @@ public final class SkyAi {
                 case "sky:aiEvict": ENGINE.execute(() -> { try { reply.ok(evict(c, new JSONObject(p.optString("offer", "{}")))); } catch (Exception e) { reply.err("failed: " + e); } }); return;
                 case "sky:aiPrepare": prepare(c, p, reply); return;
                 case "sky:aiChat": ENGINE.execute(() -> chat(c, p, reply)); return;
+                case "sky:aiStreamBegin": ENGINE.execute(() -> streamBegin(c, p, reply)); return;
+                case "sky:aiStreamNext": ENGINE.execute(() -> streamNext(reply)); return;
                 default: reply.err("invalid: unknown op " + op);
             }
         } catch (Exception e) {
@@ -9781,6 +9823,52 @@ public final class SkyAi {
         }
     }
 
+    private static String engineFailure(JSONObject e) {
+        String msg = e.optString("message", "the engine failed");
+        if ("context".equals(e.optString("code"))) {
+            return failure("InvalidSetting", msg, new String[][] {{"setting", "context"}, {"reason", msg}});
+        }
+        return failure("EngineFailed", msg, new String[][] {{"reason", msg}});
+    }
+
+    // Provider.chatStream: begin decodes the prompt, each next answers one
+    // {"delta":...} and last {"done":true,"body":"<the body as a string>"}.
+    private static void streamBegin(Context c, JSONObject p, Reply reply) {
+        try {
+            load(c, new JSONObject(p.optString("offer", "{}")));
+            if (!p.optString("path", "").equals("/chat/completions")) {
+                reply.err(failure("RemoteRejected", "a device answers chat requests only", new String[][] {{"status", "404"}}));
+                return;
+            }
+            String out = new String(SkyLlama.chatBegin(p.optString("body", "{}").getBytes(java.nio.charset.StandardCharsets.UTF_8)), java.nio.charset.StandardCharsets.UTF_8);
+            if (!out.isEmpty()) {
+                reply.err(engineFailure(new JSONObject(out).getJSONObject("error")));
+                return;
+            }
+            reply.ok("");
+        } catch (SkyAiFailure e) {
+            reply.err(e.getMessage());
+        } catch (Exception e) {
+            reply.err("failed: " + e);
+        }
+    }
+
+    private static void streamNext(Reply reply) {
+        try {
+            String out = new String(SkyLlama.chatNext(), java.nio.charset.StandardCharsets.UTF_8);
+            JSONObject j = new JSONObject(out);
+            if (j.has("error")) {
+                reply.err(engineFailure(j.getJSONObject("error")));
+            } else if (j.optBoolean("done", false)) {
+                reply.ok(new JSONObject().put("done", true).put("body", j.getJSONObject("body").toString()).toString());
+            } else {
+                reply.ok(out);
+            }
+        } catch (Exception e) {
+            reply.err("failed: " + e);
+        }
+    }
+
     private static String evict(Context c, JSONObject offer) throws Exception {
         if (loadedKey.contains(offer.getJSONObject("model").getString("sha256"))) { SkyLlama.unload(); loadedKey = ""; }
         JSONArray fs = files(offer);
@@ -9805,6 +9893,8 @@ final class SkyLlama {
     static native int load(String path, int nCtx, int threads);
     static native int adapter(String path, float scale);
     static native byte[] chat(byte[] requestJson);
+    static native byte[] chatBegin(byte[] requestJson);
+    static native byte[] chatNext();
     static native int tokenize(String text);
     static native void unload();
     static native String lastError();

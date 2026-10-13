@@ -415,3 +415,95 @@ func TestDeviceModelFollowsTheSlotModel(t *testing.T) {
 		t.Fatalf("DEVICE_MODEL wins: %s", body)
 	}
 }
+
+// sseUpstream streams "one two" a word at a time, or fails mid-answer.
+func sseUpstream(t *testing.T, failMidway bool) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"one \"}}]}\n\n")
+		if failMidway {
+			io.WriteString(w, "data: {\"error\":{\"message\":\"the engine stopped\"}}\n\n")
+			return
+		}
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"two\"},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func sseEvents(body string) []string {
+	var out []string
+	for _, block := range strings.Split(body, "\n\n") {
+		if d, ok := strings.CutPrefix(strings.TrimSpace(block), "data: "); ok {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func TestDeviceStreamFallbackStreamsTheServerSlot(t *testing.T) {
+	_, modelRef := aiTestEnv(t, nil)
+	srv := deviceServer(t, deviceEndpoint("chat", sseUpstream(t, false).URL+"/v1", "auto", modelRef, ""))
+	url := srv.URL + "/_sky/ai/device/chat/stream"
+	st, b := post(t, url, "application/json", callBody("hi"), map[string]string{"Cookie": "sky_sid=s"})
+	evs := sseEvents(b)
+	if st != 200 || len(evs) != 3 || evs[0] != `{"delta":"one "}` || evs[1] != `{"delta":"two"}` {
+		t.Fatalf("stream: %d %q", st, evs)
+	}
+	var done struct {
+		Done bool   `json:"done"`
+		Body string `json:"body"`
+	}
+	if json.Unmarshal([]byte(evs[2]), &done) != nil || !done.Done || chatContent(t, done.Body) != "one two" {
+		t.Fatalf("last event %q", evs[2])
+	}
+	// The same rules as the call.
+	if st, _ := post(t, url, "application/json", callBody("hi"), map[string]string{"Cookie": "sky_sid=s", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}); st != 403 {
+		t.Fatalf("cross origin: %d", st)
+	}
+	if st, _ := post(t, url, "text/plain", callBody("hi"), nil); st != 415 {
+		t.Fatalf("not JSON: %d", st)
+	}
+}
+
+func TestDeviceStreamFallbackCarriesATypedFailure(t *testing.T) {
+	_, modelRef := aiTestEnv(t, nil)
+	srv := deviceServer(t, deviceEndpoint("chat", sseUpstream(t, true).URL+"/v1", "auto", modelRef, ""))
+	_, b := post(t, srv.URL+"/_sky/ai/device/chat/stream", "application/json", callBody("hi"), nil)
+	evs := sseEvents(b)
+	if len(evs) != 2 || evs[0] != `{"delta":"one "}` {
+		t.Fatalf("events %q", evs)
+	}
+	var w struct {
+		Failure json.RawMessage `json:"failure"`
+	}
+	_ = json.Unmarshal([]byte(evs[1]), &w)
+	f, ok := aiDeviceFailureFrom(w.Failure)
+	if !ok || f.code != aiRemoteRejected || !strings.Contains(f.msg, "the engine stopped") {
+		t.Fatalf("failure %q", evs[1])
+	}
+}
+
+func TestDeviceOnlyHasNoServerStream(t *testing.T) {
+	_, modelRef := aiTestEnv(t, nil)
+	srv := deviceServer(t, deviceEndpoint("chat", sseUpstream(t, false).URL+"/v1", "device", modelRef, ""))
+	if st, _ := post(t, srv.URL+"/_sky/ai/device/chat/stream", "application/json", callBody("hi"), nil); st != 404 {
+		t.Fatalf("DeviceOnly stream route: %d", st)
+	}
+}
+
+func TestDeviceServerStreamKernelIsTheServerSlot(t *testing.T) {
+	_, modelRef := aiTestEnv(t, nil)
+	deviceServer(t, deviceEndpoint("chat", sseUpstream(t, false).URL+"/v1", "auto", modelRef, ""))
+	r := AnyTaskRun(AiDevice_streamServer("chat", "/chat/completions", chatBody("hi")))
+	tag, ok, _ := anyResultView(r)
+	if tag != 0 {
+		t.Fatalf("open: %v", r)
+	}
+	deltas, body := streamAll(t, AsString(ok))
+	if strings.Join(deltas, "") != "one two" || bodyContent(body) != "one two" {
+		t.Fatalf("%q %v", deltas, body)
+	}
+}

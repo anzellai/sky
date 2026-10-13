@@ -66,9 +66,26 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   `sky build --ai-embed <slot>` puts the slot's model and adapter in a native
   app. `Bundle.IncreasedMemoryLimit` declares the iOS entitlement an
   on-device model needs.
+- **Streaming answers.** `Provider.stream` sends a chat and `Provider.read`
+  gives the answer one piece at a time (`Piece text next`, then `Finished
+  response` with the usage), so a TEA app shows it as it is written, one
+  update per piece; `Provider.close` stops early, and `Provider.chatStream`
+  hands each piece to a callback in a Task program. Server slots
+  (`Std.Ai.Endpoint`, `Std.Ai.Local`) and `Provider.openai` / `compatible`
+  read the server's event stream (retries only before the first byte, the
+  queue place held until the end, an abandoned stream closed by its
+  deadline); a device slot streams from the engine core
+  (`sky_llama_chat_begin` / `sky_llama_chat_next`) in the browser worker and
+  the iOS and Android apps, from the managed engine in the Mac app, and from
+  `POST /_sky/ai/device/<slot>/stream` when the decision is the server. A
+  `custom` provider and a server that answers with one body give one piece.
+  `Provider.wireStreaming` builds a streaming `wire` provider.
 - The `ai-device-bundles` workflow builds the engines from the pinned source
   (emsdk 6.0.12, Dawn v20260423.175430, NDK 27.0.12077973, Xcode) and
-  publishes the release `sky-llama-b11200`.
+  publishes the release `sky-llama-b11200`. Until it has run, the engine pins
+  are empty, and `sky ai provision --device <target>` (and a build that
+  cannot stage the engine) fails with a typed error that names the empty
+  `PINS` entry, the workflow and the release, and the `--from` local build.
 - `examples/75-ai-everywhere`: private notes whose assistant runs on the
   device, with a consent card, a badge that says where each summary was made,
   a server-only Help page and an eval self-check, for every target.
@@ -649,6 +666,14 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   per-commit run), and `scripts/ai-device-e2e.sh` (Chromium and WebKit under
   the strict policy). `go run ./cmd/sky-tiny-gguf` writes the synthetic Qwen2
   model they run.
+- Streaming: `runtime-go/rt/ai_stream_test.go` (pieces from a managed engine,
+  one piece from a server that does not stream, retries before the stream
+  only, typed failures, close releases the queue place),
+  `TestDeviceStream*` (the streaming fallback route and its rules),
+  `TestDeviceWorkerStreamsAnAnswer`, the `chatStream` / `read` cases of
+  `ProviderEndpointTest.sky`, and `scripts/ai/device/test-engine-core.sh`
+  (`test_sky_llama.cpp`: the streamed answer equals the one-call answer, in
+  whole UTF-8 pieces). The probe streams on every target.
 - Pipeline (phase 2 part C): `tests/Std/Ai/PipelineTest.sky` (members, alone
   and against an alias, the typed gate failure, the attached report,
   `--promote-to` on a pass only and only against a compared alias, the

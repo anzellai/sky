@@ -3906,6 +3906,21 @@ pub fn ai_device_digest(ctx: &GateCtx) -> GateOutcome {
     )
 }
 
+/// `TestAiStreamPieceByPiece` (ai_stream_test.go): a managed engine's answer
+/// arrives in more than one piece, the pieces are the final body's content,
+/// the stream ends with its last event, and the browser worker streams. Five
+/// assertions, measured by the gate.
+pub const AI_STREAM_PIECES_EXPECTED: u64 = 5;
+
+pub fn ai_stream_pieces(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestAiStreamPieceByPiece",
+        AI_STREAM_PIECES_EXPECTED,
+    )
+}
+
 /// `TestDeviceBlobServesOnlyOfferedDigests` (ai_device_serve_test.go): no
 /// blob before an offer, the offered one with Range, not a model the host
 /// holds that no offer names, three malformed names, and the chunk list.

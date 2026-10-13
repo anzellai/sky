@@ -5,7 +5,9 @@
 // rust/crates/sky/tests/fixtures/ai-device, built as a web:app, in real
 // browsers under SKY_CSP=strict. The probe reads the slot's status, prepares
 // it, asks one question and reports each step as a `SKY-PROBE` line on the
-// backend's output. See scripts/ai-device-e2e.sh for the scenarios.
+// backend's output, then streams the same question one piece per update
+// (Provider.stream / read) and reports `stream=<pieces>:same` when the pieces
+// join to the answer. See scripts/ai-device-e2e.sh for the scenarios.
 //
 // Usage: node scripts/ai-device-verify.mjs <backend> [--port N] [--scenarios a,b]
 //   scenarios: chromium-cpu, chromium-webgpu, webkit-cpu, webkit-private,
@@ -92,7 +94,7 @@ async function runProbe(app, engine, mode) {
     });
     await page.goto(`http://127.0.0.1:${PORT}/`);
     const deadline = Date.now() + 15 * 60 * 1000;
-    while (!/SKY-PROBE answer=/.test(app.log().slice(from)) && Date.now() < deadline) {
+    while (!/SKY-PROBE stream=/.test(app.log().slice(from)) && Date.now() < deadline) {
       await page.waitForTimeout(250);
     }
     for (const v of await page.evaluate(() => window.__csp || [])) violations.push(v);
@@ -104,7 +106,9 @@ async function runProbe(app, engine, mode) {
   return { lines, requests, violations };
 }
 
-const calls = (r) => r.requests.filter((q) => q.startsWith("POST ") && q.endsWith("/call")).length;
+const calls = (r) => r.requests.filter((q) => q.startsWith("POST ") && (q.endsWith("/call") || q.endsWith("/stream"))).length;
+// `stream=<n>:same` with more than one piece: the answer arrived as it was written.
+const streamedInPieces = (r) => { const m = /^(\d+):same$/.exec(r.lines.stream || ""); return !!m && Number(m[1]) > 1; };
 const downloads = (r) => r.requests.filter((q) => q.startsWith("GET /_sky/ai/blob/")).length;
 
 async function onDevice(name, engine, mode, backend) {
@@ -116,6 +120,7 @@ async function onDevice(name, engine, mode, backend) {
     check(`${name}: status`, r.lines.status === `not-downloaded:${backend}`, r.lines.status);
     check(`${name}: prepared`, r.lines.prepared === `ready:${backend}`, r.lines.prepared);
     check(`${name}: answered on the device`, !!r.lines.answer && !r.lines.answer.startsWith("err:"), `${r.lines.answer} (${secs} s)`);
+    check(`${name}: streamed on the device, piece by piece`, streamedInPieces(r), r.lines.stream);
     check(`${name}: downloaded from the app's own server`, downloads(r) > 0, `${downloads(r)} blob requests`);
     check(`${name}: privacy, no call reached the server`, calls(r) === 0, r.requests.filter((q) => q.startsWith("POST")).join(", ") || "none");
     check(`${name}: strict policy, no violation`, r.violations.length === 0, r.violations.join("; ") || "none");
@@ -130,6 +135,7 @@ async function fromServer(name, engine, mode, env, wantStatus, wantCalls) {
     const r = await runProbe(app, engine, mode);
     check(`${name}: status`, r.lines.status === wantStatus, r.lines.status);
     check(`${name}: answered`, !!r.lines.answer && !r.lines.answer.startsWith("err:"), r.lines.answer);
+    check(`${name}: streamed from the server, piece by piece`, streamedInPieces(r), r.lines.stream);
     check(`${name}: the server answered the call`, calls(r) === wantCalls, `${calls(r)} fallback calls`);
     check(`${name}: nothing downloaded`, downloads(r) === 0, `${downloads(r)} blob requests`);
     check(`${name}: strict policy, no violation`, r.violations.length === 0, r.violations.join("; ") || "none");
@@ -146,6 +152,7 @@ async function deviceOnlyPrivate() {
     const r = await runProbe(app, "webkit", "private");
     check("device-only-private: status", r.lines.status === "unsupported", r.lines.status);
     check("device-only-private: the call fails typed", /StorageDenied/.test(r.lines.answer || ""), r.lines.answer);
+    check("device-only-private: the stream fails typed", /StorageDenied/.test(r.lines.stream || ""), r.lines.stream);
     check("device-only-private: never the server", calls(r) === 0, `${calls(r)} fallback calls`);
   } finally {
     await stopApp(app);
@@ -157,8 +164,8 @@ try {
     if (s === "chromium-cpu") await onDevice(s, "chromium", "private", "wasm-cpu");
     else if (s === "chromium-webgpu") await onDevice(s, "chromium", "webgpu", "webgpu");
     else if (s === "webkit-cpu") await onDevice(s, "webkit", "persistent", "wasm-cpu");
-    else if (s === "webkit-private") await fromServer(s, "webkit", "private", {}, "server", 1);
-    else if (s === "server-placement") await fromServer(s, "chromium", "private", { SKY_AI_PROBE_PLACEMENT: "server" }, "server", 1);
+    else if (s === "webkit-private") await fromServer(s, "webkit", "private", {}, "server", 2);
+    else if (s === "server-placement") await fromServer(s, "chromium", "private", { SKY_AI_PROBE_PLACEMENT: "server" }, "server", 2);
     else if (s === "device-only-private") await deviceOnlyPrivate();
     else throw new Error("unknown scenario " + s);
   }

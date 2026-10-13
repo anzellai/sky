@@ -181,6 +181,18 @@ CPU build and 0.8 s on WebGPU, and the self-check (three prompts on the
 device, scored on the server) took 27.1 s and 2.8 s, with both pass rates at
 100%.
 
+## Streaming
+
+`Provider.stream` and `Provider.read` (or `Provider.chatStream` with a
+callback) work on `Device.provider` like on any provider, and the decision is
+the same as for a call. On the device the engine hands over each piece of
+text as it writes it: the browser worker, the iOS and Android apps step the
+engine core (`sky_llama_chat_begin` / `sky_llama_chat_next`, whole UTF-8
+pieces), and the Mac app reads its managed engine's event stream. When the
+decision is the server, the client reads `POST /_sky/ai/device/<slot>/stream`.
+On the server itself (Sky.Live, tests) it is the slot's own stream. A piece
+read on the device sends nothing to the server.
+
 ## The server's routes
 
 A server with a device slot answers:
@@ -191,6 +203,7 @@ A server with a device slot answers:
 | `GET /_sky/ai/blob/<sha256>` | an offered file, with Range requests; only the digests a current offer names (never a path) |
 | `GET /_sky/ai/blob/<sha256>.chunks.json` | its 64 MiB chunk digests |
 | `POST /_sky/ai/device/<slot>/call` | the fallback call: same origin, `application/json`, at most 64 KiB, 30 calls a minute per session; absent for `DeviceOnly` |
+| `POST /_sky/ai/device/<slot>/stream` | the streaming fallback call (`Provider.stream` in a client the decision sends to the server): the same rules and rate as `/call`, answered as server-sent events, one piece per event, a failure as a typed event; absent for `DeviceOnly` |
 
 ## Privacy
 
@@ -257,6 +270,11 @@ record and replay), `runtime-go/rt/ai_device_*_test.go` (the routes, the
 worker's digests and its refusal to run WebGPU on the CPU, the Mac bridge),
 `scripts/ai-device-e2e.sh` (Chromium and WebKit under the strict policy) and
 `rust/crates/sky/tests/ai_device_native_flow.rs` (the iOS simulator, the
-Android emulator and the Mac app). `go run ./cmd/sky-tiny-gguf <dir>` (in
+Android emulator and the Mac app; the probe also streams its answer and
+checks it arrived in more than one piece). Streaming is covered by
+`runtime-go/rt/ai_stream_test.go` (the `ai-stream-pieces` gate) and by
+`scripts/ai/device/test-engine-core.sh`, which builds the engine core for the
+build machine's CPU and checks that the streamed answer equals the one-call
+answer in whole UTF-8 pieces. `go run ./cmd/sky-tiny-gguf <dir>` (in
 `runtime-go/`) writes a 0.4 MB synthetic Qwen2 model and adapter that every
 engine loads, so the flows run without the 430 MB model.

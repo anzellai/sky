@@ -558,6 +558,14 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("ai-device-decide", &["stdlib.Std.Ai.Device"]),
     ("ai-device-no-silent-fallback", &["stdlib.Std.Ai.Device"]),
     ("ai-device-digest", &["stdlib.Std.Ai.Device"]),
+    (
+        "ai-stream-pieces",
+        &[
+            "stdlib.Std.Ai.Provider",
+            "stdlib.Std.Ai.Endpoint",
+            "stdlib.Std.Ai.Device",
+        ],
+    ),
     ("ai-device-blob-allowlist", &["stdlib.Std.Ai.Device"]),
     ("ai-device-partition", &["stdlib.Std.Ai.Device"]),
     ("ai-device-privacy", &["stdlib.Std.Ai.Device"]),

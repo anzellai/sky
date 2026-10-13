@@ -396,11 +396,29 @@ postRaw =
     Ffi.kernel "Ai_endpointPost"
 
 
+streamOpenRaw : Config -> String -> String -> Task Error String
+streamOpenRaw =
+    Ffi.kernel "Ai_endpointStreamOpen"
+
+
+streamNextRaw : String -> Task Error String
+streamNextRaw =
+    Ffi.kernel "Ai_streamNext"
+
+
+streamCloseRaw : String -> Task Error ()
+streamCloseRaw =
+    Ffi.kernel "Ai_streamClose"
+
+
 {-| The slot as a `Provider`. It is pure: the first call resolves the slot and
 the process keeps the result, so a top-level binding is enough. -}
 provider : Endpoint -> Provider
 provider (Endpoint c) =
-    Provider.wire (postRaw c) ""
+    Provider.wireStreaming
+        (postRaw c)
+        { open = streamOpenRaw c, next = streamNextRaw, close = streamCloseRaw }
+        ""
 
 {-| One resolved setting and where it came from: `env`, `code` or `default`.
 `name` is the variable an operator sets. A key's value is never shown. -}

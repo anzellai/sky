@@ -234,6 +234,13 @@ fn assert_on_device(r: &std::collections::BTreeMap<String, String>, what: &str) 
         !answer.is_empty() && !answer.starts_with("err:"),
         "{what}: {r:?}"
     );
+    // Provider.stream: the same answer, in more than one piece.
+    let stream = r.get("stream").cloned().unwrap_or_default();
+    let pieces: usize = stream
+        .strip_suffix(":same")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    assert!(pieces > 1, "{what}: not streamed piece by piece: {r:?}");
 }
 
 fn simctl(args: &[&str]) -> Output {
@@ -297,7 +304,7 @@ fn ios_simulator_runs_the_slot_on_the_device() {
     let _ = simctl(&["uninstall", &udid, "com.example.deviceprobe"]);
     let install = simctl(&["install", &udid, app.to_str().unwrap()]);
     let launch = simctl(&["launch", &udid, "com.example.deviceprobe"]);
-    let answered = backend.wait_for("SKY-PROBE answer=", 600);
+    let answered = backend.wait_for("SKY-PROBE stream=", 600);
     let _ = simctl(&["terminate", &udid, "com.example.deviceprobe"]);
     let _ = simctl(&["uninstall", &udid, "com.example.deviceprobe"]);
     if booted_here {
@@ -378,7 +385,7 @@ fn android_emulator_runs_the_slot_on_the_device() {
         ])
         .output()
         .unwrap();
-    let answered = backend.wait_for("SKY-PROBE answer=", 900);
+    let answered = backend.wait_for("SKY-PROBE stream=", 900);
     let _ = Command::new(adb())
         .args(["uninstall", "com.example.deviceprobe"])
         .output();
@@ -420,7 +427,7 @@ fn desktop_mac_runs_the_slot_on_the_managed_engine() {
         .stderr(Stdio::null())
         .spawn()
         .expect("start the desktop app");
-    let answered = backend.wait_for("SKY-PROBE answer=", 600);
+    let answered = backend.wait_for("SKY-PROBE stream=", 600);
     // SIGTERM: the app stops the engine it started on its way out. A SIGKILL
     // would leave the engine running until the next Sky program reaps it.
     let _ = Command::new("kill")

@@ -8,8 +8,9 @@ package rt
 // `Ai_localStreamOpen`) sends the request and returns a stream id,
 // `Ai_streamNext` returns the next event, and `Ai_streamClose` ends a stream
 // early. An event is {"delta":"<text>"} or, last,
-// {"done":true,"body":<an OpenAI chat-completions response>} whose content is
-// every delta joined, so the caller decodes it as `chat` would.
+// {"done":true,"body":"<an OpenAI chat-completions response, as a JSON
+// string>"} whose content is every delta joined, so the caller decodes it as
+// `chat` would.
 //
 // A server that answers a streaming request with one JSON body (a gateway
 // without streaming, a test fixture under tests/mocks/) is read as one delta
@@ -254,7 +255,7 @@ func (st *aiStream) next() (event string, done bool, err error) {
 				return aiDeltaEvent(whole.Choices[0].Message.Content), false, nil
 			}
 		}
-		b, _ := json.Marshal(map[string]any{"done": true, "body": json.RawMessage(st.whole)})
+		b, _ := json.Marshal(map[string]any{"done": true, "body": st.whole})
 		if !json.Valid([]byte(st.whole)) {
 			return "", false, aiFailf(aiRemoteRejected, "%s answered a body that is not JSON: %s", st.target, aiTail(st.whole, 300))
 		}
@@ -319,6 +320,12 @@ func (st *aiStream) final() string {
 			"total_tokens":      st.prompt + st.complete,
 		},
 	}
+	bb, _ := json.Marshal(body)
+	return aiDoneEvent(string(bb))
+}
+
+// aiDoneEvent is the last event of a stream: the whole answer's body.
+func aiDoneEvent(body string) string {
 	b, _ := json.Marshal(map[string]any{"done": true, "body": body})
 	return string(b)
 }
@@ -534,3 +541,25 @@ func Ai_streamClose(idArg any) any {
 		return Ok[any, any](struct{}{})
 	}
 }
+
+// Ai_streamOpenUrl : String -> Secret -> String -> Task Error String — a
+// stream from a built-in backend (`Provider.openai` / `compatible`): the
+// endpoint URL and its API key, with the endpoint's retries.
+func Ai_streamOpenUrl(urlArg, keyArg, bodyArg any) any {
+	url, body := AsString(urlArg), AsString(bodyArg)
+	key := secretReveal(keyArg)
+	return func() any {
+		c := &aiSlotConfig{slot: "provider", key: key, hasKey: key != "", retries: 2, timeout: aiProviderStreamTimeout}
+		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+		st, err := aiRemoteStream(ctx, c, url, aiStreamBody(body))
+		if err != nil {
+			cancel()
+			return aiTaskErr(err)
+		}
+		st.onClose = append(st.onClose, func(error) { cancel() })
+		return Ok[any, any](aiStreamRegister(st, c.timeout))
+	}
+}
+
+// aiProviderStreamTimeout bounds a built-in backend's streamed answer.
+const aiProviderStreamTimeout = 10 * time.Minute

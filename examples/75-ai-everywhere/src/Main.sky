@@ -85,7 +85,8 @@ type Msg
     | Forget
     | Forgotten (Result Error ())
     | Summarise Int String
-    | Summarised Int (Result Error ( String, String ))
+    | Summarised Int String (Result Error Provider.Stream)
+    | SummaryPiece Int String (Result Error Provider.StreamStep)
     | QuestionChanged String
     | AskHelp String
     | HelpAnswered (Result Error String)
@@ -184,25 +185,35 @@ deviceText =
     Device.status "notes" |> Task.map describe
 
 
--- Summarise on the device or the server, and say which.
-summarise : String -> Task Error ( String, String )
+-- Summarise on the device or the server, and say which: the badge, and the
+-- stream the summary is read from as it is written.
+summarise : String -> Task Error ( String, Provider.Stream )
 summarise body =
     Device.status "notes"
         |> Task.andThen
                (\s ->
-                   Provider.chatWith
+                   Provider.stream
                        Assist.summaryOptions
                        Assist.assistant
                        (Assist.summaryPrompt body)
                        |> Task.map
-                              (\r ->
-                                  ( r.content
-                                  , if isReady s then
+                              (\st ->
+                                  ( if isReady s then
                                         "made on this device"
 
                                     else
                                         "made on the server"
+                                  , st
                                   )))
+
+
+-- The summary of note `id` so far.
+setSummary : Int -> String -> Model -> Model
+setSummary id text model =
+    { model
+        | summaries =
+            ( id, text ) :: List.filter (\( i, _ ) -> i /= id) model.summaries
+    }
 
 
 -- Record the device's answers to the self-check suite.
@@ -289,18 +300,37 @@ update msg model =
             ( model, Cmd.perform deviceText DeviceRead )
 
         Summarise id body ->
-            ( model, Cmd.perform (summarise body) (Summarised id) )
+            ( setSummary id "" model
+            , Cmd.perform
+                  (summarise body)
+                  (\r ->
+                      case r of
 
-        Summarised id (Ok ( text, badge )) ->
-            ( { model
-                  | summaries =
-                      ( id, text ++ "  [" ++ badge ++ "]" )
-                          :: List.filter (\( i, _ ) -> i /= id) model.summaries
-              }
+                          Ok ( badge, st ) ->
+                              Summarised id badge (Ok st)
+
+                          Err e ->
+                              Summarised id "" (Err e))
+            )
+
+        Summarised id badge (Ok st) ->
+            ( model, Cmd.perform (Provider.read st) (SummaryPiece id badge) )
+
+        Summarised _ _ (Err e) ->
+            ( { model | notice = Error.toString e }, Cmd.none )
+
+        -- The summary grows as the model writes it; the badge comes last.
+        SummaryPiece id badge (Ok (Provider.Piece text next)) ->
+            ( setSummary id (summaryOf model id ++ text) model
+            , Cmd.perform (Provider.read next) (SummaryPiece id badge)
+            )
+
+        SummaryPiece id badge (Ok (Provider.Finished r)) ->
+            ( setSummary id (r.content ++ "  [" ++ badge ++ "]") model
             , Cmd.none
             )
 
-        Summarised _ (Err e) ->
+        SummaryPiece _ _ (Err e) ->
             ( { model | notice = Error.toString e }, Cmd.none )
 
         QuestionChanged q ->

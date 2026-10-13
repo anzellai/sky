@@ -84,6 +84,21 @@ func aiDeviceDesktopDispatch(op string, p map[string]string) (string, error) {
 			return "", aiDeskWireErr(err)
 		}
 		return out, nil
+	case "sky:aiStreamBegin":
+		o, err := aiDeskOffer(p["offer"])
+		if err != nil {
+			return "", aiDeskWireErr(err)
+		}
+		if err := aiDeskStreamBegin(o, p["path"], p["body"]); err != nil {
+			return "", aiDeskWireErr(err)
+		}
+		return "", nil
+	case "sky:aiStreamNext":
+		ev, err := aiDeskStreamNext()
+		if err != nil {
+			return "", aiDeskWireErr(err)
+		}
+		return ev, nil
 	case "sky:aiEvict":
 		o, err := aiDeskOffer(p["offer"])
 		if err != nil {
@@ -344,6 +359,56 @@ func aiDeskChat(o *aiDeviceOffer, path, body string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	return e.post(ctx, 10*time.Minute, path, body)
+}
+
+// The desktop app streams one answer at a time (Provider.chatStream), as the
+// device shells do: a new begin closes the one before.
+var aiDeskStream string
+
+func aiDeskStreamBegin(o *aiDeviceOffer, path, body string) error {
+	if path != "/chat/completions" {
+		return aiFailf(aiRemoteRejected, "a device answers chat requests only").withInt("status", 404)
+	}
+	e, err := aiDeskEngine(o)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	st, done, err := e.openStream(ctx, path, aiStreamBody(body))
+	if err != nil {
+		cancel()
+		if done != nil {
+			done()
+		}
+		return err
+	}
+	st.onClose = append(st.onClose, func(error) {
+		cancel()
+		done()
+	})
+	aiDeskMu.Lock()
+	prev := aiDeskStream
+	aiDeskStream = aiStreamRegister(st, 10*time.Minute)
+	aiDeskMu.Unlock()
+	if prev != "" {
+		aiStreamDrop(prev, nil)
+	}
+	return nil
+}
+
+func aiDeskStreamNext() (string, error) {
+	aiDeskMu.Lock()
+	id := aiDeskStream
+	aiDeskMu.Unlock()
+	st, err := aiStreamGet(id)
+	if err != nil {
+		return "", err
+	}
+	ev, done, err := st.next()
+	if err != nil || done {
+		aiStreamDrop(id, err)
+	}
+	return ev, err
 }
 
 func aiDeskEvict(o *aiDeviceOffer) {

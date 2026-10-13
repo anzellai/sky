@@ -71,7 +71,11 @@ globalThis.fetch = async (url, init) => {
 const engine = (variant, gpus) => 'data:text/javascript,' + encodeURIComponent(
   'export default async function create() { globalThis.__loaded.push(' + JSON.stringify(variant) + ');' +
   ' return { FS: { mkdir() {}, mount() {}, unmount() {}, filesystems: { WORKERFS: {} } },' +
-  ' ccall(name) { if (name === "sky_llama_gpu_devices") return ' + gpus + '; if (name === "sky_llama_last_error") return ""; if (name === "sky_llama_chat") return JSON.stringify({choices:[{message:{content:"on " + ' + JSON.stringify(variant) + '}}]}); return 0; } }; }');
+  ' ccall(name) { if (name === "sky_llama_gpu_devices") return ' + gpus + '; if (name === "sky_llama_last_error") return ""; if (name === "sky_llama_chat") return JSON.stringify({choices:[{message:{content:"on " + ' + JSON.stringify(variant) + '}}]});' +
+  ' if (name === "sky_llama_chat_begin") { globalThis.__q = ["on ", ' + JSON.stringify(variant) + ']; return ""; }' +
+  ' if (name === "sky_llama_chat_next") { const q = globalThis.__q; if (!q) return JSON.stringify({error:{code:"not_started",message:"no streamed answer is in progress"}});' +
+  ' if (q.length) return JSON.stringify({delta: q.shift()}); globalThis.__q = null; return JSON.stringify({done:true, body:{choices:[{message:{content:"on " + ' + JSON.stringify(variant) + '}}]}}); }' +
+  ' return 0; } }; }');
 globalThis.__loaded = loaded;
 await import(dir + '/worker.mjs');
 const ask = (msg) => new Promise((res) => { const n = posted.length; self.onmessage({ data: msg });
@@ -107,6 +111,14 @@ if (scenario === 'no-gpu' || scenario === 'gpu') {
     results.push(h.hex() === (await sha(data)));
   }
   out({ all: results.every(Boolean), results });
+} else if (scenario === 'stream') {
+  files.set(modelSha + '.gguf', model); files.set(modelSha + '.ok', new Uint8Array(0));
+  const engines = { cpu: { mjs: engine('cpu', 0), wasm: '' } };
+  const msg = { op: 'streamBegin', backend: 'wasm-cpu', slot: 'chat', offer: offer(modelSha, model.length), path: '/chat/completions', body: '{"messages":[]}', engines };
+  const begin = await ask({ id: 6, ...msg });
+  const events = [];
+  for (let i = 0; i < 4; i++) { const r = await ask({ id: 7 + i, op: 'streamNext' }); events.push(r.ok ? r.value : 'error:' + r.error); }
+  out({ begin: begin.ok, events });
 } else if (scenario === 'refused-store') {
   const r = await ask({ id: 4, op: 'caps', engines: { cpu: { mjs: 'x', wasm: '' } } });
   const p = await ask({ id: 5, op: 'prepare', backend: 'wasm-cpu', slot: 'chat', key: 'k', offer: offer(modelSha, model.length), engines: {} });
@@ -210,5 +222,25 @@ func TestDeviceWorkerRefusedStoreIsStorageDenied(t *testing.T) {
 	}
 	if wireCode(t, v["prepareError"].(string)) != "StorageDenied" {
 		t.Fatalf("prepare on a refused store: %v", v)
+	}
+}
+
+// TestDeviceWorkerStreamsAnAnswer: Provider.chatStream on the browser worker
+// (streamBegin, then streamNext until done; the body arrives as a string).
+func TestDeviceWorkerStreamsAnAnswer(t *testing.T) {
+	v := runWorker(t, "stream")
+	ev := v["events"].([]any)
+	if v["begin"] != true || len(ev) != 4 || ev[0] != `{"delta":"on "}` || ev[1] != `{"delta":"cpu"}` {
+		t.Fatalf("stream: %v", v)
+	}
+	var done struct {
+		Done bool   `json:"done"`
+		Body string `json:"body"`
+	}
+	if json.Unmarshal([]byte(ev[2].(string)), &done) != nil || !done.Done || chatContent(t, done.Body) != "on cpu" {
+		t.Fatalf("done event: %v", ev[2])
+	}
+	if !strings.HasPrefix(ev[3].(string), "error:") || wireCode(t, strings.TrimPrefix(ev[3].(string), "error:")) != "EngineFailed" {
+		t.Fatalf("a next after the end: %v", ev[3])
 	}
 }

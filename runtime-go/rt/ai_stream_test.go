@@ -25,15 +25,18 @@ func streamAll(t *testing.T, id string) (deltas []string, body map[string]any) {
 			t.Fatalf("next: %+v", r)
 		}
 		var ev struct {
-			Delta *string        `json:"delta"`
-			Done  bool           `json:"done"`
-			Body  map[string]any `json:"body"`
+			Delta *string `json:"delta"`
+			Done  bool    `json:"done"`
+			Body  string  `json:"body"`
 		}
 		if err := json.Unmarshal([]byte(r.OkValue.(string)), &ev); err != nil {
 			t.Fatalf("event %q: %v", r.OkValue, err)
 		}
 		if ev.Done {
-			return deltas, ev.Body
+			if err := json.Unmarshal([]byte(ev.Body), &body); err != nil {
+				t.Fatalf("body %q: %v", ev.Body, err)
+			}
+			return deltas, body
 		}
 		deltas = append(deltas, *ev.Delta)
 	}
@@ -204,4 +207,35 @@ func TestAiStreamBodyAsksForUsage(t *testing.T) {
 	if m["stream"] != true || m["stream_options"].(map[string]any)["include_usage"] != true {
 		t.Fatalf("%v", m)
 	}
+}
+
+// TestAiStreamPieceByPiece: the harness gate `ai-stream-pieces`. A managed
+// engine's answer arrives in more than one piece, the pieces join to the
+// final body's content, the stream ends with its last event, and the browser
+// worker streams the same way. Its mutation buffers the whole answer and
+// sends it only at the end (a silent non-stream).
+func TestAiStreamPieceByPiece(t *testing.T) {
+	c := &counter{t: t}
+	_, model := aiTestEnv(t, nil)
+	cfg := map[string]any{
+		"slot": "streamgate", "mode": "", "url": "", "hasKey": false, "key": Secret{},
+		"model": "", "adapter": "", "timeoutMs": -1, "maxInFlight": -1, "queue": -1,
+		"queueWaitMs": -1, "retries": -1, "hasLocal": true,
+		"local": map[string]any{"model": model, "context": -1, "gpu": "", "parallel": -1,
+			"idleUnload": -1, "embeddings": false, "port": -1},
+	}
+	r := Ai_endpointStreamOpen(cfg, "/chat/completions", chatBody("alpha beta gamma")).(func() any)().(SkyResult[any, any])
+	c.check(r.Tag == 0, "open: %+v", r)
+	id := r.OkValue.(string)
+	deltas, body := streamAll(t, id)
+	c.check(len(deltas) > 2, "the answer arrived in pieces: %q", deltas)
+	c.check(bodyContent(body) == strings.Join(deltas, "") && strings.HasSuffix(bodyContent(body), "alpha beta gamma"),
+		"the pieces are the answer: %q %v", deltas, body)
+	n := Ai_streamNext(id).(func() any)().(SkyResult[any, any])
+	c.check(n.Tag != 0, "the stream ended with its last event")
+	v := runWorker(t, "stream")
+	ev := v["events"].([]any)
+	c.check(v["begin"] == true && len(ev) == 4 && ev[0] == `{"delta":"on "}` && ev[1] == `{"delta":"cpu"}`,
+		"the worker streams: %v", v)
+	c.done()
 }

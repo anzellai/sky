@@ -2455,7 +2455,7 @@ to the local engine.
 |---|---|
 | `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe`, `inspect`, `tokenize`, `slotName` |
 | `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withAdapter`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
-| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire` |
+| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire`, `wireStreaming`; streaming: `stream`, `read` (`Piece` / `Finished`), `close`, `chatStream` |
 
 The full guide, every variable and the failure kinds: [`ai/local.md`](ai/local.md).
 

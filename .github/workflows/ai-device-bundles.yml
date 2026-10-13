@@ -82,6 +82,20 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
           cmake --version
 
+      - uses: actions/setup-go@v5
+        if: matrix.target == 'web'
+        with:
+          go-version-file: runtime-go/go.mod
+
+      # The engine core's contract on the runner's CPU before any target is
+      # built: the streamed answer is the one-call answer, in whole UTF-8
+      # pieces (scripts/ai/device/test_sky_llama.cpp, the synthetic model).
+      - name: The engine core's contract
+        if: matrix.target == 'web'
+        run: |
+          set -euo pipefail
+          ./scripts/ai/device/test-engine-core.sh --llama-src "$RUNNER_TEMP/src/llama.cpp-${LLAMA_BUILD}" --work "$RUNNER_TEMP/core"
+
       - name: emsdk ${{ env.EMSDK_VERSION }} and Dawn ${{ env.DAWN_TAG }}
         if: matrix.target == 'web'
         run: |

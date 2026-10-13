@@ -307,6 +307,7 @@ func registerAiDeviceRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET /_sky/ai/device/{slot}", aiDeviceOfferHandler)
 	mux.HandleFunc("POST /_sky/ai/device/{slot}/call", aiDeviceCallHandler)
+	mux.HandleFunc("POST /_sky/ai/device/{slot}/stream", aiDeviceStreamHandler)
 	mux.HandleFunc("GET /_sky/ai/blob/{name}", aiDeviceBlobHandler)
 	// The browser worker (ai_device_worker.go), from memory like the boot
 	// loader.
@@ -553,47 +554,57 @@ type aiDeviceCallBody struct {
 	Body string `json:"body"`
 }
 
-func aiDeviceCallHandler(w http.ResponseWriter, r *http.Request) {
+// aiDeviceCallGuard applies the fallback call's rules (a server slot, the
+// same origin, JSON, the rate and the size) and returns the call, or writes
+// the refusal and returns ok false.
+func aiDeviceCallGuard(w http.ResponseWriter, r *http.Request) (e *aiDeviceEntry, call aiDeviceCallBody, ok bool) {
 	slot := r.PathValue("slot")
 	e, err := aiDeviceEntryFor(slot)
 	if err != nil {
 		aiDeviceWriteFailure(w, http.StatusNotFound, err)
-		return
+		return nil, call, false
 	}
 	o, err := e.offerNow(r.Context())
 	if err != nil {
 		aiDeviceWriteFailure(w, http.StatusServiceUnavailable, err)
-		return
+		return nil, call, false
 	}
 	if !o.Server {
 		// DeviceOnly: there is no server fallback to call.
 		http.NotFound(w, r)
-		return
+		return nil, call, false
 	}
 	if reason, ok := sameOriginGuard(r); !ok {
 		aiDeviceWriteFailure(w, http.StatusForbidden, aiFailf(aiRemoteRejected, "%s", reason).withInt("status", 403))
-		return
+		return nil, call, false
 	}
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(strings.ToLower(ct), "application/json") {
 		aiDeviceWriteFailure(w, http.StatusUnsupportedMediaType, aiFailf(aiRemoteRejected, "the call body must be application/json").withInt("status", 415))
-		return
+		return nil, call, false
 	}
 	if !aiDeviceLimiter.allow(aiDeviceCallKey(r), time.Now()) {
 		f := aiFailf(aiOverloaded, "more than %d device fallback calls a minute", aiDeviceCallsPerMinute)
 		f.retryAfterMs, f.httpStatus = 60000, http.StatusTooManyRequests
 		w.Header().Set("Retry-After", "60")
 		aiDeviceWriteFailure(w, http.StatusTooManyRequests, f)
-		return
+		return nil, call, false
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, aiDeviceCallMaxBody))
 	if err != nil {
 		aiDeviceWriteFailure(w, http.StatusRequestEntityTooLarge,
 			aiFailf(aiRemoteRejected, "the call body is larger than %d bytes", aiDeviceCallMaxBody).withInt("status", 413))
-		return
+		return nil, call, false
 	}
-	var call aiDeviceCallBody
 	if json.Unmarshal(raw, &call) != nil || !aiDeviceCallPaths[call.Path] {
 		aiDeviceWriteFailure(w, http.StatusBadRequest, aiFailf(aiRemoteRejected, "not a device call").withInt("status", 400))
+		return nil, call, false
+	}
+	return e, call, true
+}
+
+func aiDeviceCallHandler(w http.ResponseWriter, r *http.Request) {
+	e, call, ok := aiDeviceCallGuard(w, r)
+	if !ok {
 		return
 	}
 	out, err := aiDeviceServerCall(e, call.Path, call.Body)
@@ -605,6 +616,68 @@ func aiDeviceCallHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	setSecurityHeaders(w.Header())
 	_, _ = io.Copy(w, bytes.NewReader([]byte(out)))
+}
+
+// aiDeviceStreamIdle is how long one event of the fallback stream may take
+// to write: the write deadline moves on with every event.
+const aiDeviceStreamIdle = 2 * time.Minute
+
+// aiDeviceStreamHandler is the streaming fallback call (Provider.chatStream
+// in a client that answers from the server): the same rules as /call, then
+// server-sent events, each `data: <event>` with the event as
+// `Ai_streamNext` gives it, or `data: {"failure":<the typed failure>}`.
+func aiDeviceStreamHandler(w http.ResponseWriter, r *http.Request) {
+	e, call, ok := aiDeviceCallGuard(w, r)
+	if !ok {
+		return
+	}
+	if call.Path != "/chat/completions" {
+		aiDeviceWriteFailure(w, http.StatusBadRequest, aiFailf(aiRemoteRejected, "only a chat streams").withInt("status", 400))
+		return
+	}
+	s, err := aiSlotFor(e.b)
+	if err != nil {
+		aiDeviceWriteFailure(w, http.StatusBadGateway, err)
+		return
+	}
+	id, err := s.openStream(call.Path, call.Body)
+	if err != nil {
+		aiDeviceWriteFailure(w, http.StatusBadGateway, err)
+		return
+	}
+	defer aiStreamDrop(id, aiFailf(aiUnreachable, "the client left the stream").with("target", "client"))
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	setSecurityHeaders(w.Header())
+	rc := http.NewResponseController(w)
+	write := func(ev string) bool {
+		_ = rc.SetWriteDeadline(time.Now().Add(aiDeviceStreamIdle))
+		if _, err := io.WriteString(w, "data: "+ev+"\n\n"); err != nil {
+			return false
+		}
+		return rc.Flush() == nil
+	}
+	for {
+		st, err := aiStreamGet(id)
+		if err != nil {
+			return
+		}
+		ev, done, err := st.next()
+		if err != nil {
+			f, _ := err.(*aiFailure)
+			if f == nil {
+				f = aiFailf(aiEngineFailed, "%v", err).with("reason", err.Error())
+			}
+			write(`{"failure":` + string(aiDeviceFailureJSON(f)) + `}`)
+			return
+		}
+		if !write(ev) || done {
+			return
+		}
+		if r.Context().Err() != nil {
+			return
+		}
+	}
 }
 
 // aiDeviceServerCall runs one call on the registered slot itself.
@@ -675,6 +748,41 @@ func AiDevice_server(slotArg, pathArg, bodyArg any) any {
 		return Ok[any, any](out)
 	}
 }
+
+// AiDevice_streamOpen : String -> String -> String -> String -> String -> Task Error String
+func AiDevice_streamOpen(backendArg, slotArg, _, _, _ any) any {
+	backend, slot := AsString(backendArg), AsString(slotArg)
+	return func() any {
+		return aiTaskErr(aiDeviceUnsupportedf(backend, "slot %q: the server runs no device backend", slot))
+	}
+}
+
+// AiDevice_streamServer : String -> String -> String -> Task Error String —
+// a stream from the registered slot, in this process.
+func AiDevice_streamServer(slotArg, pathArg, bodyArg any) any {
+	slot, path, body := AsString(slotArg), AsString(pathArg), AsString(bodyArg)
+	return func() any {
+		e, err := aiDeviceEntryFor(slot)
+		if err != nil {
+			return aiTaskErr(err)
+		}
+		s, err := aiSlotFor(e.b)
+		if err != nil {
+			return aiTaskErr(err)
+		}
+		id, err := s.openStream(path, body)
+		if err != nil {
+			return aiTaskErr(err)
+		}
+		return Ok[any, any](id)
+	}
+}
+
+// AiDevice_streamNext : String -> Task Error String
+func AiDevice_streamNext(idArg any) any { return Ai_streamNext(idArg) }
+
+// AiDevice_streamClose : String -> Task Error ()
+func AiDevice_streamClose(idArg any) any { return Ai_streamClose(idArg) }
 
 // AiDevice_prepare : String -> String -> String -> Task Error String
 func AiDevice_prepare(slotArg, backendArg, _ any) any {

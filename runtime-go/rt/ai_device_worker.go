@@ -319,6 +319,36 @@ async function chat(msg) {
   return out;
 }
 
+// engineFailure is the typed failure of an engine error object.
+function engineFailure(err) {
+  if (err.code === 'context') {
+    return fail('InvalidSetting', err.message, [['setting', 'context'], ['reason', err.message]]);
+  }
+  return fail('EngineFailed', err.message, [['reason', err.message]]);
+}
+
+// Streaming (Provider.chatStream): streamBegin decodes the prompt; each
+// streamNext answers {"delta":…} or, last, {"done":true,"body":"<the
+// chat-completions body as a string>"}. One answer streams at a time: a new
+// begin ends the one before.
+async function streamBegin(msg) {
+  const e = await ensureLoaded(msg);
+  if (msg.path !== '/chat/completions') {
+    throw fail('RemoteRejected', 'a device answers chat requests only', [['status', '404']]);
+  }
+  const out = await e.call('sky_llama_chat_begin', 'string', ['string'], [msg.body]);
+  if (out) throw engineFailure(JSON.parse(out).error);
+  return '';
+}
+
+async function streamNext() {
+  if (!engine) throw fail('EngineFailed', 'no answer is streaming', [['reason', 'no answer is streaming']]);
+  const ev = JSON.parse(await engine.call('sky_llama_chat_next', 'string', [], []));
+  if (ev.error) throw engineFailure(ev.error);
+  if (ev.done) return JSON.stringify({ done: true, body: JSON.stringify(ev.body) });
+  return JSON.stringify(ev);
+}
+
 async function prepare(msg) {
   const offer = JSON.parse(msg.offer);
   const dir = await storeDir();
@@ -357,6 +387,8 @@ self.onmessage = (ev) => {
       if (msg.op === 'caps') value = JSON.stringify(await caps(msg.engines || {}));
       else if (msg.op === 'prepare') value = await prepare(msg);
       else if (msg.op === 'chat') value = await chat(msg);
+      else if (msg.op === 'streamBegin') value = await streamBegin(msg);
+      else if (msg.op === 'streamNext') value = await streamNext();
       else if (msg.op === 'evict') value = await evict(msg);
       else throw new Error('invalid: unknown op ' + msg.op);
       self.postMessage({ id: msg.id, ok: true, value });
