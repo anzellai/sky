@@ -196,6 +196,31 @@ sky ai teardown --all-sky                                      # every job and s
 A training run deletes its own Vertex job records and staging prefix after
 the adapter is registered (`Train.withKeepStaging` keeps them).
 
+## Measured on a real project
+
+Six wrapper runs of stages l0 to l3 in us-central1 on 2026-10-12 and
+2026-10-13 (`scripts/ai/live/gcp-ledger.jsonl` holds each run's resources
+and cost):
+
+* Cloud Build made the trainer image in 709 to 1131 s (USD 0.07 to 0.11 at
+  the default pool's rate) and the tier image in 17 to 48 s.
+* A Fake-driver job on `n2-standard-4` (20 steps of 3 s) took 329 to 974 s
+  from create to end: Vertex provisioning and the pull of the CUDA-based
+  trainer image are most of it.
+* The last run passed every stage: the plan refused a budget below the
+  estimate and created no job; a launch whose journal row was deleted found
+  its job and created no second one; a trainer killed after step 7 was
+  relaunched from the checkpoint at step 5 and finished; a cancel ended the
+  run `TrainingCancelled`; and a job with a 3-minute ceiling was stopped by
+  Vertex at step 52 of 400 and ended `TrainingFailed`. It cost about USD 0.16,
+  and the leak check found nothing left.
+* What Vertex reports, which the emulator now copies: a container ended by
+  exit 137 is error code 8 "Replicas low on memory" (the run relaunches it),
+  and a job at its scheduling timeout ends `JOB_STATE_CANCELLED`.
+
+The Unsloth run on an L4 (l4) and the Cloud Run tier (l5) need the L4
+quotas above, which a new project does not have; they have not run yet.
+
 ## Live tests
 
 `scripts/ai/gcp-live.sh --project <id> --stages l0,l1,l2,l3,l4,l5` runs the
