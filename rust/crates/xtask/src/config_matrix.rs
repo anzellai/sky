@@ -816,7 +816,10 @@ const MEASURED_SOURCE_ROOTS: &[(&str, &[&str])] = &[
     ("rust/crates", &["rs", "toml"]),
     // `py`, `in` and `txt`: the Std.Ai.Train driver and its hash locks under
     // runtime-go/rt/ai_train_assets, which `rt` embeds (go:embed).
-    ("runtime-go", &["go", "mod", "sum", "py", "in", "txt", "dockerfile"]),
+    (
+        "runtime-go",
+        &["go", "mod", "sum", "py", "in", "txt", "dockerfile"],
+    ),
     ("sky-stdlib", &["sky", "skyi"]),
     ("templates", &["md"]),
     ("sky-bundled", &["sky", "skyi", "toml"]),

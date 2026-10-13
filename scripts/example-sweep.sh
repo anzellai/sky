@@ -327,6 +327,11 @@ declare -a EXAMPLES=(
     # network. The cloud workflow runs offline against the runtime's emulator
     # in its `sky test` suite (rust/crates/sky/tests/ai_cloud_train_flow.rs).
     "74-ai-cloud:server:8074:/"
+    # 75 — Std.Ai.Device in a full-stack app (Std.App, Std.Ui): serving `/`
+    # reads the notes and the device status; nothing downloads and no model
+    # runs until the user asks, so it needs no model. The device flows are
+    # scripts/ai-device-e2e.sh and rust/crates/sky/tests/ai_device_*.rs.
+    "75-ai-everywhere:server:8075:/"
 )
 
 # ─── shard selection ──────────────────────────────────────────────────────

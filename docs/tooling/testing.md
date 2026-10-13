@@ -309,6 +309,19 @@ starts, labels every resource, tears everything down on exit and fails the
 run if anything is left. CI runs them on manual dispatch only
 (`.github/workflows/ai-cloud-live.yml`), never on a commit or a release.
 
+### On-device slots (`Std.Ai.Device`)
+
+A test runs on the server, so `Device.provider "<slot>"` is the slot itself:
+its calls are answered by `tests/mocks/` like any slot's, `Device.status`
+reports `ServerSide OnTheServer`, and `Device.record` with `Eval.prompts`
+followed by `Device.replay` and `Eval.runAs` scores a recording offline.
+`examples/75-ai-everywhere/tests/NotesTest.sky` does all three. The device
+itself (the browser worker, the iOS and Android apps, the Mac app) is tested
+by `scripts/ai-device-e2e.sh` and `rust/crates/sky/tests/ai_device_native_flow.rs`
+on a synthetic model (`go run ./cmd/sky-tiny-gguf <dir>` in `runtime-go/`),
+set through the slot's own variables (`SKY_AI_<SLOT>_MODEL`). See
+[`../ai/device.md`](../ai/device.md#testing).
+
 ### Log capture
 
 Set **`SKY_TEST_LOG_CAPTURE=<path>`** and the app's `Std.Log` output is written

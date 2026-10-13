@@ -19,6 +19,7 @@ import Sky.Test as Test exposing (Test, TestResult(..))
 import Std.Ai.Provider as Provider exposing (Provider)
 import Std.Ai.Endpoint as Endpoint
 import Std.Ai.Local as Local
+import Std.Sync as Sync
 
 
 -- A chat answer whose content is "<path>|<request body>".
@@ -112,9 +113,237 @@ lacks needle result =
             Test.fail (Error.toString e)
 
 
+-- ---------------------------------------------------------------------------
+-- chatStream
+-- ---------------------------------------------------------------------------
+-- A stream transport that answers scripted events in order and counts closes.
+scripted : Sync.Ref (List String) -> Sync.Ref Int -> Provider.StreamTransport
+scripted events closed =
+    { open = \_ _ -> Task.succeed "s1"
+    , next =
+        \_ ->
+            Sync.get events
+                |> Task.andThen
+                       (\evs ->
+                           case evs of
+
+                               e :: rest ->
+                                   Sync.set rest events |> Task.map (\_ -> e)
+
+                               [] ->
+                                   Task.fail
+                                       (Error.unexpected "read past the end"))
+    , close = \_ -> Sync.update (\n -> n + 1) closed |> Task.map (\_ -> ())
+    }
+
+
+helloEvents : List String
+helloEvents =
+    [ "{\"delta\":\"Hel\"}"
+    , "{\"delta\":\"lo\"}"
+    , "{\"done\":true,\"body\":\"{\\\"choices\\\":[{\\\"message\\\":{\\\"content\\\":\\\"Hello\\\"}}],\\\"usage\\\":{\\\"prompt_tokens\\\":1,\\\"completion_tokens\\\":2,\\\"total_tokens\\\":3}}\"}"
+    ]
+
+
+-- The pieces a stream handed over, the answer, and how often it was closed.
+streamed : List String -> (String -> Task Error ()) -> Result Error ( List String, String, Int )
+streamed events extra =
+    Task.run
+        (Sync.newRef events
+            |> Task.andThen
+                   (\evs ->
+                       Sync.newRef 0
+                           |> Task.andThen
+                                  (\closed ->
+                                      Sync.newRef []
+                                          |> Task.andThen
+                                                 (\pieces ->
+                                                     Provider.chatStream
+                                                         Provider.defaultOptions
+                                                         (Provider.wireStreaming
+                                                             echo
+                                                             (scripted evs closed)
+                                                             "m")
+                                                         [ Provider.user "hi" ]
+                                                         (\p ->
+                                                             extra p
+                                                                 |> Task.andThen
+                                                                        (\_ ->
+                                                                            Sync.update
+                                                                                (\ps ->
+                                                                                    ps
+                                                                                        ++ [ p
+                                                                                           ])
+                                                                                pieces)
+                                                                 |> Task.map
+                                                                        (\_ -> ()))
+                                                         |> Task.andThen
+                                                                (\r ->
+                                                                    Sync.get
+                                                                        pieces
+                                                                        |> Task.andThen
+                                                                               (\ps ->
+                                                                                   Sync.get
+                                                                                       closed
+                                                                                       |> Task.map
+                                                                                              (\n ->
+                                                                                                  ( ps
+                                                                                                  , r.content
+                                                                                                        ++ "/"
+                                                                                                        ++ String.fromInt
+                                                                                                               r.usage.completionTokens
+                                                                                                  , n
+                                                                                                  ))))
+                                                         |> Task.onError
+                                                                (\e ->
+                                                                    Sync.get
+                                                                        closed
+                                                                        |> Task.andThen
+                                                                               (\n ->
+                                                                                   Task.fail
+                                                                                       (Error.unexpected
+                                                                                           (Error.toString
+                                                                                               e
+                                                                                               ++ " closed="
+                                                                                               ++ String.fromInt
+                                                                                                      n))))))))
+
+
+-- Read a stream to its end with `read`, as a TEA app does one update at a time.
+readAll : List String -> Provider.Stream -> Task Error ( List String, String )
+readAll acc s =
+    Provider.read s
+        |> Task.andThen
+               (\step ->
+                   case step of
+
+                       Provider.Piece text next ->
+                           readAll (acc ++ [ text ]) next
+
+                       Provider.Finished r ->
+                           Task.succeed ( acc, r.content ))
+
+
+pulled : Result Error ( List String, String )
+pulled =
+    Task.run
+        (Sync.newRef helloEvents
+            |> Task.andThen
+                   (\evs ->
+                       Sync.newRef 0
+                           |> Task.andThen
+                                  (\closed ->
+                                      Provider.stream
+                                          Provider.defaultOptions
+                                          (Provider.wireStreaming
+                                              echo
+                                              (scripted evs closed)
+                                              "m")
+                                          [ Provider.user "hi" ]
+                                          |> Task.andThen (readAll []))))
+
+
+noExtra : String -> Task Error ()
+noExtra _ =
+    Task.succeed ()
+
+
+onePiece : Provider -> Result Error ( List String, String )
+onePiece provider =
+    Task.run
+        (Sync.newRef []
+            |> Task.andThen
+                   (\pieces ->
+                       Provider.chatStream
+                           Provider.defaultOptions
+                           provider
+                           [ Provider.user "hi" ]
+                           (\p ->
+                               Sync.update (\ps -> ps ++ [ p ]) pieces
+                                   |> Task.map (\_ -> ()))
+                           |> Task.andThen
+                                  (\r ->
+                                      Sync.get pieces
+                                          |> Task.map (\ps -> ( ps, r.content )))))
+
+
 tests : List Test
 tests =
     [ Test.suite
+          "Std.Ai.Provider chatStream"
+          [ Test.test
+                "the pieces arrive in order and the result is the whole answer"
+                (\_ ->
+                    Test.equal
+                        (Ok ( [ "Hel", "lo" ], "Hello/2", 0 ))
+                        (streamed helloEvents noExtra))
+          , Test.test
+                "read gives the pieces one at a time, then the whole answer"
+                (\_ -> Test.equal (Ok ( [ "Hel", "lo" ], "Hello" )) pulled)
+          , Test.test
+                "a failing piece handler closes the stream and fails the call"
+                (\_ ->
+                    contains
+                        "closed=1"
+                        (streamed
+                            helloEvents
+                            (\p ->
+                                if p == "lo" then
+                                    Task.fail
+                                        (Error.unexpected "the view is gone")
+
+                                else
+                                    Task.succeed ())
+                            |> Result.map (\_ -> "no failure")
+                            |> Result.mapError identity
+                            |> (\r ->
+                                   case r of
+
+                                       Ok s ->
+                                           Ok s
+
+                                       Err e ->
+                                           Ok (Error.toString e))))
+          , Test.test
+                "a stream that ends early is a failure, and it is closed"
+                (\_ ->
+                    contains
+                        "closed=1"
+                        (case streamed [ "{\"delta\":\"a\"}" ] noExtra of
+
+                            Ok _ ->
+                                Ok "no failure"
+
+                            Err e ->
+                                Ok (Error.toString e)))
+          , Test.test
+                "a provider without a stream hands the whole answer as one piece"
+                (\_ ->
+                    Test.equal
+                        (Ok
+                            ( [ "/chat/completions|{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+                              ]
+                            , "/chat/completions|{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+                            ))
+                        (onePiece (Provider.wire echo "m")))
+          , Test.test
+                "a custom provider hands the whole answer as one piece"
+                (\_ ->
+                    Test.equal
+                        (Ok ( [ "custom" ], "custom" ))
+                        (onePiece
+                            (Provider.custom
+                                (\_ ->
+                                    Task.succeed
+                                        { content = "custom"
+                                        , usage =
+                                            { promptTokens = 1
+                                            , completionTokens = 1
+                                            , totalTokens = 2
+                                            }
+                                        }))))
+          ]
+    , Test.suite
           "Std.Ai.Provider chatWith / embed / wire"
           [ Test.test
                 "a wire provider posts the chat to /chat/completions with its model"

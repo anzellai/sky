@@ -43,6 +43,7 @@ use project::{
 };
 use testrunner::run_test;
 
+mod ai_device;
 mod ai_doctor;
 mod ai_project;
 mod app_url;
@@ -3779,7 +3780,16 @@ fn bake_backend_wasm_name(backend_main: &Path, dist: &Path) {
     let Ok(src) = std::fs::read_to_string(backend_main) else {
         return;
     };
-    if let Some(baked) = project::spa_split::bake_built_wasm_name(&src, &name) {
+    let mut out = project::spa_split::bake_built_wasm_name(&src, &name);
+    // Std.Ai.Device: the engines the frontend leg staged, for the
+    // server-rendered page's `sky-ai-engine` meta.
+    if let Some(content) = project::spa_split::built_ai_engine(dist) {
+        let base = out.clone().unwrap_or_else(|| src.clone());
+        if let Some(b) = project::spa_split::bake_built_ai_engine(&base, &content) {
+            out = Some(b);
+        }
+    }
+    if let Some(baked) = out {
         if let Err(e) = std::fs::write(backend_main, baked) {
             eprintln!(
                 "sky spa-split --build: could not write the wasm name into {}: {e}",
@@ -4044,6 +4054,12 @@ fn spa_split_and_build(
         if !precompress {
             c.arg("--no-precompress");
         }
+        if let Some(v) = ai_web_engine_arg() {
+            c.args(["--ai-web-engine", v]);
+        }
+        if let Some(slot) = AI_EMBED.get() {
+            c.args(["--ai-embed", slot]);
+        }
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
@@ -4052,7 +4068,44 @@ fn spa_split_and_build(
         out
     };
     let t_legs = project::timings::phase("both legs (wall)");
-    let (backend_res, frontend_res) = if bake_wasm_name {
+    // `--ai-embed <slot>`: the native shell carries the slot's model and
+    // adapter. The backend is built first and resolves them as it would serve
+    // them (`--sky-ai-export`), into the frontend project's `.sky-ai-embed/`,
+    // which the frontend leg's shell builder copies into the app.
+    let embed_dir = frontend_dir.join(".sky-ai-embed");
+    let _ = std::fs::remove_dir_all(&embed_dir);
+    let ai_embed_ready = match AI_EMBED.get() {
+        None => None,
+        Some(slot) => {
+            let backend = build_backend();
+            match &backend {
+                Ok(out) if out.status.success() => {
+                    let bin = backend_dir.join("sky-out").join("app");
+                    let st = Command::new(&bin)
+                        .arg("--sky-ai-export")
+                        .arg(slot)
+                        .arg(&embed_dir)
+                        .current_dir(&backend_dir)
+                        .status();
+                    if !matches!(st, Ok(s) if s.success()) {
+                        eprintln!("sky build --ai-embed {slot}: the server could not export the slot's files (see above)");
+                        return Err(ExitCode::FAILURE);
+                    }
+                }
+                _ => {}
+            }
+            Some(backend)
+        }
+    };
+    let (backend_res, frontend_res) = if let Some(backend) = ai_embed_ready {
+        let frontend = build_frontend();
+        if bake_wasm_name && matches!(&frontend, Ok(out) if out.status.success()) {
+            bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
+            (Ok(build_backend()), Ok(frontend))
+        } else {
+            (Ok(backend), Ok(frontend))
+        }
+    } else if bake_wasm_name {
         let frontend = build_frontend();
         if matches!(&frontend, Ok(out) if out.status.success()) {
             bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
@@ -4582,6 +4635,37 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
 fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
     let (positional, out_override) = parse_out(args);
     let embed = args.iter().any(|a| a == "--embed");
+    // `--ai-web-engine webgpu|cpu|both|none`: the Std.Ai.Device browser
+    // engines a web client stages (stage_ai_device). Forwarded to the
+    // frontend leg of a split.
+    if let Some(i) = args.iter().position(|a| a == "--ai-web-engine") {
+        let v = args.get(i + 1).map(String::as_str).unwrap_or("");
+        let engine = if v == "none" {
+            None
+        } else {
+            match ai_device::WebEngine::parse(v) {
+                Ok(e) => Some(e),
+                Err(msg) => {
+                    eprintln!("sky build: {msg} (or none)");
+                    return ExitCode::FAILURE;
+                }
+            }
+        };
+        let _ = AI_WEB_ENGINE.set(engine);
+    }
+    if let Some(i) = args.iter().position(|a| a == "--ai-embed") {
+        match args.get(i + 1) {
+            Some(slot) if !slot.starts_with('-') => {
+                let _ = AI_EMBED.set(slot.clone());
+            }
+            _ => {
+                eprintln!(
+                    "sky build: --ai-embed needs the slot whose model a native shell carries"
+                );
+                return ExitCode::FAILURE;
+            }
+        }
+    }
     // Sky.Spa client build: `--wasm` compiles the emitted Go for the browser
     // (GOOS=js GOARCH=wasm) + drops wasm_exec.js; `--target <t>` bundles that
     // client for a delivery surface (web / desktop / ios / android). See
@@ -5226,6 +5310,14 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
             1,
         );
     }
+    let ai_meta = stage_ai_device(dist)?;
+    if !ai_meta.is_empty() {
+        index = index.replacen(
+            "<meta charset=\"utf-8\" />",
+            &format!("<meta charset=\"utf-8\" />{ai_meta}"),
+            1,
+        );
+    }
     std::fs::write(dist.join("index.html"), index).map_err(|e| format!("write index.html: {e}"))?;
     t_stage.end();
 
@@ -5240,6 +5332,14 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
         precompress_web_asset(&dist.join(&wasm_name), cache.as_deref());
         precompress_web_asset(&dist.join("wasm_exec.js"), cache.as_deref());
         precompress_web_asset(&dist.join(&boot_name), cache.as_deref());
+        for e in std::fs::read_dir(dist).into_iter().flatten().flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("sky-ai-")
+                && (n.ends_with(".wasm") || n.ends_with(".mjs") || n.ends_with(".js"))
+            {
+                precompress_web_asset(&e.path(), cache.as_deref());
+            }
+        }
     }
     Ok(())
 }
@@ -5384,6 +5484,9 @@ fn build_desktop_shell(
     std::fs::copy(&built, &dest)
         .map_err(|e| format!("copy the desktop binary to {}: {e}", dest.display()))?;
     let _ = std::fs::remove_dir_all(&shell);
+    // `--ai-embed`: the slot's files beside the binary, in sky-ai/.
+    let _ = std::fs::remove_dir_all(dest_dir.join("sky-ai"));
+    copy_ai_embedded(&dest_dir.join("sky-ai"), &ai_embedded_files(project_dir)?)?;
     if let Some(release_dir) = native_pkg::release_dir() {
         return package_macos_release(project_dir, out_dir, &dest, &id, &release_dir);
     }
@@ -5414,6 +5517,9 @@ fn package_macos_release(
     }
     std::fs::copy(bin, macos.join(&id.exe_name))
         .map_err(|e| format!("copy the desktop binary into the .app: {e}"))?;
+    // `--ai-embed`: the slot's files in Resources/sky-ai, where the desktop
+    // app's device bridge reads them (ai_device_desktop.go).
+    copy_ai_embedded(&resources.join("sky-ai"), &ai_embedded_files(project_dir)?)?;
 
     let icon = bundle_icon_source(project_dir, id);
     if let Some(icon) = &icon {
@@ -6550,6 +6656,69 @@ fn build_android_apk(
         ANDROID_PERMISSIONS_JAVA,
     )
     .map_err(|e| format!("write SkyPermissions.java: {e}"))?;
+    // Std.Ai.Device: llama.cpp in the shell when the app uses device slots and
+    // the engine is installed (`sky ai provision --device android`): the JNI
+    // library per ABI, stored uncompressed and 16 KB aligned.
+    let ai_dir = root.join("app/src/main/java/sky/ai");
+    std::fs::create_dir_all(&ai_dir).map_err(|e| format!("create {}: {e}", ai_dir.display()))?;
+    let ai_native = project_uses_ai_device(project_dir) && ai_device::installed("android");
+    if project_uses_ai_device(project_dir) && !ai_native {
+        eprintln!(
+            "note: Std.Ai.Device: the Android shell runs device slots in the web worker or on the server; {}",
+            ai_device::not_provisioned("android")
+        );
+    }
+    let _ = std::fs::remove_file(ai_dir.join("SkyLlama.java"));
+    std::fs::write(
+        ai_dir.join("SkyAi.java"),
+        if ai_native {
+            ANDROID_AI_JAVA
+        } else {
+            ANDROID_AI_STUB_JAVA
+        },
+    )
+    .map_err(|e| format!("write SkyAi.java: {e}"))?;
+    let jni = root.join("app/jniLibs");
+    let _ = std::fs::remove_dir_all(&jni);
+    if ai_native {
+        std::fs::write(ai_dir.join("SkyLlama.java"), ANDROID_AI_LLAMA_JAVA)
+            .map_err(|e| format!("write SkyLlama.java: {e}"))?;
+        for abi in ["arm64-v8a", "x86_64"] {
+            let d = jni.join("lib").join(abi);
+            std::fs::create_dir_all(&d).map_err(|e| format!("create {}: {e}", d.display()))?;
+            let src = ai_device::engine_dir("android")
+                .join(abi)
+                .join("libskyllama.so");
+            std::fs::copy(&src, d.join("libskyllama.so"))
+                .map_err(|e| format!("copy {}: {e}", src.display()))?;
+        }
+    }
+    if ai_native {
+        // The libraries load in place from the APK, never extracted.
+        let mf = root.join("app/src/main/AndroidManifest.xml");
+        let text =
+            std::fs::read_to_string(&mf).map_err(|e| format!("read {}: {e}", mf.display()))?;
+        // ACCESS_NETWORK_STATE (a normal permission, no prompt): a download
+        // waits for an unmetered network unless the slot allows metered.
+        std::fs::write(
+            &mf,
+            text.replacen(
+                "android:supportsRtl=\"true\">",
+                "android:supportsRtl=\"true\"\n        android:extractNativeLibs=\"false\">",
+                1,
+            )
+            .replacen(
+                "<uses-permission android:name=\"android.permission.INTERNET\" />",
+                "<uses-permission android:name=\"android.permission.INTERNET\" />\n    \
+                 <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />",
+                1,
+            ),
+        )
+        .map_err(|e| format!("write {}: {e}", mf.display()))?;
+    }
+    let assets = root.join("app/src/main/assets");
+    let _ = std::fs::remove_dir_all(&assets);
+    copy_ai_embedded(&assets.join("sky-ai"), &ai_embedded_files(project_dir)?)?;
     let scan_dir = root.join("app/src/main/java/sky/scan");
     std::fs::create_dir_all(&scan_dir)
         .map_err(|e| format!("create {}: {e}", scan_dir.display()))?;
@@ -6821,6 +6990,325 @@ public final class SkyRegistry {
 
 /// `Std.Native.scanCode` in the iOS shell: VisionKit's
 /// DataScannerViewController behind the `sky:scanCode` op (WebView.swift).
+/// The iOS shell's Std.Ai.Device bridge: the `sky:ai*` ops over llama.cpp
+/// (SkyLlama.xcframework, `ai_device.rs`). Written when the app imports
+/// `Std.Ai.Device` and the iOS engine is installed; [`IOS_AI_STUB_SWIFT`]
+/// otherwise.
+const IOS_AI_SWIFT: &str = r#"import Foundation
+import CryptoKit
+import Network
+import SkyLlama
+
+// Std.Ai.Device in the iOS shell: llama.cpp b11200 (SkyLlama.xcframework)
+// answers a device slot's calls. Files live in Application Support/sky-ai,
+// excluded from backups, named by their SHA-256; a file is ready only after
+// its digest was checked. A model the build embedded (`--ai-embed`) is read
+// from the app bundle. Generated by `sky build`; do not edit.
+enum SkyAi {
+    static let queue = DispatchQueue(label: "sky.ai.engine", qos: .userInitiated)
+    static let monitor: NWPathMonitor = { let m = NWPathMonitor(); m.start(queue: DispatchQueue(label: "sky.ai.path")); return m }()
+    static var loadedKey = ""
+    static var inited = false
+    static var progress: [String: [String: Any]] = [:]
+    static let lock = NSLock()
+
+    static func dir() throws -> URL {
+        var d = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("sky-ai", isDirectory: true)
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        var rv = URLResourceValues(); rv.isExcludedFromBackup = true
+        try? d.setResourceValues(rv)
+        return d
+    }
+
+    static func bundled(_ sha: String) -> URL? {
+        Bundle.main.url(forResource: sha, withExtension: "gguf", subdirectory: "sky-ai")
+    }
+
+    static func ready(_ sha: String) -> URL? {
+        if let b = bundled(sha) { return b }
+        guard let d = try? dir() else { return nil }
+        let ok = d.appendingPathComponent(sha + ".ok")
+        let f = d.appendingPathComponent(sha + ".gguf")
+        return FileManager.default.fileExists(atPath: ok.path) && FileManager.default.fileExists(atPath: f.path) ? f : nil
+    }
+
+    static func failure(_ code: String, _ message: String, _ attrs: [[String]]) -> String {
+        let body: [String: Any] = ["failure": ["code": code, "message": message, "attrs": attrs]]
+        let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        return "ai:" + (String(data: data, encoding: .utf8) ?? "{}")
+    }
+
+    static func json(_ v: Any) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: v)) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    static func handle(_ op: String, _ payload: String, origin: URL?, _ reply: @escaping (Any?, String?) -> Void) {
+        let done: (Any?, String?) -> Void = { r, e in DispatchQueue.main.async { reply(r, e) } }
+        let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
+        switch op {
+        case "sky:aiCaps": done(caps(), nil)
+        case "sky:aiStatus":
+            lock.lock(); let st = progress[key(p["offer"] ?? "")] ?? ["state": "idle", "doneBytes": 0, "totalBytes": 0]; lock.unlock()
+            done(json(st), nil)
+        case "sky:aiEvict": queue.async { done(evict(p["offer"] ?? ""), nil) }
+        case "sky:aiPrepare": prepare(p, origin: origin, done)
+        case "sky:aiChat": queue.async { let (r, e) = chat(p); done(r, e) }
+        case "sky:aiStreamBegin": queue.async { let (r, e) = streamBegin(p); done(r, e) }
+        case "sky:aiStreamNext": queue.async { let (r, e) = streamNext(); done(r, e) }
+        default: done(nil, "invalid: unknown op " + op)
+        }
+    }
+
+    static func caps() -> String {
+        var ready: [String] = []
+        if let d = try? dir(), let names = try? FileManager.default.contentsOfDirectory(atPath: d.path) {
+            ready = names.filter { $0.hasSuffix(".ok") }.map { String($0.dropLast(3)) }
+        }
+        if let b = Bundle.main.resourceURL?.appendingPathComponent("sky-ai"),
+           let names = try? FileManager.default.contentsOfDirectory(atPath: b.path) {
+            ready += names.filter { $0.hasSuffix(".gguf") }.map { String($0.dropLast(5)) }
+        }
+        var avail: Int64 = 0
+        if let d = try? dir(), let v = try? d.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]) {
+            avail = v.volumeAvailableCapacityForImportantUsage ?? 0
+        }
+        // A model may use a third of the device's memory.
+        let maxModel = Int64(ProcessInfo.processInfo.physicalMemory / 3)
+        let c: [String: Any] = [
+            "platform": "ios",
+            "backends": [["backend": "native", "maxModelBytes": maxModel]],
+            "unsupported": [["backend": "webgpu", "reason": "the iOS shell runs llama.cpp natively"],
+                            ["backend": "wasm-cpu", "reason": "the iOS shell runs llama.cpp natively"]],
+            "storageAvailableBytes": avail,
+            "metered": monitor.currentPath.isExpensive || monitor.currentPath.isConstrained,
+            "ready": ready,
+            "failed": [String](),
+        ]
+        return json(c)
+    }
+
+    static func offer(_ s: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] ?? [:]
+    }
+
+    static func files(_ o: [String: Any]) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        if let m = o["model"] as? [String: Any] { out.append(m) }
+        if let a = o["adapter"] as? [String: Any] { out.append(a) }
+        return out
+    }
+
+    static func key(_ offerJSON: String) -> String {
+        let o = offer(offerJSON)
+        return (o["slot"] as? String ?? "") + ":" + files(o).map { $0["sha256"] as? String ?? "" }.joined(separator: ":")
+    }
+
+    static func setProgress(_ k: String, _ v: [String: Any]) { lock.lock(); progress[k] = v; lock.unlock() }
+
+    static func sha256(of url: URL) throws -> String {
+        let h = try FileHandle(forReadingFrom: url)
+        defer { try? h.close() }
+        var hasher = SHA256()
+        while let chunk = try h.read(upToCount: 8 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func prepare(_ p: [String: String], origin: URL?, _ done: @escaping (Any?, String?) -> Void) {
+        let offerJSON = p["offer"] ?? ""
+        let o = offer(offerJSON)
+        let k = key(offerJSON)
+        let all = files(o)
+        let total = all.reduce(Int64(0)) { $0 + (($1["bytes"] as? NSNumber)?.int64Value ?? 0) }
+        let base = URL(string: p["origin"] ?? "") ?? origin
+        setProgress(k, ["state": "downloading", "doneBytes": 0, "totalBytes": total])
+        Task.detached {
+            var doneBytes: Int64 = 0
+            do {
+                let d = try dir()
+                for f in all {
+                    let sha = f["sha256"] as? String ?? ""
+                    let bytes = (f["bytes"] as? NSNumber)?.int64Value ?? 0
+                    if ready(sha) != nil { doneBytes += bytes; continue }
+                    guard let rel = f["url"] as? String, let url = URL(string: rel, relativeTo: base) else {
+                        throw NSError(domain: "sky", code: 1, userInfo: [NSLocalizedDescriptionKey: "unavailable: no download address"])
+                    }
+                    // 64 MiB Range requests: each finishes well inside a server's
+                    // write timeout, and a slow link never holds one response open.
+                    let tmp = d.appendingPathComponent(sha + ".part")
+                    FileManager.default.createFile(atPath: tmp.path, contents: nil)
+                    let out = try FileHandle(forWritingTo: tmp)
+                    var off: Int64 = 0
+                    let chunk: Int64 = 64 << 20
+                    while off < bytes {
+                        let end = min(off + chunk, bytes) - 1
+                        var req = URLRequest(url: url)
+                        req.setValue("bytes=\(off)-\(end)", forHTTPHeaderField: "Range")
+                        let (data, resp) = try await URLSession.shared.data(for: req)
+                        if let http = resp as? HTTPURLResponse, http.statusCode != 206 && !(http.statusCode == 200 && off == 0) {
+                            try? out.close()
+                            throw NSError(domain: "sky", code: 2, userInfo: [NSLocalizedDescriptionKey: "unavailable: the server answered \(http.statusCode)"])
+                        }
+                        try out.write(contentsOf: data)
+                        off += Int64(data.count)
+                        doneBytes += Int64(data.count)
+                        setProgress(k, ["state": "downloading", "doneBytes": doneBytes, "totalBytes": total])
+                        if data.isEmpty { break }
+                    }
+                    try out.close()
+                    doneBytes -= off
+                    let got = try sha256(of: tmp)
+                    if got != sha {
+                        try? FileManager.default.removeItem(at: tmp)
+                        throw NSError(domain: "skyai", code: 3, userInfo: [NSLocalizedDescriptionKey:
+                            failure("ChecksumMismatch", (f["label"] as? String ?? "a file") + " does not match its SHA-256", [["expected", sha], ["actual", got]])])
+                    }
+                    let dest = d.appendingPathComponent(sha + ".gguf")
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.moveItem(at: tmp, to: dest)
+                    FileManager.default.createFile(atPath: d.appendingPathComponent(sha + ".ok").path, contents: Data())
+                    doneBytes += bytes
+                    setProgress(k, ["state": "downloading", "doneBytes": doneBytes, "totalBytes": total])
+                }
+                let (r, e) = queue.sync { load(o) }
+                if let e = e { throw NSError(domain: "skyai", code: 4, userInfo: [NSLocalizedDescriptionKey: e]) }
+                setProgress(k, ["state": "ready", "doneBytes": total, "totalBytes": total])
+                done(r, nil)
+            } catch {
+                let msg = (error as NSError).localizedDescription
+                setProgress(k, ["state": "failed", "doneBytes": doneBytes, "totalBytes": total, "error": msg])
+                done(nil, msg.hasPrefix("ai:") || msg.contains(": ") ? msg : "unavailable: " + msg)
+            }
+        }
+    }
+
+    // Load the slot's model and adapter (on the engine queue).
+    static func load(_ o: [String: Any]) -> (Any?, String?) {
+        let fs = files(o)
+        let k = fs.map { $0["sha256"] as? String ?? "" }.joined(separator: ":")
+        if k == loadedKey { return ("ready", nil) }
+        var paths: [URL] = []
+        for f in fs {
+            guard let u = ready(f["sha256"] as? String ?? "") else {
+                let slot = o["slot"] as? String ?? ""
+                return (nil, failure("NotProvisioned", "the on-device model of slot \(slot) is not downloaded",
+                                     [["what", "the on-device model of slot \(slot)"], ["command", "Device.prepare \"\(slot)\""]]))
+            }
+            paths.append(u)
+        }
+        if !inited { _ = sky_llama_init(0); inited = true }
+        loadedKey = ""
+        #if targetEnvironment(simulator)
+        let gpuLayers: Int32 = 0
+        #else
+        let gpuLayers: Int32 = 999
+        #endif
+        let ctx = Int32((o["context"] as? NSNumber)?.intValue ?? 2048)
+        let threads = Int32(max(1, min(4, ProcessInfo.processInfo.activeProcessorCount - 2)))
+        if sky_llama_load(paths[0].path, gpuLayers, ctx, threads) != 0 {
+            let why = String(cString: sky_llama_last_error())
+            return (nil, failure("EngineFailed", "the device model did not load: " + why, [["reason", "the device model did not load: " + why]]))
+        }
+        if paths.count > 1 && sky_llama_adapter(paths[1].path, 1.0) != 0 {
+            let why = String(cString: sky_llama_last_error())
+            return (nil, failure("EngineFailed", "the device adapter did not load: " + why, [["reason", "the device adapter did not load: " + why]]))
+        }
+        loadedKey = k
+        return ("ready", nil)
+    }
+
+    static func chat(_ p: [String: String]) -> (Any?, String?) {
+        let o = offer(p["offer"] ?? "")
+        let (_, e) = load(o)
+        if let e = e { return (nil, e) }
+        let path = p["path"] ?? ""
+        let body = p["body"] ?? "{}"
+        if path == "/@root/tokenize" {
+            let req = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any] ?? [:]
+            let n = Int(sky_llama_tokenize((req["content"] as? String) ?? ""))
+            return (json(["tokens": [Int](repeating: 0, count: max(0, n))]), nil)
+        }
+        if path != "/chat/completions" {
+            return (nil, failure("RemoteRejected", "a device answers chat requests only", [["status", "404"]]))
+        }
+        let out = String(cString: sky_llama_chat(body))
+        if let j = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any], let err = j["error"] as? [String: Any] {
+            let msg = err["message"] as? String ?? "the engine failed"
+            if (err["code"] as? String) == "context" {
+                return (nil, failure("InvalidSetting", msg, [["setting", "context"], ["reason", msg]]))
+            }
+            return (nil, failure("EngineFailed", msg, [["reason", msg]]))
+        }
+        return (out, nil)
+    }
+
+    static func engineFailure(_ err: [String: Any]) -> String {
+        let msg = err["message"] as? String ?? "the engine failed"
+        if (err["code"] as? String) == "context" {
+            return failure("InvalidSetting", msg, [["setting", "context"], ["reason", msg]])
+        }
+        return failure("EngineFailed", msg, [["reason", msg]])
+    }
+
+    // Provider.chatStream: begin decodes the prompt, each next answers one
+    // {"delta":…} and last {"done":true,"body":"<the body as a string>"}.
+    static func streamBegin(_ p: [String: String]) -> (Any?, String?) {
+        let o = offer(p["offer"] ?? "")
+        let (_, e) = load(o)
+        if let e = e { return (nil, e) }
+        if (p["path"] ?? "") != "/chat/completions" {
+            return (nil, failure("RemoteRejected", "a device answers chat requests only", [["status", "404"]]))
+        }
+        let out = String(cString: sky_llama_chat_begin(p["body"] ?? "{}"))
+        if !out.isEmpty {
+            let j = (try? JSONSerialization.jsonObject(with: Data(out.utf8))) as? [String: Any] ?? [:]
+            return (nil, engineFailure(j["error"] as? [String: Any] ?? [:]))
+        }
+        return ("", nil)
+    }
+
+    static func streamNext() -> (Any?, String?) {
+        let out = String(cString: sky_llama_chat_next())
+        let j = (try? JSONSerialization.jsonObject(with: Data(out.utf8))) as? [String: Any] ?? [:]
+        if let err = j["error"] as? [String: Any] { return (nil, engineFailure(err)) }
+        if (j["done"] as? Bool) == true, let body = j["body"] {
+            return (json(["done": true, "body": json(body)]), nil)
+        }
+        return (out, nil)
+    }
+
+    static func evict(_ offerJSON: String) -> String {
+        let o = offer(offerJSON)
+        if loadedKey.contains((o["model"] as? [String: Any])?["sha256"] as? String ?? "-") {
+            sky_llama_unload(); loadedKey = ""
+        }
+        if let d = try? dir() {
+            for f in files(o) {
+                let sha = f["sha256"] as? String ?? ""
+                for ext in [".ok", ".gguf"] { try? FileManager.default.removeItem(at: d.appendingPathComponent(sha + ext)) }
+            }
+        }
+        lock.lock(); progress[key(offerJSON)] = nil; lock.unlock()
+        return ""
+    }
+}
+"#;
+
+/// The iOS shell's `sky:ai*` handler when the app runs no device model: it
+/// answers that the op is unknown, so the client uses the browser worker or
+/// the server.
+const IOS_AI_STUB_SWIFT: &str = r#"import Foundation
+
+// Std.Ai.Device is not in this app (or the iOS engine is not installed):
+// the client falls back to the web worker or the server.
+enum SkyAi {
+    static func handle(_ op: String, _ payload: String, origin: URL?, _ reply: @escaping (Any?, String?) -> Void) {
+        reply(nil, "invalid: unknown op " + op)
+    }
+}
+"#;
+
 const IOS_CODE_SCANNER_SWIFT: &str = r#"import UIKit
 import AVFoundation
 import Vision
@@ -7045,6 +7533,25 @@ fn build_ios_app(
     .map_err(|e| format!("write WebView.swift: {e}"))?;
     std::fs::write(src.join("SkyCodeScanner.swift"), IOS_CODE_SCANNER_SWIFT)
         .map_err(|e| format!("write SkyCodeScanner.swift: {e}"))?;
+    // Std.Ai.Device: llama.cpp in the shell when the app uses device slots
+    // and the engine is installed (`sky ai provision --device ios`).
+    let ai_native = project_uses_ai_device(project_dir) && ai_device::installed("ios");
+    if project_uses_ai_device(project_dir) && !ai_native {
+        eprintln!(
+            "note: Std.Ai.Device: the iOS shell runs device slots in the web worker or on the server; {}",
+            ai_device::not_provisioned("ios")
+        );
+    }
+    std::fs::write(
+        src.join("SkyAi.swift"),
+        if ai_native {
+            IOS_AI_SWIFT
+        } else {
+            IOS_AI_STUB_SWIFT
+        },
+    )
+    .map_err(|e| format!("write SkyAi.swift: {e}"))?;
+    let ai_embedded = ai_embedded_files(project_dir)?;
 
     // Native extensions (Std.Native.bridge): copy each native/ios/*.swift from
     // the project + its Sky deps into the shell, and generate the registry
@@ -7155,6 +7662,8 @@ fn build_ios_app(
             ent_has_keys.then_some(ent_path.as_path()),
             signing.as_ref(),
             &release_dir,
+            &ios_ai_flags("ios-arm64", ai_native),
+            &ai_embedded,
         );
     }
 
@@ -7192,7 +7701,10 @@ fn build_ios_app(
     }
     std::fs::write(
         root.join("build-app.sh"),
-        IOS_BUILD_APP.replace("{{NAME}}", name),
+        IOS_BUILD_APP.replace("{{NAME}}", name).replace(
+            "{{AI_FLAGS}}",
+            &ios_ai_flags("ios-arm64-simulator", ai_native),
+        ),
     )
     .map_err(|e| format!("write build-app.sh: {e}"))?;
 
@@ -7210,6 +7722,7 @@ fn build_ios_app(
     if let Some(icon) = &icon_src {
         generate_ios_app_icons(icon, &app)?;
     }
+    copy_ai_embedded(&app.join("sky-ai"), &ai_embedded)?;
     // Sign the simulator build ad hoc with no entitlements, as Xcode does: the
     // entitlements are in the executable's sections (above), where the
     // simulator reads them. The app must carry a signature for the Keychain.
@@ -7222,6 +7735,42 @@ fn build_ios_app(
         return Err(format!("codesign --sign - {} failed", app.display()));
     }
     Ok(app)
+}
+
+/// The `swiftc` flags that link the iOS Std.Ai.Device engine's static
+/// library for one xcframework slice (`ios-arm64` or `ios-arm64-simulator`),
+/// or none when the app runs no device model.
+fn ios_ai_flags(slice: &str, native: bool) -> String {
+    if !native {
+        return String::new();
+    }
+    let dir = ai_device::engine_dir("ios")
+        .join("SkyLlama.xcframework")
+        .join(slice);
+    format!(
+        "-I '{h}' -L '{l}' -lskyllama -lc++ -framework Accelerate -framework Metal -framework Foundation",
+        h = dir.join("Headers").display(),
+        l = dir.display()
+    )
+}
+
+/// Copy the `--ai-embed` files into a native app's `sky-ai/` folder as
+/// `<sha256>.gguf`, where the shell's AI bridge reads them as ready.
+fn copy_ai_embedded(dir: &Path, files: &[(String, PathBuf)]) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    for (sum, path) in files {
+        let dest = dir.join(format!("{sum}.gguf"));
+        let _ = std::fs::remove_file(&dest);
+        std::fs::copy(path, &dest).map_err(|e| format!("embed {}: {e}", path.display()))?;
+    }
+    eprintln!(
+        "  Std.Ai.Device: embedded {} file(s) for --ai-embed",
+        files.len()
+    );
+    Ok(())
 }
 
 /// The Info.plist keys Sky owns for the iOS shell: identity, version, device
@@ -7285,10 +7834,14 @@ fn package_ios_release(
     entitlements: Option<&Path>,
     signing: Option<&native_pkg::IosSigning>,
     release_dir: &Path,
+    ai_flags: &str,
+    ai_embedded: &[(String, PathBuf)],
 ) -> Result<PathBuf, String> {
     std::fs::write(
         root.join("build-release.sh"),
-        IOS_BUILD_RELEASE.replace("{{NAME}}", name),
+        IOS_BUILD_RELEASE
+            .replace("{{NAME}}", name)
+            .replace("{{AI_FLAGS}}", ai_flags),
     )
     .map_err(|e| format!("write build-release.sh: {e}"))?;
     let status = Command::new("bash")
@@ -7306,6 +7859,7 @@ fn package_ios_release(
     if let Some(icon) = icon_src {
         generate_ios_app_icons(icon, &app)?;
     }
+    copy_ai_embedded(&app.join("sky-ai"), ai_embedded)?;
     let ipa_name = match signing {
         Some(sign) => {
             std::fs::copy(&sign.profile, app.join("embedded.mobileprovision"))
@@ -7692,6 +8246,11 @@ struct WebView: UIViewRepresentable {
                 let p = (try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: String] ?? [:]
                 SkyCodeScanner.run(formats: p["formats"] ?? "", prompt: p["prompt"] ?? "",
                                    from: message.webView) { reply, err in replyHandler(reply, err) }
+            case "sky:aiCaps", "sky:aiPrepare", "sky:aiStatus", "sky:aiChat", "sky:aiEvict",
+                 "sky:aiStreamBegin", "sky:aiStreamNext":
+                // Std.Ai.Device (SkyAi.swift): the slot's model on llama.cpp.
+                let payload = dict["payload"] as? String ?? "{}"
+                SkyAi.handle(type, payload, origin: message.webView?.url) { reply, err in replyHandler(reply, err) }
             default:
                 // A custom Std.Native.bridge capability registered by an injected
                 // native/ios/*.swift file (e.g. a payments library). The build
@@ -7799,7 +8358,7 @@ rm -rf build && mkdir -p "build/{{NAME}}.app"
 # The simulator reads the app's entitlements from these two sections (XML and
 # DER), as it does for an Xcode build; the signature carries none.
 xcrun --sdk iphonesimulator swiftc -sdk "$SDK" -target arm64-apple-ios17.0-simulator \
-  -parse-as-library {{NAME}}/*.swift \
+  -parse-as-library {{NAME}}/*.swift {{AI_FLAGS}} \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements \
   -Xlinker "{{NAME}}-Simulated.entitlements" \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der \
@@ -7819,7 +8378,7 @@ cd "$(dirname "$0")"
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 rm -rf release && mkdir -p "release/Payload/{{NAME}}.app"
 xcrun --sdk iphoneos swiftc -sdk "$SDK" -target arm64-apple-ios17.0 -O \
-  -parse-as-library {{NAME}}/*.swift \
+  -parse-as-library {{NAME}}/*.swift {{AI_FLAGS}} \
   -o "release/Payload/{{NAME}}.app/{{NAME}}"
 cp {{NAME}}/Info.plist "release/Payload/{{NAME}}.app/Info.plist"
 echo "OK -> release/Payload/{{NAME}}.app"
@@ -8108,6 +8667,21 @@ public class MainActivity extends Activity {
                                 @Override public void ok(String json) { replyOk(cbId, json); }
                                 @Override public void err(String msg) { replyErr(cbId, msg); }
                             });
+                        break;
+                    case "sky:aiCaps":
+                    case "sky:aiPrepare":
+                    case "sky:aiStatus":
+                    case "sky:aiChat":
+                    case "sky:aiEvict":
+                    case "sky:aiStreamBegin":
+                    case "sky:aiStreamNext":
+                        // Std.Ai.Device (sky/ai/SkyAi.java). The client sends the
+                        // page's origin, where a device downloads the slot's files
+                        // from (a WebView method may not be called on this thread).
+                        sky.ai.SkyAi.handle(act, name, p, new sky.ai.SkyAi.Reply() {
+                            @Override public void ok(String data) { replyOk(cbId, data); }
+                            @Override public void err(String msg) { replyErr(cbId, msg); }
+                        });
                         break;
                     case "sky:notify":
                         notifyOp(p.optString("title", ""), p.optString("body", ""), cbId);
@@ -8947,6 +9521,404 @@ public final class SkyScanner {
 }
 "#;
 
+/// The Android shell's Std.Ai.Device bridge (`sky.ai.SkyAi`): the `sky:ai*`
+/// ops over llama.cpp (`libskyllama.so`, `ai_device.rs`). Written when the
+/// app imports `Std.Ai.Device` and the Android engine is installed;
+/// [`ANDROID_AI_STUB_JAVA`] otherwise.
+const ANDROID_AI_JAVA: &str = r#"package sky.ai;
+
+import android.app.Activity;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.os.StatFs;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.security.MessageDigest;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+// Std.Ai.Device in the Android shell: llama.cpp b11200 (libskyllama.so)
+// answers a device slot's calls. Files live in the app's files directory under
+// sky-ai/, named by their SHA-256; a file is ready only after its digest was
+// checked. A model the build embedded (`--ai-embed`) ships in the APK's assets
+// and is copied out once. Generated by `sky build`; do not edit.
+public final class SkyAi {
+    public interface Reply { void ok(String data); void err(String msg); }
+
+    private static final long CHUNK = 64L << 20;
+    private static final ExecutorService ENGINE = Executors.newSingleThreadExecutor();
+    private static final ExecutorService NET = Executors.newSingleThreadExecutor();
+    private static final Map<String, JSONObject> PROGRESS = new HashMap<>();
+    private static String loadedKey = "";
+    private static boolean inited = false;
+
+    private static File dir(Context c) {
+        File d = new File(c.getFilesDir(), "sky-ai");
+        d.mkdirs();
+        return d;
+    }
+
+    static String failure(String code, String message, String[][] attrs) {
+        try {
+            JSONArray a = new JSONArray();
+            for (String[] kv : attrs) a.put(new JSONArray().put(kv[0]).put(kv[1]));
+            JSONObject f = new JSONObject().put("code", code).put("message", message).put("attrs", a);
+            return "ai:" + new JSONObject().put("failure", f).toString();
+        } catch (Exception e) {
+            return "unavailable: " + message;
+        }
+    }
+
+    private static boolean embedded(Context c, String sha) {
+        try { c.getAssets().openFd("sky-ai/" + sha + ".gguf").close(); return true; }
+        catch (Exception e) {
+            try { InputStream in = c.getAssets().open("sky-ai/" + sha + ".gguf"); in.close(); return true; }
+            catch (Exception e2) { return false; }
+        }
+    }
+
+    // A ready file's path: verified in the store, or copied out of the APK.
+    private static File ready(Context c, String sha) throws Exception {
+        File f = new File(dir(c), sha + ".gguf");
+        File ok = new File(dir(c), sha + ".ok");
+        if (ok.exists() && f.exists()) return f;
+        if (embedded(c, sha)) {
+            File tmp = new File(dir(c), sha + ".part");
+            try (InputStream in = c.getAssets().open("sky-ai/" + sha + ".gguf"); OutputStream out = new FileOutputStream(tmp)) {
+                byte[] buf = new byte[1 << 20]; int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
+            if (!tmp.renameTo(f)) throw new java.io.IOException("cannot store " + sha);
+            ok.createNewFile();
+            return f;
+        }
+        return null;
+    }
+
+    private static JSONArray files(JSONObject offer) throws Exception {
+        JSONArray out = new JSONArray();
+        out.put(offer.getJSONObject("model"));
+        if (offer.has("adapter") && !offer.isNull("adapter")) out.put(offer.getJSONObject("adapter"));
+        return out;
+    }
+
+    private static String key(JSONObject offer) throws Exception {
+        StringBuilder k = new StringBuilder(offer.optString("slot", ""));
+        JSONArray fs = files(offer);
+        for (int i = 0; i < fs.length(); i++) k.append(':').append(fs.getJSONObject(i).getString("sha256"));
+        return k.toString();
+    }
+
+    public static void handle(Activity act, String op, JSONObject p, Reply reply) {
+        Context c = act.getApplicationContext();
+        try {
+            switch (op) {
+                case "sky:aiCaps": reply.ok(caps(c)); return;
+                case "sky:aiStatus": {
+                    JSONObject st;
+                    synchronized (PROGRESS) { st = PROGRESS.get(key(new JSONObject(p.optString("offer", "{}")))); }
+                    reply.ok(st != null ? st.toString() : "{\"state\":\"idle\",\"doneBytes\":0,\"totalBytes\":0}");
+                    return;
+                }
+                case "sky:aiEvict": ENGINE.execute(() -> { try { reply.ok(evict(c, new JSONObject(p.optString("offer", "{}")))); } catch (Exception e) { reply.err("failed: " + e); } }); return;
+                case "sky:aiPrepare": prepare(c, p, reply); return;
+                case "sky:aiChat": ENGINE.execute(() -> chat(c, p, reply)); return;
+                case "sky:aiStreamBegin": ENGINE.execute(() -> streamBegin(c, p, reply)); return;
+                case "sky:aiStreamNext": ENGINE.execute(() -> streamNext(reply)); return;
+                default: reply.err("invalid: unknown op " + op);
+            }
+        } catch (Exception e) {
+            reply.err("failed: " + e);
+        }
+    }
+
+    private static String caps(Context c) throws Exception {
+        JSONArray ready = new JSONArray();
+        String[] names = dir(c).list();
+        if (names != null) for (String n : names) if (n.endsWith(".ok")) ready.put(n.substring(0, n.length() - 3));
+        try {
+            String[] emb = c.getAssets().list("sky-ai");
+            if (emb != null) for (String n : emb) if (n.endsWith(".gguf")) ready.put(n.substring(0, n.length() - 5));
+        } catch (Exception e) { /* no embedded model */ }
+        android.app.ActivityManager am = (android.app.ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+        android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        StatFs fs = new StatFs(c.getFilesDir().getPath());
+        ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+        JSONObject o = new JSONObject();
+        o.put("platform", "android");
+        o.put("backends", new JSONArray().put(new JSONObject().put("backend", "native").put("maxModelBytes", mi.totalMem / 3)));
+        o.put("unsupported", new JSONArray()
+            .put(new JSONObject().put("backend", "webgpu").put("reason", "the Android shell runs llama.cpp natively"))
+            .put(new JSONObject().put("backend", "wasm-cpu").put("reason", "the Android shell runs llama.cpp natively")));
+        o.put("storageAvailableBytes", fs.getAvailableBytes());
+        boolean metered = false;
+        try { metered = cm != null && cm.isActiveNetworkMetered(); } catch (SecurityException e) { metered = false; }
+        o.put("metered", metered);
+        o.put("ready", ready);
+        o.put("failed", new JSONArray());
+        return o.toString();
+    }
+
+    private static void setProgress(String k, String state, long done, long total, String error) {
+        try {
+            JSONObject o = new JSONObject().put("state", state).put("doneBytes", done).put("totalBytes", total);
+            if (error != null) o.put("error", error);
+            synchronized (PROGRESS) { PROGRESS.put(k, o); }
+        } catch (Exception e) { /* progress is advisory */ }
+    }
+
+    private static void prepare(Context c, JSONObject p, Reply reply) {
+        NET.execute(() -> {
+            String k = "";
+            long total = 0, done = 0;
+            try {
+                JSONObject offer = new JSONObject(p.optString("offer", "{}"));
+                k = key(offer);
+                JSONArray fs = files(offer);
+                for (int i = 0; i < fs.length(); i++) total += fs.getJSONObject(i).optLong("bytes", 0);
+                setProgress(k, "downloading", 0, total, null);
+                for (int i = 0; i < fs.length(); i++) {
+                    JSONObject f = fs.getJSONObject(i);
+                    String sha = f.getString("sha256");
+                    if (ready(c, sha) != null) { done += f.optLong("bytes", 0); continue; }
+                    URL url = new URL(new URL(p.optString("origin", "")), f.getString("url"));
+                    long size = f.optLong("bytes", 0);
+                    File part = new File(dir(c), sha + ".part");
+                    MessageDigest md = MessageDigest.getInstance("SHA-256");
+                    // 64 MiB Range requests: each finishes well inside a server's
+                    // write timeout, and a slow link never holds one response open.
+                    try (OutputStream out = new FileOutputStream(part)) {
+                        for (long off = 0; off < size; off += CHUNK) {
+                            long end = Math.min(off + CHUNK, size) - 1;
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.setConnectTimeout(30000);
+                            conn.setReadTimeout(60000);
+                            conn.setRequestProperty("Range", "bytes=" + off + "-" + end);
+                            int code = conn.getResponseCode();
+                            if (code != 206 && !(code == 200 && off == 0 && end == size - 1)) {
+                                conn.disconnect();
+                                throw new java.io.IOException("unavailable: the server answered " + code);
+                            }
+                            try (InputStream in = conn.getInputStream()) {
+                                byte[] buf = new byte[1 << 20]; int n;
+                                while ((n = in.read(buf)) > 0) {
+                                    out.write(buf, 0, n); md.update(buf, 0, n); done += n;
+                                    setProgress(k, "downloading", done, total, null);
+                                }
+                            } finally { conn.disconnect(); }
+                        }
+                    }
+                    StringBuilder got = new StringBuilder();
+                    for (byte b : md.digest()) got.append(String.format("%02x", b));
+                    if (!got.toString().equals(sha)) {
+                        part.delete();
+                        throw new SkyAiFailure(failure("ChecksumMismatch", f.optString("label", "a file") + " does not match its SHA-256",
+                            new String[][] {{"expected", sha}, {"actual", got.toString()}}));
+                    }
+                    if (!part.renameTo(new File(dir(c), sha + ".gguf"))) throw new java.io.IOException("cannot store " + sha);
+                    new File(dir(c), sha + ".ok").createNewFile();
+                }
+                final String fk = k; final long ft = total;
+                ENGINE.execute(() -> {
+                    try {
+                        load(c, offer);
+                        setProgress(fk, "ready", ft, ft, null);
+                        reply.ok("ready");
+                    } catch (SkyAiFailure e) {
+                        setProgress(fk, "failed", ft, ft, e.getMessage());
+                        reply.err(e.getMessage());
+                    } catch (Exception e) {
+                        setProgress(fk, "failed", ft, ft, String.valueOf(e));
+                        reply.err("failed: " + e);
+                    }
+                });
+            } catch (SkyAiFailure e) {
+                setProgress(k, "failed", done, total, e.getMessage());
+                reply.err(e.getMessage());
+            } catch (Exception e) {
+                String m = String.valueOf(e.getMessage());
+                setProgress(k, "failed", done, total, m);
+                reply.err(m.matches("^[a-z]+: .*") ? m : "unavailable: " + m);
+            }
+        });
+    }
+
+    static final class SkyAiFailure extends Exception {
+        SkyAiFailure(String wire) { super(wire); }
+    }
+
+    // Load the slot's model and adapter (on the engine thread).
+    private static void load(Context c, JSONObject offer) throws Exception {
+        JSONArray fs = files(offer);
+        String k = key(offer);
+        if (k.equals(loadedKey)) return;
+        File[] paths = new File[fs.length()];
+        for (int i = 0; i < fs.length(); i++) {
+            File f = ready(c, fs.getJSONObject(i).getString("sha256"));
+            if (f == null) {
+                String slot = offer.optString("slot", "");
+                throw new SkyAiFailure(failure("NotProvisioned", "the on-device model of slot " + slot + " is not downloaded",
+                    new String[][] {{"what", "the on-device model of slot " + slot}, {"command", "Device.prepare \"" + slot + "\""}}));
+            }
+            paths[i] = f;
+        }
+        if (!inited) { SkyLlama.init(); inited = true; }
+        loadedKey = "";
+        // Few threads: a phone's big cores are few, and oversubscribing them
+        // makes generation slower, not faster.
+        int threads = Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() / 2));
+        if (SkyLlama.load(paths[0].getAbsolutePath(), offer.optInt("context", 2048), threads) != 0) {
+            String why = SkyLlama.lastError();
+            throw new SkyAiFailure(failure("EngineFailed", "the device model did not load: " + why, new String[][] {{"reason", "the device model did not load: " + why}}));
+        }
+        if (paths.length > 1 && SkyLlama.adapter(paths[1].getAbsolutePath(), 1.0f) != 0) {
+            String why = SkyLlama.lastError();
+            throw new SkyAiFailure(failure("EngineFailed", "the device adapter did not load: " + why, new String[][] {{"reason", "the device adapter did not load: " + why}}));
+        }
+        loadedKey = k;
+    }
+
+    private static void chat(Context c, JSONObject p, Reply reply) {
+        try {
+            load(c, new JSONObject(p.optString("offer", "{}")));
+            String path = p.optString("path", "");
+            String body = p.optString("body", "{}");
+            if (path.equals("/@root/tokenize")) {
+                int n = SkyLlama.tokenize(new JSONObject(body).optString("content", ""));
+                JSONArray toks = new JSONArray();
+                for (int i = 0; i < Math.max(0, n); i++) toks.put(0);
+                reply.ok(new JSONObject().put("tokens", toks).toString());
+                return;
+            }
+            if (!path.equals("/chat/completions")) {
+                reply.err(failure("RemoteRejected", "a device answers chat requests only", new String[][] {{"status", "404"}}));
+                return;
+            }
+            String out = new String(SkyLlama.chat(body.getBytes(java.nio.charset.StandardCharsets.UTF_8)), java.nio.charset.StandardCharsets.UTF_8);
+            JSONObject j = new JSONObject(out);
+            if (j.has("error")) {
+                JSONObject e = j.getJSONObject("error");
+                String msg = e.optString("message", "the engine failed");
+                if ("context".equals(e.optString("code"))) {
+                    reply.err(failure("InvalidSetting", msg, new String[][] {{"setting", "context"}, {"reason", msg}}));
+                } else {
+                    reply.err(failure("EngineFailed", msg, new String[][] {{"reason", msg}}));
+                }
+                return;
+            }
+            reply.ok(out);
+        } catch (SkyAiFailure e) {
+            reply.err(e.getMessage());
+        } catch (Exception e) {
+            reply.err("failed: " + e);
+        }
+    }
+
+    private static String engineFailure(JSONObject e) {
+        String msg = e.optString("message", "the engine failed");
+        if ("context".equals(e.optString("code"))) {
+            return failure("InvalidSetting", msg, new String[][] {{"setting", "context"}, {"reason", msg}});
+        }
+        return failure("EngineFailed", msg, new String[][] {{"reason", msg}});
+    }
+
+    // Provider.chatStream: begin decodes the prompt, each next answers one
+    // {"delta":...} and last {"done":true,"body":"<the body as a string>"}.
+    private static void streamBegin(Context c, JSONObject p, Reply reply) {
+        try {
+            load(c, new JSONObject(p.optString("offer", "{}")));
+            if (!p.optString("path", "").equals("/chat/completions")) {
+                reply.err(failure("RemoteRejected", "a device answers chat requests only", new String[][] {{"status", "404"}}));
+                return;
+            }
+            String out = new String(SkyLlama.chatBegin(p.optString("body", "{}").getBytes(java.nio.charset.StandardCharsets.UTF_8)), java.nio.charset.StandardCharsets.UTF_8);
+            if (!out.isEmpty()) {
+                reply.err(engineFailure(new JSONObject(out).getJSONObject("error")));
+                return;
+            }
+            reply.ok("");
+        } catch (SkyAiFailure e) {
+            reply.err(e.getMessage());
+        } catch (Exception e) {
+            reply.err("failed: " + e);
+        }
+    }
+
+    private static void streamNext(Reply reply) {
+        try {
+            String out = new String(SkyLlama.chatNext(), java.nio.charset.StandardCharsets.UTF_8);
+            JSONObject j = new JSONObject(out);
+            if (j.has("error")) {
+                reply.err(engineFailure(j.getJSONObject("error")));
+            } else if (j.optBoolean("done", false)) {
+                reply.ok(new JSONObject().put("done", true).put("body", j.getJSONObject("body").toString()).toString());
+            } else {
+                reply.ok(out);
+            }
+        } catch (Exception e) {
+            reply.err("failed: " + e);
+        }
+    }
+
+    private static String evict(Context c, JSONObject offer) throws Exception {
+        if (loadedKey.contains(offer.getJSONObject("model").getString("sha256"))) { SkyLlama.unload(); loadedKey = ""; }
+        JSONArray fs = files(offer);
+        for (int i = 0; i < fs.length(); i++) {
+            String sha = fs.getJSONObject(i).getString("sha256");
+            for (String ext : new String[] {".ok", ".gguf", ".part"}) new File(dir(c), sha + ext).delete();
+        }
+        synchronized (PROGRESS) { PROGRESS.remove(key(offer)); }
+        return "";
+    }
+}
+"#;
+
+/// The JNI face of the Android engine (`scripts/ai/device/sky_llama_jni.cpp`).
+const ANDROID_AI_LLAMA_JAVA: &str = r#"package sky.ai;
+
+// The Std.Ai.Device engine: llama.cpp b11200 in libskyllama.so. Generated by
+// `sky build`; do not edit.
+final class SkyLlama {
+    static { System.loadLibrary("skyllama"); }
+    static native int init();
+    static native int load(String path, int nCtx, int threads);
+    static native int adapter(String path, float scale);
+    static native byte[] chat(byte[] requestJson);
+    static native byte[] chatBegin(byte[] requestJson);
+    static native byte[] chatNext();
+    static native int tokenize(String text);
+    static native void unload();
+    static native String lastError();
+}
+"#;
+
+/// The Android shell's `sky:ai*` handler when the app runs no device model:
+/// the client uses the browser worker or the server.
+const ANDROID_AI_STUB_JAVA: &str = r#"package sky.ai;
+
+import android.app.Activity;
+import org.json.JSONObject;
+
+// Std.Ai.Device is not in this app (or the Android engine is not installed):
+// the client falls back to the web worker or the server.
+public final class SkyAi {
+    public interface Reply { void ok(String data); void err(String msg); }
+
+    public static void handle(Activity act, String op, JSONObject p, Reply reply) {
+        reply.err("invalid: unknown op " + op);
+    }
+}
+"#;
+
 const ANDROID_BUILD_APK: &str = r#"#!/usr/bin/env bash
 # Build + sign a WebView shell APK with the Android SDK tools directly
 # (aapt2 -> javac -> d8 -> zipalign -> apksigner) — no Gradle, no Studio.
@@ -8965,9 +9937,12 @@ KS="$HOME/.android/debug.keystore"
 
 rm -rf build && mkdir -p build/gen build/classes
 "$BT/aapt2" compile --dir app/src/main/res -o build/res.zip
+# Embedded Std.Ai.Device models (`sky build --ai-embed`) ship uncompressed in
+# assets/sky-ai.
+ASSETS=(); [ -d app/src/main/assets ] && ASSETS=(-A app/src/main/assets -0 gguf)
 "$BT/aapt2" link -o build/base.apk -I "$PLAT" \
   --manifest app/src/main/AndroidManifest.xml -R build/res.zip --java build/gen \
-  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
+  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay "${ASSETS[@]}"
 # Library jars the shell compiles against and dexes in (app/libs: the ZXing
 # decoder when the app calls Native.scanCode).
 LIBS="$(find app/libs -name '*.jar' 2>/dev/null | sort | tr '\n' ':' || true)"
@@ -8976,7 +9951,10 @@ javac --release 11 -cp "$PLAT:$LIBS" -d build/classes \
 "$BT/d8" --lib "$PLAT" --min-api 24 --output build/ $(find build/classes -name '*.class') \
   $(find app/libs -name '*.jar' 2>/dev/null | sort)
 ( cd build && zip -q base.apk classes.dex )
-"$BT/zipalign" -f 4 build/base.apk build/aligned.apk
+# The Std.Ai.Device engine (lib/<abi>/libskyllama.so), stored uncompressed and
+# 16 KB aligned so it loads in place on 16 KB-page devices.
+if [ -d app/jniLibs/lib ]; then ( cd app/jniLibs && zip -q -0 -r ../../build/base.apk lib ); fi
+"$BT/zipalign" -f -P 16 4 build/base.apk build/aligned.apk
 "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
   --min-sdk-version 24 --out build/{{APK}} build/aligned.apk
 # The signer's certificate digest (for the App Links assetlinks.json).
@@ -9005,16 +9983,18 @@ PLAT="$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)/android.j
 
 rm -rf release && mkdir -p release/gen release/classes
 "$BT/aapt2" compile --dir app/src/main/res -o release/res.zip
+ASSETS=(); [ -d app/src/main/assets ] && ASSETS=(-A app/src/main/assets -0 gguf)
 "$BT/aapt2" link -o release/base.apk -I "$PLAT" \
   --manifest app/src/main/AndroidManifest.xml -R release/res.zip --java release/gen \
-  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
+  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay "${ASSETS[@]}"
 LIBS="$(find app/libs -name '*.jar' 2>/dev/null | sort | tr '\n' ':' || true)"
 javac --release 11 -cp "$PLAT:$LIBS" -d release/classes \
   $(find release/gen -name '*.java') $(find app/src/main/java -name '*.java')
 "$BT/d8" --release --lib "$PLAT" --min-api 24 --output release/ \
   $(find release/classes -name '*.class') $(find app/libs -name '*.jar' 2>/dev/null | sort)
 ( cd release && zip -q base.apk classes.dex )
-"$BT/zipalign" -f 4 release/base.apk release/aligned.apk
+if [ -d app/jniLibs/lib ]; then ( cd app/jniLibs && zip -q -0 -r ../../release/base.apk lib ); fi
+"$BT/zipalign" -f -P 16 4 release/base.apk release/aligned.apk
 "$BT/apksigner" sign --ks "$SKY_ANDROID_KEYSTORE" --ks-key-alias "$SKY_ANDROID_KEY_ALIAS" \
   --ks-pass env:SKY_ANDROID_KEYSTORE_PASSWORD --key-pass env:SKY_ANDROID_KEY_PASSWORD \
   --min-sdk-version 24 --out release/{{APK}} release/aligned.apk
@@ -9027,10 +10007,12 @@ echo "OK -> release/{{APK}}"
 if command -v bundletool >/dev/null 2>&1; then
   "$BT/aapt2" link --proto-format -o release/proto.apk -I "$PLAT" \
     --manifest app/src/main/AndroidManifest.xml -R release/res.zip \
-    --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay
+    --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay "${ASSETS[@]}"
   rm -rf release/module && mkdir -p release/module/manifest release/module/dex
   ( cd release/module && unzip -q ../proto.apk && mv AndroidManifest.xml manifest/ \
-      && cp ../classes.dex dex/ && zip -qr ../base-module.zip . )
+      && cp ../classes.dex dex/ \
+      && if [ -d ../../app/jniLibs/lib ]; then cp -R ../../app/jniLibs/lib .; fi \
+      && zip -qr ../base-module.zip . )
   bundletool build-bundle --modules=release/base-module.zip --output=release/{{AAB}}
   jarsigner -keystore "$SKY_ANDROID_KEYSTORE" -storepass:env SKY_ANDROID_KEYSTORE_PASSWORD \
     -keypass:env SKY_ANDROID_KEY_PASSWORD release/{{AAB}} "$SKY_ANDROID_KEY_ALIAS"
@@ -9068,6 +10050,134 @@ const WASM_INDEX_HTML: &str = r#"<!doctype html>
 /// The Go runtime sources the Sky.Spa boot loader is read from, at compile time.
 const ISLAND_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/island_client.go");
 const SPA_BOOT_GO: &str = include_str!("../../../../runtime-go/rt/spa_boot.go");
+const AI_DEVICE_WORKER_GO: &str = include_str!("../../../../runtime-go/rt/ai_device_worker.go");
+
+/// The Std.Ai.Device browser worker, `AiDeviceWorkerJS` in
+/// `runtime-go/rt/ai_device_worker.go` byte for byte, staged as
+/// `sky-ai-worker.<sha256[:12]>.js` (the name the Go client computes with
+/// `assetHash`; `ai_device_worker_matches_the_runtime` checks the extraction).
+fn ai_device_worker_js() -> &'static str {
+    go_raw_const(AI_DEVICE_WORKER_GO, "AiDeviceWorkerJS")
+        .expect("runtime-go/rt/ai_device_worker.go defines AiDeviceWorkerJS as a raw string")
+}
+
+fn ai_device_worker_name() -> String {
+    format!(
+        "sky-ai-worker.{}.js",
+        &db_provision::sha256_hex(ai_device_worker_js().as_bytes())[..12]
+    )
+}
+
+/// `sky build --ai-web-engine webgpu|cpu|both|none`, set once by the CLI.
+/// Unset: a client that imports `Std.Ai.Device` gets both engines when they
+/// are installed (`sky ai provision --device web`), and a note otherwise.
+static AI_WEB_ENGINE: std::sync::OnceLock<Option<ai_device::WebEngine>> =
+    std::sync::OnceLock::new();
+
+/// `sky build --ai-embed <slot>`, set once by the CLI: a native shell
+/// (`desktop:mac`, `mobile:ios`, `mobile:android`) carries the slot's model
+/// and adapter, so the app never downloads them.
+static AI_EMBED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The files `--ai-embed` exported for a frontend project: `(sha256, path)`
+/// of each, from `<project>/.sky-ai-embed/`. Empty without `--ai-embed`.
+fn ai_embedded_files(project_dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    if AI_EMBED.get().is_none() {
+        return Ok(Vec::new());
+    }
+    let dir = project_dir.join(".sky-ai-embed");
+    let mut out = Vec::new();
+    let rd = std::fs::read_dir(&dir)
+        .map_err(|e| format!("--ai-embed: no exported files in {} ({e})", dir.display()))?;
+    for e in rd.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if let Some(sum) = n.strip_suffix(".gguf") {
+            if db_provision::is_sha256_hex(sum) {
+                out.push((sum.to_string(), e.path()));
+            }
+        }
+    }
+    out.sort();
+    if out.is_empty() {
+        return Err(format!("--ai-embed: {} holds no model", dir.display()));
+    }
+    Ok(out)
+}
+
+/// The `--ai-web-engine` value to forward to a child build, when one was given.
+fn ai_web_engine_arg() -> Option<&'static str> {
+    AI_WEB_ENGINE.get().map(|e| match e {
+        None => "none",
+        Some(ai_device::WebEngine::WebGpu) => "webgpu",
+        Some(ai_device::WebEngine::Cpu) => "cpu",
+        Some(ai_device::WebEngine::Both) => "both",
+    })
+}
+
+/// Whether a project's sources import `Std.Ai.Device`.
+fn project_uses_ai_device(project: &Path) -> bool {
+    fn walk(d: &Path) -> bool {
+        let Ok(rd) = std::fs::read_dir(d) else {
+            return false;
+        };
+        rd.flatten().any(|e| {
+            let p = e.path();
+            if p.is_dir() {
+                return !e.file_name().to_string_lossy().starts_with('.') && walk(&p);
+            }
+            p.extension().is_some_and(|x| x == "sky")
+                && std::fs::read_to_string(&p)
+                    .map(|s| {
+                        s.lines()
+                            .any(|l| l.trim_start().starts_with("import Std.Ai.Device"))
+                    })
+                    .unwrap_or(false)
+        })
+    }
+    walk(&project.join("src"))
+}
+
+/// Stage the Std.Ai.Device worker and browser engines into a frontend dist
+/// and return the `<meta>` lines the page carries, or "" for a client that
+/// does not use device slots.
+fn stage_ai_device(dist: &Path) -> Result<String, String> {
+    for e in std::fs::read_dir(dist).into_iter().flatten().flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.starts_with("sky-ai-") {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    let uses = dist.parent().is_some_and(project_uses_ai_device);
+    let engine = match AI_WEB_ENGINE.get().copied().flatten() {
+        Some(e) => Some(e),
+        None if AI_WEB_ENGINE.get().is_some() => None, // --ai-web-engine none
+        None if uses && ai_device::installed("web") => Some(ai_device::WebEngine::Both),
+        None => {
+            if uses {
+                eprintln!(
+                    "note: Std.Ai.Device: no browser engine is staged, so device slots answer from the \
+                     server in a browser; {}",
+                    ai_device::not_provisioned("web")
+                );
+            }
+            None
+        }
+    };
+    if !uses && engine.is_none() {
+        return Ok(String::new());
+    }
+    let worker = ai_device_worker_name();
+    std::fs::write(dist.join(&worker), ai_device_worker_js())
+        .map_err(|e| format!("write {worker}: {e}"))?;
+    let Some(engine) = engine else {
+        return Ok(String::new());
+    };
+    let meta = ai_device::stage_web_engines(dist, engine)?;
+    Ok(format!(
+        "\n    <meta name=\"sky-ai-engine\" content=\"{}\" />",
+        meta.replace('"', "&quot;")
+    ))
+}
 const SCENE_CLIENT_GO: &str = include_str!("../../../../runtime-go/rt/scene_client.go");
 const TERMINAL_WIDGET_GO: &str = include_str!("../../../../runtime-go/rt/island_terminal.go");
 
@@ -11550,6 +12660,8 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
 const AI_USAGE: &str = "usage: sky ai <verb> [--format json]
   provision [--variant cpu|metal] [--dev-model] [--model <ref>]
                      install the pinned llama-server for this host (and models)
+  provision --device web|ios|android|all [--from <dir|archive>] [--check]
+                     install the Std.Ai.Device engines a build stages (llama.cpp b11200)
   pull <org>/<repo> <file>
                      download a GGUF file and print its pinned Local.huggingFace value
   ps [--all]         list the engines running on this machine
@@ -11654,6 +12766,11 @@ fn cmd_ai(args: &[String]) -> ExitCode {
         .filter(|a| *a != "--format" && *a != "json")
         .collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // The device engines are installed by the compiler itself: a build reads
+    // them (ai_device.rs), no Sky program does.
+    if positional.first() == Some(&"provision") && positional.contains(&"--device") {
+        return ai_device::cmd_provision_device(&args);
+    }
     let mode = match positional.as_slice() {
         ["provision", ..] | ["ps", ..] => Some(AiMode::Bundled),
         ["pull", repo, file] if repo.contains('/') && !file.is_empty() => Some(AiMode::Bundled),
@@ -15458,6 +16575,11 @@ fn parse_out(args: &[String]) -> (Vec<String>, Option<String>) {
             // `--upload <destination>` / `--ipa <file>` (sky package): consume
             // the value. cmd_package reads both from `args`.
             "--upload" | "--ipa" => {
+                it.next();
+            }
+            // `--ai-web-engine <engine>` / `--ai-embed <slot>` (sky build): the
+            // Std.Ai.Device build options; cmd_build reads them from `args`.
+            "--ai-web-engine" | "--ai-embed" => {
                 it.next();
             }
             s if s.starts_with('-') => { /* ignore unknown flags for forward-compat */ }

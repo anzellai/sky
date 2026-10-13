@@ -368,11 +368,32 @@ postRaw =
     Ffi.kernel "Ai_localPost"
 
 
+streamOpenRaw : Int -> String -> String -> Task Error String
+streamOpenRaw =
+    Ffi.kernel "Ai_localStreamOpen"
+
+
+streamNextRaw : String -> Task Error String
+streamNextRaw =
+    Ffi.kernel "Ai_streamNext"
+
+
+streamCloseRaw : String -> Task Error ()
+streamCloseRaw =
+    Ffi.kernel "Ai_streamClose"
+
+
 {-| The engine as a `Provider`. A call to an engine that was unloaded for
 being idle starts it again. -}
 provider : Engine -> Provider
 provider (Engine id) =
-    Provider.wire (postRaw id) ""
+    Provider.wireStreaming
+        (postRaw id)
+        { open = streamOpenRaw id
+        , next = streamNextRaw
+        , close = streamCloseRaw
+        }
+        ""
 
 {-| What an engine is doing: `state` is `ready`, `starting`, `stopped`,
 `stopping` or `down` (crashed). `shared` is `True` when the engine belongs to

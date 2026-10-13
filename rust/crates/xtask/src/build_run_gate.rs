@@ -91,10 +91,13 @@ const FFI_BUILD_ONLY: &[&str] = &["11-fyne-stopwatch"];
 // is pinned by `rust/crates/sky/tests/ai_registry_flow.rs` instead.
 // 73-ai-train uses Std.Ai.Train (no legacy oracle either); its page and its
 // training workflow are pinned by its own `sky test` suite, run offline by
-// `rust/crates/sky/tests/ai_train_flow.rs`. 74-ai-cloud uses Std.Ai.Serve
-// and Std.Ai.Cloud.Google (no legacy oracle either); its cloud workflow is
-// pinned by its own `sky test` suite against the runtime's Google Cloud
-// emulator, and by `rust/crates/sky/tests/ai_cloud_train_flow.rs`.
+// `rust/crates/sky/tests/ai_train_flow.rs`. 75-ai-everywhere uses
+// Std.Ai.Device (no legacy oracle); its server side is pinned by its own
+// `sky test` suite and its device flows by `rust/crates/sky/tests/ai_device_*.rs`.
+// 74-ai-cloud uses Std.Ai.Serve and Std.Ai.Cloud.Google (no legacy oracle
+// either); its cloud workflow is pinned by its own `sky test` suite against
+// the runtime's Google Cloud emulator, and by
+// `rust/crates/sky/tests/ai_cloud_train_flow.rs`.
 const NONDETERMINISTIC_OUTPUT: &[&str] = &[
     "02-go-stdlib",
     "67-durable-counter",
@@ -104,6 +107,7 @@ const NONDETERMINISTIC_OUTPUT: &[&str] = &[
     "71-ai-registry",
     "73-ai-train",
     "74-ai-cloud",
+    "75-ai-everywhere",
 ];
 
 /// Hand-authored multi-project splits — an example that is NOT a single project

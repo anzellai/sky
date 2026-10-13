@@ -206,6 +206,16 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          literal skyEnvName read in ai_store.go; all are counted normally",
     ),
     (
+        "runtime-go/rt/ai_device_serve.go",
+        "Std.Ai.Device slot settings (v0.28.0): a device slot's variables are \
+         <PREFIX>_AI_<SLOT>_<KEY> like every slot's (the SLOT is the app's own \
+         literal), built with aiSlotSuffix and read through aiLayer / \
+         configLayers. The KEY set is closed and literal in that file \
+         (PLACEMENT / DEVICE_MODEL / DEVICE_ADAPTER, and MODEL, the slot's own \
+         model the device follows), each documented in docs/ai/device.md as \
+         SKY_AI_<SLOT>_<KEY>",
+    ),
+    (
         "runtime-go/rt/ai_startup.go",
         "the startup report's AI lines (v0.28.0) print each declared slot's \
          variable NAMES, built with skyEnvName(aiSlotSuffix(slot, key)) for \

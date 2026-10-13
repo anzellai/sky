@@ -329,6 +329,11 @@ func nativeShellDispatch(store nativeSecureStore, auth nativeBiometric, op, payl
 		return "", errors.New("invalid: the payload is not a JSON object of strings")
 	}
 	key := p["key"]
+	// Std.Ai.Device: the slot's model on the managed engine
+	// (ai_device_desktop.go).
+	if strings.HasPrefix(op, "sky:ai") {
+		return aiDeviceDesktopDispatch(op, p)
+	}
 	switch op {
 	case nativeOpSecureSet, nativeOpSecureGet, nativeOpSecureRemove:
 		if store == nil {

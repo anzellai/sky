@@ -152,3 +152,10 @@ Never print a credential file or an access token. Test the cloud workflow
 under `sky test` with `SKY_AI_GCP_ENDPOINT=http://sky-gcp.invalid` in
 `.env.test`: an emulator in the runtime answers every Google Cloud call and
 nothing is spent. See `docs/ai/deploy-gcp.md`.
+`Std.Ai.Device` runs a slot on the user's device: never call `Device.prepare`
+before the user agreed to the download (the page shows the size from
+`Device.status`), and never make a `DeviceOnly` slot answer from the server
+another way: its prompts must not reach the server. A registry adapter runs on
+devices only after `Registry.allowOnDevice`; do not clear one the user has not
+reviewed. `sky ai provision --device ios|android|web` and `--ai-embed` download
+hundreds of megabytes: run them when the task needs them.

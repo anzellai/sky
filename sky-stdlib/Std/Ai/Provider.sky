@@ -7,6 +7,8 @@ module Std.Ai.Provider exposing
     , customTools
     , WireTransport
     , wire
+    , StreamTransport
+    , wireStreaming
     , Message
     , user
     , system
@@ -17,6 +19,12 @@ module Std.Ai.Provider exposing
     , Options
     , defaultOptions
     , chatWith
+    , Stream
+    , StreamStep(..)
+    , stream
+    , read
+    , close
+    , chatStream
     , embed
     , PriceBook
     , priceBook
@@ -46,7 +54,8 @@ never a float, so per-task and per-tenant cost roll-ups are honest.
 -}
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
+import Sky.Core.Task as Task exposing (Step(..))
+import Sky.Ffi as Ffi
 import Sky.Core.Error as Error
 import Sky.Core.String as String
 import Sky.Core.List as List
@@ -87,6 +96,18 @@ type alias WireTransport =
 type alias WireImpl =
     { post : String -> String -> String -> Task Error String
     , model : String
+    , stream : Maybe StreamTransport
+    }
+
+{-| How a streaming `wire` provider reads an answer as it is written:
+`open path body` sends a streaming request and returns a stream id, `next id`
+returns the stream's next event, and `close id` ends a stream early. An event
+is the JSON `{"delta":"<text>"}` or, last, `{"done":true,"body":"<the
+OpenAI chat-completions response, as a JSON string>"}`. -}
+type alias StreamTransport =
+    { open : String -> String -> Task Error String
+    , next : String -> Task Error String
+    , close : String -> Task Error ()
     }
 
 type Provider
@@ -109,6 +130,12 @@ compatible endpoint apiKey model =
     Wire
         { post = \what path body -> backendPost endpoint apiKey what path body
         , model = model
+        , stream =
+            Just
+                { open = \_ body -> streamOpenUrl endpoint apiKey body
+                , next = streamNext
+                , close = streamClose
+                }
         }
 
 
@@ -183,7 +210,38 @@ transport fill it in at call time (an `Endpoint` does, from its resolved slot).
 -}
 wire : WireTransport -> String -> Provider
 wire transport model =
-    Wire { post = \_ path body -> transport path body, model = model }
+    Wire
+        { post = \_ path body -> transport path body
+        , model = model
+        , stream = Nothing
+        }
+
+
+{-| `wire`, with a transport that streams an answer as it is written
+(`chatStream`). `Std.Ai.Endpoint`, `Std.Ai.Local` and `Std.Ai.Device` build
+their providers this way. -}
+wireStreaming : WireTransport -> StreamTransport -> String -> Provider
+wireStreaming transport streamTransport model =
+    Wire
+        { post = \_ path body -> transport path body
+        , model = model
+        , stream = Just streamTransport
+        }
+
+
+streamOpenUrl : String -> Secret -> String -> Task Error String
+streamOpenUrl =
+    Ffi.kernel "Ai_streamOpenUrl"
+
+
+streamNext : String -> Task Error String
+streamNext =
+    Ffi.kernel "Ai_streamNext"
+
+
+streamClose : String -> Task Error ()
+streamClose =
+    Ffi.kernel "Ai_streamClose"
 
 -- ---------------------------------------------------------------------------
 -- Messages
@@ -313,6 +371,148 @@ chatWith opts provider messages =
         Wire w ->
             w.post "chat" "/chat/completions" (chatBody opts w.model messages)
                 |> Task.andThen decodeChat
+
+{-| An answer being written, read a piece at a time with `read`. A TEA app
+reads it one piece per update:
+
+    Cmd.perform (Provider.stream Provider.defaultOptions assistant messages) Opened
+
+    -- in update
+    Opened (Ok s) ->
+        ( model, Cmd.perform (Provider.read s) Got )
+
+    Got (Ok (Provider.Piece text next)) ->
+        ( { model | answer = model.answer ++ text }, Cmd.perform (Provider.read next) Got )
+
+    Got (Ok (Provider.Finished r)) ->
+        ( { model | usage = Just r.usage }, Cmd.none )
+
+A server slot (`Std.Ai.Endpoint`, `Std.Ai.Local`), a built-in backend and a
+device slot (`Std.Ai.Device`) stream token by token. A `custom` provider, and
+a server that answers a streaming request with one body, give the whole
+answer as one piece. -}
+type Stream
+    = Open StreamTransport String
+    | Whole ChatResponse Bool
+
+{-| The next part of a stream: a piece of text and the stream to read next,
+or the whole answer with its usage, as `chatWith` returns it. -}
+type StreamStep
+    = Piece String Stream
+    | Finished ChatResponse
+
+
+{-| Send a chat and start reading its answer as it is written. -}
+stream : Options -> Provider -> List Message -> Task Error Stream
+stream opts provider messages =
+    case provider of
+
+        Routed select ->
+            stream opts (select messages) messages
+
+        Custom c ->
+            c.chat messages |> Task.map (\r -> Whole r False)
+
+        Wire w ->
+            case w.stream of
+
+                Just st ->
+                    st.open "/chat/completions" (chatBody opts w.model messages)
+                        |> Task.map (Open st)
+
+                Nothing ->
+                    w.post
+                        "chat"
+                        "/chat/completions"
+                        (chatBody opts w.model messages)
+                        |> Task.andThen decodeChat
+                        |> Task.map (\r -> Whole r False)
+
+
+{-| Read the next piece of a stream. -}
+read : Stream -> Task Error StreamStep
+read s =
+    case s of
+
+        Whole r sent ->
+            if sent || r.content == "" then
+                Task.succeed (Finished r)
+
+            else
+                Task.succeed (Piece r.content (Whole r True))
+
+        Open st id ->
+            st.next id
+                |> Task.andThen
+                       (\ev ->
+                           case JsonD.decodeString streamEvent ev of
+
+                               Ok (EvDelta text) ->
+                                   Task.succeed (Piece text s)
+
+                               Ok (EvDone body) ->
+                                   decodeChat body |> Task.map Finished
+
+                               Err e ->
+                                   Task.fail e)
+
+
+{-| Stop reading a stream before its end (the user left the page, the
+answer is long enough). Closing a finished stream does nothing. -}
+close : Stream -> Task Error ()
+close s =
+    case s of
+
+        Open st id ->
+            st.close id
+
+        Whole _ _ ->
+            Task.succeed ()
+
+type StreamEvent
+    = EvDelta String
+    | EvDone String
+
+
+streamEvent : JsonD.Decoder StreamEvent
+streamEvent =
+    JsonD.oneOf
+        [ JsonD.field "delta" JsonD.string |> JsonD.map EvDelta
+        , JsonD.field "body" JsonD.string |> JsonD.map EvDone
+        ]
+
+
+{-| `chatWith`, with each piece of the answer handed to `onPiece` as it is
+written, in order. The result is the whole answer with its usage. When
+`onPiece` fails, the stream is closed and the call fails with that error. Use
+it in a Task program or a server handler; a TEA app reads a `stream` one
+piece per update instead.
+
+    Provider.chatStream Provider.defaultOptions assistant messages
+        (\piece -> Log.print piece)
+-}
+chatStream : Options -> Provider -> List Message -> (String -> Task Error ()) -> Task Error ChatResponse
+chatStream opts provider messages onPiece =
+    stream opts provider messages
+        |> Task.andThen
+               (\s ->
+                   Task.loop (streamStep onPiece) s
+                       |> Task.onError
+                              (\e -> close s |> Task.andThen (\_ -> Task.fail e)))
+
+
+streamStep : (String -> Task Error ()) -> Stream -> Task Error (Step Stream ChatResponse)
+streamStep onPiece s =
+    read s
+        |> Task.andThen
+               (\step ->
+                   case step of
+
+                       Piece text next ->
+                           onPiece text |> Task.map (\_ -> Loop next)
+
+                       Finished r ->
+                           Task.succeed (Done r))
 
 
 chatBody : Options -> String -> List Message -> String

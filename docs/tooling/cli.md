@@ -1570,6 +1570,33 @@ Target flags: `--project`, `--region`, `--adapters`, `--engine-image`,
 See [`../ai/serve.md`](../ai/serve.md) and
 [`../ai/deploy-gcp.md`](../ai/deploy-gcp.md).
 
+### `sky ai provision --device` and the device build flags *(v0.28.0)*
+
+```
+sky ai provision --device web|ios|android|all [--from <dir|archive>] [--check]
+sky build --target web:app [--ai-web-engine webgpu|cpu|both|none] src/Main.sky
+sky build --target mobile:ios|mobile:android|desktop:mac [--ai-embed <slot>] src/Main.sky
+```
+
+- `provision --device` installs the `Std.Ai.Device` engines (llama.cpp b11200
+  with Sky's engine core) under the AI home: the browser's WebGPU and CPU
+  WebAssembly builds, `SkyLlama.xcframework`, or `libskyllama.so` for
+  arm64-v8a and x86_64. It downloads the release `sky-llama-b11200` and checks
+  each archive's pinned SHA-256; `--from` installs a local build of
+  `scripts/ai/device/build-device-bundles.sh` (its output directory or an
+  archive). `--check` installs nothing and exits 1 when an engine is missing.
+- `--ai-web-engine` picks the engines a browser client stages next to its
+  wasm (`sky-ai-webgpu.<hash>.*`, `sky-ai-cpu.<hash>.*`, and the worker
+  `sky-ai-worker.<hash>.js`). The default is `both` when the web engines are
+  installed and the client imports `Std.Ai.Device`; `none` stages none, and
+  device slots then answer from the server in a browser.
+- `--ai-embed <slot>` builds the server first, asks it for the slot's offer
+  as it would serve it (operator variables and the registry included), and
+  puts the model and the adapter in the native app, which then never
+  downloads them.
+
+See [`../ai/device.md`](../ai/device.md).
+
 A model `<ref>` is `hf:<org>/<repo>/<file>#sha256=<hex>` or
 `file:<path>#sha256=<hex>`. See [`../ai/local.md`](../ai/local.md).
 

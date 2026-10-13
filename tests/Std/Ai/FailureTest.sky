@@ -69,6 +69,9 @@ every =
           , reason = "the revision never became ready"
           , logTail = "engine: CUDA error"
           }
+    , DeviceUnsupported
+          { backend = "webgpu", reason = "WebGPU registered no GPU device" }
+    , StorageDenied { needBytes = 472000000, availableBytes = 100000000 }
     ]
 
 
@@ -201,6 +204,14 @@ tests =
                  "DeploymentFailed"
                  (DeploymentFailed { target = "t", reason = "r", logTail = "" })
                  Unavailable
+           , kindCase
+                 "DeviceUnsupported"
+                 (DeviceUnsupported { backend = "webgpu", reason = "no GPU" })
+                 Unavailable
+           , kindCase
+                 "StorageDenied"
+                 (StorageDenied { needBytes = 2, availableBytes = 1 })
+                 PermissionDenied
            , kindCase
                  "RemoteRejected 400"
                  (RemoteRejected { status = 400 })

@@ -263,7 +263,43 @@ name, which is how vLLM and gateways select a LoRA adapter). A field left
 
 `Provider.embed provider texts` returns one vector per text, in order.
 `Provider.wire transport model` builds an OpenAI-compatible provider over your
-own transport. `Endpoint` and `Local` build theirs with it.
+own transport. `Provider.wireStreaming transport streamTransport model` is the
+same with a transport that streams; `Endpoint`, `Local` and `Device` build
+theirs with it.
+
+### Streaming an answer
+
+An answer can be read as it is written. A TEA app reads it one piece per
+update:
+
+```elm
+Cmd.perform (Provider.stream Provider.defaultOptions assistant messages) Opened
+
+-- in update
+Opened (Ok s) ->
+    ( model, Cmd.perform (Provider.read s) Got )
+
+Got (Ok (Provider.Piece text next)) ->
+    ( { model | answer = model.answer ++ text }, Cmd.perform (Provider.read next) Got )
+
+Got (Ok (Provider.Finished r)) ->
+    ( { model | usage = Just r.usage }, Cmd.none )
+```
+
+`Provider.close stream` stops reading early. A Task program or a server
+handler can use `Provider.chatStream options provider messages onPiece`
+instead: `onPiece` gets each piece in order and the result is the whole
+answer with its usage, as `chatWith` returns it. When `onPiece` fails, the
+stream is closed and the call fails with that error.
+
+A server slot (remote or managed), `Provider.openai` / `compatible` and a
+device slot stream token by token (server-sent events with
+`stream_options.include_usage`; retries happen only before the first byte of
+the answer, and the slot's queue place is held until the stream ends). A
+`custom` provider, and a server that answers a streaming request with one
+JSON body (a test fixture under `tests/mocks/` included), give the whole
+answer as one piece. A stream the program stops reading is closed by the
+slot's timeout.
 
 ## Failures
 

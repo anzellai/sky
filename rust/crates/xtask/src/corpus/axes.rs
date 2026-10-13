@@ -197,6 +197,7 @@ pub const SURFACE: Axis = Axis::new(
         "aitrain",
         "aiserve",
         "aigooglecloud",
+        "aidevice",
         "aiscrub",
         "aidataset",
         "aisynthetic",

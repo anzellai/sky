@@ -47,10 +47,7 @@ use std::process::Command;
 /// **214 at the merge of v0.28.0 phase 3** (+3, examples/73-ai-train:
 /// src/Main.sky, src/Support.sky, tests/TrainExampleTest.sky), measured by the
 /// `roundtrip` gate.
-/// **219 in v0.28.0 phase 4** (+5, examples/74-ai-cloud: src/Main.sky,
-/// src/Cloud.sky, src/Ai.sky, src/Suites.sky, tests/CloudTest.sky), measured
-/// by the `roundtrip` gate.
-pub const ROUNDTRIP_EXPECTED: u64 = 219; // +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
+pub const ROUNDTRIP_EXPECTED: u64 = 219; // +5: examples/75-ai-everywhere (four src modules and one tests suite, v0.28.0 phase 5); +1: examples/65-metadata-service (v1 B5 load-test app); +1: examples/66-slack-agent (Std.Ai capstone, src/Main.sky); +1: examples/67-durable-counter (App.withDurable demo); +9: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (src/Main.sky, one src module and one tests suite each, v0.28.0 phase 2)
 /// Files in `rust/crates/ty/tests/reject/corpus/`. Measured — and read from the
 /// SINGLE declaration both reject faces share, so the harness cannot pin a
 /// different corpus size than `xtask reject` and `cargo test -p ty --test
@@ -795,10 +792,10 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// **695 at the merge of v0.28.0 phase 3** (+2, Family S: the `aitrain`
 /// surface, nominal and failure, for `Std.Ai.Train`), measured by the
 /// `corpus-manifest` gate.
-/// **698 in v0.28.0 phase 4** (+3, Family S: the `aiserve` surface, nominal,
-/// and the `aigooglecloud` surface, nominal and failure), measured by
-/// `xtask corpus --run` (698 cases, 552 behavioural, all green).
-pub const CORPUS_EXPECTED: u64 = 698;
+/// **697 in v0.28.0 phase 5** (+2, Family S: the `aidevice` surface, nominal
+/// and failure, for `Std.Ai.Device`), measured by the generator
+/// (`corpus_count_sync`) and `xtask corpus --emit-manifest`.
+pub const CORPUS_EXPECTED: u64 = 697;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -856,9 +853,9 @@ pub const CORPUS_EXPECTED: u64 = 698;
 /// **549 at the merge of v0.28.0 phase 3** (+2, the `aitrain` surface, built
 /// and run; measured by the `corpus` gate).
 ///
-/// **552 in v0.28.0 phase 4** (+3, the `aiserve` and `aigooglecloud`
-/// surfaces, built and run; measured by `xtask corpus --run`).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 552;
+/// **551 in v0.28.0 phase 5** (+2, the `aidevice` surface, built and run;
+/// measured by the generator, `corpus_count_sync`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 551;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.
@@ -899,7 +896,7 @@ pub const CORPUS_WITNESS_EXPECTED: u64 = 16;
 /// still identical (137 shared, one full-rebuild fallback). This is a tier-only
 /// exact-count ratchet — it drifted undetected because only the release/T1
 /// harness checks the count; see the per-PR-ratchet work (v1 release hardening).
-pub const SHARED_WORLD_EXPECTED: u64 = 163; // measured 163 by the `shared-world` gate in v0.28.0 phase 4: +1 dir examples/74-ai-cloud; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
+pub const SHARED_WORLD_EXPECTED: u64 = 163; // measured 163 by the `shared-world` gate in v0.28.0 phase 5: +1 dir examples/75-ai-everywhere; measured 162 by the `shared-world` gate at the merge of v0.28.0 phase 3: +1 dir examples/73-ai-train; measured 161 by the `shared-world` gate in v0.28.0 phase 2 part C: +1 dir examples/72-ai-support-desk, +1 reject file ai_eval_passed_is_opaque.sky; measured 159 by the `shared-world` gate at the merge of the two v0.28.0 phase 2 parts (156 + the 3 dataset examples); +3 dirs: examples/68-ai-dataset, 69-ai-scrub, 70-ai-synthetic (v0.28.0 phase 2 part A); +1 dir: examples/71-ai-registry (Std.Ai.Registry, v0.28.0 phase 2 part B, renumbered from 68 at the merge); +5 reject files: value_restriction_*.sky (S3a), bounds_*.sky (S3b), pattern_ctor_too_many_args.sky (S3d) — v0.27.0 final batch; +1 reject file: ffi_kernel_through_another_qualifier.sky (`Webview.kernel` is [E1011], v0.27.0 judge round 2); +1 reject file: ffi_go_type_is_not_an_app_type.sky (a Go FFI type keeps its identity, v0.27.0 round 5); +1 reject file: let_application_not_generalised.sky (the let-generalisation value restriction, v0.27.0 round 3); +1 dir: examples/65-metadata-service (v1 B5); +1 dir: examples/66-slack-agent (Std.Ai capstone); +1 dir: examples/67-durable-counter (App.withDurable demo); +1 reject file: unknown_operator_bang_equals.sky ([E1014], v0.25.17); +1 reject file: dangling_export_value.sky ([E1015], v0.25.19); +4 reject files: ffi_result_*.sky + ffi_sky_ffi_call_is_stdlib_only.sky (v0.27.0 FFI Result enforcement)
 
 /// The corpus manifest is the ONLY membership authority (v2 §3.1). This gate
 /// fails when the generator and the checked-in manifest disagree, so a generator
@@ -2949,7 +2946,12 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// 958 -> 979 at the merge of v0.28.0 phase 3 (+17 `tests/Std/Ai/TrainTest.sky`,
 /// +4 `FailureTest`: the round trip and the kind of `TrainingFailed` and
 /// `TrainingCancelled`), measured by the `sky-suites` gate.
-pub const SKY_SUITES_EXPECTED: u64 = 979;
+/// 979 -> 1032 in v0.28.0 phase 5 (+38 `tests/Std/Ai/DeviceTest.sky`, +5
+/// `RegistryTest`: `allowOnDevice`, +4 `FailureTest`: the round trip and the
+/// kind of `DeviceUnsupported` and `StorageDenied`, +6
+/// `ProviderEndpointTest`: `chatStream`, `stream` and `read`), measured by the
+/// `sky-suites` gate.
+pub const SKY_SUITES_EXPECTED: u64 = 1032;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
@@ -3495,11 +3497,10 @@ pub fn lsp(ctx: &GateCtx) -> GateOutcome {
 /// surface).
 /// 195 -> 196 at the merge of v0.28.0 phase 3: `stdlib.Std.Ai.Train`, covered
 /// by `tests/Std/Ai/TrainTest.sky` and the `aitrain` corpus surface.
-/// 196 -> 198 in v0.28.0 phase 4, measured by the `coverage-ledger` gate:
-/// `stdlib.Std.Ai.Serve` and `stdlib.Std.Ai.Cloud.Google`, covered by
-/// `tests/Std/Ai/ServeTest.sky`, `tests/Std/Ai/TrainCloudTest.sky` and the
-/// `aiserve` and `aigooglecloud` corpus surfaces.
-pub const COVERAGE_LEDGER_EXPECTED: u64 = 198;
+/// 196 -> 197 in v0.28.0 phase 5: `stdlib.Std.Ai.Device`, covered by
+/// `tests/Std/Ai/DeviceTest.sky`, the `aidevice` corpus surface and the
+/// `ai-device-*` gates.
+pub const COVERAGE_LEDGER_EXPECTED: u64 = 197;
 
 /// `xtask coverage-ledger --check`, run in-process.
 ///
@@ -3877,6 +3878,228 @@ pub fn ai_train_resumes_from_the_newest_checkpoint(ctx: &GateCtx) -> GateOutcome
         "./rt/",
         "TestTrainResumesFromNewestVerifiedCheckpoint",
         AI_TRAIN_RESUME_EXPECTED,
+    )
+}
+
+// ---- Std.Ai.Device (v0.28.0 phase 5) ----------------------------------
+
+/// `TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported`
+/// (runtime-go/rt/ai_device_worker_test.go): the browser worker under node
+/// with a fake WebGPU engine that registers no GPU device. Five assertions:
+/// the call fails, typed DeviceUnsupported, naming webgpu, only the WebGPU
+/// engine was loaded, and with a GPU device the same call answers on WebGPU.
+pub const AI_DEVICE_NO_SILENT_FALLBACK_EXPECTED: u64 = 5;
+
+pub fn ai_device_no_silent_fallback(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestDeviceWebGpuWithoutAGpuIsDeviceUnsupported",
+        AI_DEVICE_NO_SILENT_FALLBACK_EXPECTED,
+    )
+}
+
+/// `TestDeviceWorkerDigests`: the worker's streaming SHA-256 against the
+/// platform's, a verified download, a chunk that does not match (refused, not
+/// stored) and a file whose whole digest does not match (refused, not
+/// stored). Six assertions, measured by the gate.
+pub const AI_DEVICE_DIGEST_EXPECTED: u64 = 6;
+
+pub fn ai_device_digest(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestDeviceWorkerDigests",
+        AI_DEVICE_DIGEST_EXPECTED,
+    )
+}
+
+/// `TestAiStreamPieceByPiece` (ai_stream_test.go): a managed engine's answer
+/// arrives in more than one piece, the pieces are the final body's content,
+/// the stream ends with its last event, and the browser worker streams. Five
+/// assertions, measured by the gate.
+pub const AI_STREAM_PIECES_EXPECTED: u64 = 5;
+
+pub fn ai_stream_pieces(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestAiStreamPieceByPiece",
+        AI_STREAM_PIECES_EXPECTED,
+    )
+}
+
+/// `TestDeviceBlobServesOnlyOfferedDigests` (ai_device_serve_test.go): no
+/// blob before an offer, the offered one with Range, not a model the host
+/// holds that no offer names, three malformed names, and the chunk list.
+/// Eight assertions, measured by the gate.
+pub const AI_DEVICE_BLOB_ALLOWLIST_EXPECTED: u64 = 8;
+
+pub fn ai_device_blob_allowlist(ctx: &GateCtx) -> GateOutcome {
+    go_runtime_gate(
+        ctx,
+        "./rt/",
+        "TestDeviceBlobServesOnlyOfferedDigests",
+        AI_DEVICE_BLOB_ALLOWLIST_EXPECTED,
+    )
+}
+
+/// `tests/Std/Ai/DeviceTest.sky`, run by itself: every rule of the decision,
+/// the status, the wire values, the spec builders, record and replay, and one
+/// suite scored on both sides. The count is the suite's passing cases,
+/// measured by the gate.
+pub const AI_DEVICE_DECIDE_EXPECTED: u64 = 38;
+
+pub fn ai_device_decide(ctx: &GateCtx) -> GateOutcome {
+    let sky = match super::layer2::sky_binary(&ctx.repo_root) {
+        Ok(s) => s,
+        Err(e) => return GateOutcome::new(false, 0, e),
+    };
+    let out_dir = scratch(&ctx.repo_root).join("ai-device-decide");
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let out = Command::new(&sky)
+        .args(["test", "tests/Std/Ai/DeviceTest.sky", "--out"])
+        .arg(&out_dir)
+        .current_dir(&ctx.repo_root)
+        .stdin(std::process::Stdio::null())
+        .output();
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::new(false, 0, format!("could not run sky test: {e}")),
+    };
+    let text = String::from_utf8_lossy(&o.stdout).into_owned();
+    let passed = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("ok "))
+        .count() as u64;
+    let failed = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("FAIL "))
+        .count();
+    GateOutcome::new(
+        o.status.success() && failed == 0,
+        passed,
+        format!(
+            "{passed} Std.Ai.Device cases passed, {failed} failed:\n{}",
+            super::layer2::tail(&text, 15)
+        ),
+    )
+}
+
+/// `rust/crates/sky/tests/ai_device_flow.rs`: the build refuses a provider
+/// without a server slot and a slot binding with parameters, and a web:app
+/// build puts the `AiDevice_` kernels in the client and the registration in
+/// the server, and serves the offer and the allow-listed blob. Three tests.
+pub const AI_DEVICE_PARTITION_EXPECTED: u64 = 3;
+
+pub fn ai_device_partition(ctx: &GateCtx) -> GateOutcome {
+    let out = Command::new("cargo")
+        .args(["test", "-p", "sky", "--test", "ai_device_flow"])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .stdin(std::process::Stdio::null())
+        .output();
+    cargo_test_outcome(out, "ai_device_flow", AI_DEVICE_PARTITION_EXPECTED)
+}
+
+/// `ai_device_native_flow.rs` `ios_simulator_runs_the_slot_on_the_device`:
+/// the probe on the iOS simulator reports not-downloaded on the native
+/// backend, prepared and ready, and an answer. One test.
+pub const AI_DEVICE_IOS_SIM_EXPECTED: u64 = 1;
+
+pub fn ai_device_ios_sim(ctx: &GateCtx) -> GateOutcome {
+    let out = Command::new("cargo")
+        .args([
+            "test",
+            "-p",
+            "sky",
+            "--test",
+            "ai_device_native_flow",
+            "--",
+            "--ignored",
+            "--test-threads=1",
+            "ios_simulator",
+        ])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .env(
+            "DEVELOPER_DIR",
+            "/Applications/Xcode.app/Contents/Developer",
+        )
+        .stdin(std::process::Stdio::null())
+        .output();
+    cargo_test_outcome(
+        out,
+        "ai_device_native_flow ios_simulator",
+        AI_DEVICE_IOS_SIM_EXPECTED,
+    )
+}
+
+/// A `cargo test` run as a gate outcome: green only when every test passed
+/// and exactly `expected` ran.
+fn cargo_test_outcome(
+    out: std::io::Result<std::process::Output>,
+    what: &str,
+    expected: u64,
+) -> GateOutcome {
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::new(false, 0, format!("could not run cargo test: {e}")),
+    };
+    let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+    let ran = stdout
+        .lines()
+        .find_map(|l| {
+            let l = l.trim();
+            let rest = l.strip_prefix("test result: ok. ")?;
+            rest.split_whitespace().next()?.parse::<u64>().ok()
+        })
+        .unwrap_or(0);
+    GateOutcome::new(
+        o.status.success() && ran == expected,
+        ran,
+        format!(
+            "{what}: {ran} passed (exit {:?}):\n{}",
+            o.status.code(),
+            // stderr first: the compiler's warnings, then the tests' own
+            // output, so the tail shows a failing test, not the build.
+            super::layer2::tail(
+                &format!("{}{stdout}", String::from_utf8_lossy(&o.stderr)),
+                40
+            )
+        ),
+    )
+}
+
+/// `scripts/ai-device-e2e.sh --scenarios chromium-cpu`: the probe on the CPU
+/// engine in Chromium under the strict policy. Six checks: the status, the
+/// preparation, the device's answer, the download from the app's own server,
+/// no call reaching the server, and no policy violation.
+pub const AI_DEVICE_BROWSER_EXPECTED: u64 = 6;
+
+pub fn ai_device_browser(ctx: &GateCtx) -> GateOutcome {
+    let out = Command::new("bash")
+        .args(["scripts/ai-device-e2e.sh", "--scenarios", "chromium-cpu"])
+        .current_dir(&ctx.repo_root)
+        .stdin(std::process::Stdio::null())
+        .output();
+    let o = match out {
+        Ok(o) => o,
+        Err(e) => {
+            return GateOutcome::new(false, 0, format!("could not run ai-device-e2e.sh: {e}"))
+        }
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let ok = text.lines().filter(|l| l.starts_with("ok  ")).count() as u64;
+    let pass = text.lines().any(|l| l.trim() == "PASS");
+    GateOutcome::new(
+        pass && o.status.success(),
+        ok,
+        format!("{ok} checks green:\n{}", super::layer2::tail(&text, 20)),
     )
 }
 

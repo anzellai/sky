@@ -2455,7 +2455,7 @@ to the local engine.
 |---|---|
 | `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe`, `inspect`, `tokenize`, `slotName` |
 | `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withAdapter`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
-| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire` |
+| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire`, `wireStreaming`; streaming: `stream`, `read` (`Piece` / `Finished`), `close`, `chatStream` |
 
 The full guide, every variable and the failure kinds: [`ai/local.md`](ai/local.md).
 
@@ -2623,6 +2623,26 @@ Guides: [`ai/serve.md`](ai/serve.md), [`ai/deploy-gcp.md`](ai/deploy-gcp.md);
 example `examples/74-ai-cloud`. CLI: `sky ai serve`, `sky ai deploy`,
 `sky ai teardown`, `sky ai cloud ls | prices`, `sky ai image build`,
 `sky ai registry publish`.
+
+### `Std.Ai.Device`: a model slot on the user's device (v0.28.0)
+
+The server's slot gets `Endpoint.withDevice spec` (placement `Auto`,
+`DeviceOnly` or `ServerOnly`, required; `SKY_AI_<SLOT>_PLACEMENT`,
+`_DEVICE_MODEL`, `_DEVICE_ADAPTER` override the code). A Sky.Spa client asks
+`provider "<slot>"`, an ordinary `Provider` that answers on the device
+(llama.cpp: WebGPU or CPU WebAssembly in a Web Worker, the iOS and Android
+apps, the Mac app) when it holds the model, and from the server otherwise.
+`decide` is the policy as a pure function. Nothing downloads before `prepare`,
+which the app calls after the user's consent; `status` gives the size and the
+progress. `record` and `replay` with `Eval.prompts` score one suite on both
+sides. `Registry.allowOnDevice` clears an adapter for devices.
+
+| Module | Main functions |
+|---|---|
+| `Std.Ai.Device` | `spec`, `withModel`, `withAdapter`, `withContext`, `withMaxDownload`, `withBackends`, `withMetered`, `raw`, `placementText`, `backendText`, `backendFromText`, `decide`, `estimateTokens`, `decodeOffer`, `decodeCapabilities`, `provider`, `statusOf`, `status`, `prepare`, `evict`, `capabilities`, `record`, `replay`, `encodeRecording`, `decodeRecording` |
+
+Guide: [`ai/device.md`](ai/device.md). CLI: `sky ai provision --device`,
+`sky build --ai-web-engine`, `sky build --ai-embed`.
 
 ## The Prelude
 

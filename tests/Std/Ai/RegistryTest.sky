@@ -25,6 +25,7 @@ import Std.Ai.Store as Store
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Registry as Registry exposing (Format(..), Method(..))
 import Std.Ai.Dataset as Dataset exposing (Instruction)
+import Std.Ai.Dataset.Scrub as Scrub
 
 
 -- ── Fixtures ────────────────────────────────────────────────────────
@@ -730,8 +731,8 @@ migrated =
 
 
 -- ── Tests ───────────────────────────────────────────────────────────
-tests : List Test
-tests =
+baseTests : List Test
+baseTests =
     [ Test.test
           "register numbers versions and returns the existing one for the same bytes"
           (\_ ->
@@ -976,8 +977,9 @@ tests =
     , Test.test
           "opening twice applies the registry migrations once"
           (\_ ->
-              -- Two migrations: the records (0001) and the dataset versions (0002).
-              Test.equal (Ok ( 2, 0 )) migrated)
+              -- Three migrations: the records (0001), the dataset versions
+              -- (0002) and the device clearance (0003).
+              Test.equal (Ok ( 3, 0 )) migrated)
     , Test.test
           "an unknown alias is NotRegistered"
           (\_ ->
@@ -1233,3 +1235,182 @@ firstCompared =
                                                                               current
                                                                         )))))
         |> Task.run
+
+
+tests : List Test
+tests =
+    baseTests ++ deviceTests
+
+
+-- ── Clearing a version for devices (Std.Ai.Device) ──────────────────
+-- A minimal GGUF LoRA adapter: the header, no tensors, and the two metadata
+-- keys the registry checks (`general.type` = adapter, `adapter.type` = lora),
+-- plus a tag so different tags give different bytes.
+le8 : Int -> String
+le8 n =
+    hexByte n ++ "00000000000000"
+
+
+ggufString : String -> String
+ggufString s =
+    le8 (String.length s) ++ Encoding.hexEncode s
+
+
+ggufKv : String -> String -> String
+ggufKv k v =
+    ggufString k ++ "08000000" ++ ggufString v
+
+
+ggufAdapter : String -> String
+ggufAdapter tag =
+    Encoding.hexDecode
+        ("4747554603000000" ++ le8 0 ++ le8 3 ++ ggufKv "general.type" "adapter"
+            ++ ggufKv "adapter.type" "lora"
+            ++ ggufKv "sky.tag" tag)
+        |> Result.withDefault ""
+
+
+-- Freeze a dataset (scrubbed or not), register it, and register a GGUF
+-- adapter trained on it.
+deviceVersion : World -> Bool -> Bool -> String -> Task Error Registry.Version
+deviceVersion w scrubbed registered tag =
+    let
+        rows =
+            Dataset.fromList
+                [ { prompt = "mail me at a@b.example", completion = "ok" }
+                , { prompt = "b", completion = "c" }
+                ]
+        prepared =
+            if scrubbed then
+                rows |> Dataset.scrub (Scrub.forInstruction Scrub.defaults)
+
+            else
+                rows
+        path = w.dir ++ "/" ++ tag ++ ".gguf"
+    in
+        prepared |> Dataset.unsplit
+            |> Dataset.freeze
+                   (Dataset.folder (w.dir ++ "/datasets") ("device-" ++ tag))
+                   Dataset.instructionCodec
+            |> Task.andThen
+                   (\v ->
+                       (if registered then
+                           Registry.registerDataset
+                               w.reg
+                               (Dataset.manifest v)
+                               (Dataset.blobPath v)
+                               |> Task.map (\_ -> ())
+
+                       else
+                           Task.succeed ())
+                           |> Task.andThen
+                                  (\_ -> File.writeFile path (ggufAdapter tag))
+                           |> Task.andThen
+                                  (\_ ->
+                                      Registry.register
+                                          w.reg
+                                          "device-lora"
+                                          { path = path
+                                          , format = Gguf
+                                          , method = Lora
+                                          }
+                                          { lineage
+                                              | datasetDigest =
+                                                  (Dataset.manifest v).digest
+                                          }))
+
+
+cleared : Result Error ( Maybe String, Bool, List String )
+cleared =
+    world
+        |> Task.andThen
+               (\w ->
+                   deviceVersion w True True "ok"
+                       |> Task.andThen
+                              (\v ->
+                                  Registry.allowOnDevice
+                                      w.reg
+                                      v
+                                      "  reviewed: no personal data in the weights  "
+                                      |> Task.andThen
+                                             (\_ ->
+                                                 Registry.version
+                                                     w.reg
+                                                     "device-lora"
+                                                     v.number)
+                                      |> Task.andThen
+                                             (\after ->
+                                                 (Registry.resolver
+                                                     (Task.succeed w.reg)).resolve
+                                                     ("registry:"
+                                                         ++ Registry.label after)
+                                                     False
+                                                     |> Task.andThen
+                                                            (\ad ->
+                                                                Registry.history
+                                                                    w.reg
+                                                                    "device-lora"
+                                                                    "device"
+                                                                    |> Task.map
+                                                                           (\events ->
+                                                                               ( after.onDevice
+                                                                               , ad.onDevice
+                                                                               , List.map
+                                                                                     .action
+                                                                                     events
+                                                                               ))))))
+        |> Task.run
+
+
+refusal : (World -> Task Error Registry.Version) -> String -> Result Error ()
+refusal make reason =
+    world
+        |> Task.andThen
+               (\w ->
+                   make w
+                       |> Task.andThen
+                              (\v -> Registry.allowOnDevice w.reg v reason))
+        |> Task.run
+
+
+deviceTests : List Test
+deviceTests =
+    [ Test.test
+          "allowOnDevice clears a GGUF version trained on a scrubbed, registered dataset, audited"
+          (\_ ->
+              Test.equal
+                  (Ok
+                      ( Just "reviewed: no personal data in the weights"
+                      , True
+                      , [ "allow-on-device" ]
+                      ))
+                  cleared)
+    , Test.test
+          "allowOnDevice refuses a version whose dataset was not scrubbed"
+          (\_ ->
+              expectFailure
+                  isNotPromotable
+                  "NotPromotable"
+                  (refusal (\w -> deviceVersion w False True "raw") "ok"))
+    , Test.test
+          "allowOnDevice refuses a version whose dataset is not in the registry"
+          (\_ ->
+              expectFailure
+                  isNotPromotable
+                  "NotPromotable"
+                  (refusal (\w -> deviceVersion w True False "unknown") "ok"))
+    , Test.test
+          "allowOnDevice refuses a safetensors version: a device loads GGUF only"
+          (\_ ->
+              expectFailure
+                  isNotPromotable
+                  "NotPromotable"
+                  (refusal (\w -> registerTag w "st") "ok"))
+    , Test.test
+          "allowOnDevice needs a reason"
+          (\_ ->
+              expectFailure
+                  isInvalid
+                  "InvalidSetting"
+                  (refusal (\w -> deviceVersion w True True "noreason") "   "))
+    ]

@@ -124,6 +124,7 @@ app" below):
 | `AssociatedDomain "applinks:acme.com"` | `com.apple.developer.associated-domains` (`webcredentials:` for password autofill) |
 | `PushNotifications PushProduction` | `aps-environment` (`PushDevelopment` for a development build) |
 | `ICloudContainer "iCloud.com.acme.app"` | `com.apple.developer.icloud-container-identifiers` + `icloud-services: CloudKit` |
+| `IncreasedMemoryLimit` | `com.apple.developer.kernel.increased-memory-limit` (an on-device model, `Std.Ai.Device`, needs more than iOS gives an app by default) |
 
 The build checks the shape of each value (an app group starts with `group.`,
 an associated domain is `<service>:<host>` with an optional `:<port>` and
@@ -152,6 +153,25 @@ the login Keychain without an access group. Signed with a Developer ID
 identity, a restricted entitlement needs `SKY_MACOS_PROVISIONING_PROFILE`: the
 profile is embedded in the `.app` and must grant every entitlement the app asks
 for.
+
+## On-device models — `Std.Ai.Device`
+
+An app that asks `Device.provider "<slot>"` runs that slot's model in the
+native shell when the engine is installed (`sky ai provision --device
+ios|android`): `SkyLlama.xcframework` linked into the iOS app (the arm64
+device slice with Metal, the simulator slice on the CPU) and `libskyllama.so`
+for arm64-v8a and x86_64 in the Android app (stored uncompressed, 16 KB
+aligned, `extractNativeLibs="false"`, two threads by default). The Mac app
+runs the managed `llama-server`. The shell answers the `sky:aiCaps`,
+`sky:aiPrepare`, `sky:aiStatus`, `sky:aiChat` and `sky:aiEvict` ops; a shell
+built without the engine answers that it does not know them, and the client
+uses the browser worker or the server. The files are downloaded from the app's
+own server after the user's consent and checked by SHA-256: iOS keeps them in
+Application Support (excluded from backups), Android in the app's files
+directory. `sky build --ai-embed <slot>` puts the slot's model and adapter in
+the app instead (`sky-ai/<sha256>.gguf`: the bundle on iOS and macOS, the
+uncompressed assets on Android). Declare `Bundle.IncreasedMemoryLimit` for iOS.
+See [`../ai/device.md`](../ai/device.md).
 
 ## Links into the app — `AssociatedDomain "applinks:…"`
 

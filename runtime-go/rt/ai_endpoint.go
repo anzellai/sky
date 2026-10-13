@@ -283,20 +283,7 @@ func (s *aiSlot) post(path, body string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	model := s.cfg.model
-	if ad != nil {
-		model = ad.servedName
-	} else if s.cfg.adapter != "" {
-		model = s.cfg.adapter
-	}
-	if s.cfg.mode == "local" && ad == nil {
-		model = orDefault(model, "local")
-		model = strings.TrimSpace(model)
-		if strings.HasPrefix(model, "hf:") || strings.HasPrefix(model, "file:") {
-			model = "local"
-		}
-	}
-	body = aiPatchModel(body, model)
+	body = aiPatchModel(body, s.requestModel(ad))
 
 	if s.cfg.mode == "remote" || testModeActive() {
 		url := aiJoinPath(s.cfg.baseURL, path)

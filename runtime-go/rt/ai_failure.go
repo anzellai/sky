@@ -1,5 +1,3 @@
-//go:build !js
-
 package rt
 
 // ai_failure.go — the ONE place an AI failure becomes a Sky `Error`.
@@ -63,6 +61,12 @@ const (
 	aiQuotaExceeded       aiFailCode = "QuotaExceeded"
 	aiCapacityUnavailable aiFailCode = "CapacityUnavailable"
 	aiDeploymentFailed    aiFailCode = "DeploymentFailed"
+	// DeviceUnsupported and StorageDenied are Std.Ai.Device failures: the
+	// device cannot run the model on the backend the decision chose (a WebGPU
+	// load that registers no device is one, never a silent CPU run), or the
+	// device has too little storage for the download.
+	aiDeviceUnsupported aiFailCode = "DeviceUnsupported"
+	aiStorageDenied     aiFailCode = "StorageDenied"
 )
 
 // aiDomain is the DomainFailure domain of every AI failure.
@@ -109,6 +113,8 @@ var aiFailSpecs = map[aiFailCode]aiFailSpec{
 	aiDatasetInvalid:      {errKindInvalidInput, false, [][2]string{{"dataset", ""}, {"reasons", ""}}},
 	aiTrainingFailed:      {errKindUnavailable, false, [][2]string{{"runId", ""}, {"step", "0"}, {"reason", ""}, {"logTail", ""}}},
 	aiTrainingCancelled:   {errKindConflict, false, [][2]string{{"runId", ""}, {"step", "0"}}},
+	aiDeviceUnsupported:   {errKindUnavailable, false, [][2]string{{"backend", ""}, {"reason", ""}}},
+	aiStorageDenied:       {errKindPermissionDenied, false, [][2]string{{"needBytes", "0"}, {"availableBytes", "0"}}},
 	aiQuotaExceeded:       {errKindPermissionDenied, false, [][2]string{{"resource", ""}, {"region", ""}, {"limit", "0"}}},
 	aiCapacityUnavailable: {errKindUnavailable, true, [][2]string{{"resource", ""}, {"region", ""}}},
 	aiDeploymentFailed:    {errKindUnavailable, false, [][2]string{{"target", ""}, {"reason", ""}, {"logTail", ""}}},

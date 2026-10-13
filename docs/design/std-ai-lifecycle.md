@@ -303,7 +303,7 @@ tested on every toolchain bump (section 13).
 | `Std.Ai.Pipeline` (new) | Names the project's datasets, jobs, suites and tiers in one value, so the `sky ai` verbs can run them. |
 | `Std.Ai.Toolchain` (new, mostly internal) | The pinned engine and Python toolchain artefacts: discovery, fetch, checksum, atomic install, registry of running engines. |
 | `Std.Ai.Trace` (extended) | Adds latency, time to first token, tokens per second, slot, adapter and tier to each row. Adds training and eval cost rows. |
-| `Std.Ai.Browser`, `Std.Ai.Device` (phase 5) | `Provider` bridges to WebLLM or transformers.js in Sky.Spa, Apple Foundation Models on iOS and LiteRT-LM on Android. |
+| `Std.Ai.Device` (phase 5) | A slot on the user's device: llama.cpp in the browser (WebGPU or CPU WebAssembly), the iOS, Android and Mac apps, with the server's slot as the fallback (§14 P5 records why not WebLLM, transformers.js, Foundation Models or LiteRT-LM). |
 
 ## 8. API sketches
 
@@ -1532,6 +1532,56 @@ capability detection and falls back to the server `Provider` through a `router`.
 Exit criteria: one Sky app answers on device when the device supports it and
 from the server otherwise, with the same `Provider` code and the same eval
 suite run against both.
+
+**Shipped (v0.28.0).** `Std.Ai.Device` with `Endpoint.withDevice`, the
+server's offer, blob and fallback routes, the browser worker, the iOS, Android
+and Mac bridges, `Registry.allowOnDevice`, `Eval.prompts` with
+`Device.record` and `replay`, `sky ai provision --device`, `--ai-web-engine`,
+`--ai-embed`, `Bundle.IncreasedMemoryLimit` and `examples/75-ai-everywhere`.
+The guide is [`../ai/device.md`](../ai/device.md).
+
+Where the shipped phase differs from this design:
+
+1. **llama.cpp everywhere, not WebLLM, transformers.js, Apple Foundation
+   Models or LiteRT-LM.** One engine (llama.cpp b11200 with Sky's engine core,
+   `scripts/ai/device/sky_llama.cpp`) runs the same GGUF model and the same
+   GGUF LoRA adapter on every target, with the same chat template and
+   sampler, so a `Std.Ai.Train` adapter runs on a device unchanged and one
+   eval suite compares like with like. WebLLM needs its own compiled model
+   format and evaluates generated code (no strict CSP), transformers.js has no
+   LoRA path for the Qwen GGUF files, Foundation Models runs only Apple's own
+   model, and LiteRT-LM runs no Qwen GGUF or LoRA. The browser engine is built
+   by Sky with Emscripten (WebGPU and CPU), the iOS engine is Sky's own
+   xcframework (upstream's has no simulator slice), and the Android engine a
+   JNI library per ABI, all from the pinned source by the `ai-device-bundles`
+   workflow.
+2. **The client owns the decision, not a `router`.** `Device.provider` is a
+   `Provider.wire` whose transport reads the server's offer and the device's
+   capabilities and applies the pure `Device.decide`; the server's slot is the
+   fallback, reached through `POST /_sky/ai/device/<slot>/call`. A
+   `DeviceOnly` slot has no fallback route at all.
+3. **Consent is the app's.** `Device.status` gives the size and
+   `Device.prepare` downloads; nothing downloads on its own. Files come from
+   the app's own server, never a third-party CDN, checked by SHA-256 per
+   64 MiB chunk and per file.
+4. **Weights on devices need clearance.** A registry adapter runs on devices
+   only after `Registry.allowOnDevice`, which needs a scrubbed dataset in the
+   same registry.
+5. **WebGPU needs JSPI.** The WebGPU engine waits on the GPU through
+   JavaScript Promise Integration, so Safari and Firefox use the CPU engine;
+   a WebGPU load that finds no GPU device is `DeviceUnsupported`, never a
+   silent CPU run.
+6. **Pins after publication.** The engines' archive digests are pinned in
+   `rust/crates/sky/src/ai_device.rs` once the workflow publishes them; until
+   then `sky ai provision --device --from <dir>` installs a local build of the
+   same script, and provisioning from the release fails with a typed error
+   that names the empty pin, the workflow and the release.
+7. **Streaming, beyond the design.** `Provider.stream` and `Provider.read`
+   (one piece per update in a TEA app) and `Provider.chatStream` (a callback
+   in a Task program) stream an answer from a server slot, the built-in
+   backends and a device slot. The engine core gained a step API
+   (`sky_llama_chat_begin` / `sky_llama_chat_next`), and the fallback gained a
+   streaming route (`POST /_sky/ai/device/<slot>/stream`).
 
 ## 15. Risks
 

@@ -245,6 +245,9 @@ type PushEnvironment
 -- * `PushNotifications PushProduction` — `aps-environment`.
 -- * `ICloudContainer "iCloud.com.acme.app"` —
 --   `com.apple.developer.icloud-container-identifiers` (CloudKit).
+-- * `IncreasedMemoryLimit` —
+--   `com.apple.developer.kernel.increased-memory-limit`: an on-device model
+--   (`Std.Ai.Device`) needs more memory than iOS gives an app by default.
 --
 -- Android has no entitlements file. An `applinks:` domain becomes an App Links
 -- intent filter there, and a `webcredentials:` domain the app's
@@ -257,6 +260,7 @@ type Entitlement
     | AssociatedDomain String
     | PushNotifications PushEnvironment
     | ICloudContainer String
+    | IncreasedMemoryLimit
 
 
 -- | Declare an `Entitlement` the signed app carries:

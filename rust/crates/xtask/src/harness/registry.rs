@@ -126,6 +126,7 @@ pub const ALL_PLATFORMS: Platforms =
     Platforms::new(&[Platform::Linux, Platform::Macos, Platform::Windows]);
 /// Unix only — anything that depends on `killpg`, PTYs, or POSIX shell.
 pub const UNIX: Platforms = Platforms::new(&[Platform::Linux, Platform::Macos]);
+pub const MACOS: Platforms = Platforms::new(&[Platform::Macos]);
 
 /// How a gate's source is perturbed to prove its assertion is live.
 #[derive(Clone, Copy, Debug)]
@@ -438,10 +439,11 @@ pub static GATES: &[Gate] = &[
                 // Std.Ai.Store and Std.Ai.Registry surfaces (+3 cases, 682 → 685),
                 // and the v0.28.0 Std.Ai.Dataset, Scrub and Synthetic surfaces
                 // (+6 cases, 685 → 691), the v0.28.0 Std.Ai.Pipeline surface
-                // (+2 cases, 691 → 693) and the v0.28.0 Std.Ai.Train surface
-                // (+2 cases, 693 → 695).
-                from: "n_min = 698",
-                to: "n_min = 696",
+                // (+2 cases, 691 → 693), the v0.28.0 Std.Ai.Train surface
+                // (+2 cases, 693 → 695) and the v0.28.0 Std.Ai.Device surface
+                // (+2 cases, 695 → 697).
+                from: "n_min = 697",
+                to: "n_min = 698",
             },
         }]),
         body: bodies::corpus_manifest,
@@ -1166,6 +1168,190 @@ pub static GATES: &[Gate] = &[
             },
         }]),
         body: bodies::ai_serve_hot_loads_without_dropping_a_request,
+    },
+    // ---- Std.Ai.Device (v0.28.0 phase 5) --------------------------------
+    Gate {
+        name: "ai-device-decide",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_DECIDE_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "Std.Ai.Device's decision: every rule, in order, as a pure function",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-decide.no-storage-margin",
+            description: "drop the 1.1x storage margin, so a download that fills the \
+                          device to the last byte is offered; the margin cases must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-stdlib/Std/Ai/Device.sky",
+                from: "if missing > 0 && missing + missing // 10 > caps.storageAvailableBytes then",
+                to: "if missing > 0 && missing > caps.storageAvailableBytes then",
+            },
+        }]),
+        body: bodies::ai_device_decide,
+    },
+    Gate {
+        name: "ai-device-no-silent-fallback",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_NO_SILENT_FALLBACK_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a WebGPU engine that registers no GPU device is DeviceUnsupported, never a silent CPU run",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-no-silent-fallback.run-without-a-gpu",
+            description: "let the worker load the model on a WebGPU engine with no GPU \
+                          device (ggml then runs it on the CPU in silence); the \
+                          DeviceUnsupported assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_worker.go",
+                from: "    if (gpus === 0) {",
+                to: "    if (gpus < 0) {",
+            },
+        }]),
+        body: bodies::ai_device_no_silent_fallback,
+    },
+    Gate {
+        name: "ai-device-digest",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_DIGEST_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a device stores a downloaded file only after every chunk and the whole file match their SHA-256",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-digest.skip-the-chunk-check",
+            description: "accept a chunk whatever its digest; a chunk list that does not \
+                          describe the bytes is then stored, and the corrupt-chunk \
+                          assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_worker.go",
+                from: "    if (got !== list.chunks[i]) {",
+                to: "    if (false && got !== list.chunks[i]) {",
+            },
+        }]),
+        body: bodies::ai_device_digest,
+    },
+    Gate {
+        name: "ai-stream-pieces",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_STREAM_PIECES_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a streamed answer arrives piece by piece, from a server slot and from the browser worker",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-stream-pieces.buffer-the-answer",
+            description: "keep every piece of a server's event stream and send none until the \
+                          end (a silent non-stream); the arrived-in-pieces assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_stream.go",
+                from: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\treturn aiDeltaEvent(d), false, nil",
+                to: "\t\t\t\t\tst.content.WriteString(d)\n\t\t\t\t\tcontinue",
+            },
+        }]),
+        body: bodies::ai_stream_pieces,
+    },
+    Gate {
+        name: "ai-device-blob-allowlist",
+        tier: Tier::T1,
+        platforms: UNIX,
+        budget_s: 120,
+        expected: bodies::AI_DEVICE_BLOB_ALLOWLIST_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the blob route serves only the digests a current offer names",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-blob-allowlist.serve-the-store",
+            description: "serve any model the host holds when no offer names the digest; \
+                          the not-offered assertion must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_serve.go",
+                from: "\t\tif p := e.fileFor(sum); p != \"\" {\n\t\t\treturn p\n\t\t}\n\t}\n\treturn \"\"",
+                to: "\t\tif p := e.fileFor(sum); p != \"\" {\n\t\t\treturn p\n\t\t}\n\t}\n\tif fileExists(aiModelStorePath(sum)) {\n\t\treturn aiModelStorePath(sum)\n\t}\n\treturn \"\"",
+            },
+        }]),
+        body: bodies::ai_device_blob_allowlist,
+    },
+    Gate {
+        name: "ai-device-partition",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 600,
+        expected: bodies::AI_DEVICE_PARTITION_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the AiDevice kernels run in the Sky.Spa client and the slot registers on the server",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-partition.server-side-device",
+            description: "classify the AiDevice kernels as server effects, so a device call \
+                          becomes an RPC to the server; the split assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/project/src/spa_partition.rs",
+                from: "const CLIENT_EFFECT_KERNELS: &[&str] = &[\"Native\", \"WebSocket\", \"Nav\", \"AiDevice\"];",
+                to: "const CLIENT_EFFECT_KERNELS: &[&str] = &[\"Native\", \"WebSocket\", \"Nav\"];",
+            },
+        }]),
+        body: bodies::ai_device_partition,
+    },
+    Gate {
+        name: "ai-device-privacy",
+        tier: Tier::T4,
+        platforms: UNIX,
+        budget_s: 2400,
+        expected: bodies::AI_DEVICE_BROWSER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a call that runs on the device sends nothing to the server (Chromium, strict CSP)",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-privacy.device-calls-the-server",
+            description: "send an on-device call to the server's fallback as well; the \
+                          no-call-reached-the-server check must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "sky-stdlib/Std/Ai/Device.sky",
+                from: "runRaw (backendText b) ctx.slot ctx.offerJson path body",
+                to: "serverRaw ctx.slot path body |> Task.andThen (\\_ -> runRaw (backendText b) ctx.slot ctx.offerJson path body)",
+            },
+        }]),
+        body: bodies::ai_device_browser,
+    },
+    Gate {
+        name: "ai-device-csp",
+        tier: Tier::T4,
+        platforms: UNIX,
+        budget_s: 2400,
+        expected: bodies::AI_DEVICE_BROWSER_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the device worker and engines run under script-src 'self' 'wasm-unsafe-eval' with no violation",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-csp.evaluate-a-string",
+            description: "make the worker evaluate a string; the strict policy refuses it, \
+                          the worker never answers on the device and the run goes red",
+            kind: MutationKind::ReplaceOnce {
+                path: "runtime-go/rt/ai_device_worker.go",
+                from: "'use strict';\nconst CHUNK = 64 * 1024 * 1024;",
+                to: "'use strict';\nnew Function('return 1')();\nconst CHUNK = 64 * 1024 * 1024;",
+            },
+        }]),
+        body: bodies::ai_device_browser,
+    },
+    Gate {
+        name: "ai-device-ios-sim",
+        tier: Tier::T4,
+        platforms: MACOS,
+        budget_s: 2400,
+        expected: bodies::AI_DEVICE_IOS_SIM_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the iOS simulator runs a device slot on its own llama.cpp",
+        mutations: Mutations::new(&[Mutation {
+            id: "ai-device-ios-sim.shell-ignores-the-ai-ops",
+            description: "make the iOS shell answer the capability op as unknown, so the \
+                          client falls back to the worker; the native-backend \
+                          assertions must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/sky/src/main.rs",
+                from: "case \"sky:aiCaps\", \"sky:aiPrepare\", \"sky:aiStatus\", \"sky:aiChat\", \"sky:aiEvict\",",
+                to: "case \"sky:aiCapsOff\", \"sky:aiPrepare\", \"sky:aiStatus\", \"sky:aiChat\", \"sky:aiEvict\",",
+            },
+        }]),
+        body: bodies::ai_device_ios_sim,
     },
     Gate {
         name: "live-time-every-mutex-survives-a-panic",

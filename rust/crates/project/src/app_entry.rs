@@ -63,6 +63,11 @@ fn parse(src: &str) -> ast::SourceFile {
     syntax::parse(src, base::FileId(0)).tree()
 }
 
+/// The syntax tree of a module's source, for the build's static scans.
+pub(crate) fn parse_source(src: &str) -> ast::SourceFile {
+    parse(src)
+}
+
 /// Read how `Std.App` is imported (see [`AppImport`]).
 pub fn app_import(src: &str) -> AppImport {
     let file = parse(src);

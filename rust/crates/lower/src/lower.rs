@@ -246,6 +246,15 @@ pub struct LowerConfig {
     /// `Handler`-returning alias like `withCors` — the ONLY correct source (the
     /// curried sig over-counts because its result type is itself a function).
     pub variadic_kernels: std::collections::BTreeSet<String>,
+    /// The Std.Ai device slots of the program: `(module, binding, slot)` for
+    /// every top-level zero-parameter binding whose value is an
+    /// `Std.Ai.Endpoint` given `Endpoint.withDevice` (found by
+    /// `project::ai_slots::device_slots`). Each binding is rooted in the DCE
+    /// work-list and registered by `main` (`rt.AiDeviceRegister`), so the
+    /// server answers `/_sky/ai/device/<slot>` and `Device.provider "<slot>"`
+    /// finds its server slot, even when nothing else references the binding.
+    /// Empty for every program without one, which is then byte-identical.
+    pub device_slots: Vec<(String, String, String)>,
 }
 
 pub fn lower_program(db: &dyn TyDb, entry: ModuleId) -> LowerOutput {
@@ -782,6 +791,25 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         top_go_name(&e.module_name, &e.name)
     });
 
+    // The device slots (`LowerConfig.device_slots`): rooted below, registered
+    // by `main`. A listed binding that is missing or takes parameters is
+    // skipped here; `ai_slots` reports it at build time.
+    let mut device_defs: Vec<DefId> = Vec::new();
+    let mut device_regs: Vec<(String, String)> = Vec::new();
+    for (m, n, slot) in &cfg.device_slots {
+        let found = defs
+            .iter()
+            .filter(|(_, e)| &e.module_name == m && &e.name == n && e.body.params.is_empty())
+            .map(|(d, e)| (*d, top_go_name(&e.module_name, &e.name)))
+            .min_by(|a, b| a.1.cmp(&b.1));
+        if let Some((d, go)) = found {
+            device_defs.push(d);
+            device_regs.push((slot.clone(), go));
+        }
+    }
+    device_regs.sort();
+    device_regs.dedup();
+
     // ---- DCE: lower reachable defs, discovering refs as we go ----
     let mut seen: HashSet<DefId> = HashSet::new();
     // Root the work-list at `main` AND (when present) the `config` entry point,
@@ -791,6 +819,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
     if let Some(cd) = config_def {
         work.push(cd);
     }
+    work.extend(device_defs.iter().copied());
     let mut funcs: Vec<GoItem> = Vec::new();
     let mut used_go_types: HashSet<String> = HashSet::new();
     let mut ffi_used: BTreeSet<String> = BTreeSet::new();
@@ -848,6 +877,7 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             tco: None,
             // Only `lower_main` reads this; harmless to carry on every Ctx.
             apply_config: config_go_name.clone(),
+            device_regs: device_regs.clone(),
         };
         let def_items = cx.lower_def(&e.name, &e.module_name, e.sig.as_ref(), d == main_def);
         // determinism (L4): `discovered` is a Vec (ordered), and the two set
@@ -2331,6 +2361,8 @@ struct Ctx<'a> {
     /// anything. `None` for a program with no `config` binding, which keeps its
     /// emitted `main` byte-identical to before this feature.
     apply_config: Option<String>,
+    /// `(slot, Go name)` of each Std.Ai device slot `main` registers.
+    device_regs: Vec<(String, String)>,
 }
 
 /// The tail-call-optimisation context for one def. Present only while the def's
@@ -2925,6 +2957,27 @@ impl<'a> Ctx<'a> {
         if let Some(cfg) = &self.apply_config {
             stmts.push(GoStmt::Expr(GoExpr::new(
                 GoExprKind::Ident(format!("rt.ApplyConfig({cfg}())")),
+                GoTy::Unit,
+            )));
+        }
+        // Register the Std.Ai device slots (`LowerConfig.device_slots`) before
+        // any handler runs. Each is a thunk: the endpoint value is built on
+        // first use, like any CAF. Emitted only for a program with a device
+        // slot, so every other program is byte-identical.
+        for (slot, go) in &self.device_regs {
+            stmts.push(GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident(format!(
+                    "rt.AiDeviceRegister({slot:?}, func() any {{ return {go}() }})"
+                )),
+                GoTy::Unit,
+            )));
+        }
+        // `sky build --ai-embed <slot>` runs the built server once with
+        // `--sky-ai-export <slot> <dir>`: it resolves the slot's offer as it
+        // would serve it, writes the files and exits.
+        if !self.device_regs.is_empty() {
+            stmts.push(GoStmt::Expr(GoExpr::new(
+                GoExprKind::Ident("rt.AiDeviceExportIfAsked()".into()),
                 GoTy::Unit,
             )));
         }
@@ -9732,6 +9785,25 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
         ("rt.Error_isRetryable", 1) => twin("rt.Error_isRetryableT", vec![None], bool_()),
         ("rt.Error_domain", 1) => twin("rt.Error_domainT", vec![None], maybe(str_())),
         ("rt.Error_retryAfter", 1) => twin("rt.Error_retryAfterT", vec![None], maybe(int())),
+        // v0.28.0: the length, trim, replace and match twins
+        // (runtime-go/rt/kernel_twins_test.go checks each against its erased
+        // kernel), used when every argument is a proven string.
+        ("rt.String_length", 1) => twin("rt.String_lengthT", vec![Some(str_())], int()),
+        ("rt.String_trim", 1) => twin("rt.String_trimT", vec![Some(str_())], str_()),
+        ("rt.String_replace", 3) => twin(
+            "rt.String_replaceT",
+            vec![Some(str_()), Some(str_()), Some(str_())],
+            str_(),
+        ),
+        ("rt.Regex_match", 2) => twin("rt.Regex_matchT", vec![Some(str_()), Some(str_())], bool_()),
+        // `Std.Db`'s row readers already return their Go type
+        // (runtime-go/rt/db_auth.go), so each is its own twin: a column read
+        // narrows nothing (doc 14 R5, lever §5.3).
+        ("rt.Db_getField", 2) => twin("rt.Db_getField", vec![None, None], str_()),
+        ("rt.Db_getString", 2) => twin("rt.Db_getString", vec![None, None], str_()),
+        ("rt.Db_getInt", 2) => twin("rt.Db_getInt", vec![None, None], int()),
+        ("rt.Db_getFloat", 2) => twin("rt.Db_getFloat", vec![None, None], float()),
+        ("rt.Db_getBool", 2) => twin("rt.Db_getBool", vec![None, None], bool_()),
         // Pre-existing typed twins, each checked against its erased form in
         // runtime-go/rt/kernel_twins_test.go.
         ("rt.String_fromInt", 1) => twin("rt.String_fromIntT", vec![Some(int())], str_()),

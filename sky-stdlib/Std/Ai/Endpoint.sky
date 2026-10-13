@@ -12,6 +12,7 @@ module Std.Ai.Endpoint exposing
     , Adapter
     , Resolver
     , withLocal
+    , withDevice
     , withTimeout
     , withMaxInFlight
     , withQueue
@@ -83,6 +84,7 @@ import Sky.Core.Secret as Secret exposing (Secret)
 import Std.Ai.Provider as Provider exposing (Provider)
 import Std.Ai.Local as LocalEngine
 import Std.Ai.Cloud.Google as Google
+import Std.Ai.Device as Device
 import Sky.Core.List as List
 import Sky.Core.Json.Encode as JsonE
 import Sky.Core.Json.Decode as JsonD
@@ -126,6 +128,8 @@ type alias Config =
     , adapterRefreshS : Int
     , auth : String
     , idToken : String -> Task Error Secret
+    , hasDevice : Bool
+    , device : Device.RawSpec
     }
 
 {-| A registry adapter, as a resolver hands it to the slot: the reference it
@@ -141,6 +145,7 @@ type alias Adapter =
     , baseDigest : String
     , format : String
     , path : String
+    , onDevice : Bool
     }
 
 {-| How a slot turns `registry:<name>@<alias>` into a concrete adapter.
@@ -192,6 +197,16 @@ endpoint slot =
         , adapterRefreshS = -1
         , auth = ""
         , idToken = Google.idToken
+        , hasDevice = False
+        , device =
+            { placement = "server"
+            , model = ""
+            , adapter = ""
+            , context = -1
+            , maxDownloadBytes = -1
+            , backends = []
+            , metered = False
+            }
         }
 
 
@@ -314,6 +329,19 @@ withLocal spec (Endpoint c) =
             }
 
 
+{-| Let devices run this slot: a Sky.Spa client's `Device.provider "<slot>"`
+runs the call on the device when the spec allows it and the device can,
+and on this slot otherwise. The slot must be a top-level binding without
+parameters that names its slot with a literal, so the server registers it
+when it starts and answers `GET /_sky/ai/device/<slot>` (the build checks
+both). The placement, device model and device adapter fall back to
+`<PREFIX>_AI_<SLOT>_PLACEMENT`, `_DEVICE_MODEL` and `_DEVICE_ADAPTER`. See
+`docs/ai/device.md`. -}
+withDevice : Device.Spec -> Endpoint -> Endpoint
+withDevice d (Endpoint c) =
+    Endpoint { c | hasDevice = True, device = Device.raw d }
+
+
 gpuText : LocalEngine.Gpu -> String
 gpuText g =
     case g of
@@ -388,11 +416,29 @@ postRaw =
     Ffi.kernel "Ai_endpointPost"
 
 
+streamOpenRaw : Config -> String -> String -> Task Error String
+streamOpenRaw =
+    Ffi.kernel "Ai_endpointStreamOpen"
+
+
+streamNextRaw : String -> Task Error String
+streamNextRaw =
+    Ffi.kernel "Ai_streamNext"
+
+
+streamCloseRaw : String -> Task Error ()
+streamCloseRaw =
+    Ffi.kernel "Ai_streamClose"
+
+
 {-| The slot as a `Provider`. It is pure: the first call resolves the slot and
 the process keeps the result, so a top-level binding is enough. -}
 provider : Endpoint -> Provider
 provider (Endpoint c) =
-    Provider.wire (postRaw c) ""
+    Provider.wireStreaming
+        (postRaw c)
+        { open = streamOpenRaw c, next = streamNextRaw, close = streamCloseRaw }
+        ""
 
 {-| One resolved setting and where it came from: `env`, `code` or `default`.
 `name` is the variable an operator sets. A key's value is never shown. -}

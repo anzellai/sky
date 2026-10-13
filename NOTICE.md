@@ -377,3 +377,27 @@ Host operating-system libraries — the C library and its loader on
 Linux, and the libraries in `/usr/lib` and `/System/Library` on
 macOS — are referenced by the bundle but are *not* redistributed in
 it, and are supplied by the operating system.
+
+## Std.Ai.Device engines — `scripts/ai/device/`, release `sky-llama-b11200`
+
+The on-device engines `sky ai provision --device` installs, and a Sky.Spa,
+iOS, Android or Mac app built with `Std.Ai.Device` ships, are Sky's engine
+core (`scripts/ai/device/sky_llama.cpp`, under Sky's licence) compiled with
+the following software. Each keeps its own licence, and each engine archive
+carries `NOTICE.txt` and `LICENSE-llama.cpp`.
+
+- **llama.cpp and ggml**, build b11200 (https://github.com/ggml-org/llama.cpp).
+  MIT. Copyright (c) 2023-2026 The ggml authors.
+- **nlohmann/json**, vendored by llama.cpp (https://github.com/nlohmann/json).
+  MIT. Copyright (c) 2013-2026 Niels Lohmann.
+- **Emscripten runtime** (the browser engines, emsdk 6.0.12,
+  https://emscripten.org). MIT and the University of Illinois/NCSA Open Source
+  Licence. Copyright (c) 2010-2026 Emscripten authors.
+- **Dawn's emdawnwebgpu** (the WebGPU browser engine, release
+  v20260423.175430, https://dawn.googlesource.com/dawn). BSD 3-Clause.
+  Copyright 2017-2026 The Dawn and Tint Authors.
+
+The development model the examples and tests download, **Qwen2.5 0.5B
+Instruct** (Q4_0 GGUF), is Apache-2.0 (Alibaba Cloud); it is fetched at run
+time and never bundled. The synthetic test model (`runtime-go/cmd/sky-tiny-gguf`)
+is generated, not downloaded.

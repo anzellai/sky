@@ -91,3 +91,47 @@ fn min_picks_the_twin_for_its_argument_types() {
     assert!(g.contains("rt.Math_minT"), "{g}");
     assert!(!g.contains("Coerce"), "{g}");
 }
+
+const DB_SRC: &str = "module Main exposing (main)\n\n\
+                      import Std.Db as Db\n\n\
+                      name : row -> String\nname r =\n    Db.getString \"name\" r\n\n\
+                      size : row -> Int\nsize r =\n    Db.getInt \"size\" r\n\n\
+                      main =\n    name 1 ++ String.fromInt (size 1)\n";
+
+#[test]
+fn a_db_column_read_narrows_nothing() {
+    // v0.28.0: `Db.getString` / `getInt` (and `getField`, `getFloat`,
+    // `getBool`) return their Go type, so a column read is not narrowed.
+    for (f, sym) in [
+        ("Main_name", "rt.Db_getString"),
+        ("Main_size", "rt.Db_getInt"),
+    ] {
+        let body = func_debug(DB_SRC, f);
+        assert!(body.contains(sym), "{body}");
+        assert!(
+            !body.contains("Coerce"),
+            "no narrowing of a column read: {body}"
+        );
+    }
+}
+
+const STR_SRC: &str = "module Main exposing (main)\n\n\
+                       import Sky.Core.Regex as Regex\n\n\
+                       size : String -> Int\nsize s =\n    String.length s\n\n\
+                       tidy : String -> String\ntidy s =\n    String.replace \"a\" \"b\" (String.trim s)\n\n\
+                       digits : String -> Bool\ndigits s =\n    Regex.match \"^[0-9]+$\" s\n\n\
+                       main =\n    ( size \"x\", tidy \" a \", digits \"12\" )\n";
+
+#[test]
+fn length_trim_replace_and_match_use_their_twins() {
+    for (f, sym) in [
+        ("Main_size", "rt.String_lengthT"),
+        ("Main_tidy", "rt.String_replaceT"),
+        ("Main_tidy", "rt.String_trimT"),
+        ("Main_digits", "rt.Regex_matchT"),
+    ] {
+        let body = func_debug(STR_SRC, f);
+        assert!(body.contains(sym), "{sym}: {body}");
+        assert!(!body.contains("Coerce"), "{body}");
+    }
+}

@@ -1,0 +1,198 @@
+module Main exposing (main, bundle)
+
+-- The Std.Ai.Device probe the native flow tests run in a simulator, an
+-- emulator and the desktop shell: it reports the slot's status, prepares it,
+-- asks one question and reports the answer, each as a `SKY-PROBE` line on the
+-- backend's standard output. Then it streams the same question
+-- (`Provider.stream`, one piece per update) and reports the number of pieces
+-- and the text.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Std.App as App
+import Std.Bundle as Bundle exposing (Bundle)
+import Std.Cmd as Cmd
+import Std.Log as Log
+import Std.Sub as Sub
+import Std.Ui as Ui exposing (Element)
+import Std.Ai.Provider as Provider
+import Std.Ai.Device as Device
+import Assist
+
+
+bundle : Bundle
+bundle =
+    Bundle.default |> Bundle.withName "Sky Device Probe"
+        |> Bundle.withId "com.example.deviceprobe"
+        |> Bundle.withEntitlement Bundle.IncreasedMemoryLimit
+
+type alias Model =
+    { status : String
+    , pieces : Int
+    , streamed : String
+    }
+
+type Msg
+    = StatusGot (Result Error Device.Status)
+    | Prepared (Result Error Device.Status)
+    | Answered (Result Error Provider.ChatResponse)
+    | Opened (Result Error Provider.Stream)
+    | Got (Result Error Provider.StreamStep)
+    | Report (Result Error String)
+    | Reported (Result Error ())
+
+
+describe : Device.Status -> String
+describe s =
+    case s of
+
+        Device.Ready r ->
+            "ready:" ++ Device.backendText r.backend
+
+        Device.NotDownloaded r ->
+            "not-downloaded:" ++ Device.backendText r.backend
+
+        Device.Downloading _ ->
+            "downloading"
+
+        Device.ServerSide _ ->
+            "server"
+
+        Device.Unsupported _ ->
+            "unsupported"
+
+
+-- A line goes to the server as a String (the Msg crosses the wire), and the
+-- server prints it.
+report : String -> Cmd.Cmd Msg
+report line =
+    Cmd.perform (Task.succeed line) Report
+
+
+options : Provider.Options
+options =
+    { temperature = Just 0.0
+    , seed = Just 1
+    , maxTokens = Just 32
+    , adapter = Nothing
+    }
+
+
+question : List Provider.Message
+question =
+    [ Provider.system "Answer in one short sentence."
+    , Provider.user "What is the capital of France?"
+    ]
+
+
+ask : Cmd.Cmd Msg
+ask =
+    Cmd.perform (Provider.chatWith options Assist.assistant question) Answered
+
+
+init : () -> ( Model, Cmd.Cmd Msg )
+init _ =
+    ( { status = "starting", pieces = 0, streamed = "" }
+    , Cmd.perform (Device.status "probe") StatusGot
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd.Cmd Msg )
+update msg model =
+    case msg of
+
+        StatusGot (Ok s) ->
+            ( { model | status = describe s }
+            , Cmd.batch
+                  [ report ("status=" ++ describe s)
+                  , Cmd.perform (Device.prepare "probe") Prepared
+                  ]
+            )
+
+        StatusGot (Err e) ->
+            ( model, report ("status=err:" ++ Error.toString e) )
+
+        Prepared (Ok s) ->
+            ( { model | status = describe s }
+            , Cmd.batch [ report ("prepared=" ++ describe s), ask ]
+            )
+
+        Prepared (Err e) ->
+            ( model
+            , Cmd.batch [ report ("prepared=err:" ++ Error.toString e), ask ]
+            )
+
+        Answered (Ok r) ->
+            ( { model | status = r.content }
+            , Cmd.batch
+                  [ report ("answer=" ++ r.content)
+                  , Cmd.perform
+                        (Provider.stream options Assist.assistant question)
+                        Opened
+                  ]
+            )
+
+        Answered (Err e) ->
+            ( model
+            , Cmd.batch
+                  [ report ("answer=err:" ++ Error.toString e)
+                  , Cmd.perform
+                        (Provider.stream options Assist.assistant question)
+                        Opened
+                  ]
+            )
+
+        Opened (Ok s) ->
+            ( model, Cmd.perform (Provider.read s) Got )
+
+        Opened (Err e) ->
+            ( model, report ("stream=err:" ++ Error.toString e) )
+
+        Got (Ok (Provider.Piece text next)) ->
+            ( { model
+                  | pieces = model.pieces + 1
+                  , streamed = model.streamed ++ text
+              }
+            , Cmd.perform (Provider.read next) Got
+            )
+
+        Got (Ok (Provider.Finished r)) ->
+            ( model
+            , report
+                  ("stream=" ++ String.fromInt model.pieces ++ ":"
+                      ++ (if model.streamed == r.content then
+                             "same"
+
+                         else
+                             "differs"))
+            )
+
+        Got (Err e) ->
+            ( model, report ("stream=err:" ++ Error.toString e) )
+
+        Report (Ok line) ->
+            ( model, Cmd.perform (Log.println ("SKY-PROBE " ++ line)) Reported )
+
+        Report (Err _) ->
+            ( model, Cmd.none )
+
+        Reported _ ->
+            ( model, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.el [ Ui.padding 40 ] (Ui.text model.status)
+
+
+main =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> Sub.none
+        }
+        |> App.withNotFound ()
+        |> App.run

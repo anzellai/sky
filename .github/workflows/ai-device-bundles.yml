@@ -1,0 +1,213 @@
+name: Std.Ai.Device engines
+
+# Builds the on-device engines `sky ai provision --device <target>` installs
+# (rust/crates/sky/src/ai_device.rs, docs/ai/device.md): llama.cpp b11200 with
+# Sky's engine core (scripts/ai/device/sky_llama.cpp), compiled here from the
+# pinned source with pinned toolchains, by the same script a contributor runs
+# locally (scripts/ai/device/build-device-bundles.sh):
+#
+#   web      the browser worker's WebGPU and CPU WebAssembly builds
+#            (emsdk 6.0.12; Dawn's emdawnwebgpu v20260423.175430)
+#   android  libskyllama.so for arm64-v8a and x86_64 (NDK 27.0.12077973,
+#            16 KB pages)
+#   ios      SkyLlama.xcframework: ios-arm64 (Metal) and ios-arm64-simulator
+#            (the upstream xcframework has no simulator slice)
+#
+# Each archive carries the licences (NOTICE.txt, LICENSE-llama.cpp). The
+# release `sky-llama-b11200` holds the three archives and SHA256SUMS; the
+# archives' digests are then pinned in ai_device.rs (PINS), which is what
+# `sky ai provision --device` checks.
+#
+# TRIGGERS: workflow_dispatch and a `sky-llama-b*` tag. The builds take 15 to
+# 30 minutes per target, so this is a per-engine-bump job, not a per-commit
+# one; the per-commit and release gates build the web engine themselves
+# (release.yml gate-ai-device-web).
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the engines as the sky-llama-b11200 GitHub release'
+        type: boolean
+        default: false
+  push:
+    tags: ['sky-llama-b*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-device-bundles-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LLAMA_BUILD: b11200
+  LLAMA_SOURCE_SHA256: 77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94
+  EMSDK_VERSION: 6.0.12
+  DAWN_TAG: v20260423.175430
+  DAWN_SHA256: 3ad7ebe95a4a20764df46c5a63b0ad489782aee26804fff8511d9797c10e732f
+  NDK_VERSION: 27.0.12077973
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: web
+            os: ubuntu-24.04
+          - target: android
+            os: ubuntu-24.04
+          - target: ios
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The pinned llama.cpp source, checked
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/src"
+          curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" \
+            "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${LLAMA_BUILD}.tar.gz"
+          echo "${LLAMA_SOURCE_SHA256}  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"
+          # The pin in the compiler and the pin here must be one value.
+          grep -q "${LLAMA_SOURCE_SHA256}" rust/crates/sky/src/ai_device.rs
+
+      - name: Ninja and CMake
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
+          cmake --version
+
+      - uses: actions/setup-go@v5
+        if: matrix.target == 'web'
+        with:
+          go-version-file: runtime-go/go.mod
+
+      # The engine core's contract on the runner's CPU before any target is
+      # built: the streamed answer is the one-call answer, in whole UTF-8
+      # pieces (scripts/ai/device/test_sky_llama.cpp, the synthetic model).
+      - name: The engine core's contract
+        if: matrix.target == 'web'
+        run: |
+          set -euo pipefail
+          ./scripts/ai/device/test-engine-core.sh --llama-src "$RUNNER_TEMP/src/llama.cpp-${LLAMA_BUILD}" --work "$RUNNER_TEMP/core"
+
+      - name: emsdk ${{ env.EMSDK_VERSION }} and Dawn ${{ env.DAWN_TAG }}
+        if: matrix.target == 'web'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "${EMSDK_VERSION}"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "${EMSDK_VERSION}"
+          curl -fsSL -o "$RUNNER_TEMP/dawn.zip" \
+            "https://github.com/google/dawn/releases/download/${DAWN_TAG}/emdawnwebgpu_pkg-${DAWN_TAG}.zip"
+          echo "${DAWN_SHA256}  $RUNNER_TEMP/dawn.zip" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/dawn" && unzip -q "$RUNNER_TEMP/dawn.zip" -d "$RUNNER_TEMP/dawn"
+
+      - name: Android NDK ${{ env.NDK_VERSION }}
+        if: matrix.target == 'android'
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" > /dev/null
+
+      - name: Build
+        env:
+          DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src/llama.cpp-${LLAMA_BUILD}"
+          extra=()
+          if [ "${{ matrix.target }}" = web ]; then
+            extra=(--emsdk "$RUNNER_TEMP/emsdk" --emdawnwebgpu "$RUNNER_TEMP/dawn/emdawnwebgpu_pkg")
+          elif [ "${{ matrix.target }}" = android ]; then
+            extra=(--android-sdk "$ANDROID_HOME")
+          fi
+          ./scripts/ai/device/build-device-bundles.sh "${{ matrix.target }}" \
+            --llama-src "$src" --out "$RUNNER_TEMP/out" --jobs 4 "${extra[@]}"
+
+      # The web engine loads in a real browser before it is published: the
+      # synthetic model runs on the CPU build under the strict policy.
+      - name: Smoke the web engine in Chromium
+        if: matrix.target == 'web'
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/out/web/cpu/skyllama.wasm"
+          test -s "$RUNNER_TEMP/out/web/webgpu/skyllama.wasm"
+          ! grep -q 'new Function\|eval(' "$RUNNER_TEMP/out/web/cpu/skyllama.mjs"
+
+      - name: 16 KB alignment of the Android libraries
+        if: matrix.target == 'android'
+        run: |
+          set -euo pipefail
+          for abi in arm64-v8a x86_64; do
+            f="$RUNNER_TEMP/out/android/$abi/libskyllama.so"
+            # Every LOAD segment is aligned to 16 KB (2**14).
+            readelf -lW "$f" | awk '$1=="LOAD" && $NF != "0x4000" {bad=1} END {exit bad}'
+          done
+
+      - name: The xcframework has both slices
+        if: matrix.target == 'ios'
+        run: |
+          set -euo pipefail
+          plist="$RUNNER_TEMP/out/ios/SkyLlama.xcframework/Info.plist"
+          grep -q ios-arm64-simulator "$plist"
+          grep -q '<string>ios-arm64</string>' "$plist"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sky-llama-${{ env.LLAMA_BUILD }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/out/sky-llama-${{ env.LLAMA_BUILD }}-${{ matrix.target }}.tar.gz
+          retention-days: 14
+
+  publish:
+    name: Publish the engines
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/sky-llama-b') || inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag is the URL `sky ai provision --device` downloads from
+      # (ai_device.rs RELEASE_TAG); it is derived from the pin, never from
+      # the ref a dispatch ran on.
+      - name: The release tag from the pin
+        id: tag
+        run: |
+          set -euo pipefail
+          want="$(sed -n 's/^pub const RELEASE_TAG: &str = "\(.*\)";$/\1/p' rust/crates/sky/src/ai_device.rs)"
+          [ "$want" = "sky-llama-${LLAMA_BUILD}" ] || { echo "RELEASE_TAG ($want) and LLAMA_BUILD disagree" >&2; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "$want" ]; then
+            echo "tag '${GITHUB_REF_NAME}' is not '$want'" >&2
+            exit 1
+          fi
+          echo "tag=$want" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Collect, check the set, and sum
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find staging -type f -name '*.tar.gz' -exec mv -f {} release/ \;
+          for t in web android ios; do
+            [ -s "release/sky-llama-${LLAMA_BUILD}-$t.tar.gz" ] || { echo "::error::missing $t" >&2; exit 1; }
+          done
+          (cd release && shasum -a 256 sky-llama-*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.tag.outputs.tag }}" release/* \
+            --title "Std.Ai.Device engines (llama.cpp ${LLAMA_BUILD})" \
+            --notes "The Std.Ai.Device engines. Pin each archive's SHA-256 (SHA256SUMS) in rust/crates/sky/src/ai_device.rs PINS."

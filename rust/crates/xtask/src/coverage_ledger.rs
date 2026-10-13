@@ -559,6 +559,23 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     // promotion with no failed request (runtime-go/rt/ai_serve.go).
     ("ai-train-exactly-once", &["stdlib.Std.Ai.Train"]),
     ("ai-serve-hot-load", &["stdlib.Std.Ai.Serve"]),
+    // v0.28.0 phase 5: Std.Ai.Device (docs/ai/device.md).
+    ("ai-device-decide", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-no-silent-fallback", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-digest", &["stdlib.Std.Ai.Device"]),
+    (
+        "ai-stream-pieces",
+        &[
+            "stdlib.Std.Ai.Provider",
+            "stdlib.Std.Ai.Endpoint",
+            "stdlib.Std.Ai.Device",
+        ],
+    ),
+    ("ai-device-blob-allowlist", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-partition", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-privacy", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-csp", &["stdlib.Std.Ai.Device"]),
+    ("ai-device-ios-sim", &["stdlib.Std.Ai.Device"]),
     (
         "live-time-every-mutex-survives-a-panic",
         &["runtime.periodic-goroutines", "skylive.session-sse-csrf"],

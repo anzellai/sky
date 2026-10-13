@@ -774,6 +774,29 @@ fn assemble_and_emit_with(
     // it is memoised (re-demand is a cache hit) and invalidated natively by any
     // `SourceFile` edit (the LSP/incremental path). Emitted bytes are byte-for-byte
     // the prior eager `lower_program_cfg` + `emit_program` pair.
+    // The Std.Ai device slots (`Endpoint.withDevice`): rooted and registered
+    // by the lowering (`LowerConfig.device_slots`). A misuse is a build error
+    // (ai_slots::device_slots_for_entry). A generated Sky.Spa half is checked
+    // without the cross-half rule, and only the server half registers slots:
+    // the client half runs in the browser and holds none.
+    {
+        let generated = is_spa_generated_project(example_dir);
+        let (device_slots, device_errors) = crate::ai_slots::device_slots_for_entry(
+            example_dir,
+            extra_dirs,
+            entry_module.unwrap_or("Main"),
+            !generated,
+        );
+        if !device_errors.is_empty() {
+            return Err(device_errors.join("\n").into());
+        }
+        if !generated || spa_role(example_dir).as_deref() == Some("backend") {
+            cfg.device_slots = device_slots
+                .into_iter()
+                .map(|d| (d.module, d.binding, d.slot))
+                .collect();
+        }
+    }
     let t_lower = crate::timings::phase("lower + emit Go");
     let config = skydb::BuildConfig::new(&db, cfg);
     let prog = skydb::go_program(&db, entry, config);
@@ -1176,11 +1199,20 @@ fn build_inner(
     // migrations: a failure warns.
     // Scoped to what the entry imports: a slot only the AI pipeline
     // (`src/Ai.sky`) names is not the app's (ai_slots::discover_for_entry).
-    let (slots, slot_problems) = crate::ai_slots::discover_for_entry(
+    let (mut slots, slot_problems) = crate::ai_slots::discover_for_entry(
         &opts.example_dir,
         extra_dirs,
         entry_module.unwrap_or("Main"),
     );
+    // The client half of a Sky.Spa split runs in the browser, where no slot
+    // is resolved (the Std.Ai kernels are server-side): it declares none, so
+    // a client that shares a module with a slot still builds for wasm.
+    if opts.wasm
+        || (is_spa_generated_project(&opts.example_dir)
+            && spa_role(&opts.example_dir).as_deref() != Some("backend"))
+    {
+        slots.clear();
+    }
     report.warnings.extend(slot_problems);
     if let Err(e) = crate::ai_slots::write_go(&out_dir, &slots) {
         report.warnings.push(format!("ai slots: {e}"));
@@ -2528,6 +2560,16 @@ pub fn bundled_source_texts(repo_root: &Path) -> std::collections::HashSet<Strin
 /// `[spa] generated = true` in the project's `sky.toml`: the Sky.Spa split
 /// wrote this project (the same marker `sky build` keys its no-re-split guard
 /// on).
+/// The `[spa] role` of a generated Sky.Spa half (`frontend` or `backend`).
+fn spa_role(example_dir: &Path) -> Option<String> {
+    let s = std::fs::read_to_string(example_dir.join("sky.toml")).ok()?;
+    s.lines().find_map(|l| {
+        let l = l.trim();
+        let rest = l.strip_prefix("role")?.trim_start().strip_prefix('=')?;
+        Some(rest.trim().trim_matches('"').to_string())
+    })
+}
+
 pub fn is_spa_generated_project(example_dir: &Path) -> bool {
     std::fs::read_to_string(example_dir.join("sky.toml"))
         .map(|s| s.contains("[spa]") && s.contains("generated = true"))
