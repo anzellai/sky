@@ -344,12 +344,13 @@ type State_AiData_R struct {
 	Evals    []State_AiEval_R        `sky:"evals,[]State_AiEval_R"`
 	Registry []State_AiModel_R       `sky:"registry,[]State_AiModel_R"`
 	Training []State_AiTrainingRun_R `sky:"training,[]State_AiTrainingRun_R"`
+	Tiers    []State_AiTier_R        `sky:"tiers,[]State_AiTier_R"`
 }
 
 func init() { rt.RegisterGobType(State_AiData_R{}) }
 
-func State_AiData(p0 []State_AiSlot_R, p1 []State_AiEngine_R, p2 []State_AiCall_R, p3 []State_AiEval_R, p4 []State_AiModel_R, p5 []State_AiTrainingRun_R) State_AiData_R {
-	return State_AiData_R{Slots: p0, Engines: p1, Calls: p2, Evals: p3, Registry: p4, Training: p5}
+func State_AiData(p0 []State_AiSlot_R, p1 []State_AiEngine_R, p2 []State_AiCall_R, p3 []State_AiEval_R, p4 []State_AiModel_R, p5 []State_AiTrainingRun_R, p6 []State_AiTier_R) State_AiData_R {
+	return State_AiData_R{Slots: p0, Engines: p1, Calls: p2, Evals: p3, Registry: p4, Training: p5, Tiers: p6}
 }
 
 type State_AiEngine_R struct {
@@ -484,6 +485,26 @@ func State_AiSlot(p0 string, p1 string, p2 string, p3 int, p4 int, p5 int, p6 in
 	return State_AiSlot_R{Slot: p0, Mode: p1, Target: p2, MaxInFlight: p3, Queue: p4, InFlight: p5, Waiting: p6, Settings: p7, Calls: p8, Failures: p9, Overloaded: p10, P50Ms: p11, P95Ms: p12}
 }
 
+type State_AiTier_R struct {
+	Bind     string   `sky:"bind,string"`
+	Base     string   `sky:"base,string"`
+	Ready    bool     `sky:"ready,bool"`
+	Reason   string   `sky:"reason,string"`
+	Resident []string `sky:"resident,[]string"`
+	InFlight int      `sky:"inFlight,int"`
+	Loads    int      `sky:"loads,int"`
+	Unloads  int      `sky:"unloads,int"`
+	Running  float64  `sky:"running,float64"`
+	Waiting  float64  `sky:"waiting,float64"`
+	KvCache  float64  `sky:"kvCache,float64"`
+}
+
+func init() { rt.RegisterGobType(State_AiTier_R{}) }
+
+func State_AiTier(p0 string, p1 string, p2 bool, p3 string, p4 []string, p5 int, p6 int, p7 int, p8 float64, p9 float64, p10 float64) State_AiTier_R {
+	return State_AiTier_R{Bind: p0, Base: p1, Ready: p2, Reason: p3, Resident: p4, InFlight: p5, Loads: p6, Unloads: p7, Running: p8, Waiting: p9, KvCache: p10}
+}
+
 type State_AiTrainingRun_R struct {
 	Run            string               `sky:"run,string"`
 	Status         string               `sky:"status,string"`
@@ -499,12 +520,16 @@ type State_AiTrainingRun_R struct {
 	Registered     string               `sky:"registered,string"`
 	Losses         []float64            `sky:"losses,[]float64"`
 	ValLosses      []float64            `sky:"valLosses,[]float64"`
+	Cloud          string               `sky:"cloud,string"`
+	CloudState     string               `sky:"cloudState,string"`
+	Spent          string               `sky:"spent,string"`
+	Budget         string               `sky:"budget,string"`
 }
 
 func init() { rt.RegisterGobType(State_AiTrainingRun_R{}) }
 
-func State_AiTrainingRun(p0 string, p1 string, p2 string, p3 int, p4 int, p5 rt.SkyMaybe[float64], p6 rt.SkyMaybe[float64], p7 int, p8 int, p9 int, p10 string, p11 string, p12 []float64, p13 []float64) State_AiTrainingRun_R {
-	return State_AiTrainingRun_R{Run: p0, Status: p1, Backend: p2, Step: p3, TotalSteps: p4, Loss: p5, ValLoss: p6, Relaunches: p7, ResumedFrom: p8, LastCheckpoint: p9, Message: p10, Registered: p11, Losses: p12, ValLosses: p13}
+func State_AiTrainingRun(p0 string, p1 string, p2 string, p3 int, p4 int, p5 rt.SkyMaybe[float64], p6 rt.SkyMaybe[float64], p7 int, p8 int, p9 int, p10 string, p11 string, p12 []float64, p13 []float64, p14 string, p15 string, p16 string, p17 string) State_AiTrainingRun_R {
+	return State_AiTrainingRun_R{Run: p0, Status: p1, Backend: p2, Step: p3, TotalSteps: p4, Loss: p5, ValLoss: p6, Relaunches: p7, ResumedFrom: p8, LastCheckpoint: p9, Message: p10, Registered: p11, Losses: p12, ValLosses: p13, Cloud: p14, CloudState: p15, Spent: p16, Budget: p17}
 }
 
 type State_AiVersion_R struct {
@@ -1268,6 +1293,18 @@ func init() { rt.RegisterGobType(State_TraceRow_R{}) }
 
 func State_TraceRow(p0 string, p1 string, p2 string, p3 string, p4 string, p5 string, p6 float64, p7 string) State_TraceRow_R {
 	return State_TraceRow_R{TraceId: p0, SpanId: p1, ParentId: p2, Name: p3, Kind: p4, StartTime: p5, DurationMs: p6, Status: p7}
+}
+
+type Std_Ai_Cloud_Google_Response_R struct {
+	Status  int    `sky:"status,int"`
+	Body    string `sky:"body,string"`
+	Request string `sky:"request,string"`
+}
+
+func init() { rt.RegisterGobType(Std_Ai_Cloud_Google_Response_R{}) }
+
+func Std_Ai_Cloud_Google_Response(p0 int, p1 string, p2 string) Std_Ai_Cloud_Google_Response_R {
+	return Std_Ai_Cloud_Google_Response_R{Status: p0, Body: p1, Request: p2}
 }
 
 type Std_Ai_Endpoint_Setting_R struct {
@@ -2441,7 +2478,7 @@ func View_content(v_0 State_Model_R) Std_Ui_Element {
 }
 
 func AiTab_aiView(v_0 State_AiFilter_R, v_1 State_AiData_R) []Std_Ui_Element {
-	return []Std_Ui_Element{AiTab_slotsPanel(v_0, v_1.Slots), AiTab_enginesPanel(v_1.Engines), AiTab_callsPanel(v_0, v_1.Calls), AiTab_evalsPanel(v_0, v_1.Evals), AiTab_trainingPanel(v_1.Training), AiTab_registryPanel(v_0, v_1.Registry)}
+	return []Std_Ui_Element{AiTab_slotsPanel(v_0, v_1.Slots), AiTab_enginesPanel(v_1.Engines), AiTab_callsPanel(v_0, v_1.Calls), AiTab_evalsPanel(v_0, v_1.Evals), AiTab_trainingPanel(v_1.Training), AiTab_tiersPanel(v_1.Tiers), AiTab_registryPanel(v_0, v_1.Registry)}
 }
 
 func AiTab_registryPanel(v_0 State_AiFilter_R, v_1 []State_AiModel_R) Std_Ui_Element {
@@ -2782,6 +2819,35 @@ func AiTab_bgRaised() Std_Ui_Color {
 	return AiTab_bgRaised__caf.Get(func() Std_Ui_Color { return Std_Ui_rgb(20, 23, 28) })
 }
 
+func AiTab_tiersPanel(v_0 []State_AiTier_R) Std_Ui_Element {
+	if rt.List_isEmptyT[State_AiTier_R](v_0) {
+		return Std_Ui_none()
+	} else {
+		return AiTab_panel("GPU tiers", rt.List_mapT[State_AiTier_R, Std_Ui_Element](AiTab_tierRow, v_0))
+	}
+}
+
+func AiTab_tierRow(v_0 State_AiTier_R) Std_Ui_Element {
+	return Std_Ui_column([]Std_Ui_Attribute{Std_Ui_width(Std_Ui_fill()), Std_Ui_paddingXY(0, 6), Std_Ui_spacing(4), Std_Ui_Border_widthEach(struct {
+		Bottom int
+		Left   int
+		Right  int
+		Top    int
+	}{Top: 0, Right: 0, Bottom: 1, Left: 0}), Std_Ui_Border_color(AiTab_borderSoft()), Std_Ui_htmlAttribute("data-ai-tier", v_0.Bind)}, []Std_Ui_Element{Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12)}, []Std_Ui_Element{Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_bold(), Std_Ui_Font_size(13)}, Std_Ui_text(("tier " + (v_0.Bind + (" · " + v_0.Base))))), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_Font_bold(), Std_Ui_Font_color(func() Std_Ui_Color {
+		if v_0.Ready {
+			return AiTab_ok()
+		} else {
+			return AiTab_err()
+		}
+	}())}, Std_Ui_text(func() string {
+		if v_0.Ready {
+			return "ready"
+		} else {
+			return ("not ready: " + v_0.Reason)
+		}
+	}()))}), Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12)}, []Std_Ui_Element{AiTab_muted(("adapters " + rt.String_joinT(", ", v_0.Resident))), AiTab_muted(("in flight " + rt.String_fromIntT(v_0.InFlight))), AiTab_muted(("engine running " + (rt.String_fromFloatAnyT(any(v_0.Running)) + (", waiting " + rt.String_fromFloatAnyT(any(v_0.Waiting)))))), AiTab_muted(("KV cache " + ( /* FFI return */ rt.AsString(rt.String_fromInt(rt.Math_round(rt.Mul(any(100.0), any(v_0.KvCache))))) + " %"))), AiTab_muted(("loads " + (rt.String_fromIntT(v_0.Loads) + (", unloads " + rt.String_fromIntT(v_0.Unloads)))))})})
+}
+
 func AiTab_trainingPanel(v_0 []State_AiTrainingRun_R) Std_Ui_Element {
 	return AiTab_panel("Training", func() []Std_Ui_Element {
 		if rt.List_isEmptyT[State_AiTrainingRun_R](v_0) {
@@ -2804,7 +2870,13 @@ func AiTab_trainingRow(v_0 State_AiTrainingRun_R) Std_Ui_Element {
 		} else {
 			return ("backend " + v_0.Backend)
 		}
-	}()), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_htmlAttribute("data-ai-train-step", rt.String_fromIntT(v_0.Step))}, Std_Ui_text(AiTab_stepText(v_0)))}), Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12)}, []Std_Ui_Element{AiTab_muted(("loss " + AiTab_maybeLoss(v_0.Loss))), AiTab_muted(("eval loss " + AiTab_maybeLoss(v_0.ValLoss))), AiTab_muted(AiTab_relaunchText(v_0)), AiTab_muted(func() string {
+	}()), Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_htmlAttribute("data-ai-train-step", rt.String_fromIntT(v_0.Step))}, Std_Ui_text(AiTab_stepText(v_0)))}), Std_Ui_row([]Std_Ui_Attribute{Std_Ui_spacing(12)}, []Std_Ui_Element{AiTab_muted(("loss " + AiTab_maybeLoss(v_0.Loss))), AiTab_muted(("eval loss " + AiTab_maybeLoss(v_0.ValLoss))), AiTab_muted(AiTab_relaunchText(v_0)), func() Std_Ui_Element {
+		if v_0.Cloud == "" {
+			return Std_Ui_none()
+		} else {
+			return Std_Ui_el([]Std_Ui_Attribute{Std_Ui_Font_size(12), Std_Ui_htmlAttribute("data-ai-train-cloud", v_0.CloudState)}, Std_Ui_text((v_0.Cloud + (" · " + (v_0.CloudState + (" · spent " + (v_0.Spent + (" of " + v_0.Budget))))))))
+		}
+	}(), AiTab_muted(func() string {
 		if v_0.LastCheckpoint > 0 {
 			return ("checkpoint at step " + rt.String_fromIntT(v_0.LastCheckpoint))
 		} else {
@@ -3794,7 +3866,7 @@ func View_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element {
 		spans_2 := rt.List_filterT[State_TraceRow_R](func(v_5 State_TraceRow_R) bool { return (v_5.TraceId == v_1) }, v_0)
 		_ = spans_2
 		shortId_3 := func() string {
-			if /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) >= 8 {
+			if rt.String_lengthT(v_1) >= 8 {
 				return /* FFI return */ rt.AsString(rt.String_slice(any(0), any(8), any(v_1)))
 			} else {
 				return v_1
@@ -4024,7 +4096,7 @@ func TracesTab_viewTracesTab(v_0 State_Model_R, v_1 []State_TraceRow_R) []Std_Ui
 
 func TracesTab_tracesPanel(v_0 string, v_1 []State_TraceRow_R) Std_Ui_Element {
 	return TracesTab_panel("Recent traces", func() []Std_Ui_Element {
-		if rt.List_isEmptyT[State_TraceRow_R](v_1) && ( /* FFI return */ rt.AsString(rt.String_trim(any(v_0))) != "") {
+		if rt.List_isEmptyT[State_TraceRow_R](v_1) && (rt.String_trimT(v_0) != "") {
 			return []Std_Ui_Element{TracesTab_emptyState("No traces match the filter.")}
 		} else {
 			if rt.List_isEmptyT[State_TraceRow_R](v_1) {
@@ -4064,7 +4136,7 @@ func TracesTab_traceGroupView(v_0 []State_TraceRow_R, v_1 string) Std_Ui_Element
 		spans_2 := rt.List_filterT[State_TraceRow_R](func(v_5 State_TraceRow_R) bool { return (v_5.TraceId == v_1) }, v_0)
 		_ = spans_2
 		shortId_3 := func() string {
-			if /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) >= 8 {
+			if rt.String_lengthT(v_1) >= 8 {
 				return /* FFI return */ rt.AsString(rt.String_slice(any(0), any(8), any(v_1)))
 			} else {
 				return v_1
@@ -6200,7 +6272,7 @@ func Std_Ui_layoutWith(v_0 struct {
 		wrapperExtraStyle_3 := Std_Ui_buildStyleString(false, Std_Ui_LayoutContext_AsColumn, Std_Ui_LayoutContext_AsColumn, v_0.WrapperAttrs)
 		_ = wrapperExtraStyle_3
 		wrapperStyle_4 := func() string {
-			if /* FFI return */ rt.AsBool(rt.String_isEmpty(rt.String_trim(any(wrapperExtraStyle_3)))) {
+			if /* FFI return */ rt.AsBool(rt.String_isEmpty(any(rt.String_trimT(wrapperExtraStyle_3)))) {
 				return defaultWrapperStyle_2
 			} else {
 				return (defaultWrapperStyle_2 + wrapperExtraStyle_3)
@@ -6739,7 +6811,7 @@ func Std_Ui_pickAnimation(v_0 Std_Ui_Attribute) rt.SkyMaybe[Std_Ui_AnimationEntr
 			_ = v_2
 			_ = v_3
 			_ = v_4
-			if ( /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) == 0) || ( /* FFI return */ rt.AsInt(rt.String_length(any(v_3))) == 0) {
+			if (rt.String_lengthT(v_1) == 0) || (rt.String_lengthT(v_3) == 0) {
 				return rt.Nothing[Std_Ui_AnimationEntry]()
 			} else {
 				return rt.Just[Std_Ui_AnimationEntry](Std_Ui_AnimationEntry_AnimationEntry(v_1, v_2, v_3, v_4))
@@ -6809,7 +6881,7 @@ func Std_Ui_pickTransitionShorthand(v_0 Std_Ui_Attribute) rt.SkyMaybe[string] {
 		if _subj.Tag == 36 {
 			v_1 := /* generic erase */ rt.AsString(_subj.Fields[0])
 			_ = v_1
-			if /* FFI return */ rt.AsInt(rt.String_length(any(v_1))) == 0 {
+			if rt.String_lengthT(v_1) == 0 {
 				return rt.Nothing[string]()
 			} else {
 				return rt.Just[string](v_1)
@@ -6848,7 +6920,7 @@ func Std_Ui_pseudoRuleEntry(v_0 Std_Ui_Attribute) rt.SkyMaybe[rt.T2[string, stri
 			v_2 := /* generic erase */ rt.AsString(_subj.Fields[1])
 			_ = v_1
 			_ = v_2
-			if /* FFI return */ rt.AsInt(rt.String_length(any(v_2))) == 0 {
+			if rt.String_lengthT(v_2) == 0 {
 				return rt.Nothing[rt.T2[string, string]]()
 			} else {
 				return rt.Just[rt.T2[string, string]](rt.T2[string, string]{V0: Std_Ui_pseudoClassTag(v_1), V1: v_2})
@@ -8794,7 +8866,7 @@ var State_emptyAiData__caf rt.LazyCaf[State_AiData_R]
 
 func State_emptyAiData() State_AiData_R {
 	return State_emptyAiData__caf.Get(func() State_AiData_R {
-		return State_AiData_R{Slots: []State_AiSlot_R{}, Engines: []State_AiEngine_R{}, Calls: []State_AiCall_R{}, Evals: []State_AiEval_R{}, Registry: []State_AiModel_R{}, Training: []State_AiTrainingRun_R{}}
+		return State_AiData_R{Slots: []State_AiSlot_R{}, Engines: []State_AiEngine_R{}, Calls: []State_AiCall_R{}, Evals: []State_AiEval_R{}, Registry: []State_AiModel_R{}, Training: []State_AiTrainingRun_R{}, Tiers: []State_AiTier_R{}}
 	})
 }
 
@@ -8929,9 +9001,9 @@ var Main_aiDecoder__caf rt.LazyCaf[any]
 
 func Main_aiDecoder() any {
 	return Main_aiDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("training"), rt.JsonDec_list(Main_aiTrainingDecoder()), any([]State_AiTrainingRun_R{}), rt.JsonDecP_optional(any("registry"), rt.JsonDec_list(Main_aiModelDecoder()), any([]State_AiModel_R{}), rt.JsonDecP_optional(any("evals"), rt.JsonDec_list(Main_aiEvalDecoder()), any([]State_AiEval_R{}), rt.JsonDecP_optional(any("calls"), rt.JsonDec_list(Main_aiCallDecoder()), any([]State_AiCall_R{}), rt.JsonDecP_optional(any("engines"), rt.JsonDec_list(Main_aiEngineDecoder()), any([]State_AiEngine_R{}), rt.JsonDecP_optional(any("slots"), rt.JsonDec_list(Main_aiSlotDecoder()), any([]State_AiSlot_R{}), rt.JsonDec_succeed(any(rt.CurryN(6, func(_ps0 []any) any {
-			return any(State_AiData( /* FFI return */ rt.AsListT[State_AiSlot_R](_ps0[0]) /* FFI return */, rt.AsListT[State_AiEngine_R](_ps0[1]) /* FFI return */, rt.AsListT[State_AiCall_R](_ps0[2]) /* FFI return */, rt.AsListT[State_AiEval_R](_ps0[3]) /* FFI return */, rt.AsListT[State_AiModel_R](_ps0[4]) /* FFI return */, rt.AsListT[State_AiTrainingRun_R](_ps0[5])))
-		})))))))))
+		return rt.JsonDecP_optional(any("tiers"), rt.JsonDec_list(Main_aiTierDecoder()), any([]State_AiTier_R{}), rt.JsonDecP_optional(any("training"), rt.JsonDec_list(Main_aiTrainingDecoder()), any([]State_AiTrainingRun_R{}), rt.JsonDecP_optional(any("registry"), rt.JsonDec_list(Main_aiModelDecoder()), any([]State_AiModel_R{}), rt.JsonDecP_optional(any("evals"), rt.JsonDec_list(Main_aiEvalDecoder()), any([]State_AiEval_R{}), rt.JsonDecP_optional(any("calls"), rt.JsonDec_list(Main_aiCallDecoder()), any([]State_AiCall_R{}), rt.JsonDecP_optional(any("engines"), rt.JsonDec_list(Main_aiEngineDecoder()), any([]State_AiEngine_R{}), rt.JsonDecP_optional(any("slots"), rt.JsonDec_list(Main_aiSlotDecoder()), any([]State_AiSlot_R{}), rt.JsonDec_succeed(any(rt.CurryN(7, func(_ps0 []any) any {
+			return any(State_AiData( /* FFI return */ rt.AsListT[State_AiSlot_R](_ps0[0]) /* FFI return */, rt.AsListT[State_AiEngine_R](_ps0[1]) /* FFI return */, rt.AsListT[State_AiCall_R](_ps0[2]) /* FFI return */, rt.AsListT[State_AiEval_R](_ps0[3]) /* FFI return */, rt.AsListT[State_AiModel_R](_ps0[4]) /* FFI return */, rt.AsListT[State_AiTrainingRun_R](_ps0[5]) /* FFI return */, rt.AsListT[State_AiTier_R](_ps0[6])))
+		}))))))))))
 	})
 }
 
@@ -9059,9 +9131,9 @@ var Main_aiTrainingDecoder__caf rt.LazyCaf[any]
 
 func Main_aiTrainingDecoder() any {
 	return Main_aiTrainingDecoder__caf.Get(func() any {
-		return rt.JsonDecP_optional(any("valLosses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("losses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("registered"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("lastCheckpoint"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("resumedFrom"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("relaunches"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("valLoss"), rt.JsonDec_map(any(func(_p0 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p0))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("loss"), rt.JsonDec_map(any(func(_p1 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p1))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("totalSteps"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("step"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("backend"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("run"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(14, func(_ps2 []any) any {
-			return any(State_AiTrainingRun( /* FFI return */ rt.AsString(_ps2[0]) /* FFI return */, rt.AsString(_ps2[1]) /* FFI return */, rt.AsString(_ps2[2]) /* FFI return */, rt.AsInt(_ps2[3]) /* FFI return */, rt.AsInt(_ps2[4]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[5]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[6]) /* FFI return */, rt.AsInt(_ps2[7]) /* FFI return */, rt.AsInt(_ps2[8]) /* FFI return */, rt.AsInt(_ps2[9]) /* FFI return */, rt.AsString(_ps2[10]) /* FFI return */, rt.AsString(_ps2[11]) /* FFI return */, rt.AsListT[float64](_ps2[12]) /* FFI return */, rt.AsListT[float64](_ps2[13])))
-		})))))))))))))))))
+		return rt.JsonDecP_optional(any("budget"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("spent"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("cloudState"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("cloud"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("valLosses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("losses"), rt.JsonDec_list(Main_curvePoint()), any([]float64{}), rt.JsonDecP_optional(any("registered"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("message"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("lastCheckpoint"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("resumedFrom"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("relaunches"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("valLoss"), rt.JsonDec_map(any(func(_p0 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p0))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("loss"), rt.JsonDec_map(any(func(_p1 any) any { return any(rt.Just[float64]( /* FFI return */ rt.AsFloat(_p1))) }), rt.JsonDec_float()), any(rt.Nothing[float64]()), rt.JsonDecP_optional(any("totalSteps"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("step"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("backend"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("status"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("run"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(18, func(_ps2 []any) any {
+			return any(State_AiTrainingRun( /* FFI return */ rt.AsString(_ps2[0]) /* FFI return */, rt.AsString(_ps2[1]) /* FFI return */, rt.AsString(_ps2[2]) /* FFI return */, rt.AsInt(_ps2[3]) /* FFI return */, rt.AsInt(_ps2[4]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[5]) /* FFI return */, rt.MaybeCoerce[float64](_ps2[6]) /* FFI return */, rt.AsInt(_ps2[7]) /* FFI return */, rt.AsInt(_ps2[8]) /* FFI return */, rt.AsInt(_ps2[9]) /* FFI return */, rt.AsString(_ps2[10]) /* FFI return */, rt.AsString(_ps2[11]) /* FFI return */, rt.AsListT[float64](_ps2[12]) /* FFI return */, rt.AsListT[float64](_ps2[13]) /* FFI return */, rt.AsString(_ps2[14]) /* FFI return */, rt.AsString(_ps2[15]) /* FFI return */, rt.AsString(_ps2[16]) /* FFI return */, rt.AsString(_ps2[17])))
+		})))))))))))))))))))))
 	})
 }
 
@@ -9069,6 +9141,16 @@ var Main_curvePoint__caf rt.LazyCaf[any]
 
 func Main_curvePoint() any {
 	return Main_curvePoint__caf.Get(func() any { return rt.JsonDec_index(any(1), rt.JsonDec_float()) })
+}
+
+var Main_aiTierDecoder__caf rt.LazyCaf[any]
+
+func Main_aiTierDecoder() any {
+	return Main_aiTierDecoder__caf.Get(func() any {
+		return rt.JsonDecP_optional(any("signals"), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("kvCache"), rt.JsonDec_float()), rt.JsonDec_succeed(any(0.0))})), any(0.0), rt.JsonDecP_optional(any("signals"), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("waiting"), rt.JsonDec_float()), rt.JsonDec_succeed(any(0.0))})), any(0.0), rt.JsonDecP_optional(any("signals"), rt.JsonDec_oneOf(any([]any{rt.JsonDec_field(any("running"), rt.JsonDec_float()), rt.JsonDec_succeed(any(0.0))})), any(0.0), rt.JsonDecP_optional(any("unloads"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("loads"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("inFlight"), Main_intFromFloat(), any(0), rt.JsonDecP_optional(any("resident"), rt.JsonDec_list(rt.JsonDec_string()), any([]string{}), rt.JsonDecP_optional(any("reason"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("ready"), rt.JsonDec_bool(), any(false), rt.JsonDecP_optional(any("base"), rt.JsonDec_string(), any(""), rt.JsonDecP_optional(any("bind"), rt.JsonDec_string(), any(""), rt.JsonDec_succeed(any(rt.CurryN(11, func(_ps0 []any) any {
+			return any(State_AiTier( /* FFI return */ rt.AsString(_ps0[0]) /* FFI return */, rt.AsString(_ps0[1]) /* FFI return */, rt.AsBool(_ps0[2]) /* FFI return */, rt.AsString(_ps0[3]) /* FFI return */, rt.AsListT[string](_ps0[4]) /* FFI return */, rt.AsInt(_ps0[5]) /* FFI return */, rt.AsInt(_ps0[6]) /* FFI return */, rt.AsInt(_ps0[7]) /* FFI return */, rt.AsFloat(_ps0[8]) /* FFI return */, rt.AsFloat(_ps0[9]) /* FFI return */, rt.AsFloat(_ps0[10])))
+		}))))))))))))))
+	})
 }
 
 func Main_apiGet(v_0 string, v_1 string, v_2 any) rt.SkyTask[Sky_Core_Error_Error, any] {
@@ -9200,10 +9282,10 @@ func Main_scopeQuery(v_0 State_Scope_R) string {
 }
 
 func Main_searchParam(v_0 string) string {
-	if /* FFI return */ rt.AsString(rt.String_trim(any(v_0))) == "" {
+	if rt.String_trimT(v_0) == "" {
 		return ""
 	} else {
-		return ("&q=" + /* FFI return */ rt.AsString(rt.Encoding_urlEncode(rt.String_trim(any(v_0)))))
+		return ("&q=" + rt.Encoding_urlEncodeT(rt.String_trimT(v_0)))
 	}
 }
 
@@ -10922,5 +11004,5 @@ func Sky_Config_csrfValue(v_0 bool) string {
 }
 
 func init() {
-	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpRequest_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AiAliasEvent_R{}, State_AiAlias_R{}, State_AiCall_R{}, State_AiData_R{}, State_AiEngine_R{}, State_AiEvalCase_R{}, State_AiEval_R{}, State_AiFilter_R{}, State_AiModel_R{}, State_AiReportLink_R{}, State_AiSetting_R{}, State_AiSlot_R{}, State_AiTrainingRun_R{}, State_AiVersion_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Msg_AiOpenEval_V{}, State_Msg_AiOpenModel_V{}, State_Msg_AiPickSlot_V{}, State_Msg_AiShowFailed_V{}, State_Msg_GlobalQuery_V{}, State_Msg_GotAi_V{}, State_Msg_GotAnalytics_V{}, State_Msg_GotErrors_V{}, State_Msg_GotIdentity_V{}, State_Msg_GotLogs_V{}, State_Msg_GotMetrics_V{}, State_Msg_GotOverview_V{}, State_Msg_GotServiceStats_V{}, State_Msg_GotTraces_V{}, State_Msg_LogFilterClear_V{}, State_Msg_LogFilterPickSession_V{}, State_Msg_LogFilterQuery_V{}, State_Msg_LogFilterToggleLevel_V{}, State_Msg_PivotToTrace_V{}, State_Msg_SelectRange_V{}, State_Msg_SelectService_V{}, State_Msg_SelectTab_V{}, State_Msg_Tick_V{}, State_Msg_TraceFilterQuery_V{}, State_Overview_R{}, State_Scope_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Endpoint_Setting_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
+	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpRequest_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AiAliasEvent_R{}, State_AiAlias_R{}, State_AiCall_R{}, State_AiData_R{}, State_AiEngine_R{}, State_AiEvalCase_R{}, State_AiEval_R{}, State_AiFilter_R{}, State_AiModel_R{}, State_AiReportLink_R{}, State_AiSetting_R{}, State_AiSlot_R{}, State_AiTier_R{}, State_AiTrainingRun_R{}, State_AiVersion_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Msg_AiOpenEval_V{}, State_Msg_AiOpenModel_V{}, State_Msg_AiPickSlot_V{}, State_Msg_AiShowFailed_V{}, State_Msg_GlobalQuery_V{}, State_Msg_GotAi_V{}, State_Msg_GotAnalytics_V{}, State_Msg_GotErrors_V{}, State_Msg_GotIdentity_V{}, State_Msg_GotLogs_V{}, State_Msg_GotMetrics_V{}, State_Msg_GotOverview_V{}, State_Msg_GotServiceStats_V{}, State_Msg_GotTraces_V{}, State_Msg_LogFilterClear_V{}, State_Msg_LogFilterPickSession_V{}, State_Msg_LogFilterQuery_V{}, State_Msg_LogFilterToggleLevel_V{}, State_Msg_PivotToTrace_V{}, State_Msg_SelectRange_V{}, State_Msg_SelectService_V{}, State_Msg_SelectTab_V{}, State_Msg_Tick_V{}, State_Msg_TraceFilterQuery_V{}, State_Overview_R{}, State_Scope_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Cloud_Google_Response_R{}, Std_Ai_Endpoint_Setting_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
 }
