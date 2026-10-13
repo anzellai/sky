@@ -9,6 +9,9 @@
 //! of a promotion are the real code. The deployment verbs run against
 //! `runtime-go/rt/testdata/fakegcp`, the runtime's Google Cloud emulator.
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -170,7 +173,9 @@ fn have_go() -> bool {
 
 #[test]
 fn the_tier_serves_two_adapters_and_hot_loads_a_promotion() {
-    assert!(have_go(), "the serve flow needs a Go toolchain");
+    if !required(Need::Go, have_go()) {
+        return;
+    }
     let dir = scratch("tier");
     let app = fixture(&dir);
     let reg = dir.join("reg");
@@ -302,7 +307,9 @@ fn the_tier_serves_two_adapters_and_hot_loads_a_promotion() {
 
 #[test]
 fn deploy_dry_run_teardown_and_ls_against_the_emulator() {
-    assert!(have_go(), "the serve flow needs a Go toolchain");
+    if !required(Need::Go, have_go()) {
+        return;
+    }
     let dir = scratch("deploy");
     let fakegcp = go_build("fakegcp", &dir);
     let (gcp, gcp_addr) = start_server(&fakegcp, &dir, &[]);

@@ -14,7 +14,7 @@
 #   steps:
 #   - name: gcr.io/cloud-builders/docker
 #     env: ["DOCKER_BUILDKIT=1"]
-#     args: ["build", "-f", "image/Dockerfile.trainer", "-t", "$_IMAGE", "."]
+#     args: ["build", "-f", "image/trainer.dockerfile", "-t", "$_IMAGE", "."]
 #   images: ["$_IMAGE"]
 #   YAML
 #   gcloud builds submit runtime-go/rt/ai_train_assets \

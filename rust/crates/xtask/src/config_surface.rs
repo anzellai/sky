@@ -170,6 +170,16 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          whose members are all read through a literal dbEnvInt/dbEnvDuration call",
     ),
     (
+        "runtime-go/rt/ai_serve.go",
+        "the display name of a tier or Cloud Run target setting (`AI_SERVE_<KEY>`) \
+         that aiLayer reads; each name is documented in docs/sky-toml.md",
+    ),
+    (
+        "runtime-go/rt/ai_train.go",
+        "the display name of a Vertex training setting (`AI_TRAIN_<KEY>`) that \
+         aiLayer reads; each name is documented in docs/sky-toml.md",
+    ),
+    (
         "runtime-go/rt/analytics_writer.go",
         "skyEnvSynchronousCommitOff wrapper",
     ),

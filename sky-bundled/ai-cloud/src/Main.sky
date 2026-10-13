@@ -655,7 +655,7 @@ imageVerb json opts =
         train = List.member "--train" opts
         ( imageId, dockerfile ) =
             if train then
-                ( "sky-ai-trainer", "image/Dockerfile.trainer" )
+                ( "sky-ai-trainer", "image/trainer.dockerfile" )
 
             else
                 ( "sky-ai-tier", "Dockerfile" )

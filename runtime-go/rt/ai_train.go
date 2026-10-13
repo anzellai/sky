@@ -1409,7 +1409,7 @@ func Ai_trainCloudResolve(codeArg any) any {
 		out := []any{}
 		for _, key := range []string{"PROJECT", "REGION", "MACHINE", "STAGING", "BUDGET", "IMAGE", "SERVICE_ACCOUNT", "LABELS"} {
 			v, src := aiTrainCloudLayer(key, code[key])
-			out = append(out, map[string]any{"key": key, "name": skyEnvName("AI_TRAIN_" + key), "value": strings.TrimSpace(v), "source": src})
+			out = append(out, map[string]any{"key": key, "name": skyEnvName(aiTrainSuffix(key)), "value": strings.TrimSpace(v), "source": src})
 		}
 		return Ok[any, any](out)
 	}
@@ -1438,3 +1438,7 @@ func aiTrainCloudLayer(key, code string) (string, string) {
 	}
 	return "", "default"
 }
+
+// aiTrainSuffix is the env suffix of a cloud training setting, for the name
+// `describe` shows (the read itself is aiLayer's).
+func aiTrainSuffix(key string) string { return "AI_TRAIN_" + key }

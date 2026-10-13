@@ -180,7 +180,7 @@ func aiServeSettings(b aiTierConfig, codeToken string) ([]aiSetting, aiTierConfi
 		if v == "" {
 			v, src = def, "default"
 		}
-		out = append(out, aiSetting{key: key, name: skyEnvName("AI_SERVE_" + key), value: v, source: src})
+		out = append(out, aiSetting{key: key, name: skyEnvName(aiServeSuffix(key)), value: v, source: src})
 		return v
 	}
 	engineOK := func(s string) bool { return strings.TrimSpace(s) == "vllm" }
@@ -211,10 +211,9 @@ func aiServeSettings(b aiTierConfig, codeToken string) ([]aiSetting, aiTierConfi
 		pollS = -1
 	}
 	c.poll = time.Duration(aiAtoi(get("POLL_S", itoaSet(pollS), "30", aiPositiveInt))) * time.Second
-	tokenSuffix := "AI_SERVE_TOKEN"
-	if t, src := aiLayer(tokenSuffix, codeToken, nil); t != "" {
+	if t, src := aiLayer("AI_SERVE_TOKEN", codeToken, nil); t != "" {
 		c.token = t
-		out = append(out, aiSetting{key: "TOKEN", name: skyEnvName(tokenSuffix), value: "(secret)", source: src})
+		out = append(out, aiSetting{key: "TOKEN", name: skyEnvName("AI_SERVE_TOKEN"), value: "(secret)", source: src})
 	}
 	return out, c, nil
 }
@@ -966,8 +965,12 @@ func Ai_serveTarget(rawArg any) any {
 			case "IMAGE":
 				v, src = aiLayer("AI_SERVE_IMAGE", code[key], nil)
 			}
-			out = append(out, map[string]any{"key": key, "name": skyEnvName("AI_SERVE_" + key), "value": strings.TrimSpace(v), "source": src})
+			out = append(out, map[string]any{"key": key, "name": skyEnvName(aiServeSuffix(key)), "value": strings.TrimSpace(v), "source": src})
 		}
 		return Ok[any, any](out)
 	}
 }
+
+// aiServeSuffix is the env suffix of a tier or target setting, for the name
+// the console and `describe` show (the read itself is aiLayer's).
+func aiServeSuffix(key string) string { return "AI_SERVE_" + key }

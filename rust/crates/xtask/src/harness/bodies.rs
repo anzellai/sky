@@ -792,7 +792,10 @@ fn sh(root: &Path, script: &str, args: &[String]) -> Result<Sh, String> {
 /// **695 at the merge of v0.28.0 phase 3** (+2, Family S: the `aitrain`
 /// surface, nominal and failure, for `Std.Ai.Train`), measured by the
 /// `corpus-manifest` gate.
-pub const CORPUS_EXPECTED: u64 = 695;
+/// **698 in v0.28.0 phase 4** (+3, Family S: the `aiserve` surface, nominal,
+/// and the `aigooglecloud` surface, nominal and failure), measured by
+/// `xtask corpus --run` (698 cases, 552 behavioural, all green).
+pub const CORPUS_EXPECTED: u64 = 698;
 /// The subset that is BUILT AND RUN. Split from [`CORPUS_EXPECTED`] when R and E
 /// landed: the `corpus` gate runs only the behavioural cases (an ill-typed
 /// family-R program has no binary to run, and a family-E verdict is a property of
@@ -849,7 +852,10 @@ pub const CORPUS_EXPECTED: u64 = 695;
 ///
 /// **549 at the merge of v0.28.0 phase 3** (+2, the `aitrain` surface, built
 /// and run; measured by the `corpus` gate).
-pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 549;
+///
+/// **552 in v0.28.0 phase 4** (+3, the `aiserve` and `aigooglecloud`
+/// surfaces, built and run; measured by `xtask corpus --run`).
+pub const CORPUS_BEHAVIOURAL_EXPECTED: u64 = 552;
 /// Family R: 135 cases × 2 checks (the rejection carries its declared code; the
 /// twin compiles). Both are counted because both can fail independently — a
 /// rejection for the wrong reason and a broken twin are different defects.

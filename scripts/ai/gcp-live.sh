@@ -44,6 +44,10 @@ umask 077
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/scripts/lib/require-tool.sh"
 source "$ROOT/scripts/lib/with-timeout.sh"
+source "$ROOT/scripts/lib/fresh-compiler.sh"
+# The images, the teardown and the tests run sky-out/sky: it must be built
+# from this tree (./scripts/build.sh), or a paid run measures old code.
+require_fresh_compiler "$ROOT/sky-out/sky" "$ROOT"
 require_tool gcloud "install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install)"
 require_tool openssl "install openssl"
 require_tool cargo "install the Rust toolchain (rustup)"

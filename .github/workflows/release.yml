@@ -739,7 +739,9 @@ jobs:
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 165
+    # 180 since v0.28.0 phase 4: ai-train-exactly-once (600 s) and
+    # ai-serve-hot-load (300 s) joined this shard (163 + 15 = 178 min).
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup

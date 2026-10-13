@@ -440,7 +440,7 @@ pub static GATES: &[Gate] = &[
                 // (+6 cases, 685 → 691), the v0.28.0 Std.Ai.Pipeline surface
                 // (+2 cases, 691 → 693) and the v0.28.0 Std.Ai.Train surface
                 // (+2 cases, 693 → 695).
-                from: "n_min = 695",
+                from: "n_min = 698",
                 to: "n_min = 696",
             },
         }]),

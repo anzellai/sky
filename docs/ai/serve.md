@@ -109,10 +109,12 @@ and, for the QA or production environment:
 ```
 SKY_AI_SUPPORT_URL=https://<service>.run.app/v1
 SKY_AI_SUPPORT_KEY=<the tier's service token>
-SKY_AI_SUPPORT_TIMEOUT_MS=300000
 ```
 
-`Endpoint.withGoogleAuth` (or `SKY_AI_SUPPORT_AUTH=google`) adds a Google ID
+A first request after the tier scaled to zero waits for a cold start, so
+give the slot a long timeout (`Endpoint.withTimeout`, or
+`SKY_AI_<SLOT>_TIMEOUT_MS`).
+`Endpoint.withGoogleAuth` (or `SKY_AI_<SLOT>_AUTH=google`) adds a Google ID
 token for the service's URL in `X-Serverless-Authorization`. Cloud Run checks
 it and removes it before the request reaches the tier; `Authorization` keeps
 the service token. The ID token comes from `GOOGLE_APPLICATION_CREDENTIALS`

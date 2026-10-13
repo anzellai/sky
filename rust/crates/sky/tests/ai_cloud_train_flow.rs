@@ -13,6 +13,9 @@
 //!   trains, registers and cleans up; `sky ai cloud ls` sees nothing left;
 //!   `sky ai teardown --run` is idempotent.
 
+#[path = "../src/live_gate.rs"]
+mod live_gate;
+use live_gate::{required, Need};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -81,7 +84,9 @@ fn have_go() -> bool {
 
 #[test]
 fn the_vertex_workflow_suite_passes_against_the_in_process_emulator() {
-    assert!(have_go(), "the cloud flow needs a Go toolchain");
+    if !required(Need::Go, have_go()) {
+        return;
+    }
     let dir = scratch("suite");
     copy_dir(
         &repo_root().join("rust/crates/sky/tests/fixtures/ai-cloud"),
@@ -198,7 +203,9 @@ impl Drop for Killed {
 
 #[test]
 fn sky_ai_train_runs_on_vertex_through_the_cli() {
-    assert!(have_go(), "the cloud flow needs a Go toolchain");
+    if !required(Need::Go, have_go()) {
+        return;
+    }
     let dir = scratch("cli");
     let bin = dir.join("fakegcp");
     let out = Command::new("go")

@@ -456,7 +456,7 @@ a GPU serving tier on Cloud Run) of the Std.Ai lifecycle design
   converts and registers it, and deletes the job records and the staging
   prefix. The budget is also the job's hard runtime ceiling, so Vertex stops
   it with no Sky process left. `cancel` cancels the cloud job too.
-- **The trainer image.** `Dockerfile.trainer`: NVIDIA's CUDA 13 base pinned by
+- **The trainer image.** `trainer.dockerfile`: NVIDIA's CUDA 13 base pinned by
   digest, the pinned CPython and uv, the Unsloth hash lock and the Sky driver
   behind a shim (`sky_cloud.py`) that moves data, checkpoints and the adapter
   through the bucket. `sky ai image build --train` builds it with Cloud Build

@@ -69,7 +69,7 @@ sky ai image build --train --project <id> --region us-central1 --repo sky --stag
 sky ai image build --tier  --project <id> --region us-central1 --repo sky --staging gs://<bucket>/build
 ```
 
-* **The trainer** (`runtime-go/rt/ai_train_assets/image/Dockerfile.trainer`):
+* **The trainer** (`runtime-go/rt/ai_train_assets/image/trainer.dockerfile`):
   NVIDIA's CUDA 13 base pinned by digest, the pinned CPython and uv, the
   Unsloth hash lock installed with `--require-hashes --only-binary`, and the
   Sky driver. Its entry point is the shim `sky_cloud.py`, which moves the
