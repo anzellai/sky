@@ -281,18 +281,18 @@ None.
 
 | gate | tier | falsifier | surfaces |
 |---|---|---|---|
-| `ai-device-blob-allowlist` | T1 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-device-csp` | T4 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-device-decide` | T1 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-device-digest` | T1 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-device-ios-sim` | T4 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-device-no-silent-fallback` | T1 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-device-partition` | T2 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-device-privacy` | T4 | not proven | `stdlib.Std.Ai.Device` |
-| `ai-serve-hot-load` | T1 | not proven | `stdlib.Std.Ai.Serve` |
-| `ai-stream-pieces` | T1 | not proven | `stdlib.Std.Ai.Provider` · `stdlib.Std.Ai.Endpoint` · `stdlib.Std.Ai.Device` |
-| `ai-train-exactly-once` | T1 | not proven | `stdlib.Std.Ai.Train` |
-| `ai-train-resume` | T1 | not proven | `stdlib.Std.Ai.Train` |
+| `ai-device-blob-allowlist` | T1 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-device-csp` | T4 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-device-decide` | T1 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-device-digest` | T1 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-device-ios-sim` | T4 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-device-no-silent-fallback` | T1 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-device-partition` | T2 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-device-privacy` | T4 | PROVEN | `stdlib.Std.Ai.Device` |
+| `ai-serve-hot-load` | T1 | PROVEN | `stdlib.Std.Ai.Serve` |
+| `ai-stream-pieces` | T1 | PROVEN | `stdlib.Std.Ai.Provider` · `stdlib.Std.Ai.Endpoint` · `stdlib.Std.Ai.Device` |
+| `ai-train-exactly-once` | T1 | PROVEN | `stdlib.Std.Ai.Train` |
+| `ai-train-resume` | T1 | PROVEN | `stdlib.Std.Ai.Train` |
 | `analytics-prune-errors-are-reported` | T1 | PROVEN | `observability.analytics-store` |
 | `analytics-retention-survives-a-panic` | T1 | PROVEN | `observability.analytics-store` |
 | `apps-bundled` | T1 | PROVEN | `observability.console` · `skylive.session-sse-csrf` |
