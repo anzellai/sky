@@ -135,7 +135,14 @@ update msg model =
             )
 
         Answered (Err e) ->
-            ( model, report ("answer=err:" ++ Error.toString e) )
+            ( model
+            , Cmd.batch
+                  [ report ("answer=err:" ++ Error.toString e)
+                  , Cmd.perform
+                        (Provider.stream options Assist.assistant question)
+                        Opened
+                  ]
+            )
 
         Opened (Ok s) ->
             ( model, Cmd.perform (Provider.read s) Got )

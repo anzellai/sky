@@ -96,7 +96,7 @@ build_web() {
     # calls wait on the GPU.
     cmake_build "$WORK/web-webgpu" -DCMAKE_TOOLCHAIN_FILE="$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake" \
         "${common[@]}" -DGGML_WEBGPU=ON "${dawn[@]}" ${py:+"-DPython3_EXECUTABLE=$py/python3"} \
-        "-DSKY_EXTRA_LINK=-sJSPI_EXPORTS=sky_llama_init,sky_llama_load,sky_llama_adapter,sky_llama_chat,sky_llama_tokenize,sky_llama_unload"
+        "-DSKY_EXTRA_LINK=-sJSPI_EXPORTS=sky_llama_init,sky_llama_load,sky_llama_adapter,sky_llama_chat,sky_llama_chat_begin,sky_llama_chat_next,sky_llama_tokenize,sky_llama_unload"
     rm -rf "$OUT/web" && mkdir -p "$OUT/web/cpu" "$OUT/web/webgpu"
     cp -f "$WORK/web-cpu/skyllama.mjs" "$WORK/web-cpu/skyllama.wasm" "$OUT/web/cpu/"
     cp -f "$WORK/web-webgpu/skyllama.mjs" "$WORK/web-webgpu/skyllama.wasm" "$OUT/web/webgpu/"
