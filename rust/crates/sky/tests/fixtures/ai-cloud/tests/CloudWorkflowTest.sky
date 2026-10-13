@@ -288,6 +288,24 @@ ceiling =
         |> Task.run
 
 
+-- Vertex AI cancelled a running job well before its timeout, with no cancel
+-- from Sky (a live run, 2026-10-13). That attempt ended unfinished, so the run
+-- relaunches it from its newest checkpoint, as for a crash.
+unasked : Result Error Train.Adapter
+unasked =
+    fresh "unasked"
+        |> Task.andThen
+               (\w ->
+                   let
+                       job = Fixture.job "unasked" w
+                   in
+                       Fixture.control
+                           ("unasked-cancel?run="
+                               ++ Train.runKey (Train.runId job))
+                           |> Task.andThen (\_ -> Train.drive w.db job))
+        |> Task.run
+
+
 -- ── Typed cloud failures ────────────────────────────────────────────
 stockout : Result Error Train.Adapter
 stockout =
@@ -446,6 +464,18 @@ tests =
 
                   _ ->
                       Test.fail ("not TrainingFailed: " ++ codeOf ceiling))
+    , Test.test
+          "a cancel nobody asked for, before the ceiling, is relaunched from the newest checkpoint"
+          (\_ ->
+              case unasked of
+
+                  Ok a ->
+                      Test.equal
+                          ( a.relaunches, a.steps, a.resumedFrom > 0 )
+                          ( 1, 6, True )
+
+                  Err e ->
+                      Test.fail (Error.toString e))
     , Test.test
           "a stockout is CapacityUnavailable"
           (\_ -> Test.equal "CapacityUnavailable" (codeOf stockout))

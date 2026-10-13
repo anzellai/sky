@@ -116,6 +116,7 @@ type aiFakeGCP struct {
 	builds        map[string]map[string]any // operation → its result
 	quotas        map[string]int            // quotaId|region → limit
 	stockouts     int
+	unaskedCancel map[string]int // run key -> running jobs Vertex cancels on its own
 	listLag       time.Duration
 	// clockScale makes a job's reported times run faster than the wall
 	// clock (a spend test reaches a budget in milliseconds): a reported time
@@ -635,6 +636,14 @@ func (f *aiFakeGCP) createJob(w http.ResponseWriter, project, region string, bod
 	aiFakeJSON(w, 200, f.jobValue(j))
 }
 
+// aiFakeRunOf is the run key of a job's display name (`<key>-a<attempt>`).
+func aiFakeRunOf(display string) string {
+	if i := strings.LastIndex(display, "-a"); i > 0 {
+		return display[:i]
+	}
+	return display
+}
+
 func aiFakeLabel(s string) bool {
 	if len(s) < 1 || len(s) > 63 {
 		return false
@@ -742,6 +751,14 @@ func (f *aiFakeGCP) advance(j *aiFakeJob) {
 			f.checkpoint(j, j.step)
 			emit("checkpoint", map[string]any{"step": j.step, "path": fmt.Sprintf("checkpoints/%07d", j.step)})
 			j.lastCk = j.step
+		}
+		// A cancel nobody asked for (seen on a live run, 2026-10-13): the job
+		// ends JOB_STATE_CANCELLED well before its timeout, with no cancel
+		// object and no terminal line, after its first checkpoint.
+		if run := aiFakeRunOf(j.displayName); f.unaskedCancel[run] > 0 && j.lastCk > 0 {
+			f.unaskedCancel[run]--
+			end("JOB_STATE_CANCELLED", 1, "")
+			return
 		}
 		if j.crash > 0 && j.attempt == 0 && j.step == j.crash {
 			// What Vertex AI reports for a container that exit 137 ended
@@ -1198,6 +1215,12 @@ func (f *aiFakeGCP) control(w http.ResponseWriter, r *http.Request, what string)
 		aiFakeJSON(w, 200, map[string]any{})
 	case "stockout":
 		f.stockouts++
+		aiFakeJSON(w, 200, map[string]any{})
+	case "unasked-cancel":
+		if f.unaskedCancel == nil {
+			f.unaskedCancel = map[string]int{}
+		}
+		f.unaskedCancel[q.Get("run")]++
 		aiFakeJSON(w, 200, map[string]any{})
 	case "clockscale":
 		x, _ := strconv.ParseFloat(q.Get("x"), 64)

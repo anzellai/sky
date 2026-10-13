@@ -1858,7 +1858,8 @@ companions : Adapter -> List Registry.Companion
 companions a =
     let
         dir = dirOf a.peft.path
-        config = { role = "peft.config", path = dir ++ "/adapter_config.json" }
+        config =
+            { role = "peft.config", path = dir ++ "/adapter_config.json" }
     in
         case a.gguf of
 
@@ -3171,7 +3172,8 @@ cancelled job step =
 ceilingReached : Job -> CloudSettings -> CloudPlan -> Money -> Int -> Error
 ceilingReached job cs p spent step =
     if Money.gte (Money.add spent (perMinutes cs.perHour 1)) cs.budget then
-        Failure.toError (BudgetExceeded { budget = cs.budget, estimate = spent })
+        Failure.toError
+            (BudgetExceeded { budget = cs.budget, estimate = spent })
 
     else
         Failure.toError
@@ -3582,7 +3584,9 @@ checkCloud s found =
             Err
                 (invalid
                     labelsR.name
-                    (String.join ", " (List.map (\( k, v ) -> k ++ "=" ++ v) badLabel)
+                    (String.join
+                        ", "
+                        (List.map (\( k, v ) -> k ++ "=" ++ v) badLabel)
                         ++ ": a label is lower case letters, digits, - and _ (at most 63), and sky- keys are Sky's own"))
 
         else if project.value == "" then
@@ -4208,13 +4212,14 @@ type alias CloudWatch =
     , errorCode : Int
     , errorMessage : String
     , relaunches : Int
+    , ranSeconds : Int
     }
 
 
 cloudWatchCodec : Codec CloudWatch
 cloudWatchCodec =
     Codec.object
-        (\sg st oc sp cd ms tl vl pf rf sm ec em rl ->
+        (\sg st oc sp cd ms tl vl pf rf sm ec em rl rs ->
             { segment = sg
             , state = st
             , outcome = oc
@@ -4229,6 +4234,7 @@ cloudWatchCodec =
             , errorCode = ec
             , errorMessage = em
             , relaunches = rl
+            , ranSeconds = rs
             })
         |> Codec.field "segment" .segment Codec.string
         |> Codec.field "state" .state Codec.string
@@ -4244,6 +4250,7 @@ cloudWatchCodec =
         |> Codec.field "errorCode" .errorCode Codec.int
         |> Codec.field "errorMessage" .errorMessage Codec.string
         |> Codec.field "relaunches" .relaunches Codec.int
+        |> Codec.field "ranSeconds" .ranSeconds Codec.int
         |> Codec.buildObject
 
 -- Where a cloud run stands when the workflow takes it up: the last attempt
@@ -4482,6 +4489,7 @@ cloudLaunchAndWatch ctx job cs p shape key =
                                                              , errorCode = 0
                                                              , errorMessage = ""
                                                              , relaunches = 0
+                                                             , ranSeconds = 0
                                                              }
 
                                                      else if o.live then
@@ -4667,7 +4675,17 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                            Codec.string
                            ("launch-" ++ tag)
                            (budgetLeft job cs attempt spentMinor
-                               |> Task.andThen (\_ -> launchOnce job cs p store key attempt from spentMinor))
+                               |> Task.andThen
+                                      (\_ ->
+                                          launchOnce
+                                              job
+                                              cs
+                                              p
+                                              store
+                                              key
+                                              attempt
+                                              from
+                                              spentMinor))
                            |> Task.andThen
                                   (\name ->
                                       writeCloudFile
@@ -4700,12 +4718,15 @@ affordableSeconds : CloudSettings -> Int -> Int
 affordableSeconds cs spentMinor =
     let
         left =
-            Money.sub cs.budget (Money.fromMinor (Money.currency cs.budget) spentMinor)
+            Money.sub
+                cs.budget
+                (Money.fromMinor (Money.currency cs.budget) spentMinor)
     in
         case Decimal.div (Money.amount left) (Money.amount cs.perHour) of
 
             Ok hours ->
-                Decimal.toInt (Decimal.floor (Decimal.mul hours (Decimal.fromInt 3600)))
+                Decimal.toInt
+                    (Decimal.floor (Decimal.mul hours (Decimal.fromInt 3600)))
 
             Err _ ->
                 86400
@@ -4721,7 +4742,9 @@ budgetLeft job cs attempt spentMinor =
         next = Money.add spent (perMinutes cs.perHour 15)
     in
         if attempt > 0 && Money.gt next cs.budget then
-            Task.fail (Failure.toError (BudgetExceeded { budget = cs.budget, estimate = next }))
+            Task.fail
+                (Failure.toError
+                    (BudgetExceeded { budget = cs.budget, estimate = next }))
 
         else
             Task.succeed ()
@@ -4762,7 +4785,11 @@ launchOnce job cs p store key attempt from spentMinor =
             { spec
                 | spot = (settings job).spot
                 , timeoutSeconds =
-                    Math.max 60 (Math.min spec.timeoutSeconds (affordableSeconds cs spentMinor))
+                    Math.max
+                        60
+                        (Math.min
+                            spec.timeoutSeconds
+                            (affordableSeconds cs spentMinor))
             }
     in
         Time.unixMillis ()
@@ -4954,6 +4981,78 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                , errorCode = w.errorCode
                                , errorMessage = w.errorMessage
                                }
+                           -- The ceiling this attempt was launched with
+                           -- (launchOnce: the budget left, at most the plan's).
+                           attemptTimeout =
+                               Math.max
+                                   60
+                                   (Math.min
+                                       p.timeoutSeconds
+                                       (affordableSeconds cs spentBefore))
+                           -- An attempt that ended unfinished: a typed cloud
+                           -- failure, the budget spent, too many relaunches,
+                           -- or a relaunch.
+                           ended _ =
+                               case Google.jobFailure cs.region job0 of
+
+                                   Just e ->
+                                       Task.fail e
+
+                                   Nothing ->
+                                       if Money.gte
+                                           (Money.add
+                                               spent
+                                               (perMinutes cs.perHour 1))
+                                           cs.budget then
+                                           Task.fail
+                                               (Failure.toError
+                                                   (BudgetExceeded
+                                                       { budget = cs.budget
+                                                       , estimate = spent
+                                                       }))
+
+                                       else if relaunched >= s.maxRelaunches then
+                                           Google.logTail
+                                               cs.project
+                                               (lastSegment name)
+                                               50
+                                               |> Task.andThen
+                                                      (\tail ->
+                                                          -- It ran into the ceiling its budget set: Vertex
+                                                          -- stopped it, and nothing is left to relaunch with.
+                                                          Task.fail
+                                                              (Failure.toError
+                                                                  (TrainingFailed
+                                                                      { runId =
+                                                                          runId
+                                                                              job
+                                                                      , step =
+                                                                          w.step
+                                                                      , reason =
+                                                                          "the Vertex job ended without finishing "
+                                                                              ++ String.fromInt
+                                                                                     (relaunched
+                                                                                         + 1)
+                                                                              ++ " times (withMaxRelaunches "
+                                                                              ++ String.fromInt
+                                                                                     s.maxRelaunches
+                                                                              ++ "): "
+                                                                              ++ w.errorMessage
+                                                                      , logTail =
+                                                                          tail
+                                                                      })))
+
+                                       else
+                                           cloudRelaunch
+                                               ctx
+                                               job
+                                               cs
+                                               p
+                                               store
+                                               key
+                                               (attempt + 1)
+                                               (relaunched + 1)
+                                               w.spentMinor
                        in
                            case w.outcome of
 
@@ -4981,72 +5080,36 @@ cloudWatchLoop ctx job cs p store key attempt name n segment relaunched spentBef
                                    -- its scheduling timeout (the runtime
                                    -- ceiling). Only a cancel Sky asked for
                                    -- (`cancel`, or the budget stop) writes
-                                   -- the run's cancel object.
+                                   -- the run's cancel object. A cancel
+                                   -- nobody asked for, before the ceiling,
+                                   -- is an attempt that ended unfinished.
                                    Store.getAt store (runPath key ++ "/cancel")
                                        |> Task.andThen
                                               (\asked ->
                                                   case asked of
 
                                                       Just _ ->
-                                                          Task.fail (cancelled job w.step)
+                                                          Task.fail
+                                                              (cancelled
+                                                                  job
+                                                                  w.step)
 
                                                       Nothing ->
-                                                          Task.fail (ceilingReached job cs p spent w.step))
+                                                          if w.ranSeconds + 60
+                                                              >= attemptTimeout then
+                                                              Task.fail
+                                                                  (ceilingReached
+                                                                      job
+                                                                      cs
+                                                                      p
+                                                                      spent
+                                                                      w.step)
+
+                                                          else
+                                                              ended ())
 
                                "dead" ->
-                                   case Google.jobFailure cs.region job0 of
-
-                                       Just e ->
-                                           Task.fail e
-
-                                       Nothing ->
-                                           if Money.gte (Money.add spent (perMinutes cs.perHour 1)) cs.budget then
-                                               -- It ran into the ceiling its budget set: Vertex
-                                               -- stopped it, and nothing is left to relaunch with.
-                                               Task.fail
-                                                   (Failure.toError
-                                                       (BudgetExceeded { budget = cs.budget, estimate = spent }))
-
-                                           else if relaunched >= s.maxRelaunches then
-                                               Google.logTail
-                                                   cs.project
-                                                   (lastSegment name)
-                                                   50
-                                                   |> Task.andThen
-                                                          (\tail ->
-                                                              Task.fail
-                                                                  (Failure.toError
-                                                                      (TrainingFailed
-                                                                          { runId =
-                                                                              runId
-                                                                                  job
-                                                                          , step =
-                                                                              w.step
-                                                                          , reason =
-                                                                              "the Vertex job ended without finishing "
-                                                                                  ++ String.fromInt
-                                                                                         (relaunched
-                                                                                             + 1)
-                                                                                  ++ " times (withMaxRelaunches "
-                                                                                  ++ String.fromInt
-                                                                                         s.maxRelaunches
-                                                                                  ++ "): "
-                                                                                  ++ w.errorMessage
-                                                                          , logTail =
-                                                                              tail
-                                                                          })))
-
-                                           else
-                                               cloudRelaunch
-                                                   ctx
-                                                   job
-                                                   cs
-                                                   p
-                                                   store
-                                                   key
-                                                   (attempt + 1)
-                                                   (relaunched + 1)
-                                                   w.spentMinor
+                                   ended ()
 
                                _ ->
                                    if Money.gte spent cs.budget then
@@ -5258,6 +5321,17 @@ watchCloud job cs store key attempt name after spentBefore =
                                                                                            cj.errorMessage
                                                                                        , relaunches =
                                                                                            0
+                                                                                       , ranSeconds =
+                                                                                           if cj.startMs
+                                                                                               > 0
+                                                                                               && cj.endMs
+                                                                                               > cj.startMs then
+                                                                                               (cj.endMs
+                                                                                                   - cj.startMs)
+                                                                                                   // 1000
+
+                                                                                           else
+                                                                                               0
                                                                                        })))))
 
 
@@ -5411,7 +5485,6 @@ cloudCleanup ctx job cloud a =
                                               (runPath cloud.key ++ "/"))))
             |> Task.map (\_ -> a)
 
-
 -- | A Vertex run as its last watch saw it: the job, its state
 -- (`JOB_STATE_RUNNING`, …), the attempt, where it runs, and the spend so far
 -- against the budget, in exact money.
@@ -5451,21 +5524,43 @@ cloudStatus job =
                                                       , attempt = a
                                                       , region = r
                                                       , machine = m
-                                                      , spent = Maybe.withDefault (Money.zero Money.USD) (parseMoney sp)
-                                                      , budget = Maybe.withDefault (Money.zero Money.USD) (parseMoney bu)
+                                                      , spent =
+                                                          Maybe.withDefault
+                                                              (Money.zero
+                                                                  Money.USD)
+                                                              (parseMoney sp)
+                                                      , budget =
+                                                          Maybe.withDefault
+                                                              (Money.zero
+                                                                  Money.USD)
+                                                              (parseMoney bu)
                                                       })
                                                   (JsonD.map3
                                                       (\j st a -> ( j, st, a ))
-                                                      (JsonD.field "job" JsonD.string)
-                                                      (JsonD.field "state" JsonD.string)
-                                                      (JsonD.field "attempt" JsonD.int))
+                                                      (JsonD.field
+                                                          "job"
+                                                          JsonD.string)
+                                                      (JsonD.field
+                                                          "state"
+                                                          JsonD.string)
+                                                      (JsonD.field
+                                                          "attempt"
+                                                          JsonD.int))
                                                   (JsonD.map2
                                                       (\r m -> ( r, m ))
-                                                      (JsonD.field "region" JsonD.string)
-                                                      (JsonD.field "machine" JsonD.string))
+                                                      (JsonD.field
+                                                          "region"
+                                                          JsonD.string)
+                                                      (JsonD.field
+                                                          "machine"
+                                                          JsonD.string))
                                                   (JsonD.map2
                                                       (\sp bu -> ( sp, bu ))
-                                                      (JsonD.field "spent" JsonD.string)
-                                                      (JsonD.field "budget" JsonD.string)))
+                                                      (JsonD.field
+                                                          "spent"
+                                                          JsonD.string)
+                                                      (JsonD.field
+                                                          "budget"
+                                                          JsonD.string)))
                                               text
                                               |> Result.toMaybe))

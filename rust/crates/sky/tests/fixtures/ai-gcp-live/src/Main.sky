@@ -297,7 +297,13 @@ run args =
                 |> Task.andThen
                        (\w ->
                            let
-                               job = cpuJob w "support" 8 20 3000
+                               -- Kept: the run would delete its job
+                               -- records after registering, and the count
+                               -- below is of the jobs attempt 0 created.
+                               -- The wrapper's teardown deletes them.
+                               job =
+                                   cpuJob w "support" 8 20 3000
+                                       |> Train.withKeepStaging
                            in
                                Train.start w.db job
                                    |> Task.andThen
