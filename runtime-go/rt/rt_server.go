@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -614,9 +615,16 @@ func serverListenRun(port any, routes any) any {
 		// session store, on this shape).
 		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
 	}()
-	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
-	printStartupReport(p) // see startup_report.go — added under, never in place of
-	err := srv.ListenAndServe()
+	// Bind BEFORE the "listening" line: a supervisor, `sky run` and every
+	// test that waits for that line connect as soon as they read it, and a
+	// line printed before the bind lost that race under load (v0.28.0, the
+	// `ai-device-partition` gate after a rebuild: connection refused).
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err == nil {
+		fmt.Printf("Sky server listening on http://localhost:%d\n", p)
+		printStartupReport(p) // see startup_report.go — added under, never in place of
+		err = srv.Serve(ln)
+	}
 	signal.Stop(srvSigCh)
 	releaseSignals()
 	// If the listener closed because the embedded-PostgreSQL supervisor is

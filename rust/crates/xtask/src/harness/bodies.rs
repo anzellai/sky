@@ -4061,9 +4061,11 @@ fn cargo_test_outcome(
         format!(
             "{what}: {ran} passed (exit {:?}):\n{}",
             o.status.code(),
+            // stderr first: the compiler's warnings, then the tests' own
+            // output, so the tail shows a failing test, not the build.
             super::layer2::tail(
-                &format!("{stdout}{}", String::from_utf8_lossy(&o.stderr)),
-                25
+                &format!("{}{stdout}", String::from_utf8_lossy(&o.stderr)),
+                40
             )
         ),
     )

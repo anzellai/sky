@@ -815,9 +815,11 @@ func AiDeviceExportIfAsked() {
 	slot, dir := os.Args[2], os.Args[3]
 	if err := aiDeviceExport(slot, dir); err != nil {
 		fmt.Fprintf(os.Stderr, "sky --ai-embed %s: %v\n", slot, err)
-		os.Exit(1)
+		ExitProcess(1)
 	}
-	os.Exit(0)
+	// ExitProcess, never os.Exit: an `--embed` server started its database
+	// before main reached this, and only ExitProcess stops it.
+	ExitProcess(0)
 }
 
 func aiDeviceExport(slot, dir string) error {

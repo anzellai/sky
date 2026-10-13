@@ -1517,7 +1517,14 @@ Where the shipped phase differs from this design:
 6. **Pins after publication.** The engines' archive digests are pinned in
    `rust/crates/sky/src/ai_device.rs` once the workflow publishes them; until
    then `sky ai provision --device --from <dir>` installs a local build of the
-   same script.
+   same script, and provisioning from the release fails with a typed error
+   that names the empty pin, the workflow and the release.
+7. **Streaming, beyond the design.** `Provider.stream` and `Provider.read`
+   (one piece per update in a TEA app) and `Provider.chatStream` (a callback
+   in a Task program) stream an answer from a server slot, the built-in
+   backends and a device slot. The engine core gained a step API
+   (`sky_llama_chat_begin` / `sky_llama_chat_next`), and the fallback gained a
+   streaming route (`POST /_sky/ai/device/<slot>/stream`).
 
 ## 15. Risks
 

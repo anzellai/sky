@@ -522,6 +522,22 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   the server, where `Std.Ai.Device` answers as the slot. A task that asks the
   device alone stays in the client
   (`rust/crates/project/tests/spa_ai_device_mixed.rs`).
+- **A `Server.listen` app said it was listening before it was.** The
+  "listening" line, which `sky run`'s supervisor, the build-run gate and the
+  flow tests read as the readiness signal, was printed before the port was
+  bound, so under load a client that read it was refused (the
+  `ai-device-partition` gate failed right after a rebuild). The port is bound
+  first now (`TestServerListen_PrintsListeningOnlyOnceBound`).
+- **`--ai-embed` could leave an `--embed` app's database running.** The
+  server's `--sky-ai-export` step ended with `os.Exit`, which skips the
+  embedded PostgreSQL's shutdown; it now ends through `rt.ExitProcess`
+  (`pg_embed_exit_audit_test.go` was red).
+- **A streamed answer on WebGPU failed** ("trying to suspend without
+  WebAssembly.promising"): the streaming engine functions were not JSPI
+  exports of the WebGPU build (`ai_device_engine_exports.rs`).
+- **The device e2e reused an earlier run's model in WebKit**, whose persistent
+  context keeps the origin-private file system across profiles; each probe
+  run now starts from an empty device store.
 - **The server-rendered page of a Sky.Spa app named no browser engine.** The
   `sky-ai-engine` meta was only in the static `index.html`, so an app with
   routes never offered the device. `sky build` now writes it into the backend
