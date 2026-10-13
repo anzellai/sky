@@ -61,82 +61,164 @@ import Sky.Core.Maybe as Maybe exposing (Maybe(..))
 import Std.Money as Money exposing (Money)
 import Std.Decimal as Decimal
 
+-- The payload of each constructor is a named record, so a function that
+-- matches a `Failure` reads the stdlib constructor's payload with one runtime
+-- narrowing instead of one per field (doc 14 §4.5, R6). Constructing and
+-- matching are unchanged: `NotConfigured { setting = "x" }` still builds one,
+-- and `NotConfigured r -> r.setting` still reads it. Constructors with the
+-- same fields share one record.
+type alias NotConfiguredPayload =
+    { setting : String }
+
+type alias InvalidSettingPayload =
+    { setting : String
+    , reason : String
+    }
+
+type alias UnreachablePayload =
+    { target : String }
+
+type alias OverloadedPayload =
+    { retryAfterMs : Maybe Int
+    , status : Maybe Int
+    }
+
+type alias TimedOutPayload =
+    { afterMs : Maybe Int }
+
+type alias EngineCrashedPayload =
+    { exitCode : Maybe Int
+    , logTail : String
+    }
+
+type alias EngineFailedPayload =
+    { reason : String }
+
+type alias BytesPayload =
+    { needBytes : Int
+    , availableBytes : Int
+    }
+
+type alias NoAcceleratorPayload =
+    { wanted : String }
+
+type alias NotProvisionedPayload =
+    { what : String
+    , command : String
+    }
+
+type alias ChecksumMismatchPayload =
+    { expected : String
+    , actual : String
+    }
+
+type alias RemoteRejectedPayload =
+    { status : Int }
+
+type alias BudgetExceededPayload =
+    { budget : Money
+    , estimate : Money
+    }
+
+type alias ToolchainFailedPayload =
+    { tool : String
+    , logTail : String
+    }
+
+type alias GateFailedPayload =
+    { suite : String
+    , reasons : String
+    }
+
+type alias NotRegisteredPayload =
+    { ref : String }
+
+type alias NotPromotablePayload =
+    { ref : String
+    , reason : String
+    }
+
+type alias PromotionConflictPayload =
+    { ref : String
+    , expected : String
+    , actual : String
+    }
+
+type alias AdapterMismatchPayload =
+    { adapter : String
+    , adapterBase : String
+    , engineBase : String
+    }
+
+type alias DatasetInvalidPayload =
+    { dataset : String
+    , reasons : String
+    }
+
+type alias TrainingFailedPayload =
+    { runId : String
+    , step : Int
+    , reason : String
+    , logTail : String
+    }
+
+type alias TrainingCancelledPayload =
+    { runId : String
+    , step : Int
+    }
+
+type alias QuotaExceededPayload =
+    { resource : String
+    , region : String
+    , limit : Int
+    }
+
+type alias CapacityUnavailablePayload =
+    { resource : String
+    , region : String
+    }
+
+type alias DeploymentFailedPayload =
+    { target : String
+    , reason : String
+    , logTail : String
+    }
+
+type alias DeviceUnsupportedPayload =
+    { backend : String
+    , reason : String
+    }
+
 -- | Every AI failure. Attributes hold no secret: a URL is reduced to its
 -- scheme, host and port, and a log tail is the end of an engine's own log.
 type Failure
-    = NotConfigured { setting : String }
-    | InvalidSetting { setting : String
-, reason : String
-}
-    | Unreachable { target : String }
-    | Overloaded { retryAfterMs : Maybe Int
-, status : Maybe Int
-}
-    | TimedOut { afterMs : Maybe Int }
-    | EngineCrashed { exitCode : Maybe Int
-, logTail : String
-}
-    | EngineFailed { reason : String }
-    | ModelTooLarge { needBytes : Int
-, availableBytes : Int
-}
-    | NoAccelerator { wanted : String }
-    | NotProvisioned { what : String
-, command : String
-}
-    | ChecksumMismatch { expected : String
-, actual : String
-}
-    | RemoteRejected { status : Int }
-    | BudgetExceeded { budget : Money
-, estimate : Money
-}
-    | ToolchainFailed { tool : String
-, logTail : String
-}
-    | GateFailed { suite : String
-, reasons : String
-}
-    | NotRegistered { ref : String }
-    | NotPromotable { ref : String
-, reason : String
-}
-    | PromotionConflict { ref : String
-, expected : String
-, actual : String
-}
-    | AdapterMismatch { adapter : String
-, adapterBase : String
-, engineBase : String
-}
-    | DatasetInvalid { dataset : String
-, reasons : String
-}
-    | TrainingFailed { runId : String
-, step : Int
-, reason : String
-, logTail : String
-}
-    | TrainingCancelled { runId : String
-, step : Int
-}
-    | QuotaExceeded { resource : String
-, region : String
-, limit : Int
-}
-    | CapacityUnavailable { resource : String
-, region : String
-}
-    | DeploymentFailed { target : String
-, reason : String
-, logTail : String
-}
-    | DeviceUnsupported { backend : String
-, reason : String
-}
-    | StorageDenied { needBytes : Int
-, availableBytes : Int
-}
+    = NotConfigured NotConfiguredPayload
+    | InvalidSetting InvalidSettingPayload
+    | Unreachable UnreachablePayload
+    | Overloaded OverloadedPayload
+    | TimedOut TimedOutPayload
+    | EngineCrashed EngineCrashedPayload
+    | EngineFailed EngineFailedPayload
+    | ModelTooLarge BytesPayload
+    | NoAccelerator NoAcceleratorPayload
+    | NotProvisioned NotProvisionedPayload
+    | ChecksumMismatch ChecksumMismatchPayload
+    | RemoteRejected RemoteRejectedPayload
+    | BudgetExceeded BudgetExceededPayload
+    | ToolchainFailed ToolchainFailedPayload
+    | GateFailed GateFailedPayload
+    | NotRegistered NotRegisteredPayload
+    | NotPromotable NotPromotablePayload
+    | PromotionConflict PromotionConflictPayload
+    | AdapterMismatch AdapterMismatchPayload
+    | DatasetInvalid DatasetInvalidPayload
+    | TrainingFailed TrainingFailedPayload
+    | TrainingCancelled TrainingCancelledPayload
+    | QuotaExceeded QuotaExceededPayload
+    | CapacityUnavailable CapacityUnavailablePayload
+    | DeploymentFailed DeploymentFailedPayload
+    | DeviceUnsupported DeviceUnsupportedPayload
+    | StorageDenied BytesPayload
 
 
 -- | The domain every AI failure is recorded in.

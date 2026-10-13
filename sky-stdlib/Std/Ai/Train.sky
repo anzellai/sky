@@ -204,16 +204,21 @@ type alias Snapshot =
     , files : List SnapshotFile
     }
 
+-- `BaseModel`'s payloads are named records, so a match reads each payload with
+-- one runtime narrowing instead of one per field (doc 14 §4.5, R6).
+type alias BaseModelPayload =
+    { id : String
+    , mlx : Maybe Snapshot
+    , unsloth : Maybe Snapshot
+    , serving : Local.ModelRef
+    }
+
 -- | The model an adapter is trained on: an id (`<org>/<repo>@<commit>` of the
 -- original weights), the pinned weights each backend trains on, and the GGUF
 -- model that serves the adapter (its digest is the adapter's base digest in
 -- the registry, and the engine checks it before loading the adapter).
 type BaseModel
-    = BaseModel { id : String
-, mlx : Maybe Snapshot
-, unsloth : Maybe Snapshot
-, serving : Local.ModelRef
-}
+    = BaseModel BaseModelPayload
 
 
 -- | A base model from its id and the GGUF model that serves it. Add the
@@ -457,12 +462,17 @@ type alias Settings =
     , labels : List ( String, String )
     }
 
+-- `Job`'s payloads are named records, so a match reads each payload with
+-- one runtime narrowing instead of one per field (doc 14 §4.5, R6).
+type alias JobPayload =
+    { s : Settings
+    , base : BaseModel
+    , registry : Maybe Registry.Registry
+    }
+
 -- | A training job: a base, a frozen dataset version and the settings.
 type Job
-    = Job { s : Settings
-, base : BaseModel
-, registry : Maybe Registry.Registry
-}
+    = Job JobPayload
 
 
 -- | A LoRA job on a chat dataset (the `{"messages": [...]}` format). The loss
@@ -1439,38 +1449,64 @@ emptyProgress id =
     , message = ""
     }
 
+-- `Event`'s payloads are named records, so a match reads each payload with
+-- one runtime narrowing instead of one per field (doc 14 §4.5, R6).
+type alias HelloPayload =
+    { backend : String
+    , attempt : Int
+    , resumeFrom : Int
+    , totalSteps : Int
+    }
+
+type alias StepProgressPayload =
+    { step : Int
+    , total : Int
+    , loss : Float
+    , tokensPerSecond : Float
+    }
+
+type alias MetricPayload =
+    { step : Int
+    , name : String
+    , value : Float
+    }
+
+type alias CheckpointPayload =
+    { step : Int
+    , path : String
+    }
+
+type alias ArtefactPayload =
+    { kind : String
+    , path : String
+    , sha256 : String
+    }
+
+type alias DoneEventPayload =
+    { step : Int
+    , trainLoss : Float
+    , valLoss : Float
+    }
+
+type alias CancelledEventPayload =
+    { step : Int }
+
+type alias DriverErrorPayload =
+    { code : String
+    , message : String
+    }
+
 -- ── The driver protocol ─────────────────────────────────────────────
 -- | One line the trainer writes (`docs/ai/train.md`, "The driver protocol").
 type Event
-    = Hello { backend : String
-, attempt : Int
-, resumeFrom : Int
-, totalSteps : Int
-}
-    | StepProgress { step : Int
-, total : Int
-, loss : Float
-, tokensPerSecond : Float
-}
-    | Metric { step : Int
-, name : String
-, value : Float
-}
-    | Checkpoint { step : Int
-, path : String
-}
-    | Artefact { kind : String
-, path : String
-, sha256 : String
-}
-    | DoneEvent { step : Int
-, trainLoss : Float
-, valLoss : Float
-}
-    | CancelledEvent { step : Int }
-    | DriverError { code : String
-, message : String
-}
+    = Hello HelloPayload
+    | StepProgress StepProgressPayload
+    | Metric MetricPayload
+    | Checkpoint CheckpointPayload
+    | Artefact ArtefactPayload
+    | DoneEvent DoneEventPayload
+    | CancelledEvent CancelledEventPayload
+    | DriverError DriverErrorPayload
 
 
 toolchainFailed : String -> Error

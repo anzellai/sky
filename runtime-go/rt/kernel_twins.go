@@ -1,5 +1,7 @@
 package rt
 
+import "strings"
+
 // kernel_twins.go — typed-result twins of erased kernels whose Go result has
 // exactly one type. Each calls the erased kernel and asserts that one type, so
 // its semantics are the erased kernel's by construction; the lowerer calls it
@@ -37,3 +39,12 @@ func List_rangeT(lo, hi int) []int {
 // exactly the erased one.
 func Math_minFloatT(a, b float64) float64 { return Math_min(a, b).(float64) }
 func Math_maxFloatT(a, b float64) float64 { return Math_max(a, b).(float64) }
+
+// System_getenvOrT, Secret_revealT and Crypto_sha256T: the erased kernel's one
+// result type, asserted inside the runtime (v0.28.0 phase 4 twins).
+func System_getenvOrT(name, def any) string { return System_getenvOr(name, def).(string) }
+func Secret_revealT(v any) string           { return secretReveal(v) }
+func Crypto_sha256T(s any) string           { return Crypto_sha256(s).(string) }
+
+// String_linesT is String_lines over a proven string: the same split on "\n".
+func String_linesT(s string) []string { return strings.Split(s, "\n") }

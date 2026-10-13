@@ -9865,6 +9865,26 @@ fn kernel_typed_return_twin(go: &str, nargs: usize) -> Option<TypedTwin> {
             vec![Some(str_()), Some(str_()), Some(str_())],
             str_(),
         ),
+        // v0.28.0 phase 4: the kernels the Std.Ai training, store and cloud
+        // code calls most (kernel_twins_test.go checks each against its
+        // erased form). `String.split` / `isEmpty` / `lines` take proven
+        // strings (the pre-existing `String_splitT` / `String_isEmptyT`);
+        // `System.getenvOr`, `Secret.reveal` and `Crypto.sha256` assert the
+        // erased kernel's one result type inside the runtime.
+        ("rt.String_split", 2) => twin(
+            "rt.String_splitT",
+            vec![Some(str_()), Some(str_())],
+            GoTy::Slice(Box::new(str_())),
+        ),
+        ("rt.String_isEmpty", 1) => twin("rt.String_isEmptyT", vec![Some(str_())], bool_()),
+        ("rt.String_lines", 1) => twin(
+            "rt.String_linesT",
+            vec![Some(str_())],
+            GoTy::Slice(Box::new(str_())),
+        ),
+        ("rt.System_getenvOr", 2) => twin("rt.System_getenvOrT", vec![None, None], str_()),
+        ("rt.Secret_reveal", 1) => twin("rt.Secret_revealT", vec![None], str_()),
+        ("rt.Crypto_sha256", 1) => twin("rt.Crypto_sha256T", vec![None], str_()),
         _ => None,
     }
 }

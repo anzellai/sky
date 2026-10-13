@@ -464,6 +464,14 @@ The table also covers the typed Math companions (`Math_sqrtT` … `Math_roundT`,
 types the lowered arguments match. `String_fromFloatT` is NOT used: it formats
 with `'g'` where the erased kernel uses `'f'`, so it is a different function.
 
+The v0.28.0 phase 4 entries route `String.split` / `String.isEmpty` /
+`String.lines` over proven strings to `rt.String_splitT` / `String_isEmptyT`
+(both pre-existing and, until then, never called) and `String_linesT`, and
+`System.getenvOr`, `Secret.reveal` and `Crypto.sha256` over erased arguments
+to `System_getenvOrT` / `Secret_revealT` / `Crypto_sha256T`, which assert the
+erased kernel's one result type inside the runtime
+(`kernel_twins_test.go`, `TestSplitLinesEnvSecretShaTwinsMatchErased`).
+
 An empty list literal `[]` in a typed slot is built at the slot's slice type
 (`lower_expr_at`, lever §5.2): it carries no element, so `[]T{}` is exactly the
 value the former `rt.AsListT[T]([]any{})` produced.

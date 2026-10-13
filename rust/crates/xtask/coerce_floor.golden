@@ -379,13 +379,69 @@
 #   twin closes a large share; the largest twin candidates are
 #   `AsListT(String.split …)` (29) and `AsBool(String.isEmpty …)` (10). Not
 #   traced site by site.
-00-standard-libs	adapter=0	dispatch=0	narrow=122
+# ── Recorded transition, 2026-10-13 — phase 4 rises, reduced and cited ──
+#   83 of 86 rows measured; 05-mux-server, 08-notes-app and 13-skyshop are
+#   carried forward (SKY_LIVE_TESTS=skip, no generated FFI surface, and
+#   installing it would take the disk under its 60 GB floor). No row rises;
+#   37 fall. Two levers:
+#   * R5 (lower.rs `kernel_call`, the `kernel_typed_return_twin` branch),
+#     lever §5.3: `String.split` / `isEmpty` / `lines` over proven strings go
+#     to `rt.String_splitT` / `String_isEmptyT` / `String_linesT`, and
+#     `System.getenvOr`, `Secret.reveal`, `Crypto.sha256` to `..T` twins that
+#     assert the erased kernel's one result type. §1: the kernel's result has
+#     one Go type and a `Some` parameter is used only when the argument
+#     already lowers to it, so both shapes are known at emit time.
+#     runtime-go/rt/kernel_twins_test.go checks each twin against its erased
+#     kernel.
+#   * R6 (lower.rs `narrow_ctor_subject` / `narrow_erased`), lever §5.2 with
+#     the record resolution of goty.rs (`record_fieldsets`): the payloads of
+#     Std.Ai.Failure's 27 constructors, Std.Ai.Train's `Event`, `Job` and
+#     `BaseModel` and Std.Ai.Dataset's `Issue` are named records. A match
+#     then reads a payload with one narrowing instead of one per field. §1:
+#     the payload's shape is known; `SkyADT.Fields[i]` stays `any` by the
+#     stdlib-ADT contract (§4.5), so one narrowing remains per read.
+#   The gate that goes red if either regresses is this one (narrow is
+#   fail-on-increase on every Std.Ai row); the Std.Ai suites
+#   (scripts/sky-suites.sh Std_Ai, 14 suites) prove the semantics.
+#   Rows against their value before phase 4 (15944613d):
+#     68-ai-dataset 489 -> 431 and sky-bundled/console 182 -> 180: below.
+#     70-ai-synthetic 408 -> 419 (+11), 71-ai-registry 790 -> 825 (+35),
+#     72-ai-support-desk 434 -> 442 (+8), 75-ai-everywhere 855 -> 868 (+13),
+#     sky-bundled/ai 552 -> 651 (+99), 73-ai-train 1007 -> 1292 (+285),
+#     sky-bundled/ai-train 872 -> 1186 (+314).
+#   Cause, per row: each rise is smaller than the sites in functions that
+#   did not exist before phase 4 (counted per emitted Go function against
+#   the 15944613d stdlib): 70 has 43 such sites, 71 has 139, 72 has 82, 75
+#   has 43, sky-bundled/ai 126, 73 440, sky-bundled/ai-train 459. The code
+#   that existed before phase 4 now carries fewer sites than it did. The new
+#   code is reachable in every one of these programs, so dead-code
+#   elimination cannot drop it, and no dispatch restructuring would:
+#   - Std.Ai.Cloud.Google's token code (43 to 51 sites per row) is reached
+#     from every `Endpoint`: `Endpoint.endpoint` holds `Google.idToken`
+#     (Endpoint.sky, the default record), and `SKY_AI_<SLOT>_AUTH=google`
+#     turns it on at run time (runtime-go/rt/ai_endpoint.go, `cfg.auth ==
+#     "google"`).
+#   - Std.Ai.Store's GCS and S3 object operations are chosen by the store
+#     URL's scheme at run time (`Store.fromUrl`), and the registry's
+#     companion and pointer objects are written by every `register` /
+#     `promote`.
+#   - Std.Ai.Train's Vertex backend is chosen at run time by
+#     `SKY_AI_TRAIN_BACKEND=vertex` (runtime-go/rt/ai_train.go,
+#     `aiTrainResolveBackend`), which overrides `withBackend` and detection
+#     by design: a program built for a local backend runs on Vertex AI by an
+#     environment variable, so every training program links it.
+#   The remaining sites in this code are R2 (`eta_narrow`, the JSON decoder
+#   callbacks: already the closed form), R6 reads of stdlib ADTs (§4.5), R10
+#   / R11 `rt.Field` on open rows (policy floor, §4.6) and R5 returns of
+#   kernels with no one-type twin. New rows: 74-ai-cloud 1589 -> 1414 and
+#   sky-bundled/ai-cloud 634 -> 540, measured, not limited.
+00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
-02-go-stdlib	adapter=0	dispatch=0	narrow=7
+02-go-stdlib	adapter=0	dispatch=0	narrow=6
 03-tea-external	adapter=0	dispatch=0	narrow=3
 04-local-pkg	adapter=0	dispatch=0	narrow=1
 05-mux-server	adapter=0	dispatch=0	narrow=3
-06-json	adapter=0	dispatch=0	narrow=61
+06-json	adapter=0	dispatch=0	narrow=60
 07-todo-cli	adapter=0	dispatch=0	narrow=159
 08-notes-app	adapter=0	dispatch=0	narrow=358
 09-live-counter	adapter=0	dispatch=0	narrow=100
@@ -395,16 +451,16 @@
 14-task-demo	adapter=0	dispatch=0	narrow=8
 15-http-server	adapter=0	dispatch=0	narrow=8
 16-skychess	adapter=0	dispatch=0	narrow=466
-17-skymon	adapter=0	dispatch=0	narrow=443
+17-skymon	adapter=0	dispatch=0	narrow=427
 18-job-queue	adapter=0	dispatch=0	narrow=197
-19-skyforum	adapter=0	dispatch=0	narrow=95
+19-skyforum	adapter=0	dispatch=0	narrow=92
 20-cli-counter	adapter=0	dispatch=0	narrow=40
 21-tui-stopwatch	adapter=0	dispatch=0	narrow=45
 22-tui-stopwatch-ui	adapter=0	dispatch=0	narrow=51
-23-tui-todo	adapter=0	dispatch=0	narrow=63
+23-tui-todo	adapter=0	dispatch=0	narrow=62
 24-tui-kitchen-sink	adapter=0	dispatch=0	narrow=69
 25-sky-console	adapter=0	dispatch=0	narrow=67
-26-ui-showcase	adapter=0	dispatch=0	narrow=209
+26-ui-showcase	adapter=0	dispatch=0	narrow=208
 27-multi-session-chat	adapter=0	dispatch=0	narrow=191
 28-streaming-chat	adapter=0	dispatch=0	narrow=72
 29-webview-threejs-spike	adapter=0	dispatch=0	narrow=51
@@ -413,10 +469,10 @@
 32-sse-relay	adapter=0	dispatch=0	narrow=18
 33-websocket-echo	adapter=0	dispatch=0	narrow=4
 34-multi-tier-console	adapter=0	dispatch=0	narrow=60
-35-composite-generics	adapter=0	dispatch=0	narrow=129
-36-composite-server	adapter=0	dispatch=0	narrow=236
-37-composite-live-shop	adapter=0	dispatch=0	narrow=286
-38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=225
+35-composite-generics	adapter=0	dispatch=0	narrow=126
+36-composite-server	adapter=0	dispatch=0	narrow=233
+37-composite-live-shop	adapter=0	dispatch=0	narrow=281
+38-composite-ui-multibackend	adapter=0	dispatch=0	narrow=223
 40-generic-adt-field	adapter=0	dispatch=0	narrow=2
 41-nested-curry	adapter=0	dispatch=0	narrow=4
 42-poly-record	adapter=0	dispatch=0	narrow=2
@@ -429,39 +485,39 @@
 49-xmodule-adt	adapter=0	dispatch=0	narrow=1
 50-open-row-closure	adapter=0	dispatch=0	narrow=11
 51-kernel-variadic-arity	adapter=0	dispatch=0	narrow=2
-52-blog-analytics	adapter=0	dispatch=0	narrow=370
+52-blog-analytics	adapter=0	dispatch=0	narrow=367
 53-record-update-map	adapter=0	dispatch=0	narrow=21
 54-record-fieldset-collision	adapter=0	dispatch=0	narrow=1
 55-store-partial-update	adapter=0	dispatch=0	narrow=123
-61-app-kanban	adapter=0	dispatch=0	narrow=181
-62-app-notes	adapter=0	dispatch=0	narrow=345
-63-app-chat	adapter=0	dispatch=0	narrow=346
-64-app-native	adapter=0	dispatch=0	narrow=208
+61-app-kanban	adapter=0	dispatch=0	narrow=177
+62-app-notes	adapter=0	dispatch=0	narrow=338
+63-app-chat	adapter=0	dispatch=0	narrow=340
+64-app-native	adapter=0	dispatch=0	narrow=204
 65-metadata-service	adapter=0	dispatch=0	narrow=16
-66-slack-agent	adapter=0	dispatch=0	narrow=135
+66-slack-agent	adapter=0	dispatch=0	narrow=134
 67-durable-counter	adapter=0	dispatch=0	narrow=73
-68-ai-dataset	adapter=0	dispatch=0	narrow=500
-69-ai-scrub	adapter=0	dispatch=0	narrow=62
-70-ai-synthetic	adapter=0	dispatch=0	narrow=479
-71-ai-registry	adapter=0	dispatch=0	narrow=907
-72-ai-support-desk	adapter=0	dispatch=0	narrow=514
-73-ai-train	adapter=0	dispatch=0	narrow=1462
-74-ai-cloud	adapter=0	dispatch=0	narrow=1589
-75-ai-everywhere	adapter=0	dispatch=0	narrow=926
-apps/dispatch	adapter=0	dispatch=0	narrow=326
-apps/fieldbook	adapter=0	dispatch=0	narrow=468
+68-ai-dataset	adapter=0	dispatch=0	narrow=431
+69-ai-scrub	adapter=0	dispatch=0	narrow=60
+70-ai-synthetic	adapter=0	dispatch=0	narrow=419
+71-ai-registry	adapter=0	dispatch=0	narrow=825
+72-ai-support-desk	adapter=0	dispatch=0	narrow=442
+73-ai-train	adapter=0	dispatch=0	narrow=1292
+74-ai-cloud	adapter=0	dispatch=0	narrow=1414
+75-ai-everywhere	adapter=0	dispatch=0	narrow=868
+apps/dispatch	adapter=0	dispatch=0	narrow=318
+apps/fieldbook	adapter=0	dispatch=0	narrow=459
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2
-apps/ledger	adapter=0	dispatch=0	narrow=415
-apps/relay	adapter=0	dispatch=0	narrow=132
+apps/ledger	adapter=0	dispatch=0	narrow=410
+apps/relay	adapter=0	dispatch=0	narrow=119
 examples/39-hub-demo/billing-app	adapter=0	dispatch=0	narrow=62
 examples/39-hub-demo/frontend-app	adapter=0	dispatch=0	narrow=63
-examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=192
-examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
-examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=195
+examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=187
+examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
+examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=193
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/ai	adapter=0	dispatch=0	narrow=731
-sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=634
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1360
-sky-bundled/console	adapter=0	dispatch=0	narrow=183
-sky-bundled/doc	adapter=0	dispatch=0	narrow=51
+sky-bundled/ai	adapter=0	dispatch=0	narrow=651
+sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=540
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1186
+sky-bundled/console	adapter=0	dispatch=0	narrow=180
+sky-bundled/doc	adapter=0	dispatch=0	narrow=48
 test_pkg	adapter=0	dispatch=0	narrow=1

@@ -242,14 +242,32 @@ func TestAiFailSpecsMatchFailureSky(t *testing.T) {
 	if end := strings.Index(block[1:], "\n\n"); end > 0 {
 		block = block[:end+1]
 	}
-	re := regexp.MustCompile(`(?s)[=|] ([A-Z][A-Za-z]*) \{([^}]*)\}`)
-	sky := map[string][]string{}
-	for _, m := range re.FindAllStringSubmatch(block, -1) {
+	fieldsOf := func(record string) []string {
 		var fields []string
-		for _, f := range strings.Split(m[2], ",") {
+		for _, f := range strings.Split(record, ",") {
 			fields = append(fields, strings.TrimSpace(strings.SplitN(f, ":", 2)[0]))
 		}
-		sky[m[1]] = fields
+		return fields
+	}
+	// A constructor's payload is an inline record or a named one
+	// (`type alias XPayload = { … }`, which reads each payload with one
+	// runtime narrowing, doc 14 R6).
+	aliases := map[string][]string{}
+	for _, m := range regexp.MustCompile(`(?s)\ntype alias ([A-Z][A-Za-z]*) =\s*\{([^}]*)\}`).FindAllStringSubmatch(src, -1) {
+		aliases[m[1]] = fieldsOf(m[2])
+	}
+	re := regexp.MustCompile(`(?s)[=|] ([A-Z][A-Za-z]*) (?:\{([^}]*)\}|([A-Z][A-Za-z]*))`)
+	sky := map[string][]string{}
+	for _, m := range re.FindAllStringSubmatch(block, -1) {
+		if m[3] != "" {
+			fields, ok := aliases[m[3]]
+			if !ok {
+				t.Fatalf("%s: payload %s is not a record alias in Failure.sky", m[1], m[3])
+			}
+			sky[m[1]] = fields
+			continue
+		}
+		sky[m[1]] = fieldsOf(m[2])
 	}
 	var goCodes, skyCodes []string
 	for c := range aiFailSpecs {

@@ -1084,29 +1084,43 @@ estimateTokens : String -> Int
 estimateTokens s =
     (String.length s + 3) // 4
 
+-- `Issue`'s payloads are named records, so a match reads each payload with
+-- one runtime narrowing instead of one per field (doc 14 §4.5, R6).
+type alias EmptyTurnPayload =
+    { row : Int
+    , turn : Int
+    }
+
+type alias RoleOrderPayload =
+    { row : Int
+    , reason : String
+    }
+
+type alias TooManyTokensPayload =
+    { row : Int
+    , tokens : Int
+    , limit : Int
+    }
+
+type alias TooFewTurnsPayload =
+    { row : Int
+    , turns : Int
+    , limit : Int
+    }
+
+type alias DuplicateRowPayload =
+    { row : Int
+    , firstRow : Int
+    }
+
 -- | One problem in one row (rows count from 1).
 type Issue
-    = EmptyTurn { row : Int
-, turn : Int
-}
-    | RoleOrder { row : Int
-, reason : String
-}
-    | TooManyTokens { row : Int
-, tokens : Int
-, limit : Int
-}
-    | TooFewTurns { row : Int
-, turns : Int
-, limit : Int
-}
-    | TooManyTurns { row : Int
-, turns : Int
-, limit : Int
-}
-    | DuplicateRow { row : Int
-, firstRow : Int
-}
+    = EmptyTurn EmptyTurnPayload
+    | RoleOrder RoleOrderPayload
+    | TooManyTokens TooManyTokensPayload
+    | TooFewTurns TooFewTurnsPayload
+    | TooManyTurns TooFewTurnsPayload
+    | DuplicateRow DuplicateRowPayload
 
 
 -- | An issue as one line, with no message text.

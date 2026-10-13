@@ -184,3 +184,44 @@ func TestStringLengthTrimReplaceMatchTwinsMatchErased(t *testing.T) {
 		}
 	}
 }
+
+// The phase 4 twins: String.split / isEmpty / lines over proven strings, and
+// System.getenvOr / Secret.reveal / Crypto.sha256 over erased arguments.
+func TestSplitLinesEnvSecretShaTwinsMatchErased(t *testing.T) {
+	asStrings := func(v any) []string {
+		xs := v.([]any)
+		out := make([]string, len(xs))
+		for i, x := range xs {
+			out[i] = x.(string)
+		}
+		return out
+	}
+	eq := func(a, b []string) bool {
+		return strings.Join(a, "\x00") == strings.Join(b, "\x00") && len(a) == len(b)
+	}
+	for _, s := range append(twinStrings, "a\nb\n", "\n", "x/y/z", "a://b") {
+		if got, want := String_isEmptyT(s), String_isEmpty(s).(bool); got != want {
+			t.Errorf("isEmpty %q", s)
+		}
+		if got, want := String_linesT(s), asStrings(String_lines(s)); !eq(got, want) {
+			t.Errorf("lines %q: %q vs %q", s, got, want)
+		}
+		for _, sep := range []string{"", "/", "://", " ", "ö"} {
+			if got, want := String_splitT(sep, s), asStrings(String_split(sep, s)); !eq(got, want) {
+				t.Errorf("split %q %q: %q vs %q", sep, s, got, want)
+			}
+		}
+		if got, want := Crypto_sha256T(s), Crypto_sha256(s).(string); got != want {
+			t.Errorf("sha256 %q", s)
+		}
+		if got, want := Secret_revealT(Secret{v: s}), Secret_reveal(Secret{v: s}).(string); got != want {
+			t.Errorf("reveal %q", s)
+		}
+		if got, want := Secret_revealT(s), Secret_reveal(s).(string); got != want {
+			t.Errorf("reveal plain %q", s)
+		}
+	}
+	if got, want := System_getenvOrT("TWIN_TEST_UNSET_VARIABLE_Q", "fallback"), System_getenvOr("TWIN_TEST_UNSET_VARIABLE_Q", "fallback").(string); got != want || got != "fallback" {
+		t.Errorf("getenvOr default: %q vs %q", got, want)
+	}
+}
