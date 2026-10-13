@@ -26,6 +26,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
@@ -192,6 +195,7 @@ fn run_dir(work: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(unix)]
 #[test]
 fn mlx_trains_survives_a_killed_trainer_serves_and_evaluates() {
     if !gate() {
@@ -213,7 +217,33 @@ fn mlx_trains_survives_a_killed_trainer_serves_and_evaluates() {
             cmd.env_remove(k);
         }
     }
-    let driver = cmd.spawn().unwrap();
+    // The driver and everything in its group end with the test on every
+    // path, a panic in the wait below included. Its pipes are drained on
+    // threads, as `wait_with_output` did.
+    let mut driver = child_group::ChildGroup::spawn(&mut cmd).unwrap();
+    let drain = |r: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut r) = r {
+                let _ = r.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let stdout = drain(
+        driver
+            .child()
+            .stdout
+            .take()
+            .map(|r| Box::new(r) as Box<dyn std::io::Read + Send>),
+    );
+    let stderr = drain(
+        driver
+            .child()
+            .stderr
+            .take()
+            .map(|r| Box::new(r) as Box<dyn std::io::Read + Send>),
+    );
 
     // Wait for the first checkpoint (a first run fetches ~700 MB first), then
     // SIGKILL the trainer's whole process group.
@@ -241,7 +271,12 @@ fn mlx_trains_survives_a_killed_trainer_serves_and_evaluates() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let out = driver.wait_with_output().unwrap();
+    let status = driver.wait().expect("wait for the driver");
+    let out = Output {
+        status,
+        stdout: stdout.join().unwrap(),
+        stderr: stderr.join().unwrap(),
+    };
     assert!(out.status.success(), "drive: {}", text(&out));
     let a = json(&out);
     eprintln!("ai_train_mlx_live: {a}");

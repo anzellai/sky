@@ -11,6 +11,10 @@
 //! app. The same flow through `--target web:app` (both split legs) is the
 //! heavy `web_app_archive_build_reports_the_ci_commit` in spa_target_flow.rs.
 
+// Each test runs the built app in a `ChildGroup`, which needs unix process
+// groups.
+#![cfg(unix)]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -21,6 +25,10 @@ use std::time::Duration;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -190,14 +198,15 @@ fn http_get(port: u16, path: &str) -> Option<String> {
     buf.split_once("\r\n\r\n").map(|(_, b)| b.to_string())
 }
 
-/// Start `bin`, read `/_sky/buildinfo`, stop it (by its own PID).
+/// Start `bin`, read `/_sky/buildinfo`, stop it (its whole process group).
 fn buildinfo(bin: &Path, cwd: &Path, port: u16) -> serde_json::Value {
-    let mut child = Command::new(bin)
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn the app");
+    let mut child = ChildGroup::spawn(
+        Command::new(bin)
+            .current_dir(cwd)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    )
+    .expect("spawn the app");
     let mut body = None;
     for _ in 0..200 {
         std::thread::sleep(Duration::from_millis(100));
@@ -208,8 +217,7 @@ fn buildinfo(bin: &Path, cwd: &Path, port: u16) -> serde_json::Value {
             }
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let body = body.unwrap_or_else(|| panic!("{} never served /_sky/buildinfo", bin.display()));
     // The body may be chunked; take the JSON object.
     let start = body.find('{').unwrap();

@@ -16,11 +16,16 @@
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
+#[cfg(unix)]
+use child_group::ChildGroup;
 use live_gate::{required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
@@ -140,27 +145,31 @@ fn build(target: &str, port: u16) -> PathBuf {
     dir
 }
 
-/// The probe's backend, its output kept.
+/// The probe's backend, its output kept. The backend and anything it starts
+/// end with the guard on every path, the readiness assertion included.
+#[cfg(unix)]
 struct Backend {
-    child: Child,
+    _child: ChildGroup,
     lines: Arc<Mutex<Vec<String>>>,
 }
 
+#[cfg(unix)]
 impl Backend {
     fn start(split: &Path, port: u16, model: &str) -> Backend {
-        let mut child = Command::new(split.join("backend/sky-out/app"))
-            .current_dir(split.join("backend"))
-            .env("PORT", port.to_string())
-            .env("SKY_HOST", "0.0.0.0")
-            .env("SKY_AI_PROBE_MODEL", model)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("start the backend");
+        let mut child = ChildGroup::spawn(
+            Command::new(split.join("backend/sky-out/app"))
+                .current_dir(split.join("backend"))
+                .env("PORT", port.to_string())
+                .env("SKY_HOST", "0.0.0.0")
+                .env("SKY_AI_PROBE_MODEL", model)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .expect("start the backend");
         let lines = Arc::new(Mutex::new(Vec::new()));
         for stream in [
-            Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
-            Box::new(child.stderr.take().unwrap()),
+            Box::new(child.child().stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
+            Box::new(child.child().stderr.take().unwrap()),
         ] {
             let l = lines.clone();
             std::thread::spawn(move || {
@@ -169,7 +178,10 @@ impl Backend {
                 }
             });
         }
-        let b = Backend { child, lines };
+        let b = Backend {
+            _child: child,
+            lines,
+        };
         assert!(b.wait_for("listening", 30), "the backend never listened");
         b
     }
@@ -206,13 +218,6 @@ impl Backend {
             }
         }
         out
-    }
-}
-
-impl Drop for Backend {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -329,6 +334,7 @@ fn adb() -> PathBuf {
     sdk.join("platform-tools/adb")
 }
 
+#[cfg(unix)]
 #[test]
 #[ignore = "native: needs Go, the Android SDK, a running emulator and `sky ai provision --device android` (release gate-ai-device-android)"]
 fn android_emulator_runs_the_slot_on_the_device() {
@@ -420,13 +426,14 @@ fn desktop_mac_runs_the_slot_on_the_managed_engine() {
     let model = tiny_model();
     let backend = Backend::start(&split, port, &model);
     let home = scratch("desktop-home");
-    let mut app = Command::new(&bin)
-        .env("SKY_APP_URL", format!("http://127.0.0.1:{port}/"))
-        .env("SKY_AI_HOME", &home)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("start the desktop app");
+    let mut app = ChildGroup::spawn(
+        Command::new(&bin)
+            .env("SKY_APP_URL", format!("http://127.0.0.1:{port}/"))
+            .env("SKY_AI_HOME", &home)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    )
+    .expect("start the desktop app");
     let answered = backend.wait_for("SKY-PROBE stream=", 600);
     // SIGTERM: the app stops the engine it started on its way out. A SIGKILL
     // would leave the engine running until the next Sky program reaps it.
@@ -434,11 +441,10 @@ fn desktop_mac_runs_the_slot_on_the_managed_engine() {
         .args(["-TERM", &app.id().to_string()])
         .status();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while std::time::Instant::now() < deadline && app.try_wait().ok().flatten().is_none() {
+    while std::time::Instant::now() < deadline && app.child().try_wait().ok().flatten().is_none() {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    let _ = app.kill();
-    let _ = app.wait();
+    app.kill();
     assert!(answered, "no answer: {:?}", backend.reports());
     assert_on_device(&backend.reports(), "desktop:mac");
 }

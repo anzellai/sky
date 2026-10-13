@@ -9,11 +9,13 @@
 //! which logs its launch arguments, so the test reads which adapter file the
 //! slot loaded (`--lora <path>`).
 
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
@@ -739,6 +741,7 @@ const RUN_LIMIT: Duration = Duration::from_secs(600);
 // `sky run`), run nightly and by the release gate via `--ignored`, as the other
 // PostgreSQL legs are. The SQLite leg above and tests/Std/Ai/RegistryTest.sky
 // run per commit.
+#[cfg(unix)]
 #[test]
 #[ignore = "heavy real-DB e2e leg; runs nightly and in the release gate (--ignored)"]
 fn the_registry_runs_unchanged_on_postgres() {
@@ -757,32 +760,30 @@ fn the_registry_runs_unchanged_on_postgres() {
     .unwrap();
     std::fs::write(project.join("src/Main.sky"), PG_APP).unwrap();
     let out_path = project.join("run.out");
-    let mut child = Command::new(SKY)
-        .args(["run", "src/Main.sky"])
-        .current_dir(&project)
-        .env("SKY_HOME", &sky_home)
-        .env("SKY_POSTGRES_BIN", &pg_bin)
-        .env_remove("SKY_DB_PATH")
-        .env_remove("DATABASE_URL")
-        .env_remove("XDG_RUNTIME_DIR")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-        .stderr(Stdio::from(
-            std::fs::File::create(project.join("run.err")).unwrap(),
-        ))
-        .process_group(0)
-        .spawn()
-        .expect("spawn sky run");
+    // `sky run` and the cluster it supervises end with the test on every
+    // path, a panic included.
+    let mut child = child_group::ChildGroup::spawn(
+        Command::new(SKY)
+            .args(["run", "src/Main.sky"])
+            .current_dir(&project)
+            .env("SKY_HOME", &sky_home)
+            .env("SKY_POSTGRES_BIN", &pg_bin)
+            .env_remove("SKY_DB_PATH")
+            .env_remove("DATABASE_URL")
+            .env_remove("XDG_RUNTIME_DIR")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+            .stderr(Stdio::from(
+                std::fs::File::create(project.join("run.err")).unwrap(),
+            )),
+    )
+    .expect("spawn sky run");
     let deadline = Instant::now() + RUN_LIMIT;
     let status = loop {
-        match child.try_wait().unwrap() {
+        match child.child().try_wait().unwrap() {
             Some(s) => break s,
             None if Instant::now() >= deadline => {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(-(child.id() as i32)),
-                    nix::sys::signal::Signal::SIGKILL,
-                );
-                let _ = child.wait();
+                child.kill();
                 panic!("sky run did not finish within {RUN_LIMIT:?}");
             }
             None => std::thread::sleep(Duration::from_millis(200)),

@@ -19,6 +19,12 @@ use std::time::{Duration, Instant};
 mod live_gate;
 use live_gate::{required, Need};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 /// A unique suffix for a scratch directory. The clock alone is not unique:
@@ -157,6 +163,7 @@ fn sky_ai_refuses_a_bad_verb_shape_without_building_anything() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn sky_ai_start_ps_stop_drive_an_engine() {
     if !required(Need::Go, have_go()) {
@@ -182,20 +189,19 @@ fn sky_ai_start_ps_stop_drive_an_engine() {
     assert!(text.contains("no pinned cuda12 build"), "{text}");
 
     // start holds the engine in the foreground.
-    let mut start = fake
-        .sky(&cwd)
-        .args(["ai", "start", "chat", "--model", &fake.model_ref])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
+    let mut start = ChildGroup::spawn(
+        fake.sky(&cwd)
+            .args(["ai", "start", "chat", "--model", &fake.model_ref])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit()),
+    )
+    .unwrap();
     let mut line = String::new();
-    let mut reader = BufReader::new(start.stdout.take().unwrap());
+    let mut reader = BufReader::new(start.child().stdout.take().unwrap());
     let deadline = Instant::now() + Duration::from_secs(600);
     while !line.contains("ready") {
         line.clear();
         if reader.read_line(&mut line).unwrap() == 0 || Instant::now() > deadline {
-            let _ = start.kill();
             panic!("sky ai start never reported ready");
         }
     }
@@ -236,11 +242,10 @@ fn sky_ai_start_ps_stop_drive_an_engine() {
     );
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        if let Some(_status) = start.try_wait().unwrap() {
+        if let Some(_status) = start.child().try_wait().unwrap() {
             break;
         }
         if Instant::now() > deadline {
-            let _ = start.kill();
             panic!("sky ai start did not exit after sky ai stop");
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -267,20 +272,19 @@ fn sky_ai_start_ends_its_engine_on_ctrl_c() {
     }
     let fake = fake_engine();
     let cwd = temp_dir("cwd-sigint");
-    let mut start = fake
-        .sky(&cwd)
-        .args(["ai", "start", "chat", "--model", &fake.model_ref])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
+    let mut start = ChildGroup::spawn(
+        fake.sky(&cwd)
+            .args(["ai", "start", "chat", "--model", &fake.model_ref])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit()),
+    )
+    .unwrap();
     let mut line = String::new();
-    let mut reader = BufReader::new(start.stdout.take().unwrap());
+    let mut reader = BufReader::new(start.child().stdout.take().unwrap());
     let deadline = Instant::now() + Duration::from_secs(600);
     while !line.contains("ready") {
         line.clear();
         if reader.read_line(&mut line).unwrap() == 0 || Instant::now() > deadline {
-            let _ = start.kill();
             panic!("sky ai start never reported ready");
         }
     }
@@ -301,11 +305,10 @@ fn sky_ai_start_ends_its_engine_on_ctrl_c() {
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
     let status = loop {
-        if let Some(status) = start.try_wait().unwrap() {
+        if let Some(status) = start.child().try_wait().unwrap() {
             break status;
         }
         if Instant::now() > deadline {
-            let _ = start.kill();
             panic!("sky ai start did not exit on SIGINT");
         }
         std::thread::sleep(Duration::from_millis(50));

@@ -15,6 +15,10 @@
 //! the app again and assert the revoked session is EVICTED with the
 //! `X-Sky-Status: session-lost` signal (the e2e leg the rt tests cannot make).
 
+// The runtime leg holds the server in a `ChildGroup`, which needs unix
+// process groups.
+#![cfg(unix)]
+
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
@@ -22,6 +26,10 @@ use std::process::Command;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -188,17 +196,18 @@ fn revocation_app_builds_and_evicts() {
     let log_path = dir.join("server.log");
     let jar = dir.join("cookies.txt");
     let log = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&dir)
-        .env("SKY_LIVE_PORT", port.to_string())
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("spawn compiled revocation app");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&dir)
+            .env("SKY_LIVE_PORT", port.to_string())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    )
+    .expect("spawn compiled revocation app");
 
     let ready = wait_for_listening(&log_path, port, 60);
     if !ready {
-        let _ = child.kill();
+        child.kill();
         let mut buf = String::new();
         let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
         panic!("app never reported listening on :{port}\nlog:\n{buf}");
@@ -237,8 +246,7 @@ fn revocation_app_builds_and_evicts() {
     //    shared table FRESH, sees Disabled, and evicts.
     let (status, sky_status) = curl_status_and_header(port, "/", &jar, "x-sky-status", Some(&tab));
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let logs = {
         let mut b = String::new();
         let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut b));

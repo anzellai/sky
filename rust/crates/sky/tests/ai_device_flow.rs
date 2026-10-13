@@ -14,7 +14,13 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
+
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
@@ -179,7 +185,11 @@ fn tiny_model(dir: &Path) -> (String, String) {
     )
 }
 
-fn start(bin: &Path, port: u16, env: &[(&str, &str)], home: &Path) -> Child {
+/// Start the built server and wait for it to listen. The server is held by a
+/// `ChildGroup`, so a readiness timeout or a failed request later in the test
+/// still ends it (and anything it started) when the guard drops.
+#[cfg(unix)]
+fn start(bin: &Path, port: u16, env: &[(&str, &str)], home: &Path) -> ChildGroup {
     let mut c = Command::new(bin);
     c.current_dir(bin.parent().unwrap().parent().unwrap())
         .env("PORT", port.to_string())
@@ -190,8 +200,8 @@ fn start(bin: &Path, port: u16, env: &[(&str, &str)], home: &Path) -> Child {
     for (k, v) in env {
         c.env(k, v);
     }
-    let mut child = c.spawn().expect("start the server");
-    let stdout = child.stdout.take().unwrap();
+    let mut child = ChildGroup::spawn(&mut c).expect("start the server");
+    let stdout = child.child().stdout.take().unwrap();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -232,6 +242,7 @@ fn free_port() -> u16 {
         .port()
 }
 
+#[cfg(unix)]
 #[test]
 fn a_web_app_build_splits_the_device_kernels_and_serves_the_offer() {
     if !required(Need::Go, have_go()) {
@@ -316,8 +327,7 @@ fn a_web_app_build_splits_the_device_kernels_and_serves_the_offer() {
                 .unwrap()
         ),
     );
-    let _ = child.kill();
-    let _ = child.wait();
+    child.stop();
     let offer = String::from_utf8_lossy(&offer).to_string();
     assert_eq!(st, 200, "{offer}");
     let o: serde_json::Value = serde_json::from_str(&offer).unwrap();

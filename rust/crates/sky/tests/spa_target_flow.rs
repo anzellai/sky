@@ -15,6 +15,12 @@ use std::process::Command;
 mod live_gate;
 use live_gate::{required, Need};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn have_go() -> bool {
@@ -838,13 +844,14 @@ fn web_app_archive_build_reports_the_ci_commit() {
     assert!(sky_out.join("app-linux").is_file());
 
     let port = 9665u16;
-    let mut child = Command::new(sky_out.join("app-plain"))
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn the plain-built backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(sky_out.join("app-plain"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    )
+    .expect("spawn the plain-built backend");
     let mut body = None;
     for _ in 0..200 {
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -860,8 +867,7 @@ fn web_app_archive_build_reports_the_ci_commit() {
             }
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let body = body.expect("the backend never served /_sky/buildinfo");
     let bi: serde_json::Value = serde_json::from_str(body.trim()).unwrap();
     assert_eq!(bi["commit"], sha[..12], "{bi}");

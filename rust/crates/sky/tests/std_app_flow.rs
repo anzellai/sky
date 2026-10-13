@@ -20,6 +20,12 @@ use std::process::Command;
 mod live_gate;
 use live_gate::{required, Need};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 // Every test here `go build`s (some build a full spa split). Cargo runs them in
@@ -502,6 +508,7 @@ fn a_dispatched_entry_defaults_to_web_without_a_target() {
 /// structural reader follows the helper; the backend must answer 403 and never
 /// run the effect.
 #[test]
+#[cfg(unix)]
 fn a_guard_attached_via_a_local_helper_is_enforced_on_web_app() {
     if !required(Need::Go, have_go()) {
         return;
@@ -526,16 +533,17 @@ fn a_guard_attached_via_a_local_helper_is_enforced_on_web_app() {
     let port = 9231u16;
     let log_path = backend_dir.join("server.log");
     let log = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .env("ENV", "production")
-        .env("SKY_CONSOLE_AUTH", "off")
-        .env("HOME", "/sky-guard-secret-home")
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("spawn the web:app backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env("ENV", "production")
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env("HOME", "/sky-guard-secret-home")
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    )
+    .expect("spawn the web:app backend");
     let mut ready = false;
     for _ in 0..240 {
         let probe = Command::new("curl")
@@ -573,8 +581,7 @@ fn a_guard_attached_via_a_local_helper_is_enforced_on_web_app() {
     } else {
         None
     };
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&dir);
     let resp =
@@ -631,24 +638,24 @@ fn a_desktop_window_whose_live_server_fails_to_start_exits_at_once_naming_the_ca
     let log_path = dir.join("run.log");
     let log = std::fs::File::create(&log_path).unwrap();
     let started = std::time::Instant::now();
-    let mut child = Command::new(&bin)
-        .current_dir(&dir)
-        // 192.0.2.1 is TEST-NET-1: never an address of this machine, so the
-        // listener fails with "can't assign requested address".
-        .env("SKY_HOST", "192.0.2.1")
-        .env("SKY_LIVE_PORT", "9334")
-        .stdin(std::process::Stdio::null())
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("spawn desktop app");
+    let mut child = ChildGroup::spawn(
+        Command::new(&bin)
+            .current_dir(&dir)
+            // 192.0.2.1 is TEST-NET-1: never an address of this machine, so the
+            // listener fails with "can't assign requested address".
+            .env("SKY_HOST", "192.0.2.1")
+            .env("SKY_LIVE_PORT", "9334")
+            .stdin(std::process::Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    )
+    .expect("spawn desktop app");
     let status = loop {
-        if let Some(s) = child.try_wait().unwrap() {
+        if let Some(s) = child.child().try_wait().unwrap() {
             break Some(s);
         }
         if started.elapsed() > std::time::Duration::from_secs(20) {
-            let _ = child.kill();
-            let _ = child.wait();
+            child.kill();
             break None;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -842,6 +849,7 @@ fn build_live_config(tag: &str, config: &str) -> (PathBuf, PathBuf) {
 /// Run `bin` with `env`, wait until it reports listening on `port`, and return
 /// the response headers of `GET /`. Panics with the log when it never listens
 /// on `port` (for example because it bound another one).
+#[cfg(unix)]
 fn run_and_head(
     dir: &std::path::Path,
     bin: &std::path::Path,
@@ -859,7 +867,7 @@ fn run_and_head(
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn().expect("spawn the live-config app");
+    let mut child = ChildGroup::spawn(&mut cmd).expect("spawn the live-config app");
     let ready = wait_for_listening(&log_path, port, 60);
     let head = if ready {
         let url = format!("http://127.0.0.1:{port}/");
@@ -871,8 +879,7 @@ fn run_and_head(
     } else {
         String::new()
     };
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     if !ready {
         let buf = std::fs::read_to_string(&log_path).unwrap_or_default();
         panic!("the app never reported listening on :{port}\nlog:\n{buf}");
@@ -890,6 +897,7 @@ fn run_and_head(
 /// The precedence the fix must keep (docs/sky-toml.md "Precedence"):
 /// operator env > explicit `App.withConfig` > sky.toml > fallback.
 #[test]
+#[cfg(unix)]
 fn std_app_web_honours_sky_toml_port_and_explicit_web_config() {
     if !required(Need::Go, have_go()) {
         return;

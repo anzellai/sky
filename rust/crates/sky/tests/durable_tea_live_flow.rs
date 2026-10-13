@@ -25,14 +25,20 @@
 //! There is NO durable code in the app's model / msg / update — durability is
 //! the single `App.withDurable` builder line. Needs a `go` toolchain + `curl`.
 
+#![cfg(unix)]
+
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 const SKY_LIMIT: Duration = Duration::from_secs(420);
@@ -129,19 +135,18 @@ fn unique(tag: &str) -> String {
 fn run_bounded(cmd: &mut Command, what: &str) -> Output {
     let out_path = std::env::temp_dir().join(unique("dl-cmd-out"));
     let err_path = std::env::temp_dir().join(unique("dl-cmd-err"));
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
-        .spawn()
-        .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
+    let mut child = ChildGroup::spawn(
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+            .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap())),
+    )
+    .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
     let deadline = Instant::now() + SKY_LIMIT;
     let status = loop {
-        match child.try_wait().unwrap() {
+        match child.child().try_wait().unwrap() {
             Some(s) => break s,
             None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                child.kill();
                 panic!("`{what}` did not finish within {}s", SKY_LIMIT.as_secs());
             }
             None => std::thread::sleep(Duration::from_millis(50)),
@@ -165,8 +170,11 @@ fn both(o: &Output) -> String {
     )
 }
 
+/// A running server. `ChildGroup` ends it, and anything it started, on every
+/// path: `stop`, a failed assertion that unwinds past `stop`, or the test
+/// process itself being killed.
 struct Server {
-    child: Child,
+    child: ChildGroup,
     port: u16,
     log_path: PathBuf,
 }
@@ -175,17 +183,18 @@ impl Server {
     fn launch(project: &Path, app_bin: &Path, port: u16) -> Server {
         let log_path = std::env::temp_dir().join(unique("dl-log"));
         let log = std::fs::File::create(&log_path).unwrap();
-        let child = Command::new(app_bin)
-            .current_dir(project)
-            .env("SKY_LIVE_PORT", port.to_string())
-            // Default memory session store: cold on every fresh process, which
-            // is exactly the case durable restore must cover.
-            .env_remove("SKY_LIVE_STORE")
-            .stdin(Stdio::null())
-            .stdout(log.try_clone().unwrap())
-            .stderr(log)
-            .spawn()
-            .unwrap_or_else(|e| panic!("failed to spawn server on :{port}: {e}"));
+        let child = ChildGroup::spawn(
+            Command::new(app_bin)
+                .current_dir(project)
+                .env("SKY_LIVE_PORT", port.to_string())
+                // Default memory session store: cold on every fresh process, which
+                // is exactly the case durable restore must cover.
+                .env_remove("SKY_LIVE_STORE")
+                .stdin(Stdio::null())
+                .stdout(log.try_clone().unwrap())
+                .stderr(log),
+        )
+        .unwrap_or_else(|e| panic!("failed to spawn server on :{port}: {e}"));
         let mut s = Server {
             child,
             port,
@@ -200,7 +209,7 @@ impl Server {
 
     fn wait_for_log(&mut self, needle: &str, tries: u32) -> bool {
         for _ in 0..tries {
-            if let Ok(Some(status)) = self.child.try_wait() {
+            if let Ok(Some(status)) = self.child.child().try_wait() {
                 panic!(
                     "server on :{} exited early ({status}) before logging {needle:?}\nlog:\n{}",
                     self.port,
@@ -221,19 +230,10 @@ impl Server {
         buf
     }
 
+    /// KILL the server (the scenario is a crash, not a graceful stop).
     fn stop(mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.child.kill();
         let _ = std::fs::remove_file(&self.log_path);
-    }
-}
-
-// A failed assertion unwinds past `stop`; without this the server process
-// outlives the test and holds its port, so the next run cannot start.
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 

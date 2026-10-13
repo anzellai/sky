@@ -25,6 +25,12 @@ mod live_gate;
 #[allow(unused_imports)]
 use live_gate::{required, Need};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn scratch(tag: &str) -> PathBuf {
@@ -927,10 +933,11 @@ fn free_port() -> u16 {
 }
 
 /// The probe's backend, running; its output lines are collected. Dropping it
-/// stops it.
+/// stops it, and anything it started (`ChildGroup`), on a panic too.
 #[cfg(unix)]
 struct Backend {
-    child: std::process::Child,
+    #[allow(dead_code)] // held for its Drop
+    child: ChildGroup,
     lines: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -939,18 +946,19 @@ impl Backend {
     fn start(split: &Path, port: u16) -> Backend {
         use std::io::BufRead;
         let dir = split.join("backend");
-        let mut child = Command::new(dir.join("sky-out/app"))
-            .current_dir(&dir)
-            .env("PORT", port.to_string())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("start the probe backend");
+        let mut child = ChildGroup::spawn(
+            Command::new(dir.join("sky-out/app"))
+                .current_dir(&dir)
+                .env("PORT", port.to_string())
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped()),
+        )
+        .expect("start the probe backend");
         let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         for stream in [
-            Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
-            Box::new(child.stderr.take().unwrap()),
+            Box::new(child.child().stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
+            Box::new(child.child().stderr.take().unwrap()),
         ] {
             let lines = lines.clone();
             std::thread::spawn(move || {
@@ -1010,14 +1018,6 @@ impl Backend {
 
     fn output(&self) -> String {
         self.lines.lock().unwrap().join("\n")
-    }
-}
-
-#[cfg(unix)]
-impl Drop for Backend {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -1587,10 +1587,11 @@ fn first_avd(home: &Path) -> Option<String> {
 /// The Android emulator the test runs on: one that is already running (the
 /// CI runner's, or one a developer started), used as it is, or one this test
 /// starts from the first AVD. Dropping it stops only an emulator this test
-/// started, by its serial.
+/// started, by its serial, and then its whole process group (`ChildGroup`:
+/// the emulator's own children, on a panic too).
 #[cfg(unix)]
 struct Emulator {
-    started: Option<std::process::Child>,
+    started: Option<ChildGroup>,
     adb: PathBuf,
     serial: String,
 }
@@ -1686,18 +1687,19 @@ impl Emulator {
             });
         }
         let port = 5584;
-        let child = Command::new(home.join("emulator/emulator"))
-            .args(["-avd", avd?, "-port", &port.to_string()])
-            .args([
-                "-no-window",
-                "-no-audio",
-                "-no-boot-anim",
-                "-no-snapshot-save",
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .ok()?;
+        let child = ChildGroup::spawn(
+            Command::new(home.join("emulator/emulator"))
+                .args(["-avd", avd?, "-port", &port.to_string()])
+                .args([
+                    "-no-window",
+                    "-no-audio",
+                    "-no-boot-anim",
+                    "-no-snapshot-save",
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        )
+        .ok()?;
         Some(Emulator {
             started: Some(child),
             adb,
@@ -1943,13 +1945,13 @@ impl Drop for Emulator {
             .args(["-s", &self.serial, "emu", "kill"])
             .output();
         for _ in 0..60 {
-            if let Ok(Some(_)) = child.try_wait() {
-                return;
+            if let Ok(Some(_)) = child.child().try_wait() {
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        let _ = child.kill();
-        let _ = child.wait();
+        // The emulator, if it still runs, and anything it left in its group.
+        child.kill();
     }
 }
 

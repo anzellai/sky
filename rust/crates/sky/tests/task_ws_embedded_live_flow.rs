@@ -20,6 +20,8 @@
 //!
 //! Needs a `go` toolchain.
 
+#![cfg(unix)]
+
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -28,6 +30,10 @@ use std::time::{Duration, Instant};
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 const LIMIT: Duration = Duration::from_secs(420);
@@ -71,19 +77,18 @@ fn copy_dir(from: &Path, to: &Path) {
 fn run_bounded(cmd: &mut Command, what: &str) -> Output {
     let out_path = unique("twel-out");
     let err_path = unique("twel-err");
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
-        .spawn()
-        .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
+    let mut child = ChildGroup::spawn(
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+            .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap())),
+    )
+    .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
     let deadline = Instant::now() + LIMIT;
     let status = loop {
-        match child.try_wait().unwrap() {
+        match child.child().try_wait().unwrap() {
             Some(s) => break s,
             None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                child.kill();
                 panic!("`{what}` did not finish within {}s", LIMIT.as_secs());
             }
             None => std::thread::sleep(Duration::from_millis(50)),

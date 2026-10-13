@@ -9,13 +9,18 @@
 //! of a promotion are the real code. The deployment verbs run against
 //! `runtime-go/rt/testdata/fakegcp`, the runtime's Google Cloud emulator.
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
+#[cfg(unix)]
+use child_group::ChildGroup;
 use live_gate::{required, Need};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
@@ -66,20 +71,24 @@ fn go_build(name: &str, dir: &Path) -> PathBuf {
     bin
 }
 
-/// Start a testdata server and return it with its address.
-fn start_server(bin: &Path, dir: &Path, args: &[&str]) -> (Child, String) {
+/// Start a testdata server and return it with its address. The server and
+/// anything it starts end with the returned guard, on every path (the
+/// readiness panic below included).
+#[cfg(unix)]
+fn start_server(bin: &Path, dir: &Path, args: &[&str]) -> (ChildGroup, String) {
     let port_file = dir.join(format!(
         "{}.port",
         bin.file_name().unwrap().to_string_lossy()
     ));
-    let child = Command::new(bin)
-        .arg("-port-file")
-        .arg(&port_file)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("start the server");
+    let child = ChildGroup::spawn(
+        Command::new(bin)
+            .arg("-port-file")
+            .arg(&port_file)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    )
+    .expect("start the server");
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(10) {
         if let Ok(addr) = std::fs::read_to_string(&port_file) {
@@ -90,15 +99,6 @@ fn start_server(bin: &Path, dir: &Path, args: &[&str]) -> (Child, String) {
         std::thread::sleep(Duration::from_millis(20));
     }
     panic!("{} did not start", bin.display());
-}
-
-struct Killed(Child);
-
-impl Drop for Killed {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 fn free_port() -> u16 {
@@ -171,6 +171,7 @@ fn have_go() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(unix)]
 #[test]
 fn the_tier_serves_two_adapters_and_hot_loads_a_promotion() {
     if !required(Need::Go, have_go()) {
@@ -187,42 +188,41 @@ fn the_tier_serves_two_adapters_and_hot_loads_a_promotion() {
     assert!(out.status.success(), "register:\n{}", text(&out));
 
     let fakevllm = go_build("fakevllm", &dir);
-    let (engine, engine_addr) = start_server(
+    let (_engine, engine_addr) = start_server(
         &fakevllm,
         &dir,
         &["-base", "qwen2.5-0.5b-instruct", "-delay-ms", "100"],
     );
-    let _engine = Killed(engine);
 
     let port = free_port();
     let addr = format!("127.0.0.1:{port}");
-    let tier = Command::new(SKY)
-        .args([
-            "ai",
-            "serve",
-            "--adapters",
-            "support@qa",
-            "--max-adapters",
-            "3",
-        ])
-        .arg("--registry")
-        .arg(format!("file://{}", reg.join("store").display()))
-        .arg("--bind")
-        .arg(&addr)
-        .arg("--engine-url")
-        .arg(format!("http://{engine_addr}"))
-        .arg("--models")
-        .arg(dir.join("models"))
-        .current_dir(&dir)
-        .env("SKY_AI_HOME", dir.join("home"))
-        .env("SKY_AI_SERVE_TOKEN", "flow-token")
-        .env("SKY_AI_SERVE_POLL_S", "1")
-        .env("SKY_TEST_MODE", "1")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("sky ai serve");
-    let _tier = Killed(tier);
+    let _tier = ChildGroup::spawn(
+        Command::new(SKY)
+            .args([
+                "ai",
+                "serve",
+                "--adapters",
+                "support@qa",
+                "--max-adapters",
+                "3",
+            ])
+            .arg("--registry")
+            .arg(format!("file://{}", reg.join("store").display()))
+            .arg("--bind")
+            .arg(&addr)
+            .arg("--engine-url")
+            .arg(format!("http://{engine_addr}"))
+            .arg("--models")
+            .arg(dir.join("models"))
+            .current_dir(&dir)
+            .env("SKY_AI_HOME", dir.join("home"))
+            .env("SKY_AI_SERVE_TOKEN", "flow-token")
+            .env("SKY_AI_SERVE_POLL_S", "1")
+            .env("SKY_TEST_MODE", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    )
+    .expect("sky ai serve");
 
     let start = Instant::now();
     loop {
@@ -305,6 +305,7 @@ fn the_tier_serves_two_adapters_and_hot_loads_a_promotion() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn deploy_dry_run_teardown_and_ls_against_the_emulator() {
     if !required(Need::Go, have_go()) {
@@ -312,8 +313,7 @@ fn deploy_dry_run_teardown_and_ls_against_the_emulator() {
     }
     let dir = scratch("deploy");
     let fakegcp = go_build("fakegcp", &dir);
-    let (gcp, gcp_addr) = start_server(&fakegcp, &dir, &[]);
-    let _gcp = Killed(gcp);
+    let (_gcp, gcp_addr) = start_server(&fakegcp, &dir, &[]);
     let ep = format!("http://{gcp_addr}");
     let image = "us-central1-docker.pkg.dev/p/sky/sky-ai-tier@sha256:2222222222222222222222222222222222222222222222222222222222222222";
     let sky = |args: &[&str]| {

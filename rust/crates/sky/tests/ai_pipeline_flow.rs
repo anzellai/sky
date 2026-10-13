@@ -20,11 +20,16 @@
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
+#[cfg(unix)]
+use child_group::ChildGroup;
 use live_gate::{required, Need};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
@@ -381,6 +386,7 @@ impl World {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn the_lifecycle_runs_through_the_cli_against_the_engine() {
     if !required(Need::Go, have_go()) {
@@ -560,13 +566,11 @@ fn the_lifecycle_runs_through_the_cli_against_the_engine() {
     let mut start = Command::new(SKY);
     start.args(["ai", "start", "teacher"]);
     w.env(&mut start);
-    let mut child = start
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
+    // The holder and the engine it starts end with the test on every path.
+    let mut child =
+        ChildGroup::spawn(start.stdout(Stdio::piped()).stderr(Stdio::inherit())).unwrap();
     let mut line = String::new();
-    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut reader = BufReader::new(child.child().stdout.take().unwrap());
     let deadline = Instant::now() + Duration::from_secs(300);
     while !line.contains("ready") {
         line.clear();
@@ -582,7 +586,7 @@ fn the_lifecycle_runs_through_the_cli_against_the_engine() {
     let out = w.sky(&["ai", "stop", "teacher"]);
     assert!(out.status.success(), "stop: {}", text(&out));
     let deadline = Instant::now() + Duration::from_secs(30);
-    while child.try_wait().unwrap().is_none() {
+    while child.child().try_wait().unwrap().is_none() {
         if Instant::now() > deadline {
             let _ = child.kill();
             panic!("sky ai start teacher did not exit after sky ai stop");
@@ -624,12 +628,14 @@ fn the_lifecycle_runs_through_the_cli_against_the_engine() {
     drop(app);
 }
 
+#[cfg(unix)]
 struct App {
-    child: Child,
+    child: ChildGroup,
     port: u16,
     log: PathBuf,
 }
 
+#[cfg(unix)]
 impl App {
     fn start(w: &World) -> App {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -641,12 +647,12 @@ impl App {
         let file = std::fs::File::create(&log).unwrap();
         let mut c = Command::new(w.project.join("sky-out/app"));
         w.env(&mut c);
-        let child = c
-            .env("SKY_LIVE_PORT", port.to_string())
-            .stdout(file.try_clone().unwrap())
-            .stderr(file)
-            .spawn()
-            .unwrap();
+        let child = ChildGroup::spawn(
+            c.env("SKY_LIVE_PORT", port.to_string())
+                .stdout(file.try_clone().unwrap())
+                .stderr(file),
+        )
+        .unwrap();
         let app = App { child, port, log };
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
@@ -671,21 +677,22 @@ impl App {
     }
 }
 
+#[cfg(unix)]
 impl Drop for App {
     /// SIGTERM, so the app stops the engine it holds; SIGKILL after a bound.
+    /// The ChildGroup's own Drop then ends anything left in the app's group.
     fn drop(&mut self) {
         let _ = Command::new("kill")
             .args(["-TERM", &self.child.id().to_string()])
             .status();
         let deadline = Instant::now() + Duration::from_secs(20);
         while Instant::now() < deadline {
-            if let Ok(Some(_)) = self.child.try_wait() {
+            if let Ok(Some(_)) = self.child.child().try_wait() {
                 return;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.child.kill();
     }
 }
 

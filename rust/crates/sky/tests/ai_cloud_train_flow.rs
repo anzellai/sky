@@ -13,13 +13,16 @@
 //!   trains, registers and cleans up; `sky ai cloud ls` sees nothing left;
 //!   `sky ai teardown --run` is idempotent.
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
@@ -192,15 +195,7 @@ fn http_get(addr: &str, path: &str) -> String {
         .unwrap_or_default()
 }
 
-struct Killed(Child);
-
-impl Drop for Killed {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
+#[cfg(unix)]
 #[test]
 fn sky_ai_train_runs_on_vertex_through_the_cli() {
     if !required(Need::Go, have_go()) {
@@ -217,15 +212,16 @@ fn sky_ai_train_runs_on_vertex_through_the_cli() {
         .unwrap();
     assert!(out.status.success(), "go build fakegcp:\n{}", text(&out));
     let port_file = dir.join("port");
-    let _gcp = Killed(
+    // The fake Google Cloud server and anything it starts end with the
+    // test on every path, a panic included.
+    let _gcp = child_group::ChildGroup::spawn(
         Command::new(&bin)
             .arg("-port-file")
             .arg(&port_file)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+            .stderr(Stdio::null()),
+    )
+    .unwrap();
     let start = Instant::now();
     let addr = loop {
         if let Ok(a) = std::fs::read_to_string(&port_file) {
