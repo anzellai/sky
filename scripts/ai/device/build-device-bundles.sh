@@ -75,15 +75,23 @@ build_web() {
     [ -n "$EMSDK" ] && [ -f "$EMSDK/emsdk_env.sh" ] || { echo "--emsdk must be an emsdk 6.0.12 checkout" >&2; exit 2; }
     export EMSDK_QUIET=1
     # shellcheck disable=SC1091
-    source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
+    source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1 \
+        || { echo "sourcing $EMSDK/emsdk_env.sh failed" >&2; exit 2; }
     # emsdk's own Python first on PATH: a `python3` found elsewhere can be a
     # shim that re-executes itself (a configure step that probes the Python
-    # version then never returns).
-    local py
-    py="$(ls -d "$EMSDK"/python/*/bin 2>/dev/null | head -1)"
-    [ -n "$py" ] && export PATH="$py:$PATH"
+    # version then never returns). Only the macOS emsdk bundles one: a glob,
+    # not `ls … | head`, because under pipefail the `ls` that finds nothing
+    # (Linux) ended this script with status 2 and no message.
+    local py="" d
+    for d in "$EMSDK"/python/*/bin; do
+        [ -d "$d" ] && { py="$d"; break; }
+    done
+    if [ -n "$py" ]; then export PATH="$py:$PATH"; fi
     local v
-    v="$(emcc --version | head -1)"
+    # The whole output, then its first line: `emcc --version | head -1` can
+    # end on SIGPIPE, which pipefail turns into a silent exit.
+    v="$(emcc --version)"
+    v="${v%%$'\n'*}"
     case "$v" in *" 6.0.12 "*|*"6.0.12"*) ;; *) echo "emsdk 6.0.12 is required, got: $v" >&2; exit 2 ;; esac
     local common=("-DSKY_TARGET=web" "-DCMAKE_C_FLAGS=-fwasm-exceptions" "-DCMAKE_CXX_FLAGS=-fwasm-exceptions"
         "-DCMAKE_EXE_LINKER_FLAGS=-fwasm-exceptions" "-DLLAMA_WASM_MEM64=OFF")
@@ -107,8 +115,11 @@ build_web() {
 build_android() {
     local ndk="$ANDROID_SDK/ndk/$NDK_VERSION"
     [ -f "$ndk/build/cmake/android.toolchain.cmake" ] || { echo "Android NDK $NDK_VERSION is required under $ANDROID_SDK/ndk" >&2; exit 2; }
-    local strip
-    strip="$(ls -d "$ndk"/toolchains/llvm/prebuilt/*/bin/llvm-strip | head -1)"
+    local strip="" d
+    for d in "$ndk"/toolchains/llvm/prebuilt/*/bin/llvm-strip; do
+        [ -x "$d" ] && { strip="$d"; break; }
+    done
+    [ -n "$strip" ] || { echo "llvm-strip is missing from the NDK at $ndk" >&2; exit 2; }
     rm -rf "$OUT/android" && mkdir -p "$OUT/android"
     for abi in arm64-v8a x86_64; do
         local arch=()
