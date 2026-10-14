@@ -1445,7 +1445,7 @@ jobs:
           set -euo pipefail
           sudo apt-get install -y -qq ninja-build
           ./scripts/build.sh
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" > /dev/null
+          { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" > /dev/null
           curl -fsSL -o "$RUNNER_TEMP/llama.tar.gz" https://github.com/ggml-org/llama.cpp/archive/refs/tags/b11200.tar.gz
           echo "77d9d947e1dbdbe3eccc95ae10fa5d6abf48dc3395a84673f67d59b6364b6a94  $RUNNER_TEMP/llama.tar.gz" | shasum -a 256 -c -
           mkdir -p "$RUNNER_TEMP/src" && tar -xzf "$RUNNER_TEMP/llama.tar.gz" -C "$RUNNER_TEMP/src"

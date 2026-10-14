@@ -1729,3 +1729,29 @@ fn the_nix_entry_points_are_built_by_the_nightly_and_the_release_gate() {
         );
     }
 }
+
+/// A bare `yes | cmd` dies under pipefail, which every GitHub bash step runs
+/// with (`bash -e -o pipefail`). When `cmd` stops reading, `yes` takes SIGPIPE,
+/// exits 141, and pipefail makes that the step's status: `sdkmanager` had
+/// installed the NDK, and `gate-ai-device-android` still failed on
+/// `yes: standard output: Broken pipe`. Write `{ yes || true; } | cmd`, which
+/// keeps `cmd`'s own status.
+#[test]
+fn no_run_step_pipes_a_bare_yes() {
+    let mut bad = Vec::new();
+    for wf in workflows() {
+        let text = std::fs::read_to_string(&wf).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("yes |") || t.contains("&& yes |") || t.contains("; yes |") {
+                bad.push(format!("{}:{}: {}", wf.display(), i + 1, t));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "a bare `yes |` fails the step under pipefail (SIGPIPE, exit 141); \
+         write `{{ yes || true; }} | cmd`:\n{}",
+        bad.join("\n")
+    );
+}
