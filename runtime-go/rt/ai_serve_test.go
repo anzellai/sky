@@ -391,3 +391,28 @@ func TestAiServeTargetRegionIsItsOwnSetting(t *testing.T) {
 		t.Fatalf("env over code: %s (%s)", v, src)
 	}
 }
+
+// vLLM 0.31 lists only its base in /v1/models, not the adapters loaded at
+// run time (seen on Cloud Run, 2026-10-14). The tier adds the adapters it
+// holds, so a client finds the names it may ask for.
+func TestAiTierModelsListsTheAdaptersItHolds(t *testing.T) {
+	engine := startFakeVLLM(t, "-hide-loras")
+	reg := newFakeRegistry(t)
+	reg.point("support@prod", 1)
+	_, url := startTier(t, engine, reg, nil)
+	waitReady(t, url)
+	if st, body := tierChat(t, url, "tier-token", "support-v1"); st != 200 {
+		t.Fatalf("support-v1: %d %s", st, body)
+	}
+	req, _ := http.NewRequest("GET", url+"/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer tier-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"support-v1"`) || !strings.Contains(string(b), "qwen-base") {
+		t.Fatalf("/v1/models lists the base and the held adapter: %d %s", resp.StatusCode, b)
+	}
+}

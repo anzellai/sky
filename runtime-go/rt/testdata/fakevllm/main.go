@@ -48,6 +48,7 @@ type state struct {
 	broken    int // requests whose adapter vanished while they ran
 	delay     time.Duration
 	healthyAt time.Time
+	hideLoras bool // list only the base in /v1/models
 }
 
 func main() {
@@ -56,8 +57,9 @@ func main() {
 	base := flag.String("base", "base", "the served name of the base model")
 	delayMs := flag.Int("delay-ms", 0, "the time each completion takes")
 	healthAfter := flag.Int("health-after-ms", 0, "answer /health 503 until this has passed")
+	hideLoras := flag.Bool("hide-loras", false, "list only the base in /v1/models, as vLLM 0.31 does for adapters loaded at run time")
 	flag.Parse()
-	s := &state{base: *base, loaded: map[string]string{}, requests: map[string]int{}, inflight: map[string]int{},
+	s := &state{base: *base, hideLoras: *hideLoras, loaded: map[string]string{}, requests: map[string]int{}, inflight: map[string]int{},
 		delay: time.Duration(*delayMs) * time.Millisecond, healthyAt: time.Now().Add(time.Duration(*healthAfter) * time.Millisecond)}
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -97,6 +99,9 @@ func (s *state) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Strings(names)
 		for _, n := range names {
+			if s.hideLoras {
+				break
+			}
 			data = append(data, map[string]any{"id": n, "object": "model", "root": s.loaded[n], "parent": s.base})
 		}
 		s.mu.Unlock()

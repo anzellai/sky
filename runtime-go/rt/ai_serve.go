@@ -620,7 +620,7 @@ func (t *aiTier) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case !t.authorised(r):
 		aiServeError(w, 401, "authentication_error", "a valid service token is required (Authorization: Bearer)")
 	case r.URL.Path == "/v1/models" && r.Method == "GET":
-		t.proxy(w, r, nil, "")
+		t.models(w)
 	case r.Method == "POST" && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/completions" || r.URL.Path == "/v1/embeddings"):
 		t.complete(w, r)
 	default:
@@ -974,3 +974,49 @@ func Ai_serveTarget(rawArg any) any {
 // aiServeSuffix is the env suffix of a tier or target setting, for the name
 // the console and `describe` show (the read itself is aiLayer's).
 func aiServeSuffix(key string) string { return "AI_SERVE_" + key }
+
+// models answers /v1/models: the engine's list, plus every adapter the tier
+// holds that the list lacks. vLLM 0.31 lists only the base, not the adapters
+// loaded at run time (seen on Cloud Run, 2026-10-14), and a client finds the
+// adapter names it may ask for here.
+func (t *aiTier) models(w http.ResponseWriter) {
+	var list struct {
+		Object string           `json:"object"`
+		Data   []map[string]any `json:"data"`
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", t.cfg.engineURL+"/v1/models", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		aiServeError(w, 503, "engine_unavailable", "the engine does not answer: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&list) != nil {
+		aiServeError(w, 503, "engine_unavailable", fmt.Sprintf("the engine's model list is unreadable (HTTP %d)", resp.StatusCode))
+		return
+	}
+	have := map[string]bool{}
+	for _, m := range list.Data {
+		if id, ok := m["id"].(string); ok {
+			have[id] = true
+		}
+	}
+	t.mu.Lock()
+	names := make([]string, 0, len(t.resident))
+	for n, res := range t.resident {
+		if res.loading == nil && res.loadErr == nil && !have[n] {
+			names = append(names, n)
+		}
+	}
+	t.mu.Unlock()
+	sort.Strings(names)
+	for _, n := range names {
+		list.Data = append(list.Data, map[string]any{"id": n, "object": "model", "owned_by": "sky", "parent": t.cfg.baseName})
+	}
+	if list.Object == "" {
+		list.Object = "list"
+	}
+	aiServeJSON(w, 200, list)
+}

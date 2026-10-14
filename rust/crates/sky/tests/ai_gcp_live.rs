@@ -358,8 +358,8 @@ fn gcp_live_l5_the_gpu_tier_on_cloud_run() {
         "the promotion is hot-loaded with no failed request: {r}"
     );
     assert_eq!(
-        r["noIdTokenStatus"], 403,
-        "Cloud Run refuses a call without an ID token: {r}"
+        r["noIdTokenStatus"], 401,
+        "Cloud Run answers 401 to a call without a valid ID token: {r}"
     );
     assert_eq!(
         r["badTokenStatus"], 401,
