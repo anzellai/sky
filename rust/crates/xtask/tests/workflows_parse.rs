@@ -1792,3 +1792,30 @@ fn an_array_a_step_starts_empty_is_expanded_guarded() {
         bad.join("\n")
     );
 }
+
+/// A run of the whole sky crate's `#[ignore]`d tests must skip the paid
+/// `gcp_live_*` tests: they rent cloud GPUs and run only through
+/// scripts/ai/gcp-live.sh (the ai-cloud-live workflow, behind a spend
+/// confirmation). The release gate-app leg ran them, and they failed on the
+/// missing `SKY_AI_GCP_LIVE`, as their live gate says they must.
+#[test]
+fn no_ignored_test_sweep_runs_the_paid_cloud_tests() {
+    let mut bad = Vec::new();
+    for wf in workflows() {
+        let text = std::fs::read_to_string(&wf).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            let sweeps_crate = line.contains("cargo test -p sky")
+                && line.contains("-- --ignored")
+                && !line.contains("--test ");
+            if sweeps_crate && !line.contains("--skip gcp_live_") {
+                bad.push(format!("{}:{}: {}", wf.display(), i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "an `--ignored` sweep of the sky crate runs the paid gcp_live_* tests; add \
+         `--skip gcp_live_`:\n{}",
+        bad.join("\n")
+    );
+}

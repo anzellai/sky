@@ -536,7 +536,7 @@ jobs:
           SKY_LIVE_TESTS: require
         # The Android emulator test needs a running emulator: the release
         # workflow's gate-native-android job runs it.
-        run: cargo test -p sky --locked --manifest-path rust/Cargo.toml -- --ignored --skip android_emulator
+        run: cargo test -p sky --locked --manifest-path rust/Cargo.toml -- --ignored --skip android_emulator --skip gcp_live_
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

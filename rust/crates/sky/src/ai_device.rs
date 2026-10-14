@@ -41,9 +41,21 @@ pub const TARGETS: [&str; 3] = ["web", "ios", "android"];
 /// pin is an archive the workflow has not published yet: provisioning then
 /// needs `--from` with a local build.
 pub const PINS: &[(&str, &str, Option<&str>)] = &[
-    ("web", "sky-llama-b11200-web.tar.gz", None),
-    ("ios", "sky-llama-b11200-ios.tar.gz", None),
-    ("android", "sky-llama-b11200-android.tar.gz", None),
+    (
+        "web",
+        "sky-llama-b11200-web.tar.gz",
+        Some("fcc80232c41504caff6f6559fa3aee8ab418b7da1632fc36e7f8392f81f81cac"),
+    ),
+    (
+        "ios",
+        "sky-llama-b11200-ios.tar.gz",
+        Some("ec779692f77d3a9503c0361112fb32ed9875bafb76c777f93b21ef3a033e3538"),
+    ),
+    (
+        "android",
+        "sky-llama-b11200-android.tar.gz",
+        Some("ed8f43feab6005ac3f86cc095bbcd60eafb92becdd463be9c2ff577fbdf58b86"),
+    ),
 ];
 
 /// Where a published archive is downloaded from.

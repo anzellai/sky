@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -49,54 +50,75 @@ func TestServerListen_BuildsATaskAndDoesNotServe(t *testing.T) {
 // it was refused (v0.28.0: the `ai-device-partition` gate, right after a
 // rebuild). A port that refuses the first connection after the line fails
 // this test.
+//
+// The server runs in a child process (this test binary, re-run on
+// TestServerListen_Child). A server started in this process never stops and
+// keeps writing its startup report to os.Stdout, so swapping os.Stdout here
+// to read the line raced with it (`go test -race`, the release gate-race).
 func TestServerListen_PrintsListeningOnlyOnceBound(t *testing.T) {
-	// No inline console: it mounts once per process, and the other
-	// Server.listen tests in this package mount it.
-	t.Setenv("SKY_CONSOLE_AUTH", "off")
-	old := os.Stdout
-	r, w, err := os.Pipe()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
-	defer func() { os.Stdout = old }()
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestServerListen_Child$")
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("SKY_RT_LISTEN_CHILD_PORT=%d", port),
+		// No inline console: the report is what matters, not the console.
+		"SKY_CONSOLE_AUTH=off")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
 	lines := make(chan string, 256)
 	go func() {
-		sc := bufio.NewScanner(r)
+		sc := bufio.NewScanner(out)
 		for sc.Scan() {
-			select {
-			case lines <- sc.Text():
-			default:
-			}
+			lines <- sc.Text()
 		}
+		close(lines)
 	}()
-	for i := 0; i < 1; i++ { // one server: the console mounts once per process
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := l.Addr().(*net.TCPAddr).Port
-		l.Close()
-		task := Server_listen(port, []any{}).(func() any)
-		go task()
-		deadline := time.After(10 * time.Second)
-	wait:
-		for {
-			select {
-			case line := <-lines:
-				if strings.Contains(strings.ToLower(line), "listening") && strings.Contains(line, fmt.Sprintf(":%d", port)) {
-					break wait
-				}
-			case <-deadline:
-				os.Stdout = old
-				t.Fatalf("server %d printed no listening line", i)
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				t.Fatal("the child server exited without a listening line")
 			}
+			if !strings.Contains(strings.ToLower(line), "listening") || !strings.Contains(line, fmt.Sprintf(":%d", port)) {
+				continue
+			}
+			c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if err != nil {
+				t.Fatalf("the server said it was listening but refused a connection: %v", err)
+			}
+			c.Close()
+			return
+		case <-deadline:
+			t.Fatal("the child server printed no listening line")
 		}
-		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			os.Stdout = old
-			t.Fatalf("server %d said it was listening but refused a connection: %v", i, err)
-		}
-		c.Close()
 	}
+}
+
+// TestServerListen_Child is the server TestServerListen_PrintsListeningOnlyOnceBound
+// runs in a child process. It does nothing in a normal run.
+func TestServerListen_Child(t *testing.T) {
+	p := os.Getenv("SKY_RT_LISTEN_CHILD_PORT")
+	if p == "" {
+		t.Skip("the child of TestServerListen_PrintsListeningOnlyOnceBound")
+	}
+	var port int
+	if _, err := fmt.Sscanf(p, "%d", &port); err != nil {
+		t.Fatal(err)
+	}
+	Server_listen(port, []any{}).(func() any)()
 }

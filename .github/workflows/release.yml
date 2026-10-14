@@ -935,8 +935,10 @@ jobs:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         # The Android emulator test runs in gate-native-android (it needs a
-        # running emulator); skip it here by name.
-        run: cargo test -p sky --locked -- --ignored --skip android_emulator
+        # running emulator); skip it here by name. The `gcp_live_*` tests
+        # rent cloud GPUs: they run only through scripts/ai/gcp-live.sh (the
+        # ai-cloud-live workflow, with a spend confirmation), never here.
+        run: cargo test -p sky --locked -- --ignored --skip android_emulator --skip gcp_live_
 
       - name: Bound the Go caches before save
         if: always()
