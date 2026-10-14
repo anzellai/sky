@@ -1097,7 +1097,10 @@ dockerfileWith args =
         , "#   sky ai image build --tier --project <p> --region <r> --repo <repo>"
         , "# and deploy the digest it prints (Serve.withTierImage)."
         , "FROM " ++ tierBaseImage
-        , "COPY app /app"
+        , -- The image runs as nonroot: the binary must be executable by
+          -- anyone, whatever mode the build context gave it (a 0700 file
+          -- failed to start on Cloud Run, live, 2026-10-14).
+          "COPY --chmod=0555 app /app"
         , "USER nonroot:nonroot"
         , "EXPOSE 8080"
         , "ENTRYPOINT ["

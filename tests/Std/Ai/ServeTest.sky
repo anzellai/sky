@@ -183,13 +183,15 @@ tests =
                       )
                       ( True, True, True, True ))
     , Test.test
-          "the tier's Dockerfile copies the static binary onto a pinned distroless base"
+          "the tier's Dockerfile copies the static binary, executable by nonroot, onto a pinned distroless base"
           (\_ ->
               Test.equal
                   ( String.contains
                         ("FROM " ++ Serve.tierBaseImage)
                         Serve.dockerfile
-                  , String.contains "COPY app /app" Serve.dockerfile
+                  , String.contains
+                        "COPY --chmod=0555 app /app"
+                        Serve.dockerfile
                   , String.contains "USER nonroot" Serve.dockerfile
                   )
                   ( True, True, True ))
