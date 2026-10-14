@@ -265,9 +265,14 @@ renderVerb json opts =
                        File.mkdirAll out
                            |> Task.andThen
                                   (\_ ->
+                                      -- The image runs this program, the
+                                      -- `sky ai` CLI: its tier is the `serve`
+                                      -- verb. Without it the container printed
+                                      -- the usage and exited, and Cloud Run's
+                                      -- startup probe failed (live, 2026-10-14).
                                       File.writeFile
                                           (out ++ "/Dockerfile")
-                                          r.dockerfile)
+                                          (Serve.dockerfileWith [ "serve" ]))
                            |> Task.andThen
                                   (\_ ->
                                       File.writeFile

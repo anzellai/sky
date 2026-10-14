@@ -93,6 +93,7 @@ module Std.Ai.Serve exposing
     , serviceJson
     , knativeYaml
     , dockerfile
+    , dockerfileWith
     , Deployment
     , deploy
     , teardown
@@ -1081,6 +1082,15 @@ knativeYaml (CloudRun t) (Tier s) =
 -- next to it in the build directory) on distroless, run as non-root.
 dockerfile : String
 dockerfile =
+    dockerfileWith []
+
+
+-- | The tier image's Dockerfile for a binary that takes arguments: the
+-- `sky ai` program is one (`dockerfileWith [ "serve" ]`, what
+-- `sky ai image build --tier` builds); a tier program of your own runs the
+-- tier from its `main` and takes none (`dockerfile`).
+dockerfileWith : List String -> String
+dockerfileWith args =
     String.join
         "\n"
         [ "# The Std.Ai.Serve GPU tier. Build it in your own project:"
@@ -1090,7 +1100,11 @@ dockerfile =
         , "COPY app /app"
         , "USER nonroot:nonroot"
         , "EXPOSE 8080"
-        , "ENTRYPOINT [\"/app\"]"
+        , "ENTRYPOINT ["
+              ++ String.join
+                     ", "
+                     (List.map (\a -> "\"" ++ a ++ "\"") ("/app" :: args))
+              ++ "]"
         , ""
         ]
 

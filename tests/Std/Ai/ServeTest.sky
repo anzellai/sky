@@ -194,6 +194,16 @@ tests =
                   )
                   ( True, True, True ))
     , Test.test
+          "a tier program starts with no verb; the sky ai CLI's tier image starts its serve verb"
+          (\_ ->
+              Test.equal
+                  ( String.contains "ENTRYPOINT [\"/app\"]" Serve.dockerfile
+                  , String.contains
+                        "ENTRYPOINT [\"/app\", \"serve\"]"
+                        (Serve.dockerfileWith [ "serve" ])
+                  )
+                  ( True, True ))
+    , Test.test
           "a target's service name is its full resource name"
           (\_ ->
               Test.equal
