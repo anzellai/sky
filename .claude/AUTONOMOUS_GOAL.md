@@ -1,75 +1,51 @@
-# AUTONOMOUS GOAL (captured verbatim 2026-09-27)
+# AUTONOMOUS GOAL (captured verbatim 2026-10-15)
 
-> i'd like not that many releases...
-> so using worktree or branch for individual phase... with the end goal to release ONLY 0.27.0, covering 1-6 perhaps even 1-7.
+Branch: `perf/build-speed`. The earlier v0.27.0 mandate this file held is done
+(released). This mandate replaces it.
+
+> so for [a private project]/repo, the github action cicd takes 70mins+ to
+> build web:app so i switch to build in GCP VM instance with a large instance
+> 8-CPU VM, plenty of RAM.
 >
-> all fully e2e 100% unattended + autonomous + PIV.
-> no inputs from me, you may proceed now.
-
-## Scope: the phases "1-6 (perhaps 1-7)" refer to
-
-The plan presented just before the mandate, built from a downstream app's report
-of 22 Sky gaps, six design studies and three adversarial reviews. Go FFI stays
-`Result Error a` (decided earlier by the user).
-
-1. **Security.** Sky.Live session-id rotation on every change of bound user
-   (all tabs follow, durable snapshot moves); revocation also deletes the
-   durable snapshot; Sky.Spa RPC as a cookie-authenticated route kind with an
-   Origin / Sec-Fetch-Site check and JSON-only bodies, Secure cookie on HTTPS;
-   an authorisation guard for Sky.Spa `GET /_sky/sub`; dev WebSocket origin
-   check plus a loopback Host guard on the dev listener (anti DNS rebinding,
-   `SKY_ALLOWED_HOSTS`); CSRF exemptions keyed by method and path; start-up
-   bind-address line; `Server.withHeader` copy-on-write and tests.
-2. **Small correctness and ergonomics.** `Task.loop` / `Step` / `Task.forever`;
-   `sky test` exits 2 on a build failure; `Result.toMaybe`, `Sky.Core.Tuple`,
-   `Json.Decode.value`, `Json.Encode.raw` (and no silent `""` on encode
-   failure); WebSocket server frame type and a Task-based client `receive`
-   (plus the sessionless reaper fix); an embedded Sky.Live mode (no signal
-   handling, no process exit); `Task.spawn` logs panics.
-3. **FFI `Result` enforced by the type checker**, delivered through the type
-   database to every inference path, lazily parsed, strict on the wrapper,
-   arity and primitives, wildcards for Go-opaque types; `Sky.Ffi` escape hatch
-   closed or typed; partial application eta-expanded.
-4. **Sky.Live platform.** Widget islands with typed messages (Live and Spa);
-   `App.serve` with a stop handle; opt-in sessions without cookies.
-5. **Stdlib modules.** Crypto primitives (Ed25519, X25519, HKDF, XChaCha),
-   QR encode, process spawning with streams and PTYs, file watching, Noise IK,
-   a PAKE.
-6. **UI and tooling.** `Ui.text` wrapping; `--format json` diagnostics; local
-   Go path dependencies for `sky add`; native permission text, entitlements,
-   secure storage, biometrics, release packaging; `Std.Ui.Canvas`; a terminal
-   element.
-7. **(Optional) full Task trampoline**, with the review's corrections.
-
-## Definition of done
-
-- One release only: **v0.27.0**, tagged once, covering phases 1 to 6 at least.
-- Each phase on its own branch or worktree, merged into the v0.27.0 integration
-  branch after its own verification.
-- PIV per phase (CLAUDE.md §0.4): Plan (architecture consult, adversarial
-  review for compiler and security work) → Implement (regression test first)
-  → Verify (narrow gates per change, the release workflow's full suite before
-  merge and tag, real apps behind Caddy).
-- Fully unattended: design decisions the user would normally make are taken
-  with the safest reasonable default and recorded in the CHANGELOG.
-- "Done" is declared only by a fresh-context Judge agent against this verbatim
-  goal (CLAUDE.md §0).
-
-## Amendment (user, 2026-09-30, verbatim)
-
-> can we work a bit more smarter so than we sweep + audit everything first,
-> before we call it ready for merge test etc.?
-> it seems we've been running for long time, and each iteration we found new
-> bugs etc.
+> but it still takes >30mins to build, realising dispite the multi-cores, sky
+> only build with single core?! and not leveragin what machine capabilities
+> can provide and speed up?
 >
-> the release will affect live production apps, so i want this release to be
-> properly audited + tested in real practical terms, plus audited so there are
-> no known holes/gaps/security concerns
->
-> please again in 100^ fully unattended + autonomous + PIV
+> can you investigate and see anything we do with sky compiler (essentially go
+> build right?) to massively speed up builds regardless for App.live or
+> web:app or native apps?
 
-How it runs: one full audit of the whole v0.27.0 change first (security,
-crypto, compiler soundness, runtime robustness, upgrade impact on live apps,
-tooling, test and doc integrity, practical real-app tests including an
-in-place upgrade from v0.26.1). All findings are fixed in one batch, verified
-once, then the release workflow, the Judge and the tag follow.
+> for medium sized project (which [the private project] is) it runs for every
+> long time already, which in production application it will only get worse
+> if sky adoption grows.
+>
+> this is now top priority as well -- but we cannot sacrifice type checks etc.
+> all sky provides strong guarantee, so we need industrial deep dive +
+> research + analysis and fix this issue once and for all
+
+> Build speed (the private web:app): Spot VM, 8 CPUs, 32 GB: 29 minutes. My
+> Mac: about 25 minutes. GitHub runner: 30 to 38 minutes.
+
+> please, this is top priority right now, and you will manage e2e for speed up
+> with no quality/checks sacrificed basically. leveraging multi-core, caching
+> + split go modules strategies all you found/researched to improve sky's
+> build time for various targets.
+>
+> i'm going to be away, so unless you have questions for me, otherwise please
+> start in 100% unattended + autonomous + PIV mode
+> the end goal is simple: speed up build time as much as possible within
+> safety boundary.
+>
+> once improved, tested properly to ensure no regression on built apps
+> essentially, then push/merge branch work into main + cicd green + tag
+> released
+
+## Done means (all of it, judged by an independent Judge)
+
+1. Build time of Sky apps falls as much as possible, on every target (Sky.Live
+   `web`, Sky.Spa `web:app`, native shells), using multi-core, caching and
+   split Go packages.
+2. No type check, guarantee or quality gate is weakened.
+3. Tested properly: no regression on built apps.
+4. Merged to `main`, CI green (the full release workflow), and a release tag
+   cut.
