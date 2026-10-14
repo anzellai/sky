@@ -167,7 +167,7 @@
       "tier": "T1"
     },
     "ai-train-exactly-once": {
-      "expected_assertions": 13,
+      "expected_assertions": 15,
       "falsifier_mutation": "ai-train-exactly-once.ignore-the-intent",
       "falsifier_proven": true,
       "summary": "a Vertex launch whose journal row was lost attaches to its job: one create, never two",
@@ -525,8 +525,8 @@
     },
     "fmt-clean": {
       "expected_assertions": 395,
-      "falsifier_mutation": "",
-      "falsifier_proven": false,
+      "falsifier_mutation": "fmt-clean.unformat-a-tracked-file",
+      "falsifier_proven": true,
       "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
       "surfaces": [
         "compiler.fmt"
@@ -618,7 +618,7 @@
       "tier": "T1"
     },
     "sky-suites": {
-      "expected_assertions": 1066,
+      "expected_assertions": 1068,
       "falsifier_mutation": "sky-suites.break-expectation",
       "falsifier_proven": true,
       "summary": "root tests/ Sky.Test suites (pure seams: patterns, TEA, routing, Std.Db, Std.Ui)",
@@ -794,7 +794,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2880,
+    "stdlib_entries": 2881,
     "stdlib_modules": 127,
     "surfaces_covered": 184,
     "surfaces_covered_pct": 94.4,
@@ -1587,8 +1587,8 @@
           },
           {
             "by": "gate `fmt-clean`",
-            "class": "Asserted",
-            "strength": 3
+            "class": "Falsified",
+            "strength": 4
           },
           {
             "by": ".github/workflows/rust-ci.yml: xtask fmt (`xtask:fmt` is not harness-registered — no proven falsifier)",
@@ -18380,7 +18380,7 @@
           ]
         },
         "Std.Ai.Cloud.Google": {
-          "count": 25,
+          "count": 24,
           "symbols": [
             "CustomJob",
             "ImageBuild",
@@ -18390,7 +18390,6 @@
             "Response",
             "Service",
             "Sku",
-            "artifactExists",
             "bucketLocation",
             "call",
             "createCustomJob",
@@ -19416,7 +19415,7 @@
           ]
         }
       },
-      "count": 815,
+      "count": 814,
       "pct_of_denominator": 28.3
     },
     "symbols_unreferenced_strict": {
@@ -19714,7 +19713,7 @@
           ]
         },
         "Std.Ai.Cloud.Google": {
-          "count": 25,
+          "count": 24,
           "symbols": [
             "CustomJob",
             "ImageBuild",
@@ -19724,7 +19723,6 @@
             "Response",
             "Service",
             "Sku",
-            "artifactExists",
             "bucketLocation",
             "call",
             "createCustomJob",
@@ -20855,7 +20853,7 @@
           ]
         }
       },
-      "count": 923,
+      "count": 922,
       "pct_of_denominator": 32.0
     }
   },
@@ -20866,8 +20864,8 @@
       "id": "apps:bundled",
       "modules_imported": 39,
       "path": "sky-bundled",
-      "refs_generous": 324,
-      "refs_qualified": 317,
+      "refs_generous": 326,
+      "refs_qualified": 319,
       "role": "Layer2",
       "sky_files": 18,
       "sky_toml_sections": []
@@ -22292,8 +22290,8 @@
       "id": "flow:ai_cloud_train_flow",
       "modules_imported": 20,
       "path": "rust/crates/sky/tests/ai_cloud_train_flow.rs",
-      "refs_generous": 97,
-      "refs_qualified": 91,
+      "refs_generous": 98,
+      "refs_qualified": 92,
       "role": "FlowTest",
       "sky_files": 3,
       "sky_toml_sections": []
@@ -22376,8 +22374,8 @@
       "id": "flow:ai_serve_flow",
       "modules_imported": 25,
       "path": "rust/crates/sky/tests/ai_serve_flow.rs",
-      "refs_generous": 118,
-      "refs_qualified": 109,
+      "refs_generous": 119,
+      "refs_qualified": 110,
       "role": "FlowTest",
       "sky_files": 4,
       "sky_toml_sections": []
@@ -22796,8 +22794,8 @@
       "id": "tests/Std",
       "modules_imported": 46,
       "path": "tests/Std",
-      "refs_generous": 617,
-      "refs_qualified": 594,
+      "refs_generous": 621,
+      "refs_qualified": 598,
       "role": "SkySuite",
       "sky_files": 22,
       "sky_toml_sections": []

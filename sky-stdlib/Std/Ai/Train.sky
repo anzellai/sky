@@ -5278,7 +5278,7 @@ watchCloud job cs store key attempt name after spentBefore =
                                                                             cj.state
                                                                                 == "JOB_STATE_QUEUED"
                                                                                 || cj.state
-                                                                                == "JOB_STATE_PENDING"
+                                                                                       == "JOB_STATE_PENDING"
                                                                         samePrev =
                                                                             case prevFile of
 

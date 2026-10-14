@@ -27,15 +27,15 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `weaker` | 0 |
 | corpus units | 146 |
 | stdlib modules (denominator) | 127 |
-| stdlib entries (denominator) | 2880 |
+| stdlib entries (denominator) | 2881 |
 
 ## Uncovered
 
 | metric | count | % of denominator |
 |---|---|---|
 | stdlib modules imported by nothing | 9 | 7.1% |
-| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 923 | 32.0% |
-| symbols unreferenced under the generous rule | 815 | 28.3% |
+| symbols with zero qualified references (STRICT — the number any uncovered claim uses) | 922 | 32.0% |
+| symbols unreferenced under the generous rule | 814 | 28.3% |
 | stdlib modules imported ONLY by a root `tests/` suite (no application builds them) | 1 | — |
 
 ### Surfaces with zero new cover
@@ -320,7 +320,7 @@ None.
 | `corpus-witness` | T2 | PROVEN | `compiler.codegen-determinism` · `compiler.lower-emit-shape` |
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
 | `erasure-path-uses-an-index` | T1 | PROVEN | `observability.analytics-store` |
-| `fmt-clean` | T1 | not proven | `compiler.fmt` |
+| `fmt-clean` | T1 | PROVEN | `compiler.fmt` |
 | `jobs-complete-failure-is-reported` | T1 | PROVEN | `runtime.periodic-goroutines` |
 | `kernel-members` | T1 | PROVEN | `meta.kernel-members` |
 | `live-time-every-mutex-survives-a-panic` | T1 | PROVEN | `runtime.periodic-goroutines` · `skylive.session-sse-csrf` |

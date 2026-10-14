@@ -361,7 +361,7 @@ labelFilter opts =
                (\kv ->
                    case String.split "=" kv of
 
-                       [k, v] ->
+                       [ k, v ] ->
                            Just ( k, v )
 
                        _ ->

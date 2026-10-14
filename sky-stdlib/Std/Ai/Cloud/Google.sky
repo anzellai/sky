@@ -1133,7 +1133,7 @@ allLabels =
                                     (\pair ->
                                         case String.split ":" pair of
 
-                                            [k, val] ->
+                                            [ k, val ] ->
                                                 if validLabel (String.trim k) then
                                                     Just
                                                         ( String.trim k
