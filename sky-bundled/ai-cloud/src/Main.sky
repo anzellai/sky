@@ -120,7 +120,13 @@ flags name opts =
 
 text : String -> List String -> String
 text name opts =
-    Maybe.withDefault "" (flag name opts)
+    case flag name opts of
+
+        Just v ->
+            v
+
+        Nothing ->
+            ""
 
 
 emit : Bool -> JsonE.Value -> String -> Task Error ()
@@ -494,12 +500,13 @@ teardownVerb json opts =
                            clearJobs
                                project
                                region
-                               (String.join
-                                   " AND "
-                                   ("labels.sky-managed=\"true\""
-                                       :: List.map
+                               ("labels.sky-managed=\"true\""
+                                   ++ String.join
+                                          ""
+                                          (List.map
                                               (\( k, v ) ->
-                                                  "labels." ++ k ++ "=\"" ++ v
+                                                  " AND labels." ++ k ++ "=\""
+                                                      ++ v
                                                       ++ "\"")
                                               (labelFilter opts)))
                                |> Task.andThen
@@ -776,8 +783,13 @@ imageVerb json opts =
 
 bucketOf : String -> String
 bucketOf url =
-    String.dropLeft 5 url |> String.split "/" |> List.head
-        |> Maybe.withDefault ""
+    case String.split "/" (String.dropLeft 5 url) of
+
+        b :: _ ->
+            b
+
+        [] ->
+            ""
 
 
 -- The object name of a blob the store put below the staging prefix.

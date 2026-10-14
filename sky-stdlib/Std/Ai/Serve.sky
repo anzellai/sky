@@ -1110,10 +1110,8 @@ dockerfileWith args =
           "COPY --chmod=0555 app /app"
         , "USER nonroot:nonroot"
         , "EXPOSE 8080"
-        , "ENTRYPOINT ["
-              ++ String.join
-                     ", "
-                     (List.map (\a -> "\"" ++ a ++ "\"") ("/app" :: args))
+        , "ENTRYPOINT [\"/app\""
+              ++ String.join "" (List.map (\a -> ", \"" ++ a ++ "\"") args)
               ++ "]"
         , ""
         ]

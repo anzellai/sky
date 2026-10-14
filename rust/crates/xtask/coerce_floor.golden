@@ -435,6 +435,58 @@
 #   / R11 `rt.Field` on open rows (policy floor, §4.6) and R5 returns of
 #   kernels with no one-type twin. New rows: 74-ai-cloud 1589 -> 1414 and
 #   sky-bundled/ai-cloud 634 -> 540, measured, not limited.
+# ── Recorded transition, 2026-10-14 — the P4 live-run commits
+#    (d83301526..d6bd6b493), rises closed ──
+#   84 of 86 rows measured; 05-mux-server and 08-notes-app are carried forward
+#   (SKY_LIVE_TESTS=skip, no generated FFI surface). No row rises; 5 fall.
+#   The 17 commits raised four rows: 73-ai-train 1292 -> 1302, 74-ai-cloud
+#   1414 -> 1431, sky-bundled/ai-cloud 540 -> 554, sky-bundled/ai-train
+#   1186 -> 1196. The compiler was not the cause: the d83301526 Sky sources
+#   (Train, Serve, Cloud.Google, ai-cloud Main) measure the golden exactly.
+#   Per emitted Go function, the new tokens were: Train.watchCloud +6
+#   (`Task.map2` into a tuple callback, R1 via `box_func_value`, and
+#   `Maybe.withDefault (Maybe.map …)` over the previous cloud.json, R12 + R11
+#   `rt.Field`), Train.readCloudFile +2 (a nested `JsonD.map2` tuple),
+#   Train.cloudRelaunch +2 (two new Task callbacks), Google.remoteHas +7 (new),
+#   Google.validLabel +3 (now reached in sky-bundled/ai-cloud through
+#   `allLabels`), Serve.dockerfileWith +2 (new) and ai-cloud teardownVerb +2.
+#   Closed by restructuring the new code so the shapes are known at emit time:
+#   * watchCloud reads the previous file with `case` on the typed
+#     `Maybe CloudFile` (R8, lever §5.2, `.JustValue` typed read) and binds
+#     `now` and the file with two nested `andThen`s, not a `map2` tuple: +0.
+#   * readCloudFile decodes with one `JsonD.map5` over a `map3` triple: +0.
+#   * Google.validLabel uses `Regex.match`, a typed kernel twin (R5, lever
+#     §5.3), not `List.all` over `String.toList` (R12, and R2 for the
+#     `rune` narrowing in its callback): -3 in every row that reaches it.
+#   * Google.pathOf and regionOf take the first `String.split` piece with a
+#     cons pattern on the typed `[]string` instead of `List.head` +
+#     `Maybe.withDefault` (R12 via R1): -2 each.
+#   * remoteHas takes the endpoint artifactExists already read (pure
+#     `serviceBaseFor`), matches the decoded mode with `case`, and fetches the
+#     token with one `andThen` (a `Secret` callback narrows nothing): 7 -> 3
+#     over remoteHas and manifestReachable.
+#   * Serve.dockerfileWith and ai-cloud teardownVerb build their text with
+#     `String.join ""` over a typed `List.map` (`String_joinT`, R5, §5.3)
+#     instead of joining a `::` list (an erased `List_cons` return); ai-cloud
+#     `text` and `bucketOf` use `case` instead of `Maybe.withDefault` (R12).
+#   Tokens left in the new code, each offset by the falls above:
+#   cloudRelaunch +1 (the launch step now writes cloud.json inside the step,
+#   so it gains one `\launched -> … |> Task.map (\_ -> launched)` pair, less
+#   the removed `Task.succeed () |> Task.andThen`), remoteHas +3 (the `\resp`
+#   and `\r` Task callbacks and the `JsonD.decodeString` result) and
+#   teardownVerb +1 (`List.all` over the `::` label list, R12). The callback
+#   tokens are R1 at `box_func_value` (lower.rs): a typed Sky lambda boxed
+#   into the erased `func(any) any` slot of the Task kernels
+#   (`rt.AnyTaskAndThen` / `rt.Task_map`, run by the Task trampoline). By §1
+#   both shapes are known, so they are closeable only by typed Task kernel
+#   twins (§5.3), which do not exist; every existing `andThen` pays the same.
+#   Rows now: 73-ai-train 1286, sky-bundled/ai-train 1180, 74-ai-cloud 1411,
+#   sky-bundled/ai-cloud 537. 13-skyshop 1190 -> 1188 (measured with its FFI
+#   surface): its two `String.split` sites (`Std.Css.rawProp`,
+#   `Lib.Auth.adminEmails`) now reach the `rt.String_splitT` twin added by
+#   the previous transition (R5, §5.3); the row was carried forward then.
+#   Std.Ai suites (scripts/sky-suites.sh Ai, 14 suites), ai_cloud_train_flow
+#   and ai_serve_flow prove the behaviour is unchanged.
 00-standard-libs	adapter=0	dispatch=0	narrow=113
 01-hello-world	adapter=0	dispatch=0	narrow=1
 02-go-stdlib	adapter=0	dispatch=0	narrow=6
@@ -447,7 +499,7 @@
 09-live-counter	adapter=0	dispatch=0	narrow=100
 10-live-component	adapter=0	dispatch=0	narrow=103
 12-skyvote	adapter=0	dispatch=0	narrow=403
-13-skyshop	adapter=0	dispatch=0	narrow=1190
+13-skyshop	adapter=0	dispatch=0	narrow=1188
 14-task-demo	adapter=0	dispatch=0	narrow=8
 15-http-server	adapter=0	dispatch=0	narrow=8
 16-skychess	adapter=0	dispatch=0	narrow=466
@@ -501,8 +553,8 @@
 70-ai-synthetic	adapter=0	dispatch=0	narrow=419
 71-ai-registry	adapter=0	dispatch=0	narrow=825
 72-ai-support-desk	adapter=0	dispatch=0	narrow=442
-73-ai-train	adapter=0	dispatch=0	narrow=1292
-74-ai-cloud	adapter=0	dispatch=0	narrow=1414
+73-ai-train	adapter=0	dispatch=0	narrow=1286
+74-ai-cloud	adapter=0	dispatch=0	narrow=1411
 75-ai-everywhere	adapter=0	dispatch=0	narrow=868
 apps/dispatch	adapter=0	dispatch=0	narrow=318
 apps/fieldbook	adapter=0	dispatch=0	narrow=459
@@ -516,8 +568,8 @@ examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=1
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=193
 simple	adapter=0	dispatch=0	narrow=3
 sky-bundled/ai	adapter=0	dispatch=0	narrow=651
-sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=540
-sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1186
+sky-bundled/ai-cloud	adapter=0	dispatch=0	narrow=537
+sky-bundled/ai-train	adapter=0	dispatch=0	narrow=1180
 sky-bundled/console	adapter=0	dispatch=0	narrow=180
 sky-bundled/doc	adapter=0	dispatch=0	narrow=48
 test_pkg	adapter=0	dispatch=0	narrow=1

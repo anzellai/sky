@@ -4339,8 +4339,8 @@ readCloudFile dir =
                                |> Task.map
                                       (\text ->
                                           JsonD.decodeString
-                                              (JsonD.map2
-                                                  (\( j, s, a ) ( st, k, ( sm, rs ) ) ->
+                                              (JsonD.map5
+                                                  (\( j, s, a ) st k sm rs ->
                                                       { job = j
                                                       , state = s
                                                       , attempt = a
@@ -4360,28 +4360,24 @@ readCloudFile dir =
                                                       (JsonD.field
                                                           "attempt"
                                                           JsonD.int))
-                                                  (JsonD.map3
-                                                      (\st k sm -> ( st, k, sm ))
-                                                      (JsonD.field
-                                                          "staging"
-                                                          JsonD.string)
-                                                      (JsonD.field
-                                                          "runKey"
-                                                          JsonD.string)
-                                                      (JsonD.map2
-                                                          (\sm rs -> ( sm, rs ))
-                                                          (JsonD.oneOf
-                                                              [ JsonD.field
-                                                                    "spentMinor"
-                                                                    JsonD.int
-                                                              , JsonD.succeed 0
-                                                              ])
-                                                          (JsonD.oneOf
-                                                              [ JsonD.field
-                                                                    "runningSinceMs"
-                                                                    JsonD.int
-                                                              , JsonD.succeed 0
-                                                              ]))))
+                                                  (JsonD.field
+                                                      "staging"
+                                                      JsonD.string)
+                                                  (JsonD.field
+                                                      "runKey"
+                                                      JsonD.string)
+                                                  (JsonD.oneOf
+                                                      [ JsonD.field
+                                                            "spentMinor"
+                                                            JsonD.int
+                                                      , JsonD.succeed 0
+                                                      ])
+                                                  (JsonD.oneOf
+                                                      [ JsonD.field
+                                                            "runningSinceMs"
+                                                            JsonD.int
+                                                      , JsonD.succeed 0
+                                                      ]))
                                               text
                                               |> Result.toMaybe))
 
@@ -4752,22 +4748,19 @@ cloudRelaunch ctx job cs p store key attempt relaunched spentMinor =
                                               |> Task.map (\_ -> launched)))
                            |> Task.andThen
                                   (\name ->
-                                      Task.succeed ()
-                                          |> Task.andThen
-                                                 (\_ ->
-                                                     cloudWatchLoop
-                                                         ctx
-                                                         job
-                                                         cs
-                                                         p
-                                                         store
-                                                         key
-                                                         attempt
-                                                         name
-                                                         0
-                                                         ""
-                                                         relaunched
-                                                         spentMinor)))
+                                      cloudWatchLoop
+                                          ctx
+                                          job
+                                          cs
+                                          p
+                                          store
+                                          key
+                                          attempt
+                                          name
+                                          0
+                                          ""
+                                          relaunched
+                                          spentMinor))
 
 
 -- The seconds of machine time the rest of the budget buys.
@@ -5258,209 +5251,209 @@ watchCloud job cs store key attempt name after spentBefore =
                                                                 (\_ -> texts))
                                           |> Task.andThen
                                                  (\texts ->
-                                                     Task.map2
-                                                         (\n pf -> ( n, pf ))
-                                                         (Time.unixMillis ())
-                                                         (readCloudFile dir)
+                                                     Time.unixMillis ()
                                                          |> Task.andThen
-                                                                (\( now, prevFile ) ->
-                                                                    let
-                                                                        -- Vertex bills a job's
-                                                                        -- running time. Its start
-                                                                        -- time is set when it
-                                                                        -- begins PENDING, and a
-                                                                        -- stockout keeps it PENDING
-                                                                        -- for as long as it lasts
-                                                                        -- (an hour, live). Spend
-                                                                        -- counts from the first
-                                                                        -- watch that saw it RUNNING.
-                                                                        pending =
-                                                                            cj.state
-                                                                                == "JOB_STATE_QUEUED"
-                                                                                || cj.state
-                                                                                       == "JOB_STATE_PENDING"
-                                                                        samePrev =
-                                                                            case prevFile of
-
-                                                                                Just pf ->
-                                                                                    if pf.job
-                                                                                        == name then
-                                                                                        Just
-                                                                                            pf
-
-                                                                                    else
-                                                                                        Nothing
-
-                                                                                Nothing ->
-                                                                                    Nothing
-                                                                        seenSince =
-                                                                            Maybe.withDefault
-                                                                                0
-                                                                                (Maybe.map
-                                                                                    .runningSinceMs
-                                                                                    samePrev)
-                                                                        sawPending =
-                                                                            Maybe.withDefault
-                                                                                False
-                                                                                (Maybe.map
-                                                                                    (\pf ->
-                                                                                        pf.state
-                                                                                            == "JOB_STATE_PENDING")
-                                                                                    samePrev)
-                                                                        -- Recorded (and kept) only when
-                                                                        -- a watch saw the job wait
-                                                                        -- PENDING and then run.
-                                                                        runningSince =
-                                                                            if pending then
-                                                                                0
-
-                                                                            else if seenSince
-                                                                                > 0 then
-                                                                                seenSince
-
-                                                                            else if sawPending then
-                                                                                now
-
-                                                                            else
-                                                                                0
-                                                                        -- Never seen PENDING: it began
-                                                                        -- running at its start.
-                                                                        from =
-                                                                            if pending then
-                                                                                0
-
-                                                                            else if runningSince
-                                                                                > 0 then
-                                                                                runningSince
-
-                                                                            else if cj.startMs
-                                                                                > 0 then
-                                                                                cj.startMs
-
-                                                                            else
-                                                                                cj.createMs
-                                                                        until =
-                                                                            if cj.endMs
-                                                                                > 0 then
-                                                                                cj.endMs
-
-                                                                            else
-                                                                                now
-                                                                        ran =
-                                                                            if from
-                                                                                > 0 then
-                                                                                Math.max
-                                                                                    0
-                                                                                    (until
-                                                                                        - from)
-
-                                                                            else
-                                                                                0
-                                                                        spentMinor =
-                                                                            spentBefore
-                                                                                + Money.toMinor
-                                                                                      (perMillis
-                                                                                          cs.perHour
-                                                                                          ran)
-                                                                        lines =
-                                                                            List.concatMap
-                                                                                (\t ->
-                                                                                    List.filter
-                                                                                        (\l ->
-                                                                                            not
-                                                                                                (String.isEmpty
-                                                                                                    (String.trim
-                                                                                                        l)))
-                                                                                        (String.lines
-                                                                                            t))
-                                                                                texts
-                                                                        live =
-                                                                            List.member
-                                                                                cj.state
-                                                                                [ "JOB_STATE_QUEUED"
-                                                                                , "JOB_STATE_PENDING"
-                                                                                , "JOB_STATE_RUNNING"
-                                                                                , "JOB_STATE_CANCELLING"
-                                                                                , "JOB_STATE_UPDATING"
-                                                                                ]
-                                                                        seen =
-                                                                            seenOf
-                                                                                0
-                                                                                { offset =
-                                                                                    0
-                                                                                , lines =
-                                                                                    lines
-                                                                                , alive =
-                                                                                    live
-                                                                                , cancelRequested =
-                                                                                    cj.state
-                                                                                        == "JOB_STATE_CANCELLED"
-                                                                                , stderrTail =
-                                                                                    cj.errorMessage
-                                                                                }
-                                                                        outcome =
-                                                                            if seen.outcome
-                                                                                == "cancelling" then
-                                                                                "cancelled"
-
-                                                                            else
-                                                                                seen.outcome
-                                                                    in
-                                                                        writeCloudFile
-                                                                            dir
-                                                                            cs
-                                                                            key
-                                                                            name
-                                                                            cj.state
-                                                                            attempt
-                                                                            spentMinor
-                                                                            runningSince
-                                                                            |> Task.map
-                                                                                   (\_ ->
-                                                                                       { segment =
-                                                                                           List.reverse
-                                                                                               keys
-                                                                                               |> List.head
-                                                                                               |> Maybe.withDefault
-                                                                                                      after
-                                                                                       , state =
+                                                                (\now ->
+                                                                    readCloudFile
+                                                                        dir
+                                                                        |> Task.andThen
+                                                                               (\prevFile ->
+                                                                                   let
+                                                                                       -- Vertex bills a job's
+                                                                                       -- running time. Its start
+                                                                                       -- time is set when it
+                                                                                       -- begins PENDING, and a
+                                                                                       -- stockout keeps it PENDING
+                                                                                       -- for as long as it lasts
+                                                                                       -- (an hour, live). Spend
+                                                                                       -- counts from the first
+                                                                                       -- watch that saw it RUNNING.
+                                                                                       pending =
                                                                                            cj.state
-                                                                                       , outcome =
-                                                                                           outcome
-                                                                                       , step =
-                                                                                           seen.step
-                                                                                       , code =
-                                                                                           seen.code
-                                                                                       , message =
-                                                                                           seen.message
-                                                                                       , trainLoss =
-                                                                                           seen.trainLoss
-                                                                                       , valLoss =
-                                                                                           seen.valLoss
-                                                                                       , peft =
-                                                                                           seen.peft
-                                                                                       , resumedFrom =
-                                                                                           seen.resumedFrom
-                                                                                       , spentMinor =
-                                                                                           spentMinor
-                                                                                       , errorCode =
-                                                                                           cj.errorCode
-                                                                                       , errorMessage =
-                                                                                           cj.errorMessage
-                                                                                       , relaunches =
-                                                                                           0
-                                                                                       , ranSeconds =
-                                                                                           if cj.startMs
-                                                                                               > 0
-                                                                                               && cj.endMs
-                                                                                                      > cj.startMs then
-                                                                                               (cj.endMs
-                                                                                                   - cj.startMs)
-                                                                                                   // 1000
+                                                                                               == "JOB_STATE_QUEUED"
+                                                                                               || cj.state
+                                                                                                      == "JOB_STATE_PENDING"
+                                                                                       -- What the previous watch of this
+                                                                                       -- job recorded (another job's
+                                                                                       -- file counts as nothing).
+                                                                                       seenSince =
+                                                                                           case prevFile of
+
+                                                                                               Just pf ->
+                                                                                                   if pf.job
+                                                                                                       == name then
+                                                                                                       pf.runningSinceMs
+
+                                                                                                   else
+                                                                                                       0
+
+                                                                                               Nothing ->
+                                                                                                   0
+                                                                                       sawPending =
+                                                                                           case prevFile of
+
+                                                                                               Just pf ->
+                                                                                                   pf.job
+                                                                                                       == name
+                                                                                                       && pf.state
+                                                                                                              == "JOB_STATE_PENDING"
+
+                                                                                               Nothing ->
+                                                                                                   False
+                                                                                       -- Recorded (and kept) only when
+                                                                                       -- a watch saw the job wait
+                                                                                       -- PENDING and then run.
+                                                                                       runningSince =
+                                                                                           if pending then
+                                                                                               0
+
+                                                                                           else if seenSince
+                                                                                               > 0 then
+                                                                                               seenSince
+
+                                                                                           else if sawPending then
+                                                                                               now
 
                                                                                            else
                                                                                                0
-                                                                                       })))))
+                                                                                       -- Never seen PENDING: it began
+                                                                                       -- running at its start.
+                                                                                       from =
+                                                                                           if pending then
+                                                                                               0
+
+                                                                                           else if runningSince
+                                                                                               > 0 then
+                                                                                               runningSince
+
+                                                                                           else if cj.startMs
+                                                                                               > 0 then
+                                                                                               cj.startMs
+
+                                                                                           else
+                                                                                               cj.createMs
+                                                                                       until =
+                                                                                           if cj.endMs
+                                                                                               > 0 then
+                                                                                               cj.endMs
+
+                                                                                           else
+                                                                                               now
+                                                                                       ran =
+                                                                                           if from
+                                                                                               > 0 then
+                                                                                               Math.max
+                                                                                                   0
+                                                                                                   (until
+                                                                                                       - from)
+
+                                                                                           else
+                                                                                               0
+                                                                                       spentMinor =
+                                                                                           spentBefore
+                                                                                               + Money.toMinor
+                                                                                                     (perMillis
+                                                                                                         cs.perHour
+                                                                                                         ran)
+                                                                                       lines =
+                                                                                           List.concatMap
+                                                                                               (\t ->
+                                                                                                   List.filter
+                                                                                                       (\l ->
+                                                                                                           not
+                                                                                                               (String.isEmpty
+                                                                                                                   (String.trim
+                                                                                                                       l)))
+                                                                                                       (String.lines
+                                                                                                           t))
+                                                                                               texts
+                                                                                       live =
+                                                                                           List.member
+                                                                                               cj.state
+                                                                                               [ "JOB_STATE_QUEUED"
+                                                                                               , "JOB_STATE_PENDING"
+                                                                                               , "JOB_STATE_RUNNING"
+                                                                                               , "JOB_STATE_CANCELLING"
+                                                                                               , "JOB_STATE_UPDATING"
+                                                                                               ]
+                                                                                       seen =
+                                                                                           seenOf
+                                                                                               0
+                                                                                               { offset =
+                                                                                                   0
+                                                                                               , lines =
+                                                                                                   lines
+                                                                                               , alive =
+                                                                                                   live
+                                                                                               , cancelRequested =
+                                                                                                   cj.state
+                                                                                                       == "JOB_STATE_CANCELLED"
+                                                                                               , stderrTail =
+                                                                                                   cj.errorMessage
+                                                                                               }
+                                                                                       outcome =
+                                                                                           if seen.outcome
+                                                                                               == "cancelling" then
+                                                                                               "cancelled"
+
+                                                                                           else
+                                                                                               seen.outcome
+                                                                                   in
+                                                                                       writeCloudFile
+                                                                                           dir
+                                                                                           cs
+                                                                                           key
+                                                                                           name
+                                                                                           cj.state
+                                                                                           attempt
+                                                                                           spentMinor
+                                                                                           runningSince
+                                                                                           |> Task.map
+                                                                                                  (\_ ->
+                                                                                                      { segment =
+                                                                                                          List.reverse
+                                                                                                              keys
+                                                                                                              |> List.head
+                                                                                                              |> Maybe.withDefault
+                                                                                                                     after
+                                                                                                      , state =
+                                                                                                          cj.state
+                                                                                                      , outcome =
+                                                                                                          outcome
+                                                                                                      , step =
+                                                                                                          seen.step
+                                                                                                      , code =
+                                                                                                          seen.code
+                                                                                                      , message =
+                                                                                                          seen.message
+                                                                                                      , trainLoss =
+                                                                                                          seen.trainLoss
+                                                                                                      , valLoss =
+                                                                                                          seen.valLoss
+                                                                                                      , peft =
+                                                                                                          seen.peft
+                                                                                                      , resumedFrom =
+                                                                                                          seen.resumedFrom
+                                                                                                      , spentMinor =
+                                                                                                          spentMinor
+                                                                                                      , errorCode =
+                                                                                                          cj.errorCode
+                                                                                                      , errorMessage =
+                                                                                                          cj.errorMessage
+                                                                                                      , relaunches =
+                                                                                                          0
+                                                                                                      , ranSeconds =
+                                                                                                          if cj.startMs
+                                                                                                              > 0
+                                                                                                              && cj.endMs
+                                                                                                                     > cj.startMs then
+                                                                                                              (cj.endMs
+                                                                                                                  - cj.startMs)
+                                                                                                                  // 1000
+
+                                                                                                          else
+                                                                                                              0
+                                                                                                      }))))))
 
 
 -- A segment's local copy: `cloud-events/<attempt>-<seq>.jsonl`, the same
