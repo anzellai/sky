@@ -2851,7 +2851,13 @@ impl<'a> Ctx<'a> {
                     },
                 };
                 let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
-                let (_cond, binds) = self.pattern_test(&subj, &ty, p);
+                let (_cond, mut binds) = self.pattern_test(&subj, &ty, p);
+                // Discard every inner binder (`_ = v`) so a destructured param
+                // whose names the body ignores (`pairFirst ( a, b ) = a`) does
+                // not trip Go's "declared and not used" — the same per-binding
+                // discard a case arm and a `let` destructure emit.
+                let discards = discard_binds(&binds);
+                binds.extend(discards);
                 (n, ty, binds)
             }
         }
@@ -8125,7 +8131,12 @@ impl<'a> Ctx<'a> {
                     let n = self.fresh_temp();
                     let subj = GoExpr::new(GoExprKind::Ident(n.clone()), ty.clone());
                     let (_cond, binds) = self.pattern_test(&subj, &ty, *p);
+                    // Discard every inner binder (`_ = v`): a lambda that
+                    // ignores a destructured name (`\( j, s, a ) -> j`) must
+                    // not trip Go's "declared and not used".
+                    let discards = discard_binds(&binds);
                     destructure.extend(binds);
+                    destructure.extend(discards);
                     n
                 }
             };
