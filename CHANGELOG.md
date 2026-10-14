@@ -823,6 +823,16 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Tests
 
+- The Sky.Spa differential split fuzzer (`xtask harness --only
+  spa-diff-fuzz`) now compares the leaf and the command each leg takes, not
+  only the model, and checks client-result roots. For a client-result arm the
+  client runs itself, it checks that the client sends the request exactly on
+  the leaf where the direct update performs. It fails when a Model field takes
+  one value over every generated model. New fixture
+  `tests/fixtures/spa-readset-noneleaf`; new falsifiers
+  `spa-diff-fuzz.condition-read-dropped` and
+  `spa-diff-fuzz.none-leaf-sends-rpc`.
+
 - Device (phase 5): `tests/Std/Ai/DeviceTest.sky` (every rule of the
   decision, the status, the wire values, the spec builders, record, replay
   and one suite scored on both sides), the `allowOnDevice` cases of

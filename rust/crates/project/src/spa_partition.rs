@@ -6997,6 +6997,73 @@ fn trim_span(src: &str, r: (u32, u32)) -> Option<(u32, u32)> {
     (r.0 + lead < r.1 - trail).then_some((r.0 + lead, r.1 - trail))
 }
 
+/// The command half of every `( model', cmd )` leaf in `update`'s own body
+/// (module `module`, source `src`), through `let` / `if` / `case` and a guard
+/// wrapper's inline lambda, as trimmed byte spans in source order. The
+/// differential split fuzzer tags each one with its leaf number, so the two
+/// runs it compares show which leaf each took. A leaf inside a helper is not
+/// listed (its command still shows in the command shape).
+pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec<(u32, u32)> {
+    fn walk(body: &Body, e: ExprId, src: &str, out: &mut Vec<(u32, u32)>) {
+        match &body.exprs[e] {
+            Expr::Tuple(xs) if xs.len() == 2 => {
+                if let Some(r) = body
+                    .expr_spans
+                    .get(xs[1])
+                    .and_then(|sp| trim_span(src, sp.range))
+                {
+                    out.push(r);
+                }
+            }
+            Expr::Let { body: b, .. } => walk(body, *b, src, out),
+            Expr::If { arms, els } => {
+                for (_, t) in arms {
+                    walk(body, *t, src, out);
+                }
+                walk(body, *els, src, out);
+            }
+            Expr::Case { branches, .. } => {
+                for br in branches {
+                    walk(body, br.body, src, out);
+                }
+            }
+            Expr::Lambda { body: b, .. } => walk(body, *b, src, out),
+            Expr::Call(_, args) => {
+                if let Some(last) = args.last() {
+                    if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
+                        walk(body, *lb, src, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let resolved = db.resolve(module);
+    let Some(td) = resolved
+        .top_defs
+        .iter()
+        .find(|t| t.name.as_str() == "update")
+    else {
+        return Vec::new();
+    };
+    let Some(body) = resolved.bodies.get(&td.def) else {
+        return Vec::new();
+    };
+    let Some(root) = body.root else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk(body, root, src, &mut out);
+    out.sort();
+    out.dedup();
+    // Nested spans cannot be rewritten one by one: keep none of them.
+    let nested = out.windows(2).any(|w| w[1].0 < w[0].1);
+    if nested {
+        return Vec::new();
+    }
+    out
+}
+
 /// Is `e` itself a `Cmd.perform task ToMsg` call (not a helper that returns
 /// one)?
 fn is_direct_perform(db: &dyn SkyDb, body: &Body, e: ExprId) -> bool {
