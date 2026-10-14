@@ -32,6 +32,11 @@ on:
         default: false
   push:
     tags: ['sky-llama-b*']
+    # TEMPORARY (feat/std-ai-lifecycle only): GitHub dispatches a workflow
+    # only from the default branch, and this one is not there yet. The commit
+    # that pins the published digests in ai_device.rs removes this trigger.
+    branches: ['feat/std-ai-lifecycle']
+    paths: ['.github/workflows/ai-device-bundles.yml', 'scripts/ai/device/**']
 
 permissions:
   contents: read
@@ -166,7 +171,7 @@ jobs:
   publish:
     name: Publish the engines
     needs: build
-    if: startsWith(github.ref, 'refs/tags/sky-llama-b') || inputs.publish
+    if: startsWith(github.ref, 'refs/tags/sky-llama-b') || inputs.publish || github.ref == 'refs/heads/feat/std-ai-lifecycle'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
