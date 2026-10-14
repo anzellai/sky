@@ -291,8 +291,13 @@ func MountConsoleEndpoints(mux *http.ServeMux) {
 //     when the host binary failed to link `sky-app/rt/console_app`
 //     (the compiler emits the blank import; missing means a build
 //     that's been hand-edited away from the canonical codegen).
+//
+// Each call is its own owner, so a second call in the process mounts nothing
+// (one console per process). A caller that must release the console when its
+// listener stops uses mountEmbeddedConsoleFor with an owner it keeps, as
+// Server.listen and Live.serve do.
 func MountEmbeddedConsole(mux *http.ServeMux) {
-	mountEmbeddedConsoleFor(mux, &serverListenConsoleOwner, nil)
+	mountEmbeddedConsoleFor(mux, new(serverListenOwner), nil)
 }
 
 // The inline console is ONE per process (v0.27). It renders the process-wide
@@ -311,10 +316,6 @@ var (
 	consoleClaimOwner any
 	consoleClaimApp   *liveApp
 )
-
-// serverListenConsoleOwner is the owner token of every Server.listen: it owns
-// the console for the process lifetime.
-var serverListenConsoleOwner struct{ _ byte }
 
 // consoleOwnedBy reports whether owner holds the console claim.
 func consoleOwnedBy(owner any) bool {

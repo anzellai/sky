@@ -44,7 +44,10 @@ composes them for you, and they are **deprecated for direct use**.
 markup) → use `App.web` instead of `App.app`. The only non-`Std.App` entry you
 still reach for directly is **`Sky.Http.Server`** (`Server.listen 8000 […]`) for
 a headless HTTP/JSON API with no TEA UI, and `main = Task.run cmd` for a one-shot
-job. See `sky doc Std.App`.
+job. One process can serve several ports (`Task.spawn (Server.listen 9001
+adminRoutes |> Task.onError report)`), each with its own routes; a failure to
+start (port in use) is the Task's `Err`, and `Task.spawn` drops it unless you
+handle it. See `sky doc Std.App`.
 
 ### Migrating a deprecated front door → `Std.App`
 

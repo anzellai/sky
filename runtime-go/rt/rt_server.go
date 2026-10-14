@@ -525,18 +525,30 @@ func serverListenRun(port any, routes any) any {
 	}
 	mux, rootFiles := serverRouteMux(AsList(routes))
 
-	// Observability endpoints (Phase 1.1a Step 4). Mount BEFORE
-	// any of the user's routes so the catch-all "/" pattern in
-	// user code doesn't shadow them. Opt-out via
-	// OBSERVABILITY_DISABLED=1.
-	// v0.16.0: in-process inline Sky Console mount. Replaces the
-	// v0.15.x subprocess + reverse-proxy mount. Must run BEFORE
-	// MountObservabilityEndpoints so the legacy console HTML root
-	// inside it can defer to the inline one. Same gates as
-	// Sky.Live (production+no-secret → skipped; SKY_LIVE_BASE_PATH
-	// set → skipped; SKY_CONSOLE_EMBED=off → skipped). No port
-	// argument needed — handler runs on this mux directly.
-	_ = p
+	// Bind FIRST, before anything process-wide is touched. A port already in
+	// use is then reported before the console mounts or the app announces
+	// itself, and it is the Task's Err: a program that runs two servers
+	// (`Task.spawn (Server.listen 9001 adminRoutes)`) handles it like any
+	// other failure, and `main = Server.listen …` still exits 1 through the
+	// entry's Err path. Port 0 asks the kernel for a free port.
+	bindHost, _ := resolveBindHost()
+	ln, lerr := net.Listen("tcp", joinBindAddr(bindHost, p))
+	if lerr != nil {
+		if isAddrInUse(lerr) {
+			reportPortInUse(p, "pass a different port to Server.listen")
+			return Err[any, any](ErrUnavailable(fmt.Sprintf(
+				"Server.listen did not start: port %d is already in use", p)))
+		}
+		return Err[any, any](ErrUnavailable("Server.listen did not start: " + lerr.Error()))
+	}
+	// Every way out closes the listener, a panic below included: a port that
+	// is bound but never served would hang its clients instead of refusing
+	// them. (srv.Serve closes it too, and a second Close is harmless.)
+	defer func() { _ = ln.Close() }()
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		p = tcp.Port
+	}
+
 	// v0.16.1 PR7 — seed SKY_PARENT_URL so the inline console_app's
 	// init_ reads OUR OWN listener's loopback when it builds the
 	// initial Model. Mirror of the liveAppRun setup; see that path's
@@ -548,14 +560,29 @@ func serverListenRun(port any, routes any) any {
 	if procenv.Getenv("SKY_PARENT_URL") == "" {
 		procenv.Set("SKY_PARENT_URL", fmt.Sprintf("http://127.0.0.1:%d", p), procenv.Runtime)
 	}
-	MountEmbeddedConsole(mux)
+	// The inline Sky Console is ONE per process (console.go). Each
+	// Server.listen is its own owner: the first listener in the process
+	// mounts the console, a second one serves none, and the console is
+	// released when its owner stops. Before v0.28.0 every Server.listen
+	// shared one owner token, so a second listener took itself for the
+	// owner, mounted the console sub-app again and panicked ("sub-app
+	// already mounted at /_sky/console"): the second server never bound
+	// and its Task never ended. Must run BEFORE MountObservabilityEndpoints
+	// so the legacy console HTML root there defers to the inline one.
+	owner := new(serverListenOwner)
+	defer releaseConsole(owner)
+	mountEmbeddedConsoleFor(mux, owner, nil)
 	MountObservabilityEndpoints(mux)
 	// v0.16.1 PR 2 — boot-time mount-precedence invariant. When the
 	// user EXPLICITLY asked for a console (SKY_CONSOLE_AUTH=token|app,
 	// not a sub-app, SKY_CONSOLE_EMBED not off) but neither the
-	// inline nor the legacy mount actually claimed /_sky/console,
-	// this prints a FATAL stderr line + os.Exit(1).
-	AssertConsoleInvariantOrExit()
+	// inline nor the legacy mount actually claimed /_sky/console, the
+	// server does not start. It is the Task's Err, as every other
+	// refusal to start is (the entry's Err path exits 1).
+	if err := consoleInvariantError(); err != nil {
+		fmt.Fprintf(os.Stderr, "[sky.console] FATAL: %v\n", err)
+		return Err[any, any](ErrInvalidInput(err.Error()))
+	}
 	// If THIS process is a sub-app (SKY_PARENT_URL + SKY_LIVE_NAMESPACE
 	// set), start the push-exporter so Log.* / metric / span writes
 	// flow back to the parent. No-op for standalone runs.
@@ -574,7 +601,6 @@ func serverListenRun(port any, routes any) any {
 	// The handler chain (Host guard, observability, CSRF, RPC dedupe, the
 	// asset guard, the mux) is built by serverListenerHandler so a test can
 	// drive the same handler the listener serves.
-	bindHost, _ := resolveBindHost()
 	listenerHandler := serverListenerHandler(mux, rootFiles, bindHost)
 
 	srv := &http.Server{
@@ -593,8 +619,13 @@ func serverListenRun(port any, routes any) any {
 	// SEQUENCE, because the embedded database must be stopped strictly after
 	// the app has stopped accepting and drained. Handing it the listener is
 	// what makes its first phase real; it is a no-op registration when no
-	// cluster is being supervised.
-	RegisterAcceptStopper("http.Server", func() { _ = srv.Close() })
+	// cluster is being supervised. Scoped: a server that has stopped is
+	// taken off the list.
+	unregisterStopper := registerAcceptStopperScoped("http.Server", func() { _ = srv.Close() })
+	defer unregisterStopper()
+	if serverListenStartedHook != nil {
+		serverListenStartedHook(srv)
+	}
 	// v0.16.0: inline console runs in-process — no children to
 	// signal. Still install a SIGINT/SIGTERM/SIGHUP handler so the
 	// server closes gracefully (drains in-flight requests) rather
@@ -605,7 +636,9 @@ func serverListenRun(port any, routes any) any {
 	srvSigCh := make(chan os.Signal, 2)
 	signal.Notify(srvSigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		<-srvSigCh
+		if _, ok := <-srvSigCh; !ok {
+			return
+		}
 		// v0.16.1: drain HubExporter (and any other shutdown
 		// hook) BEFORE srv.Close so pending telemetry pushes
 		// reach the hub within Cloud Run / k8s grace windows.
@@ -615,17 +648,15 @@ func serverListenRun(port any, routes any) any {
 		// session store, on this shape).
 		drainAndRelease(8*time.Second, func() { _ = srv.Close() })
 	}()
-	// Bind BEFORE the "listening" line: a supervisor, `sky run` and every
-	// test that waits for that line connect as soon as they read it, and a
-	// line printed before the bind lost that race under load (v0.28.0, the
-	// `ai-device-partition` gate after a rebuild: connection refused).
-	ln, err := net.Listen("tcp", srv.Addr)
-	if err == nil {
-		fmt.Printf("Sky server listening on http://localhost:%d\n", p)
-		printStartupReport(p) // see startup_report.go — added under, never in place of
-		err = srv.Serve(ln)
-	}
+	// The listener is bound, so the "listening" line is true when printed: a
+	// supervisor, `sky run` and every test that waits for that line connect
+	// as soon as they read it (v0.28.0, the `ai-device-partition` gate after
+	// a rebuild: connection refused).
+	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
+	printStartupReport(p) // see startup_report.go — added under, never in place of
+	err := srv.Serve(ln)
 	signal.Stop(srvSigCh)
+	close(srvSigCh)
 	releaseSignals()
 	// If the listener closed because the embedded-PostgreSQL supervisor is
 	// mid-shutdown, returning here would let main exit and take the database
@@ -633,14 +664,19 @@ func serverListenRun(port any, routes any) any {
 	// once PostgreSQL is down.
 	BlockIfEmbeddedShuttingDown()
 	if err != nil && err != http.ErrServerClosed {
-		if isAddrInUse(err) {
-			reportPortInUse(p, "pass a different port to Server.listen")
-			ExitProcess(1)
-		}
 		return Err[any, any](ErrFfi(err.Error()))
 	}
 	return Ok[any, any](struct{}{})
 }
+
+// serverListenOwner is a Server.listen's console owner token (console.go):
+// one per call. It has a field so that two tokens never share an address.
+type serverListenOwner struct{ _ byte }
+
+// serverListenStartedHook, when set, sees each Server.listen's *http.Server
+// just before it serves, so a test can stop the server it started
+// (Server.listen has no stop of its own). Nil outside tests.
+var serverListenStartedHook func(srv *http.Server)
 
 // Server_api registers an API route — a REST / machine-to-machine
 // endpoint (server-to-server calls, webhooks) that authenticates via

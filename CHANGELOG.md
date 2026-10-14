@@ -598,6 +598,21 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
+- **Sky.Http.Server: a second `Server.listen` in one process serves.** A
+  program that served two ports (a public API and an admin API, each started
+  with `Task.spawn (Server.listen …)`) lost the second server: every
+  `Server.listen` shared one Sky Console owner, so the second one mounted the
+  console again and panicked before it bound. Nothing listened on its port and
+  no error reached the program. Each `Server.listen` now owns its own routes,
+  the first one in the process serves the Sky Console (one per process, as
+  with Sky.Live), and the console is released when that server stops. A
+  failure to start is the Task's `Err`: a port already in use is
+  `Err (Unavailable "Server.listen did not start: port N is already in use")`
+  (still printed loudly on stderr), and so is `SKY_CONSOLE_AUTH=token|app`
+  with no console to mount. Before, both exited the whole process, which also
+  ended any other server in it. A `main = Server.listen …` still exits 1 on
+  them, through the entry's `Err` path.
+
 - **Sky.Spa: a server branch that reads a model field through a value derived
   from the model now sends that field.** `let m2 = { model | n = 0 } in if
   m2.flag …`, `let m2 = stamp model`, `(stamp model).flag` and a `case` on

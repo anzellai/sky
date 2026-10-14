@@ -167,6 +167,9 @@ rpc =
 
 -- | `listen port routes` — bind the server.  The returned Task
 -- only resolves on shutdown (clean stop) or a fatal listen error.
+-- A failure to start (the port is in use) is the Task's `Err`.
+-- One process can run several servers, each on its own port with
+-- its own routes; the first one serves the Sky Console.
 listen : Int -> List Route -> Task Error ()
 listen =
     Ffi.kernel "Server_listen"

@@ -1744,6 +1744,23 @@ main =
 
 Routing: `get`, `post`, `put`, `delete`, `any`, `static`, `group` (prefix), `use` (middleware), `listen`.
 
+One process can serve several ports. Each `Server.listen` has its own routes:
+
+```elm
+main =
+    Task.spawn (Server.listen 9001 adminRoutes |> Task.onError reportAdmin)
+        |> Task.andThen (\_ -> Server.listen 8000 publicRoutes)
+```
+
+A failure to start is the Task's `Err` (v0.28.0): a port already in use is
+`Unavailable "Server.listen did not start: port 9001 is already in use"`, and
+`SKY_CONSOLE_AUTH=token|app` with no console to mount is `InvalidInput`. A
+`main = Server.listen …` exits 1 on either, through the entry's `Err` path.
+`Task.spawn` drops its task's result, so handle a spawned server's `Err`
+with `Task.onError`. The Sky Console is one per process: the first server
+that starts serves it at `/_sky/console`, and a second one serves none (the
+same rule as Sky.Live, `docs/skylive/embedded.md`).
+
 Cookies: `Server.cookie : String -> String -> Cookie` builds one with
 `Path=/; HttpOnly; SameSite=Lax`, and `Server.addCookie : Cookie -> Response ->
 Response` adds it. `Server.withCookie : String -> String -> String -> Response

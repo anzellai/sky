@@ -399,7 +399,7 @@ tier calls for it*.
 |---|---|---|
 | Web app (forms, real-time, UI state) | **Sky.Live** | `App.app {…}` + `--target web` (default) |
 | Client-rendered SPA / cross-platform client loop | **Sky.Spa** | `App.app {…}` + `--target web:app` (or `desktop`/`mobile`) |
-| HTTP/JSON API (no browser UI) | **Sky.Http.Server** | `Server.listen 8000 [...]` |
+| HTTP/JSON API (no browser UI) | **Sky.Http.Server** | `Server.listen 8000 [...]` (several ports: `Task.spawn (Server.listen 9001 [...])`; a failure to start is the Task's `Err`) |
 | Background job / cron | **Sky.Cli** | `main = Task.run work` |
 | Terminal UI | **Sky.Tui** | `App.app {…}` + `--target terminal:tui` |
 | One-shot CLI | **Sky.Cli** | `main = Task.run cliCmd` |
