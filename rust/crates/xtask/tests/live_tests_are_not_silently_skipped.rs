@@ -749,6 +749,11 @@ const GO_SKIPS_ALLOWED: &[(&str, &str, &str)] = &[
         "a helper body that runs only in the re-executed child process",
     ),
     (
+        "server_listen_deferred_test.go",
+        "the child of TestServerListen_PrintsListeningOnlyOnceBound",
+        "a server body that runs only in the child process its parent test starts",
+    ),
+    (
         "gob_register_test.go",
         "gob.Register(nil) did not panic",
         "a Go-version-dependent failure path; nothing to install fixes it",
