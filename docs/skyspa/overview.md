@@ -249,7 +249,18 @@ Per-arm guarantees, in one list:
   and no Msg runs between its hops;
 - a request is built from the model the Msg ran on, and a retry re-sends the
   same request (the backend's dedupe cache answers it without running the
-  effect twice).
+  effect twice);
+- the request carries every model field the server branch reads, also a field
+  read through a value derived from the model (`let m2 = { model | n = 0 } in
+  if m2.flag …`), so the backend takes the branch Sky.Live takes (v0.28.0);
+- a branch that returns `Cmd.none` dispatches nothing, as on Sky.Live. When the
+  arm returns one `Cmd.perform` on one branch and `Cmd.none` on the others
+  (`if model.flag then ( model, Cmd.perform t Got ) else ( model, Cmd.none )`),
+  the client runs the arm's conditions itself and sends no request on a
+  `Cmd.none` branch, and gets no `Applied<Msg>`. When the `Cmd.none` sits where
+  the client cannot see it (a guard helper's reject path), the request goes out
+  and the backend answers that no task ran; the client dispatches nothing.
+  Before v0.28.0 that answer was an `Err`, and the client ran `Got (Err …)`.
 
 **Write a long wait as an async arm.** A long poll or a slow relay read belongs
 in a `Cmd.perform` from an arm whose model write reads no server data; the

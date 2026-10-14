@@ -283,7 +283,7 @@ fn frontend_has_no_wire_leak_for_the_server_internal_msg() {
         "`Reloaded` must have NO Applied<Msg> variant"
     );
     assert!(
-        front.contains("| Reloaded ") && front.contains("update (Reloaded resp.result) model"),
+        front.contains("| Reloaded ") && front.contains("update (Reloaded spaResult_) model"),
         "`Reloaded` stays a client arm, dispatched with Reload's result:\n{front}"
     );
     // The server-internal `Shipped` is pruned, and `Ship` holds the queue (its

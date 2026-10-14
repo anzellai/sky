@@ -6608,7 +6608,7 @@ fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
 ///   2. the result Msg `Saved` is NOT a wire branch (no `/_rpc/Saved`, no
 ///      `SavedReq`, no `AppliedSaved`) — it stays a CLIENT arm;
 ///   3. the whole `Result` value is carried (frontend dispatches
-///      `update (Saved resp.result) model`; the response codec is
+///      `update (Saved spaResult_) model`; the response codec is
 ///      `Codec.result …`), never a Req that decomposes it into `url`/`e`
 ///      binders (the `missing field(s): url` bug);
 ///   4. FAIL-CLOSED — `Stored`, whose own arm reaches a server effect
@@ -6680,13 +6680,13 @@ fn client_result_perform_wires_task_result_to_client() {
     // GATE 3: the WHOLE `Result` value crosses and is dispatched — never
     // decomposed into `url`/`e` binders.
     assert!(
-        front.contains("update (Saved resp.result) model"),
+        front.contains("update (Saved spaResult_) model"),
         "the frontend `AppliedUpload` must dispatch `Saved` with the WHOLE result value:\n{front}"
     );
     assert!(
-        shared.contains("result : Result Error String")
+        shared.contains("result : List (Result Error String)")
             && shared.contains("Codec.result Codec.error Codec.string"),
-        "the `Upload` response wire must carry the task RESULT as `result : Result Error String` via `Codec.result`:\n{shared}"
+        "the `Upload` response wire must carry the task RESULT as `result : List (Result Error String)` via `Codec.result`:\n{shared}"
     );
     // The backend RUNS the task and returns its result (never drops the perform).
     assert!(
@@ -7872,7 +7872,7 @@ fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
         ("SlowB", "GotB"),
     ] {
         assert!(
-            front.contains(&format!("update ({result} resp.result) model")),
+            front.contains(&format!("update ({result} spaResult_) model")),
             "`{root}`'s result must be dispatched as `{result}` in the client:\n{front}"
         );
         assert!(
@@ -8152,11 +8152,11 @@ fn live_press_and_read(port: u16, jar: &std::path::Path, i: usize, prefix: &str)
 /// write `"failed"` for an `Err`; an `Ok` is not expected (port 1 refuses).
 fn client_got_out(front: &str, posted: &(u32, String)) -> String {
     assert!(
-        front.contains("update (Got resp.result)"),
+        front.contains("update (Got spaResult_)"),
         "the client dispatches the RPC's result to its own `Got` arm:\n{front}"
     );
     let v: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
-    match v["result"][0].as_str() {
+    match v["result"][0][0].as_str() {
         Some("Err") => "failed".to_string(),
         other => panic!("the RPC must answer the task's Err result, got {other:?}: {posted:?}"),
     }
@@ -8427,7 +8427,7 @@ fn a_result_msg_with_a_captured_argument_crosses_with_the_argument() {
     let (proj, out, log) = web_app_build("spa-captured-result-msg", &[]);
     let front = split_file(&proj, "frontend/src/Main.sky");
     assert!(
-        !front.contains("update (Got resp.result)"),
+        !front.contains("update (Got resp.result)") && !front.contains("update (Got spaResult_)"),
         "the client must not rebuild `Got` from the result alone:\n{front}"
     );
     if !required(Need::Go, have_go()) {
@@ -9917,5 +9917,334 @@ fn a_spa_backend_honours_the_store_the_app_names_with_with_config() {
     assert!(
         both.contains("The session store \"memory\", set by SKY_LIVE_STORE in the environment"),
         "the operator's variable wins over the code:\n{both}"
+    );
+}
+
+fn readset_noneleaf_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-readset-noneleaf")
+}
+
+/// The block of a generated `type alias <name> =` up to the next blank line.
+fn alias_block<'a>(shared: &'a str, name: &str) -> &'a str {
+    let Some(start) = shared.find(&format!("type alias {name} =")) else {
+        return "";
+    };
+    let block = &shared[start..];
+    let end = block.find("\n\n").unwrap_or(block.len());
+    &block[..end]
+}
+
+/// The field names of a generated record alias block (`{ a : T, b : U }`).
+fn alias_fields(block: &str) -> Vec<String> {
+    block
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let l = l.trim().trim_start_matches(['{', ',']).trim();
+            l.split_once(" :").map(|(n, _)| n.trim().to_string())
+        })
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+/// The generated client arm `<ctor> ->` of the frontend `update`, up to the
+/// next arm at the same indentation.
+fn frontend_arm<'a>(front: &'a str, ctor: &str) -> &'a str {
+    let head = format!("\n        {ctor} ->\n");
+    let Some(start) = front.find(&head) else {
+        return "";
+    };
+    let rest = &front[start + 1..];
+    let mut end = rest.len();
+    for (i, _) in rest.match_indices("\n        ") {
+        let after = &rest[i + 9..];
+        if i > 0 && after.starts_with(|c: char| c.is_ascii_uppercase()) {
+            end = i;
+            break;
+        }
+    }
+    &rest[..end]
+}
+
+/// Sky.Spa soundness: a model field read through a MODEL-DERIVED local must
+/// ride the RPC request, and a client-result root's `Cmd.none` leaf must send no
+/// RPC and must never dispatch `Got (Err …)`.
+///
+/// Generation leg (always runs): each derived-read arm's `<Msg>Req` carries the
+/// field its branch reads (before the fix the read through `m2` was dropped and
+/// the request was `{}`), the `Gated` / `ByMode` client arms keep `Cmd.none` on
+/// the none leaf and send the RPC only on the perform leaf, and the client-result
+/// response says "no task ran" as an empty `result` list.
+#[test]
+fn readset_through_derived_locals_and_none_leaf_sends_no_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+    let entry = readset_noneleaf_fixture_dir().join("src/Main.sky");
+    let o = Command::new(SKY)
+        .args([
+            "spa-split",
+            entry.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        o.status.success(),
+        "sky spa-split should succeed:\n{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+
+    for (req, field) in [
+        ("AliasCondReq", "flag"),
+        ("AliasReadReq", "mode"),
+        ("StampedReq", "flag"),
+        ("DestructuredReq", "flag"),
+        ("CaseOfReq", "flag"),
+    ] {
+        let block = alias_block(&shared, req);
+        assert!(!block.is_empty(), "{req} must exist:\n{shared}");
+        assert!(
+            alias_fields(block).iter().any(|f| f == field),
+            "{req} must carry `{field}`: the branch reads it through a model-derived \
+             local, and without it the backend rebuilds it from `init ()`:\n{block}"
+        );
+    }
+
+    // The none leaf keeps `Cmd.none` in the client and sends no request.
+    for ctor in ["Gated", "ByMode"] {
+        let arm = frontend_arm(&front, ctor);
+        assert!(!arm.is_empty(), "client arm `{ctor}` missing:\n{front}");
+        assert!(
+            arm.contains("Cmd.none") && arm.contains("spaRpc_"),
+            "client arm `{ctor}` must keep its `Cmd.none` leaf and send the RPC \
+             only on the perform leaf:\n{arm}"
+        );
+    }
+
+    // "No task ran" is its own answer: an empty `result` list, which the
+    // client maps to `( model, Cmd.none )`.
+    for resp in ["GatedResp", "GuardedResp", "ByModeResp", "CaseOfResp"] {
+        let block = alias_block(&shared, resp);
+        assert!(
+            block.contains("result : List (Result Error String)"),
+            "{resp} must answer `result : List (Result Error String)`:\n{block}"
+        );
+    }
+    let applied = frontend_arm(&front, "AppliedGated (Ok resp)");
+    assert!(
+        applied.contains("case resp.result of") && applied.contains("Cmd.none"),
+        "AppliedGated must map an empty result to `( model, Cmd.none )`:\n{applied}"
+    );
+}
+
+/// The behaviour leg: the split backend takes the branch Sky.Live takes, and a
+/// `Cmd.none` leaf answers "no task ran", never `Err`. Each request is the one
+/// the generated client builds: the fields of the generated `<Msg>Req`, taken
+/// from the client model.
+#[test]
+#[cfg(unix)]
+fn readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&readset_noneleaf_fixture_dir(), &proj);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "web:app build failed:\n{log}");
+    let shared = std::fs::read_to_string(proj.join(".split/shared/Shared.sky"))
+        .expect("generated shared module");
+    let backend_dir = proj.join(".split/backend");
+    // The wire hash the generated client sends (`X-Sky-Wire`). Without it the
+    // backend treats the request as a pre-v0.27.0 client's and settles the
+    // follow-ups itself, which would hide the branch it took.
+    let backend_src = std::fs::read_to_string(backend_dir.join("src/Main.sky"))
+        .expect("generated backend module");
+    let wire = backend_src
+        .split_once("spaSetWireHash_ \"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(h, _)| h.to_string())
+        .expect("the backend sets its wire hash");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("SPA_NONELEAF_P")
+            .stdin(std::process::Stdio::null())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the split backend");
+    if !wait_for_spa_backend(&log_path, 120) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("the split backend never reported listening on :{port}");
+    }
+
+    // The client model a request is built from, as JSON values per field.
+    let model = |flag: bool, mode: Option<&str>| -> Vec<(&'static str, String)> {
+        vec![
+            ("n", "7".to_string()),
+            ("flag", flag.to_string()),
+            (
+                "mode",
+                mode.map(|m| format!("\"{m}\"")).unwrap_or("null".into()),
+            ),
+            ("log", "\"L\"".to_string()),
+        ]
+    };
+    let post = |ctor: &str, m: &[(&'static str, String)]| -> String {
+        let fields = alias_fields(alias_block(&shared, &format!("{ctor}Req")));
+        let body = fields
+            .iter()
+            .map(|f| {
+                let v = m
+                    .iter()
+                    .find(|(n, _)| n == f)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| panic!("{ctor}Req field `{f}` is not a model field"));
+                format!("\"{f}\":{v}")
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let out = Command::new("curl")
+            .args([
+                "-s",
+                "-w",
+                "\n%{http_code}",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-H",
+                &format!("X-Sky-Wire: {wire}"),
+                "-d",
+                &format!("{{{body}}}"),
+                &format!("http://127.0.0.1:{port}/_rpc/{ctor}"),
+            ])
+            .output()
+            .expect("run curl");
+        let s = String::from_utf8_lossy(&out.stdout).to_string();
+        let (resp, code) = s
+            .rsplit_once('\n')
+            .unwrap_or_else(|| panic!("POST /_rpc/{ctor} did not answer: {s}"));
+        let code: u32 = code.trim().parse().unwrap_or(0);
+        let resp = resp.to_string();
+        assert_eq!(code, 200, "POST /_rpc/{ctor} must answer 200: {resp}");
+        resp
+    };
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut expect = |what: &str, ok: bool, resp: &str| {
+        if !ok {
+            failures.push(format!("{what}: {resp}"));
+        }
+    };
+    // Derived reads: with flag = True Sky.Live takes the perform branch, so the
+    // response carries the `Got` follow-up. With the dropped read the backend
+    // saw `init ()`'s flag = False and answered no follow-up.
+    for ctor in ["AliasCond", "Stamped", "Destructured"] {
+        let r = post(ctor, &model(true, None));
+        expect(
+            &format!("{ctor} flag=True runs the perform (Got follow-up)"),
+            r.contains("Got"),
+            &r,
+        );
+        let r = post(ctor, &model(false, None));
+        expect(
+            &format!("{ctor} flag=False runs no perform"),
+            !r.contains("Got"),
+            &r,
+        );
+    }
+    // `case m2.mode of Just s -> ( { m2 | log = s }, Cmd.none )`: with mode =
+    // Just "x" Sky.Live writes log = "x" and performs nothing. The dropped read
+    // saw `init ()`'s Nothing and performed.
+    let r = post("AliasRead", &model(false, Some("x")));
+    expect(
+        "AliasRead mode=Just writes the mode, runs no perform",
+        r.contains("\"log\":\"x\"") && !r.contains("Got"),
+        &r,
+    );
+    let r = post("AliasRead", &model(false, None));
+    expect(
+        "AliasRead mode=Nothing runs the perform",
+        r.contains("Got"),
+        &r,
+    );
+    // A client-result root through a derived case subject: flag = True runs the
+    // task and answers its Ok result.
+    let r = post("CaseOf", &model(true, None));
+    expect(
+        "CaseOf flag=True answers the task result",
+        r.contains("[[\"Ok\""),
+        &r,
+    );
+    // A `Cmd.none` leaf answers "no task ran", never an Err the client would
+    // dispatch as `Got (Err …)`.
+    for (ctor, m) in [
+        ("Gated", model(false, None)),
+        ("Guarded", model(false, None)),
+        ("ByMode", model(false, None)),
+        ("CaseOf", model(false, None)),
+    ] {
+        let r = post(ctor, &m);
+        expect(
+            &format!("{ctor} none leaf answers an empty result, no Err"),
+            r.contains("\"result\":[]") && !r.contains("Err"),
+            &r,
+        );
+    }
+    // The guard rejects (flag = False): Sky.Live keeps `log`. The allow path
+    // writes `log`, the reject path keeps it, so the request must carry it.
+    let r = post("GuardedWrite", &model(false, None));
+    expect(
+        "GuardedWrite rejected keeps the client's log",
+        r.contains("\"log\":\"L\""),
+        &r,
+    );
+    let r = post("Gated", &model(true, None));
+    expect(
+        "Gated flag=True answers the task result",
+        r.contains("[[\"Ok\""),
+        &r,
+    );
+    let r = post("ByMode", &model(false, Some("hi")));
+    expect(
+        "ByMode mode=Just answers the task result",
+        r.contains("[[\"Ok\""),
+        &r,
+    );
+
+    let _ = child.kill();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        failures.is_empty(),
+        "the split backend diverged from Sky.Live:\n{}",
+        failures.join("\n")
     );
 }

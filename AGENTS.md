@@ -194,8 +194,9 @@ browser WebSocket API: `WebSocket.connect "/ws"` runs in the client and is
 same-origin (it passes `connect-src 'self'`); serve it with `App.api "GET /ws"`
 and `Ws.upgrade`. A Sky.Spa client runs every Msg once, in arrival order, and
 several server RPCs can be in flight together; an arm whose model write needs
-server data holds later Msgs until it answers (`docs/skyspa/overview.md`, "Msg
-order and server calls").
+server data holds later Msgs until it answers, and a server arm's `Cmd.none`
+branch sends no request and dispatches nothing, as on Sky.Live
+(`docs/skyspa/overview.md`, "Msg order and server calls").
 The client re-sends a transiently failing request by itself (no answer, a
 30 s timeout, 408 / 425 / 429 / 502 / 503 / 504; full-jitter backoff, `Retry-After`
 wins, in failure order, 8 attempts or 60 s), shows a quiet "Reconnecting…" only

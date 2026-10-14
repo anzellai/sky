@@ -609,6 +609,17 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   now rides the request too; before, the rejected branch answered `init ()`'s
   value for it.
 
+- **Sky.Spa: a server branch's `Cmd.none` path dispatches nothing.** For an
+  arm that runs one `Cmd.perform … Got` on one branch and returns `Cmd.none`
+  on another (`if model.flag then ( model, Cmd.perform t Got ) else ( model,
+  Cmd.none )`), the backend answered `Err "… carried no server task to run"`
+  on the `Cmd.none` branch, and the client ran `Got (Err …)`: a failure the
+  app never had. Sky.Live dispatches nothing there. The client now runs such
+  an arm's conditions itself and sends no request on a `Cmd.none` branch.
+  Where it cannot see the `Cmd.none` (a guard helper's reject path), the
+  backend answers that no task ran (`result : List (Result Error T)`, empty),
+  and the client dispatches nothing.
+
 - **`sky fmt` no longer moves an own-line comment to a different place in
   the code.** A comment above an `if` then-branch moved into a lambda in that
   branch (`Task.map (\_ -> ..)`) or below `else`. A comment above a pipeline

@@ -870,10 +870,39 @@ bound `( m2, _ )` and **discarded** the command — `saveBlob` ran nowhere and
 
 **Behaviour.** The `Upload` RPC runs `saveBlob` server-side and answers with the
 task **result** (`Result Error String`), carried in the branch's `UploadResp`
-record as a single `result` field (`Codec.result Codec.error <valCodec>`). The
-frontend's `AppliedUpload (Ok resp) -> update (Saved resp.result) model` then
-dispatches the result Msg with the **whole** `Result` value into the client
-`update`, so `Saved`'s arm runs in the wasm client. `Saved` stays a client arm —
+record as a single `result : List (Result Error String)` field (`Codec.list
+(Codec.result Codec.error <valCodec>)`): one element when a server task ran,
+none when the branch took a `Cmd.none` path. The frontend's `AppliedUpload (Ok
+resp)` arm dispatches `update (Saved spaResult_) model` for `[ spaResult_ ]`
+and returns `( model, Cmd.none )` for `[]`, as Sky.Live dispatches nothing on a
+`Cmd.none` path. It dispatches the result Msg with the **whole** `Result` value
+into the client `update`, so `Saved`'s arm runs in the wasm client.
+
+**A `Cmd.none` leaf sends no request (v0.28.0).** A root whose tail the client
+can read (`let` / `if` / `case` over direct `( model, cmd )` tuples, one
+`Cmd.perform` leaf, the other leaves `Cmd.none`, every condition and binding
+client-pure: `spa_partition::NoneLeafPlan`) runs in the client as written,
+with the perform leaf's command replaced by the RPC:
+
+```elm
+Gated ->
+    let
+        spaRpc_ =
+            Spa.rpc gatedReqCodec gatedRespCodec "/_rpc/Gated" { flag = model.flag } AppliedGated
+    in
+    if model.flag then
+        ( model, spaRpc_ )
+
+    else
+        ( model, Cmd.none )
+```
+
+So the request goes out only on the branch where Sky.Live runs the task. A
+root whose `Cmd.none` the client cannot see (a guard helper's reject path, a
+helper that returns the command) sends the request on every branch, and the
+backend answers `[]` when no task ran. Before v0.28.0 it answered `Err "…
+carried no server task to run"`, and the client dispatched `Got (Err …)`, a
+failure the app never had. `Saved` stays a client arm —
 **no** `/_rpc/Saved` route, **no** `SavedReq`, **no** decomposition of the
 `Result` into `Ok`/`Err` binders (the `record is missing field(s): url` bug a
 `Result`-typed wire branch produces). The server task never crosses to the
@@ -904,8 +933,9 @@ it still settle server-side as a §18 chain (the build prints a note).
 **Runtime.** `runtime-go/rt/spa_perform_notjs.go`'s `Spa_runServerPerform`
 (`Ffi.kernel "Spa_runServerPerform"`, the `spaRunPerform_` alias) walks the
 branch's command, runs the single server `perform` leaf's task, and returns its
-`Result` **raw** — without folding it back through `update` (§18's job). A
-command with no runnable perform returns a classified `Err`.
+`Result` **raw**, as a one-element list — without folding it back through
+`update` (§18's job). A command with no runnable perform (a `Cmd.none` path)
+returns the empty list: no task ran, nothing to dispatch.
 
 **Verified.** Generation contracts (no server-effect leak; `Saved` is not a wire
 branch; the whole `Result` is carried; fail-closed `Stored` whose arm reaches a
@@ -914,8 +944,11 @@ server effect), both-trees build, and the end-to-end `POST /_rpc/Upload` →
 (`client_result_perform_wires_task_result_to_client`,
 `client_result_both_trees_build`,
 `client_result_e2e_post_upload_returns_task_result`, against
-`tests/fixtures/spa-client-result`); the runtime run-and-return + no-fold + Err
-fallback in `runtime-go/rt/spa_perform_notjs_test.go`.
+`tests/fixtures/spa-client-result`); the `Cmd.none` leaf with no request and
+the `[]` answer in `readset_through_derived_locals_and_none_leaf_sends_no_rpc`
+and `readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err`
+(`tests/fixtures/spa-readset-noneleaf`); the runtime run-and-return + no-fold +
+"no task ran" answer in `runtime-go/rt/spa_perform_notjs_test.go`.
 
 
 ## 20. RPC consistency, follow-ups, guard and persistence (2026-09-23)

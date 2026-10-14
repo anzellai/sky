@@ -1416,7 +1416,9 @@ struct ClientResultInfo {
     /// The CLIENT result Msg the frontend dispatches with the whole result value.
     result_msg: String,
     /// The task's result type (`Result Error T`) — the RPC response payload,
-    /// carried in the root's `<Root>Resp` record as a single `result` field.
+    /// carried in the root's `<Root>Resp` record as a single `result : List
+    /// (Result Error T)` field: one element when a server task ran, none when
+    /// the branch's command was `Cmd.none`.
     result_ty: ty::Ty,
 }
 
@@ -2343,13 +2345,19 @@ fn build_wire(
     }
     let mut resp: Vec<ModelFieldTy> = if let Some(cr) = client_result {
         // PATTERN-2: the response is the task RESULT, carried as a single
-        // `result : Result Error T` field. The write-set is NOT the response —
-        // the result Msg's client arm applies the model update in the wasm client.
+        // `result : List (Result Error T)` field. The write-set is NOT the
+        // response — the result Msg's client arm applies the model update in the
+        // wasm client. The list is EMPTY when the branch's command ran no server
+        // task (a `Cmd.none` leaf, the reject path of a guard helper): Sky.Live
+        // dispatches nothing then, and the client maps `[]` to `( model,
+        // Cmd.none )`. A `List`, not a `Maybe`: `Codec.maybe` decodes a value it
+        // cannot read as `Nothing`, which would turn a broken answer into a
+        // silent no-op; a list element that does not decode fails loudly.
         vec![ModelFieldTy {
             name: "result".to_string(),
             ty_name: String::new(),
             codec: None,
-            ty: Some(cr.result_ty.clone()),
+            ty: Some(ty::Ty::app("List", vec![cr.result_ty.clone()])),
         }]
     } else if io.writes_whole_model {
         model_fields.to_vec()
@@ -7744,7 +7752,8 @@ fn gen_backend(
         handlers.push_str(
             "-- Client-result perform: run the server task in the branch's command\n\
              -- and return its RESULT for the client to dispatch (pattern-2,\n\
-             -- runtime-go/rt/spa_perform_notjs.go).\n\
+             -- runtime-go/rt/spa_perform_notjs.go): `[ result ]`, or `[]` when\n\
+             -- the command ran no server task (a `Cmd.none` leaf).\n\
              spaRunPerform_ : any -> result\n\
              spaRunPerform_ =\n\
              \x20   Ffi.kernel \"Spa_runServerPerform\"\n\n\n",
@@ -9232,6 +9241,10 @@ pub(crate) struct ArmRoutes {
     /// server-only names (a residual may not use them).
     nav_names: NavNames,
     nav_tainted: HashSet<String>,
+    /// Server arms (by index) whose tail the client runs up to its leaves (see
+    /// [`spa_partition::NoneLeafPlan`]): for a client-result root, the client
+    /// keeps the `Cmd.none` leaves and sends the RPC only from the perform leaf.
+    none_leaf: HashMap<usize, spa_partition::NoneLeafPlan>,
 }
 
 /// How one module names the Std.Nav commands: the qualifier of `import
@@ -9328,6 +9341,11 @@ impl ArmRoutes {
             }
         }
         for b in branches {
+            if let (true, Some(a), Some(plan)) = (b.server, &b.arm, &b.none_leaf_plan) {
+                out.none_leaf.insert(a.index, plan.clone());
+            }
+        }
+        for b in branches {
             if !b.server || !b.effect_families.iter().any(|f| f == "Nav") {
                 continue;
             }
@@ -9382,6 +9400,49 @@ fn client_model_arm_body(arm: &syntax::ast::MatchArm, src: &str, call: &str) -> 
         &src[start..cmd_start],
         call,
         &src[cmd_end..end]
+    ))
+}
+
+/// The client body of a client-result root arm with a [`NoneLeafPlan`]: the
+/// arm as written, with the perform leaf's command half replaced by `spaRpc_`
+/// (bound once, at the top of the arm, to `call`, the RPC built from the model
+/// and Msg the arm runs on). Every `Cmd.none` leaf stays: the client evaluates
+/// the arm's own conditions, so it sends the request only on the branch where
+/// Sky.Live runs the task, and sends nothing on a `Cmd.none` branch.
+///
+/// The text is laid out at the body's own source column, so each continuation
+/// line keeps its place relative to the first. `None` (the caller then sends
+/// the RPC from every branch, and the backend answers "no task ran" on a
+/// `Cmd.none` leaf) when the spans do not match this source, or the body sits
+/// at or left of the generated pattern's column.
+pub(crate) fn client_none_leaf_arm_body(
+    arm: &syntax::ast::MatchArm,
+    src: &str,
+    plan: &spa_partition::NoneLeafPlan,
+    call: &str,
+) -> Option<String> {
+    let range = arm.body()?.syntax().text_range();
+    let (bs, be): (usize, usize) = (range.start().into(), range.end().into());
+    // The body node can carry its leading trivia (the newline and indent after
+    // `->`): start at its first token. A comment there is not handled.
+    let text = src.get(bs..be)?;
+    let bs = bs + (text.len() - text.trim_start().len());
+    let be = be - (text.len() - text.trim_end().len());
+    if src.get(bs..be)?.starts_with("--") || src.get(bs..be)?.starts_with("{-") {
+        return None;
+    }
+    let (ps, pe) = (plan.perform_span.0 as usize, plan.perform_span.1 as usize);
+    if !(bs <= ps && pe <= be) || src.get(ps..pe)? != plan.perform_text {
+        return None;
+    }
+    let col = bs - src[..bs].rfind('\n').map_or(0, |i| i + 1);
+    if col <= 8 {
+        return None;
+    }
+    let ind = " ".repeat(col);
+    let body = format!("{}spaRpc_{}", &src[bs..ps], &src[pe..be]);
+    Some(format!(
+        "{ind}let\n{ind}    spaRpc_ =\n{ind}        {call}\n{ind}in\n{ind}{body}"
     ))
 }
 
@@ -9550,9 +9611,21 @@ fn gen_frontend_update(
             } else {
                 None
             };
-            match client_model_text {
-                Some(body) => arms_out.push_str(&format!("        {pat_text} ->\n            {body}\n\n")),
-                None => arms_out.push_str(&format!(
+            // A client-result root whose tail the client can run keeps its
+            // `Cmd.none` leaves: it sends the request only from the perform leaf,
+            // as Sky.Live runs the task only there.
+            let none_leaf_text = if client_model_text.is_none() && client_result.contains_key(&m) {
+                arm_routes
+                    .none_leaf
+                    .get(&arm_index)
+                    .and_then(|plan| client_none_leaf_arm_body(&arm, src, plan, &call))
+            } else {
+                None
+            };
+            match (client_model_text, none_leaf_text) {
+                (Some(body), _) => arms_out.push_str(&format!("        {pat_text} ->\n            {body}\n\n")),
+                (None, Some(body)) => arms_out.push_str(&format!("        {pat_text} ->\n{body}\n\n")),
+                (None, None) => arms_out.push_str(&format!(
                     "        {pat_text} ->\n            ( {model_param}\n            , {call}\n            )\n\n"
                 )),
             }
@@ -9603,12 +9676,19 @@ fn gen_frontend_update(
             emit_apply_delta(io, model_param)
         };
         // PATTERN-2 (client-result perform): the RPC answered with the task
-        // RESULT (`resp.result : Result Error T`). DISPATCH the client result Msg
-        // with the WHOLE result value into `update`, so its client arm runs in the
-        // wasm client — never decompose the `Result` into Ok/Err binders.
+        // RESULT (`resp.result : List (Result Error T)`, one element when a task
+        // ran). DISPATCH the client result Msg with the WHOLE result value into
+        // `update`, so its client arm runs in the wasm client — never decompose
+        // the `Result` into Ok/Err binders.
         let apply = if let Some(cr) = client_result.get(m) {
+            // An empty `result` means the branch's command ran no server task
+            // (a `Cmd.none` leaf): as on Sky.Live, nothing is dispatched.
             format!(
-                "            update ({} resp.result) {model_param}",
+                "            case resp.result of\n\
+                 \x20               [ spaResult_ ] ->\n\
+                 \x20                   update ({} spaResult_) {model_param}\n\n\
+                 \x20               _ ->\n\
+                 \x20                   ( {model_param}, Cmd.none )",
                 cr.result_msg
             )
         } else if follow

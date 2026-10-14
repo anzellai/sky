@@ -663,6 +663,7 @@ mod tests {
             effect_families: vec![],
             arm: None,
             own_model_client: false,
+            none_leaf_plan: None,
         }
     }
     fn report_with(branches: Vec<BranchVerdict>) -> SpaPartitionReport {
