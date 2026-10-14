@@ -125,6 +125,12 @@ prices =
           , region = "us-central1"
           , perHour = "0.95"
           }
+        , -- Read from the Cloud Billing catalogue on 2026-10-14: N2 core and
+          -- RAM, running and management fee, 4 vCPU and 16 GiB, rounded up.
+          { machine = "n2-standard-4"
+          , region = "europe-west4"
+          , perHour = "0.30"
+          }
         ]
 
 
