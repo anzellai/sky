@@ -1840,7 +1840,8 @@ recordOnDevice (Registry r) v reason now =
                            , SqlInt now
                            , SqlString v.name
                            ]
-                           |> Task.andThen (\_ -> publishConsole (Registry r) v.name)
+                           |> Task.andThen
+                                  (\_ -> publishConsole (Registry r) v.name)
 
                    else
                        Task.fail (notRegistered (label v)))

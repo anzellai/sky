@@ -598,6 +598,14 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
+- **`sky fmt` no longer moves an own-line comment to a different place in
+  the code.** A comment above an `if` then-branch moved into a lambda in that
+  branch (`Task.map (\_ -> ..)`) or below `else`. A comment above a pipeline
+  step or a call argument moved into a lambda, and a comment above a let
+  binding's body, a record field's value or a let body moved below the `in`
+  body or above `in`. Each construct now keeps the comments in its own gaps,
+  and a lambda claims only the comments between `->` and its body.
+
 - **A stdlib module that did not parse stopped the build with an internal
   compiler error.** The stdlib is trusted and was not checked for parse
   errors, so a recovered error node (an operator section such as `(+)`, which
