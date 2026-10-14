@@ -339,7 +339,7 @@ both). The placement, device model and device adapter fall back to
 `docs/ai/device.md`. -}
 withDevice : Device.Spec -> Endpoint -> Endpoint
 withDevice d (Endpoint c) =
-    Endpoint { c | hasDevice = True, device = Device.raw d }
+    Endpoint { c | hasDevice = True, device = Device.rawSpec d }
 
 
 gpuText : LocalEngine.Gpu -> String

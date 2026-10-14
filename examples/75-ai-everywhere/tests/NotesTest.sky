@@ -77,7 +77,7 @@ tests =
           "the self-check scores a device recording and the server with one suite"
           (\_ ->
               check
-                  (Device.record
+                  (Device.recordPrompts
                       "device"
                       Assist.assistant
                       (Eval.prompts Suites.summaries)

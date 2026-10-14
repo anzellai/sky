@@ -24,11 +24,11 @@ sky test tests/NotesTest.sky                           # the server side, offlin
   runs `Device.prepare`, and the page reads the progress every second while it
   runs. `Remove from this device` runs `Device.evict`.
 - **The badge**: each summary appears as the model writes it
-  (`Provider.stream`, then `Provider.read` one piece per update) and says, at
+  (`Provider.openStream`, then `Provider.readStream` one piece per update) and says, at
   the end, whether it was made on the device or on the server.
 - **Help** (`/help`): the server-only `help` slot answers through the server.
 - **Self-check** (`/selfcheck`): the device answers the prompts of one eval
-  suite (`Device.record` over `Eval.prompts`), and the server scores that
+  suite (`Device.recordPrompts` over `Eval.prompts`), and the server scores that
   recording and its own slot with the same suite (`Device.replay`,
   `Eval.runAs`), then shows both pass rates.
 

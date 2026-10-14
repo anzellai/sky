@@ -19,11 +19,11 @@ module Std.Ai.Provider exposing
     , Options
     , defaultOptions
     , chatWith
-    , Stream
+    , AnswerStream
     , StreamStep(..)
-    , stream
-    , read
-    , close
+    , openStream
+    , readStream
+    , closeStream
     , chatStream
     , embed
     , PriceBook
@@ -372,17 +372,17 @@ chatWith opts provider messages =
             w.post "chat" "/chat/completions" (chatBody opts w.model messages)
                 |> Task.andThen decodeChat
 
-{-| An answer being written, read a piece at a time with `read`. A TEA app
+{-| An answer being written, read a piece at a time with `readStream`. A TEA app
 reads it one piece per update:
 
-    Cmd.perform (Provider.stream Provider.defaultOptions assistant messages) Opened
+    Cmd.perform (Provider.openStream Provider.defaultOptions assistant messages) Opened
 
     -- in update
     Opened (Ok s) ->
-        ( model, Cmd.perform (Provider.read s) Got )
+        ( model, Cmd.perform (Provider.readStream s) Got )
 
     Got (Ok (Provider.Piece text next)) ->
-        ( { model | answer = model.answer ++ text }, Cmd.perform (Provider.read next) Got )
+        ( { model | answer = model.answer ++ text }, Cmd.perform (Provider.readStream next) Got )
 
     Got (Ok (Provider.Finished r)) ->
         ( { model | usage = Just r.usage }, Cmd.none )
@@ -391,24 +391,24 @@ A server slot (`Std.Ai.Endpoint`, `Std.Ai.Local`), a built-in backend and a
 device slot (`Std.Ai.Device`) stream token by token. A `custom` provider, and
 a server that answers a streaming request with one body, give the whole
 answer as one piece. -}
-type Stream
+type AnswerStream
     = Open StreamTransport String
     | Whole ChatResponse Bool
 
 {-| The next part of a stream: a piece of text and the stream to read next,
 or the whole answer with its usage, as `chatWith` returns it. -}
 type StreamStep
-    = Piece String Stream
+    = Piece String AnswerStream
     | Finished ChatResponse
 
 
 {-| Send a chat and start reading its answer as it is written. -}
-stream : Options -> Provider -> List Message -> Task Error Stream
-stream opts provider messages =
+openStream : Options -> Provider -> List Message -> Task Error AnswerStream
+openStream opts provider messages =
     case provider of
 
         Routed select ->
-            stream opts (select messages) messages
+            openStream opts (select messages) messages
 
         Custom c ->
             c.chat messages |> Task.map (\r -> Whole r False)
@@ -430,8 +430,8 @@ stream opts provider messages =
 
 
 {-| Read the next piece of a stream. -}
-read : Stream -> Task Error StreamStep
-read s =
+readStream : AnswerStream -> Task Error StreamStep
+readStream s =
     case s of
 
         Whole r sent ->
@@ -459,8 +459,8 @@ read s =
 
 {-| Stop reading a stream before its end (the user left the page, the
 answer is long enough). Closing a finished stream does nothing. -}
-close : Stream -> Task Error ()
-close s =
+closeStream : AnswerStream -> Task Error ()
+closeStream s =
     case s of
 
         Open st id ->
@@ -485,7 +485,7 @@ streamEvent =
 {-| `chatWith`, with each piece of the answer handed to `onPiece` as it is
 written, in order. The result is the whole answer with its usage. When
 `onPiece` fails, the stream is closed and the call fails with that error. Use
-it in a Task program or a server handler; a TEA app reads a `stream` one
+it in a Task program or a server handler; a TEA app reads an `AnswerStream` one
 piece per update instead.
 
     Provider.chatStream Provider.defaultOptions assistant messages
@@ -493,17 +493,19 @@ piece per update instead.
 -}
 chatStream : Options -> Provider -> List Message -> (String -> Task Error ()) -> Task Error ChatResponse
 chatStream opts provider messages onPiece =
-    stream opts provider messages
+    openStream opts provider messages
         |> Task.andThen
                (\s ->
                    Task.loop (streamStep onPiece) s
                        |> Task.onError
-                              (\e -> close s |> Task.andThen (\_ -> Task.fail e)))
+                              (\e ->
+                                  closeStream s
+                                      |> Task.andThen (\_ -> Task.fail e)))
 
 
-streamStep : (String -> Task Error ()) -> Stream -> Task Error (Step Stream ChatResponse)
+streamStep : (String -> Task Error ()) -> AnswerStream -> Task Error (Step AnswerStream ChatResponse)
 streamStep onPiece s =
-    read s
+    readStream s
         |> Task.andThen
                (\step ->
                    case step of

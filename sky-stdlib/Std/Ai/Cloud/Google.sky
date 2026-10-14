@@ -46,9 +46,7 @@ module Std.Ai.Cloud.Google exposing
     , idToken
     , endpointOverride
     , serviceBase
-    , Response
-    , call
-    , ok
+    , ApiResponse
     , refused
     , accelerator
     , validLabel
@@ -659,25 +657,25 @@ federatedIdToken e audience =
 -- | A Google API's answer: its status, its body, and the request it answers
 -- (`POST /v1/projects/…/customJobs`: the method and the path, never the
 -- host's query string), which a failure names.
-type alias Response =
+type alias ApiResponse =
     { status : Int
     , body : String
     , request : String
     }
 
 
--- | One call to a Google API with a `cloud-platform` token: `call method url
+-- One call to a Google API with a `cloud-platform` token: `call method url
 -- body` (`""` for no body). HTTP 429 and 503 are retried up to four times
 -- with backoff and then fail `Overloaded`. Every other status is returned,
 -- so a caller decides what a 404 or a 409 means; `ok` turns a non-2xx
 -- answer into a typed failure.
-call : String -> String -> String -> Task Error Response
+call : String -> String -> String -> Task Error ApiResponse
 call method url body =
     accessToken [ cloudPlatform ]
         |> Task.andThen (\token -> attempt token method url body 0)
 
 
-attempt : Secret -> String -> String -> String -> Int -> Task Error Response
+attempt : Secret -> String -> String -> String -> Int -> Task Error ApiResponse
 attempt token method url body n =
     let
         base =
@@ -718,10 +716,10 @@ attempt token method url body n =
                                })
 
 
--- | A 2xx answer's body; any other answer as its typed failure: a quota
+-- A 2xx answer's body; any other answer as its typed failure: a quota
 -- error is `QuotaExceeded` for `resource` in `region`, a stockout
 -- `CapacityUnavailable`, anything else `RemoteRejected` with Google's message.
-ok : String -> String -> Response -> Task Error String
+ok : String -> String -> ApiResponse -> Task Error String
 ok resource region resp =
     if resp.status >= 200 && resp.status < 300 then
         Task.succeed resp.body
@@ -760,8 +758,10 @@ pathOf url =
                 path
 
 
--- | The typed failure for a non-2xx answer (see `ok`).
-refused : String -> String -> Response -> Error
+-- | The typed failure for a non-2xx answer: a quota error is `QuotaExceeded`
+-- for `resource` in `region`, a stockout `CapacityUnavailable`, anything else
+-- `RemoteRejected` with Google's message.
+refused : String -> String -> ApiResponse -> Error
 refused resource region resp =
     let
         message = googleMessage resp.body ++ " [" ++ resp.request ++ "]"

@@ -6,12 +6,12 @@
     "non_constructs": 44,
     "syntax_kinds": 124
   },
-  "removals_accounted": 76,
+  "removals_accounted": 78,
   "stdlib": {
     "_source": "api/symbols.json, via project::render_doc_site_export (the `sky doc --export` code path)",
-    "entries": 2881,
+    "entries": 2879,
     "explicit_exposing": {
-      "entries": 2703,
+      "entries": 2701,
       "modules": 124,
       "unfiltered_entries": 3958
     },
@@ -30,11 +30,11 @@
     "unfiltered": {
       "_note": "every top-level declaration, ignoring `exposing` lists. NEVER average these with the filtered counts — they answer a different question.",
       "entries": 4136,
-      "hidden_by_exposing": 1255,
+      "hidden_by_exposing": 1257,
       "types": 486,
       "values": 3650
     },
-    "values": 2518
+    "values": 2516
   },
   "tests": {
     "_note": "a CASE is one `Test.test` leaf. An ASSERTION is one call to Test.{equal,notEqual,ok,err,expectErrorKind,isTrue,isFalse,fail}. `Test.pass` is VACUOUS and excluded from `assertions`; `assertion_calls_incl_pass` is the looser reading, reported so the two are never confused.",

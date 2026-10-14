@@ -2455,7 +2455,7 @@ to the local engine.
 |---|---|
 | `Std.Ai.Endpoint` | `endpoint`, `withMode`, `withUrl`, `withKey`, `withModel`, `withAdapter`, `fromRegistry`, `withAdapterRefresh`, `withLocal`, `withTimeout`, `withMaxInFlight`, `withQueue`, `withQueueWait`, `withRetry`, `provider`, `warm`, `describe`, `inspect`, `tokenize`, `slotName` |
 | `Std.Ai.Local` | `huggingFace`, `file`, `devModel`, `reference`, `fromReference`, `model`, `withContext`, `withGpu`, `withParallel`, `withIdleUnload`, `withEmbeddings`, `withAdapter`, `withPort`, `settings`, `fit`, `start`, `provider`, `status`, `stop`, `fetch`, `pull`, `provision`, `engines`, `stopSlot` |
-| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire`, `wireStreaming`; streaming: `stream`, `read` (`Piece` / `Finished`), `close`, `chatStream` |
+| `Std.Ai.Provider` (added) | `Options`, `defaultOptions`, `chatWith` (temperature, seed, max tokens, adapter), `embed`, `wire`, `wireStreaming`; streaming: `AnswerStream`, `openStream`, `readStream` (`Piece` / `Finished`), `closeStream`, `chatStream` |
 
 The full guide, every variable and the failure kinds: [`ai/local.md`](ai/local.md).
 
@@ -2609,7 +2609,7 @@ Run with one L4 that scales to zero, never public.
 | Module | Main functions |
 |---|---|
 | `Std.Ai.Serve` | `tier`, `devBase`, `withBaseName`, `withAdapters`, `withMaxAdapters`, `withMaxModelLength`, `withGpuMemoryFraction`, `withBind`, `withToken`, `withAliasPolling`, `withRegistry`, `withEngineUrl`, `withModelsDir`, `settings`, `baseIdOf`, `vllmArgs`, `describe`, `adapterFrom`, `run`, `cloudRun`, `withTierImage`, `withEngineImage`, `withMinInstances`, `withMaxInstances`, `withServiceAccount`, `withInvokers`, `withTokenSecret`, `withRegistryUrl`, `withTimeoutSeconds`, `withLabels`, `render`, `serviceJson`, `knativeYaml`, `dockerfile`, `deploy`, `teardown` |
-| `Std.Ai.Cloud.Google` | `accessToken`, `idToken`, `call`, `ok`, `refused`, `createCustomJob`, `getCustomJob`, `listCustomJobs`, `cancelCustomJob`, `deleteCustomJob`, `createService`, `getService`, `patchService`, `deleteService`, `listServices`, `grantInvoker`, `bucketLocation`, `artifactExists`, `quota`, `logTail`, `ensureRepository`, `packDirectory`, `buildImage`, `skus` |
+| `Std.Ai.Cloud.Google` | `accessToken`, `idToken`, `refused` (an `ApiResponse` as a typed failure), `createCustomJob`, `getCustomJob`, `listCustomJobs`, `cancelCustomJob`, `deleteCustomJob`, `createService`, `getService`, `patchService`, `deleteService`, `listServices`, `grantInvoker`, `bucketLocation`, `artifactExists`, `quota`, `logTail`, `ensureRepository`, `packDirectory`, `buildImage`, `skus` |
 
 `Std.Ai.Cloud.Google` is Sky over HTTP: a service-account key file, workload
 identity federation or the metadata server gives the token, and under
@@ -2634,12 +2634,12 @@ The server's slot gets `Endpoint.withDevice spec` (placement `Auto`,
 apps, the Mac app) when it holds the model, and from the server otherwise.
 `decide` is the policy as a pure function. Nothing downloads before `prepare`,
 which the app calls after the user's consent; `status` gives the size and the
-progress. `record` and `replay` with `Eval.prompts` score one suite on both
+progress. `recordPrompts` and `replay` with `Eval.prompts` score one suite on both
 sides. `Registry.allowOnDevice` clears an adapter for devices.
 
 | Module | Main functions |
 |---|---|
-| `Std.Ai.Device` | `spec`, `withModel`, `withAdapter`, `withContext`, `withMaxDownload`, `withBackends`, `withMetered`, `raw`, `placementText`, `backendText`, `backendFromText`, `decide`, `estimateTokens`, `decodeOffer`, `decodeCapabilities`, `provider`, `statusOf`, `status`, `prepare`, `evict`, `capabilities`, `record`, `replay`, `encodeRecording`, `decodeRecording` |
+| `Std.Ai.Device` | `spec`, `withModel`, `withAdapter`, `withContext`, `withMaxDownload`, `withBackends`, `withMetered`, `rawSpec`, `placementText`, `backendText`, `backendFromText`, `decide`, `estimateTokens`, `decodeOffer`, `decodeCapabilities`, `provider`, `statusOf`, `status`, `prepare`, `evict`, `capabilities`, `recordPrompts`, `replay`, `encodeRecording`, `decodeRecording` |
 
 Guide: [`ai/device.md`](ai/device.md). CLI: `sky ai provision --device`,
 `sky build --ai-web-engine`, `sky build --ai-embed`.

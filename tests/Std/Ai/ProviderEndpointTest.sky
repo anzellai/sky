@@ -210,9 +210,9 @@ streamed events extra =
 
 
 -- Read a stream to its end with `read`, as a TEA app does one update at a time.
-readAll : List String -> Provider.Stream -> Task Error ( List String, String )
+readAll : List String -> Provider.AnswerStream -> Task Error ( List String, String )
 readAll acc s =
-    Provider.read s
+    Provider.readStream s
         |> Task.andThen
                (\step ->
                    case step of
@@ -233,7 +233,7 @@ pulled =
                        Sync.newRef 0
                            |> Task.andThen
                                   (\closed ->
-                                      Provider.stream
+                                      Provider.openStream
                                           Provider.defaultOptions
                                           (Provider.wireStreaming
                                               echo

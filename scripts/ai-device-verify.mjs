@@ -6,7 +6,7 @@
 // browsers under SKY_CSP=strict. The probe reads the slot's status, prepares
 // it, asks one question and reports each step as a `SKY-PROBE` line on the
 // backend's output, then streams the same question one piece per update
-// (Provider.stream / read) and reports `stream=<pieces>:same` when the pieces
+// (Provider.openStream / read) and reports `stream=<pieces>:same` when the pieces
 // join to the answer. See scripts/ai-device-e2e.sh for the scenarios.
 //
 // Usage: node scripts/ai-device-verify.mjs <backend> [--port N] [--scenarios a,b]

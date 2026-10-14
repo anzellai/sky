@@ -85,7 +85,7 @@ type Msg
     | Forget
     | Forgotten (Result Error ())
     | Summarise Int String
-    | Summarised Int String (Result Error Provider.Stream)
+    | Summarised Int String (Result Error Provider.AnswerStream)
     | SummaryPiece Int String (Result Error Provider.StreamStep)
     | QuestionChanged String
     | AskHelp String
@@ -187,12 +187,12 @@ deviceText =
 
 -- Summarise on the device or the server, and say which: the badge, and the
 -- stream the summary is read from as it is written.
-summarise : String -> Task Error ( String, Provider.Stream )
+summarise : String -> Task Error ( String, Provider.AnswerStream )
 summarise body =
     Device.status "notes"
         |> Task.andThen
                (\s ->
-                   Provider.stream
+                   Provider.openStream
                        Assist.summaryOptions
                        Assist.assistant
                        (Assist.summaryPrompt body)
@@ -222,7 +222,7 @@ recordHere =
     Device.status "notes"
         |> Task.andThen
                (\s ->
-                   Device.record
+                   Device.recordPrompts
                        (if isReady s then
                            "device"
 
@@ -314,7 +314,9 @@ update msg model =
             )
 
         Summarised id badge (Ok st) ->
-            ( model, Cmd.perform (Provider.read st) (SummaryPiece id badge) )
+            ( model
+            , Cmd.perform (Provider.readStream st) (SummaryPiece id badge)
+            )
 
         Summarised _ _ (Err e) ->
             ( { model | notice = Error.toString e }, Cmd.none )
@@ -322,7 +324,7 @@ update msg model =
         -- The summary grows as the model writes it; the badge comes last.
         SummaryPiece id badge (Ok (Provider.Piece text next)) ->
             ( setSummary id (summaryOf model id ++ text) model
-            , Cmd.perform (Provider.read next) (SummaryPiece id badge)
+            , Cmd.perform (Provider.readStream next) (SummaryPiece id badge)
             )
 
         SummaryPiece id badge (Ok (Provider.Finished r)) ->

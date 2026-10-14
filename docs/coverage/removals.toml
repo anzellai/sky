@@ -693,6 +693,18 @@ reason = "v0.27.0 (unreleased) terminal redesign: the widget no longer takes raw
 owner  = "anzel"
 commit = "fix/v027-terminal"
 
+[[removal]]
+symbol = "Std.Ai.Cloud.Google.call"
+reason = "v0.28.0 (unreleased): an internal helper of Std.Ai.Cloud.Google, no longer exported. Nothing outside the module called it (sky-stdlib, examples, tests, fixtures, the corpus): Std.Ai.Train, Std.Ai.Serve, Std.Ai.Store and Std.Ai.Endpoint reach Google through the module's named calls (createCustomJob, getService, bucketLocation, ...). Exported, it shared the name `call` with kernel Ffi (hir/tests/stdlib_collisions.rs, every_new_module_overlap_is_listed). Its behaviour (retry on 429/503, then Overloaded) stays covered through those named calls in tests/Std/Ai/TrainCloudTest.sky and ai_cloud_train_flow."
+owner  = "anzel"
+commit = "fix/stdlib-collisions"
+
+[[removal]]
+symbol = "Std.Ai.Cloud.Google.ok"
+reason = "v0.28.0 (unreleased): an internal helper of Std.Ai.Cloud.Google, no longer exported, with `call`. Nothing outside the module called it. Exported, it shared the name `ok` with Sky.Test. The typed failure it builds stays exported as Google.refused (now over the renamed Google.ApiResponse), which the corpus battery aigooglecloud still checks."
+owner  = "anzel"
+commit = "fix/stdlib-collisions"
+
 # ===========================================================================
 # ## The FOURTH ledger: `[[correction]]` — a false credit removed
 # ===========================================================================

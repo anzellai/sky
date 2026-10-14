@@ -2,7 +2,7 @@ module Suites exposing (summaries, score, scoreText)
 
 {-| The self-check: one eval suite measures the model where it runs. The
 client records the device's answers to the suite's prompts
-(`Device.record` over `Eval.prompts`), the server scores the recording
+(`Device.recordPrompts` over `Eval.prompts`), the server scores the recording
 (`Device.replay`, `Eval.runAs`) and the server slot itself, and compares the
 two pass rates.
 -}
