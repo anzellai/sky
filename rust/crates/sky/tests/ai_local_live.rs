@@ -111,11 +111,16 @@ fn zero_config_endpoint_chats_and_embeds_on_the_real_engine() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Zero configuration: no SKY_AI_* variable reaches the program.
+    // Zero configuration: no SKY_AI_* setting reaches the program. The home
+    // is where the harness keeps the engine and model (CI restores it from a
+    // cache into $SKY_AI_HOME), not a setting: stripping it sent the program
+    // to the default cache directory while `provisioned` looked in
+    // $SKY_AI_HOME, so a cold CI run fetched into one place and checked
+    // another. The flagship test below keeps it for the same reason.
     let mut app = Command::new(project.join("sky-out/app"));
     app.current_dir(&project).env_remove("ENV");
     for (k, _) in std::env::vars() {
-        if k.starts_with("SKY_AI_") {
+        if k.starts_with("SKY_AI_") && k != "SKY_AI_HOME" {
             app.env_remove(k);
         }
     }

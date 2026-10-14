@@ -132,7 +132,7 @@ jobs:
             extra=(--android-sdk "$ANDROID_HOME")
           fi
           ./scripts/ai/device/build-device-bundles.sh "${{ matrix.target }}" \
-            --llama-src "$src" --out "$RUNNER_TEMP/out" --jobs 4 "${extra[@]}"
+            --llama-src "$src" --out "$RUNNER_TEMP/out" --jobs 4 ${extra[@]+"${extra[@]}"}
 
       # The web engine loads in a real browser before it is published: the
       # synthetic model runs on the CPU build under the strict policy.

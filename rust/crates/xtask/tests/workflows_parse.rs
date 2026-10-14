@@ -1755,3 +1755,40 @@ fn no_run_step_pipes_a_bare_yes() {
         bad.join("\n")
     );
 }
+
+/// An array a run step starts empty (`extra=()`) and may leave empty must be
+/// expanded as `${extra[@]+"${extra[@]}"}`. macOS runners run steps with
+/// /bin/bash 3.2, where `"${extra[@]}"` of an empty array under `set -u` is
+/// "unbound variable": the ios engine build in ai-device-bundles.yml (the one
+/// target that adds no extra arguments) died on it before compiling a line.
+#[test]
+fn an_array_a_step_starts_empty_is_expanded_guarded() {
+    let mut bad = Vec::new();
+    for wf in workflows() {
+        let text = std::fs::read_to_string(&wf).unwrap();
+        let mut empty: Vec<String> = Vec::new();
+        for line in text.lines() {
+            let t = line.trim();
+            if let Some(name) = t.strip_suffix("=()") {
+                if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    empty.push(name.to_string());
+                }
+            }
+        }
+        for (i, line) in text.lines().enumerate() {
+            for name in &empty {
+                let bare = format!("\"${{{name}[@]}}\"");
+                let guarded = format!("${{{name}[@]+\"${{{name}[@]}}\"}}");
+                if line.replace(&guarded, "").contains(&bare) {
+                    bad.push(format!("{}:{}: {}", wf.display(), i + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "an array a step starts empty is \"unbound\" under set -u on bash 3.2 \
+         (macOS runners); expand it as ${{name[@]+\"${{name[@]}}\"}}:\n{}",
+        bad.join("\n")
+    );
+}
