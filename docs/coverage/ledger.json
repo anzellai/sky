@@ -639,7 +639,7 @@
       "tier": "T1"
     },
     "spa-diff-fuzz": {
-      "expected_assertions": 20,
+      "expected_assertions": 46,
       "falsifier_mutation": "spa-diff-fuzz.drop-msgarg-rename",
       "falsifier_proven": true,
       "summary": "Sky.Spa differential split fuzzer: split leg == direct update over random (Model, Msg)",
@@ -4409,6 +4409,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "examples/00-standard-libs (retained; tests/ suite run by gate `sky-verify`)",
             "class": "Asserted",
             "strength": 3
@@ -7509,6 +7514,11 @@
           },
           {
             "by": "e2e:scripts/spa-restore-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -11746,6 +11756,11 @@
           },
           {
             "by": "e2e:scripts/spa-rpc-consistency-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
           },
@@ -17437,6 +17452,11 @@
             "strength": 3
           },
           {
+            "by": "e2e:scripts/spa-rpc-order-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
+            "class": "Asserted",
+            "strength": 3
+          },
+          {
             "by": "e2e:scripts/spa-vdom-identity-e2e.sh (counted assertions, run by a release job: gate-core-sky for a flow test, gate-web / gate-example-e2e for an e2e script; not a registered harness gate, so no falsifier)",
             "class": "Asserted",
             "strength": 3
@@ -21149,12 +21169,12 @@
       "db_drivers": [],
       "gate": null,
       "id": "e2e:scripts/spa-rpc-order-e2e.sh",
-      "modules_imported": 13,
+      "modules_imported": 17,
       "path": "scripts/spa-rpc-order-e2e.sh",
-      "refs_generous": 44,
-      "refs_qualified": 43,
+      "refs_generous": 51,
+      "refs_qualified": 50,
       "role": "FlowTest",
-      "sky_files": 3,
+      "sky_files": 4,
       "sky_toml_sections": []
     },
     {
@@ -22653,7 +22673,7 @@
       "refs_generous": 155,
       "refs_qualified": 147,
       "role": "FlowTest",
-      "sky_files": 119,
+      "sky_files": 128,
       "sky_toml_sections": []
     },
     {

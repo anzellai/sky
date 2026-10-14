@@ -21,6 +21,7 @@ type alias Model =
 
 type Msg
     = Ask String
+    | AskServer
     | Submitted (Result Error String)
 
 type Page
@@ -30,6 +31,13 @@ type Page
 init : a -> ( Model, Cmd Msg )
 init _ =
     ( { draft = "", notice = "" }, Cmd.none )
+
+
+{-| A server value: an arm that writes it into the model holds (v0.28.0:
+`Ask`, whose model write the client computes, runs async instead). -}
+serverDraft : String
+serverDraft =
+    System.getenvOr "SPA_WHOLE_MODEL_DRAFT" "from the server"
 
 
 {-| A server-only task. -}
@@ -55,6 +63,9 @@ update msg model =
 
         Ask text ->
             submit { model | draft = text }
+
+        AskServer ->
+            submit { model | draft = serverDraft }
 
         Submitted (Ok s) ->
             ( { model | notice = s }, Cmd.none )
