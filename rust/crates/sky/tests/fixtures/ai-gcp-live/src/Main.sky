@@ -674,7 +674,7 @@ serveChecks w url ( t0, t1, t2 ) first =
                                       (result
                                           (rawStatus url True "not-the-token"))
                                       |> Task.andThen
-                                             (\( noId, badToken ) ->
+                                             (\( noId, badToken ) -> idleCold url |> Task.andThen (\( idleMs, idle ) ->
                                                  emit
                                                      [ ( "scenario"
                                                        , JsonE.string "l5"
@@ -716,7 +716,31 @@ serveChecks w url ( t0, t1, t2 ) first =
                                                      , ( "badTokenStatus"
                                                        , statusValue badToken
                                                        )
-                                                     ])))
+                                                       , ( "idleSeconds", JsonE.int idleSeconds )
+  , ( "idleColdStartMs", JsonE.int idleMs )
+  , ( "idleCold", outcomeValue idle )
+  ]))))
+
+
+-- The scale-from-zero cold start. The deploy waits for a ready instance, so
+-- the first call after it meets a warm one. After the checks the service is
+-- idle, and Cloud Run (min-instances 0) removes an idle instance within about
+-- 15 minutes, so the first call after this wait starts one from zero: image
+-- pull, base staged, vLLM loaded. SKY_AI_LIVE_IDLE_S sets the wait.
+idleSeconds : Int
+idleSeconds =
+    String.toInt (env "SKY_AI_LIVE_IDLE_S") |> Maybe.withDefault 960
+
+
+idleCold : String -> Task Error ( Int, Result Error String )
+idleCold url =
+    Time.sleep (idleSeconds * 1000)
+        |> Task.andThen (\_ -> Time.unixMillis ())
+        |> Task.andThen
+               (\t0 ->
+                   result (ask (baseSlot url) "")
+                       |> Task.andThen
+                              (\r -> Time.unixMillis () |> Task.map (\t1 -> ( t1 - t0, r ))))
 
 
 outcomeValue : Result Error String -> JsonE.Value

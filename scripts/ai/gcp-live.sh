@@ -17,7 +17,8 @@
 #       a relaunch from a checkpoint, a cancel, the hard runtime ceiling
 #   l4  a real Unsloth QLoRA run on one L4 (g2-standard-4), the adapter
 #       collected and registered (needs the Vertex L4 training quota)
-#   l5  the GPU tier on Cloud Run with one L4: cold start measured, two
+#   l5  the GPU tier on Cloud Run with one L4: cold start measured (after
+#       the deploy, and from zero after a 16-minute idle wait), two
 #       adapters on one GPU, a promotion hot-loaded under load, the auth
 #       layers (needs the Cloud Run L4 quota)
 #

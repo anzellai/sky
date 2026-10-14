@@ -343,6 +343,10 @@ fn gcp_live_l5_the_gpu_tier_on_cloud_run() {
         rate("cloudRunL4InstancePerHour"),
     );
     assert_eq!(r["base"]["ok"], true, "the base answers: {r}");
+    assert_eq!(
+        r["idleCold"]["ok"], true,
+        "the base answers again after the idle wait (scale from zero): {r}"
+    );
     assert_eq!(r["v1"]["ok"], true, "support-v1 answers: {r}");
     assert_eq!(
         r["v2"]["ok"], true,
