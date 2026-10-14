@@ -141,19 +141,28 @@ STAGE_LOG="$WORK/stages.jsonl"
 
 # ─── teardown and the leak check (always) ────────────────────────────────
 leak_check() {
-    local tries=0 left
+    # Every billable kind Sky makes, in both regions when they differ: live
+    # Vertex jobs, Cloud Run services (their revisions go with them),
+    # repositories (their images go with them), buckets (staging, registry,
+    # Cloud Build sources) and secrets. Cloud Build logs only to Cloud
+    # Logging, and a run creates no IP, disk or service account.
+    local tries=0 left regions r
+    regions="$REGION"
+    [ "$SERVE_REGION" != "$REGION" ] && regions="$REGION $SERVE_REGION"
     while [ $tries -lt 3 ]; do
         left=0
-        n="$(gcloud ai custom-jobs list --project "$PROJECT" --region "$REGION" \
-            --filter='labels.sky-managed=true AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED OR state=JOB_STATE_CANCELLING)' \
-            --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
-        echo "gcp-live: leak check: $n live Vertex jobs"; left=$((left + n))
-        n="$(gcloud run services list --project "$PROJECT" --region "$SERVE_REGION" --filter='metadata.labels.sky-managed=true' \
-            --format='value(metadata.name)' 2>/dev/null | grep -c . || true)"
-        echo "gcp-live: leak check: $n Cloud Run services"; left=$((left + n))
-        n="$(gcloud artifacts repositories list --project "$PROJECT" --location "$REGION" --filter='labels.sky-managed=true' \
-            --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
-        echo "gcp-live: leak check: $n repositories"; left=$((left + n))
+        for r in $regions; do
+            n="$(gcloud ai custom-jobs list --project "$PROJECT" --region "$r" \
+                --filter='labels.sky-managed=true AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED OR state=JOB_STATE_CANCELLING)' \
+                --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
+            echo "gcp-live: leak check: $n live Vertex jobs in $r"; left=$((left + n))
+            n="$(gcloud run services list --project "$PROJECT" --region "$r" --filter='metadata.labels.sky-managed=true' \
+                --format='value(metadata.name)' 2>/dev/null | grep -c . || true)"
+            echo "gcp-live: leak check: $n Cloud Run services in $r"; left=$((left + n))
+            n="$(gcloud artifacts repositories list --project "$PROJECT" --location "$r" --filter='labels.sky-managed=true' \
+                --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
+            echo "gcp-live: leak check: $n repositories in $r"; left=$((left + n))
+        done
         n="$(gcloud storage buckets list --project "$PROJECT" --filter='labels.sky-managed=true' \
             --format='value(name)' 2>/dev/null | grep -c . || true)"
         echo "gcp-live: leak check: $n buckets"; left=$((left + n))

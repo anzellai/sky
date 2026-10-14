@@ -438,12 +438,14 @@ run args =
             -- The two versions l5 serves: two small Fake runs on CPU Vertex
             -- jobs (real PEFT files for the base's shapes), registered as
             -- support v1 and v2 in l5's own world, so l5 needs no other stage.
+            -- The ranks differ: a Fake adapter is a no-op, so two of the
+            -- same rank have one digest and the registry keeps one version.
             world
                 |> Task.andThen
                        (\w ->
                            let
                                first = cpuJob w "support" 4 6 1000
-                               second = cpuJob w "support" 4 8 1000
+                               second = cpuJob w "support" 8 8 1000
                            in
                                result (Train.drive w.db first)
                                    |> Task.andThen
