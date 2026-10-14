@@ -598,6 +598,17 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
+- **Sky.Spa: a server branch that reads a model field through a value derived
+  from the model now sends that field.** `let m2 = { model | n = 0 } in if
+  m2.flag …`, `let m2 = stamp model`, `(stamp model).flag` and a `case` on
+  such a value read `flag` of the client model, but the request left it out.
+  The backend rebuilt `flag` from `init ()` and could take another branch than
+  Sky.Live, so a click ran no task, or the wrong one. The request now carries
+  the field (or the whole model, where the read cannot be mapped to a field).
+  A field written on a guard helper's allow path and kept on its reject path
+  now rides the request too; before, the rejected branch answered `init ()`'s
+  value for it.
+
 - **`sky fmt` no longer moves an own-line comment to a different place in
   the code.** A comment above an `if` then-branch moved into a lambda in that
   branch (`Task.map (\_ -> ..)`) or below `else`. A comment above a pipeline

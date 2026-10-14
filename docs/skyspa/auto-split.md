@@ -440,6 +440,19 @@ reads → the RPC *inputs*) and the **write-set** (Model fields it writes → th
 (sound: bigger payload, never a wrong value — under-approximating reads is a
 correctness bug, so unknown ⇒ send more). This is what keeps payloads ∝ effect
 I/O, not Model size (§ the large-Model answer).
+A field read through a value DERIVED from the model counts as a read of the
+model's field: `let m2 = { model | n = 0 } in if m2.flag …`, `let m2 = stamp
+model`, `(stamp model).flag` each put `flag` in the request. A value that holds
+the model in a way the analysis cannot map back to fields (a destructured
+binder of a tuple that holds it, a `case` subject that holds it, the model in a
+list or a call argument) makes the request carry the whole model. Before
+v0.28.0 such a read was dropped: the backend rebuilt the field from `init ()`
+and could take another branch than Sky.Live (`spa_partition::collect_reads`,
+fixture `tests/fixtures/spa-readset-noneleaf`).
+A field written on the allow path of a guard helper (`requireFlag model (\_ ->
+( { model | log = "busy" }, cmd ))`) and kept on its reject path is not written
+on every path, so it rides the request too (`collect_write_leaves` walks the
+guard helper's own reject leaves).
 A whole-model RESPONSE goes with a narrow request only when every response
 leaf builds a fresh model (a record literal, `{ emptyModel | … }`); when one leaf
 rebuilds the model and another keeps it (`{ model | error = … }` on a failed

@@ -5105,13 +5105,19 @@ fn compute_branch_io(
 
     let mut read_fields: BTreeSet<String> = BTreeSet::new();
     let mut reads_whole = false;
-    collect_reads(
+    let rc = ReadCtx {
         db,
         body,
-        arm_body,
         model_local,
-        &allowed_bare,
+        allowed_bare: &allowed_bare,
+        destr: destructure_locals(body),
+    };
+    // The arm's value is its `( model', cmd )` result: a flow position.
+    collect_reads(
+        &rc,
+        arm_body,
         &let_locals,
+        true,
         &mut read_fields,
         &mut reads_whole,
         0,
@@ -5238,37 +5244,270 @@ fn is_model_var(body: &Body, e: ExprId, model_local: Option<LocalId>) -> bool {
     matches!(&body.exprs[e], Expr::Var(Res::Local(l)) if Some(*l) == model_local)
 }
 
-/// Walk the arm body for the READ-SET. `Access(model, f)` records `f`; the model
-/// base of an `Update` and the bare-model tail returns (`allowed_bare`) are the
-/// only permitted `model` occurrences — any OTHER `Var(model)` is an opaque use
-/// and forces `reads_whole` (sound over-approximation).
+/// What a value holds of the model, for the read walk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ModelShape {
+    /// Holds no model data the walk has not recorded already.
+    Not,
+    /// A field-preserving transform of the model (the model itself, a
+    /// `{ model | … }` update, a field-preserving helper chain, a `let` alias of
+    /// such) that writes these fields. Its field `f` is `model.f` or a value the
+    /// walk has already read the inputs of.
+    Narrow(BTreeSet<String>),
+    /// May hold model data the walk cannot map back to fields (a tuple that
+    /// holds the model, a destructured binder of one, a value a helper built
+    /// from it): any use reads the whole model.
+    Opaque,
+}
+
+/// The `let` destructure binders of `body` (`( m2, note ) = …`): binder →
+/// the destructured expression. A `LocalId` is unique in its body, so one map
+/// serves the whole walk.
+fn destructure_locals(body: &Body) -> HashMap<LocalId, ExprId> {
+    let mut m = HashMap::new();
+    for (_, expr) in body.exprs.iter() {
+        if let Expr::Let { defs, .. } = expr {
+            for d in defs {
+                if let (Some(pat), true) = (d.pat, d.params.is_empty()) {
+                    // A destructure carries its binders in its pattern, not in
+                    // `binders` (hir resolve: `binders: Vec::new(), pat`).
+                    let mut ls = Vec::new();
+                    pattern_locals(body, pat, &mut ls);
+                    ls.extend(d.binders.iter().map(|(_, l)| *l));
+                    for l in ls {
+                        m.insert(l, d.body);
+                    }
+                }
+            }
+        }
+    }
+    m
+}
+
+/// Every local a pattern binds.
+fn pattern_locals(body: &Body, pat: PatId, out: &mut Vec<LocalId>) {
+    match &body.pats[pat] {
+        Pattern::Var(l) => out.push(*l),
+        Pattern::Alias(p, l) => {
+            out.push(*l);
+            pattern_locals(body, *p, out);
+        }
+        Pattern::Record(fields) => out.extend(fields.iter().map(|(_, l)| *l)),
+        Pattern::Tuple(ps) | Pattern::List(ps) => {
+            for p in ps {
+                pattern_locals(body, *p, out);
+            }
+        }
+        Pattern::Cons(a, b) => {
+            pattern_locals(body, *a, out);
+            pattern_locals(body, *b, out);
+        }
+        Pattern::Ctor { args, .. } => {
+            for p in args {
+                pattern_locals(body, *p, out);
+            }
+        }
+        Pattern::Anything
+        | Pattern::Unit
+        | Pattern::Bool(_)
+        | Pattern::Chr(_)
+        | Pattern::Str(_)
+        | Pattern::Int(_)
+        | Pattern::Float(_)
+        | Pattern::Error => {}
+    }
+}
+
+/// The context of one read walk: the body, its model parameter, the bare-model
+/// tail returns the write walk recorded, and the destructure binders.
+struct ReadCtx<'a> {
+    db: &'a dyn SkyDb,
+    body: &'a Body,
+    model_local: Option<LocalId>,
+    allowed_bare: &'a HashSet<ExprId>,
+    destr: HashMap<LocalId, ExprId>,
+}
+
+impl ReadCtx<'_> {
+    /// What local `l` holds of the model.
+    fn local_shape(
+        &self,
+        l: LocalId,
+        let_locals: &HashMap<LocalId, ExprId>,
+        depth: usize,
+    ) -> ModelShape {
+        if Some(l) == self.model_local {
+            return ModelShape::Narrow(BTreeSet::new());
+        }
+        if depth > IO_DELEGATE_DEPTH {
+            return ModelShape::Opaque;
+        }
+        if let Some(bound) = let_locals.get(&l) {
+            return self.expr_shape(*bound, let_locals, depth + 1);
+        }
+        if let Some(bound) = self.destr.get(&l) {
+            return if self.carries(*bound, let_locals, depth + 1) {
+                ModelShape::Opaque
+            } else {
+                ModelShape::Not
+            };
+        }
+        ModelShape::Not
+    }
+
+    /// What the value of expression `e` holds of the model.
+    fn expr_shape(
+        &self,
+        e: ExprId,
+        let_locals: &HashMap<LocalId, ExprId>,
+        depth: usize,
+    ) -> ModelShape {
+        if let Expr::Var(Res::Local(l)) = &self.body.exprs[e] {
+            return self.local_shape(*l, let_locals, depth);
+        }
+        if let Some(w) =
+            model_write_shape(self.db, self.body, e, self.model_local, let_locals, depth)
+        {
+            return ModelShape::Narrow(w);
+        }
+        if self.carries(e, let_locals, depth) {
+            ModelShape::Opaque
+        } else {
+            ModelShape::Not
+        }
+    }
+
+    /// May the value of `e` hold model data that the read walk has not
+    /// recorded as a field read? A `model.f` access does not (the walk records
+    /// `f`). The model itself, an update of it, a tuple, list or record holding
+    /// it, and a call whose result can hold its argument do. Sound: on any
+    /// doubt, `true`.
+    fn carries(&self, e: ExprId, let_locals: &HashMap<LocalId, ExprId>, depth: usize) -> bool {
+        if depth > IO_DELEGATE_DEPTH {
+            return true;
+        }
+        let body = self.body;
+        let go = |x: ExprId| self.carries(x, let_locals, depth);
+        match &body.exprs[e] {
+            Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Chr(_)
+            | Expr::Bool(_)
+            | Expr::Unit
+            | Expr::Accessor(_)
+            | Expr::Error => false,
+            Expr::Var(Res::Local(l)) => self.local_shape(*l, let_locals, depth) != ModelShape::Not,
+            Expr::Var(_) => false,
+            Expr::Access(base, _) => match self.expr_shape(*base, let_locals, depth) {
+                ModelShape::Narrow(_) | ModelShape::Not => false,
+                ModelShape::Opaque => true,
+            },
+            Expr::Update { base, fields } => go(*base) || fields.iter().any(|(_, v)| go(*v)),
+            Expr::List(xs) | Expr::Tuple(xs) => xs.iter().any(|x| go(*x)),
+            Expr::Record(fields) => fields.iter().any(|(_, v)| go(*v)),
+            Expr::Negate(x) => go(*x),
+            Expr::Lambda { body: b, .. } => go(*b),
+            Expr::Binop { lhs, rhs, .. } => go(*lhs) || go(*rhs),
+            Expr::If { arms, els } => arms.iter().any(|(_, t)| go(*t)) || go(*els),
+            Expr::Let { defs, body: b } => {
+                let mut ls = let_locals.clone();
+                add_let_locals(defs, &mut ls);
+                self.carries(*b, &ls, depth)
+            }
+            Expr::Case { subject, branches } => {
+                go(*subject) || branches.iter().any(|br| go(br.body))
+            }
+            Expr::Call(callee, args) => {
+                if model_write_shape(self.db, body, e, self.model_local, let_locals, depth)
+                    .is_some()
+                {
+                    return true;
+                }
+                match &body.exprs[*callee] {
+                    Expr::Var(Res::Def(f)) => args
+                        .iter()
+                        .enumerate()
+                        .any(|(i, a)| go(*a) && helper_carries_param(self.db, *f, i, depth + 1)),
+                    _ => go(*callee) || args.iter().any(|a| go(*a)),
+                }
+            }
+        }
+    }
+}
+
+/// May helper `f`'s result hold the value it receives at parameter `i`? A
+/// parameter it ignores (`_`) or destructures as a record (it reads the named
+/// fields, which [`helper_readset`] records) cannot reach the result. Otherwise
+/// the helper's body is asked [`ReadCtx::carries`] with that parameter as the
+/// model. An unresolvable helper (a kernel alias, a parameter past its arity)
+/// may: `true`.
+fn helper_carries_param(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> bool {
+    if depth > IO_DELEGATE_DEPTH {
+        return true;
+    }
+    let Some(loc) = db.def_loc(f) else {
+        return true;
+    };
+    let resolved = db.resolve(loc.module);
+    let Some(body) = resolved.bodies.get(&f) else {
+        return true;
+    };
+    let Some(root) = body.root else {
+        return true;
+    };
+    match body.params.get(i).map(|p| &body.pats[*p]) {
+        Some(Pattern::Anything) | Some(Pattern::Record(_)) => return false,
+        _ => {}
+    }
+    let Some(mlocal) = param_local_at(body, i) else {
+        return true;
+    };
+    let empty = HashSet::new();
+    let rc = ReadCtx {
+        db,
+        body,
+        model_local: Some(mlocal),
+        allowed_bare: &empty,
+        destr: destructure_locals(body),
+    };
+    rc.carries(root, &HashMap::new(), depth + 1)
+}
+
+/// Walk the arm body for the READ-SET.
+///
+/// `model.f` records `f`. So does `m2.f` when `m2` is a model-DERIVED value
+/// (`let m2 = { model | … }`, `let m2 = stamp model`, `(stamp model).f`): the
+/// field passes through the derivation from the client model, and the branch
+/// can decide on it (`if m2.flag …`). Before this, such a read was dropped, the
+/// request did not carry the field, and the backend rebuilt it from `init ()`
+/// and could take another branch than Sky.Live.
+///
+/// `flow` says whether the value of `e` flows to a place that accounts for it
+/// on its own: the arm's tail (the `( model', cmd )` result), a `let` binder
+/// (each use of the binder is checked), the base of an update or a field
+/// access. Everywhere else (a call argument, a condition, an operand, a lambda
+/// body) a value that holds model data the walk cannot map back to fields is an
+/// OPAQUE use and forces `reads_whole` (sound over-approximation). That covers
+/// a bare `model`, a model-derived local, an update of the model, a destructured
+/// binder of a tuple that holds the model, and a `case` subject that holds it.
 #[allow(clippy::too_many_arguments)]
 fn collect_reads(
-    db: &dyn SkyDb,
-    body: &Body,
+    rc: &ReadCtx<'_>,
     e: ExprId,
-    model_local: Option<LocalId>,
-    allowed_bare: &HashSet<ExprId>,
     let_locals: &HashMap<LocalId, ExprId>,
+    flow: bool,
     read_fields: &mut BTreeSet<String>,
     reads_whole: &mut bool,
     depth: usize,
 ) {
     macro_rules! go {
-        ($x:expr) => {
-            collect_reads(
-                db,
-                body,
-                $x,
-                model_local,
-                allowed_bare,
-                let_locals,
-                read_fields,
-                reads_whole,
-                depth,
-            )
+        ($x:expr, $flow:expr) => {
+            collect_reads(rc, $x, let_locals, $flow, read_fields, reads_whole, depth)
         };
     }
+    let body = rc.body;
+    let model_local = rc.model_local;
     match &body.exprs[e] {
         Expr::Int(_)
         | Expr::Float(_)
@@ -5278,46 +5517,65 @@ fn collect_reads(
         | Expr::Unit
         | Expr::Accessor(_)
         | Expr::Error => {}
-        Expr::Access(base, field) => {
-            if is_model_var(body, *base, model_local) {
-                // `model.field` — a precise field read.
+        Expr::Access(base, field) => match rc.expr_shape(*base, let_locals, depth) {
+            // `model.f`, `m2.f`, `(stamp model).f` — a precise field read. The
+            // base is still walked for the reads its own derivation makes.
+            ModelShape::Narrow(_) => {
                 read_fields.insert(field.as_str().to_string());
-            } else {
-                // e.g. `model.ui.newTitle` — the inner `model.ui` records "ui".
-                go!(*base);
+                go!(*base, true);
             }
-        }
+            ModelShape::Opaque => {
+                *reads_whole = true;
+                go!(*base, true);
+            }
+            // e.g. `model.ui.newTitle` — the inner `model.ui` records "ui".
+            ModelShape::Not => go!(*base, false),
+        },
         Expr::Update { base, fields } => {
-            // `{ model | … }` — the model base is a WRITE base, not an opaque
-            // read; skip it. A non-model base is walked normally.
+            // `{ model | … }` / `{ m2 | … }` — the base is a WRITE base, not a
+            // read. The updated value holds the model, so outside a flow
+            // position it is an opaque use.
+            if !flow && !rc.allowed_bare.contains(&e) && rc.carries(*base, let_locals, depth) {
+                *reads_whole = true;
+            }
             if !is_model_var(body, *base, model_local) {
-                go!(*base);
+                go!(*base, true);
             }
             for (_, v) in fields {
-                go!(*v);
+                go!(*v, false);
             }
         }
         Expr::Var(res) => {
             if let Res::Local(l) = res {
-                if Some(*l) == model_local && !allowed_bare.contains(&e) {
-                    // An opaque use of `model` (helper arg, list element, …).
-                    *reads_whole = true;
+                if !flow && !rc.allowed_bare.contains(&e) {
+                    if Some(*l) == model_local {
+                        // An opaque use of `model` (helper arg, list element, …).
+                        *reads_whole = true;
+                    } else if rc.local_shape(*l, let_locals, depth) != ModelShape::Not {
+                        // An opaque use of a model-derived local.
+                        *reads_whole = true;
+                    }
                 }
             }
         }
         Expr::List(xs) | Expr::Tuple(xs) => {
             for x in xs {
-                go!(*x);
+                go!(*x, flow);
             }
         }
         Expr::Record(fields) => {
             for (_, x) in fields {
-                go!(*x);
+                go!(*x, flow);
             }
         }
-        Expr::Negate(x) => go!(*x),
-        Expr::Lambda { body: b, .. } => go!(*b),
+        Expr::Negate(x) => go!(*x, false),
+        Expr::Lambda { body: b, .. } => go!(*b, false),
         Expr::Call(callee, args) => {
+            // A call whose RESULT can hold the model (`stamp model` as a list
+            // element) is an opaque use outside a flow position.
+            if !flow && !rc.allowed_bare.contains(&e) && rc.carries(e, let_locals, depth) {
+                *reads_whole = true;
+            }
             // Read-delegation: an arm that passes the BARE model to a resolvable
             // `Model -> X` def (a pure accessor `pluck model`, a whole-arm handler
             // `handle model`) reads only what that def reads of its param — inherit
@@ -5332,7 +5590,7 @@ fn collect_reads(
                 if is_model_var(body, *a, model_local) {
                     // The BARE model threaded into this callee.
                     match callee_def {
-                        Some(f) => match helper_readset(db, f, i, depth + 1) {
+                        Some(f) => match helper_readset(rc.db, f, i, depth + 1) {
                             Some(fields) => read_fields.extend(fields),
                             None => *reads_whole = true,
                         },
@@ -5340,7 +5598,8 @@ fn collect_reads(
                         // opaquely — the whole model (sound).
                         None => *reads_whole = true,
                     }
-                } else if model_write_shape(db, body, *a, model_local, let_locals, depth).is_some()
+                } else if model_write_shape(rc.db, body, *a, model_local, let_locals, depth)
+                    .is_some()
                 {
                     // A provably model-DERIVED value (one that RETURNS the model
                     // record) flows into the callee: a `{ model | … }` update, a
@@ -5364,65 +5623,64 @@ fn collect_reads(
                     // `model.field` access (recorded by the `Access` arm). Only a
                     // value that is itself the model record forces the whole model.
                     *reads_whole = true;
+                    go!(*a, true);
                 } else {
-                    go!(*a);
+                    go!(*a, false);
                 }
             }
             // The callee reference itself is a function, not a model read; walk it
             // only when it is not a bare def (e.g. a computed callee).
             if callee_def.is_none() {
-                go!(*callee);
+                go!(*callee, false);
             }
         }
         Expr::Binop { lhs, rhs, .. } => {
-            go!(*lhs);
-            go!(*rhs);
+            go!(*lhs, false);
+            go!(*rhs, false);
         }
         Expr::If { arms, els } => {
-            for (c, t) in arms {
-                go!(*c);
-                go!(*t);
+            for (cond, t) in arms {
+                go!(*cond, false);
+                go!(*t, flow);
             }
-            go!(*els);
+            go!(*els, flow);
         }
         Expr::Let { defs, body: b } => {
-            // Thread the let-bound locals so `may_carry_model` / `model_write_shape`
-            // can chase an alias to a model-derived value
+            // Thread the let-bound locals so `model_write_shape` and the shape
+            // queries can chase an alias to a model-derived value
             // (`let m2 = { model | … } in helper m2`). Without this the read walk
             // saw `m2` as an opaque local and dropped the consuming helper's
             // pass-through reads — a silent wrong answer. Mirrors the write side
-            // (`collect_writes_tail` / `model_write_shape`).
+            // (`collect_writes_tail` / `model_write_shape`). A plain or
+            // destructuring binder is a flow position (each use is checked); a
+            // local FUNCTION's body is not (its result reaches its callers
+            // through calls the walk cannot follow).
             let mut ls = let_locals.clone();
             add_let_locals(defs, &mut ls);
             for d in defs {
                 collect_reads(
-                    db,
-                    body,
+                    rc,
                     d.body,
-                    model_local,
-                    allowed_bare,
                     &ls,
+                    d.params.is_empty(),
                     read_fields,
                     reads_whole,
                     depth,
                 );
             }
-            collect_reads(
-                db,
-                body,
-                *b,
-                model_local,
-                allowed_bare,
-                &ls,
-                read_fields,
-                reads_whole,
-                depth,
-            );
+            collect_reads(rc, *b, &ls, flow, read_fields, reads_whole, depth);
         }
         Expr::Case { subject, branches } => {
-            go!(*subject);
+            // A subject that holds the model (`case m2 of …`, `case model of …`)
+            // lets the patterns bind and test any of its fields: the whole model.
+            if rc.expr_shape(*subject, let_locals, depth) != ModelShape::Not {
+                *reads_whole = true;
+                go!(*subject, true);
+            } else {
+                go!(*subject, false);
+            }
             for br in branches {
-                go!(br.body);
+                go!(br.body, flow);
             }
         }
     }
@@ -5498,6 +5756,10 @@ fn collect_writes_tail(
                     for f in fields {
                         write_fields.insert(f);
                     }
+                    // The tail model (`( m2, cmd )`, `( { model | … }, cmd )`,
+                    // `( stamp model, cmd )`) is the write, not an opaque read,
+                    // wherever the tail sits (a guard wrapper's lambda too).
+                    allowed_bare.insert(m);
                 }
                 // Not provably a field-preserving transform of `model` (a fresh
                 // record, an opaque producer) — the whole model rides out (sound).
@@ -5628,6 +5890,7 @@ fn collect_write_leaves(
     model_local: Option<LocalId>,
     let_locals: &HashMap<LocalId, ExprId>,
     depth: usize,
+    cont_local: Option<LocalId>,
 ) -> Option<Vec<BTreeSet<String>>> {
     if depth > IO_DELEGATE_DEPTH {
         return None;
@@ -5649,7 +5912,7 @@ fn collect_write_leaves(
         Expr::Let { defs, body: b } => {
             let mut ls = let_locals.clone();
             add_let_locals(defs, &mut ls);
-            collect_write_leaves(db, body, *b, model_local, &ls, depth)
+            collect_write_leaves(db, body, *b, model_local, &ls, depth, cont_local)
         }
         Expr::If { arms, els } => {
             let mut out = Vec::new();
@@ -5661,6 +5924,7 @@ fn collect_write_leaves(
                     model_local,
                     let_locals,
                     depth,
+                    cont_local,
                 )?);
             }
             out.extend(collect_write_leaves(
@@ -5670,6 +5934,7 @@ fn collect_write_leaves(
                 model_local,
                 let_locals,
                 depth,
+                cont_local,
             )?);
             Some(out)
         }
@@ -5683,6 +5948,7 @@ fn collect_write_leaves(
                     model_local,
                     let_locals,
                     depth,
+                    cont_local,
                 )?);
             }
             Some(out)
@@ -5690,23 +5956,51 @@ fn collect_write_leaves(
         // A let-bound `(model', cmd)` returned by name — resolve and analyse it.
         // Chasing a name can cycle, so this step spends depth.
         Expr::Var(Res::Local(l)) => match let_locals.get(l) {
-            Some(bound) => {
-                collect_write_leaves(db, body, *bound, model_local, let_locals, depth + 1)
-            }
+            Some(bound) => collect_write_leaves(
+                db,
+                body,
+                *bound,
+                model_local,
+                let_locals,
+                depth + 1,
+                cont_local,
+            ),
             None => None,
         },
-        // Guard-wrapper tail `GUARD model (\_ -> CONT)` — the ONLY model-write
-        // response comes from the AUTHORISED continuation (the deny path answers
-        // 403, never a model write-set), so the response leaves are the lambda
-        // body's. This is what lets a guard-wrapped server write (a File result,
-        // an optimistic `busy = True`) be recognised as server-produced and kept
-        // out of the request.
+        // A call to the guard's continuation parameter (`cont ()`), met while
+        // walking the guard helper's own body: the authorised path, whose leaves
+        // are the inline lambda's (walked by the arm). It adds no leaf here.
+        Expr::Call(callee, _) if matches!(&body.exprs[*callee], Expr::Var(Res::Local(l)) if cont_local == Some(*l)) => {
+            Some(Vec::new())
+        }
+        // Guard-wrapper tail `GUARD model (\_ -> CONT)`. The response leaves are
+        // the AUTHORISED continuation's (the lambda body) AND the guard helper's
+        // own reject leaves: a user guard's reject path is an ordinary
+        // `( model', cmd )` answer (`( m, Cmd.none )`), not a 403. A field the
+        // lambda writes but the reject path keeps is therefore NOT written on
+        // every leaf, and must ride the request; before this the reject leaves
+        // were left out, the field was dropped from the request, and the
+        // rejected branch answered `init ()`'s value for it. A guard body that
+        // cannot be modelled gives up (`None`: every written field rides).
         Expr::Call(callee, args) => {
-            if let Some(gw) = detect_guard_wrapper(db, body, *callee, args, model_local) {
-                collect_write_leaves(db, body, gw.lambda_body, model_local, let_locals, depth)
-            } else {
-                None
-            }
+            let gw = detect_guard_wrapper(db, body, *callee, args, model_local)?;
+            let mut out = collect_write_leaves(
+                db,
+                body,
+                gw.lambda_body,
+                model_local,
+                let_locals,
+                depth,
+                cont_local,
+            )?;
+            out.extend(guard_reject_leaves(
+                db,
+                gw.guard,
+                gw.model_arg_idx,
+                gw.cont_arg_idx,
+                depth + 1,
+            )?);
+            Some(out)
         }
         // Anything else (a delegate call, an opaque producer) is not modelled —
         // give up so `always_written` is empty (send every field, sound).
@@ -5843,6 +6137,38 @@ fn helper_always_writes_at(
     model_always_writes(db, body, root, Some(mlocal), &let_locals, depth + 1)
 }
 
+/// The response leaves of a guard helper's own body (`requireFlag m k = if m.flag
+/// then k () else ( m, Cmd.none )`) over its model parameter, with each call to
+/// its continuation parameter adding no leaf (that path's leaves are the arm's
+/// inline lambda). `None` when the body cannot be modelled.
+fn guard_reject_leaves(
+    db: &dyn SkyDb,
+    guard: DefId,
+    model_arg_idx: usize,
+    cont_arg_idx: usize,
+    depth: usize,
+) -> Option<Vec<BTreeSet<String>>> {
+    if depth > IO_DELEGATE_DEPTH {
+        return None;
+    }
+    let loc = db.def_loc(guard)?;
+    let resolved = db.resolve(loc.module);
+    let body = resolved.bodies.get(&guard)?;
+    let root = body.root?;
+    let mlocal = param_local_at(body, model_arg_idx)?;
+    let clocal = param_local_at(body, cont_arg_idx)?;
+    let let_locals: HashMap<LocalId, ExprId> = HashMap::new();
+    collect_write_leaves(
+        db,
+        body,
+        root,
+        Some(mlocal),
+        &let_locals,
+        depth,
+        Some(clocal),
+    )
+}
+
 /// The `always_written` intersection for an arm: the fields assigned fresh on
 /// EVERY response leaf. Empty when the leaves could not all be modelled (sound
 /// over-approximation — every written field then rides the request).
@@ -5853,7 +6179,7 @@ fn always_written_of(
     model_local: Option<LocalId>,
     let_locals: &HashMap<LocalId, ExprId>,
 ) -> Vec<String> {
-    match collect_write_leaves(db, body, arm_body, model_local, let_locals, 0) {
+    match collect_write_leaves(db, body, arm_body, model_local, let_locals, 0, None) {
         Some(leaves) if !leaves.is_empty() => {
             let mut it = leaves.into_iter();
             let mut acc = it.next().unwrap();
@@ -6139,17 +6465,16 @@ fn helper_readset(db: &dyn SkyDb, f: DefId, i: usize, depth: usize) -> Option<BT
     );
     let mut rf: BTreeSet<String> = BTreeSet::new();
     let mut whole = false;
-    collect_reads(
+    let rc = ReadCtx {
         db,
         body,
-        root,
-        Some(mlocal),
-        &allowed,
-        &let_locals,
-        &mut rf,
-        &mut whole,
-        depth + 1,
-    );
+        model_local: Some(mlocal),
+        allowed_bare: &allowed,
+        destr: destructure_locals(body),
+    };
+    // The helper's result is judged where the caller uses it
+    // (`ReadCtx::carries` / `helper_carries_param`): a flow position here.
+    collect_reads(&rc, root, &let_locals, true, &mut rf, &mut whole, depth + 1);
     if whole {
         None
     } else {

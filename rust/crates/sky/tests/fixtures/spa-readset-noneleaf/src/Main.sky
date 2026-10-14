@@ -1,0 +1,223 @@
+module Main exposing (main)
+
+-- Two Sky.Spa auto-split soundness bugs, one fixture
+-- (docs/skyspa/auto-split.md, "read-set" and "client-result perform").
+--
+-- READ-SET THROUGH A MODEL-DERIVED LOCAL. Each of these arms reads a model
+-- field only through a value derived from `model`: a `let` copy, a helper
+-- result, a destructured tuple, a `case` subject. The request must carry the
+-- field, or the backend rebuilds it from `init ()` and takes the other branch.
+--
+--   * `AliasCond`    — `let m2 = { model | n = 0 } in if m2.flag …`
+--   * `AliasRead`    — `let m2 = { model | n = 1 } in case m2.mode of …`
+--   * `Stamped`      — `let m2 = stamp model in if m2.flag …`
+--   * `Destructured` — `let ( m2, note ) = ( { model | n = 2 }, "d" ) in …`
+--   * `CaseOf`       — `case { model | n = 4 } of m3 -> if m3.flag …`
+--
+-- A `Cmd.none` LEAF OF A CLIENT-RESULT ROOT. These arms write nothing and
+-- return one `Cmd.perform` whose result Msg (`Got`) is a client arm. On the
+-- branch that returns `Cmd.none`, Sky.Live dispatches nothing. The split must
+-- not dispatch `Got (Err …)` there.
+--
+--   * `Gated`        — `if model.flag then ( model, perform ) else ( model, none )`
+--   * `Guarded`      — the same through a guard helper whose reject branch
+--                      returns `Cmd.none`
+--   * `ByMode`       — `case model.mode of Just s -> perform ; Nothing -> none`
+--
+-- A FIELD WRITTEN ON THE GUARD'S ALLOW PATH ONLY. `GuardedWrite` writes `log`
+-- inside the guard's continuation. The guard's reject path keeps `log`, so the
+-- request must carry it: it is not written on every path.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+type alias Model =
+    { n : Int
+    , flag : Bool
+    , mode : Maybe String
+    , log : String
+    }
+
+type Msg
+    = AliasCond
+    | AliasRead
+    | Stamped
+    | Destructured
+    | CaseOf
+    | Gated
+    | Guarded
+    | ByMode
+    | GuardedWrite
+    | Got (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, flag = False, mode = Nothing, log = "" }, Cmd.none )
+
+
+fetchEnv : Task Error String
+fetchEnv =
+    Task.succeed (System.getenvOr "SPA_NONELEAF_P" "served")
+
+
+fetchWith : String -> Task Error String
+fetchWith s =
+    Task.succeed (System.getenvOr "SPA_NONELEAF_P" s)
+
+
+stamp : Model -> Model
+stamp m =
+    { m | n = m.n + 1 }
+
+
+requireFlag : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
+requireFlag m k =
+    if m.flag then
+        k ()
+
+    else
+        ( m, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        AliasCond ->
+            let
+                m2 = { model | n = 0 }
+            in
+                if m2.flag then
+                    ( m2, Cmd.perform fetchEnv Got )
+
+                else
+                    ( m2, Cmd.none )
+
+        AliasRead ->
+            let
+                m2 = { model | n = 1 }
+            in
+                case m2.mode of
+
+                    Just s ->
+                        ( { m2 | log = s }, Cmd.none )
+
+                    Nothing ->
+                        ( m2, Cmd.perform fetchEnv Got )
+
+        Stamped ->
+            let
+                m2 = stamp model
+            in
+                if m2.flag then
+                    ( m2, Cmd.perform fetchEnv Got )
+
+                else
+                    ( m2, Cmd.none )
+
+        Destructured ->
+            let
+                ( m2, note ) = ( { model | n = 2 }, "d" )
+            in
+                if m2.flag then
+                    ( { model | log = note }, Cmd.perform fetchEnv Got )
+
+                else
+                    ( model, Cmd.none )
+
+        CaseOf ->
+            case { model | n = 4 } of
+
+                m3 ->
+                    if m3.flag then
+                        ( model, Cmd.perform fetchEnv Got )
+
+                    else
+                        ( model, Cmd.none )
+
+        Gated ->
+            if model.flag then
+                ( model, Cmd.perform fetchEnv Got )
+
+            else
+                ( model, Cmd.none )
+
+        Guarded ->
+            requireFlag model (\_ -> ( model, Cmd.perform fetchEnv Got ))
+
+        ByMode ->
+            case model.mode of
+
+                Just s ->
+                    ( model, Cmd.perform (fetchWith s) Got )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        GuardedWrite ->
+            requireFlag
+                model
+                (\_ -> ( { model | log = "busy" }, Cmd.perform fetchEnv Got ))
+
+        Got r ->
+            case r of
+
+                Ok s ->
+                    ( { model | log = s }, Cmd.none )
+
+                Err _ ->
+                    ( { model | log = "error" }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            []
+            [ Ui.text model.log
+            , Ui.button
+                  []
+                  { onPress = Just AliasCond, label = Ui.text "alias-cond" }
+            , Ui.button
+                  []
+                  { onPress = Just AliasRead, label = Ui.text "alias-read" }
+            , Ui.button [] { onPress = Just Stamped, label = Ui.text "stamped" }
+            , Ui.button
+                  []
+                  { onPress = Just Destructured
+                  , label = Ui.text "destructured"
+                  }
+            , Ui.button [] { onPress = Just CaseOf, label = Ui.text "case-of" }
+            , Ui.button [] { onPress = Just Gated, label = Ui.text "gated" }
+            , Ui.button [] { onPress = Just Guarded, label = Ui.text "guarded" }
+            , Ui.button [] { onPress = Just ByMode, label = Ui.text "by-mode" }
+            , Ui.button
+                  []
+                  { onPress = Just GuardedWrite
+                  , label = Ui.text "guarded-write"
+                  }
+            ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })
