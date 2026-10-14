@@ -823,6 +823,11 @@ pub const CORPUS_EXPECTED: u64 = 700;
 /// the emitted Go), so pinning the full count there would have made the gate's
 /// declared assertion count a number it never reaches.
 ///
+/// Since 2026-10-14 the behavioural cases run in four shard gates (`corpus-1` …
+/// `corpus-4`); each declares [`corpus_shard_expected`], derived from this
+/// const, and the four sum to it. The history below names the unsharded
+/// `corpus` gate that measured each number.
+///
 /// **470 since the v0.27.0 Std.Sync Family-S surface** (+2, both built and
 /// run; the same +2 as `CORPUS_EXPECTED`).
 ///
@@ -944,20 +949,61 @@ pub fn corpus_manifest(ctx: &GateCtx) -> GateOutcome {
     )
 }
 
-/// The full Layer-1 corpus: every case built, run, and its value compared
-/// against the one the GENERATOR constructed (v2 §4.4 class V).
+/// How many shard gates run the behavioural corpus (`corpus-1` …).
+pub const CORPUS_SHARDS: usize = crate::corpus::SHARDS;
+
+/// The EXACT assertion count of corpus shard gate `corpus-{k+1}`: the number of
+/// behavioural cases whose index is `k` mod [`CORPUS_SHARDS`]. Derived from
+/// [`CORPUS_BEHAVIOURAL_EXPECTED`], which `corpus_count_sync` pins to the
+/// generator, so a case added without moving that const fails per-commit, and
+/// a shard that silently drops a case reports fewer assertions than this.
+pub const fn corpus_shard_expected(k: usize) -> u64 {
+    crate::corpus::shard_len(CORPUS_BEHAVIOURAL_EXPECTED as usize, k, CORPUS_SHARDS) as u64
+}
+
+/// One shard of the Layer-1 behavioural corpus: every case in slice `k` of
+/// [`CORPUS_SHARDS`] built, run, and its value compared against the one the
+/// GENERATOR constructed (v2 §4.4 class V). The four shard gates together run
+/// every behavioural case exactly once.
+///
+/// The assertion count is the number of cases that produced a verdict, never
+/// the size of the slice the generator declares: a run that loses a case
+/// reports fewer than the gate's exact expected count, and the harness fails
+/// it.
 ///
 /// Blocked cases (known product defects) still run and still count as
 /// assertions; they never contribute PASS and they fail the gate once their
 /// expiry passes.
-pub fn corpus(ctx: &GateCtx) -> GateOutcome {
-    let code = crate::corpus::runner::run_all(&ctx.repo_root);
-    let n = crate::corpus::behavioural_cases().len() as u64;
+fn corpus_shard(ctx: &GateCtx, k: usize) -> GateOutcome {
+    let (code, ran) = crate::corpus::runner::run_shard(&ctx.repo_root, k, CORPUS_SHARDS);
     GateOutcome::new(
         code == 0,
-        n,
-        format!("{n} generated cases built and run; values compared against the generator's own"),
+        ran as u64,
+        format!(
+            "shard {k}/{CORPUS_SHARDS}: {ran} generated case(s) built and run; values \
+             compared against the generator's own"
+        ),
     )
+}
+
+/// Corpus shard 0 of 4 (`corpus-1`).
+pub fn corpus_1(ctx: &GateCtx) -> GateOutcome {
+    corpus_shard(ctx, 0)
+}
+
+/// Corpus shard 1 of 4 (`corpus-2`).
+pub fn corpus_2(ctx: &GateCtx) -> GateOutcome {
+    corpus_shard(ctx, 1)
+}
+
+/// Corpus shard 2 of 4 (`corpus-3`).
+pub fn corpus_3(ctx: &GateCtx) -> GateOutcome {
+    corpus_shard(ctx, 2)
+}
+
+/// Corpus shard 3 of 4 (`corpus-4`).
+pub fn corpus_4(ctx: &GateCtx) -> GateOutcome {
+    corpus_shard(ctx, 3)
 }
 
 /// v2 §3.1 family R — the reject matrix.

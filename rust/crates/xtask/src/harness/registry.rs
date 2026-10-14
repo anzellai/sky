@@ -238,6 +238,55 @@ pub struct Gate {
     pub summary: &'static str,
 }
 
+/// The shard gates that together run the behavioural corpus, in shard order:
+/// `CORPUS_SHARD_GATES[k]` runs every behavioural case whose index is `k` mod
+/// [`bodies::CORPUS_SHARDS`]. The coverage ledger scores them as ONE logical
+/// gate, `corpus`, at the strength of the weakest shard; CI must run all of
+/// them (`tests/workflows_parse.rs`).
+pub const CORPUS_SHARD_GATES: &[&str] = &["corpus-1", "corpus-2", "corpus-3", "corpus-4"];
+
+/// The falsifying mutations of one corpus shard gate. Every shard declares the
+/// same two, because each corrupts the EXPECTATION of a whole family and every
+/// shard holds cases of both families (`corpus::tests::
+/// every_shard_holds_the_families_its_falsifiers_corrupt`). A mutation that
+/// touched one case would bite one shard only and leave the other three
+/// VACUOUS; that is why the single-case `wrong-stdlib-digest` mutation of the
+/// unsharded `corpus` gate became the Family-S-wide `wrong-stdlib-expectation`.
+macro_rules! corpus_shard_mutations {
+    ($gate:literal) => {
+        Mutations::new(&[
+            Mutation {
+                id: concat!($gate, ".wrong-expected-value"),
+                description: "corrupt the EXPECTED value the generator constructs for \
+                              the record_update family, leaving the program correct; \
+                              that family's value comparison must go red in this shard",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/gen.rs",
+                    from: "(decls, check, format!(\"{UPDATED}/{SURVIVOR}\"))",
+                    to: "(decls, check, format!(\"{UPDATED}/999\"))",
+                },
+            },
+            // Family-specific, because the mutation above proves only that
+            // `record_update` bites. Family S is the largest family, and a
+            // mutation that never touches it would let it be vacuous behind a
+            // PROVEN badge. The program stays correct; only the expectation the
+            // generator joins for every `stdlib_edge` case gains an item no
+            // program prints, so only a live value comparison can catch it.
+            Mutation {
+                id: concat!($gate, ".wrong-stdlib-expectation"),
+                description: "append an item to the expectation Family S constructs for \
+                              every stdlib_edge case, leaving each program correct; the \
+                              stdlib_edge value comparisons in this shard must go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/xtask/src/corpus/stdlib.rs",
+                    from: "        expected.join(\"|\"),\n    )",
+                    to: "        expected.join(\"|\") + \"|999\",\n    )",
+                },
+            },
+        ])
+    };
+}
+
 /// THE registry. Membership authority for every harness run.
 pub static GATES: &[Gate] = &[
     Gate {
@@ -606,54 +655,72 @@ pub static GATES: &[Gate] = &[
         ]),
         body: bodies::corpus_emit_shape,
     },
+    // ---- the behavioural corpus, in four shards ----------------------------
+    //
+    // Was one gate, `corpus`. 1800 s held 341 cases, 3000 s held 373, 4000 s
+    // held 468. At 554 cases a CI runner reached about case 350 when the
+    // harness killed it at 4000 s (release run, 2026-10-14): about 11.4 s of
+    // wall clock per case with the Go build cache restored, so the whole
+    // corpus needs about 6,300 s on one runner and keeps growing.
+    //
+    // Each shard is a gate of its own, so each keeps the harness rules: an
+    // exact assertion count (`bodies::corpus_shard_expected`, 139 / 139 / 138
+    // / 138 at 554 cases), a killpg budget, and its own falsifier proof. A
+    // shard runs every behavioural case whose index is k mod 4
+    // (`corpus::shard_slice`, interleaved like `repro --shard`), so the four
+    // are disjoint and their union is the corpus.
+    //
+    // Budget: 139 cases × 11.4 s ≈ 1,590 s, which is 44 % of 3600 s. A shard
+    // reaches 50 % at about 158 cases (about 630 behavioural cases in all).
+    // Add a shard (`corpus::SHARDS`, this list, the workflows) before that,
+    // rather than raising the budget.
     Gate {
-        name: "corpus",
+        name: "corpus-1",
         tier: Tier::T2,
         platforms: UNIX,
-        // 1800 s held 341 cases; v0.27.0 took the corpus to 373, and a CI
-        // runner reached 325 at 30 min. 3000 s kept headroom for that. The
-        // v0.27.0 round-3 language strata took it to 468 (+95, all built and
-        // run); at the same CI rate that is about 2,600 s, so 4000 s restores
-        // the headroom.
-        budget_s: 4000,
-        expected: bodies::CORPUS_BEHAVIOURAL_EXPECTED,
+        budget_s: 3600,
+        expected: bodies::corpus_shard_expected(0),
         expect: Expect::Falsifiable,
-        summary: "every generated case built + run; values compared against the generator's own",
-        mutations: Mutations::new(&[
-            Mutation {
-                id: "corpus.wrong-expected-value",
-                description: "corrupt the EXPECTED value the generator constructs for \
-                              the record_update family, leaving the program correct; \
-                              that family's value comparison must go red",
-                kind: MutationKind::ReplaceOnce {
-                    path: "rust/crates/xtask/src/corpus/gen.rs",
-                    from: "(decls, check, format!(\"{UPDATED}/{SURVIVOR}\"))",
-                    to: "(decls, check, format!(\"{UPDATED}/999\"))",
-                },
-            },
-            // A family-specific mutation, because the one above proves only
-            // that `record_update` bites. Family S is 90 of the 296 cases and a
-            // mutation that never touches it would let the whole family be
-            // vacuous behind a PROVEN badge — the exact accounting failure this
-            // branch exists to remove.
-            //
-            // The target is the published SHA-256 of the empty string, which is
-            // the strongest class-V assertion in the corpus: it is fixed by
-            // FIPS 180-4, so corrupting the EXPECTATION while leaving the
-            // program correct can only be caught by a live comparison.
-            Mutation {
-                id: "corpus.wrong-stdlib-digest",
-                description: "corrupt the published SHA-256 digest Family S asserts \
-                              for the empty string, leaving the program correct; the \
-                              stdlib_edge/empty-crypto value comparison must go red",
-                kind: MutationKind::ReplaceOnce {
-                    path: "rust/crates/xtask/src/corpus/stdlib.rs",
-                    from: "\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"",
-                    to: "\"0000000000000000000000000000000000000000000000000000000000000000\"",
-                },
-            },
-        ]),
-        body: bodies::corpus,
+        summary: "behavioural corpus shard 0 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-1"),
+        body: bodies::corpus_1,
+    },
+    Gate {
+        name: "corpus-2",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 3600,
+        expected: bodies::corpus_shard_expected(1),
+        expect: Expect::Falsifiable,
+        summary: "behavioural corpus shard 1 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-2"),
+        body: bodies::corpus_2,
+    },
+    Gate {
+        name: "corpus-3",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 3600,
+        expected: bodies::corpus_shard_expected(2),
+        expect: Expect::Falsifiable,
+        summary: "behavioural corpus shard 2 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-3"),
+        body: bodies::corpus_3,
+    },
+    Gate {
+        name: "corpus-4",
+        tier: Tier::T2,
+        platforms: UNIX,
+        budget_s: 3600,
+        expected: bodies::corpus_shard_expected(3),
+        expect: Expect::Falsifiable,
+        summary: "behavioural corpus shard 3 of 4: each case built + run; values compared \
+                  against the generator's own",
+        mutations: corpus_shard_mutations!("corpus-4"),
+        body: bodies::corpus_4,
     },
     Gate {
         name: "corpus-isolation",
@@ -1936,6 +2003,59 @@ mod tests {
         let mut seen = HashSet::new();
         for g in GATES {
             assert!(seen.insert(g.name), "duplicate gate name `{}`", g.name);
+        }
+    }
+
+    /// The corpus shard gates are exactly `corpus::SHARDS` registered T2 gates,
+    /// one per shard, whose exact counts sum to the whole behavioural corpus.
+    /// A shard missing from the registry (or a fifth shard nobody declared)
+    /// would leave cases that no gate runs.
+    #[test]
+    fn the_corpus_shard_gates_cover_the_behavioural_corpus_exactly_once() {
+        assert_eq!(
+            CORPUS_SHARD_GATES.len(),
+            crate::corpus::SHARDS,
+            "CORPUS_SHARD_GATES must name one gate per corpus shard"
+        );
+        let mut sum = 0u64;
+        for (k, name) in CORPUS_SHARD_GATES.iter().enumerate() {
+            let g = find(name)
+                .unwrap_or_else(|| panic!("corpus shard gate `{name}` is not registered"));
+            assert_eq!(
+                g.tier,
+                Tier::T2,
+                "`{name}` must run at T2 with the other corpus shards"
+            );
+            assert_eq!(
+                g.expected,
+                bodies::corpus_shard_expected(k),
+                "`{name}` must declare the exact size of shard {k}"
+            );
+            assert!(
+                g.mutations
+                    .as_slice()
+                    .iter()
+                    .all(|m| m.id.starts_with(&format!("{name}."))),
+                "`{name}` carries a mutation id that names another gate"
+            );
+            sum += g.expected;
+        }
+        assert_eq!(
+            sum,
+            bodies::CORPUS_BEHAVIOURAL_EXPECTED,
+            "the corpus shards' exact counts must sum to the whole behavioural corpus"
+        );
+        // No stray shard-shaped gate outside the list, and the unsharded name is gone.
+        for g in GATES {
+            let shard_shaped = g
+                .name
+                .strip_prefix("corpus-")
+                .is_some_and(|r| r.chars().all(|c| c.is_ascii_digit()));
+            assert!(
+                g.name != "corpus" && (!shard_shaped || CORPUS_SHARD_GATES.contains(&g.name)),
+                "gate `{}` looks like a corpus shard but is not in CORPUS_SHARD_GATES",
+                g.name
+            );
         }
     }
 

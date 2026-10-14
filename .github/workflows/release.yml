@@ -255,8 +255,9 @@ jobs:
   #     pattern: `--shard=N/3`, disjoint + total by
   #     `build_run_gate::shards_are_disjoint_and_total`). The `go clean -cache`
   #     step is GONE — it only existed to make room for that in-job sweep.
-  #   * the T2 tier splits across `gate-t2-corpus` (the ~10-min `corpus` gate
-  #     alone) + `gate-t2-rest` (the four lighter T2 gates).
+  #   * the T2 tier splits across `gate-t2-corpus-1` … `-4` (one behavioural
+  #     corpus shard gate each, `corpus-1` … `corpus-4`) + `gate-t2-rest` (the
+  #     lighter T2 gates).
   #   * the T1 falsifier sweep splits across `gate-falsifiers-1/2/3` by `--only`
   #     gate groups; their union is the whole T1 tier.
   # NOTHING is dropped: every tier T1-T4, the corpus gates, the workspace tests,
@@ -798,20 +799,24 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-t2-corpus — the behavioural corpus (`corpus` gate ALONE). This is the
-  # tier that caught the v0.21.0 `record_update` codegen regression the MORNING
-  # AFTER the release, because it ran ONLY in the nightly (§0.2.1). It `go
-  # build`s AND RUNS every combinatorial fixture and is ~10 min locally — the
-  # single heaviest T2 gate, so it gets its own runner. The gate has no internal
-  # shard flag, so it stays one gate; the OTHER four T2 gates run in
-  # gate-t2-rest. `--require-proofs` matches the rigor of the T1 line.
-  gate-t2-corpus:
+  # gate-t2-corpus-1 … -4 — the behavioural corpus, one shard gate per job
+  # (`corpus-1` … `corpus-4`). This is the tier that caught the v0.21.0
+  # `record_update` codegen regression the MORNING AFTER the release, because
+  # it ran ONLY in the nightly (§0.2.1). It `go build`s AND RUNS every
+  # combinatorial fixture. As one gate it outgrew its runner: at 554 cases the
+  # harness killed it at its 4000 s budget near case 350 (about 11.4 s per
+  # case). Each shard gate runs every case whose index is k mod 4, so the four
+  # jobs together run every case exactly once (`corpus::shard_slice`,
+  # `tests/workflows_parse.rs` fails if a shard gate runs in no job).
+  # `--require-proofs` matches the rigor of the T1 line.
+  #
+  # Each shard gate budgets 3600 s for about 139 cases (about 1,590 s at the
+  # rate above, 44 %). The harness runs a job's gates one after another: their
+  # summed budget plus ~15 min of setup must fit, or a slow gate ends as a
+  # cancelled job instead of a harness verdict (G-18;
+  # `e2e_scripts_are_gated.rs` checks it). 60 + 15 = 75, so 85.
+  gate-t2-corpus-1:
     runs-on: ubuntu-latest
-    # The gate budget is 4000 s (registry.rs, 468 behavioural cases); the job
-    # needs setup on top, so the job limit stays above the gate budget.
-    # The harness runs this job's gates one after another: their summed budget
-    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
-    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
     timeout-minutes: 85
     env:
       GO_CACHE_BUDGET_MB: '4096'
@@ -821,9 +826,69 @@ jobs:
         with:
           cache-key: t2
 
-      - name: Gate harness (T2 — corpus, build+run every fixture) with proof requirement
+      - name: Gate harness (T2 — corpus shard 1 of 4, build+run) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus --require-proofs
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-1 --require-proofs
+
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-t2-corpus-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+
+      - name: Gate harness (T2 — corpus shard 2 of 4, build+run) with proof requirement
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-2 --require-proofs
+
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-t2-corpus-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+
+      - name: Gate harness (T2 — corpus shard 3 of 4, build+run) with proof requirement
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-3 --require-proofs
+
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-t2-corpus-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+
+      - name: Gate harness (T2 — corpus shard 4 of 4, build+run) with proof requirement
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-4 --require-proofs
 
       - name: Bound the Go caches before save
         if: always()
@@ -832,7 +897,7 @@ jobs:
 
   # gate-t2-rest — the remaining five T2 gates: spa-diff-fuzz, corpus-isolation,
   # corpus-witness, apps-fieldbook, ai-device-partition. Union with
-  # gate-t2-corpus = the whole T2 tier. spa-diff-fuzz + apps-fieldbook drive the installed compiler
+  # gate-t2-corpus-1 … -4 = the whole T2 tier. spa-diff-fuzz + apps-fieldbook drive the installed compiler
   # (sky-out/sky), which the composite installs. `--require-proofs` retained.
   gate-t2-rest:
     runs-on: ubuntu-latest
@@ -1042,19 +1107,20 @@ jobs:
   # a blocked gate, which have no baseline to falsify; the canary runs in every
   # group). `--all`: nothing is carried from the checked-in proof ledger.
   #
-  # Group 4 is the behavioural corpus alone: its baseline and its mutated run
-  # each `go build` and run every fixture (~10 min apiece).
+  # Group 4 is the behavioural corpus, one job per shard gate
+  # (`gate-falsifiers-4-1` … `-4-4`, gates `corpus-1` … `corpus-4`). Each job's
+  # baseline and its two mutated runs `go build` and run that shard's cases.
   #
-  # v0.27.0 (468 cases): 57 min of job time against the old 60 min limit
-  # (release run 36643630048). The time is the BASELINE run, which builds every
-  # case from a cold per-case state: ~37 min, against ~7 min for each mutated
-  # run that follows it on a warm cache (measured per mutation in run
-  # 36651737329, where the two mutations ran in separate jobs: 2,686 s and
-  # 2,671 s each, baseline included). Splitting by mutation therefore repeats
-  # the baseline and saves ~7 min, so the work does not divide at the job level,
-  # and the timeout follows docs/ci-test-architecture-v2.md §8.2 instead: 1.5x
-  # the ~57 min measured ≈ 86, rounded to 90.
-  gate-falsifiers-4:
+  # v0.27.0 (468 cases, one gate): 57 min of job time (release run
+  # 36643630048). The time was the BASELINE run, which builds every case from a
+  # cold per-case state: ~37 min, against ~7 min for each mutated run that
+  # follows it on a warm cache. Splitting by mutation repeats the baseline, so
+  # the work divides by SHARD instead: a shard holds about a quarter of the
+  # cases. At 554 cases and the slowest rate seen on a runner (11.4 s per case,
+  # the 2026-10-14 gate run), a 139-case baseline is ~26 min and each mutated
+  # run ~5 min on the 37:7 ratio: ~36 min + ~15 min setup ≈ 51 min. 90 keeps the
+  # docs/ci-test-architecture-v2.md §8.2 margin of 1.5x and more.
+  gate-falsifiers-4-1:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -1064,9 +1130,63 @@ jobs:
       - uses: ./.github/actions/gate-setup
         with:
           cache-key: t2
-      - name: Falsifier verification (group 4 — the T2 behavioural corpus)
+      - name: Falsifier verification (group 4 — behavioural corpus shard 1 of 4)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-1
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-falsifiers-4-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+      - name: Falsifier verification (group 4 — behavioural corpus shard 2 of 4)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-2
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-falsifiers-4-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+      - name: Falsifier verification (group 4 — behavioural corpus shard 3 of 4)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-3
+      - name: Bound the Go caches before save
+        if: always()
+        working-directory: .
+        run: bash scripts/ci/bound-go-cache.sh
+
+  gate-falsifiers-4-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GO_CACHE_BUDGET_MB: '4096'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/gate-setup
+        with:
+          cache-key: t2
+      - name: Falsifier verification (group 4 — behavioural corpus shard 4 of 4)
+        working-directory: rust
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus-4
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -1897,7 +2017,10 @@ jobs:
       - gate-t1-3
       - gate-t1-4
       - gate-buildrun
-      - gate-t2-corpus
+      - gate-t2-corpus-1
+      - gate-t2-corpus-2
+      - gate-t2-corpus-3
+      - gate-t2-corpus-4
       - gate-t2-rest
       - gate-app
       - gate-ai-local
@@ -1909,7 +2032,10 @@ jobs:
       - gate-falsifiers-1
       - gate-falsifiers-2
       - gate-falsifiers-3
-      - gate-falsifiers-4
+      - gate-falsifiers-4-1
+      - gate-falsifiers-4-2
+      - gate-falsifiers-4-3
+      - gate-falsifiers-4-4
       - gate-falsifiers-5
       - gate-falsifiers-6
       - gate-falsifiers-7

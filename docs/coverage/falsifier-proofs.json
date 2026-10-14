@@ -274,7 +274,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1791997358
+      "proven_at_unix": 1792010728
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -353,17 +353,53 @@
       "outcome": "as-declared",
       "proven_at_unix": 1791997169
     },
-    "corpus": {
+    "corpus-1": {
       "inputs_files": 169,
-      "inputs_hash": "918ee619c587d14745121aed1cafb5f7d76a8c27",
-      "mutation": "corpus.wrong-expected-value",
+      "inputs_hash": "750c196556d3b0ce2d08dbace15e665a7245dbe6",
+      "mutation": "corpus-1.wrong-expected-value",
       "mutations": [
-        "corpus.wrong-expected-value",
-        "corpus.wrong-stdlib-digest"
+        "corpus-1.wrong-expected-value",
+        "corpus-1.wrong-stdlib-expectation"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791977074
+      "proven_at_unix": 1792008141
+    },
+    "corpus-2": {
+      "inputs_files": 169,
+      "inputs_hash": "06dac0b389e6f9811379e46aac17d847c6937e5e",
+      "mutation": "corpus-2.wrong-expected-value",
+      "mutations": [
+        "corpus-2.wrong-expected-value",
+        "corpus-2.wrong-stdlib-expectation"
+      ],
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1792010728
+    },
+    "corpus-3": {
+      "inputs_files": 169,
+      "inputs_hash": "0c4d5974efa59edf57a212bb8ba235119428e14f",
+      "mutation": "corpus-3.wrong-expected-value",
+      "mutations": [
+        "corpus-3.wrong-expected-value",
+        "corpus-3.wrong-stdlib-expectation"
+      ],
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1792010728
+    },
+    "corpus-4": {
+      "inputs_files": 169,
+      "inputs_hash": "b04991e88759e32d71b98d5bd9602ff7fb1b5ecf",
+      "mutation": "corpus-4.wrong-expected-value",
+      "mutations": [
+        "corpus-4.wrong-expected-value",
+        "corpus-4.wrong-stdlib-expectation"
+      ],
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1792010728
     },
     "corpus-emit-shape": {
       "inputs_files": 169,

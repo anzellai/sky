@@ -1214,37 +1214,263 @@ fn the_release_workflow_is_the_full_suite() {
          {uncovered:?} — add each to one of the gate-falsifiers-* `--only` lists"
     );
 
-    // 5. The T1 harness runs in shards (`--tier t1 --only <list>`). A shard list
-    //    is hand-written, so a gate added to T1 later would run in NO release job
-    //    and the release would look green without it. A `--tier t1` line with no
-    //    `--only` runs every T1 gate and covers them all.
-    let mut t1_all = false;
-    let mut t1_covered: Vec<String> = Vec::new();
-    for r in &runs {
+    // 5. Every tier runs in shards (`--tier tN --only <list>`): T1 by gate group,
+    //    T2 by corpus shard gate (`corpus-1` … `corpus-4`) plus the rest, T4 by
+    //    platform. A shard list is hand-written, so a gate added to a tier later
+    //    — or a corpus shard gate added to the registry — would run in NO
+    //    release job and the release would look green without it. A
+    //    `--tier tN` line with no `--only` runs every gate of the tier.
+    for tier in ["T1", "T2", "T3", "T4"] {
+        let uncovered = tier_gates_run_nowhere(&registered, &runs, tier);
+        assert!(
+            uncovered.is_empty(),
+            "{tier} gate(s) that no release {tier} job runs: {uncovered:?} — add each to \
+             the `--only` list of one of the gate-* jobs that run `--tier {}`",
+            tier.to_ascii_lowercase()
+        );
+    }
+}
+
+/// The gates of `tier` (from the registry parse `(name, tier)`) that no
+/// `harness --tier <tier>` line in `runs` selects. A falsifier line does not
+/// count: it proves a mutation bites, it does not give the gate its verdict.
+fn tier_gates_run_nowhere(
+    registered: &[(String, String)],
+    runs: &[String],
+    tier: &str,
+) -> Vec<String> {
+    let flag = format!("--tier {}", tier.to_ascii_lowercase());
+    let mut all = false;
+    let mut covered: Vec<String> = Vec::new();
+    for r in runs {
         for line in r
             .lines()
-            .filter(|l| l.contains("--tier t1") && !l.contains("--verify-falsifiers"))
+            .filter(|l| l.contains(&flag) && !l.contains("--verify-falsifiers"))
         {
             let toks: Vec<&str> = line.split_whitespace().collect();
+            // Exact token match: `--tier t1` must not be read as covering `t10`.
+            let Some(t) = toks.iter().position(|t| *t == "--tier") else {
+                continue;
+            };
+            if toks.get(t + 1).map(|v| v.to_ascii_uppercase()) != Some(tier.to_string()) {
+                continue;
+            }
             match toks.iter().position(|t| *t == "--only") {
-                Some(i) => t1_covered.extend(toks[i + 1].split(',').map(str::to_string)),
-                None => t1_all = true,
+                Some(i) => covered.extend(
+                    toks.get(i + 1)
+                        .into_iter()
+                        .flat_map(|l| l.split(','))
+                        .map(str::to_string),
+                ),
+                None => all = true,
             }
         }
     }
-    if !t1_all {
-        let t1_uncovered: Vec<&str> = registered
-            .iter()
-            .filter(|(_, tier)| tier == "T1")
-            .map(|(n, _)| n.as_str())
-            .filter(|n| !t1_covered.iter().any(|c| c == n))
+    if all {
+        return Vec::new();
+    }
+    registered
+        .iter()
+        .filter(|(_, t)| t == tier)
+        .map(|(n, _)| n.clone())
+        .filter(|n| !covered.iter().any(|c| c == n))
+        .collect()
+}
+
+/// `(name, tier)` of every gate in the harness registry, parsed from source so
+/// the test needs nothing from the xtask crate itself.
+fn registered_gates() -> Vec<(String, String)> {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let registry = std::fs::read_to_string(root.join("rust/crates/xtask/src/harness/registry.rs"))
+        .expect("read the registry");
+    let mut registered: Vec<(String, String)> = Vec::new();
+    let mut name: Option<String> = None;
+    for line in registry.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("name: \"") {
+            name = rest.split('"').next().map(str::to_string);
+        } else if let Some(rest) = t.strip_prefix("tier: Tier::") {
+            if let Some(n) = name.take() {
+                registered.push((n, rest.trim_end_matches(',').to_string()));
+            }
+        }
+    }
+    assert!(
+        registered.len() > 30,
+        "registry parse found {}",
+        registered.len()
+    );
+    registered
+}
+
+/// Every `run:` body of the jobs `keep` selects, with each `${{ matrix.<key> }}`
+/// expanded once per value of that key's list in the job's `strategy.matrix`.
+/// A matrix leg is a job that runs; its `run:` text with the placeholder left
+/// in would name no gate, and a gate named only by a matrix value would read as
+/// run nowhere.
+fn expanded_runs(
+    doc: &serde_yaml::Value,
+    keep: impl Fn(&str, &serde_yaml::Value) -> bool,
+) -> Vec<String> {
+    let jobs = doc
+        .get("jobs")
+        .and_then(|j| j.as_mapping())
+        .expect("`jobs` mapping");
+    let mut out = Vec::new();
+    for (k, job) in jobs {
+        let Some(name) = k.as_str() else { continue };
+        if !keep(name, job) {
+            continue;
+        }
+        let matrix: Vec<(String, Vec<String>)> = job
+            .get("strategy")
+            .and_then(|s| s.get("matrix"))
+            .and_then(|m| m.as_mapping())
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, v)| {
+                let vals: Vec<String> = v
+                    .as_sequence()?
+                    .iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                Some((k.as_str()?.to_string(), vals))
+            })
             .collect();
+        for step in job
+            .get("steps")
+            .and_then(|s| s.as_sequence())
+            .into_iter()
+            .flatten()
+        {
+            let Some(run) = step.get("run").and_then(|r| r.as_str()) else {
+                continue;
+            };
+            let mut expanded = vec![run.to_string()];
+            for (key, vals) in &matrix {
+                let placeholder = format!("${{{{ matrix.{key} }}}}");
+                if !run.contains(&placeholder) {
+                    continue;
+                }
+                expanded = expanded
+                    .iter()
+                    .flat_map(|r| {
+                        vals.iter()
+                            .map(|v| r.replace(&placeholder, v))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+            }
+            out.extend(expanded);
+        }
+    }
+    out
+}
+
+/// The behavioural corpus runs as shard gates (`corpus-1` … `corpus-N`, each
+/// every case whose index is k mod N). The union of the shards is the corpus
+/// only if EVERY shard runs, so a shard gate run by no job silently drops a
+/// quarter of the corpus while every job is green. This asserts, for the
+/// release workflow and for the nightly, that every T2 gate (the shards
+/// included) runs in some job, and for the release that every shard's
+/// falsifier is proven and every shard job is one `release:` waits on.
+#[test]
+fn every_corpus_shard_and_every_t2_gate_runs_in_the_release_and_the_nightly() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let registered = registered_gates();
+    let shards: Vec<&str> = registered
+        .iter()
+        .map(|(n, _)| n.as_str())
+        .filter(|n| {
+            n.strip_prefix("corpus-")
+                .is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_ascii_digit()))
+        })
+        .collect();
+    assert!(
+        shards.len() >= 2,
+        "found {} corpus shard gate(s) (`corpus-<k>`) in the registry — the parse is \
+         wrong or the corpus is no longer sharded; update this test with it",
+        shards.len()
+    );
+    assert!(
+        !registered.iter().any(|(n, _)| n == "corpus"),
+        "the unsharded `corpus` gate is registered again next to its shards"
+    );
+
+    // ---- release.yml ----------------------------------------------------
+    let text = std::fs::read_to_string(root.join(".github/workflows/release.yml"))
+        .expect("read release.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("release.yml parses");
+    let needs: Vec<String> = doc
+        .get("jobs")
+        .and_then(|j| j.get("release"))
+        .and_then(|r| r.get("needs"))
+        .and_then(|n| n.as_sequence())
+        .expect("release: needs: is a list")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let gating = |name: &str, job: &serde_yaml::Value| {
+        name.starts_with("gate-") && !job_is_disabled(job) && needs.iter().any(|n| n == name)
+    };
+    let runs = expanded_runs(&doc, gating);
+    let uncovered = tier_gates_run_nowhere(&registered, &runs, "T2");
+    assert!(
+        uncovered.is_empty(),
+        "T2 gate(s) that no enabled release job in `release: needs:` runs: {uncovered:?}"
+    );
+    for shard in &shards {
+        let proven = runs.iter().flat_map(|r| r.lines()).any(|l| {
+            l.contains("--verify-falsifiers") && {
+                let toks: Vec<&str> = l.split_whitespace().collect();
+                toks.iter()
+                    .position(|t| *t == "--only")
+                    .and_then(|i| toks.get(i + 1))
+                    .is_some_and(|list| list.split(',').any(|g| g == *shard))
+            }
+        });
         assert!(
-            t1_uncovered.is_empty(),
-            "T1 gate(s) that no release T1 shard runs: {t1_uncovered:?} — add each to \
-             one of the gate-t1-* `--only` lists"
+            proven,
+            "corpus shard gate `{shard}` has no falsifier proof in any release job"
         );
     }
+
+    // ---- nightly-sweep.yml ----------------------------------------------
+    let text = std::fs::read_to_string(root.join(".github/workflows/nightly-sweep.yml"))
+        .expect("read nightly-sweep.yml");
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("nightly-sweep.yml parses");
+    let runs = expanded_runs(&doc, |_, job| !job_is_disabled(job));
+    let uncovered = tier_gates_run_nowhere(&registered, &runs, "T2");
+    assert!(
+        uncovered.is_empty(),
+        "T2 gate(s) that no nightly job runs: {uncovered:?} — add each to a leg of the \
+         `behaviour-corpus` matrix"
+    );
+}
+
+/// The helpers above must not vouch for a gate by accident: a matrix leg is
+/// expanded per value, a shard named only in a falsifier line does not count as
+/// run, and `--tier t2` is not read as `--tier t20`.
+#[test]
+fn the_tier_coverage_helpers_see_only_real_invocations() {
+    let registered = vec![
+        ("corpus-1".to_string(), "T2".to_string()),
+        ("corpus-2".to_string(), "T2".to_string()),
+        ("other".to_string(), "T2".to_string()),
+    ];
+    let doc: serde_yaml::Value = serde_yaml::from_str(
+        "jobs:\n  leg:\n    strategy:\n      matrix:\n        gates: [corpus-1, other]\n    steps:\n      - run: xtask -- harness --tier t2 --only ${{ matrix.gates }}\n      - run: xtask -- harness --verify-falsifiers --all --only corpus-2\n      - run: xtask -- harness --tier t20 --only corpus-2\n",
+    )
+    .unwrap();
+    let runs = expanded_runs(&doc, |_, _| true);
+    assert_eq!(
+        tier_gates_run_nowhere(&registered, &runs, "T2"),
+        vec!["corpus-2".to_string()],
+        "only corpus-2 runs nowhere: the matrix covers corpus-1 and other"
+    );
+    // A bare `--tier t2` runs the whole tier.
+    let runs = vec!["xtask -- harness --tier t2".to_string()];
+    assert!(tier_gates_run_nowhere(&registered, &runs, "T2").is_empty());
 }
 
 /// The committed console_app Go must be checked against its Sky source on every

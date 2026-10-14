@@ -354,18 +354,33 @@ jobs:
   # HONESTLY: nightly is weaker than per-push. It is not merge-blocking, so a
   # regression lands and is caught the next night rather than at review. That is
   # a real gap and it is recorded as one in `.claude/AUTONOMOUS_GOAL.md`. The
-  # path to closing it is sharding — `corpus --run` has no shard or filter flag
-  # today, so partitioning the 335 cases across a matrix is a change to the
-  # gate, not to this file. It is strictly better than the status quo it
-  # replaces, which was no execution anywhere.
+  # path to closing it is sharding. It is strictly better than the status quo
+  # it replaces, which was no execution anywhere.
+  #
+  # SHARDED (2026-10-14). The corpus is now four shard gates, `corpus-1` …
+  # `corpus-4` (`corpus::shard_slice`, every case whose index is k mod 4), and
+  # this job is a matrix: one leg per shard gate, one leg for the rest of T2.
+  # As one gate it was killed at its 4000 s budget near case 350 of 554. The
+  # legs name their gates, so a gate ADDED at T2 later is NOT picked up by
+  # itself; `tests/workflows_parse.rs` fails the build until a leg names it,
+  # so it cannot silently join the set nothing runs.
   behaviour-corpus:
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "behaviour-corpus"]'), inputs.only) }}
     runs-on: ubuntu-latest
-    # Killed at 25 min on its first real run. 45 gives a cold-cache run room
-    # while staying far inside the 90-min T3 ceiling. Raised in v0.27.0 with
-    # the corpus gate's budget (4000 s, 468 behavioural cases); the job limit
-    # stays above the gate budget so the gate, not the runner, gives the verdict.
-    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        gates:
+          - corpus-1
+          - corpus-2
+          - corpus-3
+          - corpus-4
+          - corpus-isolation,corpus-witness,spa-diff-fuzz,apps-fieldbook,ai-device-partition
+    # Killed at 25 min on its first real run. The job limit stays above the
+    # leg's summed gate budget so the gate, not the runner, gives the verdict:
+    # a corpus shard budgets 3600 s (60 min) + setup, and the rest-of-T2 leg
+    # matches release.yml's gate-t2-rest (80 min).
+    timeout-minutes: 85
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -426,11 +441,12 @@ jobs:
           cd runtime-go
           CGO_ENABLED=0 go build ./... 2>&1 | tail -5 || true
           go version
-      - name: 'Gate — behavioural corpus (harness tier T2: 383 assertions)'
-        # The whole tier, not named gates, so a gate ADDED at T2 later is picked
-        # up automatically instead of silently joining the set nothing runs —
-        # which is how this hole opened in the first place.
-        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t2
+      - name: 'Gate — harness tier T2 (${{ matrix.gates }})'
+        # The legs' `--only` lists together are the whole T2 tier.
+        # `tests/workflows_parse.rs` expands this matrix and fails the build if
+        # a registered T2 gate is in no leg — which is how a hole like the one
+        # this job closed would open again.
+        run: cargo run --release -p xtask --manifest-path rust/Cargo.toml -- harness --tier t2 --only ${{ matrix.gates }}
       - name: Bound the Go caches before save
         if: always()
         run: bash scripts/ci/bound-go-cache.sh

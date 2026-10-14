@@ -90,7 +90,7 @@
 //! `cover_new` fell, or when a surface is `weaker` without a `[[weakening]]`
 //! stanza naming it. An INCREASE is always fine and rewrites the file.
 
-use crate::harness::registry::{MutationKind, Tier, GATES};
+use crate::harness::registry::{MutationKind, Tier, CORPUS_SHARD_GATES, GATES};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1746,7 +1746,19 @@ fn inapplicable_proof_violations(
 /// false for `Blocked`, and that property is the entire reason the state was
 /// affordable: a block that still counted as coverage would be a skip with
 /// better paperwork.
+///
+/// A **logical** gate the registry runs in shards (`corpus`, see
+/// [`gate_members`]) has the strength of its WEAKEST shard: the surface is
+/// covered only as strongly as the shard that covers it least.
 fn gate_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Strength {
+    gate_members(gate)
+        .iter()
+        .map(|m| member_strength(m, proofs))
+        .min()
+        .unwrap_or(Strength::None)
+}
+
+fn member_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Strength {
     if crate::harness::registry::block_for(gate).is_some() {
         return Strength::None;
     }
@@ -1756,8 +1768,33 @@ fn gate_strength(gate: &str, proofs: &BTreeMap<String, RecordedProof>) -> Streng
     }
 }
 
+/// The registered gates a ledger gate name stands for. `corpus` is the
+/// behavioural corpus, which the registry runs as the shard gates
+/// [`CORPUS_SHARD_GATES`]; every other name stands for itself.
+fn gate_members(gate: &str) -> Vec<&str> {
+    if gate == "corpus" {
+        CORPUS_SHARD_GATES.to_vec()
+    } else {
+        vec![gate]
+    }
+}
+
+/// The ledger gate name a registered gate's surfaces are declared under: a
+/// corpus shard gate declares through `corpus`.
+fn surface_owner(gate: &str) -> &str {
+    if CORPUS_SHARD_GATES.contains(&gate) {
+        "corpus"
+    } else {
+        gate
+    }
+}
+
+/// A ledger gate is registered when every gate it stands for is. A sharded gate
+/// with a shard missing from the registry has cases nothing runs.
 fn registered(gate: &str) -> bool {
-    GATES.iter().any(|g| g.name == gate)
+    gate_members(gate)
+        .iter()
+        .all(|m| GATES.iter().any(|g| g.name == *m))
 }
 
 /// The `.github/workflows/**` tree — the only place a step "runs in CI".
@@ -2401,7 +2438,7 @@ fn compute(repo_root: &Path) -> Result<Ledger, String> {
             .map(|g| {
                 let ids: Vec<&str> = GATE_SURFACES
                     .iter()
-                    .find(|(n, _)| *n == g.name)
+                    .find(|(n, _)| *n == surface_owner(g.name))
                     .map(|(_, ids)| ids.to_vec())
                     .unwrap_or_default();
                 (
@@ -4683,7 +4720,7 @@ fn t() {
             .iter()
             .filter(|g| g.tier != Tier::SelfTest)
             .map(|g| g.name)
-            .filter(|n| !declared.contains(n))
+            .filter(|n| !declared.contains(surface_owner(n)))
             .collect();
         assert!(
             missing.is_empty(),
@@ -4835,6 +4872,35 @@ fn t() {
                 .into_iter()
                 .collect();
         assert_eq!(gate_strength(unblocked, &proven), Strength::Falsified);
+    }
+
+    /// The behavioural corpus runs as shard gates, and the ledger scores it as
+    /// the one logical gate `corpus`. It is `Falsified` only when EVERY shard's
+    /// falsifier is proven: one unproven shard means part of the corpus has not
+    /// shown it can go red, so the whole claim drops to `Asserted`.
+    #[test]
+    fn the_sharded_corpus_scores_as_its_weakest_shard() {
+        assert!(
+            registered("corpus"),
+            "every corpus shard gate is registered"
+        );
+        let all: BTreeMap<String, RecordedProof> = CORPUS_SHARD_GATES
+            .iter()
+            .map(|g| (g.to_string(), live_proof(g)))
+            .collect();
+        assert_eq!(gate_strength("corpus", &all), Strength::Falsified);
+        for missing in CORPUS_SHARD_GATES {
+            let mut some = all.clone();
+            some.remove(*missing);
+            assert_eq!(
+                gate_strength("corpus", &some),
+                Strength::Asserted,
+                "`corpus` scored Falsified with shard `{missing}` unproven"
+            );
+        }
+        for shard in CORPUS_SHARD_GATES {
+            assert_eq!(surface_owner(shard), "corpus");
+        }
     }
 
     /// THE REGRESSION for GAP 1. A recorded proof is evidence about a

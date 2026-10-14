@@ -121,7 +121,8 @@ compiler_core() {
     add 45 "coerce-floor (runtime-narrowing floor)" "$XTASK coerce-floor"
     add 50 "harness T1: shared-world + corpus gates" \
         "$HARNESS --only shared-world,corpus-manifest,corpus-reject,corpus-emit-shape"
-    add 50 "harness T2: behavioural corpus" "$HARNESS --tier t2 --only corpus"
+    add 50 "harness T2: behavioural corpus (all four shard gates)" \
+        "$HARNESS --tier t2 --only corpus-1,corpus-2,corpus-3,corpus-4"
     add 55 "codegen build + run of every example (build-run)" "$XTASK build-run --all --run"
     add 58 "example sweep (clean slate; unchanged examples reuse the gate build cache)" \
         "scripts/example-sweep.sh"

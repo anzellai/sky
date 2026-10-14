@@ -120,14 +120,15 @@ fn t2_tier_being_nightly_is_within_its_review_date() {
     assert_not_expired(
         "4 (T2 behavioural corpus is nightly, not merge-blocking)",
         "2027-02-12",
-        "The 383 behavioural assertions run in nightly-sweep.yml's \
-         `behaviour-corpus`. Per-push was attempted and reverted: the tier costs \
-         25+ minutes on a GitHub runner against a 900s per-push ceiling that \
-         `ci-green` asserts, and raising that ceiling to fit a newly-added job \
-         is the budget drift the ceiling exists to catch. The route to per-push \
-         is SHARDING — `corpus --run` has no shard or filter flag, so \
-         partitioning the 335 cases across a matrix is a change to the gate \
-         itself, not to a workflow.",
+        "The behavioural assertions run in nightly-sweep.yml's \
+         `behaviour-corpus` matrix and in the release gate. Per-push was \
+         attempted and reverted: the tier costs 25+ minutes on a GitHub runner \
+         against a 900s per-push ceiling that `ci-green` asserts, and raising \
+         that ceiling to fit a newly-added job is the budget drift the ceiling \
+         exists to catch. The gate is now SHARDED (`corpus-1` … `corpus-4`, \
+         `corpus --run --shard=I/N`), but one shard of ~139 cases still costs \
+         ~26 min on a runner, so per-push needs more shards than four, or a \
+         cheaper case.",
     );
 }
 
