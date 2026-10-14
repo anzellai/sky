@@ -157,6 +157,23 @@ tests =
                   )
                   ( Just True, True, True ))
     , Test.test
+          "the tier may fetch its pinned base at start, so a fresh instance stages it"
+          (\_ ->
+              Test.equal
+                  (container
+                      0
+                      [ "env" ]
+                      (JsonD.list
+                          (JsonD.map2
+                              (\n v -> ( n, v ))
+                              (JsonD.field "name" JsonD.string)
+                              (JsonD.oneOf
+                                  [ JsonD.field "value" JsonD.string
+                                  , JsonD.succeed ""
+                                  ])))
+                      |> Maybe.map (List.member ( "SKY_AI_FETCH", "on" )))
+                  (Just True))
+    , Test.test
           "every image is pinned by digest"
           (\_ ->
               Test.equal

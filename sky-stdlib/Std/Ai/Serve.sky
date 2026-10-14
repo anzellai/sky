@@ -744,6 +744,11 @@ tierEnv : TargetSettings -> TierSettings -> List JsonE.Value
 tierEnv t s =
     [ env "ENV" "production"
     , env "SKY_AI_HOME" modelsHome
+      -- The tier stages its base's pinned files at start (each checked
+      -- against its SHA-256). Fetching is off by default outside
+      -- development, and without this the tier exited NotProvisioned on
+      -- Cloud Run (live, 2026-10-14).
+    , env "SKY_AI_FETCH" "on"
     , env "SKY_AI_SERVE_ENGINE" (engineText s.engine)
     , env "SKY_AI_SERVE_BIND" "0.0.0.0:8080"
     , env "SKY_AI_SERVE_ENGINE_URL" "http://127.0.0.1:8000"
