@@ -21,6 +21,7 @@ import Std.Db as Db exposing (SqlValue(..))
 import Std.Money as Money
 import Std.Ai.Train as Train exposing (Status(..))
 import Std.Ai.Failure as Failure exposing (Failure(..))
+import Std.Ai.Cloud.Google as Google
 import Fixture
 
 
@@ -340,6 +341,27 @@ waited =
         |> Task.run
 
 
+-- The tier's engine image comes through a remote repository (a Docker Hub
+-- cache), which holds an image only after its first pull. A live deploy was
+-- refused because the check asked only the repository; now it asks the
+-- registry for the manifest, which the remote fetches from upstream.
+viaRemote : Result Error ( Bool, Bool )
+viaRemote =
+    let
+        image digest =
+            "us-central1-docker.pkg.dev/p/hub/vllm/vllm-openai@sha256:"
+                ++ digest
+    in
+        Fixture.control "remote-repo?repo=hub&upstream=sha256:b18a"
+            |> Task.andThen
+                   (\_ ->
+                       Task.map2
+                           (\known unknown -> ( known, unknown ))
+                           (Google.artifactExists (image "b18a"))
+                           (Google.artifactExists (image "dead")))
+            |> Task.run
+
+
 -- ── Typed cloud failures ────────────────────────────────────────────
 stockout : Result Error Train.Adapter
 stockout =
@@ -520,6 +542,9 @@ tests =
 
                   Err e ->
                       Test.fail (Error.toString e))
+    , Test.test
+          "an image only a remote repository's upstream holds counts as present; an unknown digest does not"
+          (\_ -> Test.equal viaRemote (Ok ( True, False )))
     , Test.test
           "a stockout is CapacityUnavailable"
           (\_ -> Test.equal "CapacityUnavailable" (codeOf stockout))

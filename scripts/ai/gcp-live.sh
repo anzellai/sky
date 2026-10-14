@@ -204,7 +204,7 @@ teardown() {
         gcloud secrets delete "$SECRET" --project "$PROJECT" --quiet >/dev/null 2>&1 || true
     fi
     gcloud artifacts repositories delete "$REPO" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
-    has_stage l5 && gcloud artifacts repositories delete "$REMOTE" --project "$PROJECT" --location "$REGION" --quiet >/dev/null 2>&1 || true
+    has_stage l5 && gcloud artifacts repositories delete "$REMOTE" --project "$PROJECT" --location "$SERVE_REGION" --quiet >/dev/null 2>&1 || true
     # A cancelled job's container can still write its last event segment
     # after Vertex reports it ended (seen live, 2026-10-13: one 494-byte file
     # kept the bucket alive). Empty and delete again until the bucket is gone.
@@ -283,7 +283,8 @@ if has_stage l1; then
     # stage does not use.
     if has_stage l5; then
         gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" --member "serviceAccount:$SERVE_SA" --role roles/storage.objectViewer >/dev/null
-        gcloud artifacts repositories create "$REMOTE" --project "$PROJECT" --location "$REGION" --repository-format docker \
+        # In the serving region: Cloud Run pulls the ~11 GB vLLM image through it.
+        gcloud artifacts repositories create "$REMOTE" --project "$PROJECT" --location "$SERVE_REGION" --repository-format docker \
             --mode remote-repository --remote-docker-repo DOCKER-HUB --labels "$LABELS,sky-kind=image" >/dev/null
         openssl rand -hex 32 | tr -d '\n' | gcloud secrets create "$SECRET" --project "$PROJECT" --data-file=- \
             --labels "$LABELS,sky-kind=secret" >/dev/null
@@ -302,7 +303,7 @@ if has_stage l1; then
         export SKY_AI_SERVE_IMAGE
     fi
     t2=$(date +%s)
-    export SKY_AI_LIVE_ENGINE_IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REMOTE/vllm/vllm-openai@sha256:b18abb2df97b8f798e81862bd93f872ea18613372e2c3adc0cc2ac21e66ac12f"
+    export SKY_AI_LIVE_ENGINE_IMAGE="$SERVE_REGION-docker.pkg.dev/$PROJECT/$REMOTE/vllm/vllm-openai@sha256:b18abb2df97b8f798e81862bd93f872ea18613372e2c3adc0cc2ac21e66ac12f"
     "$PY" -I - "$PRICES" "$((t1 - t0))" "$((t2 - t1))" >> "$STAGE_LOG" <<'PYEOF'
 import json, sys
 p = json.load(open(sys.argv[1]))["rates"]["cloudBuildPerMinute"]

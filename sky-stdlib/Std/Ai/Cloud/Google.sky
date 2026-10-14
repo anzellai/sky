@@ -844,6 +844,68 @@ validLabel s =
                        || c == '_')
                (String.toList s)
 
+
+-- Is `path@digest` reachable through `repo` when it is a remote repository?
+-- A standard repository that lacks the image is False; a remote one is asked
+-- for the manifest by digest (Docker Registry v2), which makes it fetch the
+-- manifest from its upstream.
+remoteHas : String -> String -> String -> String -> String -> Task Error Bool
+remoteHas project location repo path digest =
+    serviceBase "artifactregistry" location
+        |> Task.andThen
+               (\base ->
+                   call
+                       "GET"
+                       (base ++ "/v1/projects/" ++ project ++ "/locations/"
+                           ++ location
+                           ++ "/repositories/"
+                           ++ repo)
+                       "")
+        |> Task.andThen
+               (\resp ->
+                   if resp.status /= 200 then
+                       Task.succeed False
+
+                   else if JsonD.decodeString
+                       (JsonD.field "mode" JsonD.string)
+                       resp.body
+                       /= Ok "REMOTE_REPOSITORY" then
+                       Task.succeed False
+
+                   else
+                       Task.map2
+                           (\ep token -> ( ep, token ))
+                           (endpointRaw ())
+                           (accessToken [ cloudPlatform ])
+                           |> Task.andThen
+                                  (\( ep, token ) ->
+                                      let
+                                          registry =
+                                              if ep /= "" then
+                                                  trimTrailingSlash ep
+                                                      ++ "/dockerregistry"
+
+                                              else
+                                                  "https://" ++ location
+                                                      ++ "-docker.pkg.dev"
+                                      in
+                                          Http.defaultRequest
+                                              (registry ++ "/v2/" ++ project
+                                                  ++ "/"
+                                                  ++ repo
+                                                  ++ "/"
+                                                  ++ path
+                                                  ++ "/manifests/"
+                                                  ++ digest)
+                                              |> Http.withBearer token
+                                              |> Http.withHeader
+                                                     "Accept"
+                                                     "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json"
+                                              |> Http.withTimeout 120000
+                                              |> Http.request
+                                              |> Task.map
+                                                     (\r -> r.status == 200)))
+
 -- ── Vertex AI custom jobs ───────────────────────────────────────────
 -- | A custom training job: one worker on `machine` (with the accelerator its
 -- type carries), the container `image` (pinned by digest) with its `args`,
@@ -1615,9 +1677,19 @@ artifactExists ref =
                                 |> Task.andThen
                                        (\resp ->
                                            if resp.status == 404 then
-                                               Task.succeed False
+                                               remoteHas
+                                                   project
+                                                   location
+                                                   repo
+                                                   path
+                                                   digest
 
                                            else
+                                               -- A remote repository (a Docker
+                                               -- Hub cache) holds an image only
+                                               -- after its first pull: ask the
+                                               -- registry for the manifest, which
+                                               -- the remote fetches from upstream.
                                                ok "image" location resp
                                                    |> Task.map (\_ -> True))
 

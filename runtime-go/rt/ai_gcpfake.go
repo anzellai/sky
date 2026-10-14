@@ -121,6 +121,9 @@ type aiFakeGCP struct {
 	stockouts     int
 	unaskedCancel map[string]int           // run key -> running jobs Vertex cancels on its own
 	pendingFor    map[string]time.Duration // run key -> how long its next job waits PENDING
+	remoteRepos   map[string]bool          // repository id -> a remote repository (a Docker Hub cache)
+	upstream      map[string]bool          // digests the remote's upstream holds
+	pulled        map[string]bool          // digests a remote repository has fetched
 	listLag       time.Duration
 	// clockScale makes a job's reported times run faster than the wall
 	// clock (a spend test reaches a budget in milliseconds): a reported time
@@ -170,6 +173,8 @@ func (f *aiFakeGCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.vertex(w, r, strings.TrimPrefix(path, "/aiplatform/v1/"), body)
 	case strings.HasPrefix(path, "/run/v2/"):
 		f.run(w, r, strings.TrimPrefix(path, "/run/v2/"), body)
+	case strings.HasPrefix(path, "/dockerregistry/v2/"):
+		f.registry(w, r, strings.TrimPrefix(path, "/dockerregistry/v2/"))
 	case strings.HasPrefix(path, "/artifactregistry/v1/"):
 		f.artifact(w, r, strings.TrimPrefix(path, "/artifactregistry/v1/"), body)
 	case strings.HasPrefix(path, "/cloudbuild/v1/"):
@@ -1095,10 +1100,31 @@ func (f *aiFakeGCP) artifact(w http.ResponseWriter, r *http.Request, path string
 	}
 	idx := strings.Index(path, "/dockerImages/")
 	if idx < 0 {
+		// GET …/repositories/<id>: its mode.
+		if i := strings.Index(path, "/repositories/"); i >= 0 && r.Method == "GET" {
+			id := path[i+len("/repositories/"):]
+			mode := "STANDARD_REPOSITORY"
+			if f.remoteRepos[id] {
+				mode = "REMOTE_REPOSITORY"
+			}
+			aiFakeJSON(w, 200, map[string]any{"name": path, "format": "DOCKER", "mode": mode})
+			return
+		}
 		aiFakeError(w, 404, "NOT_FOUND", path)
 		return
 	}
 	img, _ := url.PathUnescape(path[idx+len("/dockerImages/"):])
+	// A remote repository holds an image only once it has been pulled.
+	if i := strings.Index(path, "/repositories/"); i >= 0 {
+		repo := strings.SplitN(path[i+len("/repositories/"):], "/", 2)[0]
+		if f.remoteRepos[repo] {
+			digest := img[strings.LastIndex(img, "@")+1:]
+			if !f.pulled[digest] {
+				aiFakeError(w, 404, "NOT_FOUND", "image not found: "+img)
+				return
+			}
+		}
+	}
 	for ref := range f.missingImages {
 		if strings.HasSuffix(ref, img) {
 			aiFakeError(w, 404, "NOT_FOUND", "image not found: "+img)
@@ -1106,6 +1132,29 @@ func (f *aiFakeGCP) artifact(w http.ResponseWriter, r *http.Request, path string
 		}
 	}
 	aiFakeJSON(w, 200, map[string]any{"name": path, "uri": img})
+}
+
+// registry answers Docker Registry v2 manifest requests
+// (<project>/<repo>/<image…>/manifests/<digest>). Through a remote repository
+// it fetches from the upstream: 200 when the upstream holds the digest.
+func (f *aiFakeGCP) registry(w http.ResponseWriter, r *http.Request, path string) {
+	i := strings.Index(path, "/manifests/")
+	if i < 0 {
+		aiFakeError(w, 404, "NOT_FOUND", path)
+		return
+	}
+	digest := path[i+len("/manifests/"):]
+	parts := strings.SplitN(path[:i], "/", 3)
+	if len(parts) < 3 || !f.remoteRepos[parts[1]] || !f.upstream[digest] {
+		aiFakeError(w, 404, "NOT_FOUND", "manifest unknown")
+		return
+	}
+	if f.pulled == nil {
+		f.pulled = map[string]bool{}
+	}
+	f.pulled[digest] = true
+	w.Header().Set("Docker-Content-Digest", digest)
+	aiFakeJSON(w, 200, map[string]any{"schemaVersion": 2})
 }
 
 // aiFakeL4Quota is the Cloud Quotas id of Vertex AI's L4 training quota.
@@ -1234,6 +1283,15 @@ func (f *aiFakeGCP) control(w http.ResponseWriter, r *http.Request, what string)
 		aiFakeJSON(w, 200, map[string]any{})
 	case "stockout":
 		f.stockouts++
+		aiFakeJSON(w, 200, map[string]any{})
+	case "remote-repo":
+		if f.remoteRepos == nil {
+			f.remoteRepos, f.upstream = map[string]bool{}, map[string]bool{}
+		}
+		f.remoteRepos[q.Get("repo")] = true
+		if d := q.Get("upstream"); d != "" {
+			f.upstream[d] = true
+		}
 		aiFakeJSON(w, 200, map[string]any{})
 	case "pending":
 		ms, _ := strconv.Atoi(q.Get("ms"))
