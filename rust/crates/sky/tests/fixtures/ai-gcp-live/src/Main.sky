@@ -592,6 +592,7 @@ rawStatus url withId token =
                        |> Task.map .status)
 
 
+-- The ids /v1/models lists, through the tier.
 modelsList : String -> Task Error String
 modelsList url =
     Google.idToken url
@@ -608,7 +609,16 @@ modelsList url =
                               ("Bearer " ++ Secret.reveal t)
                        |> Http.withTimeout 120000
                        |> Http.request
-                       |> Task.map .body)
+                       |> Task.andThen (\resp -> Task.fromResult (modelIds resp.body)))
+
+
+-- The model ids of a /v1/models body, joined by commas. The whole body is
+-- too long to report: each vLLM entry carries a permission list, and the
+-- report keeps 400 characters of a text.
+modelIds : String -> Result Error String
+modelIds body =
+    JsonD.decodeString (JsonD.field "data" (JsonD.list (JsonD.field "id" JsonD.string))) body
+        |> Result.map (String.join ",")
 
 
 versionNumber : World -> Int -> Task Error Registry.Version
