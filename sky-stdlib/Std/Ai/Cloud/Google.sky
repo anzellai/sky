@@ -1534,7 +1534,7 @@ grantAttempt name members n =
     runUrl name
         |> Task.andThen
                (\url ->
-                   call "POST" (url ++ ":getIamPolicy") "{}"
+                   call "GET" (url ++ ":getIamPolicy") ""
                        |> Task.andThen (ok "IAM policy" (regionOf name))
                        |> Task.andThen
                               (\body ->

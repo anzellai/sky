@@ -1015,7 +1015,7 @@ func (f *aiFakeGCP) run(w http.ResponseWriter, r *http.Request, path string, bod
 		f.serviceDeletes++
 		delete(f.services, name)
 		aiFakeJSON(w, 200, f.newOp(project, region, 0))
-	case verb == "getIamPolicy" && r.Method == "POST":
+	case verb == "getIamPolicy" && r.Method == "GET": // Cloud Run v2: GET (a POST is 404, as Google answers)
 		p := s.policy
 		if p == nil {
 			p = map[string]any{}
@@ -1039,6 +1039,8 @@ func (f *aiFakeGCP) run(w http.ResponseWriter, r *http.Request, path string, bod
 		s.policy = req.Policy
 		out := map[string]any{"etag": fmt.Sprintf("BwX%d", s.policyEtag), "bindings": req.Policy["bindings"]}
 		aiFakeJSON(w, 200, out)
+	case verb == "getIamPolicy":
+		aiFakeError(w, 404, "NOT_FOUND", "the requested URL was not found on this server")
 	default:
 		aiFakeError(w, 405, "METHOD_NOT_ALLOWED", r.Method+" "+verb)
 	}

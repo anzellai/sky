@@ -263,7 +263,12 @@ func TestFakeGCPCloudRunServiceLifecycle(t *testing.T) {
 	if st, body, _ := fakeDo(t, "PATCH", base+"/tier", fresh); st != 200 {
 		t.Fatalf("patch: %d %s", st, body)
 	}
-	_, pol, _ := fakeDo(t, "POST", base+"/tier:getIamPolicy", "{}")
+	// Cloud Run v2 serves getIamPolicy with GET; Google answers a POST with an
+	// HTML 404 (a live deploy failed on it, 2026-10-14).
+	if st, _, _ := fakeDo(t, "POST", base+"/tier:getIamPolicy", "{}"); st != 404 {
+		t.Fatalf("POST getIamPolicy answered %d, not 404 as Cloud Run does", st)
+	}
+	_, pol, _ := fakeDo(t, "GET", base+"/tier:getIamPolicy", "")
 	var p struct{ Etag string }
 	json.Unmarshal([]byte(pol), &p)
 	set := `{"policy":{"etag":"` + p.Etag + `","bindings":[{"role":"roles/run.invoker","members":["serviceAccount:a@p.iam.gserviceaccount.com"]}]}}`
