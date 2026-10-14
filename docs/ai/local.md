@@ -276,20 +276,20 @@ An answer can be read as it is written. A TEA app reads it one piece per
 update:
 
 ```elm
-Cmd.perform (Provider.stream Provider.defaultOptions assistant messages) Opened
+Cmd.perform (Provider.openStream Provider.defaultOptions assistant messages) Opened
 
 -- in update
 Opened (Ok s) ->
-    ( model, Cmd.perform (Provider.read s) Got )
+    ( model, Cmd.perform (Provider.readStream s) Got )
 
 Got (Ok (Provider.Piece text next)) ->
-    ( { model | answer = model.answer ++ text }, Cmd.perform (Provider.read next) Got )
+    ( { model | answer = model.answer ++ text }, Cmd.perform (Provider.readStream next) Got )
 
 Got (Ok (Provider.Finished r)) ->
     ( { model | usage = Just r.usage }, Cmd.none )
 ```
 
-`Provider.close stream` stops reading early. A Task program or a server
+`Provider.closeStream s` stops reading early. A Task program or a server
 handler can use `Provider.chatStream options provider messages onPiece`
 instead: `onPiece` gets each piece in order and the result is the whole
 answer with its usage, as `chatWith` returns it. When `onPiece` fails, the

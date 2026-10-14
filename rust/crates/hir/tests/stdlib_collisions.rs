@@ -125,6 +125,17 @@ const EXPECTED_NEW_MODULE_OVERLAPS: &[&str] = &[
     "value result",
     "value runId",
     "value withName",
+    // v0.28.0 phase 4: Std.Ai.Store and Std.Ai.Serve. `Store.list` lists the
+    // objects under a prefix of a store, and `Serve.render` renders a tier for
+    // a target into the files it deploys (`Rendered`): each is the verb for
+    // its own value, read qualified, as `Std.Html.render` is. Names that read
+    // as the same idea as an older module's were renamed instead:
+    // Std.Ai.Device's `Routing` (was `Decision`, Std.Ai.Policy's),
+    // `recordPrompts` (was `record`, Std.Ai.Trace's) and `rawSpec` (was
+    // `raw`), and Std.Ai.Cloud.Google's `ApiResponse` (was `Response`,
+    // Sky.Http.Server's), whose internal `call` and `ok` are not exported.
+    "value list",
+    "value render",
 ];
 
 fn repo_root() -> PathBuf {

@@ -10,7 +10,7 @@ module Std.Ai.Device exposing
     , withBackends
     , withMetered
     , RawSpec
-    , raw
+    , rawSpec
     , placementText
     , backendText
     , backendFromText
@@ -18,7 +18,7 @@ module Std.Ai.Device exposing
     , BackendInfo
     , Offer
     , OfferFile
-    , Decision(..)
+    , Routing(..)
     , Reason(..)
     , decide
     , estimateTokens
@@ -34,7 +34,7 @@ module Std.Ai.Device exposing
     , Recording
     , Recorded
     , Prompt
-    , record
+    , recordPrompts
     , replay
     , encodeRecording
     , decodeRecording
@@ -205,8 +205,8 @@ withMetered b (Spec s) =
 
 
 {-| The spec as the runtime reads it. -}
-raw : Spec -> RawSpec
-raw (Spec s) =
+rawSpec : Spec -> RawSpec
+rawSpec (Spec s) =
     s
 
 
@@ -336,7 +336,7 @@ type Reason
 
 {-| Where one call runs. `NeedsDownload` names the backend and the bytes
 `prepare` would fetch. -}
-type Decision
+type Routing
     = OnDevice Backend
     | NeedsDownload Backend Int
     | OnServer Reason
@@ -360,7 +360,7 @@ prompt's length in tokens. The first rule that applies wins:
    `OnServer` for `Auto`, `InvalidSetting` for `DeviceOnly`.
 7. Otherwise `OnDevice`.
 -}
-decide : Capabilities -> Offer -> Int -> Decision
+decide : Capabilities -> Offer -> Int -> Routing
 decide caps offer promptTokens =
     if offer.placement == ServerOnly then
         OnServer OperatorChoice
@@ -381,7 +381,7 @@ decide caps offer promptTokens =
                 decideBackend caps offer promptTokens
 
 
-decideBackend : Capabilities -> Offer -> Int -> Decision
+decideBackend : Capabilities -> Offer -> Int -> Routing
 decideBackend caps offer promptTokens =
     let
         need = offerBytes offer
@@ -402,7 +402,7 @@ decideBackend caps offer promptTokens =
                 decideFiles caps offer promptTokens b
 
 
-decideFiles : Capabilities -> Offer -> Int -> Backend -> Decision
+decideFiles : Capabilities -> Offer -> Int -> Backend -> Routing
 decideFiles caps offer promptTokens b =
     let
         missing = missingBytes caps offer
@@ -436,7 +436,7 @@ decideFiles caps offer promptTokens b =
             OnDevice b
 
 
-orServer : Offer -> Reason -> Failure -> Decision
+orServer : Offer -> Reason -> Failure -> Routing
 orServer offer reason failure =
     if offer.placement == DeviceOnly then
         Refused failure
@@ -924,7 +924,7 @@ progressDecoder =
 {-| The status for a decision and the download state the runtime reports
 (`state` is `downloading` while `prepare` runs). Pure, for tests. -}
 statusOf :
-    Decision
+    Routing
     -> { state : String
        , doneBytes : Int
        , totalBytes : Int
@@ -1085,8 +1085,8 @@ suite (`Eval.prompts suite`) and send the recording to the server, which
 scores it with `replay` and `Eval.runAs`, so one suite measures the device and
 the server. A replay answers by the messages alone, so record a suite with one
 sample per case. -}
-record : String -> Provider -> List Prompt -> Task Error Recording
-record label p prompts =
+recordPrompts : String -> Provider -> List Prompt -> Task Error Recording
+recordPrompts label p prompts =
     Task.sequence (List.map (recordOne p) prompts)
         |> Task.map (\entries -> { label = label, entries = entries })
 

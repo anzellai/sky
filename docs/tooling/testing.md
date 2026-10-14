@@ -313,7 +313,7 @@ run if anything is left. CI runs them on manual dispatch only
 
 A test runs on the server, so `Device.provider "<slot>"` is the slot itself:
 its calls are answered by `tests/mocks/` like any slot's, `Device.status`
-reports `ServerSide OnTheServer`, and `Device.record` with `Eval.prompts`
+reports `ServerSide OnTheServer`, and `Device.recordPrompts` with `Eval.prompts`
 followed by `Device.replay` and `Eval.runAs` scores a recording offline.
 `examples/75-ai-everywhere/tests/NotesTest.sky` does all three. The device
 itself (the browser worker, the iOS and Android apps, the Mac app) is tested

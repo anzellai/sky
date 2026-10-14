@@ -1536,7 +1536,7 @@ suite run against both.
 **Shipped (v0.28.0).** `Std.Ai.Device` with `Endpoint.withDevice`, the
 server's offer, blob and fallback routes, the browser worker, the iOS, Android
 and Mac bridges, `Registry.allowOnDevice`, `Eval.prompts` with
-`Device.record` and `replay`, `sky ai provision --device`, `--ai-web-engine`,
+`Device.recordPrompts` and `replay`, `sky ai provision --device`, `--ai-web-engine`,
 `--ai-embed`, `Bundle.IncreasedMemoryLimit` and `examples/75-ai-everywhere`.
 The guide is [`../ai/device.md`](../ai/device.md).
 
@@ -1576,7 +1576,7 @@ Where the shipped phase differs from this design:
    then `sky ai provision --device --from <dir>` installs a local build of the
    same script, and provisioning from the release fails with a typed error
    that names the empty pin, the workflow and the release.
-7. **Streaming, beyond the design.** `Provider.stream` and `Provider.read`
+7. **Streaming, beyond the design.** `Provider.openStream` and `Provider.readStream`
    (one piece per update in a TEA app) and `Provider.chatStream` (a callback
    in a Task program) stream an answer from a server slot, the built-in
    backends and a device slot. The engine core gained a step API

@@ -35,7 +35,7 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   `DeviceOnly` fails typed and never reaches the server. `Device.decide` is
   the policy as a pure function; `Device.status`, `prepare` (after the user's
   consent: nothing downloads on its own), `evict` and `capabilities`;
-  `Device.record` and `replay` with the new `Eval.prompts` score one eval
+  `Device.recordPrompts` and `replay` with the new `Eval.prompts` score one eval
   suite on the device and on the server. The operator overrides the code with
   `SKY_AI_<SLOT>_PLACEMENT`, `_DEVICE_MODEL` and `_DEVICE_ADAPTER`; no
   `sky.toml` key.
@@ -68,10 +68,10 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   `sky build --ai-embed <slot>` puts the slot's model and adapter in a native
   app. `Bundle.IncreasedMemoryLimit` declares the iOS entitlement an
   on-device model needs.
-- **Streaming answers.** `Provider.stream` sends a chat and `Provider.read`
+- **Streaming answers.** `Provider.openStream` sends a chat and `Provider.readStream`
   gives the answer one piece at a time (`Piece text next`, then `Finished
   response` with the usage), so a TEA app shows it as it is written, one
-  update per piece; `Provider.close` stops early, and `Provider.chatStream`
+  update per piece; `Provider.closeStream` stops early, and `Provider.chatStream`
   hands each piece to a callback in a Task program. Server slots
   (`Std.Ai.Endpoint`, `Std.Ai.Local`) and `Provider.openai` / `compatible`
   read the server's event stream (retries only before the first byte, the
@@ -891,7 +891,7 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   one piece from a server that does not stream, retries before the stream
   only, typed failures, close releases the queue place),
   `TestDeviceStream*` (the streaming fallback route and its rules),
-  `TestDeviceWorkerStreamsAnAnswer`, the `chatStream` / `read` cases of
+  `TestDeviceWorkerStreamsAnAnswer`, the `chatStream` / `readStream` cases of
   `ProviderEndpointTest.sky`, and `scripts/ai/device/test-engine-core.sh`
   (`test_sky_llama.cpp`: the streamed answer equals the one-call answer, in
   whole UTF-8 pieces). The probe streams on every target.

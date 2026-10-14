@@ -239,7 +239,7 @@ fn assert_on_device(r: &std::collections::BTreeMap<String, String>, what: &str) 
         !answer.is_empty() && !answer.starts_with("err:"),
         "{what}: {r:?}"
     );
-    // Provider.stream: the same answer, in more than one piece.
+    // Provider.openStream: the same answer, in more than one piece.
     let stream = r.get("stream").cloned().unwrap_or_default();
     let pieces: usize = stream
         .strip_suffix(":same")

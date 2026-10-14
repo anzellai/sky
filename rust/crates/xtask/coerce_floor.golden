@@ -345,7 +345,7 @@
 #   payload reads of DeviceUnsupported { backend, reason } and StorageDenied
 #   { needBytes, availableBytes } in `Failure.facts` (+6, R6), the new
 #   `on_device` column read in `Registry.versionOf` (+2) and `adapterFor` (+1),
-#   and `Device.raw` in `Endpoint.endpoint`'s default (+1). Closed by typed
+#   and `Device.rawSpec` in `Endpoint.endpoint`'s default (+1). Closed by typed
 #   kernel returns (R5, lever §5.3): the `Std.Db` row readers (`getString`,
 #   `getInt`, `getField`, `getFloat`, `getBool`) already return their Go type
 #   and are their own twins, and `String.length` / `trim` / `replace` and
@@ -555,7 +555,7 @@
 72-ai-support-desk	adapter=0	dispatch=0	narrow=442
 73-ai-train	adapter=0	dispatch=0	narrow=1286
 74-ai-cloud	adapter=0	dispatch=0	narrow=1411
-75-ai-everywhere	adapter=0	dispatch=0	narrow=868
+75-ai-everywhere	adapter=0	dispatch=0	narrow=846
 apps/dispatch	adapter=0	dispatch=0	narrow=318
 apps/fieldbook	adapter=0	dispatch=0	narrow=459
 apps/fieldbook/probe	adapter=0	dispatch=0	narrow=2

@@ -794,7 +794,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2881,
+    "stdlib_entries": 2879,
     "stdlib_modules": 127,
     "surfaces_covered": 184,
     "surfaces_covered_pct": 94.4,
@@ -18400,18 +18400,17 @@
           ]
         },
         "Std.Ai.Cloud.Google": {
-          "count": 24,
+          "count": 22,
           "symbols": [
+            "ApiResponse",
             "CustomJob",
             "ImageBuild",
             "JobSpec",
             "Operation",
             "QuotaReading",
-            "Response",
             "Service",
             "Sku",
             "bucketLocation",
-            "call",
             "createCustomJob",
             "createService",
             "endpointOverride",
@@ -18420,7 +18419,6 @@
             "getService",
             "grantInvoker",
             "logTail",
-            "ok",
             "patchService",
             "quota",
             "refused",
@@ -18567,7 +18565,7 @@
           "count": 3,
           "symbols": [
             "WireTransport",
-            "close",
+            "closeStream",
             "cost"
           ]
         },
@@ -19435,8 +19433,8 @@
           ]
         }
       },
-      "count": 814,
-      "pct_of_denominator": 28.3
+      "count": 812,
+      "pct_of_denominator": 28.2
     },
     "symbols_unreferenced_strict": {
       "by_module": {
@@ -19733,18 +19731,17 @@
           ]
         },
         "Std.Ai.Cloud.Google": {
-          "count": 24,
+          "count": 22,
           "symbols": [
+            "ApiResponse",
             "CustomJob",
             "ImageBuild",
             "JobSpec",
             "Operation",
             "QuotaReading",
-            "Response",
             "Service",
             "Sku",
             "bucketLocation",
-            "call",
             "createCustomJob",
             "createService",
             "endpointOverride",
@@ -19753,7 +19750,6 @@
             "getService",
             "grantInvoker",
             "logTail",
-            "ok",
             "patchService",
             "quota",
             "refused",
@@ -19807,10 +19803,10 @@
           "symbols": [
             "Backend",
             "BackendInfo",
-            "Decision",
             "Placement",
             "RawSpec",
             "Recorded",
+            "Routing",
             "Spec",
             "capabilities"
           ]
@@ -19914,7 +19910,7 @@
             "ToolResponse",
             "Turn",
             "WireTransport",
-            "close",
+            "closeStream",
             "cost"
           ]
         },
@@ -20873,7 +20869,7 @@
           ]
         }
       },
-      "count": 922,
+      "count": 920,
       "pct_of_denominator": 32.0
     }
   },

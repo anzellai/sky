@@ -179,14 +179,14 @@ managed engine. The WebGPU answer with the adapter matched the server's word
 for word. In `examples/75-ai-everywhere` a note's summary took 10.1 s on the
 CPU build and 0.8 s on WebGPU, and the self-check (three prompts on the
 device, scored on the server) took 27.1 s and 2.8 s, with both pass rates at
-100%. Streamed (`Provider.stream`), the development model's answer to the
+100%. Streamed (`Provider.openStream`), the development model's answer to the
 probe's question arrived in 7 pieces that joined to the same text in
 Chromium (CPU and WebGPU), in WebKit, from the server, and in the Android
 emulator with the model carried in the app.
 
 ## Streaming
 
-`Provider.stream` and `Provider.read` (or `Provider.chatStream` with a
+`Provider.openStream` and `Provider.readStream` (or `Provider.chatStream` with a
 callback) work on `Device.provider` like on any provider, and the decision is
 the same as for a call. On the device the engine hands over each piece of
 text as it writes it: the browser worker, the iOS and Android apps step the
@@ -206,7 +206,7 @@ A server with a device slot answers:
 | `GET /_sky/ai/blob/<sha256>` | an offered file, with Range requests; only the digests a current offer names (never a path) |
 | `GET /_sky/ai/blob/<sha256>.chunks.json` | its 64 MiB chunk digests |
 | `POST /_sky/ai/device/<slot>/call` | the fallback call: same origin, `application/json`, at most 64 KiB, 30 calls a minute per session; absent for `DeviceOnly` |
-| `POST /_sky/ai/device/<slot>/stream` | the streaming fallback call (`Provider.stream` in a client the decision sends to the server): the same rules and rate as `/call`, answered as server-sent events, one piece per event, a failure as a typed event; absent for `DeviceOnly` |
+| `POST /_sky/ai/device/<slot>/stream` | the streaming fallback call (`Provider.openStream` in a client the decision sends to the server): the same rules and rate as `/call`, answered as server-sent events, one piece per event, a failure as a typed event; absent for `DeviceOnly` |
 
 ## Privacy
 
@@ -239,7 +239,7 @@ Every failure is a typed `Std.Ai.Failure`:
 ## One eval suite on the device and the server
 
 `Eval.prompts suite` lists every request a run of the suite sends.
-`Device.record label provider prompts` asks a provider each of them on the
+`Device.recordPrompts label provider prompts` asks a provider each of them on the
 device and keeps the answers; send the `Recording` to the server, and score it
 there with the same suite:
 

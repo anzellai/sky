@@ -227,7 +227,7 @@ suite name prompt cases =
 
 {-| Every request a run of the suite sends, in order: each case's messages
 with the options of each sample (temperature 0 and seed `seed + sample` by
-default). A device records the answers to them (`Std.Ai.Device.record`), and
+default). A device records the answers to them (`Std.Ai.Device.recordPrompts`), and
 the server scores the recording with `Std.Ai.Device.replay` and `runAs`, so one
 suite measures the device and the server alike. -}
 prompts : Suite input -> List { messages : List Message, options : Provider.Options }

@@ -19,7 +19,7 @@ import Std.Ai.Provider as Provider
 import Std.Ai.Failure as Failure exposing (Failure(..))
 import Std.Ai.Device as Device exposing
     ( Backend(..)
-    , Decision(..)
+    , Routing(..)
     , Placement(..)
     , Reason(..)
     , Status(..)
@@ -88,7 +88,7 @@ notStored =
     { browser | ready = [] }
 
 
-decided : Decision -> Decision -> Test.TestResult
+decided : Routing -> Routing -> Test.TestResult
 decided want got =
     Test.equal want got
 
@@ -367,7 +367,7 @@ tests =
                         , backends = []
                         , metered = False
                         }
-                        (Device.raw (Device.spec Auto)))
+                        (Device.rawSpec (Device.spec Auto)))
           , Test.test
                 "the builders set each field"
                 (\_ ->
@@ -387,7 +387,7 @@ tests =
                             |> Device.withMaxDownload 500
                             |> Device.withBackends [ WasmCpu, Native ]
                             |> Device.withMetered True
-                            |> Device.raw))
+                            |> Device.rawSpec))
           , Test.test
                 "the placement words are the operator's"
                 (\_ ->
@@ -398,13 +398,13 @@ tests =
                             [ Auto, DeviceOnly, ServerOnly ]))
           ]
     , Test.suite
-          "Std.Ai.Device record and replay"
+          "Std.Ai.Device recordPrompts and replay"
           [ Test.test
                 "a replay answers each recorded prompt as recorded"
                 (\_ ->
                     Test.equal
                         (Ok [ "echo: one", "echo: two" ])
-                        (Device.record "device:wasm-cpu" echo prompts
+                        (Device.recordPrompts "device:wasm-cpu" echo prompts
                             |> Task.andThen
                                    (\rec ->
                                        Task.sequence
@@ -419,7 +419,7 @@ tests =
           , Test.test
                 "a prompt that was not recorded is NotConfigured"
                 (\_ ->
-                    case Device.record "device:wasm-cpu" echo prompts
+                    case Device.recordPrompts "device:wasm-cpu" echo prompts
                              |> Task.andThen
                                     (\rec ->
                                         Provider.chat
@@ -475,10 +475,11 @@ tests =
     ]
 
 
-idle : { state : String
-, doneBytes : Int
-, totalBytes : Int
-}
+idle :
+    { state : String
+    , doneBytes : Int
+    , totalBytes : Int
+    }
 idle =
     { state = "idle", doneBytes = 0, totalBytes = 0 }
 
@@ -535,7 +536,10 @@ parity =
         |> Task.andThen (\dir -> Db.open "sqlite" (dir ++ "/eval.db"))
         |> Task.andThen
                (\db ->
-                   Device.record "device:wasm-cpu" echo (Eval.prompts capitals)
+                   Device.recordPrompts
+                       "device:wasm-cpu"
+                       echo
+                       (Eval.prompts capitals)
                        |> Task.andThen
                               (\rec ->
                                   Eval.runAs
