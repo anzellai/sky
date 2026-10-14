@@ -580,12 +580,14 @@ type Target
 
 
 -- | vLLM's OpenAI server image, pinned by digest: vllm/vllm-openai
--- v0.31.0-cu129, linux/amd64 (read from Docker Hub on 2026-10-12). Point
+-- v0.31.0-x86_64, the CUDA 13 build (read from Docker Hub on 2026-10-14).
+-- Cloud Run's L4 instances have NVIDIA driver 580 (CUDA 13.0); the cu129
+-- build failed there at start (its torchcodec needs libnvrtc.so.13). Point
 -- `withEngineImage` at an Artifact Registry remote repository of Docker Hub
 -- to pull it in your region with the same digest.
 defaultEngineImage : String
 defaultEngineImage =
-    "docker.io/vllm/vllm-openai@sha256:b18abb2df97b8f798e81862bd93f872ea18613372e2c3adc0cc2ac21e66ac12f"
+    "docker.io/vllm/vllm-openai@sha256:a4a4c0437bf7240089da5f08aa370c4aee17ae5290f7a3b468825ee26c4c3a6b"
 
 
 -- | The tier image's base: distroless static, nonroot, linux/amd64, pinned by

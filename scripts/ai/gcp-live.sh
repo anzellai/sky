@@ -303,7 +303,7 @@ if has_stage l1; then
         export SKY_AI_SERVE_IMAGE
     fi
     t2=$(date +%s)
-    export SKY_AI_LIVE_ENGINE_IMAGE="$SERVE_REGION-docker.pkg.dev/$PROJECT/$REMOTE/vllm/vllm-openai@sha256:b18abb2df97b8f798e81862bd93f872ea18613372e2c3adc0cc2ac21e66ac12f"
+    export SKY_AI_LIVE_ENGINE_IMAGE="$SERVE_REGION-docker.pkg.dev/$PROJECT/$REMOTE/vllm/vllm-openai@sha256:a4a4c0437bf7240089da5f08aa370c4aee17ae5290f7a3b468825ee26c4c3a6b"
     "$PY" -I - "$PRICES" "$((t1 - t0))" "$((t2 - t1))" >> "$STAGE_LOG" <<'PYEOF'
 import json, sys
 p = json.load(open(sys.argv[1]))["rates"]["cloudBuildPerMinute"]
