@@ -342,6 +342,9 @@ app's handling of the flow, never a provider's delivery.
 
 ### AI models in test mode, and `sky ai --test-mode`
 
+The step-by-step guide for the whole AI lifecycle, from the offline checks to
+the paid live runs, is [`../ai/testing-guide.md`](../ai/testing-guide.md).
+
 A model slot (`Std.Ai.Endpoint`) is mocked like any other outbound call: in
 test mode a local slot's calls go to `http://sky-ai-local.invalid/<slot>/v1/…`
 and are answered by `tests/mocks/` fixtures (`match.bodyContains` picks the

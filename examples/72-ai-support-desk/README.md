@@ -8,9 +8,10 @@ adapter. There is no AI configuration file. Every AI setting is a `withX`
 builder in code, and an operator overrides it with `SKY_AI_<SLOT>_*`
 variables.
 
-This guide walks the lifecycle on your machine. Phase 3 of the Std.Ai
-lifecycle adds training in Sky; until then an adapter trained elsewhere is
-imported (step 5), and the guide uses small demo adapters so it runs anywhere.
+This guide walks the lifecycle on your machine. This app imports an adapter
+(step 5), and the guide uses small demo adapters so it runs anywhere. To train
+an adapter in Sky, see `examples/73-ai-train` (on this machine) and
+`examples/74-ai-cloud` (on Vertex AI).
 
 ## What is in it
 

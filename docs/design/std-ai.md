@@ -9,7 +9,9 @@
 > v0.28.0 adds model slots and a managed local engine (`Std.Ai.Endpoint`,
 > `Std.Ai.Local`) and `Provider.chatWith` / `Provider.embed`: see
 > [`../ai/local.md`](../ai/local.md) and the lifecycle design,
-> [`std-ai-lifecycle.md`](std-ai-lifecycle.md).
+> [`std-ai-lifecycle.md`](std-ai-lifecycle.md). To test the whole lifecycle
+> (offline, on a local engine, and live on Google Cloud), follow
+> [`../ai/testing-guide.md`](../ai/testing-guide.md).
 
 ## Two principles the design is built around
 

@@ -144,8 +144,11 @@ the binary is static) and use `Serve.render` for its Dockerfile and service.
 A Cloud Run instance that scaled to zero starts again on the next request:
 the platform pulls the two images (vLLM's is about 11 GB), the tier stages the
 base (about 1 GB for the development base), vLLM loads it, and the tier loads
-the aliases. The live test measures it on every run and records it in
-`scripts/ai/live/gcp-ledger.jsonl` (`coldStartMs`). Warm the tier before
+the aliases. The live test (stage l5) measures it on every run and prints
+it in the scenario's JSON line (`ai_gcp_live: l5: …`): `coldStartMs` for the
+first call after the deploy and `idleColdStartMs` for the first call after a
+16-minute idle wait. The ledger, `scripts/ai/live/gcp-ledger.jsonl`, does not
+keep these figures. Warm the tier before
 traffic with `Endpoint.warm`, or keep an instance with
 `Serve.withMinInstances 1` (billed while idle).
 

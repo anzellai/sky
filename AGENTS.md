@@ -909,6 +909,7 @@ before assuming a limitation still holds.
 | Fine-tuning adapters: `Std.Ai.Train` | `docs/ai/train.md` (`sky doc Std.Ai.Train`), example `examples/73-ai-train` |
 | Cloud training and the GPU tier: `Train.Vertex`, `Std.Ai.Serve`, `Std.Ai.Cloud.Google` | `docs/ai/serve.md`, `docs/ai/deploy-gcp.md` (`sky doc Std.Ai.Serve`); example `examples/74-ai-cloud` |
 | On-device models: `Std.Ai.Device` | `docs/ai/device.md` (`sky doc Std.Ai.Device`), example `examples/75-ai-everywhere` |
+| Testing the AI lifecycle (offline, local engine, live GCP) | `docs/ai/testing-guide.md` |
 | CLI + LSP | `docs/tooling/cli.md`, `docs/tooling/lsp.md` |
 | Testing: `sky test`, test mode + mocks, `sky fuzz` | `docs/tooling/testing.md` |
 | `sky.toml` + env vars | `docs/sky-toml.md` |

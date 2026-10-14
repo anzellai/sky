@@ -6,7 +6,7 @@ and rolled back, and the lineage of the alias that serving follows.
 
 ```bash
 sky run src/Main.sky     # the lifecycle, printed step by step
-sky test                 # serve the promoted adapter through a model slot (test mode)
+sky test tests/RegistryExampleTest.sky   # serve the promoted adapter through a model slot (test mode)
 ```
 
 - `src/Support.sky` holds the suite, the stand-in answers of each version,

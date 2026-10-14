@@ -154,10 +154,12 @@ pipeline-free form: it freezes a JSONL file with the bundled program
 
 ### `sky ai run <task> -- <args>`
 
-Runs a task with the pipeline's context. Phase 3 of the lifecycle adds a
-training member (`withJob`, `sky ai train`) the same way; until then a task
-imports an adapter trained elsewhere (`examples/72-ai-support-desk`'s
-`import-adapter`).
+Runs a task with the pipeline's context. A task can import an adapter
+trained elsewhere (`examples/72-ai-support-desk`'s `import-adapter`) or train
+one: `examples/74-ai-cloud`'s `train` task runs its `Std.Ai.Train` job, and
+`deploy-tier` and `teardown-tier` run its GPU tier. There is no separate
+training member. `sky ai train` trains without a pipeline
+([`train.md`](train.md#the-cli)).
 
 ### `sky ai start <slot>` and `sky ai promote`
 

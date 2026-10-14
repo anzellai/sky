@@ -7,7 +7,7 @@ local engine.
 
 ```bash
 sky run src/Main.sky     # then open http://localhost:8073
-sky test                 # the whole lifecycle offline (test mode, the Fake trainer)
+sky test tests/TrainExampleTest.sky   # the whole lifecycle offline (test mode, the Fake trainer)
 ```
 
 ## What the app does

@@ -219,7 +219,20 @@ and cost):
   and a job at its scheduling timeout ends `JOB_STATE_CANCELLED`.
 
 The Unsloth run on an L4 (l4) and the Cloud Run tier (l5) need the L4
-quotas above, which a new project does not have; they have not run yet.
+quotas above, which a new project does not have. Both have since passed on a
+real project:
+
+* l4 (us-central1, 2026-10-13): the Unsloth QLoRA run on one L4 collected and
+  registered its adapter. The ledger's estimate for the job is USD 0.83 for
+  3155 s from creation to end, which includes the wait for a free L4.
+* l5 (europe-west4, 2026-10-14): the tier on Cloud Run with one L4 answered
+  on the base, again after a 16-minute idle wait (scale from zero), and on two
+  adapters on one GPU, and hot-loaded a promotion with no failed request. The
+  ledger's estimate is USD 0.40 for 1258 s of the instance, plus USD 0.035 for
+  the two Fake jobs that trained its versions.
+
+Each run ended with a clean leak check. The step-by-step test guide is
+[testing-guide.md](testing-guide.md#live-gpu-runs-on-google-cloud).
 
 ## Live tests
 

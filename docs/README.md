@@ -29,6 +29,9 @@ under [`archive/`](archive/) and the per-version directories below.
 * [`skywebview/`](skywebview/) — Sky.Webview (native desktop window).
 * [`skyauth/`](skyauth/) — `Std.Auth` (sessions + JWT + roles).
 * [`skydb/`](skydb/) — `Std.Db` (SQLite + PostgreSQL).
+* [`ai/`](ai/): the `Std.Ai` lifecycle (data, training, evaluation,
+  registry, serving, device).  Test it with
+  [`ai/testing-guide.md`](ai/testing-guide.md).
 * [`v0.16.x-console/`](v0.16.x-console/) — Sky Console embedded mode,
   hub mode (`sky console-serve`), HubExporter, telemetry flow.
 
