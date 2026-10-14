@@ -144,12 +144,16 @@ the binary is static) and use `Serve.render` for its Dockerfile and service.
 A Cloud Run instance that scaled to zero starts again on the next request:
 the platform pulls the two images (vLLM's is about 11 GB), the tier stages the
 base (about 1 GB for the development base), vLLM loads it, and the tier loads
-the aliases. The live test (stage l5) measures it on every run and prints
-it in the scenario's JSON line (`ai_gcp_live: l5: …`): `coldStartMs` for the
-first call after the deploy and `idleColdStartMs` for the first call after a
-16-minute idle wait. The ledger, `scripts/ai/live/gcp-ledger.jsonl`, does not
-keep these figures. Warm the tier before
-traffic with `Endpoint.warm`, or keep an instance with
+the aliases. The live test (stage l5) measures it on every run: `coldStartMs`
+for the first call after the deploy and `idleColdStartMs` for the first call
+after a 16-minute idle wait. The ledger, `scripts/ai/live/gcp-ledger.jsonl`,
+keeps them under `measurements.l5`. The passing run of 2026-10-14
+(europe-west4, one L4, the development base) measured 2263 ms for the first
+call after the deploy, which met the instance the deploy had started, and
+107390 ms (about 107 s) from zero after the idle wait. An earlier run measured
+119946 ms from zero. See
+[testing-guide.md](testing-guide.md#live-gpu-runs-on-google-cloud). Warm the
+tier before traffic with `Endpoint.warm`, or keep an instance with
 `Serve.withMinInstances 1` (billed while idle).
 
 ## Tests

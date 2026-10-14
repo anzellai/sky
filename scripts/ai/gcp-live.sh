@@ -26,10 +26,16 @@
 # worst case stays at or under --cap (default 40.00, which keeps USD 10 of
 # margin under a USD 50 limit for estimate error and billing lag).
 #
-# Four bounds stop spend if this process dies: each Vertex job's
-# scheduling.timeout (from its budget), Cloud Run's maxInstances 1 and
-# scale-to-zero, the EXIT trap, and this script's own 90-minute bound on the
-# test run.
+# Each of l2 to l5 runs under its own wall-clock window (gcp-prices.json,
+# stageLimits.stageSeconds). After a stage, ended or stopped at its window,
+# the wrapper cancels the run's live Vertex jobs, waits at most
+# stageLimits.cancelWaitSeconds for them to end, and after l5 deletes the
+# Cloud Run service. A job's ledger seconds count from its creation, PENDING
+# and provisioning included, and its scheduling.timeout counts only from
+# RUNNING, so the window plus the cancel wait is the bound each stage's worst
+# case is priced on (rust/crates/sky/tests/ai_gcp_live_ledger.rs checks it).
+# If this process dies, each Vertex job's scheduling.timeout, Cloud Run's
+# maxInstances 1 and scale-to-zero, and the EXIT trap still stop spend.
 #
 # Every resource carries sky-managed=true, live-run=<run id> and sky-kind. The
 # trap cancels the run's Vertex jobs, deletes its Cloud Run services, secret,
@@ -82,6 +88,7 @@ has_stage() { case ",$STAGES," in *",$1,"*) return 0 ;; esac; return 1; }
 
 LEDGER="$ROOT/scripts/ai/live/gcp-ledger.jsonl"
 PRICES="$ROOT/scripts/ai/live/gcp-prices.json"
+BOOKS="$ROOT/scripts/ai/live/ledger.py"
 RUN_ID="sky-live-$(date -u +%Y%m%d%H%M%S)-$(openssl rand -hex 3)"
 SUFFIX="${RUN_ID##*-}"
 PROJECT_TAG="$(printf '%s' "$PROJECT" | openssl dgst -sha256 | awk '{print substr($NF,1,8)}')"
@@ -101,30 +108,10 @@ case "$kind" in service_account|external_account) ;; *) echo "gcp-live: the cred
 echo "gcp-live: credential: a service-account key"
 
 # ─── the ledger guard ────────────────────────────────────────────────────
-# Worst cases per stage in USD (docs/ai/deploy-gcp.md, from gcp-prices.json).
-RUN_WORST="$("$PY" -I - "$STAGES" "$PRICES" <<'PYEOF'
-import json, sys
-stages = sys.argv[1].split(",")
-prices = json.load(open(sys.argv[2]))
-worst = prices["stageWorstCaseUsd"]
-print("%.2f" % sum(float(worst.get(s, 0)) for s in stages))
-PYEOF
-)"
-"$PY" -I - "$LEDGER" "$RUN_WORST" "$CAP" <<'PYEOF'
-import json, sys
-total = 0.0
-for line in open(sys.argv[1]):
-    line = line.strip()
-    if not line:
-        continue
-    r = json.loads(line)
-    total += float(r["actualUsd"] if r.get("actualUsd") is not None else r["worstCaseUsd"])
-need = total + 1.25 * float(sys.argv[2])
-print("gcp-live: ledger total USD %.2f, this run's worst case USD %s, guard %.2f of %s" % (total, sys.argv[2], need, sys.argv[3]))
-if need > float(sys.argv[3]):
-    print("gcp-live: REFUSED: the ledger has no room for this run under the cap", file=sys.stderr)
-    sys.exit(4)
-PYEOF
+# Worst cases per stage in USD (docs/ai/testing-guide.md, from gcp-prices.json).
+RUN_WORST="$("$PY" -I "$BOOKS" worst "$PRICES" "$STAGES")"
+"$PY" -I "$BOOKS" guard "$LEDGER" "$RUN_WORST" "$CAP"
+CANCEL_WAIT="$("$PY" -I "$BOOKS" cancel-wait "$PRICES")"
 
 BUCKET="$PROJECT-sky-live-$SUFFIX"
 REPO="sky-live-$SUFFIX"
@@ -139,6 +126,10 @@ LEAK="unknown"
 TEST_STATUS=1
 STAGE_LOG="$WORK/stages.jsonl"
 : > "$STAGE_LOG"
+# The JSON lines the scenarios print that carry measurements (l5's cold
+# start); the ledger line keeps their numbers.
+MEASURE_LOG="$WORK/measurements.jsonl"
+: > "$MEASURE_LOG"
 
 # ─── teardown and the leak check (always) ────────────────────────────────
 leak_check() {
@@ -150,7 +141,7 @@ leak_check() {
     local tries=0 left regions r
     regions="$REGION"
     [ "$SERVE_REGION" != "$REGION" ] && regions="$REGION $SERVE_REGION"
-    while [ $tries -lt 3 ]; do
+    while [ "$tries" -lt 3 ]; do
         left=0
         for r in $regions; do
             n="$(gcloud ai custom-jobs list --project "$PROJECT" --region "$r" \
@@ -172,28 +163,36 @@ leak_check() {
         echo "gcp-live: leak check: $n secrets"; left=$((left + n))
         if [ "$left" -eq 0 ]; then LEAK="clean"; return 0; fi
         tries=$((tries + 1))
-        [ $tries -lt 3 ] && sleep 20
+        [ "$tries" -lt 3 ] && sleep 20
     done
     LEAK="FAILED"
     return 3
+}
+
+# Cancel this run's live Vertex jobs and wait at most CANCEL_WAIT seconds
+# for them to end. Run after every stage and in the teardown.
+cancel_run_jobs() {
+    local job n
+    for job in $(gcloud ai custom-jobs list --project "$PROJECT" --region "$REGION" \
+        --filter="labels.live-run=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED)" \
+        --format='value(name.basename())' 2>/dev/null); do
+        gcloud ai custom-jobs cancel "$job" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 || true
+    done
+    for _ in $(seq 1 $((CANCEL_WAIT / 10))); do
+        n="$(gcloud ai custom-jobs list --project "$PROJECT" --region "$REGION" \
+            --filter="labels.live-run=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED OR state=JOB_STATE_CANCELLING)" \
+            --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
+        [ "$n" = "0" ] && return 0
+        sleep 10
+    done
+    echo "gcp-live: some of this run's Vertex jobs did not end within ${CANCEL_WAIT} s of the cancel" >&2
 }
 
 teardown() {
     local code=$?
     set +e
     echo "gcp-live: teardown"
-    for job in $(gcloud ai custom-jobs list --project "$PROJECT" --region "$REGION" \
-        --filter="labels.live-run=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED)" \
-        --format='value(name.basename())' 2>/dev/null); do
-        gcloud ai custom-jobs cancel "$job" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 || true
-    done
-    for i in $(seq 1 60); do
-        n="$(gcloud ai custom-jobs list --project "$PROJECT" --region "$REGION" \
-            --filter="labels.live-run=$RUN_ID AND (state=JOB_STATE_RUNNING OR state=JOB_STATE_PENDING OR state=JOB_STATE_QUEUED OR state=JOB_STATE_CANCELLING)" \
-            --format='value(name.basename())' 2>/dev/null | grep -c . || true)"
-        [ "$n" = "0" ] && break
-        sleep 10
-    done
+    cancel_run_jobs
     # Job records cost nothing; Sky deletes the ended ones it made (gcloud has no delete).
     # Only this run's: the project may hold other Sky resources.
     with_timeout 300 "$ROOT/sky-out/sky" ai teardown --all-sky --label "live-run=$RUN_ID" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1 || true
@@ -209,7 +208,7 @@ teardown() {
     # A cancelled job's container can still write its last event segment
     # after Vertex reports it ended (seen live, 2026-10-13: one 494-byte file
     # kept the bucket alive). Empty and delete again until the bucket is gone.
-    for i in 1 2 3 4 5 6; do
+    for _ in 1 2 3 4 5 6; do
         gcloud storage rm -r "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
         gcloud storage buckets delete "gs://$BUCKET" --quiet >/dev/null 2>&1 || true
         gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1 || break
@@ -217,19 +216,9 @@ teardown() {
     done
     leak_check
     local leak_code=$?
-    "$PY" -I - "$LEDGER" "$RUN_ID" "$STARTED" "$STAGES" "$RUN_WORST" "$LEAK" "$PROJECT_TAG" "$STAGE_LOG" "$TEST_STATUS" "$(git -C "$ROOT" rev-parse --short HEAD)" <<'PYEOF'
-import json, sys, datetime
-ledger, run, started, stages, worst, leak, tag, stage_log, status, sha = sys.argv[1:11]
-details = [json.loads(l) for l in open(stage_log) if l.strip()]
-estimate = round(sum(float(d.get("estimateUsd", 0)) for d in details), 4)
-line = {"run": run, "utc": started, "ended": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "gitSha": sha, "project": tag, "stages": stages.split(","), "resources": details,
-        "estimateUsd": estimate, "worstCaseUsd": float(worst), "leakCheck": leak,
-        "testsPassed": status == "0", "actualUsd": None}
-with open(ledger, "a") as f:
-    f.write(json.dumps(line, sort_keys=True) + "\n")
-print("gcp-live: ledger: estimate USD %.4f (worst case USD %s), leak check %s" % (estimate, worst, leak))
-PYEOF
+    "$PY" -I "$BOOKS" append --ledger "$LEDGER" --stage-log "$STAGE_LOG" --measure-log "$MEASURE_LOG" \
+        --run "$RUN_ID" --started "$STARTED" --stages "$STAGES" --worst "$RUN_WORST" --leak "$LEAK" \
+        --project-tag "$PROJECT_TAG" --status "$TEST_STATUS" --sha "$(git -C "$ROOT" rev-parse --short HEAD)"
     rm -rf "$WORK"
     if [ "$leak_code" -ne 0 ]; then exit 3; fi
     exit "$code"
@@ -266,6 +255,7 @@ print(next((x for x in v if x), "0"))' "$SERVE_REGION")"
 fi
 
 export SKY_AI_LIVE_RUN_ID="$RUN_ID" SKY_AI_LIVE_STAGES="$STAGES" SKY_AI_LIVE_STAGE_LOG="$STAGE_LOG"
+export SKY_AI_LIVE_MEASURE_LOG="$MEASURE_LOG"
 export SKY_AI_TRAIN_PROJECT="$PROJECT" SKY_AI_TRAIN_REGION="$REGION" SKY_AI_TRAIN_STAGING="gs://$BUCKET/train"
 export SKY_AI_TRAIN_SERVICE_ACCOUNT="$TRAINER_SA" SKY_AI_TRAIN_LABELS="live-run=$RUN_ID"
 export SKY_AI_SERVE_PROJECT="$PROJECT" SKY_AI_SERVE_REGION="$SERVE_REGION"
@@ -315,11 +305,30 @@ PYEOF
     echo "gcp-live: l1: images built (trainer $((t1 - t0)) s, tier $((t2 - t1)) s)"
 fi
 
-# ─── l2 to l5: the cargo live tests ──────────────────────────────────────
+# ─── l2 to l5: the cargo live tests, one stage per window ─────────────────
 export SKY_AI_GCP_LIVE=1
-set +e
-(cd "$ROOT/rust" && with_timeout 5400 cargo test -p sky --test ai_gcp_live -- --ignored --nocapture --test-threads 1)
-TEST_STATUS=$?
-set -e
+# Compile first, so no stage's window pays for the build.
+(cd "$ROOT/rust" && with_timeout 1800 cargo test -p sky --test ai_gcp_live --no-run)
+TEST_STATUS=0
+for stage in l2 l3 l4 l5; do
+    has_stage "$stage" || continue
+    limit="$("$PY" -I "$BOOKS" stage-seconds "$PRICES" "$stage")"
+    echo "gcp-live: $stage: at most $limit s"
+    set +e
+    (cd "$ROOT/rust" && with_timeout "$limit" cargo test -p sky --test ai_gcp_live -- \
+        --ignored --nocapture --test-threads 1 "gcp_live_${stage}_")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+        echo "gcp-live: $stage: stopped at its ${limit} s window" >&2
+    fi
+    # Nothing a stage made outlives its window by more than the cancel wait.
+    cancel_run_jobs
+    if [ "$stage" = l5 ]; then
+        gcloud run services delete "$SERVICE" --project "$PROJECT" --region "$SERVE_REGION" --quiet >/dev/null 2>&1 || true
+    fi
+    echo "gcp-live: $stage: ended with status $rc"
+    [ "$rc" -eq 0 ] || TEST_STATUS="$rc"
+done
 echo "gcp-live: the live tests ended with status $TEST_STATUS"
 exit "$TEST_STATUS"

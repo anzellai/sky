@@ -40,7 +40,11 @@ jobs:
   live:
     runs-on: ubuntu-latest
     environment: gcp-live
-    timeout-minutes: 120
+    # The wrapper bounds itself: Cloud Build's timeouts in l1, then each of
+    # l2 to l5 in its own window plus a cancel wait (scripts/ai/live/
+    # gcp-prices.json, stageLimits). GitHub's stop kills the EXIT trap's
+    # teardown, so give the job the hosted maximum, not less than a run needs.
+    timeout-minutes: 360
     steps:
       - name: Refuse without confirmation
         if: ${{ github.event.inputs.confirm != 'spend' }}

@@ -739,21 +739,37 @@ only when the ledger's total plus 1.25 times this run's worst case is at or
 under `--cap` (default USD 40.00). The worst cases per stage are in
 `scripts/ai/live/gcp-prices.json`:
 
-| Stage | Worst case (USD) | Basis |
-|---|---|---|
-| l0 | 0.00 | |
-| l1 | 0.30 | two Cloud Build builds of at most 40 minutes together, and about 25 GB of images kept for under a day |
-| l2 | 0.00 | |
-| l3 | 0.25 | three `n2-standard-4` jobs capped at 15 minutes each |
-| l4 | 0.70 | one `g2-standard-4` job capped at 40 minutes |
-| l5 | 1.10 | one Cloud Run L4 instance for at most 45 minutes, and two Fake jobs |
+Each worst case is the spend of the stage's enforced bound at the
+catalogue's rates. The wrapper runs each of l2 to l5 under its own wall-clock
+window (`stageLimits.stageSeconds` in the price file). After a stage, ended
+or stopped at its window, it cancels the run's live Vertex jobs, waits at
+most 600 s (`cancelWaitSeconds`) for them to end, and after l5 deletes the
+Cloud Run service. The bound is the window plus that wait, from the job's
+creation. A job's `scheduling.timeout` counts only from RUNNING, so it does
+not bound the PENDING and provisioning time that the ledger counts (the l4
+job's 40 minutes did not stop runs of 3155 s and 3797 s from creation to
+end).
+
+| Stage | Window | Worst case (USD) | Basis |
+|---|---|---|---|
+| l0 | | 0.00 | reads only |
+| l1 | | 0.82 | two Cloud Builds, each stopped at its 3600 s timeout (USD 0.72), and an allowance of USD 0.10 for about 25 GB of images kept for under a day |
+| l2 | 900 s | 0.00 | a refused plan creates nothing |
+| l3 | 2700 s | 1.10 | four `n2-standard-4` job chains at once, each for 2700 + 600 s at USD 0.30 an hour |
+| l4 | 4500 s | 1.35 | one `g2-standard-4` job chain for 4500 + 600 s at USD 0.95 an hour (1.3458, rounded up) |
+| l5 | 3600 s | 1.68 | the l5-prep `n2-standard-4` job chain and one Cloud Run L4 instance, each for 3600 + 600 s at USD 0.30 and 1.14 an hour |
+
+`rust/crates/sky/tests/ai_gcp_live_ledger.rs` fails when a worst case is
+below its bound, below the estimate of any run of that stage in the ledger,
+or when a window is shorter than a passing run's longest resource. It runs
+offline in the normal test suite.
 
 A refused run prints `REFUSED: the ledger has no room for this run under the
 cap` and exits 4.
 
-Four bounds stop spend if the wrapper dies: each Vertex job's
-`scheduling.timeout`, Cloud Run's `maxInstances 1` with scale to zero, the
-EXIT trap, and the wrapper's own 90-minute bound on the test run.
+If the wrapper dies, three bounds still stop spend: each Vertex job's
+`scheduling.timeout`, Cloud Run's `maxInstances 1` with scale to zero, and
+the EXIT trap.
 
 ### Cost per stage, as measured
 
@@ -777,11 +793,22 @@ The ledger's l4 seconds count from the job's creation, so they include the
 wait for a free L4.
 
 **Cold start.** The l5 stage measures it. Its scenario prints one JSON line
-with `deploySeconds`, `coldStartMs` (the first call after the deploy) and
-`idleColdStartMs` (the first call after the idle wait, scale from zero). Run
-the stage and read that line in the output (the cargo test runs with
-`--nocapture`, and the line starts with `ai_gcp_live: l5:`). The ledger does
-not keep these figures, and no cold-start figure is recorded in the tree.
+(`ai_gcp_live: l5: …`) with `deploySeconds`, `coldStartMs` (the first call
+after the deploy) and `idleColdStartMs` (the first call after a 960 s idle
+wait, scale from zero). The l5 test writes that line to the wrapper's
+measurement log, and the ledger line keeps its numbers under
+`measurements.l5` (with `baseOk`, `idleColdOk`, `hotLoadOk` and the other
+outcomes; response texts and error strings stay out). Recorded so far
+(europe-west4, one L4, the development base):
+
+| Run | `deploySeconds` | `coldStartMs` | `idleColdStartMs` | Tests |
+|---|---|---|---|---|
+| `sky-live-20261014042006-f7b821` | 167 | 2590 | not measured (no idle wait then) | failed |
+| `sky-live-20261014045345-b61c00` | 145 | 2499 | 119946 | failed (the `/v1/models` check) |
+| `sky-live-20261014053814-92a459` | 137 | 2263 | 107390 | passed |
+
+These three lines were backfilled from the runs' logged `ai_gcp_live: l5:`
+lines (`measurementsNote` says so). From now on the wrapper records them.
 
 ### Teardown
 
@@ -840,13 +867,13 @@ teardown deletes the bucket again until it is gone.
 * **Cost figures.** The ledger holds estimates at list prices. No line is
   reconciled with a bill (`actualUsd` is empty). The budget guard therefore
   counts each past run at its worst case.
-* **The l4 worst case.** `gcp-prices.json` sets the l4 worst case at USD 0.70,
-  but the two completed l4 runs in the ledger have estimates of USD 0.83 and
-  USD 1.00 (only the first passed). The estimate includes the wait for an L4,
-  so it is an upper bound. With the guard's factor of 1.25 the l4 allowance
-  is USD 0.875, which is still below USD 1.00.
-* **Cold start.** It is measured on each l5 run and printed, but not recorded.
-  Warm the tier before traffic (`Endpoint.warm`) or keep one instance
+* **Worst cases.** Each stage's worst case is its window plus the cancel
+  wait at the catalogue's rate, from the job's creation (see the budget
+  guard). A stage that does not finish in its window is stopped and fails. The
+  image storage part of l1 is an allowance, not a catalogue read.
+* **Cold start.** A scale-from-zero start took 107 to 120 s in the two runs
+  that measured it (`measurements.l5.idleColdStartMs` in the ledger). Warm
+  the tier before traffic (`Endpoint.warm`) or keep one instance
   (`Serve.withMinInstances 1`, billed while idle).
 * **Quotas and capacity.** A new project has no L4 quota. A region with no
   free L4 is `CapacityUnavailable`. Sky does not move a job to another region.

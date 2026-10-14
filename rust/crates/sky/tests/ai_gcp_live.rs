@@ -21,6 +21,11 @@
 //!
 //! Every stage appends what it ran (machine, seconds, the estimate at the
 //! catalogue's rate) to the wrapper's stage log, which becomes the ledger line.
+//! l5 also appends its scenario line to the measurement log
+//! (`SKY_AI_LIVE_MEASURE_LOG`): the ledger line keeps its cold-start figures.
+//! The wrapper runs each stage under its own wall-clock window
+//! (`gcp-prices.json`, `stageLimits`); `ai_gcp_live_ledger.rs` checks the
+//! books offline.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -342,6 +347,17 @@ fn gcp_live_l5_the_gpu_tier_on_cloud_run() {
         t0.elapsed().as_secs_f64(),
         rate("cloudRunL4InstancePerHour"),
     );
+    // The scenario's line to the wrapper's measurement log, before any
+    // assertion: the ledger line keeps its numbers (coldStartMs,
+    // idleColdStartMs, deploySeconds, ...) for a failed run too.
+    if let Ok(path) = std::env::var("SKY_AI_LIVE_MEASURE_LOG") {
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .unwrap();
+        writeln!(f, "{r}").unwrap();
+    }
     assert_eq!(r["base"]["ok"], true, "the base answers: {r}");
     assert_eq!(
         r["idleCold"]["ok"], true,

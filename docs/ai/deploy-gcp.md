@@ -229,7 +229,9 @@ real project:
   on the base, again after a 16-minute idle wait (scale from zero), and on two
   adapters on one GPU, and hot-loaded a promotion with no failed request. The
   ledger's estimate is USD 0.40 for 1258 s of the instance, plus USD 0.035 for
-  the two Fake jobs that trained its versions.
+  the two Fake jobs that trained its versions. The deploy took 137 s, the
+  first call after it 2263 ms, and the first call after the idle wait, a
+  start from zero, 107390 ms (`measurements.l5` in the ledger line).
 
 Each run ended with a clean leak check. The step-by-step test guide is
 [testing-guide.md](testing-guide.md#live-gpu-runs-on-google-cloud).
@@ -239,7 +241,10 @@ Each run ended with a clean leak check. The step-by-step test guide is
 `scripts/ai/gcp-live.sh --project <id> --stages l0,l1,l2,l3,l4,l5` runs the
 paid tests (`rust/crates/sky/tests/ai_gcp_live.rs`) under a hard cap: it
 refuses to start unless the ledger (`scripts/ai/live/gcp-ledger.jsonl`) has
-room for 1.25 times the run's worst case under USD 40, labels every resource,
-and always tears everything down and checks for leaks. The CI workflow
+room for 1.25 times the run's worst case under USD 40, runs each stage under
+its own wall-clock window and cancels what the stage left after it (the
+bound each stage's worst case in `scripts/ai/live/gcp-prices.json` is priced
+on), labels every resource, and always tears everything down and checks for
+leaks. The CI workflow
 `ai-cloud-live.yml` runs it on manual dispatch only, never on a commit or a
 release. See [../tooling/testing.md](../tooling/testing.md).

@@ -13,19 +13,33 @@
     "cloudBuildParts": "Build time e2-standard-2, 0.006/min (default pool)"
   },
   "upperBound": true,
+  "stageLimits": {
+    "note": "gcp-live.sh runs each of l2 to l5 under with_timeout stageSeconds, then cancels the run's live Vertex jobs and waits at most cancelWaitSeconds for them to end, and after l5 deletes the Cloud Run service. A job's ledger seconds count from its creation, PENDING and provisioning included; its scheduling.timeout counts only from RUNNING (the l4 job's 40 minutes did not bound runs of 3155 s and 3797 s), so the stage window plus the cancel wait is the bound. Cloud Build stops each build at cloudBuildTimeoutSeconds (sky-bundled/ai-cloud). The windows are set above the longest passing run of each stage.",
+    "stageSeconds": {
+      "l2": 900,
+      "l3": 2700,
+      "l4": 4500,
+      "l5": 3600
+    },
+    "cancelWaitSeconds": 600,
+    "cloudBuildTimeoutSeconds": 3600,
+    "imageStorageAllowanceUsd": 0.1
+  },
   "stageWorstCaseUsd": {
     "l0": 0.0,
-    "l1": 0.3,
+    "l1": 0.82,
     "l2": 0.0,
-    "l3": 0.25,
-    "l4": 0.7,
-    "l5": 1.1
+    "l3": 1.1,
+    "l4": 1.35,
+    "l5": 1.68
   },
   "stageWorstCaseBasis": {
-    "l1": "two Cloud Build builds of at most 40 minutes together, and about 25 GB of images kept for under a day",
-    "l3": "three n2-standard-4 jobs capped at 15 minutes each by their runtime ceiling",
-    "l4": "one g2-standard-4 job capped at 40 minutes",
-    "l5": "one Cloud Run L4 instance for at most 45 minutes Plus l5-prep: two Fake n2-standard-4 jobs of at most 15 minutes each (USD 0.07 each)."
+    "l0": "reads only (services, quotas): free",
+    "l1": "two Cloud Builds, each stopped at its 3600 s timeout: 2 x 60 min x USD 0.006 = 0.72; plus an allowance of USD 0.10 for about 25 GB of images kept for under a day",
+    "l2": "a plan refused by its budget creates nothing: free",
+    "l3": "four n2-standard-4 job chains at once (l3-once, l3-crash, l3-cancel, l3-budget), each for at most the 2700 s window plus the 600 s cancel wait: 4 x 3300 s x USD 0.30/h = 1.10",
+    "l4": "one g2-standard-4 job chain for at most the 4500 s window plus the 600 s cancel wait, from job creation (PENDING and provisioning included): 5100 s x USD 0.95/h = 1.3458, rounded up to 1.35",
+    "l5": "the l5-prep n2-standard-4 job chain and one Cloud Run L4 instance, each for at most the 3600 s window plus the 600 s cancel wait: 4200 s x (USD 0.30 + 1.14)/h = 1.68"
   },
   "cloudRunL4RegionsChecked": {
     "us-central1": "2026-10-12",
