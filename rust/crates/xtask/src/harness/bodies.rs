@@ -107,16 +107,18 @@ pub const VERIFY_CLI_EXPECTED: u64 = 13;
 /// stale the same way. A new suite moves this count in the same commit.
 pub const SKY_VERIFY_EXPECTED: u64 = 14;
 
-/// Total checkable branches across the diff-fuzz fixtures. Measured: **20** —
+/// Total checkable branches across the diff-fuzz fixtures. Measured: **46** —
 /// `spa-derived-read` 4 (whole-model reads + the Msg-arg collision),
 /// `spa-diff-narrow` 2 (narrow read/write sets), `spa-partition-io` 3
 /// (Save / SaveTagged / Bulk), `spa-guard` 2 (Stamp, and Save — a
 /// client-result root, checked by its leaf and command since v0.28.0; an
 /// App.app app, analysed via app_config_defs), `spa-readset-noneleaf` 9 (reads
 /// through model-derived locals, client-result roots with a `Cmd.none` leaf,
-/// a guard-helper write). Exact: a fence change that drops or adds a checkable
-/// branch flips this and fails.
-pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 20;
+/// a guard-helper write), `spa-async-leaves` 26 (v0.28.0: 17 async arms that
+/// make their own model write in the client through `let` / `if` / `case` /
+/// helpers, 16 of them with a client leg, and 9 that hold). Exact: a fence
+/// change that drops or adds a checkable branch flips this and fails.
+pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 46;
 
 // ---------------------------------------------------------------------------
 // In-process gates
@@ -430,12 +432,16 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     // client-result root) its leaf and command. `spa-readset-noneleaf` holds the
     // reads through model-derived locals and the `Cmd.none` leaves of
     // client-result roots: the leaf/command and client-leg comparisons.
+    // `spa-async-leaves` holds the async arms that make their own model write
+    // in the client through `let` / `if` / `case` / helpers (v0.28.0): their
+    // client leg's model and where it sends are compared.
     const FIXTURES: &[&str] = &[
         "rust/crates/sky/tests/fixtures/spa-derived-read",
         "rust/crates/sky/tests/fixtures/spa-diff-narrow",
         "rust/crates/sky/tests/fixtures/spa-partition-io",
         "rust/crates/sky/tests/fixtures/spa-guard",
         "rust/crates/sky/tests/fixtures/spa-readset-noneleaf",
+        "rust/crates/sky/tests/fixtures/spa-async-leaves",
     ];
     let mut assertions = 0u64;
     for fx in FIXTURES {

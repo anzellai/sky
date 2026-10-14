@@ -10248,3 +10248,354 @@ fn readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err() {
         failures.join("\n")
     );
 }
+
+fn async_leaves_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-async-leaves")
+}
+
+/// Run `sky spa-split <entry> --out <scratch>`: the report (stdout + stderr)
+/// and the output directory. Panics when the split fails.
+fn spa_split_into(entry: &std::path::Path) -> (String, PathBuf) {
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+    let o = Command::new(SKY)
+        .args([
+            "spa-split",
+            entry.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(o.status.success(), "sky spa-split should succeed:\n{log}");
+    (log, out)
+}
+
+/// Every generated client arm whose pattern starts with constructor `ctor`.
+fn frontend_arms_of(front: &str, ctor: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, _) in front.match_indices("\n        ") {
+        let rest = &front[i + 9..];
+        let head = rest.lines().next().unwrap_or("");
+        if head.starts_with(ctor)
+            && (head[ctor.len()..].starts_with(' ') || head[ctor.len()..].is_empty())
+            && head.trim_end().ends_with("->")
+        {
+            let pat = head.trim_end().trim_end_matches("->").trim_end();
+            out.push(frontend_arm(front, pat).to_string());
+        }
+    }
+    out
+}
+
+/// The RPC function a generated client arm calls (`Spa.rpc` / `Spa.rpcHold`).
+fn arm_rpc_kind(arm: &str) -> &'static str {
+    if arm.contains("Spa.rpcHold ") {
+        "hold"
+    } else if arm.contains("Spa.rpc ") {
+        "async"
+    } else {
+        "none"
+    }
+}
+
+/// Sky.Spa (v0.28.0): a server arm whose model write the client can compute
+/// runs ASYNC through `case` / `if` / `let` and helpers, not only as a direct
+/// `( model, cmd )` tuple. The client runs the arm as written, with each command
+/// half that needs the server replaced by the RPC (bound once, `spaRpc_`), and
+/// keeps each `Cmd.none` leaf, so it sends nothing where Sky.Live performs
+/// nothing. Every arm that still holds gets a build note naming it.
+#[test]
+fn async_leaves_run_their_model_write_in_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (log, out) = spa_split_into(&async_leaves_fixture_dir().join("src/Main.sky"));
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let remote = std::fs::read_to_string(out.join("frontend/src/Remote.sky")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let mut failures: Vec<String> = Vec::new();
+    for ctor in [
+        "CaseWrap",
+        "IfWrap",
+        "Helper id",
+        "HelperPipe id",
+        "HelperTwice",
+        "Nested",
+        "Shadow k",
+        "ElseIf",
+        "Commented",
+        "Untainted",
+        "KeepOnly",
+        "BodyInline",
+        "CrossHelper",
+        "PolyArm",
+        "NoAnno",
+        "AliasAnno",
+        "MultiAnno",
+    ] {
+        let arm = frontend_arm(&front, ctor);
+        if arm.is_empty() {
+            failures.push(format!("client arm `{ctor}` missing"));
+            continue;
+        }
+        if arm_rpc_kind(arm) != "async" || !arm.contains("spaRpc_") {
+            failures.push(format!(
+                "`{ctor}` must be async with the RPC bound once:\n{arm}"
+            ));
+        }
+        if log.contains(&format!("`{ctor}` holds")) {
+            failures.push(format!("`{ctor}` is async but has a hold note"));
+        }
+    }
+    // A `Cmd.none` leaf stays in the client: no request on that branch.
+    for ctor in [
+        "CaseWrap",
+        "IfWrap",
+        "Nested",
+        "ElseIf",
+        "Commented",
+        "Untainted",
+    ] {
+        let arm = frontend_arm(&front, ctor);
+        if !arm.contains("Cmd.none") {
+            failures.push(format!("`{ctor}` must keep its `Cmd.none` leaf:\n{arm}"));
+        }
+    }
+    // The model writes stay as written.
+    let ifwrap = frontend_arm(&front, "IfWrap");
+    if !(ifwrap.contains("{ model | busy = True }") && ifwrap.contains("{ model | log = \"off\" }"))
+    {
+        failures.push(format!("`IfWrap` must keep both model writes:\n{ifwrap}"));
+    }
+    // A helper on the path runs as a client copy that takes the RPC first; one
+    // copy however many arms call it.
+    let copies = front.matches("\nopenItemSpaClient_ spaRpc_ ").count();
+    if copies != 1 {
+        failures.push(format!(
+            "one client copy of `openItem` expected, found {copies}"
+        ));
+    }
+    if !frontend_arm(&front, "HelperPipe id").contains("(openItemSpaClient_ spaRpc_)") {
+        failures.push("`HelperPipe` must call the client copy through the pipe".into());
+    }
+    // A pure helper in tail position is called as it is (no copy).
+    if front.contains("keepHelperSpaClient_") {
+        failures.push("`keepHelper` reaches no server: no client copy".into());
+    }
+    // The cross-module helper is copied into its module's client subset.
+    if !remote.contains("\npickSpaClient_ spaRpc_ ") {
+        failures.push(format!(
+            "Remote's client subset must hold `pickSpaClient_`:\n{remote}"
+        ));
+    }
+    if !frontend_arm(&front, "CrossHelper").contains("(Remote.pickSpaClient_ spaRpc_)") {
+        failures.push("`CrossHelper` must call `Remote.pickSpaClient_`".into());
+    }
+    // A copy's annotation takes the helper's own command type (`Cmd msg` for
+    // a helper polymorphic in its Msg), and is left out for an alias result.
+    if !front.contains("\npolyPickSpaClient_ : Cmd msg -> (Result Error String -> msg) -> Model -> ( Model, Cmd msg )\n") {
+        failures.push("`polyPick`'s copy must take `Cmd msg`".into());
+    }
+    if !front.contains("\nmultiPickSpaClient_ : Cmd Msg -> Int -> Model -> ( Model, Cmd Msg )\n") {
+        failures.push("`multiPick`'s copy must flatten its multi-line annotation".into());
+    }
+    if front.contains("aliasPickSpaClient_ :") || front.contains("noAnnoSpaClient_ :") {
+        failures.push("an alias result or a missing annotation gives the copy none".into());
+    }
+    // An async head whose client made the write applies no write-set.
+    let applied = frontend_arm(&front, "AppliedIfWrap (Ok resp)");
+    if applied.contains("resp.busy") || applied.contains("resp.log") {
+        failures.push(format!("AppliedIfWrap must apply no write-set:\n{applied}"));
+    }
+
+    for ctor in [
+        "ModelTaint",
+        "CondTaint",
+        "Mixed",
+        "LetTask",
+        "Forced",
+        "FarHelper",
+        "Recursive",
+        "ByName",
+        "Wrapped",
+    ] {
+        let arms = frontend_arms_of(&front, ctor);
+        if arms.is_empty() || arms.iter().any(|a| arm_rpc_kind(a) != "hold") {
+            failures.push(format!("`{ctor}` must hold:\n{}", arms.join("\n")));
+        }
+        if !log.contains(&format!("`{ctor}")) || !log.contains("holds later Msgs") {
+            failures.push(format!("`{ctor}` holds: the build must say so and name it"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "async server arms:\n{}\n\n--- report ---\n{log}\n--- frontend ---\n{front}",
+        failures.join("\n")
+    );
+}
+
+/// examples/72-ai-support-desk: `Select` (a helper), `Redraft` (a `case`) and
+/// `Send` (a `case` with an `if`) show their selection and busy label at once
+/// on `--target web:app`, as on Sky.Live: their RPCs are async, and the build
+/// prints no hold note for them. The example is an `App.app`, so this is the
+/// real `--target web:app` build (the App -> Spa synthesis, then the split).
+#[test]
+#[cfg(unix)]
+fn example_72_select_redraft_send_are_async() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../examples/72-ai-support-desk"),
+        &proj,
+    );
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "web:app build failed:\n{log}");
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .or_else(|_| std::fs::read_to_string(proj.join(".split/frontend/src/Main.sky")))
+        .expect("generated frontend module");
+    let _ = std::fs::remove_dir_all(&proj);
+    for ctor in ["Select id", "Redraft", "Send"] {
+        let arm = frontend_arm(&front, ctor);
+        assert_eq!(
+            arm_rpc_kind(arm),
+            "async",
+            "`{ctor}` must be async:\n{arm}\n--- build ---\n{log}"
+        );
+        assert!(
+            !log.contains(&format!("`{ctor}` holds")),
+            "`{ctor}` must have no hold note:\n{log}"
+        );
+    }
+}
+
+fn async_identity_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-async-identity")
+}
+
+/// Sky.Spa: the signed-session identity comes from the signed cookie on the
+/// server, never from the client's model. An arm that branches on it or
+/// writes it holds (the client cannot make the server's write), with a note;
+/// an arm that does not touch it runs async. When the app's guard reads the
+/// identity, the client cannot know whether the guard lets a write happen, so
+/// every arm that writes the model holds.
+#[test]
+fn identity_arms_hold_and_a_guard_on_identity_holds_every_write() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (log, out) = spa_split_into(&async_identity_fixture_dir().join("src/Main.sky"));
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    for ctor in ["LogIn", "IdentityCond", "IdentityWrite"] {
+        let arm = frontend_arm(&front, ctor);
+        assert_eq!(arm_rpc_kind(arm), "hold", "`{ctor}` must hold:\n{arm}");
+        assert!(
+            log.contains(&format!("`{ctor}` holds later Msgs")) && log.contains("signed identity"),
+            "`{ctor}` must have a note naming the identity:\n{log}"
+        );
+    }
+    let plain = frontend_arm(&front, "Plain");
+    assert_eq!(
+        arm_rpc_kind(plain),
+        "async",
+        "`Plain` must be async:\n{plain}"
+    );
+
+    // The same app with a guard that reads the identity.
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&async_identity_fixture_dir(), &proj);
+    let main = proj.join("src/Main.sky");
+    let mut src = std::fs::read_to_string(&main).unwrap();
+    src.push_str(
+        "\n\nspaGuard_ : Msg -> Model -> Result Error ()\nspaGuard_ _ model =\n    case model.session of\n\n        Just _ ->\n            Ok ()\n\n        Nothing ->\n            Ok ()\n",
+    );
+    std::fs::write(&main, src).unwrap();
+    let (log, out) = spa_split_into(&main);
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&proj);
+    let plain = frontend_arm(&front, "Plain");
+    assert_eq!(
+        arm_rpc_kind(plain),
+        "hold",
+        "with a guard on the identity, `Plain` must hold:\n{plain}"
+    );
+    assert!(
+        log.contains("`Plain` holds later Msgs") && log.contains("App.withGuard"),
+        "`Plain` must have a note naming the guard:\n{log}"
+    );
+}
+
+fn async_app_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-async-app")
+}
+
+/// A `Std.App` app whose `update` sits in a sibling module laid out with
+/// two-space indentation: `Pick` (a helper) and `Toggle` (a `case`) run async
+/// under `--target web:app`, and both trees build. The client arms, written at
+/// column 8 in the generated `update`, move right as a block (before v0.28.0
+/// their bodies stayed at column 6 and the generated `update` did not parse).
+#[test]
+#[cfg(unix)]
+fn std_app_sibling_update_two_space_layout_runs_async_and_builds() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&async_app_fixture_dir(), &proj);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = if proj.join(".skyapp/web-app/.split").is_dir() {
+        proj.join(".skyapp/web-app/.split")
+    } else {
+        proj.join(".split")
+    };
+    let logic = std::fs::read_to_string(split.join("frontend/src/Logic.sky")).unwrap_or_default();
+    let backend_built = split.join("backend/sky-out/app").is_file();
+    let frontend_built = dist_has_wasm(&split.join("frontend/dist"));
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(output.status.success(), "web:app build failed:\n{log}");
+    assert!(
+        backend_built && frontend_built,
+        "both trees must build:\n{log}"
+    );
+    for ctor in ["Pick n", "Toggle"] {
+        let arm = frontend_arm(&logic, ctor);
+        assert_eq!(
+            arm_rpc_kind(arm),
+            "async",
+            "`{ctor}` must be async:\n{logic}"
+        );
+    }
+    assert!(
+        logic.contains("\npickSpaClient_ spaRpc_ n model ="),
+        "the helper `pick` must have a client copy:\n{logic}"
+    );
+}

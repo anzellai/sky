@@ -274,7 +274,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1791984293
+      "proven_at_unix": 1791987581
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -568,18 +568,19 @@
       "proven_at_unix": 1791968452
     },
     "spa-diff-fuzz": {
-      "inputs_files": 13,
-      "inputs_hash": "d5adaaec705860820010a33dd94b7690482c97f8",
+      "inputs_files": 15,
+      "inputs_hash": "1197caafcec932b769cb9dc8eceaf2111a538676",
       "mutation": "spa-diff-fuzz.drop-msgarg-rename",
       "mutations": [
         "spa-diff-fuzz.drop-msgarg-rename",
         "spa-diff-fuzz.drop-read-field",
         "spa-diff-fuzz.condition-read-dropped",
-        "spa-diff-fuzz.none-leaf-sends-rpc"
+        "spa-diff-fuzz.async-arm-drops-write",
+        "spa-diff-fuzz.async-arm-sends-on-keep"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1791983322
+      "proven_at_unix": 1791987581
     },
     "verify-cli": {
       "inputs_files": 524,

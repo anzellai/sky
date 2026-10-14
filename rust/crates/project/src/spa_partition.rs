@@ -690,6 +690,10 @@ struct CollectCtx<'a> {
     /// The client-crypto opt-in ([`detect_client_crypto`]). `false` (the
     /// default) classifies every kernel exactly as before the opt-in existed.
     client_crypto: bool,
+    /// Sub-expressions the walk does not enter (ids of the body being walked):
+    /// the parts of a server arm the client does not run (see
+    /// [`client_model_plan`]). `None` walks everything.
+    skip: Option<&'a HashSet<ExprId>>,
 }
 
 impl Refs {
@@ -719,6 +723,9 @@ impl Refs {
 /// `default()` everywhere except the Msg-constant-precision arm walk (see
 /// `CollectCtx`).
 fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
+    if ctx.skip.is_some_and(|s| s.contains(&e)) {
+        return;
+    }
     match &body.exprs[e] {
         Expr::Int(_)
         | Expr::Float(_)
@@ -1228,26 +1235,80 @@ pub struct BranchVerdict {
     /// answers (`Spa.rpcHold`, runtime-go spa_rpcqueue.go). `false` for a
     /// client arm and for every shape the analysis cannot read.
     pub own_model_client: bool,
-    /// For a SERVER arm whose tail the client can run itself up to its leaves:
-    /// the source spans the split needs to keep the arm's `Cmd.none` leaves in
-    /// the client and send the RPC only from the one `Cmd.perform` leaf (see
-    /// [`none_leaf_plan`]). `None` for every other arm.
-    pub none_leaf_plan: Option<NoneLeafPlan>,
+    /// How the client runs this server arm's own model write (see
+    /// [`client_model_plan`]): `Ok` when it can (then `own_model_client`),
+    /// `Err` with the reason it cannot, which the split reports in a build
+    /// note. `Err` for a client arm too (never read there).
+    pub client_model: Result<ClientModelPlan, ClientModelHold>,
 }
 
-/// How the client runs a server arm whose tail it can see: the arm body as
-/// written, with the one `Cmd.perform` leaf's command half replaced by the RPC
-/// and every `Cmd.none` leaf kept. Sky.Live sends nothing on a `Cmd.none` leaf,
-/// so the client must not send a request there. Byte offsets are into the
-/// source of the module that declares `update`.
+/// What a server arm's client copy changes in the source: each command half
+/// that needs the server becomes the RPC, and each helper on the path that
+/// holds one becomes that helper's client copy.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NoneLeafPlan {
-    /// The arm body's `[start, end)` byte range.
+pub enum PlanSpliceKind {
+    /// A `( model', cmd )` leaf's command half that is not `Cmd.none`: the
+    /// client sends the RPC there (`spaRpc_`).
+    Rpc,
+    /// The callee name of a saturated helper call on the arm's tail path whose
+    /// own tail holds an [`PlanSpliceKind::Rpc`] leaf: the client calls the
+    /// helper's client copy, which takes the RPC as its first argument.
+    Callee(DefId),
+}
+
+/// One source edit of a [`ClientModelPlan`]: a trimmed `[start, end)` byte
+/// range into the source of the module the code lives in, the text found
+/// there when the plan was made (a fail-closed check for the split), and what
+/// replaces it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanSplice {
+    pub span: (u32, u32),
+    pub text: String,
+    pub kind: PlanSpliceKind,
+}
+
+/// A helper on a planned arm's path whose client copy the split emits: the
+/// module that declares it, its name and its splices.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HelperPlan {
+    pub module: ModuleId,
+    pub module_name: String,
+    pub name: String,
+    pub splices: Vec<PlanSplice>,
+}
+
+/// How the client runs a server arm whose own model write reads no server
+/// data (see [`client_model_plan`]): the arm as written, with each splice
+/// applied. The arm then runs ASYNC (`Spa.rpc`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientModelPlan {
+    /// The arm body is a direct `( model, cmd )` tuple (the split's original
+    /// emission, byte for byte).
+    pub direct: bool,
+    /// The arm body's trimmed byte range in the module that declares `update`.
     pub arm_span: (u32, u32),
-    /// The perform leaf's command half (`Cmd.perform task ToMsg`).
-    pub perform_span: (u32, u32),
-    /// The source text at `perform_span`, for a fail-closed check by the split.
-    pub perform_text: String,
+    /// The arm body's splices, in source order.
+    pub splices: Vec<PlanSplice>,
+    /// The helpers on the path that need a client copy, each once.
+    pub helpers: BTreeMap<DefId, HelperPlan>,
+}
+
+/// Why a server arm's own model write needs the server (so the arm holds
+/// later Msgs while its request runs), and what change would let the client
+/// compute it. The split prints both in a build note.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientModelHold {
+    pub reason: String,
+    pub suggestion: String,
+}
+
+impl ClientModelHold {
+    fn new(reason: impl Into<String>, suggestion: impl Into<String>) -> Self {
+        ClientModelHold {
+            reason: reason.into(),
+            suggestion: suggestion.into(),
+        }
+    }
 }
 
 /// One `case msg of` arm's position and pattern, for routing it (see
@@ -3305,6 +3366,7 @@ fn classify_update_body(
             db: Some(db),
             update_def: Some(def),
             client_crypto: graph.client_crypto,
+            skip: None,
         };
         let arm_ctx = ArmCtx {
             src: &src,
@@ -3446,6 +3508,18 @@ fn classify_case_arms(
         }
     }
 
+    // How the client runs each server arm's own model write (or why it
+    // cannot): computed once per arm.
+    let plans: Vec<Result<ClientModelPlan, ClientModelHold>> = (0..n)
+        .map(|i| {
+            if direct[i].is_some() || server[i] {
+                client_model_plan(db, graph, body, arms[i].body, shared, ctx, src)
+            } else {
+                Err(ClientModelHold::new("a client arm", ""))
+            }
+        })
+        .collect();
+
     // Emit verdicts with a helpful reason. SERVER branches also carry their
     // derived RPC read-set / write-set (B1); CLIENT branches need no I/O.
     for i in 0..n {
@@ -3468,8 +3542,8 @@ fn classify_case_arms(
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
-                own_model_client: own_model_client(db, graph, body, arms[i].body, shared, ctx),
-                none_leaf_plan: none_leaf_plan(db, graph, body, arms[i].body, shared, ctx, src),
+                own_model_client: plans[i].is_ok(),
+                client_model: plans[i].clone(),
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -3489,8 +3563,8 @@ fn classify_case_arms(
                 forces_effect: forces[i],
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
-                own_model_client: own_model_client(db, graph, body, arms[i].body, shared, ctx),
-                none_leaf_plan: none_leaf_plan(db, graph, body, arms[i].body, shared, ctx, src),
+                own_model_client: plans[i].is_ok(),
+                client_model: plans[i].clone(),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -3515,7 +3589,7 @@ fn classify_case_arms(
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, false)),
                 own_model_client: false,
-                none_leaf_plan: None,
+                client_model: Err(ClientModelHold::new("a client arm", "")),
             });
         }
     }
@@ -6849,50 +6923,31 @@ fn arm_direct_reason(db: &dyn SkyDb, acc: &Refs, graph: &Graph) -> Option<String
     None
 }
 
-/// Whether a server arm's own MODEL write can run in the client (see
-/// [`BranchVerdict::own_model_client`]): the arm body is a direct `( model, cmd )`
-/// tuple, and the model half — collected on its own, with the refs the whole
-/// `update` shares — has no server reason, composes no other arm (`update X
-/// model`), and forces no effect. Anything else is `false`, the sound default:
-/// the arm then holds the queue while its RPC is in flight.
-fn own_model_client(
-    db: &dyn SkyDb,
-    graph: &Graph,
-    body: &Body,
-    arm_body: ExprId,
-    shared: &Refs,
-    ctx: &CollectCtx,
-) -> bool {
-    let Expr::Tuple(xs) = &body.exprs[arm_body] else {
-        return false;
-    };
-    if xs.len() != 2 {
-        return false;
-    }
-    let mut acc = shared.clone();
-    collect(body, xs[0], &mut acc, ctx);
-    arm_direct_reason(db, &acc, graph).is_none()
-        && acc.scoped_updates.is_empty()
-        && !acc.inline_force
-        && !acc.callees.iter().any(|c| graph.forces(*c))
-}
+/// How deep a planned arm may go through helpers before it holds.
+const CLIENT_PLAN_DEPTH: usize = IO_DELEGATE_DEPTH;
 
-/// The [`NoneLeafPlan`] of a server arm, when the client can run the arm's tail
-/// itself up to its leaves:
-///   * the tail is `let` / `if` / `case` scaffolding over direct `( model',
-///     cmd )` tuples (no helper delegate, no guard wrapper, no by-name tuple);
-///   * exactly one leaf's command half IS a `Cmd.perform task ToMsg` call, and
-///     every other leaf's command half resolves to `Cmd.none` alone (at least
-///     one such leaf, or there is nothing to keep);
-///   * everything the client evaluates — every condition, `case` subject,
-///     `let` binding, model half and `Cmd.none` half; every part of the arm
-///     except the perform leaf's command — reaches no server effect and no
-///     server-tainted value, composes no other arm and forces no effect (the
-///     same test as [`own_model_client`]).
+/// How the client runs a server arm's own MODEL write (see
+/// [`BranchVerdict::client_model`]), or why it cannot.
 ///
-/// The client then evaluates the same conditions on the same model as the
-/// server, so it sends the request exactly when Sky.Live would run the task.
-fn none_leaf_plan(
+/// The SHAPE: the arm's tail positions, through `let` / `if` / `case` and
+/// saturated calls to top-level helpers (directly, or through `|>` / `<|`),
+/// end in `( model', cmd )` tuples. A leaf whose command half is `Cmd.none`
+/// alone stays in the client (Sky.Live performs nothing there, so the client
+/// sends no request); every other command half becomes the RPC. A helper whose
+/// own tail holds such a leaf is called through its client copy. Anything else
+/// in a tail position (a tuple bound to a name, a lambda, a guard wrapper, a
+/// recursive or partly applied helper, `update X model`) holds.
+///
+/// The TAINT check is one walk: everything the client copy evaluates, which
+/// is the whole arm body and every copied helper body minus the RPC command
+/// halves and the copied helpers' callee names, must reach no server effect
+/// and no server-tainted value, compose no other arm, and force no effect. So
+/// every local in scope on the client is client data, and every condition the
+/// client evaluates is the one the server evaluates on the same request model
+/// (the read-set walk includes the fields it reads).
+///
+/// `src` is the source of the module that declares `update`.
+fn client_model_plan(
     db: &dyn SkyDb,
     graph: &Graph,
     body: &Body,
@@ -6900,91 +6955,307 @@ fn none_leaf_plan(
     shared: &Refs,
     ctx: &CollectCtx,
     src: &str,
-) -> Option<NoneLeafPlan> {
+) -> Result<ClientModelPlan, ClientModelHold> {
     struct Walk<'a> {
         db: &'a dyn SkyDb,
-        body: &'a Body,
-        ctx: &'a CollectCtx<'a>,
-        acc: Refs,
-        perform: Option<ExprId>,
-        none_leaves: usize,
+        update_def: Option<DefId>,
+        // Helpers with a client copy, and their splice expression ids.
+        copied: BTreeMap<DefId, Vec<(ExprId, PlanSpliceKind)>>,
+        // Helpers on the path that need no copy (no RPC leaf below them).
+        plain: HashSet<DefId>,
+        stack: Vec<DefId>,
+    }
+    fn shape_hold(what: &str) -> ClientModelHold {
+        ClientModelHold::new(
+            format!(
+                "its result is {what}, not a `( model, cmd )` tuple reached through `let`, `if`, \
+                 `case` or a helper called with all its arguments"
+            ),
+            "return the `( model, cmd )` tuples from the arm itself, or from a top-level helper \
+             called with all its arguments",
+        )
     }
     impl Walk<'_> {
-        fn tail(&mut self, e: ExprId) -> Option<()> {
-            match &self.body.exprs[e] {
+        fn def_name(&self, d: DefId) -> String {
+            self.db
+                .def_loc(d)
+                .map(|l| l.name.as_str().to_string())
+                .unwrap_or_else(|| "a helper".to_string())
+        }
+
+        fn tail(
+            &mut self,
+            body: &Body,
+            e: ExprId,
+            out: &mut Vec<(ExprId, PlanSpliceKind)>,
+        ) -> Result<(), ClientModelHold> {
+            match &body.exprs[e] {
                 Expr::Tuple(xs) if xs.len() == 2 => {
-                    collect(self.body, xs[0], &mut self.acc, self.ctx);
                     let mut leaves = Vec::new();
-                    resolve_cmd_leaves(self.db, self.body, xs[1], &mut leaves);
-                    if matches!(leaves.as_slice(), [CmdLeaf::NoneCmd]) {
-                        collect(self.body, xs[1], &mut self.acc, self.ctx);
-                        self.none_leaves += 1;
-                        Some(())
-                    } else if self.perform.is_none() && is_direct_perform(self.db, self.body, xs[1])
-                    {
-                        self.perform = Some(xs[1]);
-                        Some(())
-                    } else {
-                        None
+                    resolve_cmd_leaves(self.db, body, xs[1], &mut leaves);
+                    if !matches!(leaves.as_slice(), [CmdLeaf::NoneCmd]) {
+                        out.push((xs[1], PlanSpliceKind::Rpc));
                     }
+                    Ok(())
                 }
-                Expr::Let { defs, body: b } => {
-                    for d in defs {
-                        collect(self.body, d.body, &mut self.acc, self.ctx);
-                    }
-                    self.tail(*b)
-                }
+                Expr::Let { body: b, .. } => self.tail(body, *b, out),
                 Expr::If { arms, els } => {
-                    for (c, t) in arms {
-                        collect(self.body, *c, &mut self.acc, self.ctx);
-                        self.tail(*t)?;
+                    for (_, t) in arms {
+                        self.tail(body, *t, out)?;
                     }
-                    self.tail(*els)
+                    self.tail(body, *els, out)
                 }
-                Expr::Case { subject, branches } => {
-                    collect(self.body, *subject, &mut self.acc, self.ctx);
+                Expr::Case { branches, .. } => {
                     for br in branches {
-                        self.tail(br.body)?;
+                        self.tail(body, br.body, out)?;
                     }
-                    Some(())
+                    Ok(())
                 }
-                _ => None,
+                Expr::Call(callee, args) => self.helper(body, *callee, args.len(), out),
+                Expr::Binop { op, rhs, .. } if op.as_str() == "|>" => self.piped(body, *rhs, out),
+                Expr::Binop { op, lhs, .. } if op.as_str() == "<|" => self.piped(body, *lhs, out),
+                Expr::Var(Res::Local(_)) => Err(ClientModelHold::new(
+                    "its result tuple is bound to a name",
+                    "return the `( model, cmd )` tuple itself instead of a name bound to it",
+                )),
+                Expr::Lambda { .. } => Err(shape_hold("a function")),
+                Expr::Var(_) => Err(shape_hold("a top-level value")),
+                _ => Err(shape_hold("another expression")),
             }
         }
+
+        /// `x |> f a` / `f a <| x`: the function side is a call or a name
+        /// that the pipe saturates.
+        fn piped(
+            &mut self,
+            body: &Body,
+            fun: ExprId,
+            out: &mut Vec<(ExprId, PlanSpliceKind)>,
+        ) -> Result<(), ClientModelHold> {
+            match &body.exprs[fun] {
+                Expr::Call(callee, args) => self.helper(body, *callee, args.len() + 1, out),
+                Expr::Var(_) => self.helper(body, fun, 1, out),
+                _ => Err(shape_hold("a pipe into an expression")),
+            }
+        }
+
+        /// A call in tail position: a saturated top-level helper is walked
+        /// in its own body.
+        fn helper(
+            &mut self,
+            body: &Body,
+            callee: ExprId,
+            nargs: usize,
+            out: &mut Vec<(ExprId, PlanSpliceKind)>,
+        ) -> Result<(), ClientModelHold> {
+            let d = match &body.exprs[callee] {
+                Expr::Var(Res::Def(d)) => *d,
+                Expr::Var(Res::Ctor(_)) => return Err(shape_hold("a constructor call")),
+                _ => return Err(shape_hold("a call to a function value or a kernel")),
+            };
+            if Some(d) == self.update_def {
+                return Err(ClientModelHold::new(
+                    "it runs another arm (`update X model`)",
+                    "write that arm's `( model, cmd )` tuple here, or call a shared helper from both arms",
+                ));
+            }
+            let name = self.def_name(d);
+            if self.stack.contains(&d) {
+                return Err(ClientModelHold::new(
+                    format!("the helper `{name}` on its path calls itself"),
+                    "keep the recursion out of the arm's result: compute the value first, then \
+                     return the tuple",
+                ));
+            }
+            if self.stack.len() >= CLIENT_PLAN_DEPTH {
+                return Err(ClientModelHold::new(
+                    format!("its helpers nest deeper than {CLIENT_PLAN_DEPTH} calls"),
+                    "call fewer nested helpers in the arm's result",
+                ));
+            }
+            if self.copied.contains_key(&d) {
+                out.push((callee, PlanSpliceKind::Callee(d)));
+                return Ok(());
+            }
+            if self.plain.contains(&d) {
+                return Ok(());
+            }
+            let loc = self
+                .db
+                .def_loc(d)
+                .ok_or_else(|| shape_hold("a call to an unknown helper"))?;
+            let resolved = self.db.resolve(loc.module);
+            let hbody = resolved
+                .bodies
+                .get(&d)
+                .ok_or_else(|| shape_hold(&format!("a call to `{name}`, which has no body")))?;
+            let root = hbody
+                .root
+                .ok_or_else(|| shape_hold(&format!("a call to `{name}`, which has no body")))?;
+            let params = hbody.params.len();
+            if params == 0 || nargs != params {
+                return Err(ClientModelHold::new(
+                    format!(
+                        "the helper `{name}` takes {params} argument(s) and is called with {nargs}"
+                    ),
+                    format!(
+                        "call `{name}` with exactly its {params} parameter(s), and let it return \
+                         the `( model, cmd )` tuple itself (not a function)"
+                    ),
+                ));
+            }
+            self.stack.push(d);
+            let mut inner = Vec::new();
+            let walked = self.tail(hbody, root, &mut inner);
+            self.stack.pop();
+            walked?;
+            if inner.is_empty() {
+                self.plain.insert(d);
+            } else {
+                self.copied.insert(d, inner);
+                out.push((callee, PlanSpliceKind::Callee(d)));
+            }
+            Ok(())
+        }
     }
+
     let mut w = Walk {
         db,
-        body,
-        ctx,
-        acc: shared.clone(),
-        perform: None,
-        none_leaves: 0,
+        update_def: ctx.update_def,
+        copied: BTreeMap::new(),
+        plain: HashSet::new(),
+        stack: Vec::new(),
     };
-    w.tail(arm_body)?;
-    let perform = w.perform?;
-    if w.none_leaves == 0 {
-        return None;
+    let mut arm_splices = Vec::new();
+    w.tail(body, arm_body, &mut arm_splices)?;
+    let direct = matches!(&body.exprs[arm_body], Expr::Tuple(xs) if xs.len() == 2);
+    if arm_splices.is_empty() {
+        return Err(ClientModelHold::new(
+            "no command on its path needs the server, yet it reads server data",
+            "keep server values inside the command (`Cmd.perform <task> <Msg>`)",
+        ));
     }
-    let acc = &w.acc;
-    let client_pure = arm_direct_reason(db, acc, graph).is_none()
-        && acc.scoped_updates.is_empty()
-        && !acc.inline_force
-        && !acc.callees.iter().any(|c| graph.forces(*c));
-    if !client_pure {
-        return None;
+
+    // The one taint check: the whole client copy, minus the RPC command
+    // halves and the copied helpers' callee names.
+    let mut acc = shared.clone();
+    let arm_skip: HashSet<ExprId> = arm_splices.iter().map(|(e, _)| *e).collect();
+    collect(
+        body,
+        arm_body,
+        &mut acc,
+        &CollectCtx {
+            skip: Some(&arm_skip),
+            ..*ctx
+        },
+    );
+    for (d, sp) in &w.copied {
+        let Some(loc) = db.def_loc(*d) else {
+            return Err(shape_hold("a call to an unknown helper"));
+        };
+        let resolved = db.resolve(loc.module);
+        let Some((hbody, root)) = resolved.bodies.get(d).and_then(|b| b.root.map(|r| (b, r)))
+        else {
+            return Err(shape_hold("a call to a helper with no body"));
+        };
+        let skip: HashSet<ExprId> = sp.iter().map(|(e, _)| *e).collect();
+        collect(
+            hbody,
+            root,
+            &mut acc,
+            &CollectCtx {
+                skip: Some(&skip),
+                ..*ctx
+            },
+        );
     }
-    let arm_span = trim_span(src, body.expr_spans.get(arm_body)?.range)?;
-    let perform_span = trim_span(src, body.expr_spans.get(perform)?.range)?;
-    if perform_span.0 < arm_span.0 || perform_span.1 > arm_span.1 {
-        return None;
+    if acc.inline_force || acc.callees.iter().any(|c| graph.forces(*c)) {
+        return Err(ClientModelHold::new(
+            "it forces an effect while `update` runs (`Task.run`, or `let _ = <task>`)",
+            "move the effect into the command (`Cmd.perform <task> <Msg>`)",
+        ));
     }
-    let perform_text = src
-        .get(perform_span.0 as usize..perform_span.1 as usize)?
-        .to_string();
-    Some(NoneLeafPlan {
+    if let Some(reason) = arm_direct_reason(db, &acc, graph) {
+        return Err(ClientModelHold::new(
+            format!("the part the client would run {reason}"),
+            "keep every server value inside the command: put the task in `Cmd.perform <task> \
+             <Msg>` (not in a `let`, a condition, a `case` subject or the model) and write its \
+             result in the result Msg's arm",
+        ));
+    }
+    if !acc.scoped_updates.is_empty() || acc.generic_update {
+        return Err(ClientModelHold::new(
+            "it runs another arm (`update X model`)",
+            "write that arm's `( model, cmd )` tuple here, or call a shared helper from both arms",
+        ));
+    }
+
+    // Spans and their source text, for the split's fail-closed check.
+    let mut texts: HashMap<ModuleId, String> = HashMap::new();
+    let splice_of = |b: &Body,
+                     msrc: &str,
+                     e: ExprId,
+                     kind: &PlanSpliceKind|
+     -> Result<PlanSplice, ClientModelHold> {
+        let span = b
+            .expr_spans
+            .get(e)
+            .and_then(|sp| trim_span(msrc, sp.range))
+            .ok_or_else(|| shape_hold("code with no source position"))?;
+        let text = msrc
+            .get(span.0 as usize..span.1 as usize)
+            .ok_or_else(|| shape_hold("code with no source position"))?
+            .to_string();
+        Ok(PlanSplice {
+            span,
+            text,
+            kind: kind.clone(),
+        })
+    };
+    let arm_span = body
+        .expr_spans
+        .get(arm_body)
+        .and_then(|sp| trim_span(src, sp.range))
+        .ok_or_else(|| shape_hold("code with no source position"))?;
+    let mut splices = Vec::new();
+    for (e, k) in &arm_splices {
+        splices.push(splice_of(body, src, *e, k)?);
+    }
+    splices.sort_by_key(|s| s.span);
+    let mut helpers = BTreeMap::new();
+    for (d, sp) in &w.copied {
+        let loc = db
+            .def_loc(*d)
+            .ok_or_else(|| shape_hold("a call to an unknown helper"))?;
+        let msrc = texts
+            .entry(loc.module)
+            .or_insert_with(|| db.module_parse(loc.module).syntax().text().to_string())
+            .clone();
+        let resolved = db.resolve(loc.module);
+        let hbody = resolved
+            .bodies
+            .get(d)
+            .ok_or_else(|| shape_hold("a call to a helper with no body"))?;
+        let mut hs = Vec::new();
+        for (e, k) in sp {
+            hs.push(splice_of(hbody, &msrc, *e, k)?);
+        }
+        hs.sort_by_key(|s| s.span);
+        helpers.insert(
+            *d,
+            HelperPlan {
+                module: loc.module,
+                module_name: db.module_name(loc.module).to_string(),
+                name: loc.name.as_str().to_string(),
+                splices: hs,
+            },
+        );
+    }
+    Ok(ClientModelPlan {
+        direct,
         arm_span,
-        perform_span,
-        perform_text,
+        splices,
+        helpers,
     })
 }
 
@@ -7062,25 +7333,6 @@ pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec
         return Vec::new();
     }
     out
-}
-
-/// Is `e` itself a `Cmd.perform task ToMsg` call (not a helper that returns
-/// one)?
-fn is_direct_perform(db: &dyn SkyDb, body: &Body, e: ExprId) -> bool {
-    let Expr::Call(callee, args) = &body.exprs[e] else {
-        return false;
-    };
-    if args.len() != 2 {
-        return false;
-    }
-    match &body.exprs[*callee] {
-        Expr::Var(Res::Def(d)) => matches!(cmd_def_kind(db, *d), CmdDefKind::Perform),
-        Expr::Var(Res::Kernel { module, func }) => matches!(
-            cmd_kernel_kind(module.as_str(), func.as_str()),
-            Some(CmdDefKind::Perform)
-        ),
-        _ => false,
-    }
 }
 
 /// The reason a composing arm is server: name the first scoped call it makes to
@@ -7178,7 +7430,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             effect_families: graph.families_for(acc),
             arm: None,
             own_model_client: false,
-            none_leaf_plan: None,
+            client_model: Err(ClientModelHold::new("not a `case msg of` arm", "")),
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -7210,7 +7462,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             effect_families: graph.families_for(acc),
             arm: None,
             own_model_client: false,
-            none_leaf_plan: None,
+            client_model: Err(ClientModelHold::new("not a `case msg of` arm", "")),
         };
     }
     // Client — note a client effect if present.
@@ -7229,7 +7481,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         effect_families: graph.families_for(acc),
         arm: None,
         own_model_client: false,
-        none_leaf_plan: None,
+        client_model: Err(ClientModelHold::new("not a `case msg of` arm", "")),
     }
 }
 

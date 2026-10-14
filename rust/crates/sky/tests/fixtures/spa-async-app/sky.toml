@@ -1,0 +1,5 @@
+[project]
+name = "spa-async-app"
+
+[app]
+target = "web:app"

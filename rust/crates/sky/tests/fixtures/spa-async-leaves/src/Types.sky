@@ -1,0 +1,46 @@
+module Types exposing (Model, Msg(..), Step)
+
+import Sky.Core.Prelude exposing (..)
+
+
+type alias Model =
+    { n : Int
+    , flag : Bool
+    , mode : Maybe String
+    , log : String
+    , busy : Bool
+    }
+
+
+type Msg
+    = CaseWrap
+    | IfWrap
+    | Helper Int
+    | HelperPipe Int
+    | HelperTwice
+    | Nested
+    | Shadow String
+    | ElseIf
+    | Commented
+    | Untainted
+    | KeepOnly
+    | BodyInline
+    | CrossHelper
+    | ModelTaint
+    | CondTaint
+    | Mixed (Maybe Int)
+    | LetTask
+    | Forced
+    | FarHelper
+    | Recursive Int
+    | ByName
+    | Wrapped
+    | PolyArm
+    | NoAnno
+    | AliasAnno
+    | MultiAnno
+    | Got (Result Error String)
+
+
+type alias Step =
+    ( Model, Cmd Msg )

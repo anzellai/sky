@@ -1,0 +1,362 @@
+module Main exposing (main)
+
+-- Sky.Spa: a server arm whose own model write the client can compute runs
+-- ASYNC (`Spa.rpc`): the client makes the write when the Msg runs, as Sky.Live
+-- does, and only the command crosses the wire. Before v0.28.0 only a direct
+-- `( model, cmd )` tuple did; every arm below held later Msgs for the whole
+-- request (`Spa.rpcHold`), so the page froze (docs/skyspa/auto-split.md).
+--
+-- ASYNC (the client runs the arm with each command half that needs the
+-- server replaced by the RPC, and keeps each `Cmd.none`):
+--
+--   * `CaseWrap`    — a `case` over the model
+--   * `IfWrap`      — an `if` over the model
+--   * `Helper`      — a same-module helper with `let` + `case` + `if`
+--   * `HelperPipe`  — the same helper through `|>`
+--   * `HelperTwice` — the same helper again (one client copy)
+--   * `Nested`      — `let` + `if` + `case`
+--   * `Shadow`      — a branch binder that shadows the Msg binder
+--   * `ElseIf`      — an `else if` chain
+--   * `Commented`   — a comment and a multi-line command inside the arm
+--   * `Untainted`   — a pure helper in the model halves
+--   * `KeepOnly`    — a pure helper in tail position (no copy needed)
+--   * `BodyInline`  — the body on the pattern line
+--   * `CrossHelper` — a helper in another module that has a client subset
+--   * `PolyArm`     — a helper polymorphic in its Msg type (`Cmd msg`)
+--   * `NoAnno`      — a helper with no annotation
+--   * `AliasAnno`   — a helper whose result is a type alias
+--   * `MultiAnno`   — a helper whose annotation spans lines
+--
+-- HOLD (`Spa.rpcHold`, each with a build note):
+--
+--   * `ModelTaint`  — a model half reads a server value
+--   * `CondTaint`   — a condition reads a server value
+--   * `Mixed`       — one arm of the constructor reads a server value
+--   * `LetTask`     — a `let` binds the task
+--   * `Forced`      — a `let _ =` forces a task
+--   * `FarHelper`   — a helper in a module with no client subset
+--   * `Recursive`   — a recursive helper
+--   * `ByName`      — the tuple is bound to a name
+--   * `Wrapped`     — a guard wrapper with a lambda
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+import Types exposing (Model, Msg(..), Step)
+import Remote
+import Far
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, flag = False, mode = Nothing, log = "", busy = False }, Cmd.none )
+
+
+price : String
+price =
+    System.getenvOr "SPA_ASYNC_PRICE" "1"
+
+
+fetchEnv : Task Error String
+fetchEnv =
+    Task.succeed (System.getenvOr "SPA_ASYNC_P" "served")
+
+
+fetchWith : String -> Task Error String
+fetchWith s =
+    Task.succeed (System.getenvOr "SPA_ASYNC_P" s)
+
+
+stamp : Model -> Model
+stamp m =
+    { m | n = m.n + 1 }
+
+
+keepHelper : Model -> ( Model, Cmd Msg )
+keepHelper m =
+    if m.n > 3 then
+        ( { m | log = "big" }, Cmd.none )
+
+    else
+        ( m, Cmd.none )
+
+
+openItem : Int -> Model -> ( Model, Cmd Msg )
+openItem id model =
+    let
+        opened = { model | n = id, log = "" }
+    in
+        case opened.mode of
+
+            Just s ->
+                if s /= "" then
+                    ( { opened | log = s, busy = False }, Cmd.none )
+
+                else
+                    ( { opened | busy = True }, Cmd.perform (fetchWith "open") Got )
+
+            Nothing ->
+                ( opened, Cmd.none )
+
+
+polyPick : (Result Error String -> msg) -> Model -> ( Model, Cmd msg )
+polyPick toMsg m =
+    if m.flag then
+        ( { m | busy = True }, Cmd.perform (fetchWith "poly") toMsg )
+
+    else
+        ( m, Cmd.none )
+
+
+noAnno m =
+    if m.flag then
+        ( { m | busy = True }, Cmd.perform (fetchWith "plain") Got )
+
+    else
+        ( { m | log = "plain" }, Cmd.none )
+
+
+aliasPick : Model -> Step
+aliasPick m =
+    if m.flag then
+        ( { m | busy = True }, Cmd.perform (fetchWith "alias") Got )
+
+    else
+        ( m, Cmd.none )
+
+
+multiPick :
+    Int
+    -> Model
+    -> ( Model, Cmd Msg )
+multiPick k m =
+    if k > m.n then
+        ( { m | busy = True, n = k }, Cmd.perform (fetchWith "multi") Got )
+
+    else
+        ( m, Cmd.none )
+
+
+spin : Int -> Model -> ( Model, Cmd Msg )
+spin k m =
+    if k <= 0 then
+        ( { m | busy = True }, Cmd.perform fetchEnv Got )
+
+    else
+        spin (k - 1) m
+
+
+requireFlag : Model -> (() -> ( Model, Cmd Msg )) -> ( Model, Cmd Msg )
+requireFlag m k =
+    if m.flag then
+        k ()
+
+    else
+        ( m, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        CaseWrap ->
+            case model.mode of
+
+                Just s ->
+                    ( { model | busy = True }, Cmd.perform (fetchWith s) Got )
+
+                Nothing ->
+                    ( { model | log = "none" }, Cmd.none )
+
+        IfWrap ->
+            if model.flag then
+                ( { model | busy = True }, Cmd.perform fetchEnv Got )
+
+            else
+                ( { model | log = "off" }, Cmd.none )
+
+        Helper id ->
+            openItem id model
+
+        HelperPipe id ->
+            model |> openItem id
+
+        HelperTwice ->
+            openItem 7 model
+
+        Nested ->
+            let
+                m2 = { model | n = model.n + 1 }
+            in
+                if m2.flag then
+                    case m2.mode of
+
+                        Just s ->
+                            ( { m2 | busy = True }, Cmd.perform (fetchWith s) Got )
+
+                        Nothing ->
+                            ( m2, Cmd.none )
+
+                else
+                    ( m2, Cmd.none )
+
+        Shadow k ->
+            case model.mode of
+
+                Just k ->
+                    ( { model | log = k, busy = True }, Cmd.perform (fetchWith k) Got )
+
+                Nothing ->
+                    ( { model | log = k }, Cmd.none )
+
+        ElseIf ->
+            if model.n > 10 then
+                ( { model | busy = True }, Cmd.perform fetchEnv Got )
+
+            else if model.flag then
+                ( { model | log = "flag" }, Cmd.none )
+
+            else
+                ( { model | busy = True, log = "else" }, Cmd.perform (fetchWith "else") Got )
+
+        Commented ->
+            -- a comment before the body
+            if model.flag then
+                ( { model | busy = True }
+                , -- the command spans lines
+                  Cmd.perform
+                      (fetchWith "commented")
+                      Got
+                )
+
+            else
+                ( model, Cmd.none )
+
+        Untainted ->
+            if model.flag then
+                ( stamp model, Cmd.perform fetchEnv Got )
+
+            else
+                ( stamp model, Cmd.none )
+
+        KeepOnly ->
+            if model.flag then
+                keepHelper model
+
+            else
+                ( { model | busy = True }, Cmd.perform fetchEnv Got )
+
+        BodyInline -> openItem 1 model
+
+        CrossHelper ->
+            Remote.pick model
+
+        PolyArm ->
+            polyPick Got model
+
+        NoAnno ->
+            noAnno model
+
+        AliasAnno ->
+            aliasPick model
+
+        MultiAnno ->
+            multiPick 3 model
+
+        ModelTaint ->
+            if model.flag then
+                ( { model | log = price }, Cmd.perform fetchEnv Got )
+
+            else
+                ( model, Cmd.none )
+
+        CondTaint ->
+            if price == "1" then
+                ( { model | busy = True }, Cmd.perform fetchEnv Got )
+
+            else
+                ( model, Cmd.none )
+
+        Mixed (Just k) ->
+            openItem k model
+
+        Mixed Nothing ->
+            ( { model | log = price }, Cmd.perform fetchEnv Got )
+
+        LetTask ->
+            let
+                t = fetchWith "let"
+            in
+                if model.flag then
+                    ( { model | busy = True }, Cmd.perform t Got )
+
+                else
+                    ( model, Cmd.none )
+
+        Forced ->
+            let
+                _ = fetchEnv
+            in
+                if model.flag then
+                    ( { model | busy = True }, Cmd.perform fetchEnv Got )
+
+                else
+                    ( model, Cmd.none )
+
+        FarHelper ->
+            Far.farPick model
+
+        Recursive k ->
+            spin k model
+
+        ByName ->
+            let
+                r = ( { model | busy = True }, Cmd.perform fetchEnv Got )
+            in
+                r
+
+        Wrapped ->
+            requireFlag model (\_ -> ( { model | busy = True }, Cmd.perform fetchEnv Got ))
+
+        Got r ->
+            case r of
+
+                Ok s ->
+                    ( { model | log = s, busy = False }, Cmd.none )
+
+                Err _ ->
+                    ( { model | log = "error", busy = False }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout
+        []
+        (Ui.column
+            []
+            [ Ui.text (Remote.label model)
+            , Ui.button [] { onPress = Just CaseWrap, label = Ui.text "case" }
+            , Ui.button [] { onPress = Just IfWrap, label = Ui.text "if" }
+            , Ui.button [] { onPress = Just (Helper 2), label = Ui.text "helper" }
+            ])
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            })

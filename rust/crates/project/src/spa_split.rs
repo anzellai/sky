@@ -2703,15 +2703,118 @@ pub fn generate(
     broker_url: Option<&str>,
     static_mount_override: Option<(String, String)>,
 ) -> Result<SpaSplitReport, String> {
-    generate_inner(
-        repo_root,
-        project_dir,
-        entry_module,
+    generate_checked(
         out_dir,
-        broker_url,
-        static_mount_override,
+        |policy| {
+            generate_inner(
+                repo_root,
+                project_dir,
+                entry_module,
+                out_dir,
+                broker_url,
+                static_mount_override.clone(),
+                policy,
+            )
+        },
+        |frontend| {
+            crate::build::front_half_errors(repo_root, frontend, None)
+                .iter()
+                .map(|d| d.message.clone())
+                .collect()
+        },
     )
     .map_err(refusal_link_last)
+}
+
+/// One generation: the report, the constructors that run from a planned
+/// client body, and the ones that would if the policy allowed it.
+type PlannedGeneration = Result<(SpaSplitReport, BTreeSet<String>, BTreeSet<String>), String>;
+
+/// The frontend build is the oracle for planned client arms (v0.28.0). A
+/// generation whose planned arms do not compile is generated again with those
+/// constructors on hold, each with a build note: first with every plan off
+/// (when that fails too, the failure is not the plans', and is returned), then
+/// turning the plans back on one constructor at a time.
+fn generate_checked(
+    out_dir: &Path,
+    mut gen: impl FnMut(&PlanPolicy) -> PlannedGeneration,
+    mut frontend_errors: impl FnMut(&Path) -> Vec<String>,
+) -> Result<SpaSplitReport, String> {
+    let frontend = out_dir.join("frontend");
+    let first = gen(&PlanPolicy::default());
+    let first_err = match &first {
+        Ok((_, used, _)) if used.is_empty() => return first.map(|(rep, _, _)| rep),
+        Ok(_) => match frontend_errors(&frontend).first() {
+            None => return first.map(|(rep, _, _)| rep),
+            Some(e) => format!("{PLAN_REPARSE}: the frontend does not compile: {e}"),
+        },
+        Err(e) => e.clone(),
+    };
+    let none = PlanPolicy {
+        all_off: true,
+        ..PlanPolicy::default()
+    };
+    let (_, _, candidates) = match gen(&none) {
+        Ok(r) => r,
+        // Not the plans' failure: report the first one as before.
+        Err(_) => return first.map(|(rep, _, _)| rep),
+    };
+    if candidates.is_empty() || !frontend_errors(&frontend).is_empty() {
+        // The frontend fails with every plan off too: not the plans' failure.
+        // Generate as first asked; the build reports the error as before.
+        return match first {
+            Ok(_) => gen(&PlanPolicy::default()).map(|(rep, _, _)| rep),
+            Err(_) => Err(first_err),
+        };
+    }
+    let mut check = |r: PlannedGeneration| -> Result<(SpaSplitReport, BTreeSet<String>, BTreeSet<String>), String> {
+        let (rep, used, cand) = r?;
+        if used.is_empty() {
+            return Ok((rep, used, cand));
+        }
+        let errs = frontend_errors(&frontend);
+        match errs.first() {
+            None => Ok((rep, used, cand)),
+            Some(e) => Err(format!("{PLAN_REPARSE}: the frontend does not compile: {e}")),
+        }
+    };
+    let reason = |e: &str| -> String {
+        e.trim_start_matches(PLAN_REPARSE)
+            .trim_start_matches(':')
+            .trim()
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut accepted: BTreeSet<String> = BTreeSet::new();
+    let mut failed: HashMap<String, String> = HashMap::new();
+    for h in &candidates {
+        let off: HashSet<String> = candidates
+            .iter()
+            .filter(|c| *c != h && !accepted.contains(*c))
+            .cloned()
+            .collect();
+        let policy = PlanPolicy {
+            all_off: false,
+            off,
+            why: HashMap::new(),
+        };
+        match check(gen(&policy)) {
+            Ok(_) => {
+                accepted.insert(h.clone());
+            }
+            Err(e) => {
+                failed.insert(h.clone(), reason(&e));
+            }
+        }
+    }
+    let policy = PlanPolicy {
+        all_off: false,
+        off: failed.keys().cloned().collect(),
+        why: failed,
+    };
+    check(gen(&policy)).map(|(rep, _, _)| rep)
 }
 
 fn generate_inner(
@@ -2726,7 +2829,8 @@ fn generate_inner(
     // `None` → `generate` reads it from its own entry + `sky.toml` (the direct
     // `sky spa-split` path, whose entry still carries the declaration).
     static_mount_override: Option<(String, String)>,
-) -> Result<SpaSplitReport, String> {
+    policy: &PlanPolicy,
+) -> Result<(SpaSplitReport, BTreeSet<String>, BTreeSet<String>), String> {
     // Fail-closed gate: the generator writes the wasm frontend, so an
     // unclassified effect kernel silently defaulting to client would be a real
     // leak. Refuse to emit if the compiler knows a kernel the auto-split
@@ -4122,6 +4226,41 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .filter(|f| !session_field_names.contains(f))
         .cloned()
         .collect::<Vec<_>>();
+    // v0.28.0: which server arms run ASYNC from a planned client body (their
+    // own model write runs in the client), and a build note for every arm that
+    // holds later Msgs while its request runs.
+    {
+        let guard_reads_identity = match spa_partition::guard_readset(&db, entry) {
+            spa_partition::GuardReads::NoGuard => false,
+            spa_partition::GuardReads::Whole => true,
+            spa_partition::GuardReads::Fields(fields) => {
+                fields.iter().any(|f| session_field_names.contains(f))
+            }
+        };
+        let mut copy_modules: HashSet<String> = subset_mods
+            .iter()
+            .map(|m| db.module_name(*m).to_string())
+            .collect();
+        copy_modules.insert(entry_name.clone());
+        copy_modules.insert(db.module_name(update_module).to_string());
+        let upd_module_name = db.module_name(update_module).to_string();
+        let plan_notes = arm_routes.finalize_plans(
+            &report.branches,
+            &routes,
+            &report.chaining_branches,
+            &PlanInputs {
+                db: &db,
+                upd_file: &upd_file,
+                upd_src: &upd_src,
+                upd_module: &upd_module_name,
+                copy_modules: &copy_modules,
+                identity: &session_field_names,
+                guard_reads_identity,
+                policy,
+            },
+        );
+        notes.extend(plan_notes);
+    }
     let frontend_src = gen_frontend(
         &file,
         &src,
@@ -4187,6 +4326,11 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         _ => frontend_src,
     };
     let frontend_src = strip_tainted_from_imports(&frontend_src, &tainted_by_module);
+    let frontend_src = with_helper_copies(
+        &frontend_src,
+        arm_routes.helper_copies.get(&entry_name),
+        false,
+    )?;
     write("frontend/src/Main.sky", &frontend_src, &mut files)?;
     // The generated projects must be able to REBUILD any third-party imports the
     // app uses: carry the `[dependencies]` (Sky packages) + `["go.dependencies"]`
@@ -4364,6 +4508,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 _ => subset,
             };
             let subset = strip_tainted_from_imports(&subset, &tainted_by_module);
+            let subset = with_helper_copies(&subset, arm_routes.helper_copies.get(&mname), true)?;
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
     }
@@ -4404,19 +4549,87 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         ));
     }
 
-    Ok(SpaSplitReport {
-        out_dir: out_dir.to_string_lossy().to_string(),
-        files,
-        server_branches: server
-            .iter()
-            .filter(|(n, _)| n != INIT_RPC)
-            .map(|(n, _)| n.clone())
-            .collect(),
-        client_branches: client_names,
-        excluded: excluded_names,
-        notes,
-        warnings,
-    })
+    Ok((
+        SpaSplitReport {
+            out_dir: out_dir.to_string_lossy().to_string(),
+            files,
+            server_branches: server
+                .iter()
+                .filter(|(n, _)| n != INIT_RPC)
+                .map(|(n, _)| n.clone())
+                .collect(),
+            client_branches: client_names,
+            excluded: excluded_names,
+            notes,
+            warnings,
+        },
+        arm_routes.plan_heads.clone(),
+        arm_routes.plan_candidates.clone(),
+    ))
+}
+
+/// A module's frontend text with the client copies of the helpers it
+/// declares appended (see [`helper_copy`]), each exposed when the module
+/// exposes an explicit list (`expose`: another module calls them). Re-parsed:
+/// each copy must be one value declaration of the result, or the planned arms
+/// hold (the caller sees [`PLAN_REPARSE`]).
+fn with_helper_copies(
+    text: &str,
+    copies: Option<&Vec<(String, String)>>,
+    expose: bool,
+) -> Result<String, String> {
+    let Some(copies) = copies.filter(|c| !c.is_empty()) else {
+        return Ok(text.to_string());
+    };
+    let mut out = text.trim_end().to_string();
+    for (_, decl) in copies {
+        out.push_str("\n\n\n");
+        out.push_str(decl.trim_end());
+    }
+    out.push('\n');
+    if expose {
+        let names: Vec<String> = copies.iter().map(|(n, _)| n.clone()).collect();
+        out = expose_more(&out, &names);
+    }
+    let parse = syntax::parse(&out, base::FileId(0));
+    for (name, _) in copies {
+        let n = parse
+            .tree()
+            .decls()
+            .filter(|d| decl_name(d).as_deref() == Some(name.as_str()) && is_value_decl(d))
+            .count();
+        if n != 1 || !parse.errors().is_empty() {
+            return Err(format!(
+                "{PLAN_REPARSE}: the client copy `{name}` re-parses as {n} declaration(s)"
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// Add `names` to a module's explicit `exposing (…)` list (an `exposing (..)`
+/// module already exposes them).
+fn expose_more(src: &str, names: &[String]) -> String {
+    let parse = syntax::parse(src, base::FileId(0));
+    let file = parse.tree();
+    let Some(list) = file.module_header().and_then(|h| {
+        h.syntax()
+            .children()
+            .find(|c| c.kind() == SyntaxKind::ExposingList)
+    }) else {
+        return src.to_string();
+    };
+    let r = list.text_range();
+    let (a, b) = (usize::from(r.start()), usize::from(r.end()));
+    let t = &src[a..b];
+    if t.contains("..") {
+        return src.to_string();
+    }
+    let Some(close) = t.rfind(')') else {
+        return src.to_string();
+    };
+    let extra: String = names.iter().map(|n| format!(", {n}")).collect();
+    format!("{}{}{}{}", &src[..a], &t[..close], extra, &src[a + close..])
 }
 
 /// The report of a `sky spa-diff-fuzz` generation.
@@ -4466,31 +4679,43 @@ fn tag_update_leaves(
     out
 }
 
-/// Fill each client-result root's [`crate::spa_diff_harness::ClientArm`]s:
-/// the client's copy of every server arm that has a
-/// [`spa_partition::NoneLeafPlan`], built by the same emitter the split uses
-/// ([`client_none_leaf_arm_body`]), with the RPC replaced by the harness's
-/// `rpc` stand-in.
+/// Fill each checkable route's [`crate::spa_diff_harness::ClientArm`]s: the
+/// client's copy of each server arm the client runs itself, built by the same
+/// emitter the split uses ([`client_arm_body`], after the same plan decisions,
+/// [`ArmRoutes::finalize_plans`]), with the RPC replaced by the harness's `rpc`
+/// stand-in:
+///   * an async arm that makes its own model write in the client (a planned
+///     arm, or a direct tuple): its model and where it sends are compared;
+///   * an async planned arm that writes nothing (a client-result root among
+///     them): where it sends.
+///
+/// Returns the client copies of the helpers those arms call (declarations to
+/// append to the harness module). A helper in another module has no copy
+/// here: its arms are checked through the server leg only.
+#[allow(clippy::too_many_arguments)]
 fn add_client_legs(
+    db: &dyn hir::SkyDb,
     ufile: &SourceFile,
     usrc: &str,
+    upd_module: &str,
     report: &SpaPartitionReport,
     checkable: &mut [crate::spa_diff_harness::CheckableBranch],
     notes: &mut Vec<String>,
-) {
+) -> String {
+    use crate::spa_diff_harness::{ClientArm, ClientLegCheck};
     let Some(update_val) = ufile
         .decls()
         .find(|d| decl_name(d).as_deref() == Some("update") && is_value_decl(d))
     else {
-        return;
+        return String::new();
     };
     let params = value_params(&update_val);
     let (Some(msg_param), Some(model_param)) = (params.first(), params.get(1)) else {
-        return;
+        return String::new();
     };
     if !is_plain_param(msg_param) || !is_plain_param(model_param) {
         notes.push("`update`'s parameters are not plain names: no client leg".to_string());
-        return;
+        return String::new();
     }
     let Some(case) = update_val
         .syntax()
@@ -4498,42 +4723,83 @@ fn add_client_legs(
         .find(|n| n.kind() == SyntaxKind::CaseExpr)
         .and_then(syntax::ast::CaseExpr::cast)
     else {
-        return;
+        return String::new();
     };
     let arms: Vec<syntax::ast::MatchArm> = case.arms().collect();
-    let roots: HashSet<&str> = report
-        .client_result
-        .iter()
-        .map(|(r, _)| r.as_str())
-        .collect();
+    let internal: HashSet<String> = report.server_internal.iter().cloned().collect();
+    let Ok(routes) = spa_partition::server_routes(&report.branches, &internal) else {
+        return String::new();
+    };
+    let mut ar = ArmRoutes::from_report(&report.branches, &routes, &report.chaining_branches);
+    let copy_modules: HashSet<String> = std::iter::once(upd_module.to_string()).collect();
+    let _ = ar.finalize_plans(
+        &report.branches,
+        &routes,
+        &report.chaining_branches,
+        &PlanInputs {
+            db,
+            upd_file: ufile,
+            upd_src: usrc,
+            upd_module,
+            copy_modules: &copy_modules,
+            identity: &[],
+            guard_reads_identity: false,
+            policy: &PlanPolicy::default(),
+        },
+    );
     for b in checkable.iter_mut() {
-        if !roots.contains(b.ctor.as_str()) {
-            continue;
-        }
         for v in report
             .branches
             .iter()
             .filter(|v| v.server && ctor_name(&v.msg) == b.ctor)
         {
-            let (Some(a), Some(plan)) = (&v.arm, &v.none_leaf_plan) else {
+            let Some(a) = &v.arm else {
                 continue;
             };
             let Some(arm) = arms.get(a.index) else {
                 continue;
             };
-            if let Some(body) = client_none_leaf_arm_body(arm, usrc, plan, "(spaDiffRpcCmd_ ())") {
-                b.client_arms.insert(
-                    a.index,
-                    crate::spa_diff_harness::ClientArm {
-                        pat: a.pat_src.clone(),
-                        msg_param: msg_param.trim().to_string(),
-                        model_param: model_param.trim().to_string(),
-                        body,
-                    },
-                );
-            }
+            let Ok(body) = client_arm_body(
+                arm,
+                a.index,
+                &b.ctor,
+                usrc,
+                "(spaDiffRpcCmd_ ())",
+                model_param.trim(),
+                &ar,
+            ) else {
+                continue;
+            };
+            let check = match body.kind {
+                ClientArmKind::Planned | ClientArmKind::DirectTuple
+                    if ar.client_model.contains(&b.ctor) =>
+                {
+                    ClientLegCheck::ModelAndSends
+                }
+                ClientArmKind::Planned => ClientLegCheck::Sends,
+                _ => continue,
+            };
+            b.client_arms.insert(
+                a.index,
+                ClientArm {
+                    pat: a.pat_src.clone(),
+                    msg_param: msg_param.trim().to_string(),
+                    model_param: model_param.trim().to_string(),
+                    body: body.text,
+                    check,
+                },
+            );
         }
     }
+    let mut copies = String::new();
+    if let Some(cs) = ar.helper_copies.get(upd_module) {
+        for (_, decl) in cs {
+            copies.push_str("\n\n");
+            copies.push_str(decl.trim_end());
+            copies.push('\n');
+        }
+    }
+    copies
 }
 
 pub fn generate_diff_fuzz(
@@ -4609,9 +4875,19 @@ pub fn generate_diff_fuzz(
     // leaves, as the split generates it, with the RPC replaced by the harness's
     // `rpc` stand-in. Only when `update` sits in the entry module, where the
     // harness snippet lives and the arm's names resolve.
-    if update_mod == entry {
-        add_client_legs(&ufile, &usrc, &report, &mut checkable, &mut fence_notes);
-    }
+    let helper_copies = if update_mod == entry {
+        add_client_legs(
+            &db,
+            &ufile,
+            &usrc,
+            db.module_name(update_mod),
+            &report,
+            &mut checkable,
+            &mut fence_notes,
+        )
+    } else {
+        String::new()
+    };
     let resolver =
         crate::spa_diff_harness::MapTypeResolver::new(tymap, db.module_name(entry).to_string());
     let out = crate::spa_diff_harness::emit_harness(
@@ -4677,7 +4953,7 @@ pub fn generate_diff_fuzz(
     // or always added (the unique-alias ones — a second alias never collides).
     let existing = collect_imports(&ofile, &orig);
     let with_imports = inject_harness_imports(&stripped, &existing, &out.required_imports);
-    let final_src = format!("{with_imports}\n\n{}", out.snippet);
+    let final_src = format!("{with_imports}\n\n{}{helper_copies}", out.snippet);
     std::fs::write(&entry_file, &final_src)
         .map_err(|e| format!("write harness entry {}: {e}", entry_file.display()))?;
 
@@ -9383,10 +9659,60 @@ pub(crate) struct ArmRoutes {
     /// server-only names (a residual may not use them).
     nav_names: NavNames,
     nav_tainted: HashSet<String>,
-    /// Server arms (by index) whose tail the client runs up to its leaves (see
-    /// [`spa_partition::NoneLeafPlan`]): for a client-result root, the client
-    /// keeps the `Cmd.none` leaves and sends the RPC only from the perform leaf.
-    none_leaf: HashMap<usize, spa_partition::NoneLeafPlan>,
+    /// The server arms (by index) whose client [`spa_partition::ClientModelPlan`]
+    /// is not a direct tuple, as the report gives them. [`ArmRoutes::finalize_plans`]
+    /// turns each into a body in `plan_bodies`, or drops it.
+    plans: HashMap<usize, spa_partition::ClientModelPlan>,
+    /// The client body of each planned arm of an async constructor: the arm as
+    /// written with each splice applied (`spaRpc_` for a command that needs the
+    /// server, a helper's client copy for a helper call), and the source column
+    /// its first line sits at. The emitter binds `spaRpc_` above it.
+    plan_bodies: HashMap<usize, (String, usize)>,
+    /// The client copies of the helpers on planned arms' paths, by the module
+    /// that declares them: (copy name, declaration text). Emitted once each.
+    helper_copies: BTreeMap<String, Vec<(String, String)>>,
+    /// The constructors that run from a planned body (not a direct tuple).
+    /// The frontend type check is the oracle for them (see [`generate`]).
+    plan_heads: BTreeSet<String>,
+    /// The constructors that WOULD run from a planned body if the plan policy
+    /// allowed it (the oracle's candidates).
+    plan_candidates: BTreeSet<String>,
+}
+
+/// Which constructors may run from a planned client body (see [`generate`]):
+/// the oracle turns a plan off when the frontend it produces does not compile.
+#[derive(Default, Clone)]
+pub(crate) struct PlanPolicy {
+    /// Every planned body is off (the arms hold as before v0.28.0).
+    all_off: bool,
+    /// These constructors' planned bodies are off.
+    off: HashSet<String>,
+    /// Why each constructor in `off` is off (for its build note).
+    why: HashMap<String, String>,
+}
+
+impl PlanPolicy {
+    fn allows(&self, head: &str) -> bool {
+        !self.all_off && !self.off.contains(head)
+    }
+}
+
+/// What [`ArmRoutes::finalize_plans`] reads beside the report.
+pub(crate) struct PlanInputs<'a> {
+    pub(crate) db: &'a dyn hir::SkyDb,
+    /// The module that declares `update`: its CST, source and name.
+    pub(crate) upd_file: &'a SourceFile,
+    pub(crate) upd_src: &'a str,
+    pub(crate) upd_module: &'a str,
+    /// Modules that have a frontend copy in which a helper copy can live: the
+    /// module that declares `update` and every module with a client subset.
+    pub(crate) copy_modules: &'a HashSet<String>,
+    /// The signed-session identity fields (their trusted value lives on the
+    /// server, never on the wire).
+    pub(crate) identity: &'a [String],
+    /// `App.withGuard`'s guard reads an identity field (or the whole model).
+    pub(crate) guard_reads_identity: bool,
+    pub(crate) policy: &'a PlanPolicy,
 }
 
 /// How one module names the Std.Nav commands: the qualifier of `import
@@ -9467,6 +9793,13 @@ impl ArmRoutes {
                 out.async_heads.insert(head.clone());
                 out.client_model.insert(head.clone());
             }
+            for b in &arms {
+                if let (Some(a), Ok(plan)) = (&b.arm, &b.client_model) {
+                    if !plan.direct {
+                        out.plans.insert(a.index, plan.clone());
+                    }
+                }
+            }
         }
         for r in routes {
             for a in &r.arms {
@@ -9483,11 +9816,6 @@ impl ArmRoutes {
             }
         }
         for b in branches {
-            if let (true, Some(a), Some(plan)) = (b.server, &b.arm, &b.none_leaf_plan) {
-                out.none_leaf.insert(a.index, plan.clone());
-            }
-        }
-        for b in branches {
             if !b.server || !b.effect_families.iter().any(|f| f == "Nav") {
                 continue;
             }
@@ -9501,6 +9829,225 @@ impl ArmRoutes {
             }
         }
         out
+    }
+
+    /// Turn the report's client plans into client bodies and helper copies,
+    /// and decide which constructors stay async. A constructor that writes the
+    /// model is async only when every server arm of it has a plan that holds up
+    /// here; a constructor that writes nothing stays async either way and uses
+    /// a plan only where one holds up (its `Cmd.none` leaves then send nothing).
+    /// Returns one build note for every server arm that holds.
+    fn finalize_plans(
+        &mut self,
+        branches: &[spa_partition::BranchVerdict],
+        routes: &[spa_partition::ServerRoute],
+        chaining: &[String],
+        inp: &PlanInputs<'_>,
+    ) -> Vec<String> {
+        let arm_nodes: Vec<syntax::ast::MatchArm> = inp
+            .upd_file
+            .decls()
+            .find(|d| decl_name(d).as_deref() == Some("update") && is_value_decl(d))
+            .and_then(|d| {
+                d.syntax()
+                    .descendants()
+                    .find(|n| n.kind() == SyntaxKind::CaseExpr)
+                    .and_then(syntax::ast::CaseExpr::cast)
+            })
+            .map(|c| c.arms().collect())
+            .unwrap_or_default();
+        // Why each arm cannot use its plan (by arm index).
+        let mut failed: HashMap<usize, (String, String)> = HashMap::new();
+        let mut copies: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let mut bodies: HashMap<usize, (String, usize)> = HashMap::new();
+        for r in routes {
+            let head = &r.ctor;
+            let arms: Vec<&spa_partition::BranchVerdict> = branches
+                .iter()
+                .filter(|b| b.server && ctor_name(&b.msg) == head.as_str())
+                .collect();
+            for b in &arms {
+                let (Some(a), Ok(plan)) = (&b.arm, &b.client_model) else {
+                    continue;
+                };
+                if inp.guard_reads_identity && !inp.identity.is_empty() {
+                    failed.insert(
+                        a.index,
+                        (
+                            "the app's `App.withGuard` reads the signed identity, which only the \
+                             server holds, so the client cannot tell whether the guard lets the \
+                             write happen"
+                                .to_string(),
+                            "make the guard read only fields the client holds, or accept that \
+                             this Msg waits for the server"
+                                .to_string(),
+                        ),
+                    );
+                    continue;
+                }
+                if let Some(f) = identity_touch(b, inp.identity) {
+                    failed.insert(
+                        a.index,
+                        (
+                            format!(
+                                "it reads or writes `{f}`, the signed identity, whose trusted \
+                                 value lives on the server, never in the client's model"
+                            ),
+                            format!(
+                                "keep `{f}` out of the arm's conditions and model write (read it \
+                                 in the server task instead)"
+                            ),
+                        ),
+                    );
+                    continue;
+                }
+                if plan.direct {
+                    continue;
+                }
+                if b.effect_families
+                    .iter()
+                    .any(|f| f == "Nav" || f == "Native")
+                {
+                    failed.insert(
+                        a.index,
+                        (
+                            "its command runs a Std.Nav or Std.Native client effect, which the \
+                             client runs when it sends the request"
+                                .to_string(),
+                            "return the `( model, cmd )` tuple directly from the arm".to_string(),
+                        ),
+                    );
+                    continue;
+                }
+                let built = arm_nodes
+                    .get(a.index)
+                    .ok_or_else(|| mismatch("the arm is not in the source"))
+                    .and_then(|arm| plan_arm_body(arm, inp, plan))
+                    .and_then(|body| {
+                        let mut mine = Vec::new();
+                        for h in plan.helpers.values() {
+                            mine.push((h.module_name.clone(), helper_copy(inp, plan, h)?));
+                        }
+                        Ok((body, mine))
+                    });
+                match built {
+                    Ok(_) if !inp.policy.allows(head) => {
+                        self.plan_candidates.insert(head.clone());
+                        let why = inp.policy.why.get(head).cloned().unwrap_or_default();
+                        let why = if why.is_empty() {
+                            "planned client arms are off for this build".to_string()
+                        } else {
+                            format!("its client copy did not compile ({why})")
+                        };
+                        failed.insert(
+                            a.index,
+                            (
+                                why,
+                                "write the arm's tuples in `update` itself, and please report \
+                                 this as a Sky bug"
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                    Ok((body, mine)) => {
+                        bodies.insert(a.index, body);
+                        for (m, (name, text)) in mine {
+                            copies.entry(m).or_default().insert(name, text);
+                        }
+                    }
+                    Err(hold) => {
+                        failed.insert(a.index, hold);
+                    }
+                }
+            }
+            let all_planned = !arms.is_empty()
+                && arms.iter().all(|b| {
+                    b.client_model.is_ok()
+                        && b.arm
+                            .as_ref()
+                            .is_some_and(|a| !failed.contains_key(&a.index))
+                });
+            if self.client_model.contains(head) && !all_planned {
+                self.client_model.remove(head);
+                self.async_heads.remove(head);
+            }
+        }
+        // Keep the bodies (and the helper copies they call) of the async
+        // constructors only.
+        let mut used_helpers: HashSet<(String, String)> = HashSet::new();
+        for (idx, body) in bodies {
+            let Some(b) = branches
+                .iter()
+                .find(|b| b.server && b.arm.as_ref().is_some_and(|a| a.index == idx))
+            else {
+                continue;
+            };
+            let head = ctor_name(&b.msg).to_string();
+            self.plan_candidates.insert(head.clone());
+            if !self.async_heads.contains(&head) || !inp.policy.allows(&head) {
+                continue;
+            }
+            if let Ok(plan) = &b.client_model {
+                for h in plan.helpers.values() {
+                    used_helpers.insert((h.module_name.clone(), copy_name(&h.name)));
+                }
+            }
+            self.plan_heads.insert(head);
+            self.plan_bodies.insert(idx, body);
+        }
+        for (m, cs) in copies {
+            let kept: Vec<(String, String)> = cs
+                .into_iter()
+                .filter(|(n, _)| used_helpers.contains(&(m.clone(), n.clone())))
+                .collect();
+            if !kept.is_empty() {
+                self.helper_copies.insert(m, kept);
+            }
+        }
+        // A note for every server arm that holds.
+        let mut notes = Vec::new();
+        for r in routes {
+            let head = &r.ctor;
+            if self.async_heads.contains(head) {
+                continue;
+            }
+            let arms: Vec<&spa_partition::BranchVerdict> = branches
+                .iter()
+                .filter(|b| b.server && ctor_name(&b.msg) == head.as_str())
+                .collect();
+            for b in &arms {
+                let pat = b
+                    .arm
+                    .as_ref()
+                    .map(|a| a.pat_src.clone())
+                    .unwrap_or_else(|| b.msg.clone());
+                let (reason, suggestion) = if chaining.contains(head) {
+                    (
+                        "its command's follow-up Msg runs on the server in the same request (a \
+                         server-internal chain), so later Msgs must see its result"
+                            .to_string(),
+                        "if the follow-up Msg's own arm needs no server, it runs in the client and \
+                         this chain ends there"
+                            .to_string(),
+                    )
+                } else if let Some(f) = b.arm.as_ref().and_then(|a| failed.get(&a.index)) {
+                    f.clone()
+                } else {
+                    match &b.client_model {
+                        Err(h) => (h.reason.clone(), h.suggestion.clone()),
+                        Ok(_) => (
+                            format!("another arm of `{head}` holds"),
+                            format!("make every arm of `{head}` async (see its note)"),
+                        ),
+                    }
+                };
+                notes.push(format!(
+                    "Sky.Spa: `{pat}` holds later Msgs while its request runs: {reason}. To run \
+                     it async, as Sky.Live does: {suggestion}."
+                ));
+            }
+        }
+        notes
     }
 
     /// Whether server arm `index` (of constructor `head`) reaches a Std.Nav
@@ -9545,47 +10092,394 @@ fn client_model_arm_body(arm: &syntax::ast::MatchArm, src: &str, call: &str) -> 
     ))
 }
 
-/// The client body of a client-result root arm with a [`NoneLeafPlan`]: the
-/// arm as written, with the perform leaf's command half replaced by `spaRpc_`
-/// (bound once, at the top of the arm, to `call`, the RPC built from the model
-/// and Msg the arm runs on). Every `Cmd.none` leaf stays: the client evaluates
-/// the arm's own conditions, so it sends the request only on the branch where
-/// Sky.Live runs the task, and sends nothing on a `Cmd.none` branch.
-///
-/// The text is laid out at the body's own source column, so each continuation
-/// line keeps its place relative to the first. `None` (the caller then sends
-/// the RPC from every branch, and the backend answers "no task ran" on a
-/// `Cmd.none` leaf) when the spans do not match this source, or the body sits
-/// at or left of the generated pattern's column.
-pub(crate) fn client_none_leaf_arm_body(
-    arm: &syntax::ast::MatchArm,
+/// A source `case` arm's text, to be written with its pattern at column 8 (the
+/// generated `update`'s arm column). An arm that sits left of column 8 (an
+/// `update` laid out with two-space indentation: pattern at 4, body at 6) moves
+/// right as a block, so its body stays right of its pattern; written as it
+/// stands, the body would sit left of the new pattern column and the arms
+/// would re-parse as one. An arm holding a multi-line string is not moved (the
+/// string's lines would change).
+fn arm_at_column_8(arm: &syntax::SyntaxNode, src: &str) -> String {
+    let text = slice(src, arm).trim();
+    let r = arm.text_range();
+    let raw = slice(src, arm);
+    let start = usize::from(r.start()) + (raw.len() - raw.trim_start().len());
+    let col = start - src[..start].rfind('\n').map_or(0, |i| i + 1);
+    if col >= 8 || text.contains("\"\"\"") {
+        return text.to_string();
+    }
+    let shift = " ".repeat(8 - col);
+    text.replace('\n', &format!("\n{shift}"))
+}
+
+/// The name of a helper's client copy (see [`helper_copy`]).
+fn copy_name(name: &str) -> String {
+    format!("{name}SpaClient_")
+}
+
+/// The identity field a server arm reads or writes, if any (the whole model
+/// counts as every field).
+fn identity_touch(b: &spa_partition::BranchVerdict, identity: &[String]) -> Option<String> {
+    let first = identity.first()?;
+    let Some(io) = &b.io else {
+        return Some(first.clone());
+    };
+    if io.reads_whole_model || io.writes_whole_model {
+        return Some(first.clone());
+    }
+    identity
+        .iter()
+        .find(|f| io.read_fields.contains(f) || io.write_fields.contains(f))
+        .cloned()
+}
+
+/// Why a plan could not be applied, and what change would let it: the two
+/// halves of the arm's build note.
+type PlanHold = (String, String);
+
+/// A plan that does not fit the source it was made from.
+fn mismatch(what: &str) -> PlanHold {
+    (
+        what.to_string(),
+        "rebuild; if it persists, please report it as a Sky bug".to_string(),
+    )
+}
+
+/// The text that replaces one plan splice in module `here`.
+fn splice_text(
+    sp: &spa_partition::PlanSplice,
+    here: &str,
+    plan: &spa_partition::ClientModelPlan,
+) -> Result<String, PlanHold> {
+    match &sp.kind {
+        spa_partition::PlanSpliceKind::Rpc => Ok("spaRpc_".to_string()),
+        spa_partition::PlanSpliceKind::Callee(d) => {
+            let h = plan
+                .helpers
+                .get(d)
+                .ok_or_else(|| mismatch(&format!("the helper `{}` has no client copy", sp.text)))?;
+            let copy = copy_name(&h.name);
+            match sp.text.rfind('.') {
+                Some(i) => Ok(format!("({}.{copy} spaRpc_)", &sp.text[..i])),
+                None if h.module_name == here => Ok(format!("({copy} spaRpc_)")),
+                None => Err((
+                    format!(
+                        "the helper `{}.{}` is called unqualified from module `{here}`",
+                        h.module_name, h.name
+                    ),
+                    format!("call it qualified (`{}.{}`)", h.module_name, h.name),
+                )),
+            }
+        }
+    }
+}
+
+/// `text[start..end]` of `src` with each splice replaced, in module `here`.
+/// Fails closed: every splice must lie inside the range, in order, without
+/// overlap, over the text the plan recorded.
+fn apply_plan_splices(
     src: &str,
-    plan: &spa_partition::NoneLeafPlan,
-    call: &str,
-) -> Option<String> {
-    let range = arm.body()?.syntax().text_range();
+    (start, end): (usize, usize),
+    splices: &[spa_partition::PlanSplice],
+    here: &str,
+    plan: &spa_partition::ClientModelPlan,
+) -> Result<String, PlanHold> {
+    let mut out = String::new();
+    let mut at = start;
+    for sp in splices {
+        let (a, b) = (sp.span.0 as usize, sp.span.1 as usize);
+        if a < at || b > end || src.get(a..b) != Some(sp.text.as_str()) {
+            return Err(mismatch(&format!(
+                "the source of `{}` no longer matches the analysis",
+                sp.text
+            )));
+        }
+        out.push_str(
+            src.get(at..a)
+                .ok_or_else(|| mismatch("a span is not on a character boundary"))?,
+        );
+        out.push_str(&splice_text(sp, here, plan)?);
+        at = b;
+    }
+    out.push_str(
+        src.get(at..end)
+            .ok_or_else(|| mismatch("a span is not on a character boundary"))?,
+    );
+    Ok(out)
+}
+
+/// The client body of a planned server arm (see [`ArmRoutes::plan_bodies`]):
+/// the arm body as written, with each splice applied, and the column its first
+/// line sits at. Continuation lines keep their columns; a body at or left of
+/// the generated pattern's column (8) is moved right as a block. A leading
+/// line comment is dropped. `Err` (the arm then holds) when the plan does not
+/// fit the source.
+fn plan_arm_body(
+    arm: &syntax::ast::MatchArm,
+    inp: &PlanInputs<'_>,
+    plan: &spa_partition::ClientModelPlan,
+) -> Result<(String, usize), PlanHold> {
+    let src = inp.upd_src;
+    let range = arm
+        .body()
+        .ok_or_else(|| mismatch("the arm has no body"))?
+        .syntax()
+        .text_range();
     let (bs, be): (usize, usize) = (range.start().into(), range.end().into());
-    // The body node can carry its leading trivia (the newline and indent after
-    // `->`): start at its first token. A comment there is not handled.
-    let text = src.get(bs..be)?;
+    let text = src
+        .get(bs..be)
+        .ok_or_else(|| mismatch("the arm is not in the source"))?;
     let bs = bs + (text.len() - text.trim_start().len());
     let be = be - (text.len() - text.trim_end().len());
-    if src.get(bs..be)?.starts_with("--") || src.get(bs..be)?.starts_with("{-") {
-        return None;
+    let (ps, pe) = (plan.arm_span.0 as usize, plan.arm_span.1 as usize);
+    if ps < bs || pe != be {
+        return Err((
+            "its body's source range differs from the analysed expression".to_string(),
+            "write the arm's body without wrapping parentheses".to_string(),
+        ));
     }
-    let (ps, pe) = (plan.perform_span.0 as usize, plan.perform_span.1 as usize);
-    if !(bs <= ps && pe <= be) || src.get(ps..pe)? != plan.perform_text {
-        return None;
+    // Drop leading line comments: the body proper starts after them.
+    let mut start = ps;
+    loop {
+        let rest = &src[start..pe];
+        if rest.starts_with("--") {
+            let nl = rest
+                .find('\n')
+                .ok_or_else(|| mismatch("the arm is only a comment"))?;
+            let after = &rest[nl + 1..];
+            start += nl + 1 + (after.len() - after.trim_start().len());
+        } else if rest.starts_with("{-") {
+            return Err((
+                "a block comment opens the arm's body".to_string(),
+                "use a `--` line comment there, or move the comment above the arm".to_string(),
+            ));
+        } else {
+            break;
+        }
     }
-    let col = bs - src[..bs].rfind('\n').map_or(0, |i| i + 1);
-    if col <= 8 {
-        return None;
+    if plan.splices.iter().any(|sp| (sp.span.0 as usize) < start) {
+        return Err(mismatch("a command sits in the arm's leading comment"));
     }
-    let ind = " ".repeat(col);
-    let body = format!("{}spaRpc_{}", &src[bs..ps], &src[pe..be]);
-    Some(format!(
-        "{ind}let\n{ind}    spaRpc_ =\n{ind}        {call}\n{ind}in\n{ind}{body}"
-    ))
+    let body = apply_plan_splices(src, (start, pe), &plan.splices, inp.upd_module, plan)?;
+    let col = start - src[..start].rfind('\n').map_or(0, |i| i + 1);
+    if col > 8 {
+        return Ok((body, col));
+    }
+    if body.contains("\"\"\"") {
+        return Err((
+            "the arm's body sits at or left of column 8 and holds a multi-line string".to_string(),
+            "indent the arm's body further, or bind the string to a top-level name".to_string(),
+        ));
+    }
+    let shift = " ".repeat(12 - col);
+    Ok((body.replace('\n', &format!("\n{shift}")), 12))
+}
+
+/// The top-level `->` segments of a type (arrows inside parentheses,
+/// brackets or braces belong to their segment).
+fn arrow_segments(ty: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    let cs: Vec<char> = ty.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && c == '-' && cs.get(i + 1) == Some(&'>') {
+            out.push(cur.trim().to_string());
+            cur.clear();
+            i += 2;
+            continue;
+        }
+        cur.push(c);
+        i += 1;
+    }
+    out.push(cur.trim().to_string());
+    out
+}
+
+/// The `Cmd …` type of a `( model, Cmd … )` result type, if it is written as
+/// a tuple.
+fn tuple_cmd_type(result: &str) -> Option<String> {
+    let inner = result.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let mut depth = 0i32;
+    let mut parts: Vec<String> = vec![String::new()];
+    for c in inner.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        parts.last_mut().unwrap().push(c);
+    }
+    match parts.as_slice() {
+        [_, c] if c.trim().starts_with("Cmd ") || c.trim() == "Cmd" => Some(c.trim().to_string()),
+        _ => None,
+    }
+}
+
+/// The client copy of a helper on a planned arm's path: `<name>SpaClient_`,
+/// which takes the RPC (`spaRpc_`) before the helper's own parameters, with
+/// each splice applied. Its annotation gains `Cmd … ->` (the helper's own
+/// command type) when the result is written as a `( model, Cmd … )` tuple, and
+/// is left out otherwise (an alias result). `Err` when the helper's module has
+/// no client copy to hold it, or the plan does not fit the source.
+fn helper_copy(
+    inp: &PlanInputs<'_>,
+    plan: &spa_partition::ClientModelPlan,
+    h: &spa_partition::HelperPlan,
+) -> Result<(String, String), PlanHold> {
+    if h.module_name != inp.upd_module && !inp.copy_modules.contains(&h.module_name) {
+        return Err((
+            format!(
+                "the helper `{}.{}` lives in module `{}`, which keeps no client copy",
+                h.module_name, h.name, h.module_name
+            ),
+            format!(
+                "move `{}` into the module that declares `update`, or into a module the \
+                 client already uses",
+                h.name
+            ),
+        ));
+    }
+    let parse = inp.db.module_parse(h.module);
+    let msrc = parse.syntax().text().to_string();
+    let file = parse.tree();
+    let value = file
+        .decls()
+        .find(|d| decl_name(d).as_deref() == Some(h.name.as_str()) && is_value_decl(d))
+        .ok_or_else(|| {
+            mismatch(&format!(
+                "the helper `{}` is not in its module's source",
+                h.name
+            ))
+        })?;
+    let r = value.syntax().text_range();
+    let (vs, ve): (usize, usize) = (r.start().into(), r.end().into());
+    let vtext = &msrc[vs..ve];
+    let vs = vs + (vtext.len() - vtext.trim_start().len());
+    let ve = ve - (vtext.len() - vtext.trim_end().len());
+    let text = apply_plan_splices(&msrc, (vs, ve), &h.splices, &h.module_name, plan)?;
+    let copy = copy_name(&h.name);
+    let rest = text
+        .strip_prefix(h.name.as_str())
+        .filter(|r| r.starts_with(char::is_whitespace))
+        .ok_or_else(|| {
+            (
+                format!(
+                    "the helper `{}` is not defined as `{} <params> = …`",
+                    h.name, h.name
+                ),
+                format!("define `{}` with its parameters before `=`", h.name),
+            )
+        })?;
+    let value_text = format!("{copy} spaRpc_{rest}");
+    let anno = file
+        .decls()
+        .find(|d| {
+            decl_name(d).as_deref() == Some(h.name.as_str()) && decl_kind(d) == DeclKind::TypeAnno
+        })
+        .and_then(|d| {
+            let t = flatten_expr_text(slice(&msrc, d.syntax()));
+            let ty = t
+                .trim()
+                .strip_prefix(h.name.as_str())?
+                .trim_start()
+                .strip_prefix(':')?;
+            let segs = arrow_segments(ty);
+            let cmd = tuple_cmd_type(segs.last()?)?;
+            Some(format!("{copy} : {cmd} -> {}\n", ty.trim()))
+        })
+        .unwrap_or_default();
+    Ok((copy, format!("{anno}{value_text}")))
+}
+
+/// Which client body a server arm gets (see [`client_arm_body`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ClientArmKind {
+    /// The arm as written through `let` / `if` / `case` / helpers, the RPC
+    /// bound once above it (a planned arm, v0.28.0).
+    Planned,
+    /// The arm's direct `( model, cmd )` tuple, the command replaced by the
+    /// RPC.
+    DirectTuple,
+    /// `( model, rpc )`: the server makes the write (a hold RPC), or the arm
+    /// writes nothing.
+    Rpc,
+}
+
+/// The client body of one server arm, laid out to follow a pattern written at
+/// column 8.
+pub(crate) struct ClientArmBody {
+    pub(crate) text: String,
+    pub(crate) kind: ClientArmKind,
+}
+
+/// The client body of server arm `arm_index` (constructor `m`), with `call`
+/// the RPC built from the model and Msg the arm runs on. The split and the
+/// differential fuzzer's client leg both take the body from here.
+///
+///   * A PLANNED arm of an async constructor (its tail runs through `let` /
+///     `if` / `case` / helpers): the client runs it as written, with each
+///     command that needs the server replaced by the RPC, bound once above it,
+///     and each `Cmd.none` leaf kept, so it sends nothing where Sky.Live
+///     performs nothing (spa_partition `client_model_plan`).
+///   * An async constructor whose arm writes the model as a direct tuple: the
+///     tuple as it stands, with only its command half replaced by the RPC. The
+///     model half reads no server data, so it runs here once, when the Msg
+///     runs, exactly as on Sky.Live.
+///   * Otherwise `( model, rpc )`: the server makes the write, or the arm
+///     writes nothing (a client-result root then answers "no task ran" on a
+///     `Cmd.none` leaf, and the client dispatches nothing).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn client_arm_body(
+    arm: &syntax::ast::MatchArm,
+    arm_index: usize,
+    m: &str,
+    src: &str,
+    call: &str,
+    model_param: &str,
+    arm_routes: &ArmRoutes,
+) -> Result<ClientArmBody, String> {
+    let hold = !arm_routes.async_heads.contains(m);
+    if !hold {
+        if let Some((body, col)) = arm_routes.plan_bodies.get(&arm_index) {
+            let ind = " ".repeat(*col);
+            // The arm as written, every model write kept.
+            let planned_arm: &str = body;
+            return Ok(ClientArmBody {
+                text: format!(
+                    "{ind}let\n{ind}    spaRpc_ =\n{ind}        {call}\n{ind}in\n{ind}{planned_arm}"
+                ),
+                kind: ClientArmKind::Planned,
+            });
+        }
+    }
+    if arm_routes.client_model.contains(m) {
+        let body = client_model_arm_body(arm, src, call).ok_or_else(|| {
+            format!(
+                "sky.spa: server branch `{m}`: the analysis read a direct `( model, cmd )` \
+                 tuple, but the split could not find it in the source"
+            )
+        })?;
+        return Ok(ClientArmBody {
+            text: format!("            {body}"),
+            kind: ClientArmKind::DirectTuple,
+        });
+    }
+    Ok(ClientArmBody {
+        text: format!("            ( {model_param}\n            , {call}\n            )"),
+        kind: ClientArmKind::Rpc,
+    })
 }
 
 fn gen_frontend_update(
@@ -9640,6 +10534,7 @@ fn gen_frontend_update(
     // the hook, keep the model and report loudly (`Spa.reportRpcFailure`). The
     // presence flag is resolved by the caller against the ENTRY (see the param).
     let mut arms_out = String::new();
+    let mut emitted_arms = 0usize;
     let arm_count = case.arms().count();
     if !arm_routes.is_empty() && arm_routes.server.len() + arm_routes.client.len() != arm_count {
         return Err(format!(
@@ -9680,7 +10575,9 @@ fn gen_frontend_update(
             let io = &server.iter().find(|(n, _)| *n == m).unwrap().1;
             let positional = arm_routes.server.get(&arm_index).cloned().flatten();
             let pat_text = positional.unwrap_or_else(|| {
-                pat.map(|p| slice(src, &p).to_string())
+                // The pattern node can carry its leading trivia (the newline
+                // and the source indent): the generated arm sets its own column.
+                pat.map(|p| slice(src, &p).trim().to_string())
                     .unwrap_or_else(|| m.clone())
             });
             let req_codec = format!("{}ReqCodec", lower_first(&m));
@@ -9736,46 +10633,16 @@ fn gen_frontend_update(
                     residual.join(", ")
                 )
             };
-            // An async constructor whose arm writes the model keeps that write
-            // in the client: the arm is written out as it stands, with only its
-            // command half replaced by the RPC. The model half reads no server
-            // data (spa_partition `own_model_client`), so it runs here once,
-            // when the Msg runs, exactly as on Sky.Live.
-            let client_model_text = if arm_routes.client_model.contains(&m) {
-                Some(
-                    client_model_arm_body(&arm, src, &call).ok_or_else(|| {
-                        format!(
-                            "sky.spa: server branch `{m}`: the analysis read a direct `( model, cmd )` \
-                             tuple, but the split could not find it in the source"
-                        )
-                    })?,
-                )
-            } else {
-                None
-            };
-            // A client-result root whose tail the client can run keeps its
-            // `Cmd.none` leaves: it sends the request only from the perform leaf,
-            // as Sky.Live runs the task only there.
-            let none_leaf_text = if client_model_text.is_none() && client_result.contains_key(&m) {
-                arm_routes
-                    .none_leaf
-                    .get(&arm_index)
-                    .and_then(|plan| client_none_leaf_arm_body(&arm, src, plan, &call))
-            } else {
-                None
-            };
-            match (client_model_text, none_leaf_text) {
-                (Some(body), _) => arms_out.push_str(&format!("        {pat_text} ->\n            {body}\n\n")),
-                (None, Some(body)) => arms_out.push_str(&format!("        {pat_text} ->\n{body}\n\n")),
-                (None, None) => arms_out.push_str(&format!(
-                    "        {pat_text} ->\n            ( {model_param}\n            , {call}\n            )\n\n"
-                )),
-            }
+            // The arm's client body: as written (a planned or direct-tuple arm
+            // of an async constructor), or `( model, rpc )`.
+            let body = client_arm_body(&arm, arm_index, &m, src, &call, model_param, arm_routes)?;
+            emitted_arms += 1;
+            arms_out.push_str(&format!("        {pat_text} ->\n{}\n\n", body.text));
         } else {
-            // Pure client-local branch — verbatim.
-            let text = slice(src, arm.syntax());
+            emitted_arms += 1;
+            // Pure client-local branch — verbatim, laid out at column 8.
             arms_out.push_str("        ");
-            arms_out.push_str(text.trim());
+            arms_out.push_str(&arm_at_column_8(arm.syntax(), src));
             arms_out.push_str("\n\n");
         }
     }
@@ -9932,11 +10799,43 @@ fn gen_frontend_update(
     } else {
         format!("({raw_model} as {model_param})")
     };
-    Ok(format!(
+    let out = format!(
         "{update_anno}\nupdate {msg_param} {model_binder} =\n    case {msg_param} of\n{}{follow_decls}",
         arms_out.trim_end()
-    ))
+    );
+    // A planned arm is re-laid out from its source: re-parse the generated
+    // `update` and check it still has every arm, so a layout the parser reads
+    // differently fails here (and the arm holds) instead of shipping.
+    if !arm_routes.plan_bodies.is_empty() {
+        // Every server constructor (and `init`'s RPC) adds an `Ok` and an
+        // `Err` `Applied<Msg>` arm.
+        let expect = emitted_arms + server.len() * 2;
+        let probe = format!("module SpaProbe_ exposing (..)\n\n\n{out}\n");
+        let parse = syntax::parse(&probe, base::FileId(0));
+        let got = parse
+            .tree()
+            .decls()
+            .find(|d| decl_name(d).as_deref() == Some("update") && is_value_decl(d))
+            .and_then(|d| {
+                d.syntax()
+                    .descendants()
+                    .find(|n| n.kind() == SyntaxKind::CaseExpr)
+                    .and_then(syntax::ast::CaseExpr::cast)
+            })
+            .map(|c| c.arms().count());
+        if !parse.errors().is_empty() || got != Some(expect) {
+            return Err(format!(
+                "{PLAN_REPARSE}: the regenerated `update` re-parses with {} arm(s), expected {expect}",
+                got.map_or("no".to_string(), |g| g.to_string())
+            ));
+        }
+    }
+    Ok(out)
 }
+
+/// The marker of a generation failure the planned arms caused (the caller
+/// then holds them).
+const PLAN_REPARSE: &str = "sky.spa: planned client arms";
 
 /// A parameter usable as an expression: a plain lower-case name.
 fn is_plain_param(p: &str) -> bool {
@@ -11260,5 +12159,168 @@ mod live_store_section_tests {
         let got = emit_live_store_section(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(got, "");
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    fn report() -> SpaSplitReport {
+        SpaSplitReport {
+            out_dir: String::new(),
+            files: Vec::new(),
+            server_branches: Vec::new(),
+            client_branches: Vec::new(),
+            excluded: Vec::new(),
+            notes: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn set(xs: &[&str]) -> BTreeSet<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The frontend build is the oracle: a planned constructor whose client
+    /// copy does not compile holds (with the reason), the others stay async.
+    #[test]
+    fn the_oracle_holds_only_the_constructor_whose_copy_does_not_compile() {
+        let used_now: RefCell<BTreeSet<String>> = RefCell::new(BTreeSet::new());
+        let policies: RefCell<Vec<(bool, BTreeSet<String>)>> = RefCell::new(Vec::new());
+        let cands = set(&["Good", "Bad"]);
+        let out = generate_checked(
+            Path::new("/nonexistent"),
+            |p| {
+                policies
+                    .borrow_mut()
+                    .push((p.all_off, p.off.iter().cloned().collect()));
+                let used: BTreeSet<String> =
+                    cands.iter().filter(|c| p.allows(c)).cloned().collect();
+                *used_now.borrow_mut() = used.clone();
+                Ok((report(), used, cands.clone()))
+            },
+            |_| {
+                if used_now.borrow().contains("Bad") {
+                    vec!["Type mismatch in badSpaClient_".to_string()]
+                } else {
+                    Vec::new()
+                }
+            },
+        );
+        assert!(out.is_ok());
+        let last = policies.borrow().last().cloned().unwrap();
+        assert_eq!(last, (false, set(&["Bad"])), "{:?}", policies.borrow());
+    }
+
+    /// A frontend that fails with every plan off too is not the plans'
+    /// failure: the plans stay (the build reports the error as before).
+    #[test]
+    fn the_oracle_keeps_the_plans_when_the_failure_is_not_theirs() {
+        let policies: RefCell<Vec<bool>> = RefCell::new(Vec::new());
+        let out = generate_checked(
+            Path::new("/nonexistent"),
+            |p| {
+                policies.borrow_mut().push(p.all_off || !p.off.is_empty());
+                let used = if p.all_off {
+                    BTreeSet::new()
+                } else {
+                    set(&["A"])
+                };
+                Ok((report(), used, set(&["A"])))
+            },
+            |_| vec!["Undefined name: appDef".to_string()],
+        );
+        assert!(out.is_ok());
+        assert_eq!(policies.borrow().last(), Some(&false));
+    }
+
+    /// A generation error that persists with every plan off is returned.
+    #[test]
+    fn the_oracle_returns_an_error_that_is_not_the_plans() {
+        let out = generate_checked(
+            Path::new("/nonexistent"),
+            |_| Err("cannot auto-split: no case".to_string()),
+            |_| Vec::new(),
+        );
+        assert_eq!(out.err().as_deref(), Some("cannot auto-split: no case"));
+    }
+
+    #[test]
+    fn helper_annotations_take_the_helpers_own_command_type() {
+        assert_eq!(
+            arrow_segments("(a -> b) -> Model -> ( Model, Cmd msg )"),
+            vec!["(a -> b)", "Model", "( Model, Cmd msg )"]
+        );
+        assert_eq!(
+            tuple_cmd_type("( Model, Cmd Msg )").as_deref(),
+            Some("Cmd Msg")
+        );
+        assert_eq!(tuple_cmd_type("Step"), None);
+        assert_eq!(tuple_cmd_type("( Model, Int )"), None);
+    }
+
+    #[test]
+    fn a_client_arm_left_of_column_8_moves_right_as_a_block() {
+        let src = "update msg model =\n  case msg of\n    A ->\n      ( model, Cmd.none )\n";
+        let parse = syntax::parse(src, base::FileId(0));
+        let arm = parse
+            .syntax()
+            .descendants()
+            .find(|n| n.kind() == SyntaxKind::MatchArm)
+            .expect("an arm");
+        assert_eq!(
+            arm_at_column_8(&arm, src),
+            "A ->\n          ( model, Cmd.none )"
+        );
+    }
+
+    /// A plan whose recorded text no longer matches the source holds the arm
+    /// (fail closed), with a build note naming it.
+    #[test]
+    fn a_stale_plan_span_holds_the_arm_with_a_note() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let fx = repo.join("rust/crates/sky/tests/fixtures/spa-async-leaves");
+        let (db, entry, check_ids) =
+            crate::build::load_source_db(&repo, &fx, None).expect("load fixture");
+        let (mut report, _) =
+            analyze_for_split(&db, entry, &check_ids, "fx".into()).expect("analyse");
+        for b in report.branches.iter_mut() {
+            if ctor_name(&b.msg) == "IfWrap" {
+                if let Ok(plan) = &mut b.client_model {
+                    plan.splices[0].text = "Cmd.perform somethingElse Got".into();
+                }
+            }
+        }
+        let internal: HashSet<String> = report.server_internal.iter().cloned().collect();
+        let routes = spa_partition::server_routes(&report.branches, &internal).unwrap();
+        let mut ar = ArmRoutes::from_report(&report.branches, &routes, &report.chaining_branches);
+        let parse = db.module_parse(entry);
+        let src = parse.syntax().text().to_string();
+        let file = parse.tree();
+        let copy_modules: HashSet<String> =
+            ["Main", "Remote"].iter().map(|s| s.to_string()).collect();
+        let notes = ar.finalize_plans(
+            &report.branches,
+            &routes,
+            &report.chaining_branches,
+            &PlanInputs {
+                db: &db,
+                upd_file: &file,
+                upd_src: &src,
+                upd_module: "Main",
+                copy_modules: &copy_modules,
+                identity: &[],
+                guard_reads_identity: false,
+                policy: &PlanPolicy::default(),
+            },
+        );
+        assert!(!ar.async_heads.contains("IfWrap"));
+        assert!(ar.async_heads.contains("CaseWrap"));
+        assert!(
+            notes.iter().any(|n| n.contains("`IfWrap` holds later Msgs") && n.contains("no longer matches")),
+            "{notes:#?}"
+        );
     }
 }
