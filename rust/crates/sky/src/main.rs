@@ -9942,7 +9942,7 @@ rm -rf build && mkdir -p build/gen build/classes
 ASSETS=(); [ -d app/src/main/assets ] && ASSETS=(-A app/src/main/assets -0 gguf)
 "$BT/aapt2" link -o build/base.apk -I "$PLAT" \
   --manifest app/src/main/AndroidManifest.xml -R build/res.zip --java build/gen \
-  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay "${ASSETS[@]}"
+  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay ${ASSETS[@]+"${ASSETS[@]}"}
 # Library jars the shell compiles against and dexes in (app/libs: the ZXing
 # decoder when the app calls Native.scanCode).
 LIBS="$(find app/libs -name '*.jar' 2>/dev/null | sort | tr '\n' ':' || true)"
@@ -9986,7 +9986,7 @@ rm -rf release && mkdir -p release/gen release/classes
 ASSETS=(); [ -d app/src/main/assets ] && ASSETS=(-A app/src/main/assets -0 gguf)
 "$BT/aapt2" link -o release/base.apk -I "$PLAT" \
   --manifest app/src/main/AndroidManifest.xml -R release/res.zip --java release/gen \
-  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay "${ASSETS[@]}"
+  --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay ${ASSETS[@]+"${ASSETS[@]}"}
 LIBS="$(find app/libs -name '*.jar' 2>/dev/null | sort | tr '\n' ':' || true)"
 javac --release 11 -cp "$PLAT:$LIBS" -d release/classes \
   $(find release/gen -name '*.java') $(find app/src/main/java -name '*.java')
@@ -10007,7 +10007,7 @@ echo "OK -> release/{{APK}}"
 if command -v bundletool >/dev/null 2>&1; then
   "$BT/aapt2" link --proto-format -o release/proto.apk -I "$PLAT" \
     --manifest app/src/main/AndroidManifest.xml -R release/res.zip \
-    --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay "${ASSETS[@]}"
+    --min-sdk-version 24 --target-sdk-version 35 --auto-add-overlay ${ASSETS[@]+"${ASSETS[@]}"}
   rm -rf release/module && mkdir -p release/module/manifest release/module/dex
   ( cd release/module && unzip -q ../proto.apk && mv AndroidManifest.xml manifest/ \
       && cp ../classes.dex dex/ \
@@ -18834,6 +18834,44 @@ mod tests {
             );
         }
         assert!(!ANDROID_BUILD_RELEASE.contains("debug.keystore"));
+    }
+
+    /// The Android build scripts start `ASSETS=()` and fill it only when the
+    /// app ships assets (a bundled model). macOS runs them with /bin/bash 3.2,
+    /// where `"${ASSETS[@]}"` of the empty array under `set -u` is "unbound
+    /// variable": `sky package --release --target mobile:android` of an app
+    /// with no assets failed (release gate-native,
+    /// android_release_is_signed_with_the_upload_key). Every expansion must
+    /// be the guarded form, and it must run under the system bash.
+    #[test]
+    fn android_build_scripts_expand_an_empty_asset_list_under_set_u() {
+        for (name, script) in [
+            ("ANDROID_BUILD_APK", ANDROID_BUILD_APK),
+            ("ANDROID_BUILD_RELEASE", ANDROID_BUILD_RELEASE),
+        ] {
+            let uses: Vec<&str> = script
+                .split_whitespace()
+                .filter(|w| w.contains("ASSETS[@]"))
+                .collect();
+            assert!(!uses.is_empty(), "{name} no longer uses ASSETS");
+            for w in uses {
+                assert_eq!(
+                    w, "${ASSETS[@]+\"${ASSETS[@]}\"}",
+                    "{name}: an unguarded expansion of the empty ASSETS array"
+                );
+                let probe = format!("set -euo pipefail\nASSETS=()\nprintf '[%s]' {w}\necho done\n");
+                let out = std::process::Command::new("/bin/bash")
+                    .args(["-c", &probe])
+                    .output()
+                    .expect("/bin/bash");
+                assert!(
+                    out.status.success()
+                        && String::from_utf8_lossy(&out.stdout).ends_with("done\n"),
+                    "{name}: `{w}` fails under set -u in /bin/bash: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
     }
 
     /// Both mobile shells must install the `skyNative` native notification bridge
