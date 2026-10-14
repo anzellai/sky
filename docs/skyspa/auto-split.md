@@ -879,10 +879,8 @@ and returns `( model, Cmd.none )` for `[]`, as Sky.Live dispatches nothing on a
 into the client `update`, so `Saved`'s arm runs in the wasm client.
 
 **A `Cmd.none` leaf sends no request (v0.28.0).** A root whose tail the client
-can read (`let` / `if` / `case` over direct `( model, cmd )` tuples, one
-`Cmd.perform` leaf, the other leaves `Cmd.none`, every condition and binding
-client-pure: `spa_partition::NoneLeafPlan`) runs in the client as written,
-with the perform leaf's command replaced by the RPC:
+can read runs in the client as written, with each command that needs the server
+replaced by the RPC (the planned arm of §19a below, `spa_partition::client_model_plan`):
 
 ```elm
 Gated ->
@@ -899,8 +897,8 @@ Gated ->
 
 So the request goes out only on the branch where Sky.Live runs the task. A
 root whose `Cmd.none` the client cannot see (a guard helper's reject path, a
-helper that returns the command) sends the request on every branch, and the
-backend answers `[]` when no task ran. Before v0.28.0 it answered `Err "…
+hold arm) sends the request on every branch, and the backend answers `[]` when
+no task ran. Before v0.28.0 it answered `Err "…
 carried no server task to run"`, and the client dispatched `Got (Err …)`, a
 failure the app never had. `Saved` stays a client arm —
 **no** `/_rpc/Saved` route, **no** `SavedReq`, **no** decomposition of the
@@ -951,6 +949,121 @@ and `readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err`
 "no task ran" answer in `runtime-go/rt/spa_perform_notjs_test.go`.
 
 
+## 19a. Async arms through `case` / `if` / `let` and helpers (v0.28.0)
+
+Before v0.28.0 a server arm ran async (`Spa.rpc`) only when its body was a
+direct `( model, cmd )` tuple. Any other shape held later Msgs for the whole
+request (`Spa.rpcHold`), so a page froze while a slow call ran: in
+`examples/72-ai-support-desk`, `Select` (a helper), `Redraft` (a `case`) and
+`Send` (a `case` with an `if`) showed no selection and no "drafting" label
+until the model answered, and typed text applied late. Sky.Live shows them at
+once.
+
+**The plan** (`spa_partition::client_model_plan`, per server arm). It walks
+the arm's tail positions:
+
+- `( model', cmd )`: a leaf. A command half that resolves to `Cmd.none` alone
+  stays in the client (KEEP: no request, as Sky.Live performs nothing). Every
+  other command half becomes the RPC (an `Rpc` splice).
+- `let … in e`, `if … then a else b` (and `else if` chains), `case s of …`:
+  the walk enters the tail expressions.
+- `f a b` where `f` is a top-level def called with exactly its parameters,
+  directly or through `|>` / `<|`: the walk enters `f`'s body. A helper whose
+  own tail holds an `Rpc` leaf gets a client copy (a `Callee` splice);
+  a helper with only `Cmd.none` leaves is called as it is.
+- Anything else holds: a tuple bound to a name, a lambda (a guard wrapper),
+  a constructor or kernel call, a recursive helper, a helper called with
+  fewer or more arguments than its parameters (`f id = \model -> …`),
+  `update X model`, helpers nested deeper than 8 calls.
+
+**One taint check.** Everything the client copy evaluates (the whole arm body
+and every copied helper body, minus the `Rpc` command halves and the copied
+callee names, `CollectCtx.skip`) must reach no server effect and no
+server-tainted value, compose no other arm and force no effect. So every
+local in scope on the client is client data, a `let` that binds the task makes
+the arm hold, and every condition the client evaluates reads only the request
+model's fields: the read-set walk includes them (also a field read through a
+value derived from the model), so the backend takes the branch the client
+took.
+
+**The splice.** The plan carries trimmed spans and the source text found
+there. The split (`ArmRoutes::finalize_plans`) checks each span against the
+module source, applies the splices in order (`apply_plan_splices`) and lays the
+arm out at its source column (moved right as a block when it sits at or left
+of column 8, the generated pattern column). The RPC is bound once at the arm's
+top, built from the model and Msg the arm runs on (a binder shadowed inside a
+branch does not change the request):
+
+```elm
+Select id ->
+    let
+        spaRpc_ =
+            Spa.rpc selectReqCodec selectRespCodec "/_rpc/Select" { … } AppliedSelect
+    in
+    (selectTicketSpaClient_ spaRpc_) id model
+```
+
+A helper copy `<f>SpaClient_` takes `spaRpc_` before the helper's own
+parameters. Its annotation gains the helper's own command type (`Cmd Msg ->`,
+or `Cmd msg ->` for a helper polymorphic in its Msg) when the result is
+written as a `( model, Cmd … )` tuple, and is left out for an alias result.
+One copy per helper, however many arms call it. A helper in another module is
+copied into that module's client subset and added to its `exposing` list; it
+must be called qualified (`Remote.pick model`), and a module with no client
+subset holds the arm.
+
+**Fail closed.** An arm holds, with a build note, when:
+
+- it reads or writes a signed-session identity field (its trusted value comes
+  from the cookie on the server, never from the client's model), or the app's
+  `App.withGuard` guard reads one (then the client cannot tell whether the
+  guard lets the write happen, so every arm that writes the model holds);
+- a planned arm's command reaches a `Std.Nav` or `Std.Native` client effect;
+- a span no longer matches the source, a block comment opens the body, or a
+  body left of column 8 holds a multi-line string;
+- the generated `update` or a helper copy does not re-parse with the expected
+  arm and declaration counts;
+- the frontend does not compile with the plan (`generate_checked`, the oracle):
+  the split runs the frontend type check, and on a failure first turns every
+  plan off (when the frontend still fails, the failure is not the plans' and
+  the plans stay), then turns them back on one constructor at a time and holds
+  the ones that fail.
+
+A constructor whose arms write the model is async only when every one of its
+server arms has a plan. A constructor that writes nothing stays async either
+way and uses a plan where one holds up (its `Cmd.none` branches then send
+nothing).
+
+**Build notes.** Every server arm that holds gets one line:
+`` Sky.Spa: `Mixed Nothing` holds later Msgs while its request runs: <reason>.
+To run it async, as Sky.Live does: <change>. ``
+
+**Layout fixes found on the way.** A server arm's pattern carried its leading
+trivia (the newline and the source indent) into the generated `update`, and a
+client arm of an `update` laid out with two-space indentation kept its body
+left of the generated pattern column. Such an `update` did not parse in the
+frontend. Both are fixed (`arm_at_column_8`, the trimmed pattern).
+
+**Verified.** `spa_split_flow.rs`: `async_leaves_run_their_model_write_in_the_client`
+(`tests/fixtures/spa-async-leaves`: 17 async shapes, 9 hold shapes, each with its
+note), `identity_arms_hold_and_a_guard_on_identity_holds_every_write`
+(`spa-async-identity`), `std_app_sibling_update_two_space_layout_runs_async_and_builds`
+(`spa-async-app`, both trees built), `example_72_select_redraft_send_are_async`;
+`spa_split::plan_tests` (the oracle, a stale span, the annotation and layout
+helpers). The differential split fuzzer (`xtask harness --only spa-diff-fuzz`)
+builds each async arm's client leg with the split's own emitter
+(`client_arm_body`) and checks that the client sends exactly where the direct
+update's command is not `Cmd.none` and, for an arm that makes its own write in
+the client, that its model is the direct update's (falsifiers
+`spa-diff-fuzz.async-arm-drops-write`, `spa-diff-fuzz.async-arm-sends-on-keep`).
+The browser stage of `scripts/spa-rpc-order-e2e.sh`
+(`scripts/spa-async-arms-verify.mjs`, fixture `spa-async-arms`) holds the app's
+model call open and reads the page while the request is pending: the selection,
+the busy label and typed text show on web:app as on Sky.Live, a `Cmd.none`
+branch sends no request, and a hold arm (the negative control) shows its write
+only when its request answers.
+
+
 ## 20. RPC consistency, follow-ups, guard and persistence (2026-09-23)
 
 The client must give the answer Sky.Live gives for the same Msg sequence. Live
@@ -966,10 +1079,11 @@ with its Cmds. The split gives each server constructor one of two kinds
 (`spa_split::ArmRoutes`):
 
 - **async** (`Spa.rpc`): the arm's own model write is empty, or reads no server
-  data (`spa_partition` `own_model_client`: a direct `( model, cmd )` tuple whose
-  model half has no server reason). The client keeps that model half and runs
-  it when the Msg runs; only the command goes over the wire, built from the
-  model the Msg ran on and sent at once. The `Applied<Msg>` arm applies no
+  data (`spa_partition::client_model_plan`: a direct `( model, cmd )` tuple, or,
+  since v0.28.0, tuples reached through `let` / `if` / `case` / helpers, §19a).
+  The client keeps the model writes and runs them when the Msg runs; only the
+  command goes over the wire, built from the model the Msg ran on and sent at
+  once. The `Applied<Msg>` arm applies no
   write-set (the client already made the write; later Msgs keep theirs) and
   dispatches the result / follow-up Msgs. Several async RPCs are in flight
   together; their results run in arrival order.

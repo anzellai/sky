@@ -620,6 +620,32 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   backend answers that no task ran (`result : List (Result Error T)`, empty),
   and the client dispatches nothing.
 
+- **Sky.Spa: a server arm runs async through `case`, `if`, `let` and
+  helpers.** On `--target web:app`, an arm whose `( model, cmd )` tuple sat
+  inside a `case`, an `if`, a `let` or a helper held later Msgs for its whole
+  request (`Spa.rpcHold`), so the page froze while a slow call ran: in
+  `examples/72-ai-support-desk` a click on a ticket showed no selection and
+  no "drafting" label until the model answered, and typed text applied late.
+  Sky.Live shows them at once. Such an arm now runs async when every part the
+  client runs reads no server data: the client runs the arm as written (a
+  helper through a client copy), with each command that needs the server
+  replaced by the request, and a `Cmd.none` branch sends no request. Helpers
+  must be top-level functions called with all their arguments (directly or
+  through `|>`), in the module that declares `update` or in a module the
+  client already uses. An arm that reads or writes the signed session holds,
+  and so does every arm that writes the model when `App.withGuard` reads the
+  session (its trusted value is on the server). The build prints a note for
+  every arm that holds: `` `Send` holds later Msgs while its request runs:
+  <reason>. To run it async, as Sky.Live does: <change>. `` A client copy that
+  does not compile makes its arm hold instead of failing the build.
+
+- **Sky.Spa: an `update` laid out with two-space indentation did not split.**
+  The generated client `update` writes each arm's pattern at column 8. A
+  client arm whose body sat at column 6 kept it there, left of its pattern,
+  and a server arm's pattern carried the source's newline and indent, so the
+  generated `update` did not parse. Client arms left of column 8 now move
+  right as a block, and patterns are written trimmed.
+
 - **`sky fmt` no longer moves an own-line comment to a different place in
   the code.** A comment above an `if` then-branch moved into a lambda in that
   branch (`Task.map (\_ -> ..)`) or below `else`. A comment above a pipeline
@@ -829,9 +855,24 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   client runs itself, it checks that the client sends the request exactly on
   the leaf where the direct update performs. It fails when a Model field takes
   one value over every generated model. New fixture
-  `tests/fixtures/spa-readset-noneleaf`; new falsifiers
-  `spa-diff-fuzz.condition-read-dropped` and
-  `spa-diff-fuzz.none-leaf-sends-rpc`.
+  `tests/fixtures/spa-readset-noneleaf`; new falsifier
+  `spa-diff-fuzz.condition-read-dropped`.
+
+- The differential split fuzzer builds the client leg of every async arm with
+  the split's own emitter and checks where it sends (exactly where the direct
+  update's command is not `Cmd.none`) and, for an arm that makes its own model
+  write in the client, that its model is the direct update's (the split
+  applies no server write-set there). New fixture
+  `tests/fixtures/spa-async-leaves` (`SPA_DIFF_FUZZ_EXPECTED` 46); new
+  falsifiers `spa-diff-fuzz.async-arm-drops-write` and
+  `spa-diff-fuzz.async-arm-sends-on-keep`. New tests in `spa_split_flow.rs`
+  (`async_leaves_run_their_model_write_in_the_client`,
+  `identity_arms_hold_and_a_guard_on_identity_holds_every_write`,
+  `std_app_sibling_update_two_space_layout_runs_async_and_builds`,
+  `example_72_select_redraft_send_are_async`) and a browser stage in
+  `scripts/spa-rpc-order-e2e.sh` (`scripts/spa-async-arms-verify.mjs`): the
+  app's model call is held open, and the page is read while the request is
+  pending, in Chromium and WebKit, against Sky.Live.
 
 - Device (phase 5): `tests/Std/Ai/DeviceTest.sky` (every rule of the
   decision, the status, the wire values, the spec builders, record, replay

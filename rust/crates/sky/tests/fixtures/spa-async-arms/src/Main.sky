@@ -1,0 +1,145 @@
+module Main exposing (main)
+
+-- Sky.Spa async-arm fixture (scripts/spa-async-arms-verify.mjs, run by
+-- scripts/spa-rpc-order-e2e.sh). The "model" is an HTTP endpoint the test
+-- holds open until it releases it, so every check is ordered, never timed.
+--
+--   select  `Select 1` reaches the server only through a helper's command (the
+--           examples/72 shape). While the model call is held, the page shows
+--           the selection and the busy label, and typed text applies at once,
+--           as on Sky.Live (before v0.28.0 the web:app page froze).
+--   saved   `Select 2` takes the helper's `Cmd.none` branch: no request.
+--   hold    `HoldPick` writes a server value into the model, so it holds
+--           later Msgs: the negative control (Sky.Live shows its write at
+--           once; web:app shows it when the request answers).
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Http as Http
+import Sky.Core.String as String
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.App as App
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Std.Ui.Input as Input
+
+
+type alias Model =
+    { selected : Int
+    , busy : Bool
+    , draft : String
+    , typed : String
+    , hold : String
+    }
+
+
+type Msg
+    = Select Int
+    | Drafted (Result Error String)
+    | Type String
+    | HoldPick
+    | HoldDone (Result Error String)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { selected = 0, busy = False, draft = "-", typed = "", hold = "-" }, Cmd.none )
+
+
+askModel : Int -> Task Error String
+askModel id =
+    Http.get (System.getenvOr "SPA_ASYNC_MODEL_URL" "http://127.0.0.1:9/" ++ "?id=" ++ String.fromInt id)
+        |> Task.map (\r -> r.body)
+
+
+serverLabel : String
+serverLabel =
+    System.getenvOr "SPA_ASYNC_HOLD_LABEL" "held"
+
+
+selectItem : Int -> Model -> ( Model, Cmd Msg )
+selectItem id model =
+    let
+        opened = { model | selected = id }
+    in
+        if id == 2 then
+            ( { opened | draft = "saved reply", busy = False }, Cmd.none )
+
+        else
+            ( { opened | draft = "-", busy = True }, Cmd.perform (askModel id) Drafted )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Select id ->
+            selectItem id model
+
+        Drafted (Ok s) ->
+            ( { model | draft = s, busy = False }, Cmd.none )
+
+        Drafted (Err e) ->
+            ( { model | draft = "error", busy = False }, Cmd.none )
+
+        Type s ->
+            ( { model | typed = s }, Cmd.none )
+
+        HoldPick ->
+            ( { model | hold = serverLabel }, Cmd.perform (askModel 9) HoldDone )
+
+        HoldDone _ ->
+            ( { model | hold = model.hold ++ " done" }, Cmd.none )
+
+
+row : String -> String -> Element Msg
+row id txt =
+    Ui.el [ Ui.htmlAttribute "id" id ] (Ui.text txt)
+
+
+btn : String -> Msg -> Element Msg
+btn id m =
+    Ui.button [ Ui.htmlAttribute "id" id ] { onPress = Just m, label = Ui.text id }
+
+
+busyLabel : Model -> String
+busyLabel model =
+    if model.busy then
+        "drafting"
+
+    else
+        "-"
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ row "selected" ("SELECTED=" ++ String.fromInt model.selected)
+        , row "busy" ("BUSY=" ++ busyLabel model)
+        , row "draft" ("DRAFT=" ++ model.draft)
+        , row "typed" ("TYPED=" ++ model.typed)
+        , row "hold" ("HOLD=" ++ model.hold)
+        , btn "t1" (Select 1)
+        , btn "t2" (Select 2)
+        , btn "holdbtn" HoldPick
+        , Input.text
+            [ Ui.htmlAttribute "id" "type" ]
+            { onChange = Type
+            , text = model.typed
+            , placeholder = Nothing
+            , label = Input.labelHidden "type"
+            }
+        ]
+
+
+main : Task Error ()
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound (Ui.text "nf"))
