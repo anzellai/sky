@@ -2965,7 +2965,10 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// `TrainCloudTest` 12, `RegistryStoreTest` 5, and the phase 4 cases added to
 /// `FailureTest` and `RegistryTest`), measured by the `sky-suites` gate (42
 /// suites, every case green).
-pub const SKY_SUITES_EXPECTED: u64 = 1066;
+/// 1066 -> 1068 in the phase 4 live runs (+2 `ServeTest`: the tier image
+/// runs the `serve` verb with an executable binary, and the deployed tier
+/// stages its base with `SKY_AI_FETCH=on`), measured by the `sky-suites` gate.
+pub const SKY_SUITES_EXPECTED: u64 = 1068;
 
 /// Suites that are discovered and RUN, but whose failure does not fail the
 /// gate, because the defect is in the **compiler**, not in the suite.
