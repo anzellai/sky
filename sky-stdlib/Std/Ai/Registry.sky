@@ -677,6 +677,8 @@ insertVersion (Registry r) name adapter lin baseDigest info blob =
                                                                              lin.metadata
                                                                          , blocked =
                                                                              Nothing
+                                                                         , onDevice =
+                                                                             Nothing
                                                                          , createdAt =
                                                                              now
                                                                          }
@@ -1919,6 +1921,8 @@ adapterFor reg ref localEngine =
                                                   , baseDigest = v.baseDigest
                                                   , format = "gguf"
                                                   , path = path
+                                                  , onDevice =
+                                                      v.onDevice /= Nothing
                                                   })
 
                                Nothing ->
@@ -2600,6 +2604,13 @@ storeResolver st =
                                                                              format
                                                                          , path =
                                                                              path
+                                                                         -- The device clearance lives in the
+                                                                         -- registry database (allowOnDevice),
+                                                                         -- not in the store manifest, so a
+                                                                         -- store-only resolve never clears an
+                                                                         -- adapter for devices.
+                                                                         , onDevice =
+                                                                             False
                                                                          }
                                                                  in
                                                                      if not

@@ -1295,18 +1295,6 @@ func State_TraceRow(p0 string, p1 string, p2 string, p3 string, p4 string, p5 st
 	return State_TraceRow_R{TraceId: p0, SpanId: p1, ParentId: p2, Name: p3, Kind: p4, StartTime: p5, DurationMs: p6, Status: p7}
 }
 
-type Std_Ai_Cloud_Google_Response_R struct {
-	Status  int    `sky:"status,int"`
-	Body    string `sky:"body,string"`
-	Request string `sky:"request,string"`
-}
-
-func init() { rt.RegisterGobType(Std_Ai_Cloud_Google_Response_R{}) }
-
-func Std_Ai_Cloud_Google_Response(p0 int, p1 string, p2 string) Std_Ai_Cloud_Google_Response_R {
-	return Std_Ai_Cloud_Google_Response_R{Status: p0, Body: p1, Request: p2}
-}
-
 type Std_Ai_Endpoint_Setting_R struct {
 	Key    string `sky:"key,string"`
 	Name   string `sky:"name,string"`
@@ -3977,7 +3965,7 @@ func View_textSecondary() Std_Ui_Color {
 
 func View_compactTime(v_0 string) string {
 	{
-		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("T"), any(v_0)))
+		_subj := rt.String_splitT("T", v_0)
 		if rt.SkyLenT(_subj) == 2 {
 			v_1 := rt.SkyElemT(_subj, 0)
 			v_2 := rt.SkyElemT(_subj, 1)
@@ -4265,7 +4253,7 @@ func TracesTab_err() Std_Ui_Color {
 
 func TracesTab_compactTime(v_0 string) string {
 	{
-		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("T"), any(v_0)))
+		_subj := rt.String_splitT("T", v_0)
 		if rt.SkyLenT(_subj) == 2 {
 			v_1 := rt.SkyElemT(_subj, 0)
 			v_2 := rt.SkyElemT(_subj, 1)
@@ -4623,7 +4611,7 @@ func LogsTab_textMuted() Std_Ui_Color {
 
 func LogsTab_compactTime(v_0 string) string {
 	{
-		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("T"), any(v_0)))
+		_subj := rt.String_splitT("T", v_0)
 		if rt.SkyLenT(_subj) == 2 {
 			v_1 := rt.SkyElemT(_subj, 0)
 			v_2 := rt.SkyElemT(_subj, 1)
@@ -6272,7 +6260,7 @@ func Std_Ui_layoutWith(v_0 struct {
 		wrapperExtraStyle_3 := Std_Ui_buildStyleString(false, Std_Ui_LayoutContext_AsColumn, Std_Ui_LayoutContext_AsColumn, v_0.WrapperAttrs)
 		_ = wrapperExtraStyle_3
 		wrapperStyle_4 := func() string {
-			if /* FFI return */ rt.AsBool(rt.String_isEmpty(any(rt.String_trimT(wrapperExtraStyle_3)))) {
+			if rt.String_isEmptyT(rt.String_trimT(wrapperExtraStyle_3)) {
 				return defaultWrapperStyle_2
 			} else {
 				return (defaultWrapperStyle_2 + wrapperExtraStyle_3)
@@ -6643,6 +6631,8 @@ func Std_Html_a(v_0 []Std_Html_Attributes_Attribute, v_1 []Std_Html_Html) Std_Ht
 func Std_Ui_renderNearby(v_0 Std_Ui_Nesting_R, _t0 rt.T2[Std_Ui_Location, Std_Ui_Element]) Std_Html_Html {
 	v_1 := _t0.V0
 	v_2 := _t0.V1
+	_ = v_1
+	_ = v_2
 	{
 		positionStyle_3 := ("position: absolute; display: flex; " + Std_Ui_locationCss(v_1))
 		_ = positionStyle_3
@@ -7766,7 +7756,7 @@ func Std_Ui_findGridTemplate(v_0 []Std_Ui_Attribute) string {
 
 func Std_Ui_takeAfterPipe(v_0 string) string {
 	{
-		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("|"), any(v_0)))
+		_subj := rt.String_splitT("|", v_0)
 		if rt.SkyLenT(_subj) >= 1 {
 			v_1 := rt.SkyTailSliceT(_subj)
 			_ = v_1
@@ -7803,7 +7793,7 @@ func Std_Ui_joinWithPipe(v_0 []string) string {
 
 func Std_Ui_takeBeforePipe(v_0 string) string {
 	{
-		_subj := /* FFI return */ rt.AsListT[string](rt.String_split(any("|"), any(v_0)))
+		_subj := rt.String_splitT("|", v_0)
 		if rt.SkyLenT(_subj) >= 1 {
 			v_1 := rt.SkyElemT(_subj, 0)
 			_ = v_1
@@ -8812,11 +8802,11 @@ func Main_init_(_ any) rt.T2[State_Model_R, any] {
 
 func Main_initWith(v_0 string) rt.T2[State_Model_R, any] {
 	{
-		parent_1 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_PARENT_URL"), any("")))
+		parent_1 := rt.System_getenvOrT(any("SKY_PARENT_URL"), any(""))
 		_ = parent_1
-		hubDbPath_2 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_CONSOLE_HUB_DB"), any("")))
+		hubDbPath_2 := rt.System_getenvOrT(any("SKY_CONSOLE_HUB_DB"), any(""))
 		_ = hubDbPath_2
-		logoutUrl_3 := /* FFI return */ rt.AsString(rt.System_getenvOr(any("SKY_CONSOLE_LOGOUT_URL"), any("")))
+		logoutUrl_3 := rt.System_getenvOrT(any("SKY_CONSOLE_LOGOUT_URL"), any(""))
 		_ = logoutUrl_3
 		params_4 := /* FFI return */ rt.AsMapT[string](rt.Http_parseQuery(any(v_0)))
 		_ = params_4
@@ -9166,7 +9156,7 @@ func Sky_Core_Http_defaultRequest(v_0 string) Sky_Core_Http_HttpRequest_R {
 }
 
 func Sky_Core_Http_withBearer(v_0 any, v_1 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
-	return Sky_Core_Http_withHeader("Authorization", ("Bearer " + /* FFI return */ rt.AsString(rt.Secret_reveal(v_0))), v_1)
+	return Sky_Core_Http_withHeader("Authorization", ("Bearer " + rt.Secret_revealT(v_0)), v_1)
 }
 
 func Sky_Core_Http_withHeader(v_0 string, v_1 string, v_2 Sky_Core_Http_HttpRequest_R) Sky_Core_Http_HttpRequest_R {
@@ -9608,6 +9598,7 @@ func Std_App_withRoutes(v_0 []Std_App_Route, _t0 Std_App_App) Std_App_App {
 			ViewImpl      Std_App_ViewImpl
 		}](_s)
 	}(_t0.Fields[0])
+	_ = v_1
 	return Std_App_App_App(func() struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
@@ -9741,6 +9732,7 @@ func Std_App_withNotFound(v_0 any, _t0 Std_App_App) Std_App_App {
 			ViewImpl      Std_App_ViewImpl
 		}](_s)
 	}(_t0.Fields[0])
+	_ = v_1
 	return Std_App_App_App(func() struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
@@ -9882,6 +9874,7 @@ func Std_App_withConfig(v_0 Std_App_Config, _t0 Std_App_App) Std_App_App {
 			ViewImpl      Std_App_ViewImpl
 		}](_s)
 	}(_t0.Fields[0])
+	_ = v_1
 	return Std_App_App_App(func() struct {
 		Base          Std_App_BaseConfig_R
 		Configs       []Std_App_Config
@@ -10015,6 +10008,7 @@ func Std_App_runLive(_t0 Std_App_App) rt.SkyTask[Sky_Core_Error_Error, struct{}]
 			ViewImpl      Std_App_ViewImpl
 		}](_s)
 	}(_t0.Fields[0])
+	_ = v_0
 	return Std_App_applyWebBase_(Std_App_findWeb(v_0.Configs), v_0.Base, Std_App_guardTerminalView_(v_0.ViewImpl, Std_App_runLiveBoot_(Std_App_App_App(v_0))))
 }
 
@@ -10145,6 +10139,7 @@ func Std_App_liveConfig_(_t0 Std_App_App) rt.SkyMaybe[any] {
 			ViewImpl      Std_App_ViewImpl
 		}](_s)
 	}(_t0.Fields[0])
+	_ = v_0
 	{
 		_subj := v_0.NotFound
 		if _subj.Tag == 0 {
@@ -11004,5 +10999,5 @@ func Sky_Config_csrfValue(v_0 bool) string {
 }
 
 func init() {
-	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpRequest_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AiAliasEvent_R{}, State_AiAlias_R{}, State_AiCall_R{}, State_AiData_R{}, State_AiEngine_R{}, State_AiEvalCase_R{}, State_AiEval_R{}, State_AiFilter_R{}, State_AiModel_R{}, State_AiReportLink_R{}, State_AiSetting_R{}, State_AiSlot_R{}, State_AiTier_R{}, State_AiTrainingRun_R{}, State_AiVersion_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Msg_AiOpenEval_V{}, State_Msg_AiOpenModel_V{}, State_Msg_AiPickSlot_V{}, State_Msg_AiShowFailed_V{}, State_Msg_GlobalQuery_V{}, State_Msg_GotAi_V{}, State_Msg_GotAnalytics_V{}, State_Msg_GotErrors_V{}, State_Msg_GotIdentity_V{}, State_Msg_GotLogs_V{}, State_Msg_GotMetrics_V{}, State_Msg_GotOverview_V{}, State_Msg_GotServiceStats_V{}, State_Msg_GotTraces_V{}, State_Msg_LogFilterClear_V{}, State_Msg_LogFilterPickSession_V{}, State_Msg_LogFilterQuery_V{}, State_Msg_LogFilterToggleLevel_V{}, State_Msg_PivotToTrace_V{}, State_Msg_SelectRange_V{}, State_Msg_SelectService_V{}, State_Msg_SelectTab_V{}, State_Msg_Tick_V{}, State_Msg_TraceFilterQuery_V{}, State_Overview_R{}, State_Scope_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Cloud_Google_Response_R{}, Std_Ai_Endpoint_Setting_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
+	rt.RegisterSkyGobTypes([]any{Sky_Config_Database_Postgres_V{}, Sky_Config_Database_Sqlite_V{}, Sky_Config_Telemetry_Otlp_V{}, Sky_Core_Error_ErrorInfo_R{}, Sky_Core_Error_PanicInfo_R{}, Sky_Core_Error_TypeInfo_R{}, Sky_Core_Http_HttpRequest_R{}, Sky_Http_Server_Request_R{}, Sky_Http_Server_Response_R{}, State_AiAliasEvent_R{}, State_AiAlias_R{}, State_AiCall_R{}, State_AiData_R{}, State_AiEngine_R{}, State_AiEvalCase_R{}, State_AiEval_R{}, State_AiFilter_R{}, State_AiModel_R{}, State_AiReportLink_R{}, State_AiSetting_R{}, State_AiSlot_R{}, State_AiTier_R{}, State_AiTrainingRun_R{}, State_AiVersion_R{}, State_AnalyticsEvent_R{}, State_Analytics_R{}, State_CurrencyTotal_R{}, State_ErrorRow_R{}, State_EventCount_R{}, State_Identity_R{}, State_LogEntry_R{}, State_LogFilter_R{}, State_MetricRow_R{}, State_Model_R{}, State_Msg_AiOpenEval_V{}, State_Msg_AiOpenModel_V{}, State_Msg_AiPickSlot_V{}, State_Msg_AiShowFailed_V{}, State_Msg_GlobalQuery_V{}, State_Msg_GotAi_V{}, State_Msg_GotAnalytics_V{}, State_Msg_GotErrors_V{}, State_Msg_GotIdentity_V{}, State_Msg_GotLogs_V{}, State_Msg_GotMetrics_V{}, State_Msg_GotOverview_V{}, State_Msg_GotServiceStats_V{}, State_Msg_GotTraces_V{}, State_Msg_LogFilterClear_V{}, State_Msg_LogFilterPickSession_V{}, State_Msg_LogFilterQuery_V{}, State_Msg_LogFilterToggleLevel_V{}, State_Msg_PivotToTrace_V{}, State_Msg_SelectRange_V{}, State_Msg_SelectService_V{}, State_Msg_SelectTab_V{}, State_Msg_Tick_V{}, State_Msg_TraceFilterQuery_V{}, State_Overview_R{}, State_Scope_R{}, State_ServiceStat_R{}, State_Store_R{}, State_TraceRow_R{}, Std_Ai_Endpoint_Setting_R{}, Std_App_BaseConfig_R{}, Std_App_DesktopOpts_R{}, Std_App_MobileOpts_R{}, Std_App_TerminalOpts_R{}, Std_App_WebOpts_R{}, Std_Live_Console_Identity_R{}, Std_Ui_Chart_Cfg_R{}, Std_Ui_Chart_Series_R{}, Std_Ui_MarkerFlags_R{}, Std_Ui_Nesting_R{}})
 }

@@ -36,19 +36,32 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 )
 
 var (
 	childSignalOnce sync.Once
+	// childSigMu guards signalOwners, childSigCh's registration and
+	// ownerBridge.
+	childSigMu sync.Mutex
 	// signalOwners counts the app-shape handlers that own the termination
 	// sequence right now.
-	signalOwners atomic.Int32
+	signalOwners int
+	// childSigs is the set childSigCh is registered for.
+	childSigs []os.Signal
+	// ownerBridge stays registered while any claim is held, so the signals
+	// stay caught while the lazy handler's channel is stopped (between a
+	// claim and its owner's signal.Notify, and between the owner's
+	// signal.Stop and the release). It is never read.
+	ownerBridge chan os.Signal
 	// childSignalExit / childSignalForceExit are the two exits, replaceable
 	// by a test.
 	childSignalExit      = ExitProcess
 	childSignalForceExit = os.Exit
+	// childSigCh is the handler's channel once installed. startChildSignalLoop
+	// runs its loop, replaceable by a test that inspects the channel instead.
+	childSigCh           chan os.Signal
+	startChildSignalLoop = func(ch chan os.Signal) { go childSignalLoop(ch) }
 )
 
 // acquireSignalOwner records that the caller's own signal handler owns the
@@ -56,9 +69,45 @@ var (
 // BEFORE signal.Notify, and the returned release after signal.Stop. Release
 // is idempotent.
 func acquireSignalOwner() (release func()) {
-	signalOwners.Add(1)
+	childSigMu.Lock()
+	signalOwners++
+	if signalOwners == 1 {
+		// The lazy handler's channel receives nothing while a claim is held.
+		// A copy it received of the owner's signal would otherwise be read
+		// by its loop at any later time, after the release too, and end the
+		// process with a status the owner did not choose. signal.Stop waits
+		// for a delivery in progress, so no copy is in flight once it returns.
+		sigs := childSigs
+		if childSigCh == nil {
+			sigs = childSignalSet()
+		}
+		if len(sigs) > 0 {
+			ownerBridge = make(chan os.Signal, 1)
+			signal.Notify(ownerBridge, sigs...)
+		}
+		if childSigCh != nil {
+			signal.Stop(childSigCh)
+		}
+	}
+	childSigMu.Unlock()
 	var once sync.Once
-	return func() { once.Do(func() { signalOwners.Add(-1) }) }
+	return func() {
+		once.Do(func() {
+			childSigMu.Lock()
+			defer childSigMu.Unlock()
+			signalOwners--
+			if signalOwners > 0 {
+				return
+			}
+			if childSigCh != nil && len(childSigs) > 0 {
+				signal.Notify(childSigCh, childSigs...)
+			}
+			if ownerBridge != nil {
+				signal.Stop(ownerBridge)
+				ownerBridge = nil
+			}
+		})
+	}
 }
 
 // childSignalSet is the signals the handler takes: SIGINT, SIGTERM and
@@ -84,8 +133,14 @@ func ensureChildSignalHandler() {
 			return
 		}
 		ch := make(chan os.Signal, 4)
-		signal.Notify(ch, sigs...)
-		go childSignalLoop(ch)
+		childSigMu.Lock()
+		childSigCh, childSigs = ch, sigs
+		if signalOwners == 0 {
+			// Under a claim the release registers it.
+			signal.Notify(ch, sigs...)
+		}
+		childSigMu.Unlock()
+		startChildSignalLoop(ch)
 	})
 }
 
@@ -98,7 +153,10 @@ func signalExitCode(s os.Signal) int {
 
 func childSignalLoop(ch chan os.Signal) {
 	for sig := range ch {
-		if signalOwners.Load() > 0 {
+		childSigMu.Lock()
+		owned := signalOwners > 0
+		childSigMu.Unlock()
+		if owned {
 			// An app shape's handler received the same signal and runs the
 			// drain, which ends the children.
 			continue

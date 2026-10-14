@@ -42,6 +42,23 @@ func TestChildSignalHelper(t *testing.T) {
 		// the process at once.
 		registerBeforeChildKill("test.wedged", func() { select {} })
 		spawn()
+	case "owner-race":
+		// The owner takes a signal and releases its claim. The lazy
+		// handler's channel must not hold a copy of that signal, or its loop,
+		// scheduled late, reads it after the release and exits 143.
+		startChildSignalLoop = func(chan os.Signal) {}
+		ensureChildSignalHandler()
+		release := acquireSignalOwner()
+		owner := make(chan os.Signal, 1)
+		signal.Notify(owner, syscall.SIGTERM)
+		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		<-owner
+		signal.Stop(owner)
+		release()
+		time.Sleep(200 * time.Millisecond)
+		fmt.Printf("CHILD_PID=0\nBUFFERED=%d\n", len(childSigCh))
+		os.Stdout.Sync()
+		os.Exit(0)
 	case "spawn-owner":
 		// An app shape that owns the termination sequence: its handler runs
 		// and decides the exit status, the lazy handler stays out of it.
@@ -204,5 +221,22 @@ func TestChildSignal_DefersToAnOwner(t *testing.T) {
 	}
 	if !waitPidGone(child, 5*time.Second) {
 		t.Fatalf("child %d still runs", child)
+	}
+}
+
+// TestChildSignal_AnOwnedSignalNeverReachesTheLazyHandler is the regression
+// for the runtime test binary dying with exit 143 under CI load. An owner
+// (the embedded PostgreSQL supervisor) took SIGTERM and released its claim;
+// the lazy handler had received its own copy of the same signal and, read
+// after the release, saw no owner and exited the process.
+func TestChildSignal_AnOwnedSignalNeverReachesTheLazyHandler(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestChildSignalHelper$", "-test.timeout=60s")
+	cmd.Env = append(os.Environ(), childSignalRoleEnv+"=owner-race")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "BUFFERED=0") {
+		t.Fatalf("the lazy handler holds a copy of a signal its owner handled: %s", out)
 	}
 }
