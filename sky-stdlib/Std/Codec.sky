@@ -86,10 +86,7 @@ type Shape
 
 -- | A bidirectional codec for `a`: encoder + decoder + shape.
 type Codec a
-    = Codec { enc : a -> Value
-, dec : Decoder a
-, shp : Shape
-}
+    = Codec { enc : a -> Value, dec : Decoder a, shp : Shape }
 
 
 -- ── Introspection / run ──────────────────────────────────────────────────────

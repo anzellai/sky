@@ -669,11 +669,13 @@ paddingXY x y =
 -- `paddingEach : Int -> Int -> Int -> Int -> Attribute msg` is gone.
 -- Migration: `paddingEach t r b l` → `paddingEach { top = t, right = r,
 -- bottom = b, left = l }`.
-paddingEach : { top : Int
-, right : Int
-, bottom : Int
-, left : Int
-} -> Attribute msg
+paddingEach :
+    { top : Int
+    , right : Int
+    , bottom : Int
+    , left : Int
+    }
+    -> Attribute msg
 paddingEach r =
     AttrPadding r.top r.right r.bottom r.left
 
@@ -1106,9 +1108,12 @@ fileMaxHeight px =
 -- HTML attribute; click navigation happens through standard browser
 -- behaviour (Sky.Live intercepts same-origin navigation if you've
 -- routed it).
-link : List (Attribute msg) -> { url : String
-, label : Element msg
-} -> Element msg
+link :
+    List (Attribute msg)
+    -> { url : String
+       , label : Element msg
+       }
+    -> Element msg
 link attrs cfg =
     let
         -- `Ui.grid` carries a `__grid` marker that switches the
@@ -1123,9 +1128,12 @@ link attrs cfg =
 
 -- Inline image with required src + alt for accessibility. Renders
 -- as `<img src=… alt=…>` (a void element — no children).
-image : List (Attribute msg) -> { src : String
-, description : String
-} -> Element msg
+image :
+    List (Attribute msg)
+    -> { src : String
+       , description : String
+       }
+    -> Element msg
 image attrs cfg =
     let
         nodeAttrs =
@@ -1165,9 +1173,12 @@ textColumnMarker =
 -- A `<button>`. Use `Ui.onClick` to attach a handler. The default
 -- styling is sparse; users layer Background/Border/Font/Padding to
 -- match their design.
-button : List (Attribute msg) -> { onPress : Maybe msg
-, label : Element msg
-} -> Element msg
+button :
+    List (Attribute msg)
+    -> { onPress : Maybe msg
+       , label : Element msg
+       }
+    -> Element msg
 button attrs cfg =
     let
         clickAttr =
@@ -1273,14 +1284,14 @@ html node =
 -- the empty element.
 island : { name : String, id : String, props : Value } -> List (Attribute msg) -> Element msg
 island cfg attrs =
-    TaggedNode "div"
+    TaggedNode
+        "div"
         NoDescription
         (AttrAttribute "data-sky-island" cfg.name
             :: AttrAttribute "data-sky-island-id" cfg.id
             :: AttrAttribute "data-sky-props" (Encode.encode 0 cfg.props)
             :: AttrAttribute "sky-key" cfg.id
-            :: attrs
-        )
+            :: attrs)
         []
 
 
@@ -2004,9 +2015,12 @@ layout rootAttrs root =
 -- `Ui.layout attrs el` is exactly `Ui.layoutWith { wrapperAttrs =
 -- [], rootAttrs = attrs } el` — call-site byte-identical for
 -- existing apps.
-layoutWith : { wrapperAttrs : List (Attribute msg)
-, rootAttrs : List (Attribute msg)
-} -> Element msg -> Html.Html msg
+layoutWith :
+    { wrapperAttrs : List (Attribute msg)
+    , rootAttrs : List (Attribute msg)
+    }
+    -> Element msg
+    -> Html.Html msg
 layoutWith cfg root =
     let
         defaultWrapperStyle =
@@ -2354,7 +2368,8 @@ renderNodeAs wantedTag nest ctx extraAttrs attrs children =
                       "data-sky-anim-rules"
                       (encodeAnimations animationEntries)
                 ]
-        renderedMain = List.map (renderElementIn childNest renderCtx []) children
+        renderedMain =
+            List.map (renderElementIn childNest renderCtx []) children
         renderedNearby = List.map (renderNearby childNest) nearbyChildren
         -- Nearby children are rare; when there are none `renderedNearby` is
         -- `[]` and the `++` would `List.append`-copy the whole main-child
@@ -2370,8 +2385,7 @@ renderNodeAs wantedTag nest ctx extraAttrs attrs children =
         -- `List.append`-copy `htmlAttrs`. `[] ++ [] ++ [] ++ htmlAttrs ==
         -- htmlAttrs`; go straight to it. Byte-identical.
         tailAttrs =
-            if List.isEmpty pseudoAttrs
-                && List.isEmpty transitionAttrs
+            if List.isEmpty pseudoAttrs && List.isEmpty transitionAttrs
                 && List.isEmpty animationAttrs then
                 htmlAttrs
 
@@ -2388,7 +2402,6 @@ renderNodeAs wantedTag nest ctx extraAttrs attrs children =
                 Attr.style styleStr :: (keptRole ++ tailAttrs)
     in
         dispatchTag tag attrList renderedChildren
-
 
 -- ─── Parser-safe nesting ─────────────────────────────────────────
 --
@@ -2443,11 +2456,7 @@ isHeadingTag t =
 -- `<p>`, so none may sit inside a paragraph.
 isFlowOnlyTag : String -> Bool
 isFlowOnlyTag t =
-    t == "div"
-        || t == "p"
-        || isHeadingTag t
-        || t == "section"
-        || t == "form"
+    t == "div" || t == "p" || isHeadingTag t || t == "section" || t == "form"
         || t == "main"
         || t == "nav"
         || t == "footer"
@@ -2752,7 +2761,8 @@ renderNearby nest ( loc, el ) =
         positionStyle =
             "position: absolute; display: flex; " ++ locationCss loc
         wrapperTag = parserSafeTag nest "div"
-        rendered = renderElementIn (nestingInside nest wrapperTag) AsEl [] el
+        rendered =
+            renderElementIn (nestingInside nest wrapperTag) AsEl [] el
     in
         dispatchTag wrapperTag [ Attr.style positionStyle ] [ rendered ]
 
@@ -2977,7 +2987,6 @@ kernelAttr key value =
     else
         Attr.attribute key value
 
-
 -- Tier 1 stops at static rendering. Std.Html.Events binding for
 -- AttrEvent → Sky.Live wire events lives in Tier 2 once we wire
 -- the Sky.Live integration. The constructor stays in the ADT so
@@ -3130,8 +3139,7 @@ buildStyleString emitDisplay parentCtx myCtx attrs =
 -- `buildStyleString` with the marker scan already done. The hot
 -- caller (`renderNodeAs`) has the flags in hand; `buildStyleString`
 -- keeps its original signature for every other caller.
-buildStyleStringWith :
-    MarkerFlags -> Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
+buildStyleStringWith : MarkerFlags -> Bool -> LayoutContext -> LayoutContext -> List (Attribute msg) -> String
 buildStyleStringWith flags emitDisplay parentCtx myCtx attrs =
     let
         gridOn = flags.grid

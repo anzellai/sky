@@ -1612,6 +1612,16 @@ Opinionated, deterministic, no configuration (output is Elm-compatible):
 - 4-space indent, no tabs.
 - Leading commas for multi-line lists/records.
 - Pipelines broken onto new lines.
+- An operator chain breaks only at its loosest operator: `a == b || c == d`
+  breaks before `||`, never inside `a == b`.
+- List patterns are spaced like list expressions: `[ x ]`, `[ a, b ]`, `[]`.
+- A type annotation stays on one line, and an exposing list breaks only past
+  100 columns. A record type in an annotation stays on one line when it fits;
+  when it does not fit, or when it is a whole argument the source had broken,
+  the annotation breaks one argument per line (`name :`, then each argument
+  on its own line led by `->`).
+- An own-line comment stays where it was: above the branch, argument,
+  pipeline step, binding or field it was written above.
 - Refuses to overwrite if the formatter would lose more than one-third of the source lines (guards against partial-parse deletions).
 
 ## Editor integration

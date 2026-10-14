@@ -93,19 +93,23 @@ digest filled in.
         , sha256 = "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed"
         }
 -}
-huggingFace : { repo : String
-, file : String
-, sha256 : String
-} -> ModelRef
+huggingFace :
+    { repo : String
+    , file : String
+    , sha256 : String
+    }
+    -> ModelRef
 huggingFace r =
     ModelRef ("hf:" ++ r.repo ++ "/" ++ r.file ++ "#sha256=" ++ r.sha256)
 
 
 {-| A GGUF file on disk, pinned by digest. The file is hashed before each
 load, because it may have been replaced since the digest was written down. -}
-file : { path : String
-, sha256 : String
-} -> ModelRef
+file :
+    { path : String
+    , sha256 : String
+    }
+    -> ModelRef
 file r =
     ModelRef ("file:" ++ r.path ++ "#sha256=" ++ r.sha256)
 

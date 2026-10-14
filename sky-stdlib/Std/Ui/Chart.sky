@@ -112,11 +112,12 @@ withSeriesLabel l s =
 
 
 -- Standard plot-area inset.
-plotInset : { left : Int
-, right : Int
-, top : Int
-, bottom : Int
-}
+plotInset :
+    { left : Int
+    , right : Int
+    , top : Int
+    , bottom : Int
+    }
 plotInset =
     { left = 32, right = 8, top = 24, bottom = 24 }
 
@@ -440,7 +441,7 @@ lineOne cfg xR yR s =
             [] ->
                 []
 
-            [single] ->
+            [ single ] ->
                 [ singlePointCircle col single (labelTitle s.label) ]
 
             _ ->
@@ -570,7 +571,7 @@ lastXCoord coords fallback =
         [] ->
             fallback
 
-        [( x, _ )] ->
+        [ ( x, _ ) ] ->
             x
 
         _ :: rest ->

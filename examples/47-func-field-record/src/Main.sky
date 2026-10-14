@@ -20,11 +20,13 @@ import Std.Log exposing (println)
 --
 -- `apply` READS a data field, and CALLS both func fields, so the runtime narrowing
 -- of func fields is exercised, not just the build.
-apply : { onChange : String -> Int
-, format : Int -> String
-, label : String
-, count : Int
-} -> String
+apply :
+    { onChange : String -> Int
+    , format : Int -> String
+    , label : String
+    , count : Int
+    }
+    -> String
 apply c =
     c.label ++ ": " ++ c.format (c.onChange "hello" + c.count)
 

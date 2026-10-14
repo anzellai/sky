@@ -21,10 +21,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 
 type Tool
-    = Tool { name : String
-, description : String
-, exec : String -> Task Error String
-}
+    = Tool { name : String, description : String, exec : String -> Task Error String }
 
 
 {-| Define a tool: a stable `name`, a `description` the model reads, and an

@@ -78,8 +78,7 @@ tests =
                           (List.filter
                               (\r ->
                                   String.contains "guess" r.completion
-                                      || String.length r.completion
-                                      < 30)
+                                      || String.length r.completion < 30)
                               gen.rows)))
     , Test.test
           "the frozen dataset is scrubbed and its digest is stable"
@@ -107,7 +106,7 @@ tests =
                   (\gen ->
                       case Dataset.sources (Synthetic.toDataset gen) of
 
-                          [source] ->
+                          [ source ] ->
                               Test.isTrue
                                   (String.startsWith
                                       "synthetic:support-faq teacher=teacher "

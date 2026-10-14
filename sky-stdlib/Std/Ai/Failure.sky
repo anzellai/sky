@@ -732,7 +732,7 @@ moneyFromText : String -> Maybe Money
 moneyFromText s =
     case String.split " " (String.trim s) of
 
-        [c, amount] ->
+        [ c, amount ] ->
             case Money.fromString (Money.parseCurrency c) amount of
 
                 Ok m ->

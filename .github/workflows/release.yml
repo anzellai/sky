@@ -755,7 +755,7 @@ jobs:
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger,config-surface,kernel-members,config-migration,config-migrate
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger,config-surface,kernel-members,config-migration,config-migrate,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -990,7 +990,7 @@ jobs:
           neovim: 'true'
       - name: Falsifier verification (group 2 — verify-cli / lsp / config)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only verify-cli,lsp,cli-verbs,config-surface,kernel-members,config-migration,config-migrate
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only verify-cli,lsp,cli-verbs,config-surface,kernel-members,config-migration,config-migrate,fmt-clean
 
       - name: Bound the Go caches before save
         if: always()
@@ -1160,7 +1160,7 @@ jobs:
           postgres: 'true'
       - name: Falsifier verification (group 8 — runtime loops and locks)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only erasure-path-uses-an-index,periodic-loops-recover-per-cycle,ai-train-resume,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only erasure-path-uses-an-index,periodic-loops-recover-per-cycle,ai-train-resume,ai-train-exactly-once,ai-serve-hot-load,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,ai-device-decide,ai-device-no-silent-fallback,ai-device-digest,ai-stream-pieces,ai-device-blob-allowlist,ai-device-partition
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

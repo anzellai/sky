@@ -71,10 +71,10 @@ adapterPath : List String -> Task Error String
 adapterPath args =
     case args of
 
-        ["--demo", tag] ->
+        [ "--demo", tag ] ->
             demoAdapter tag
 
-        [path] ->
+        [ path ] ->
             Task.succeed path
 
         _ ->

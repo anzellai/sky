@@ -72,9 +72,7 @@ import Std.Ai.Provider exposing (Message)
 -- | A text rule: a name (the key in the report) and a function that returns
 -- the scrubbed text and how many values it replaced.
 type Rule
-    = Rule { name : String
-, run : String -> ( String, Int )
-}
+    = Rule { name : String, run : String -> ( String, Int ) }
 
 -- | What a scrub replaced: rule name to count. Rows dropped by `dropIf` count
 -- under the drop's name. It never holds the replaced text.
@@ -197,8 +195,7 @@ isCardNumber s =
         ds = digitsOf compact
     in
         String.length ds == String.length compact && String.length ds >= 13
-            && String.length ds
-            <= 19
+            && String.length ds <= 19
             && luhn ds
 
 
@@ -274,8 +271,7 @@ isIban s =
     in
         String.length compact >= 15 && String.length compact <= 34
             && Regex.match "^[A-Z]{2}\\d{2}[A-Z0-9]+$" compact
-            && mod97 rearranged
-            == 1
+            && mod97 rearranged == 1
 
 
 -- The remainder of a long number written in base 36 letters (A = 10) mod 97,
@@ -308,13 +304,12 @@ usSsn =
         (\c ->
             case String.split "-" c of
 
-                [area, group, serial] ->
+                [ area, group, serial ] ->
                     let
                         a = Maybe.withDefault 0 (String.toInt area)
                     in
                         if a == 0 || a == 666 || a >= 900 || group == "00"
-                            || serial
-                            == "0000" then
+                            || serial == "0000" then
                             Nothing
 
                         else
@@ -534,7 +529,7 @@ forString rules =
         (\texts s ->
             case texts of
 
-                [t] ->
+                [ t ] ->
                     t
 
                 _ ->
@@ -542,9 +537,7 @@ forString rules =
 
 
 -- | A scrubber for instruction rows (`Std.Ai.Dataset.Instruction`).
-forInstruction : List Rule -> Scrubber { prompt : String
-, completion : String
-}
+forInstruction : List Rule -> Scrubber { prompt : String, completion : String }
 forInstruction rules =
     scrubber
         rules
@@ -552,7 +545,7 @@ forInstruction rules =
         (\texts r ->
             case texts of
 
-                [p, c] ->
+                [ p, c ] ->
                     { r | prompt = p, completion = c }
 
                 _ ->
@@ -579,10 +572,7 @@ forChat rules =
 
 
 -- | A scrubber for preference rows (`Std.Ai.Dataset.Preference`).
-forPreference : List Rule -> Scrubber { prompt : String
-, chosen : String
-, rejected : String
-}
+forPreference : List Rule -> Scrubber { prompt : String, chosen : String, rejected : String }
 forPreference rules =
     scrubber
         rules
@@ -590,7 +580,7 @@ forPreference rules =
         (\texts r ->
             case texts of
 
-                [p, c, x] ->
+                [ p, c, x ] ->
                     { r | prompt = p, chosen = c, rejected = x }
 
                 _ ->

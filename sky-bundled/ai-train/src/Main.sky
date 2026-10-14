@@ -234,7 +234,7 @@ trainVerb : Bool -> List String -> Task Error ()
 trainVerb json opts =
     case opts of
 
-        ["status"] ->
+        [ "status" ] ->
             trainRuns json []
 
         "status" :: run :: rest ->
@@ -345,7 +345,7 @@ dataRef text =
         ( path, digest ) =
             case String.split "@" text of
 
-                [p, d] ->
+                [ p, d ] ->
                     ( p, Just d )
 
                 _ ->
@@ -531,10 +531,10 @@ cloudFlags opts job =
                        (\p ->
                            case String.split "=" p of
 
-                               [where_, amount] ->
+                               [ where_, amount ] ->
                                    case String.split "@" where_ of
 
-                                       [machine, region] ->
+                                       [ machine, region ] ->
                                            Just
                                                { machine = machine
                                                , region = region
@@ -576,7 +576,7 @@ cloudFlags opts job =
                               (\l ->
                                   case String.split "=" l of
 
-                                      [k, v] ->
+                                      [ k, v ] ->
                                           Just ( k, v )
 
                                       _ ->
@@ -595,7 +595,7 @@ parseMoney : String -> Maybe Money
 parseMoney text =
     case String.split " " (String.trim text) of
 
-        [c, amount] ->
+        [ c, amount ] ->
             Result.toMaybe (Money.fromString (Money.parseCurrency c) amount)
 
         _ ->

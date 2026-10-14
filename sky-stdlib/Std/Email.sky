@@ -109,10 +109,12 @@ type EmailProvider
 
 -- | Construct a baseline message with the three required fields
 -- (`from`, `to`, `subject`).  Optional fields default to empty.
-defaultMessage : { from : String
-, to : List String
-, subject : String
-} -> EmailMessage
+defaultMessage :
+    { from : String
+    , to : List String
+    , subject : String
+    }
+    -> EmailMessage
 defaultMessage core =
     { from = core.from
     , to = core.to

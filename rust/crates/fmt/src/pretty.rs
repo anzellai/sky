@@ -43,6 +43,20 @@ pub struct Printer {
     src: String,
 }
 
+/// When a record type may stay on one line.
+#[derive(Clone, Copy)]
+enum RecordRule {
+    /// The body of a `type alias`: two or more fields always break.
+    AliasBody,
+    /// A whole argument or result of an annotation: on one line when it fits
+    /// and the source had it on one line.
+    Segment,
+    /// Inside another type (`Task Error { .. }`, a constructor argument): on
+    /// one line when it fits, like a record expression. The source layout is
+    /// not a signal here: the old printer broke every such record.
+    Nested,
+}
+
 fn width(s: &str) -> usize {
     s.chars().count()
 }
@@ -396,8 +410,53 @@ impl Printer {
             .name()
             .map(|t| t.text().to_string())
             .unwrap_or_default();
-        let ty = anno.ty().map(|t| self.fmt_type(0, &t)).unwrap_or_default();
-        format!("{name} : {ty}")
+        match anno.ty() {
+            Some(t) => self.fmt_annotation(0, &name, &t),
+            None => format!("{name} : "),
+        }
+    }
+
+    /// `name : Type` at column `col`. The annotation stays on one line unless
+    /// a record type inside it breaks (it does not fit, or the source had it
+    /// broken). Then the annotation breaks in the standard form, one function
+    /// argument per line, so the broken record sits at its own indent:
+    ///
+    /// ```text
+    /// name :
+    ///     { a : A
+    ///     , b : B
+    ///     }
+    ///     -> Result
+    /// ```
+    fn fmt_annotation(&self, col: usize, name: &str, ty: &Type) -> String {
+        let one = format!("{name} : {}", self.fmt_type(col, ty));
+        let segs = fun_segments(ty);
+        // A record that is a whole argument or result and that the source
+        // had broken stays broken.
+        let seg_broken = segs.iter().any(|t| match t {
+            Type::Record(r) => self.source_broken(r.syntax()),
+            _ => false,
+        });
+        if !one.contains('\n') && !seg_broken {
+            return one;
+        }
+        let seg_col = col + STEP;
+        let mut out = format!("{name} :");
+        for (k, seg) in segs.iter().enumerate() {
+            let last = k + 1 == segs.len();
+            let (lead, at) = if k == 0 {
+                ("", seg_col)
+            } else {
+                ("-> ", seg_col + 3)
+            };
+            let s = match seg {
+                Type::Record(r) => self.fmt_type_record(at, r, RecordRule::Segment),
+                _ if last => self.fmt_type(at, seg),
+                _ => self.fmt_type_atom(at, seg),
+            };
+            out.push_str(&format!("\n{}{lead}{s}", indent(seg_col)));
+        }
+        out
     }
 
     fn fmt_value(&mut self, v: &syntax::ast::ValueDecl) -> String {
@@ -436,7 +495,13 @@ impl Printer {
         } else {
             format!(" {}", vars.join(" "))
         };
-        let body = a.ty().map(|t| self.fmt_type(STEP, &t)).unwrap_or_default();
+        // A record alias body with two or more fields always breaks, one
+        // field per line (the oracle's rule, kept for alias bodies only).
+        let body = match a.ty().map(|t| unwrap_type_paren(&t)) {
+            Some(Type::Record(r)) => self.fmt_type_record(STEP, &r, RecordRule::AliasBody),
+            Some(t) => self.fmt_type(STEP, &t),
+            None => String::new(),
+        };
         format!("type alias {name}{vars_str} =\n{}{body}", indent(STEP))
     }
 
@@ -526,7 +591,7 @@ impl Printer {
                 let s: Vec<String> = parts.iter().map(|x| self.fmt_type(col, x)).collect();
                 format!("( {} )", s.join(", "))
             }
-            Type::Record(r) => self.fmt_type_record(col, r),
+            Type::Record(r) => self.fmt_type_record(col, r, RecordRule::Nested),
             // A function type in atom position needs grouping parens.
             Type::Fun(_) => format!("({})", self.fmt_type(col, &u)),
             Type::Paren(_) => String::new(), // unreachable: unwrapped above
@@ -545,7 +610,15 @@ impl Printer {
         }
     }
 
-    fn fmt_type_record(&self, col: usize, r: &syntax::ast::TypeRecord) -> String {
+    /// True when a node's significant tokens span more than one source line.
+    fn source_broken(&self, node: &SyntaxNode) -> bool {
+        self.line_of_node(node) != self.end_line_of_node(node)
+    }
+
+    /// A record type (see [`RecordRule`]). The old rule broke every record
+    /// type with two or more fields, which in an annotation put the field
+    /// commas and the closing brace at column 0.
+    fn fmt_type_record(&self, col: usize, r: &syntax::ast::TypeRecord, rule: RecordRule) -> String {
         let row = row_var(r.syntax());
         let fields: Vec<String> = type_record_fields(r.syntax())
             .iter()
@@ -558,7 +631,12 @@ impl Printer {
         // Note: an empty record renders as the one-line "{  }" (two spaces) —
         // the oracle's `oneLine` branch, matched here byte-for-byte.
         let one_line = format!("{{ {prefix}{} }}", fields.join(", "));
-        if col + width(&one_line) <= MAX && fields.len() <= 1 {
+        let shape_ok = match rule {
+            RecordRule::AliasBody => fields.len() <= 1,
+            RecordRule::Segment => fields.len() <= 1 || !self.source_broken(r.syntax()),
+            RecordRule::Nested => true,
+        };
+        if shape_ok && col + width(&one_line) <= MAX && !one_line.contains('\n') {
             return one_line;
         }
         // multi-line, leading commas at `col`
@@ -611,7 +689,12 @@ impl Printer {
                     .iter()
                     .map(|x| self.fmt_pattern(x))
                     .collect();
-                format!("[{}]", ps.join(", "))
+                // `[ a, b ]`, like a list expression; `[]` when empty.
+                if ps.is_empty() {
+                    "[]".to_string()
+                } else {
+                    format!("[ {} ]", ps.join(", "))
+                }
             }
             Pattern::Cons(c) => {
                 let ps = pattern_children(c.syntax());
@@ -1146,11 +1229,10 @@ impl Printer {
         // Annotation binding: `name : Type`.
         if b.kind() == SyntaxKind::LetBinding && binding_is_anno(b) {
             let name = first_lower(b);
-            let ty = type_children(b)
-                .first()
-                .map(|t| self.fmt_type(col, t))
-                .unwrap_or_default();
-            return format!("{name} : {ty}");
+            return match type_children(b).first() {
+                Some(t) => self.fmt_annotation(col, &name, t),
+                None => format!("{name} : "),
+            };
         }
         // Destructure binding: `pat = expr`.
         if b.kind() == SyntaxKind::DestructureBinding {
@@ -1334,6 +1416,32 @@ fn type_children(node: &SyntaxNode) -> Vec<Type> {
 
 /// Peel redundant `TypeParen` wrappers — the oracle's type AST has no paren
 /// node, so `(Html Msg)` in tail position renders as `Html Msg`.
+/// The argument and result types of a function type, in order
+/// (`A -> B -> C` gives `[A, B, C]`); a non-function type gives itself.
+fn fun_segments(t: &Type) -> Vec<Type> {
+    let mut out = Vec::new();
+    let mut cur = unwrap_type_paren(t);
+    loop {
+        match &cur {
+            Type::Fun(f) => {
+                let parts = type_children(f.syntax());
+                if let [a, b] = parts.as_slice() {
+                    out.push(a.clone());
+                    cur = unwrap_type_paren(b);
+                } else {
+                    out.push(cur.clone());
+                    break;
+                }
+            }
+            _ => {
+                out.push(cur.clone());
+                break;
+            }
+        }
+    }
+    out
+}
+
 fn unwrap_type_paren(t: &Type) -> Type {
     match t {
         Type::Paren(p) => match type_children(p.syntax()).into_iter().next() {
@@ -1557,26 +1665,39 @@ fn binding_params(node: &SyntaxNode) -> Vec<Pattern> {
 }
 
 /// Flatten a (possibly nested) `BinExpr` tree into source-order operands and
-/// the operators between them (mirrors the oracle's flat `Binops`).
+/// the operators between them — but only across operators of the SAME
+/// precedence. A tighter-binding sub-expression (`t == "p"` inside an `||`
+/// chain) stays one operand, so it is laid out as its own group. Flattening
+/// across precedence levels put a break between `t` and `== "p"`, which
+/// showed the chain with a structure the parser does not give it.
 fn flatten_bin(b: &syntax::ast::BinExpr) -> (Vec<Expr>, Vec<String>) {
     let mut operands = Vec::new();
     let mut ops = Vec::new();
-    flatten_bin_into(b, &mut operands, &mut ops);
+    let prec = syntax::binary_op_precedence(&bin_op_text(b));
+    flatten_bin_into(b, prec, &mut operands, &mut ops);
     (operands, ops)
 }
 
-fn flatten_bin_into(b: &syntax::ast::BinExpr, operands: &mut Vec<Expr>, ops: &mut Vec<String>) {
-    let lhs = b.lhs();
-    let op = b.op().map(|t| t.text().to_string()).unwrap_or_default();
-    let rhs = b.rhs();
-    match lhs {
-        Some(Expr::Bin(inner)) => flatten_bin_into(&inner, operands, ops),
+fn bin_op_text(b: &syntax::ast::BinExpr) -> String {
+    b.op().map(|t| t.text().to_string()).unwrap_or_default()
+}
+
+fn flatten_bin_into(
+    b: &syntax::ast::BinExpr,
+    prec: u8,
+    operands: &mut Vec<Expr>,
+    ops: &mut Vec<String>,
+) {
+    let same =
+        |inner: &syntax::ast::BinExpr| syntax::binary_op_precedence(&bin_op_text(inner)) == prec;
+    match b.lhs() {
+        Some(Expr::Bin(inner)) if same(&inner) => flatten_bin_into(&inner, prec, operands, ops),
         Some(e) => operands.push(e),
         None => {}
     }
-    ops.push(op);
-    match rhs {
-        Some(Expr::Bin(inner)) => flatten_bin_into(&inner, operands, ops),
+    ops.push(bin_op_text(b));
+    match b.rhs() {
+        Some(Expr::Bin(inner)) if same(&inner) => flatten_bin_into(&inner, prec, operands, ops),
         Some(e) => operands.push(e),
         None => {}
     }

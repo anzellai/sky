@@ -606,6 +606,17 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   body or above `in`. Each construct now keeps the comments in its own gaps,
   and a lambda claims only the comments between `->` and its body.
 
+- **`sky fmt` lays out operator chains, list patterns and record types in
+  annotations correctly.** A chain that mixed precedence levels was flattened,
+  so `t == "p" || t == "nav"` could break between `t` and `== "nav"`; a chain
+  now breaks only at its loosest operator. A list pattern lost its inner
+  spaces (`[ only ]` became `[only]`). Every record type with two or more
+  fields broke, and in an annotation that put its commas and closing brace at
+  column 0; it now stays on one line when it fits, and a broken one breaks the
+  annotation one argument per line. The stdlib, the bundled apps, `apps/` and
+  `examples/` are reformatted, and a new `fmt-clean` gate keeps every tracked
+  `.sky` file there `sky fmt`-clean.
+
 - **A stdlib module that did not parse stopped the build with an internal
   compiler error.** The stdlib is trusted and was not checked for parse
   errors, so a recovered error node (an operator section such as `(+)`, which

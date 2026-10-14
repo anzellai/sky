@@ -900,13 +900,8 @@ the server; `NotDownloaded` is the consent point (the bytes a `prepare`
 fetches); `Unsupported` is a `DeviceOnly` slot this device cannot run. -}
 type Status
     = ServerSide Reason
-    | NotDownloaded { backend : Backend
-, bytes : Int
-}
-    | Downloading { backend : Backend
-, doneBytes : Int
-, totalBytes : Int
-}
+    | NotDownloaded { backend : Backend, bytes : Int }
+    | Downloading { backend : Backend, doneBytes : Int, totalBytes : Int }
     | Ready { backend : Backend }
     | Unsupported Failure
 
@@ -928,10 +923,13 @@ progressDecoder =
 
 {-| The status for a decision and the download state the runtime reports
 (`state` is `downloading` while `prepare` runs). Pure, for tests. -}
-statusOf : Decision -> { state : String
-, doneBytes : Int
-, totalBytes : Int
-} -> Status
+statusOf :
+    Decision
+    -> { state : String
+       , doneBytes : Int
+       , totalBytes : Int
+       }
+    -> Status
 statusOf decision progress =
     case decision of
 

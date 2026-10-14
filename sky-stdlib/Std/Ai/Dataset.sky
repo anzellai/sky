@@ -867,10 +867,7 @@ defaultSplit =
 
 -- | A dataset with a split assignment.
 type Splits row
-    = Splits { spec : SplitSpec
-, key : row -> String
-, data : Dataset row
-}
+    = Splits { spec : SplitSpec, key : row -> String, data : Dataset row }
 
 
 -- | Assign each row to a part by the hash of its key: the same key and seed
@@ -1205,16 +1202,19 @@ usableEngine engine =
             Task.succeed Nothing
 
 
-inspectWith : { maxTokens : Int
-, minTurns : Int
-, maxTurns : Int
-, maxDuplicateRate : Float
-, minRows : Int
-, maxIssues : Int
-, tokenizer : Maybe (String -> Task Error Int)
-, engine : Maybe Endpoint
-, memoryKeys : Int
-} -> Dataset Chat -> Task Error Report
+inspectWith :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Dataset Chat
+    -> Task Error Report
 inspectWith l ds =
     dedupeOpen "" (max 1 l.memoryKeys)
         |> Task.andThen
@@ -1255,32 +1255,42 @@ validate lim ds =
                                (String.join "; " report.problems)))
 
 
-checkChunk : { maxTokens : Int
-, minTurns : Int
-, maxTurns : Int
-, maxDuplicateRate : Float
-, minRows : Int
-, maxIssues : Int
-, tokenizer : Maybe (String -> Task Error Int)
-, engine : Maybe Endpoint
-, memoryKeys : Int
-} -> String -> Acc -> List Chat -> Task Error Acc
+checkChunk :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> String
+    -> Acc
+    -> List Chat
+    -> Task Error Acc
 checkChunk l handle acc rs =
     dedupeFirst handle (acc.rows + 1) (List.map rowKey rs)
         |> Task.andThen (\firsts -> checkRows l acc rs firsts)
 
 
 -- Each row with the row it repeats (0 when it is the first of its kind).
-checkRows : { maxTokens : Int
-, minTurns : Int
-, maxTurns : Int
-, maxDuplicateRate : Float
-, minRows : Int
-, maxIssues : Int
-, tokenizer : Maybe (String -> Task Error Int)
-, engine : Maybe Endpoint
-, memoryKeys : Int
-} -> Acc -> List Chat -> List Int -> Task Error Acc
+checkRows :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Acc
+    -> List Chat
+    -> List Int
+    -> Task Error Acc
 checkRows l acc rs firsts =
     case ( rs, firsts ) of
 
@@ -1338,16 +1348,22 @@ messageTokens tokenizer engine text =
                 fallback
 
 
-checkRow : { maxTokens : Int
-, minTurns : Int
-, maxTurns : Int
-, maxDuplicateRate : Float
-, minRows : Int
-, maxIssues : Int
-, tokenizer : Maybe (String -> Task Error Int)
-, engine : Maybe Endpoint
-, memoryKeys : Int
-} -> Acc -> Chat -> Int -> Int -> Acc
+checkRow :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Acc
+    -> Chat
+    -> Int
+    -> Int
+    -> Acc
 checkRow l acc r tokens first =
     let
         n = acc.rows + 1
@@ -1470,16 +1486,19 @@ quoteRole r =
     "\"" ++ String.left 20 r ++ "\""
 
 
-finishReport : { maxTokens : Int
-, minTurns : Int
-, maxTurns : Int
-, maxDuplicateRate : Float
-, minRows : Int
-, maxIssues : Int
-, tokenizer : Maybe (String -> Task Error Int)
-, engine : Maybe Endpoint
-, memoryKeys : Int
-} -> Acc -> Report
+finishReport :
+    { maxTokens : Int
+    , minTurns : Int
+    , maxTurns : Int
+    , maxDuplicateRate : Float
+    , minRows : Int
+    , maxIssues : Int
+    , tokenizer : Maybe (String -> Task Error Int)
+    , engine : Maybe Endpoint
+    , memoryKeys : Int
+    }
+    -> Acc
+    -> Report
 finishReport l acc =
     let
         rate =
@@ -1624,10 +1643,7 @@ type alias Manifest =
 
 -- | A frozen, content-addressed dataset version.
 type Version row
-    = Version { manifest : Manifest
-, dir : String
-, decode : String -> Result Error row
-}
+    = Version { manifest : Manifest, dir : String, decode : String -> Result Error row }
 
 
 manifestFormat : String
@@ -1808,11 +1824,21 @@ writeChunk tmp encode spec key tally rs stats =
 
 -- Move the written file to its content address and write the manifest, or
 -- keep the version already there.
-settle : { dir : String
-, name : String
-, consentBasis : Maybe String
-, retention : Maybe String
-} -> String -> String -> String -> Tally -> String -> SplitSpec -> List String -> List String -> Task Error ( Manifest, String )
+settle :
+    { dir : String
+    , name : String
+    , consentBasis : Maybe String
+    , retention : Maybe String
+    }
+    -> String
+    -> String
+    -> String
+    -> Tally
+    -> String
+    -> SplitSpec
+    -> List String
+    -> List String
+    -> Task Error ( Manifest, String )
 settle t dir tmp d tally schema spec srcs stps =
     let
         blob = dir ++ "/" ++ d ++ ".jsonl"

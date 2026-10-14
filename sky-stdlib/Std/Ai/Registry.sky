@@ -401,7 +401,7 @@ splitRef : String -> Result Error ( String, String )
 splitRef ref =
     case String.split "@" (String.trim ref) of
 
-        [n, a] ->
+        [ n, a ] ->
             if n /= "" && a /= "" then
                 Ok ( n, a )
 
@@ -476,7 +476,7 @@ baseDigestOf ref =
     in
         case String.split "#sha256=" text of
 
-            [_, hex] ->
+            [ _, hex ] ->
                 if Regex.match "^[0-9a-f]{64}$" hex then
                     Ok hex
 
@@ -1510,7 +1510,7 @@ datasetRefParts : String -> Result Error ( String, Int )
 datasetRefParts ref =
     case String.split "@" ref of
 
-        [name, which] ->
+        [ name, which ] ->
             case String.toInt
                      (if String.startsWith "v" which then
                          String.dropLeft 1 which

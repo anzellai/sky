@@ -81,7 +81,8 @@ getOrCreateCustomer userId userName userEmail =
         listParamsR =
             Stripe.newCustomerListParams ()
                 |> Result.andThen
-                       (\p -> Stripe.customerListParamsSetEmail (Just userEmail) p)
+                       (\p ->
+                           Stripe.customerListParamsSetEmail (Just userEmail) p)
     in
         case listParamsR of
 
@@ -432,7 +433,7 @@ verifyStripeSession cartId sessionId =
             in
                 if status == rd "" (Stripe.checkoutSessionStatusComplete ())
                     && paymentStatus
-                    == rd "" (Stripe.checkoutSessionPaymentStatusPaid ()) then
+                           == rd "" (Stripe.checkoutSessionPaymentStatusPaid ()) then
                     let
                         _ =
                             println

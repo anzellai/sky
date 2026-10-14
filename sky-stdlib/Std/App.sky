@@ -449,11 +449,13 @@ noDurableWiring =
 -- | Describe an app from the shared TEA core. Routing, config, and function
 -- knobs are added by the `with…` builders below (each is target-relevant and
 -- ignored by targets that have no use for it).
-app : { init : () -> ( model, Cmd msg )
-, update : msg -> model -> ( model, Cmd msg )
-, view : model -> Element msg
-, subscriptions : model -> Sub msg
-} -> App NoFallback () page model msg key
+app :
+    { init : () -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> Element msg
+    , subscriptions : model -> Sub msg
+    }
+    -> App NoFallback () page model msg key
 app cfg =
     App
         { init = cfg.init
@@ -482,11 +484,13 @@ app cfg =
 -- backends (Live/Spa/Webview) render the `Html` natively, while the terminal
 -- backends (Tui/Cli) reject it (they require a `Std.Ui` view — use [`app`] for a
 -- cross-platform view).
-web : { init : () -> ( model, Cmd msg )
-, update : msg -> model -> ( model, Cmd msg )
-, view : model -> Html msg
-, subscriptions : model -> Sub msg
-} -> App NoFallback () page model msg key
+web :
+    { init : () -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> Html msg
+    , subscriptions : model -> Sub msg
+    }
+    -> App NoFallback () page model msg key
 web cfg =
     App
         { init = cfg.init
@@ -514,11 +518,13 @@ web cfg =
 -- with [`withOnLine`]. A `String` view is terminal-only: the web / desktop /
 -- mobile runners reject it at boot (use [`app`] for a cross-platform `Std.Ui`
 -- view). This is the first-class home of what used to be `Std.Cli.program`.
-cli : { init : () -> ( model, Cmd msg )
-, update : msg -> model -> ( model, Cmd msg )
-, view : model -> String
-, subscriptions : model -> Sub msg
-} -> App NoFallback () page model msg key
+cli :
+    { init : () -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> String
+    , subscriptions : model -> Sub msg
+    }
+    -> App NoFallback () page model msg key
 cli cfg =
     App
         { init = cfg.init
@@ -548,11 +554,13 @@ cli cfg =
 -- view is terminal-only (the web / desktop / mobile runners reject it at boot).
 -- Use [`app`] instead when you want a `Std.Ui` view that renders full-screen
 -- ANSI *and* the web. This is the first-class home of `Std.Tui.program`.
-tui : { init : () -> ( model, Cmd msg )
-, update : msg -> model -> ( model, Cmd msg )
-, view : model -> String
-, subscriptions : model -> Sub msg
-} -> App NoFallback () page model msg key
+tui :
+    { init : () -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> String
+    , subscriptions : model -> Sub msg
+    }
+    -> App NoFallback () page model msg key
 tui cfg =
     App
         { init = cfg.init
@@ -637,15 +645,19 @@ withDurableId rid dbHandle codec (App a) =
 -- The seed is a type variable, as in `Live.config`'s `init : a -> …`: the
 -- runtime hands over the raw request seed, and `toRequest`
 -- (`requestFromSeed_`) turns it into the `Request` the hook takes.
-liveDurable_ : (seed -> Request) -> Maybe (Request -> model -> ( model, Cmd msg )) -> DurableWiring model -> { enabled : Bool
-, setup : Task Error ()
-, restore : String -> Task Error (Maybe model)
-, persist : String -> model -> Task Error ()
-, discard : String -> Task Error ()
-, applyRestore : Result Error (Maybe model) -> model -> model
-, runId : String
-, applyRestoreRequest : seed -> Result Error (Maybe model) -> model -> model
-}
+liveDurable_ :
+    (seed -> Request)
+    -> Maybe (Request -> model -> ( model, Cmd msg ))
+    -> DurableWiring model
+    -> { enabled : Bool
+       , setup : Task Error ()
+       , restore : String -> Task Error (Maybe model)
+       , persist : String -> model -> Task Error ()
+       , discard : String -> Task Error ()
+       , applyRestore : Result Error (Maybe model) -> model -> model
+       , runId : String
+       , applyRestoreRequest : seed -> Result Error (Maybe model) -> model -> model
+       }
 liveDurable_ toRequest onRequest d =
     { enabled = d.enabled
     , setup = d.setup
@@ -1228,13 +1240,15 @@ apiServerRoute r =
 -- `Request` declares. This is the ONE bridge — [`withRequest`] delivers this
 -- `Request` to the app; `init` itself never sees the seed (it is called with
 -- `()`), which is what keeps the app portable.
-requestFromSeed_ : { method : String
-, path : String
-, headers : Dict String String
-, params : Dict String String
-, query : String
-, cookies : Dict String String
-} -> Request
+requestFromSeed_ :
+    { method : String
+    , path : String
+    , headers : Dict String String
+    , params : Dict String String
+    , query : String
+    , cookies : Dict String String
+    }
+    -> Request
 requestFromSeed_ s =
     { method = s.method
     , path = s.path
@@ -1967,9 +1981,12 @@ livePort_ =
     Ffi.kernel "Std_App_livePort"
 
 
-openLiveWindow_ : Int -> { title : String
-, size : ( Int, Int )
-} -> Task Error ()
+openLiveWindow_ :
+    Int
+    -> { title : String
+       , size : ( Int, Int )
+       }
+    -> Task Error ()
 openLiveWindow_ port window =
     -- Wait until the Live server actually answers before opening the window. A
     -- fixed delay was wrong: an app with a slow `init` is not listening yet, so

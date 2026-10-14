@@ -455,6 +455,77 @@ mod tests {
     }
 
     #[test]
+    fn list_pattern_keeps_spaces_inside_its_brackets() {
+        // `[ only ]` became `[only]`. A list pattern has the same spacing as a
+        // list expression: `[ a, b ]`, and `[]` when empty.
+        stays_put(
+            "module M exposing (f)\n\n\nf xs =\n    case xs of\n\n        [ only ] ->\n            only\n\n        [ a, b ] ->\n            a\n\n        [] ->\n            0\n\n        _ ->\n            1\n",
+        );
+        let out = format_source(
+            "module M exposing (f)\n\n\nf xs =\n    case xs of\n\n        [only] ->\n            only\n\n        _ ->\n            1\n",
+        );
+        assert!(out.contains("        [ only ] ->\n"), "got: {out:?}");
+    }
+
+    #[test]
+    fn annotation_record_type_stays_on_one_line_when_it_fits() {
+        // Every record type with two or more fields broke, which in an
+        // annotation put the commas and the closing brace at column 0.
+        stays_put(
+            "module M exposing (island)\n\n\nisland : { name : String, id : String, props : Value } -> List (Attribute msg) -> Element msg\nisland r attrs =\n    r\n",
+        );
+        // A record the source had broken, or one that does not fit, breaks
+        // the annotation into the standard form.
+        stays_put(
+            "module M exposing (g)\n\n\ng :\n    { name : String\n    , id : String\n    }\n    -> Int\ng r =\n    1\n",
+        );
+        let long = "module M exposing (h)\n\n\nh : { aaaaaaaaaaaaaaa : String, bbbbbbbbbbbbbbbbbbbb : String, cccccccccccccccccccc : Int } -> Int\nh r =\n    1\n";
+        assert_eq!(
+            format_source(long),
+            "module M exposing (h)\n\n\nh :\n    { aaaaaaaaaaaaaaa : String\n    , bbbbbbbbbbbbbbbbbbbb : String\n    , cccccccccccccccccccc : Int\n    }\n    -> Int\nh r =\n    1\n"
+        );
+        idempotent(long);
+        // A record inside another type joins when it fits: its broken source
+        // layout is what the old rule printed, not a choice of the author.
+        let nested = "module M exposing (stats)\n\n\nstats : Cache k v -> Task Error { hits : Int\n, misses : Int\n, evictions : Int\n}\nstats c =\n    c\n";
+        assert_eq!(
+            format_source(nested),
+            "module M exposing (stats)\n\n\nstats : Cache k v -> Task Error { hits : Int, misses : Int, evictions : Int }\nstats c =\n    c\n"
+        );
+        idempotent(nested);
+        // A record alias body keeps its rule: two or more fields break.
+        stays_put(
+            "module M exposing (Model)\n\ntype alias Model =\n    { count : Int\n    , name : String\n    }\n",
+        );
+    }
+
+    #[test]
+    fn mixed_precedence_chain_keeps_its_groups() {
+        // The printer flattened `==` into the `||` chain and broke between
+        // `t` and `== "main"`. A tighter-binding operand is one group.
+        stays_put(
+            "module M exposing (f)\n\n\nf t =\n    t == \"div\" || t == \"p\" || isHeadingTag t || t == \"section\" || t == \"form\"\n        || t == \"main\"\n        || t == \"nav\"\n",
+        );
+        let out = format_source(
+            "module M exposing (f)\n\n\nf t =\n    t == \"div\"\n        || t == \"p\"\n        || isHeadingTag t\n        || t == \"section\"\n        || t == \"form\"\n        || t == \"main\"\n        || t == \"nav\"\n",
+        );
+        assert!(!out.contains("|| t\n"), "got: {out:?}");
+        idempotent(&out);
+    }
+
+    #[test]
+    fn exposing_and_annotation_one_line_rules() {
+        // The intended rules, unchanged: an exposing list breaks only past
+        // 100 columns, and an annotation with no record in it stays on one
+        // line.
+        let src = "module M exposing\n    ( a\n    , b\n    )\n\n\na : Int\n    -> Int\na x =\n    x\n\n\nb : Int\nb =\n    1\n";
+        assert_eq!(
+            format_source(src),
+            "module M exposing (a, b)\n\n\na : Int -> Int\na x =\n    x\n\n\nb : Int\nb =\n    1\n"
+        );
+    }
+
+    #[test]
     fn multiline_record_update_puts_base_alone_and_indents_fields() {
         // A record update that does not fit on one line keeps `{ base` alone on
         // the first line and every field one step in, led by `|` then `,`. The

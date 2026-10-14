@@ -63,9 +63,7 @@ exchangeCodeForToken code =
 
 -- getGitHubUser returns a small typed record (from the GitHub JSON), consumed
 -- by the sign-in handler — not a DB row.
-getGitHubUser : String -> Result Error { username : String
-, avatarUrl : String
-}
+getGitHubUser : String -> Result Error { username : String, avatarUrl : String }
 getGitHubUser token =
     case Task.run
              (Http.get ("https://api.github.com/user?access_token=" ++ token)) of

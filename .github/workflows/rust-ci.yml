@@ -1527,9 +1527,9 @@ jobs:
       # form per-PR is what makes the tag gate boring. (conformance's count also
       # drifts tier-only, but it needs an installed sky-out/sky to run the suites,
       # so it stays in the nightly/release tier until config-gates installs one.)
-      - name: 'Gate — cli-verbs + analytics + roundtrip/shared-world (fast T1 counting gates)'
+      - name: 'Gate — cli-verbs + analytics + roundtrip/shared-world + fmt-clean (fast T1 counting gates)'
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --only cli-verbs,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,roundtrip,shared-world
+        run: cargo run --release --locked -q -p xtask -- harness --only cli-verbs,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,roundtrip,shared-world,fmt-clean
       - name: Bound the Go caches before save
         if: always()
         working-directory: .

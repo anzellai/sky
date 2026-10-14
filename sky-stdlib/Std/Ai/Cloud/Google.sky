@@ -204,10 +204,9 @@ keyFileAt path =
                        case JsonD.decodeString keyFileDecoder text of
 
                            Ok k ->
-                               if k.kind == "service_account" && k.clientEmail
-                                   /= ""
-                                   && k.privateKey
-                                   /= "" then
+                               if k.kind == "service_account"
+                                   && k.clientEmail /= ""
+                                   && k.privateKey /= "" then
                                    Task.succeed (Just k)
 
                                else if k.kind == "external_account" then
@@ -734,7 +733,7 @@ pathOf url =
         rest =
             case String.split "://" url of
 
-                [_, r] ->
+                [ _, r ] ->
                     r
 
                 _ ->
@@ -842,8 +841,7 @@ validLabel s =
         && List.all
                (\c ->
                    (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
-                       || c
-                       == '_')
+                       || c == '_')
                (String.toList s)
 
 -- ── Vertex AI custom jobs ───────────────────────────────────────────
@@ -1073,7 +1071,7 @@ regionOf : String -> String
 regionOf name =
     case String.split "/locations/" name of
 
-        [_, rest] ->
+        [ _, rest ] ->
             String.split "/" rest |> List.head |> Maybe.withDefault ""
 
         _ ->
@@ -1156,8 +1154,8 @@ cancelCustomJob name =
         |> Task.andThen (\url -> call "POST" (url ++ ":cancel") "{}")
         |> Task.andThen
                (\resp ->
-                   if resp.status == 400 || resp.status == 404 || resp.status
-                       == 409 then
+                   if resp.status == 400 || resp.status == 404
+                       || resp.status == 409 then
                        Task.succeed ()
 
                    else
@@ -1563,7 +1561,7 @@ artifactExists ref =
                 in
                     case String.split "@" image of
 
-                        [path, digest] ->
+                        [ path, digest ] ->
                             serviceBase "artifactregistry" location
                                 |> Task.andThen
                                        (\base ->
@@ -1813,9 +1811,7 @@ tarGzRaw =
 -- | Pack a directory into a gzipped tar at `out`, reproducibly (sorted
 -- entries, no times or owners, hidden files left out): a Cloud Build source.
 -- Returns the archive's digest and size.
-packDirectory : String -> String -> Task Error { sha256 : String
-, size : Int
-}
+packDirectory : String -> String -> Task Error { sha256 : String, size : Int }
 packDirectory dir out =
     tarGzRaw dir out |> Task.map (\p -> { sha256 = p.sha256, size = p.size })
 

@@ -138,11 +138,13 @@ type Route
 -- client driver reconciles the active `Sub.every` timers against the result
 -- (starts new intervals, stops removed ones, leaves unchanged ones running).
 -- Use `\_ -> Sub.none` when the app has no ongoing subscriptions.
-config : { init : a -> ( model, Cmd msg )
-, update : msg -> model -> ( model, Cmd msg )
-, view : model -> Html msg
-, subscriptions : model -> Sub msg
-} -> AppConfig model msg
+config :
+    { init : a -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg )
+    , view : model -> Html msg
+    , subscriptions : model -> Sub msg
+    }
+    -> AppConfig model msg
 config =
     Ffi.kernel "Spa_config"
 

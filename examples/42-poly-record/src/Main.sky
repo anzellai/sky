@@ -12,17 +12,21 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
 
-wrap : a -> { val : a
-, tag : String
-}
+wrap :
+    a
+    -> { val : a
+       , tag : String
+       }
 wrap v =
     { val = v, tag = "w" }
 
 
-box : a -> { item : a
-, name : String
-, count : Int
-}
+box :
+    a
+    -> { item : a
+       , name : String
+       , count : Int
+       }
 box v =
     { item = v, name = "b", count = 3 }
 

@@ -3505,7 +3505,7 @@ parseMoney : String -> Maybe Money
 parseMoney text =
     case String.split " " (String.trim text) of
 
-        [c, amount] ->
+        [ c, amount ] ->
             if Money.isKnownCode c then
                 Result.toMaybe (Money.fromString (Money.parseCurrency c) amount)
 
@@ -3583,7 +3583,7 @@ checkCloud s found =
                        (\l ->
                            case String.split "=" l of
 
-                               [k, v] ->
+                               [ k, v ] ->
                                    ( String.trim k, String.trim v )
 
                                _ ->
@@ -3605,7 +3605,7 @@ checkCloud s found =
         pinned =
             case String.split "@sha256:" image.value of
 
-                [_, hex] ->
+                [ _, hex ] ->
                     String.length hex == 64
                         && List.all
                                (\c ->
@@ -3635,8 +3635,7 @@ checkCloud s found =
             Err (notSet staging "withCloud")
 
         else if not (String.startsWith "gs://" staging.value)
-            || String.length staging.value
-            <= 5 then
+            || String.length staging.value <= 5 then
             Err
                 (invalid
                     staging.name
@@ -3705,7 +3704,7 @@ checkCloud s found =
                                                  (\r ->
                                                      r.machine == machine
                                                          && r.region
-                                                         == region.value)
+                                                                == region.value)
                                                  book.rates of
 
                                             rate :: _ ->
@@ -4146,7 +4145,7 @@ rawCloudCodec =
                        (\t ->
                            case String.split "=" t of
 
-                               [k, v] ->
+                               [ k, v ] ->
                                    ( k, v )
 
                                _ ->
@@ -4426,10 +4425,9 @@ cancelCloud c =
         |> Task.andThen (\_ -> Google.cancelCustomJob c.job)
         |> Task.map
                (\_ ->
-                   c.state == "JOB_STATE_RUNNING" || c.state
-                       == "JOB_STATE_PENDING"
-                       || c.state
-                       == "JOB_STATE_QUEUED")
+                   c.state == "JOB_STATE_RUNNING"
+                       || c.state == "JOB_STATE_PENDING"
+                       || c.state == "JOB_STATE_QUEUED")
 
 
 cloudTrain : Durable.Ctx -> Job -> Task Error ( Setup, Seen, CloudRun )
@@ -4942,7 +4940,7 @@ attach job cs store key attempt intentKey tries =
                                                                                                 5000
                                                                                                 (500
                                                                                                     + tries
-                                                                                                    * 500))
+                                                                                                          * 500))
                                                                                             |> Task.andThen
                                                                                                    (\_ ->
                                                                                                        attach
@@ -5361,7 +5359,7 @@ watchCloud job cs store key attempt name after spentBefore =
                                                                                            if cj.startMs
                                                                                                > 0
                                                                                                && cj.endMs
-                                                                                               > cj.startMs then
+                                                                                                      > cj.startMs then
                                                                                                (cj.endMs
                                                                                                    - cj.startMs)
                                                                                                    // 1000

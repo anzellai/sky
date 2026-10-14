@@ -456,10 +456,9 @@ adapterFrom : Store -> String -> Task Error TierAdapter
 adapterFrom st ref =
     case String.split "@" ref of
 
-        [name, which] ->
+        [ name, which ] ->
             (if String.startsWith "v" which
-                && String.toInt (String.dropLeft 1 which)
-                /= Nothing then
+                && String.toInt (String.dropLeft 1 which) /= Nothing then
                 Task.succeed
                     (String.toInt (String.dropLeft 1 which)
                         |> Maybe.withDefault 0)
@@ -598,10 +597,12 @@ tierBaseImage =
 -- | Google Cloud Run with one NVIDIA L4, scaling to zero: `{ project,
 -- region, service }`. The project and region fall back to
 -- `SKY_AI_SERVE_PROJECT` and `SKY_AI_SERVE_REGION` (`deploy` reads them).
-cloudRun : { project : String
-, region : String
-, service : String
-} -> Target
+cloudRun :
+    { project : String
+    , region : String
+    , service : String
+    }
+    -> Target
 cloudRun c =
     CloudRun
         { project = c.project

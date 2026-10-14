@@ -558,8 +558,8 @@ refuseEnvAdapter target req =
                            (\d ->
                                case List.filter
                                         (\st ->
-                                            st.key == "ADAPTER" && st.source
-                                                == "env")
+                                            st.key == "ADAPTER"
+                                                && st.source == "env")
                                         d.settings of
 
                                    st :: _ ->
@@ -960,7 +960,7 @@ commandLineWith p args =
             "lineage" :: ref :: opts ->
                 withFlags p opts (\q -> lineageVerb json q ref)
 
-            ["members"] ->
+            [ "members" ] ->
                 membersVerb json p
 
             _ ->

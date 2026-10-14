@@ -58,11 +58,13 @@ width n =
 
 
 -- Per-side border width: top, right, bottom, left (in px).
-widthEach : { top : Int
-, right : Int
-, bottom : Int
-, left : Int
-} -> Attribute msg
+widthEach :
+    { top : Int
+    , right : Int
+    , bottom : Int
+    , left : Int
+    }
+    -> Attribute msg
 widthEach r =
     borderWidthEach r.top r.right r.bottom r.left
 
@@ -93,12 +95,14 @@ dotted =
 -- Box shadow with an offset (px), blur radius (px), spread (px), and
 -- colour. Use 0 for spread when you don't need it. Mirrors the CSS
 -- `box-shadow: <ox>px <oy>px <blur>px <spread>px <colour>;` shape.
-shadow : { offsetX : Int
-, offsetY : Int
-, blur : Int
-, spread : Int
-, color : Color
-} -> Attribute msg
+shadow :
+    { offsetX : Int
+    , offsetY : Int
+    , blur : Int
+    , spread : Int
+    , color : Color
+    }
+    -> Attribute msg
 shadow s =
     borderShadow s.offsetX s.offsetY s.blur s.spread s.color
 
@@ -112,12 +116,14 @@ glow blur c =
 
 -- Inset (inner) shadow with the same shape as `shadow`. Renders
 -- with the CSS `inset` keyword for an inward shadow.
-innerShadow : { offsetX : Int
-, offsetY : Int
-, blur : Int
-, spread : Int
-, color : Color
-} -> Attribute msg
+innerShadow :
+    { offsetX : Int
+    , offsetY : Int
+    , blur : Int
+    , spread : Int
+    , color : Color
+    }
+    -> Attribute msg
 innerShadow s =
     borderInsetShadow s.offsetX s.offsetY s.blur s.spread s.color
 

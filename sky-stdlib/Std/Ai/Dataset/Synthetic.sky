@@ -483,10 +483,12 @@ type alias Call =
     }
 
 
-callLimit : { perCall : Int
-, target : Int
-, maxCalls : Maybe Int
-} -> Int
+callLimit :
+    { perCall : Int
+    , target : Int
+    , maxCalls : Maybe Int
+    }
+    -> Int
 callLimit g =
     case g.maxCalls of
 
@@ -565,12 +567,16 @@ hashInt s =
                0
 
 
-render : { a | name : String
-, template : String
-, codec : Codec row
-, examples : List row
-, perCall : Int
-} -> String -> String -> String
+render :
+    { a | name : String
+    , template : String
+    , codec : Codec row
+    , examples : List row
+    , perCall : Int
+    }
+    -> String
+    -> String
+    -> String
 render g topic persona =
     let
         fields =

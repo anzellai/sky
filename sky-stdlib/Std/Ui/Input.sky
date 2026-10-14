@@ -128,20 +128,26 @@ option value labelEl =
 -- Button. Set `onPress = Nothing` to render a disabled button (the
 -- runtime adds `disabled="true"` so the browser greys it out and
 -- ignores clicks).
-button : List (Attribute msg) -> { onPress : Maybe msg
-, label : Element msg
-} -> Element msg
+button :
+    List (Attribute msg)
+    -> { onPress : Maybe msg
+       , label : Element msg
+       }
+    -> Element msg
 button attrs cfg =
     Ui.button attrs cfg
 
 
 -- Single-line text input. The change handler fires on every
 -- keystroke per Sky.Live's input-event semantics.
-text : List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-} -> Element msg
+text :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       }
+    -> Element msg
 text attrs cfg =
     inputBase "text" attrs cfg
 
@@ -149,11 +155,14 @@ text attrs cfg =
 -- Email-typed text input. Renders as `<input type="email">` so
 -- mobile browsers show the @-aware keyboard and HTML5 form
 -- validation kicks in.
-email : List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-} -> Element msg
+email :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       }
+    -> Element msg
 email attrs cfg =
     inputBase "email" attrs cfg
 
@@ -161,22 +170,28 @@ email attrs cfg =
 -- Username-typed text input — identical to `text` plus
 -- `autocomplete="username"` so password managers recognise it as a
 -- sign-in field.
-username : List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-} -> Element msg
+username :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       }
+    -> Element msg
 username attrs cfg =
     inputBase "text" (Ui.htmlAttribute "autocomplete" "username" :: attrs) cfg
 
 
 -- Search input. Renders as `<input type="search">` (mobile clear
 -- button + dedicated search keyboard on some platforms).
-search : List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-} -> Element msg
+search :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       }
+    -> Element msg
 search attrs cfg =
     inputBase "search" attrs cfg
 
@@ -188,12 +203,15 @@ search attrs cfg =
 -- `Ui.input` with type "password" inside `Ui.form` + `onSubmit` (see
 -- the module header); use this control only when you need the value
 -- per keystroke (validation feedback, strength meters).
-currentPassword : List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-, show : Bool
-} -> Element msg
+currentPassword :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       , show : Bool
+       }
+    -> Element msg
 currentPassword attrs cfg =
     let
         passType =
@@ -217,12 +235,15 @@ currentPassword attrs cfg =
 
 -- Password input — new-password autocomplete (sign-up / change-password
 -- flows). Same `show` toggle as `currentPassword`.
-newPassword : List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-, show : Bool
-} -> Element msg
+newPassword :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       , show : Bool
+       }
+    -> Element msg
 newPassword attrs cfg =
     let
         passType =
@@ -261,12 +282,15 @@ newPassword attrs cfg =
 -- branch in `runtime-go/rt/live.go` handles the dance. The TUI side
 -- still consults the `type="textarea"` attr for its multiline-editor
 -- code path, so keep it on the attribute list.
-multiline : List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-, spellcheck : Bool
-} -> Element msg
+multiline :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       , spellcheck : Bool
+       }
+    -> Element msg
 multiline attrs cfg =
     let
         spellAttr =
@@ -311,11 +335,14 @@ multiline attrs cfg =
 -- authority-controlled attribute (like `value`/`selected`) and the
 -- browser driver syncs `el.checked` from it, so omitting it left the
 -- real control unchecked however the model was set.
-checkbox : List (Attribute msg) -> { onChange : Bool -> msg
-, icon : Bool -> Element msg
-, checked : Bool
-, label : Label msg
-} -> Element msg
+checkbox :
+    List (Attribute msg)
+    -> { onChange : Bool -> msg
+       , icon : Bool -> Element msg
+       , checked : Bool
+       , label : Label msg
+       }
+    -> Element msg
 checkbox attrs cfg =
     let
         layoutAndControl = splitLayoutAttrs attrs
@@ -350,11 +377,14 @@ checkbox attrs cfg =
 -- Radio button group — vertical layout. Each `RadioOption value
 -- labelEl` becomes one selectable choice; clicking dispatches
 -- `onChange value`. `selected` is the currently-active value.
-radio : List (Attribute msg) -> { onChange : String -> msg
-, options : List (RadioOption msg)
-, selected : String
-, label : Label msg
-} -> Element msg
+radio :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , options : List (RadioOption msg)
+       , selected : String
+       , label : Label msg
+       }
+    -> Element msg
 radio attrs cfg =
     let
         layoutAndControl = splitLayoutAttrs attrs
@@ -374,11 +404,14 @@ radio attrs cfg =
 
 -- Radio button group — horizontal layout. Same args as `radio`,
 -- children flow left-to-right.
-radioRow : List (Attribute msg) -> { onChange : String -> msg
-, options : List (RadioOption msg)
-, selected : String
-, label : Label msg
-} -> Element msg
+radioRow :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , options : List (RadioOption msg)
+       , selected : String
+       , label : Label msg
+       }
+    -> Element msg
 radioRow attrs cfg =
     let
         layoutAndControl = splitLayoutAttrs attrs
@@ -401,13 +434,16 @@ radioRow attrs cfg =
 -- text); use `String.toFloat` or `String.toInt` to parse. `min`,
 -- `max`, `step`, and `value` are pre-rendered as Strings so the
 -- handler can stay String-typed.
-slider : List (Attribute msg) -> { onChange : String -> msg
-, value : String
-, min : String
-, max : String
-, step : String
-, label : Label msg
-} -> Element msg
+slider :
+    List (Attribute msg)
+    -> { onChange : String -> msg
+       , value : String
+       , min : String
+       , max : String
+       , step : String
+       , label : Label msg
+       }
+    -> Element msg
 slider attrs cfg =
     let
         layoutAndControl = splitLayoutAttrs attrs
@@ -431,11 +467,15 @@ slider attrs cfg =
 -- Renders as a real <input> via `Ui.input` (Ui.el would render
 -- as <div> and the browser would ignore the type/value attrs and
 -- never fire input events).
-inputBase : String -> List (Attribute msg) -> { onChange : String -> msg
-, text : String
-, placeholder : Maybe (Placeholder msg)
-, label : Label msg
-} -> Element msg
+inputBase :
+    String
+    -> List (Attribute msg)
+    -> { onChange : String -> msg
+       , text : String
+       , placeholder : Maybe (Placeholder msg)
+       , label : Label msg
+       }
+    -> Element msg
 inputBase inputType attrs cfg =
     let
         placeholderAttr =

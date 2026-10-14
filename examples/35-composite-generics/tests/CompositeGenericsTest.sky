@@ -221,10 +221,8 @@ fixtureSuite =
                           (List.filter
                               (\r ->
                                   String.length r.tx.account > 0
-                                      && String.length r.tx.amount
-                                      > 0
-                                      && r.tx.id
-                                      > 0)
+                                      && String.length r.tx.amount > 0
+                                      && r.tx.id > 0)
                               enrichedRows)))
         ]
 
@@ -232,8 +230,7 @@ fixtureSuite =
 rowIsBlank : Transaction -> Bool
 rowIsBlank r =
     r.id <= 0 || String.length r.account == 0 || String.length r.amount == 0
-        || String.length r.category
-        == 0
+        || String.length r.category == 0
 
 
 csvSuite : Test

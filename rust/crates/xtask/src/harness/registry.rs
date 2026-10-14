@@ -1548,6 +1548,31 @@ pub static GATES: &[Gate] = &[
         body: bodies::config_surface,
     },
     Gate {
+        name: "fmt-clean",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // A pure in-process scan: `git ls-files` plus one format pass per file.
+        budget_s: 120,
+        expected: bodies::FMT_CLEAN_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ \
+                  and templates/ is already `sky fmt`-clean",
+        // The mutation is the defect the gate exists to catch: a tracked file
+        // that `sky fmt` would rewrite. The gate READS the file at run time, so
+        // no rebuild stands between the mutation and red.
+        mutations: Mutations::new(&[Mutation {
+            id: "fmt-clean.unformat-a-tracked-file",
+            description: "put extra spaces into a call in examples/01-hello-world; \
+                          `sky fmt` would rewrite the file, so the gate must go red",
+            kind: MutationKind::ReplaceOnce {
+                path: "examples/01-hello-world/src/Main.sky",
+                from: "    println \"Hello from Sky!\"",
+                to: "    println   \"Hello from Sky!\"",
+            },
+        }]),
+        body: bodies::fmt_clean,
+    },
+    Gate {
         name: "kernel-members",
         tier: Tier::T1,
         platforms: ALL_PLATFORMS,

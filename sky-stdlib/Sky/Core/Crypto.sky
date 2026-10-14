@@ -298,9 +298,12 @@ chachaKeyFromPassword =
 --         |> Task.andThen
 --                (\salt ->
 --                    Crypto.keyFromPasswordStrong { iterations = 600000, salt = salt } password)
-keyFromPasswordStrong : { iterations : Int
-, salt : String
-} -> Secret -> Task Error Secret
+keyFromPasswordStrong :
+    { iterations : Int
+    , salt : String
+    }
+    -> Secret
+    -> Task Error Secret
 keyFromPasswordStrong =
     Ffi.kernel "Crypto_keyFromPasswordStrong"
 

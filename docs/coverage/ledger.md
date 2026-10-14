@@ -320,6 +320,7 @@ None.
 | `corpus-witness` | T2 | PROVEN | `compiler.codegen-determinism` · `compiler.lower-emit-shape` |
 | `coverage-ledger` | T1 | PROVEN | `meta.coverage-accounting` |
 | `erasure-path-uses-an-index` | T1 | PROVEN | `observability.analytics-store` |
+| `fmt-clean` | T1 | not proven | `compiler.fmt` |
 | `jobs-complete-failure-is-reported` | T1 | PROVEN | `runtime.periodic-goroutines` |
 | `kernel-members` | T1 | PROVEN | `meta.kernel-members` |
 | `live-time-every-mutex-survives-a-panic` | T1 | PROVEN | `runtime.periodic-goroutines` · `skylive.session-sse-csrf` |

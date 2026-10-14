@@ -523,6 +523,16 @@
       ],
       "tier": "T1"
     },
+    "fmt-clean": {
+      "expected_assertions": 395,
+      "falsifier_mutation": "",
+      "falsifier_proven": false,
+      "summary": "every tracked .sky file in sky-stdlib/, sky-bundled/, apps/, examples/ and templates/ is already `sky fmt`-clean",
+      "surfaces": [
+        "compiler.fmt"
+      ],
+      "tier": "T1"
+    },
     "jobs-complete-failure-is-reported": {
       "expected_assertions": 3,
       "falsifier_mutation": "jobs-complete.discard-the-store-error",
@@ -1574,6 +1584,11 @@
             "by": "gate `sky-verify`",
             "class": "Falsified",
             "strength": 4
+          },
+          {
+            "by": "gate `fmt-clean`",
+            "class": "Asserted",
+            "strength": 3
           },
           {
             "by": ".github/workflows/rust-ci.yml: xtask fmt (`xtask:fmt` is not harness-registered — no proven falsifier)",

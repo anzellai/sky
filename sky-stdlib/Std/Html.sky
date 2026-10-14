@@ -54,10 +54,13 @@ node tag attrs children =
 -- (JSON) reaches `mount` and `update`; a new `name` or `id` remounts the
 -- widget. Pair with `Std.Html.Events.onIslandEvent` and `Cmd.toIsland`.
 -- See docs/skyui/overview.md, "Widget islands".
-island : { name : String
-, id : String
-, props : Value
-} -> List (Attribute msg) -> Html msg
+island :
+    { name : String
+    , id : String
+    , props : Value
+    }
+    -> List (Attribute msg)
+    -> Html msg
 island cfg attrs =
     HElement
         "div"

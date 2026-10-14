@@ -63,7 +63,7 @@ scrubber =
         (\texts t ->
             case texts of
 
-                [subject, body] ->
+                [ subject, body ] ->
                     { t | subject = subject, body = body }
 
                 _ ->

@@ -3576,6 +3576,17 @@ pub fn config_surface(ctx: &GateCtx) -> GateOutcome {
 /// — a real event that must be read, not absorbed.
 pub const KERNEL_MEMBERS_EXPECTED: u64 = 116;
 
+/// One assertion per tracked `.sky` file under `sky-stdlib/`, `sky-bundled/`,
+/// `apps/`, `examples/` and `templates/`. EXACT: it moves when such a file is
+/// added or removed, measured by running the gate.
+pub const FMT_CLEAN_EXPECTED: u64 = 395;
+
+/// Every tracked `.sky` file in scope is already `sky fmt`-clean.
+pub fn fmt_clean(ctx: &GateCtx) -> GateOutcome {
+    let (passed, assertions, detail) = crate::fmt_gate::check_clean(&ctx.repo_root);
+    GateOutcome::new(passed, assertions, detail)
+}
+
 pub fn kernel_members(ctx: &GateCtx) -> GateOutcome {
     let (passed, assertions, detail) = crate::kernel_members::check_body(&ctx.repo_root);
     GateOutcome::new(passed, assertions, detail)

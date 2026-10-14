@@ -31,7 +31,7 @@ run : List String -> Task Error ()
 run args =
     case args of
 
-        ["generate"] ->
+        [ "generate" ] ->
             generate
 
         _ ->

@@ -168,9 +168,7 @@ type Expect
     | Contains String
     | Matches String
     | JsonShape Codec.Shape
-    | CallsTool { name : String
-, args : String -> Bool
-}
+    | CallsTool { name : String, args : String -> Bool }
     | Refuses
     | Rubric String
     | Custom String (ChatResponse -> Score)
@@ -232,9 +230,7 @@ with the options of each sample (temperature 0 and seed `seed + sample` by
 default). A device records the answers to them (`Std.Ai.Device.record`), and
 the server scores the recording with `Std.Ai.Device.replay` and `runAs`, so one
 suite measures the device and the server alike. -}
-prompts : Suite input -> List { messages : List Message
-, options : Provider.Options
-}
+prompts : Suite input -> List { messages : List Message, options : Provider.Options }
 prompts (Suite s) =
     List.concatMap
         (\c ->
@@ -1162,8 +1158,8 @@ judgeIdentity (Judge j) =
                                (d.slot :: d.mode :: d.target
                                    :: List.filterMap
                                           (\st ->
-                                              if st.key == "MODEL" || st.key
-                                                  == "ADAPTER" then
+                                              if st.key == "MODEL"
+                                                  || st.key == "ADAPTER" then
                                                   Just
                                                       (st.key ++ "=" ++ st.value)
 
@@ -1771,7 +1767,7 @@ moneyDecoder =
         (\text ->
             case String.split " " (String.trim text) of
 
-                [c, amount] ->
+                [ c, amount ] ->
                     case Money.fromString (Money.parseCurrency c) amount of
 
                         Ok m ->
@@ -2311,10 +2307,7 @@ withCalibratedJudge (Thresholds t) =
 -- | Proof that a candidate passed a gate. Only `gate` and `check` make one, so
 -- a function that requires a `Passed` cannot run without a passing evaluation.
 type Passed
-    = Passed { suite : String
-, candidate : String
-, digest : String
-}
+    = Passed { suite : String, candidate : String, digest : String }
 
 
 -- | The suite the passing report ran.

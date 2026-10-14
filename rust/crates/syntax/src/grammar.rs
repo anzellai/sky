@@ -664,21 +664,33 @@ fn bin_power(p: &Parser) -> (u8, u8) {
         (prec * 2 + 1, prec * 2)
     }
     if p.at(Colon2) {
-        return right(5);
+        return right(binary_op_precedence("::"));
     }
-    match p.cur_text() {
-        ">>" => left(9),
-        "<<" => right(9),
-        "^" => right(8),
-        "*" | "/" | "//" | "%" => left(7),
-        "+" | "-" => left(6),
-        "++" => right(5),
-        "==" | "/=" | "<" | ">" | "<=" | ">=" => left(4), // non-assoc → climb left
-        "&&" => right(3),
-        "||" => right(2),
-        "|>" => left(0),
-        "<|" => right(0),
-        _ => left(9), // unknown operator (dead surface — no custom ops)
+    let op = p.cur_text();
+    let prec = binary_op_precedence(op);
+    match op {
+        // Right-associative operators.
+        "<<" | "^" | "++" | "&&" | "||" | "<|" => right(prec),
+        // Left-associative; comparisons are non-associative and climb left.
+        _ => left(prec),
+    }
+}
+
+/// The precedence of a binary operator (higher binds tighter). The parser
+/// and the formatter share this table, so a formatter that groups an
+/// operator chain by precedence groups it the way the parser built it.
+pub fn binary_op_precedence(op: &str) -> u8 {
+    match op {
+        ">>" | "<<" => 9,
+        "^" => 8,
+        "*" | "/" | "//" | "%" => 7,
+        "+" | "-" => 6,
+        "++" | "::" => 5,
+        "==" | "/=" | "<" | ">" | "<=" | ">=" => 4,
+        "&&" => 3,
+        "||" => 2,
+        "|>" | "<|" => 0,
+        _ => 9, // unknown operator (dead surface — no custom ops)
     }
 }
 

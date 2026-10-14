@@ -247,7 +247,7 @@ targetOf opts =
                               (\l ->
                                   case String.split "=" l of
 
-                                      [k, v] ->
+                                      [ k, v ] ->
                                           Just ( k, v )
 
                                       _ ->

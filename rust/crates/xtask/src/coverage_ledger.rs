@@ -599,6 +599,9 @@ static GATE_SURFACES: &[(&str, &[&str])] = &[
     ("coverage-ledger", &["meta.coverage-accounting"]),
     ("config-surface", &["meta.config-surface"]),
     ("kernel-members", &["meta.kernel-members"]),
+    // Every tracked .sky file in the product roots is `sky fmt`-clean: the
+    // formatter's output on real code is what users get.
+    ("fmt-clean", &["compiler.fmt"]),
     ("config-matrix", &["meta.config-effective-values"]),
     ("config-migration", &["meta.config-migration"]),
     ("config-migrate", &["meta.config-migrate"]),

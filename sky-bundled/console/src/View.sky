@@ -23,7 +23,6 @@ import AiTab exposing (aiView)
 -- Single palette helper module so every surface flows through named
 -- colours, not scattered hex literals. Native dark theme — the
 -- console targets developer eyes in long sessions.
-
 -- Page + raised surfaces share the same dark canvas; panels are
 -- distinguished by border, not by a contrasting block. This avoids
 -- the "empty band below the panel" visual gap when content is
@@ -133,7 +132,6 @@ header model =
               , Font.family "ui-monospace, Menlo, monospace"
               ]
               (Ui.text (headerMeta model.overview))
-
         -- "Sign out" ONLY in embedded mode (logoutUrl injected by the
         -- runtime's mountConsoleAuthRoutes path). Standalone hub /
         -- aggregator consoles have no login cookie to clear, so they
@@ -141,12 +139,12 @@ header model =
         -- to the runtime logout route, which clears the
         -- __Host-sky_console cookie and bounces to the login form.
         , if model.logoutUrl == "" then
-            Ui.none
+              Ui.none
 
           else
-            Ui.link
-                [ Font.color textSecondary, Font.size 12, Ui.pointer ]
-                { url = model.logoutUrl, label = Ui.text "Sign out" }
+              Ui.link
+                  [ Font.color textSecondary, Font.size 12, Ui.pointer ]
+                  { url = model.logoutUrl, label = Ui.text "Sign out" }
         ]
 
 
@@ -161,9 +159,9 @@ headerMeta o =
                 "prod"
 
             else
-        -- Show first 8 chars of the session id (full sids are too
-        -- long for the column). Click → pivot all logs to this
-        -- session via LogFilterPickSession Msg.
+                -- Show first 8 chars of the session id (full sids are too
+                -- long for the column). Click → pivot all logs to this
+                -- session via LogFilterPickSession Msg.
                 "dev"
     in
         -- "—" is the decoder default: no overview has arrived yet. Do not
@@ -218,7 +216,14 @@ tabStrip active =
         ]
         (List.map
             (tabButton active)
-            [ OverviewTab, MetricsTab, LogsTab, TracesTab, ErrorsTab, AnalyticsTab, AiTab ])
+            [ OverviewTab
+            , MetricsTab
+            , LogsTab
+            , TracesTab
+            , ErrorsTab
+            , AnalyticsTab
+            , AiTab
+            ])
 
 
 -- ─── Global filter strip (v0.16.18 #558-PR1 + PR2) ──────────────
@@ -309,8 +314,7 @@ serviceRow selected stats =
             ]
             (Ui.text "Service")
             :: serviceChip selected ""
-            :: List.map (\s -> serviceChip selected s.name) stats
-        )
+            :: List.map (\s -> serviceChip selected s.name) stats)
 
 
 serviceChip : String -> String -> Element Msg
@@ -495,7 +499,17 @@ encodeFilters model =
                 "model=" ++ Encoding.urlEncode model.aiFilter.openModel
     in
         joinQueryParts
-            (List.filter (\p -> p /= "") [tabPart, rangePart, qPart, svcPart, callsPart, slotPart, evalPart, modelPart])
+            (List.filter
+                (\p -> p /= "")
+                [ tabPart
+                , rangePart
+                , qPart
+                , svcPart
+                , callsPart
+                , slotPart
+                , evalPart
+                , modelPart
+                ])
 
 
 joinQueryParts : List String -> String
@@ -505,7 +519,7 @@ joinQueryParts parts =
         [] ->
             ""
 
-        [p] ->
+        [ p ] ->
             p
 
         p :: rest ->
@@ -599,7 +613,10 @@ content model =
                     viewTracesTab model model.traces
 
                 else
-                    tracesView model.traceQuery (model.traceQuery /= "" || model.globalQuery /= "") model.traces
+                    tracesView
+                        model.traceQuery
+                        (model.traceQuery /= "" || model.globalQuery /= "")
+                        model.traces
 
             ErrorsTab ->
                 if model.hubDbPath /= "" then
@@ -700,7 +717,7 @@ logsView model logs =
     , panel
           "Recent log entries"
           (if List.isEmpty logs then
-              [emptyState "No log entries match the current filter."]
+              [ emptyState "No log entries match the current filter." ]
 
           else
               List.map logRow logs)
@@ -839,7 +856,7 @@ sessionBadge sid =
     if sid == "" then
         -- Same width as the populated badge so message column
         -- alignment is stable whether session id is present.
-        Ui.el [Ui.width (Ui.px 80)] (Ui.text "")
+        Ui.el [ Ui.width (Ui.px 80) ] (Ui.text "")
 
     else
         Ui.el
@@ -862,7 +879,7 @@ sessionBadge sid =
 traceBadge : String -> Element Msg
 traceBadge tid =
     if tid == "" then
-        Ui.el [Ui.width (Ui.px 92)] (Ui.text "")
+        Ui.el [ Ui.width (Ui.px 92) ] (Ui.text "")
 
     else
         Ui.el
@@ -884,7 +901,7 @@ subappBadge sub =
     if sub == "" then
         -- Same width as the populated badge so the message column
         -- aligns whether the badge is present or not.
-        Ui.el [Ui.width (Ui.px 70)] (Ui.text "")
+        Ui.el [ Ui.width (Ui.px 70) ] (Ui.text "")
 
     else
         Ui.el
@@ -907,7 +924,7 @@ compactTime : String -> String
 compactTime ts =
     case String.split "T" ts of
 
-        [_date, rest] ->
+        [ _date, rest ] ->
             String.left 8 rest
 
         _ ->
@@ -945,13 +962,14 @@ levelTextColor level =
 -- ─── Metrics tab ─────────────────────────────────────────────────
 metricsView : List MetricRow -> List (Element Msg)
 metricsView rows =
-    [panel
-        "Metrics snapshot"
-        (if List.isEmpty rows then
-            [emptyState "No metrics collected yet."]
+    [ panel
+          "Metrics snapshot"
+          (if List.isEmpty rows then
+              [ emptyState "No metrics collected yet." ]
 
-        else
-            List.map metricRowView rows)]
+          else
+              List.map metricRowView rows)
+    ]
 
 
 metricRowView : MetricRow -> Element Msg
@@ -1038,10 +1056,10 @@ tracesView query filtered rows =
     , panel
           "Recent traces"
           (if List.isEmpty rows && filtered then
-              [emptyState "No traces match the filter."]
+              [ emptyState "No traces match the filter." ]
 
           else if List.isEmpty rows then
-              [emptyState "No traces in this range."]
+              [ emptyState "No traces in this range." ]
 
           else
               List.map (traceGroupView rows) (distinctTraceIds rows))
@@ -1099,7 +1117,7 @@ distinctTraceIds rows =
                 acc
 
             else
-                acc ++ [r.traceId])
+                acc ++ [ r.traceId ])
         []
         rows
 
@@ -1237,13 +1255,14 @@ spanRowView allRows r =
 -- ─── Errors tab ──────────────────────────────────────────────────
 errorsView : List ErrorRow -> List (Element Msg)
 errorsView rows =
-    [panel
-        "Top errors by frequency"
-        (if List.isEmpty rows then
-            [emptyState "No errors recorded — nice work."]
+    [ panel
+          "Top errors by frequency"
+          (if List.isEmpty rows then
+              [ emptyState "No errors recorded — nice work." ]
 
-        else
-            List.map errorRowView rows)]
+          else
+              List.map errorRowView rows)
+    ]
 
 
 errorRowView : ErrorRow -> Element Msg
@@ -1311,7 +1330,6 @@ emptyState message =
 
 
 -- ─── Format helpers ──────────────────────────────────────────────
-
 -- Render a Float in [0, 1] as a percentage with 2dp — `0.012` →
 -- `1.20%`. Avoids the float-to-string precision artefacts that
 -- String.fromFloat introduces (would emit `1.2000004%`) by

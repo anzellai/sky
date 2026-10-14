@@ -202,7 +202,7 @@ fromUrl url =
                 ( path, region ) =
                     case String.split "?region=" (String.dropLeft 5 u) of
 
-                        [p, r] ->
+                        [ p, r ] ->
                             ( p, r )
 
                         _ ->
@@ -626,8 +626,8 @@ writeObject (Store c) key guard body =
                                                    Task.succeed False
 
                                            Just o ->
-                                               if o.generation == want && want
-                                                   /= "" then
+                                               if o.generation == want
+                                                   && want /= "" then
                                                    write ()
 
                                                else
@@ -884,7 +884,7 @@ s3List c prefix continuation acc =
                                             "<NextContinuationToken>"
                                             resp.body of
 
-                                       [_, rest] ->
+                                       [ _, rest ] ->
                                            String.split
                                                "</NextContinuationToken>"
                                                rest
@@ -1138,7 +1138,7 @@ hostOf : String -> String
 hostOf url =
     case String.split "://" url of
 
-        [_, rest] ->
+        [ _, rest ] ->
             String.split "/" rest |> List.head |> Maybe.withDefault rest
 
         _ ->

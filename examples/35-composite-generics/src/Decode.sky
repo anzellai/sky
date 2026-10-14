@@ -60,7 +60,7 @@ parseRow line =
     in
         case cells of
 
-            [idStr, account, amount, currency, category, tsStr] ->
+            [ idStr, account, amount, currency, category, tsStr ] ->
                 Result.map2
                     (\rowId timestamp ->
                         { id = rowId

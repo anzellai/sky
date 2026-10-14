@@ -539,8 +539,8 @@ normaliseKind raw =
     let
         k = String.toLower (String.trim raw)
     in
-        if k == "asset" || k == "liability" || k == "equity" || k == "income" || k
-            == "expense" then
+        if k == "asset" || k == "liability" || k == "equity" || k == "income"
+            || k == "expense" then
             k
 
         else
