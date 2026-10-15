@@ -223,6 +223,18 @@ pub struct UnionFind {
     /// callers. A missing `Comparable`/`Number`/`Appendable` is refused
     /// (Elm's rule).
     pub(crate) rigid_needs: Vec<(Name, SuperType)>,
+    /// Record fields copied out by [`UnionFind::content`] (tests only): pins
+    /// that binding a variable moves a structure instead of copying it.
+    #[cfg(test)]
+    record_copies: u64,
+}
+
+/// How [`UnionFind::unify_vars`] first splits a pair of roots.
+#[derive(Clone, Copy)]
+enum Kind {
+    Error,
+    Flex,
+    Other,
 }
 
 impl UnionFind {
@@ -279,6 +291,10 @@ impl UnionFind {
             Slot::Root { content, .. } => {
                 if let Content::Structure(FlatTy::Record(fs, _)) = content {
                     crate::counters::RECORD_FIELDS.add(fs.len() as u64);
+                    #[cfg(test)]
+                    {
+                        self.record_copies += fs.len() as u64;
+                    }
                 }
                 content.clone()
             }
@@ -292,6 +308,32 @@ impl UnionFind {
     #[cfg(test)]
     pub(crate) fn set_content_for_test(&mut self, v: TyVarId, content: Content) {
         self.set_content(v, content);
+    }
+
+    /// Which of the three cases [`Self::unify_vars`] splits on a ROOT's
+    /// content falls in, read in place (no copy of the content).
+    fn kind(&self, root: TyVarId) -> Kind {
+        match &self.slots[root.0 as usize] {
+            Slot::Root {
+                content: Content::Error,
+                ..
+            } => Kind::Error,
+            Slot::Root {
+                content: Content::Flex,
+                ..
+            }
+            | Slot::Link(_) => Kind::Flex,
+            Slot::Root { .. } => Kind::Other,
+        }
+    }
+
+    /// Move a ROOT's content out, leaving `Flex` behind. Only for a root that
+    /// [`Self::union`] overwrites next, before anything reads it.
+    fn take_content(&mut self, root: TyVarId) -> Content {
+        match &mut self.slots[root.0 as usize] {
+            Slot::Root { content, .. } => std::mem::replace(content, Content::Flex),
+            Slot::Link(_) => Content::Flex,
+        }
     }
 
     fn set_content(&mut self, v: TyVarId, content: Content) {
@@ -381,30 +423,47 @@ impl UnionFind {
         if ra == rb {
             return Ok(());
         }
-        let ca = self.content(ra);
-        let cb = self.content(rb);
-        match (ca, cb) {
-            (Content::Error, _) | (_, Content::Error) => {
+        // The `Error` and `Flex` cases need no copy of either side: they read
+        // the two contents by kind only, and a `Flex` side's partner content
+        // MOVES into the merged root (`union` overwrites both slots, so the
+        // emptied one is never read). Binding a variable to a large record
+        // used to clone the record's field map, and the same map again for
+        // the `Flex` side's copy of nothing.
+        match (self.kind(ra), self.kind(rb)) {
+            (Kind::Error, _) | (_, Kind::Error) => {
                 self.union(ra, rb, Content::Error);
-                Ok(())
+                return Ok(());
             }
-            (Content::Flex, Content::Flex) => {
+            (Kind::Flex, Kind::Flex) => {
                 self.union(ra, rb, Content::Flex);
-                Ok(())
+                return Ok(());
             }
-            (Content::Flex, other) => {
+            (Kind::Flex, Kind::Other) => {
                 if self.occurs(rb, ra) {
                     return self.infinite(ra, rb);
                 }
+                let other = self.take_content(rb);
                 self.union(ra, rb, other);
-                Ok(())
+                return Ok(());
             }
-            (other, Content::Flex) => {
+            (Kind::Other, Kind::Flex) => {
                 if self.occurs(ra, rb) {
                     return self.infinite(ra, rb);
                 }
+                let other = self.take_content(ra);
                 self.union(ra, rb, other);
-                Ok(())
+                return Ok(());
+            }
+            (Kind::Other, Kind::Other) => {}
+        }
+        // Both sides are rigid, bounded or structured: the arms below consume
+        // owned copies (`unify_flat` / `satisfy` may read either root while
+        // they run, so neither can be emptied first).
+        let ca = self.content(ra);
+        let cb = self.content(rb);
+        match (ca, cb) {
+            (Content::Error, _) | (_, Content::Error) | (Content::Flex, _) | (_, Content::Flex) => {
+                unreachable!("Error and Flex roots are decided above")
             }
             // Two skolems unify only when they are the SAME quantifier
             // (`identity : a -> a` — the body's `x` and the declared result are
@@ -1300,5 +1359,48 @@ mod tests {
         let a = uf.fresh(Content::Rigid(Name::new("a")));
         let b = uf.fresh(Content::Rigid(Name::new("b")));
         assert!(uf.unify(a, b).is_err());
+    }
+    fn record_of(uf: &mut UnionFind, n: usize) -> TyVarId {
+        let int = uf.fresh(Content::Structure(FlatTy::App(Name::new("Int"), vec![])));
+        let fields: BTreeMap<Name, TyVarId> =
+            (0..n).map(|i| (Name::new(&format!("f{i}")), int)).collect();
+        uf.fresh(Content::Structure(FlatTy::Record(fields, None)))
+    }
+
+    /// Binding a variable to a record moves the record into the merged root:
+    /// no field map is copied, on either side of the pair, and the variable
+    /// reads back the record.
+    #[test]
+    fn binding_a_variable_moves_the_structure() {
+        for flex_first in [true, false] {
+            let mut uf = UnionFind::new();
+            let rec = record_of(&mut uf, 500);
+            let a = uf.fresh_flex();
+            let before = uf.record_copies;
+            let res = if flex_first {
+                uf.unify(a, rec)
+            } else {
+                uf.unify(rec, a)
+            };
+            assert!(res.is_ok());
+            assert_eq!(uf.record_copies, before, "a record field map was copied");
+            assert!(matches!(
+                uf.content(a),
+                Content::Structure(FlatTy::Record(fs, None)) if fs.len() == 500
+            ));
+            assert_eq!(uf.find(a), uf.find(rec));
+        }
+    }
+
+    /// The occurs check still refuses an infinite type through the moving
+    /// path, and commits both sides to `Error`.
+    #[test]
+    fn occurs_failure_still_commits_error() {
+        let mut uf = UnionFind::new();
+        let a = uf.fresh_flex();
+        let list = uf.fresh(Content::Structure(FlatTy::App(Name::new("List"), vec![a])));
+        assert!(uf.unify(a, list).is_err());
+        assert!(matches!(uf.content(a), Content::Error));
+        assert!(matches!(uf.content(list), Content::Error));
     }
 }
