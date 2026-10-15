@@ -514,7 +514,10 @@ reach for it when you want the split artefacts kept at a specific path.
 target shape):
 - **shared/Shared.sky** — per SERVER branch `M`, `type alias MReq` (read-set) /
   `type alias MResp` (write-set) + their `Codec.object … |> Codec.field … |>
-  Codec.buildObject` codecs, copied into BOTH projects' `src/`.
+  Codec.buildObject` codecs, copied into BOTH projects' `src/`. One record +
+  codec is declared per distinct wire SHAPE, not per branch: a record whose
+  ordered field list repeats an earlier one is a one-line alias of it, and the
+  whole Model's fields are declared once (§27).
 - **backend/** — the input app copied **verbatim** (Model, Msg, init, `update`,
   all helpers incl. the server ones), `main` replaced by a `Server.listen` with
   one `Server.rpc "POST /_rpc/M" MHandler` per SERVER branch (§21) + `Server.static
@@ -1515,3 +1518,60 @@ per-commit value would change the wasm's bytes and its hashed name on every
 commit (a precompress cache miss, a new download for every browser, a new name
 for the backend to link). The backend keeps the real stamp at
 `/_sky/buildinfo`.
+
+## 27. One Model wire for every whole-model branch (build speed)
+
+A server branch that hands `model` to a helper reads the WHOLE model (§14 B1),
+and one whose result is a rebuilt model writes it whole. Before this change
+each such branch got its own `MReq` / `MResp` record and its own
+`Codec.object … |> Codec.field …` chain over every Model field, in `Shared`,
+which both legs compile. The generated source grew with branches × Model
+fields: a measured app with 100 whole-model branches and 200 Model fields
+generated 156k lines from 3.3k, and its backend leg spent 31 s in typecheck,
+35 s in lowering and 4.75 GB of memory. The size is now linear in branches +
+fields:
+
+- **One record per shape.** `gen_shared` keys each record by its ORDERED list
+  of (field name, Sky type, codec). The first branch with a shape owns the
+  record and codec. A later branch with the same list gets
+  `type alias MReq = OwnerReq` and `mReqCodec = ownerReqCodec`. Order is part
+  of the key because `Codec.object` writes fields in chain order.
+- **One Model wire.** A whole-model request that also carries Msg args holds
+  the model as ONE field, `spaWholeModel_ : SpaModelWire_`, and its codec is
+  `Codec.object MReq |> Codec.inline .spaWholeModel_ spaModelWireFields_ |>
+  Codec.field "<arg>" …`. `SpaModelWire_` and its field builder
+  `spaModelWireFields_` are declared once. A whole-model record without Msg
+  args (or a whole-model response) of the same shape is
+  `type alias MReq = SpaModelWire_` with `Codec.buildObject spaModelWireFields_`.
+  The client sends `{ spaWholeModel_ = model, <arg> = <arg> }` and the server
+  reads `m = p.spaWholeModel_` (`emit_build_req` / `emit_reconstruct`, both
+  through `embeds_whole_model`, so they agree).
+- **Same wire bytes.** `Codec.inline` writes the embedded record's fields flat,
+  in order, then the remaining fields, so the JSON is byte for byte what the
+  flat record wrote: the Model fields, then the Msg args (a colliding arg still
+  rides as `spaMsgArg_<arg>`). Decoding reads every field from the same object
+  and fails on a missing one. Only the Sky declarations changed; the payloads,
+  the write-back, the session and device-key checks and the RPC ordering are
+  the same.
+
+Measured on a generated app (`examples/62-app-notes` grown to N groups of two
+Model fields and three arms; each `SaveK` hands `model` to an opaque helper),
+backend leg, before → after:
+
+| N | generated `.sky` lines | typecheck | lower + emit | `main.go` | leg wall |
+|---|---|---|---|---|---|
+| 50 | 49,310 → 18,113 | 4.28 s → 0.29 s | 5.22 s → 0.69 s | 1.59 → 0.49 MB | 20.4 s → 7.9 s |
+| 100 | 156,260 → 33,863 | 30.9 s → 0.94 s | 35.2 s → 1.91 s | 5.20 → 0.88 MB | 85.7 s → 12.9 s |
+| 200 | 550,160 → 65,363 | not run before → 3.33 s | not run before → 6.54 s | → 1.69 MB | → 44.1 s |
+
+The generated source is now linear in N. Typecheck and lowering still grow
+faster than linearly, because every handler expression carries the full
+Model record type and the checker reads back one owned type per expression.
+That cost does not depend on how the wire is declared.
+
+The `spa_split_flow` tests `whole_model_branches_share_one_model_wire_codec`
+(one Model field list, and the backend answers the flat JSON the previous
+client sent, byte for byte) and
+`generated_wire_grows_linearly_with_whole_model_branches` (Shared stays linear
+from N=25 to N=100) hold it; `CodecConformanceTest` pins that `Codec.inline`
+writes the same JSON as the flat record.

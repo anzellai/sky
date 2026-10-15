@@ -237,8 +237,10 @@ both, since `query`/`migrate` overlap; qualified is the intended usage.
 `Codec.auto blank` derives the codec from a **zero-value witness** record:
 scalars → columns, `Maybe` → nullable, `List`/nested-record → JSON blob, nullary
 enums → readable names. **Data-carrying ADTs** need an explicit codec — build one
-with `Codec.object`/`Codec.field`/`Codec.buildObject` (records) or
-`Codec.taggedUnion`/`Codec.var0..3` (ADTs). Run `sky doc Std.Codec` for those.
+with `Codec.object`/`Codec.field`/`Codec.buildObject` (records; `Codec.inline
+.part partFields` writes an embedded record's fields flat, beside the outer
+record's own, with no nested object) or `Codec.taggedUnion`/`Codec.var0..3`
+(ADTs). Run `sky doc Std.Codec` for those.
 
 ### Schema migrations — committed files, no live DB needed
 

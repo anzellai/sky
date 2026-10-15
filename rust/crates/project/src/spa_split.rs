@@ -1015,6 +1015,26 @@ struct Wire {
     name: String,
     req_fields: Vec<ModelFieldTy>,
     resp_fields: Vec<ModelFieldTy>,
+    /// How many leading `req_fields` are the whole Model, carried as ONE
+    /// [`WHOLE_MODEL_FIELD`] record that `Codec.inline` flattens into the
+    /// request JSON (a whole-model request that also carries Msg args). Zero for
+    /// every other request. See [`WireShapes`].
+    req_embedded_model: usize,
+}
+
+/// The request field that carries the whole Model on a whole-model request with
+/// Msg args. Its codec is `Codec.inline`, so the JSON stays flat: the Model
+/// fields, in order, then the Msg args — byte for byte what a flat record of
+/// all of them encodes. The Model fields are declared once (`SpaModelWire_`)
+/// instead of once per branch.
+pub(crate) const WHOLE_MODEL_FIELD: &str = "spaWholeModel_";
+
+/// Whether a branch's request embeds the whole Model as [`WHOLE_MODEL_FIELD`]:
+/// it reads the whole model AND binds Msg args. `build_wire` (the `Req` type),
+/// `emit_build_req` (what the client sends) and `emit_reconstruct` (what the
+/// server reads back) all decide with this one predicate, so they agree.
+pub(crate) fn embeds_whole_model(io: &BranchIo, model_field_count: usize) -> bool {
+    io.request_whole_model() && !io.msg_args.is_empty() && model_field_count > 0
 }
 
 /// Look a Model field's typed entry up by name.
@@ -1594,6 +1614,7 @@ fn build_follow_ctx(
             name: format!("SpaFollow{c}"),
             req_fields: fields,
             resp_fields: Vec::new(),
+            req_embedded_model: 0,
         });
     }
     for w in wires.iter_mut() {
@@ -2110,11 +2131,15 @@ pub(crate) fn emit_reconstruct(io: &BranchIo, model_fields: &[ModelFieldTy]) -> 
     } else if whole && io.msg_args.is_empty() {
         // Req IS the whole model.
         "                m =\n                    p\n".to_string()
+    } else if embeds_whole_model(io, model_fields.len()) {
+        // Whole model PLUS Msg-arg fields — the model rides as ONE embedded
+        // record (`WHOLE_MODEL_FIELD`, flattened on the wire by `Codec.inline`);
+        // the Msg args are read separately via `p.<arg>` in the ctor application
+        // by the caller.
+        format!("                m =\n                    p.{WHOLE_MODEL_FIELD}\n")
     } else if whole {
-        // Whole model PLUS Msg-arg fields — `p` carries the Msg args too
-        // (build_wire appends them), so `p` is WIDER than `Model`. Select the
-        // model fields back out into a `Model` record; the Msg args are read
-        // separately via `p.<arg>` in the ctor application by the caller.
+        // Whole model PLUS Msg-arg fields with no known model fields: select
+        // the (empty) model field list back out.
         let sets = model_fields
             .iter()
             .enumerate()
@@ -2162,24 +2187,27 @@ pub(crate) fn emit_build_req(
     let whole = io.request_whole_model();
     if whole && io.msg_args.is_empty() {
         model_param.to_string()
-    } else if whole {
-        let mut parts: Vec<String> = model_field_names
-            .iter()
-            .map(|f| format!("{f} = {model_param}.{f}"))
-            .collect();
+    } else if embeds_whole_model(io, model_field_names.len()) {
+        // The model rides as ONE embedded record (see `WHOLE_MODEL_FIELD`);
+        // `Codec.inline` writes its fields flat, then the Msg args.
+        let mut parts: Vec<String> = vec![format!("{WHOLE_MODEL_FIELD} = {model_param}")];
         for a in &io.msg_args {
             // Send the arg VALUE under its (possibly renamed) wire field, NOT
             // skipped — a name collision with a Model field must keep both (see
             // msg_arg_wire_name). `spaMsgArg_region = region` carries the NEW
-            // region; `region = model.region` the old one.
+            // region; the embedded model carries the old one under `region`.
             let collides = model_field_names.iter().any(|f| f == a);
             parts.push(format!("{} = {a}", msg_arg_wire_name(a, collides)));
         }
-        if parts.is_empty() {
-            "{}".to_string()
-        } else {
-            format!("{{ {} }}", parts.join(", "))
-        }
+        format!("{{ {} }}", parts.join(", "))
+    } else if whole {
+        // Whole model with Msg args but no known model fields: the args only.
+        let parts: Vec<String> = io
+            .msg_args
+            .iter()
+            .map(|a| format!("{} = {a}", msg_arg_wire_name(a, false)))
+            .collect();
+        format!("{{ {} }}", parts.join(", "))
     } else {
         let mut parts: Vec<String> = io
             .request_fields()
@@ -2383,10 +2411,19 @@ fn build_wire(
             f.ty_name = r.surface;
         }
     }
+    // A whole-model request that ALSO carries Msg args embeds the Model as one
+    // field (see `WHOLE_MODEL_FIELD`) so its fields are declared once, not once
+    // per branch. The fields above stay resolved and checked one by one.
+    let req_embedded_model = if embeds_whole_model(io, model_fields.len()) {
+        model_fields.len()
+    } else {
+        0
+    };
     Ok(Wire {
         name: name.to_string(),
         req_fields: req,
         resp_fields: resp,
+        req_embedded_model,
     })
 }
 
@@ -2408,6 +2445,159 @@ fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> St
     out.push_str(&format!("    Codec.object {name}\n"));
     for f in fields {
         // Every field is resolved by construction; the fallback is defensive.
+        let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
+        out.push_str(&format!(
+            "        |> Codec.field \"{0}\" .{0} {1}\n",
+            f.name, codec
+        ));
+    }
+    out.push_str("        |> Codec.buildObject\n");
+    out
+}
+
+/// The wire records `Shared` has already rendered, keyed by their ordered field
+/// list (name, Sky type, codec). See [`gen_shared`]: one record + codec per
+/// distinct shape, an alias for every repeat. The whole Model embedded in a
+/// request with Msg args ([`WHOLE_MODEL_FIELD`]) is one more shape: declared
+/// once as `SpaModelWire_` with its field builder `spaModelWireFields_`.
+#[derive(Default)]
+struct WireShapes {
+    owners: HashMap<Vec<(String, String, String)>, (String, String)>,
+    models: HashMap<Vec<(String, String, String)>, (String, String)>,
+    /// The `SpaModelWire_` declarations, rendered once each, ahead of the
+    /// branch records.
+    model_decls: String,
+}
+
+impl WireShapes {
+    /// The ordered shape key: exactly what [`render_wire_type`] writes for each
+    /// field. Order is part of the key: `Codec.object` encodes fields in chain
+    /// order, so two records with the same field SET in a different order write
+    /// different JSON and must not share a codec.
+    fn key(fields: &[ModelFieldTy]) -> Vec<(String, String, String)> {
+        fields
+            .iter()
+            .map(|f| {
+                (
+                    f.name.clone(),
+                    f.ty_name.clone(),
+                    f.codec.clone().unwrap_or_else(|| "Codec.string".into()),
+                )
+            })
+            .collect()
+    }
+
+    /// The `SpaModelWire_` record + field builder for an embedded model shape,
+    /// declared on first use.
+    fn model_wire(&mut self, fields: &[ModelFieldTy]) -> (String, String) {
+        let key = Self::key(fields);
+        if let Some(found) = self.models.get(&key) {
+            return found.clone();
+        }
+        let n = self.models.len();
+        let suffix = if n == 0 {
+            String::new()
+        } else {
+            (n + 1).to_string()
+        };
+        let ty = format!("SpaModelWire{suffix}_");
+        let builder = format!("spaModelWire{suffix}Fields_");
+        let mut out = String::from(
+            "-- | The whole Model, declared once and embedded in every whole-model\n\
+             -- request that also carries Msg args. `Codec.inline` writes its fields\n\
+             -- flat, so the request JSON is the Model fields, then the Msg args.\n",
+        );
+        out.push_str(&format!("type alias {ty} =\n"));
+        for (i, f) in fields.iter().enumerate() {
+            let lead = if i == 0 { "    { " } else { "    , " };
+            out.push_str(&format!("{lead}{} : {}\n", f.name, f.ty_name));
+        }
+        out.push_str("    }\n\n\n");
+        out.push_str(&format!(
+            "{builder} : Codec.ObjectCodec {ty} {ty}\n{builder} =\n    Codec.object {ty}\n"
+        ));
+        for (name, _, codec) in &key {
+            out.push_str(&format!(
+                "        |> Codec.field \"{name}\" .{name} {codec}\n"
+            ));
+        }
+        out.push_str("\n\n");
+        self.model_decls.push_str(&out);
+        self.models.insert(key, (ty.clone(), builder.clone()));
+        (ty, builder)
+    }
+
+    /// Render `name` + `codec_name`: the full record + codec for a new shape, or
+    /// a type alias + codec alias of the first record with the same shape. The
+    /// first `embedded_model` fields are the whole Model, carried as one
+    /// [`WHOLE_MODEL_FIELD`] record (zero: a plain record).
+    fn render(
+        &mut self,
+        name: &str,
+        codec_name: &str,
+        fields: &[ModelFieldTy],
+        embedded_model: usize,
+    ) -> String {
+        let (model, rest) = fields.split_at(embedded_model.min(fields.len()));
+        let mut key = Vec::new();
+        let mut embed = None;
+        if !model.is_empty() {
+            let (ty, builder) = self.model_wire(model);
+            key.push((WHOLE_MODEL_FIELD.to_string(), ty.clone(), builder.clone()));
+            embed = Some((ty, builder));
+        }
+        key.extend(Self::key(rest));
+        if let Some((owner_ty, owner_codec)) = self.owners.get(&key) {
+            return format!(
+                "type alias {name} =\n    {owner_ty}\n\n\n\
+                 {codec_name} : Codec {name}\n{codec_name} =\n    {owner_codec}\n"
+            );
+        }
+        // A plain record that IS the embedded Model shape (a whole-model request
+        // without Msg args, a whole-model response) reuses `SpaModelWire_`
+        // rather than declaring the Model fields again.
+        let model_shape = if embed.is_none() {
+            self.models.get(&key).cloned()
+        } else {
+            None
+        };
+        self.owners
+            .insert(key, (name.to_string(), codec_name.to_string()));
+        if let Some((ty, builder)) = model_shape {
+            return format!(
+                "type alias {name} =\n    {ty}\n\n\n\
+                 {codec_name} : Codec {name}\n{codec_name} =\n    Codec.buildObject {builder}\n"
+            );
+        }
+        match embed {
+            None => render_wire_type(name, codec_name, fields),
+            Some((ty, builder)) => render_embedded_wire_type(name, codec_name, &ty, &builder, rest),
+        }
+    }
+}
+
+/// [`render_wire_type`] for a whole-model request with Msg args: the record
+/// holds the Model as one [`WHOLE_MODEL_FIELD`] field, and its codec inlines the
+/// Model's field builder before the Msg-arg fields, so the JSON matches a flat
+/// record of the Model fields followed by the args.
+fn render_embedded_wire_type(
+    name: &str,
+    codec_name: &str,
+    model_ty: &str,
+    model_builder: &str,
+    args: &[ModelFieldTy],
+) -> String {
+    let mut out = format!("type alias {name} =\n    {{ {WHOLE_MODEL_FIELD} : {model_ty}\n");
+    for f in args {
+        out.push_str(&format!("    , {} : {}\n", f.name, f.ty_name));
+    }
+    out.push_str("    }\n\n\n");
+    out.push_str(&format!("{codec_name} : Codec {name}\n{codec_name} =\n"));
+    out.push_str(&format!("    Codec.object {name}\n"));
+    out.push_str(&format!(
+        "        |> Codec.inline .{WHOLE_MODEL_FIELD} {model_builder}\n"
+    ));
+    for f in args {
         let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
         out.push_str(&format!(
             "        |> Codec.field \"{0}\" .{0} {1}\n",
@@ -2480,6 +2670,23 @@ fn gen_shared(
             p.codec
         ));
     }
+    // One record + codec per distinct wire SHAPE, not per branch. Every branch
+    // that reads (or writes) the whole Model has the same request (or response)
+    // record, and a full `Codec.object … |> Codec.field …` chain per branch made
+    // the generated source grow with branches × Model fields (each chain is
+    // type-checked and lowered on both legs). The first branch with a shape owns
+    // the record + codec; a later branch with the identical ordered field list
+    // gets a one-line alias of each. The JSON a codec writes depends only on the
+    // ordered (name, codec) list, which the key holds, so the wire bytes are
+    // unchanged.
+    let mut shapes = WireShapes::default();
+    // Declare the embedded Model first, so every whole-model record (with or
+    // without Msg args) shares its one field list.
+    for w in wires {
+        if w.req_embedded_model > 0 && w.req_embedded_model <= w.req_fields.len() {
+            shapes.model_wire(&w.req_fields[..w.req_embedded_model]);
+        }
+    }
     for w in wires {
         let req_ty = format!("{}Req", w.name);
         let resp_ty = format!("{}Resp", w.name);
@@ -2493,11 +2700,13 @@ fn gen_shared(
             "-- | {} RPC — request = read-set + Msg args, response = write-set.\n",
             w.name
         ));
-        bodies.push_str(&render_wire_type(&req_ty, &req_codec, &w.req_fields));
+        bodies.push_str(&shapes.render(&req_ty, &req_codec, &w.req_fields, w.req_embedded_model));
         bodies.push_str("\n\n");
-        bodies.push_str(&render_wire_type(&resp_ty, &resp_codec, &w.resp_fields));
+        bodies.push_str(&shapes.render(&resp_ty, &resp_codec, &w.resp_fields, 0));
         bodies.push_str("\n\n");
     }
+    // The embedded Model records go ahead of the branch records that use them.
+    let bodies = format!("{}{bodies}", shapes.model_decls);
     // Dedup while preserving order (a type + its constructor could collide).
     let mut seen: HashSet<String> = HashSet::new();
     exposing.retain(|e| seen.insert(e.clone()));

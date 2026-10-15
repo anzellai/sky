@@ -297,6 +297,35 @@ fn generates_a_buildable_split_with_no_server_leak_into_the_client() {
 
 /// Read-set completeness for a model-DERIVED value threaded into a helper.
 ///
+/// The field lines of the generated wire record `name` in `shared`, following a
+/// one-line alias to the record that owns the shape (`type alias BReq =\n
+/// AReq`) and expanding an embedded whole model (`spaWholeModel_ :
+/// SpaModelWire_`) into the Model fields it carries.
+fn wire_record_fields(shared: &str, name: &str) -> String {
+    let start = shared
+        .find(&format!("type alias {name} =\n"))
+        .unwrap_or_else(|| panic!("type alias {name} missing:\n{shared}"));
+    let block = &shared[start..];
+    let end = block.find("\n\n").unwrap_or(block.len());
+    let block = &block[..end];
+    let body = block.lines().skip(1).collect::<Vec<_>>().join("\n");
+    let trimmed = body.trim();
+    if !trimmed.starts_with('{') {
+        return wire_record_fields(shared, trimmed);
+    }
+    let mut out = String::new();
+    for line in body.lines() {
+        let field = line.trim().trim_start_matches(['{', ',']).trim();
+        if let Some(model_ty) = field.strip_prefix("spaWholeModel_ : ") {
+            out.push_str(&wire_record_fields(shared, model_ty.trim()));
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// Regression for a silent-wrong-answer bug found in shop-app prod: a SERVER
 /// branch `SetRegion` computed shipping through
 /// `recomputeTotals (clear { model | region = r })`, where `recomputeTotals` reads
@@ -344,10 +373,7 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
             shared.contains(&format!("type alias {req}")),
             "{req} must exist (branch must be a SERVER RPC):\n{shared}"
         );
-        let start = shared.find(&format!("type alias {req}")).unwrap();
-        let block = &shared[start..];
-        let end = block.find("\n\n").unwrap_or(block.len());
-        let block = &block[..end];
+        let block = wire_record_fields(&shared, req);
         for field in ["n :", "scale :", "log :"] {
             assert!(
                 block.contains(field),
@@ -358,8 +384,8 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
     }
 
     // And the backend handler must reconstruct the model from the wire payload
-    // (`m = { … = p.… }`), NOT from a fresh `init ()`, so the branch runs against
-    // the client's real state.
+    // (the embedded whole model, `m = p.spaWholeModel_`), NOT from a fresh
+    // `init ()`, so the branch runs against the client's real state.
     let back = std::fs::read_to_string(out.join("backend/src/Main.sky")).unwrap();
     let hstart = back
         .find("setScaleHandler")
@@ -368,9 +394,9 @@ fn derived_model_threaded_into_helper_keeps_the_read_in_the_request() {
     let hend = hblock.find("Task.succeed").unwrap_or(hblock.len());
     let hblock = &hblock[..hend];
     assert!(
-        hblock.contains("n = p.n"),
-        "setScaleHandler must rebuild the model from the payload (n = p.n), not \
-         init ():\n{hblock}"
+        hblock.contains("m =\n                    p.spaWholeModel_"),
+        "setScaleHandler must rebuild the model from the payload (p.spaWholeModel_), \
+         not init ():\n{hblock}"
     );
 
     // Msg-arg / Model-field NAME COLLISION: `SetScaleArg scale` binds an arg named
@@ -9602,4 +9628,487 @@ fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
         !both.contains("[live] store / SKY_LIVE_STORE"),
         "the line names sky.toml and the environment, which did not set the store:\n{both}"
     );
+}
+
+/// How many record codec chains in `shared` (a `Codec.object` through the next
+/// blank line) name every field in `fields`.
+fn codec_chains_with_fields(shared: &str, fields: &[&str]) -> usize {
+    shared
+        .split("\n\n")
+        .filter(|chunk| chunk.contains("Codec.object"))
+        .filter(|chunk| {
+            fields
+                .iter()
+                .all(|f| chunk.contains(&format!("Codec.field \"{f}\" .{f} ")))
+        })
+        .count()
+}
+
+/// The whole-model wire app for the dedupe tests: every server branch passes the
+/// model (or a value derived from it) to a helper that does a pure-typed server
+/// read, so each request carries the WHOLE model; `Tag1`/`Tag2` share one Msg-arg
+/// shape, `Label` and `SetScale` have their own (`SetScale scale` collides with
+/// the Model's `scale` field).
+const WHOLE_MODEL_WIRE_APP: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.String as String
+import Std.Spa as Spa
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Ui as Ui
+import Std.Html exposing (Html)
+
+
+type alias Model =
+    { n : Int
+    , scale : Int
+    , log : String
+    }
+
+
+type Msg
+    = Bump
+    | Save1
+    | Save2
+    | Save3
+    | Tag1 Int
+    | Tag2 Int
+    | Label String
+    | SetScale Int
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { n = 0, scale = 1, log = "" }, Cmd.none )
+
+
+recompute : Model -> Model
+recompute m =
+    { m | log = System.getenvOr "SKY_WIRE_DEDUPE_UNSET_" (String.fromInt (m.n * m.scale)) }
+
+
+stampLog : String -> Model -> Model
+stampLog s m =
+    { m | log = System.getenvOr "SKY_WIRE_DEDUPE_UNSET_" (s ++ String.fromInt m.n) }
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Bump ->
+            ( { model | n = model.n + 1 }, Cmd.none )
+
+        Save1 ->
+            ( recompute model, Cmd.none )
+
+        Save2 ->
+            ( recompute { model | n = model.n + 1 }, Cmd.none )
+
+        Save3 ->
+            ( recompute (recompute model), Cmd.none )
+
+        Tag1 k ->
+            ( recompute { model | n = k }, Cmd.none )
+
+        Tag2 k ->
+            ( recompute { model | n = k + 1 }, Cmd.none )
+
+        Label s ->
+            ( stampLog s model, Cmd.none )
+
+        SetScale scale ->
+            ( recompute { model | scale = scale }, Cmd.none )
+
+
+view : Model -> Html Msg
+view model =
+    Ui.layout []
+        (Ui.column [ Ui.spacing 8 ]
+            [ Ui.text (String.fromInt model.n ++ " " ++ model.log)
+            , Ui.button [] { onPress = Just Bump, label = Ui.text "bump" }
+            , Ui.button [] { onPress = Just Save1, label = Ui.text "s1" }
+            , Ui.button [] { onPress = Just Save2, label = Ui.text "s2" }
+            , Ui.button [] { onPress = Just Save3, label = Ui.text "s3" }
+            , Ui.button [] { onPress = Just (Tag1 4), label = Ui.text "t1" }
+            , Ui.button [] { onPress = Just (Tag2 4), label = Ui.text "t2" }
+            , Ui.button [] { onPress = Just (Label "x"), label = Ui.text "l" }
+            , Ui.button [] { onPress = Just (SetScale 3), label = Ui.text "sc" }
+            ]
+        )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+main : Task Error ()
+main =
+    Spa.app
+        (Spa.config
+            { init = init
+            , update = update
+            , view = view
+            , subscriptions = subscriptions
+            }
+        )
+"#;
+
+/// Build speed (generated wire size): every server branch that reads or writes
+/// the whole Model used to get its own request/response record with a full
+/// `Codec.object … |> Codec.field …` chain over EVERY Model field, so `Shared`
+/// grew with branches × fields and both legs type-checked and lowered each
+/// chain (a 100-branch app spent 31 s in typecheck and 35 s in lowering). The
+/// Model's fields are now declared once (`SpaModelWire_`); a whole-model branch
+/// with Msg args embeds it (`Codec.inline`), and records with the same ordered
+/// field list share one declaration. The wire JSON is unchanged: the e2e leg
+/// posts the FLAT JSON the previous compiler's client sent and reads back the
+/// same flat response.
+#[test]
+fn whole_model_branches_share_one_model_wire_codec() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app("spa-wire-dedupe", WHOLE_MODEL_WIRE_APP);
+    let out = proj.join(".split");
+    let status = Command::new(SKY)
+        .args(["spa-split", "src/Main.sky", "--out", ".split"])
+        .current_dir(&proj)
+        .status()
+        .expect("run sky spa-split");
+    assert!(status.success(), "sky spa-split should succeed");
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+
+    // Five whole-model requests (Save2, Save3, Tag1, Tag2, SetScale), ONE
+    // field list for the Model.
+    assert_eq!(
+        codec_chains_with_fields(&shared, &["log", "n", "scale"]),
+        1,
+        "the Model's fields must be declared once in Shared, not once per \
+         whole-model branch:\n{shared}"
+    );
+    assert!(
+        shared.contains("type alias SpaModelWire_ =")
+            && shared.contains("|> Codec.inline .spaWholeModel_ spaModelWireFields_")
+            && shared.contains("type alias Save2Req =\n    SpaModelWire_"),
+        "whole-model requests share the one Model wire:\n{shared}"
+    );
+    // Same ordered shape → one declaration, the repeat is an alias.
+    assert!(
+        shared.contains("type alias Tag2Req =\n    Tag1Req")
+            && shared.contains("tag2ReqCodec =\n    tag1ReqCodec"),
+        "Tag2's request has Tag1's shape and must alias it:\n{shared}"
+    );
+    for req in ["Save2Req", "Save3Req", "Tag1Req", "Tag2Req", "SetScaleReq"] {
+        let fields = wire_record_fields(&shared, req);
+        for field in ["n :", "scale :", "log :"] {
+            assert!(
+                fields.contains(field),
+                "{req} must still carry the whole model (`{field}`):\n{fields}"
+            );
+        }
+    }
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    assert!(
+        front.contains("{ spaWholeModel_ = model, spaMsgArg_scale = scale }"),
+        "SetScale sends the model plus the collision-renamed arg:\n{front}"
+    );
+
+    // ── Go-gated e2e: the server reads the same flat JSON and answers it. ──
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&proj);
+        return;
+    }
+
+    // The CLIENT leg encodes the request the server reads. Build the request
+    // expression each `rpcHold` in the generated frontend writes (the
+    // `spaWholeModel_` embed for Tag1/Tag2/SetScale), encode it with the
+    // generated Shared codec in a native probe, and compare the bytes with the
+    // flat JSON the previous compiler's client sent.
+    let client_cases = [
+        ("Save2", r#"{"log":"z","n":2,"scale":3}"#),
+        ("Tag1", r#"{"log":"","n":2,"scale":3,"k":5}"#),
+        ("Tag2", r#"{"log":"","n":2,"scale":3,"k":5}"#),
+        ("Label", r#"{"n":2,"s":"a"}"#),
+        (
+            "SetScale",
+            r#"{"log":"","n":2,"scale":3,"spaMsgArg_scale":7}"#,
+        ),
+    ];
+    let mut encodes = Vec::new();
+    for (msg, _) in &client_cases {
+        let call = format!("\"/_rpc/{msg}\" ");
+        let at = front
+            .find(&call)
+            .unwrap_or_else(|| panic!("the frontend posts {msg}:\n{front}"));
+        let rest = &front[at + call.len()..];
+        let end = rest
+            .find(&format!(" Applied{msg}"))
+            .unwrap_or_else(|| panic!("the {msg} request ends at Applied{msg}:\n{rest}"));
+        let codec = {
+            let mut c = msg.chars();
+            let first = c.next().unwrap().to_ascii_lowercase();
+            format!("{first}{}ReqCodec", c.as_str())
+        };
+        // Save2 sends a model whose `log` is "z"; the rest send log "".
+        let log = if *msg == "Save2" { "z" } else { "" };
+        encodes.push(format!(
+            "enc{msg} : String\nenc{msg} =\n    let\n        model =\n            {{ log = \"{log}\", n = 2, scale = 3 }}\n\n        k =\n            5\n\n        s =\n            \"a\"\n\n        scale =\n            7\n    in\n    Codec.toJson {codec} {}\n\n\n",
+            &rest[..end]
+        ));
+    }
+    let probe_dir = proj.join("client-probe");
+    std::fs::create_dir_all(probe_dir.join("src")).unwrap();
+    std::fs::write(
+        probe_dir.join("sky.toml"),
+        "name = \"client-probe\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::copy(
+        out.join("frontend/src/Shared.sky"),
+        probe_dir.join("src/Shared.sky"),
+    )
+    .unwrap();
+    let names: Vec<String> = client_cases
+        .iter()
+        .map(|(msg, _)| format!("enc{msg}"))
+        .collect();
+    std::fs::write(
+        probe_dir.join("src/Main.sky"),
+        format!(
+            "module Main exposing (main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Core.String as String\n\
+             import Std.Codec as Codec\n\
+             import Std.Log exposing (println)\n\
+             import Shared exposing (..)\n\n\n\
+             {}\
+             main =\n    println (String.join \"\\n\" [ {} ])\n",
+            encodes.join(""),
+            names.join(", ")
+        ),
+    )
+    .unwrap();
+    let probe = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&probe_dir)
+        .output()
+        .expect("run sky build (client probe)");
+    assert!(
+        probe.status.success(),
+        "the client-encode probe must build:\n{}{}\n{}",
+        String::from_utf8_lossy(&probe.stdout),
+        String::from_utf8_lossy(&probe.stderr),
+        std::fs::read_to_string(probe_dir.join("src/Main.sky")).unwrap_or_default()
+    );
+    let ran = Command::new(probe_dir.join("sky-out/app"))
+        .current_dir(&probe_dir)
+        .output()
+        .expect("run the client-encode probe");
+    let encoded = String::from_utf8_lossy(&ran.stdout).to_string();
+    let lines: Vec<&str> = encoded.lines().collect();
+    assert_eq!(
+        lines.len(),
+        client_cases.len(),
+        "one encoded request per case:\n{encoded}"
+    );
+    for ((msg, want), got) in client_cases.iter().zip(lines) {
+        assert_eq!(
+            got, *want,
+            "the client's {msg} request must encode to the flat JSON"
+        );
+    }
+
+    // The frontend leg (wasm) compiles the `spaWholeModel_ = model` requests.
+    let frontend = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .output()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend.status.success(),
+        "the whole-model wire frontend must build to wasm:\n{}{}",
+        String::from_utf8_lossy(&frontend.stdout),
+        String::from_utf8_lossy(&frontend.stderr)
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "the frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+
+    let backend_dir = out.join("backend");
+    let built = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&backend_dir)
+        .output()
+        .expect("run sky build (backend)");
+    assert!(
+        built.status.success(),
+        "the whole-model wire backend must build:\n{}{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let child = Killed(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file)
+            .spawn()
+            .expect("spawn the whole-model wire backend"),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 80),
+        "backend never reported listening on :{port}"
+    );
+    // (path, flat request JSON as the previous compiler's client wrote it, the
+    // exact flat response JSON).
+    let cases = [
+        (
+            "/_rpc/Save2",
+            r#"{"log":"z","n":2,"scale":3}"#,
+            r#"{"log":"9","n":3}"#,
+        ),
+        (
+            "/_rpc/Save3",
+            r#"{"log":"z","n":2,"scale":3}"#,
+            r#"{"log":"6"}"#,
+        ),
+        (
+            "/_rpc/Tag1",
+            r#"{"log":"","n":2,"scale":3,"k":5}"#,
+            r#"{"log":"15","n":5}"#,
+        ),
+        (
+            "/_rpc/Tag2",
+            r#"{"log":"","n":2,"scale":3,"k":5}"#,
+            r#"{"log":"18","n":6}"#,
+        ),
+        ("/_rpc/Label", r#"{"n":2,"s":"a"}"#, r#"{"log":"a2"}"#),
+        (
+            "/_rpc/SetScale",
+            r#"{"log":"","n":2,"scale":3,"spaMsgArg_scale":7}"#,
+            r#"{"log":"14","scale":7}"#,
+        ),
+    ];
+    let mut results = Vec::new();
+    for (path, req, _) in &cases {
+        results.push(curl_post_status_body(port, path, req));
+    }
+    // A request without a Model field is refused, not defaulted.
+    let missing = curl_post_status_body(port, "/_rpc/Tag1", r#"{"log":"","n":2,"k":5}"#);
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    for ((path, _, want), got) in cases.iter().zip(results) {
+        let (code, body) = got.unwrap_or_else(|| panic!("POST {path} should return"));
+        assert_eq!(code, 200, "POST {path}: body {body:?}");
+        assert_eq!(body.trim(), *want, "POST {path} answered different JSON");
+    }
+    let (code, body) = missing.expect("POST /_rpc/Tag1 (missing field) should return");
+    assert_ne!(
+        code, 200,
+        "a request missing `scale` must be refused: {body:?}"
+    );
+}
+
+/// The whole-model app scaled to `n` field groups: Model fields `fK`, a pure
+/// `EditK String` arm and a server `SaveK` arm (a pure-typed server read) that
+/// hands the whole model to an opaque helper, so its request is the whole model.
+fn scaled_whole_model_app(n: usize) -> String {
+    let mut fields = String::from("    { base : String\n");
+    let mut inits = String::from("base = \"\"");
+    let mut ctors = String::from("    = Noop\n");
+    let mut arms = String::from("        Noop ->\n            ( model, Cmd.none )\n\n");
+    let mut buttons = Vec::new();
+    for k in 1..=n {
+        fields.push_str(&format!("    , f{k} : String\n"));
+        inits.push_str(&format!(", f{k} = \"\""));
+        ctors.push_str(&format!("    | Edit{k} String\n    | Save{k}\n"));
+        arms.push_str(&format!(
+            "        Edit{k} s ->\n            ( {{ model | f{k} = s }}, Cmd.none )\n\n\
+             \x20       Save{k} ->\n            ( {{ model | base = System.getenvOr \"SKY_WIRE_GROWTH_UNSET_\" (\"{k}\" ++ stamp model) }}, Cmd.none )\n\n"
+        ));
+        buttons.push(format!(
+            "Ui.button [] {{ onPress = Just Save{k}, label = Ui.text model.f{k} }}"
+        ));
+    }
+    fields.push_str("    }\n");
+    format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.System as System\n\
+         import Sky.Core.String as String\n\
+         import Sky.Core.List as List\n\
+         import Std.Spa as Spa\n\
+         import Std.Cmd as Cmd\n\
+         import Std.Sub as Sub\n\
+         import Std.Ui as Ui\n\
+         import Std.Html exposing (Html)\n\n\n\
+         type alias Model =\n{fields}\n\n\
+         type Msg\n{ctors}\n\n\
+         init : () -> ( Model, Cmd Msg )\n\
+         init _ =\n    ( {{ {inits} }}, Cmd.none )\n\n\n\
+         stamp : Model -> String\n\
+         stamp m =\n    String.fromInt (List.length [ m ])\n\n\n\
+         update : Msg -> Model -> ( Model, Cmd Msg )\n\
+         update msg model =\n    case msg of\n{arms}\n\
+         view : Model -> Html Msg\n\
+         view model =\n    Ui.layout [] (Ui.column [] [ {buttons} ])\n\n\n\
+         subscriptions : Model -> Sub Msg\n\
+         subscriptions _ =\n    Sub.none\n\n\n\
+         main : Task Error ()\n\
+         main =\n    Spa.app (Spa.config {{ init = init, update = update, view = view, subscriptions = subscriptions }})\n",
+        buttons = buttons.join(", ")
+    )
+}
+
+/// Build speed (growth guard): the generated wire must grow LINEARLY with the
+/// app. Each `SaveK` branch reads the whole model, so when every
+/// whole-model branch carried its own copy of the Model's field list, `Shared`
+/// grew with branches × fields — doubling the app roughly quadrupled it (N=50
+/// to 100: 13.6k to 47k lines on the grill app). The bound below allows the
+/// linear per-branch alias lines and fails on any per-branch field list.
+/// Falsifier: render each whole-model record in full again (no `WireShapes`
+/// dedupe in `gen_shared`) and the N=100 ratio exceeds the bound.
+#[test]
+fn generated_wire_grows_linearly_with_whole_model_branches() {
+    let mut shared_lines = Vec::new();
+    for n in [25usize, 50, 100] {
+        let proj = scratch_std_app("spa-wire-growth", &scaled_whole_model_app(n));
+        let status = Command::new(SKY)
+            .args(["spa-split", "src/Main.sky", "--out", ".split"])
+            .current_dir(&proj)
+            .status()
+            .expect("run sky spa-split");
+        assert!(status.success(), "sky spa-split should succeed at N={n}");
+        let user = std::fs::read_to_string(proj.join("src/Main.sky")).unwrap();
+        let shared = std::fs::read_to_string(proj.join(".split/shared/Shared.sky")).unwrap();
+        let _ = std::fs::remove_dir_all(&proj);
+        let (u, s) = (user.lines().count(), shared.lines().count());
+        // One field list for the Model, whatever the branch count.
+        assert_eq!(
+            codec_chains_with_fields(&shared, &["base", "f1", &format!("f{n}")]),
+            1,
+            "N={n}: the Model's fields must be declared once:\n{shared}"
+        );
+        shared_lines.push((n, u, s));
+    }
+    for (n, u, s) in &shared_lines {
+        assert!(
+            *s <= 4 * *u,
+            "N={n}: generated Shared has {s} lines for {u} user lines; the wire must \
+             stay linear in the app (all: {shared_lines:?})"
+        );
+    }
+    for w in shared_lines.windows(2) {
+        let ((n0, _, s0), (n1, _, s1)) = (w[0], w[1]);
+        assert!(
+            (s1 as f64) < 2.3 * (s0 as f64),
+            "Shared grew from {s0} lines (N={n0}) to {s1} (N={n1}): more than linear"
+        );
+    }
 }

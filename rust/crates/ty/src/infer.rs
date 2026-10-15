@@ -1066,7 +1066,7 @@ impl<'a> Infer<'a> {
         // keeps a parent's span when this node has no recorded range.
         let prev = self.cur_span;
         self.cur_span = body.expr_span(e).or(prev);
-        let tv = self.infer_expr_inner(body, e);
+        let tv = base::ensure_stack(|| self.infer_expr_inner(body, e));
         self.cur_span = prev;
         if self.record_exprs {
             self.expr_vars.push((e, tv));

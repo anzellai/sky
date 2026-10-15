@@ -1265,6 +1265,12 @@ hand-written SQL, no row mappers. The same codec also serves JSON.
   fields' codecs while auto-deriving the rest (a Bool stored 0/1, a custom enum
   format) — no full hand-written codec for a one-field tweak. `toJson` / `fromJson`
   / `fromJsonSafe`; explicit `object`/`field`/`taggedUnion`/`enum` for full control.
+  `Codec.inline .inner innerFields` adds an embedded record's object builder
+  (`ObjectCodec r r`) to an outer one with its keys written flat beside the
+  outer fields, not as a nested object. Each key of one record codec must be
+  unique, across `field` and `inline`: a repeated key cannot be told apart when
+  decoding, so that codec's `fromJson` is an `Err` naming the key (its
+  encoding writes both pairs, unchanged).
   `Codec.dict keyCodec valueCodec` (v0.27) encodes a `Dict` as a JSON array of
   `[key, value]` pairs, so any comparable key round-trips. `Codec.fromJson`
   reads exactly one JSON document: text after it is an `Err` (v0.27). A type

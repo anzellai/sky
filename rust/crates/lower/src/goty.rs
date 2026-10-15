@@ -175,6 +175,17 @@ pub fn sky_ty_to_go_params(
 /// as before, so the emitted Go stays byte-for-byte identical. See
 /// `TypeEnv::goty_cache`.
 fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, GoTy>) -> GoTy {
+    // A type is as deep as a curried constructor's arity; grow the stack on
+    // demand rather than overflow it.
+    base::ensure_stack(|| go_ty_guarded(t, env, cur_mod, params))
+}
+
+fn go_ty_guarded(
+    t: &Ty,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> GoTy {
     // A parametric record's Go type depends on `params`; never cache those. Guard
     // hits inside still propagate to `MIN_GUARD_HIT`, so an ancestor that DOES
     // cache correctly sees this subtree's context dependence.
