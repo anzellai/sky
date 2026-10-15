@@ -551,9 +551,15 @@ impl<'a> CodecResolver<'a> {
             // (option A). A union nested INSIDE a record is fine — that path is
             // reached via the record blank, not here.
             if let Some(key) = self.shapes.union_key(name.as_str()) {
+                let enum_only = self
+                    .shapes
+                    .unions
+                    .get(&key)
+                    .is_some_and(|ctors| ctors.iter().all(|(_, nullary)| *nullary));
                 return Err(bare_union_no_codec_msg(
                     &self.shapes.type_ref(&key),
                     &render_ty(t),
+                    enum_only,
                 ));
             }
         }
@@ -748,8 +754,14 @@ fn no_codec_msg(surface: &str) -> String {
 }
 
 /// The actionable error for a bare top-level union that `Codec.auto` cannot
-/// decode across the wire.
-fn bare_union_no_codec_msg(name: &str, surface: &str) -> String {
+/// decode across the wire. An enum (every constructor nullary) is named as
+/// one, with the `Codec.enum` binding that carries it.
+fn bare_union_no_codec_msg(name: &str, surface: &str, enum_only: bool) -> String {
+    if enum_only {
+        return format!(
+            "no codec for a field of type `{surface}` — `Codec.auto` cannot DECODE a bare union across the Sky.Spa wire, an enum included (only a record's FIELDS decode an ADT). Define a top-level `Codec {name}` binding in the project (spa-split copies it into Shared): for an enum, `Codec.enum [ ( Ctor, \"ctor\" ), … ]`. Or carry the value inside a record."
+        );
+    }
     format!(
         "no codec for a field of type `{surface}` — `Codec.auto` cannot DECODE a bare data-carrying union across the Sky.Spa wire (only a record's FIELDS decode an ADT). Define a top-level `Codec {name}` binding in the project (spa-split copies it into Shared), or carry the value inside a record."
     )

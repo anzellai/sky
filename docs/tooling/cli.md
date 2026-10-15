@@ -291,6 +291,11 @@ client is 100 % pure UI**), so a database/file/secret/auth value or function can
 guard over every kernel family). Server branches become generated RPC endpoints;
 `Cmd.publish` fans out to subscribed clients over SSE (server→client push).
 
+The entry is a `Std.Spa` app (`main = Spa.app …`) or a `Std.App` app (`main =
+App.run app`). A `Std.App` entry is split as `sky build --target web:app` splits
+it: the `Spa.app` entry is synthesised from the `App` value and staged under
+`.skyapp/spa-split/`, and your `src/` is not changed.
+
 - **bare** — generates `shared/`, `backend/`, `frontend/` and prints the build
   commands.
 - **`--build`** — also builds both: backend native, frontend wasm (`--target web`).

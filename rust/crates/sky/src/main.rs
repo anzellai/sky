@@ -4658,6 +4658,65 @@ fn cmd_fuzz(args: &[String]) -> ExitCode {
     }
 }
 
+/// A `Std.App` entry staged for `sky spa-split`: see [`std_app_split_input`].
+struct StdAppSplitInput {
+    /// The staged project holding the synthesised `Spa.app` entry.
+    staged: PathBuf,
+    entry_module: Option<String>,
+    /// The user's own entry source (static declarations are read from it).
+    entry_src: String,
+    static_mount: Option<(String, String)>,
+    builder_app_url: Option<String>,
+}
+
+/// For `sky spa-split` on a `Std.App` entry (`main = App.run app`): check the
+/// user's own source, synthesise the `Spa.app` entry from the `App` value and
+/// stage it under `<project>/.skyapp/spa-split/`, exactly as `sky build
+/// --target web:app` stages `.skyapp/web-app/`. `Ok(None)` for any other entry
+/// (a `Std.Spa` entry is split as written).
+fn std_app_split_input(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_file: &Path,
+    tgt: Option<target::Target>,
+) -> Result<Option<StdAppSplitInput>, ExitCode> {
+    let entry_src = std::fs::read_to_string(entry_file).unwrap_or_default();
+    let imports_spa = entry_src
+        .lines()
+        .any(|l| l.trim_start().starts_with("import Std.Spa"));
+    if imports_spa || !uses_app_run(&entry_src) {
+        return Ok(None);
+    }
+    if std_app_user_errors(repo_root, project_dir, entry_file, "spa-split") {
+        return Err(ExitCode::FAILURE);
+    }
+    let synthesized = synthesize_spa_source(&entry_src, false).map_err(|e| {
+        eprintln!("sky spa-split: cannot derive the client build from your `App` value:\n  {e}");
+        ExitCode::FAILURE
+    })?;
+    let builder_app_url = match tgt {
+        Some(tgt) => std_app_builder_url(&entry_src, tgt).map_err(|e| {
+            eprintln!("sky spa-split --target {}: {e}", tgt.canonical());
+            ExitCode::FAILURE
+        })?,
+        None => None,
+    };
+    let staged = project_dir.join(".skyapp").join("spa-split");
+    let src_to = stage_std_app_derived(project_dir, &staged)?;
+    let synth_entry = src_to.join(entry_file.file_name().unwrap_or_default());
+    if let Err(e) = std::fs::write(&synth_entry, synthesized) {
+        eprintln!("sky spa-split: write synthesised Spa entry: {e}");
+        return Err(ExitCode::FAILURE);
+    }
+    Ok(Some(StdAppSplitInput {
+        entry_module: entry_module_name(&synth_entry),
+        static_mount: project::spa_split::declared_static_mount(&entry_src, project_dir),
+        staged,
+        entry_src,
+        builder_app_url,
+    }))
+}
+
 fn cmd_spa_split(args: &[String]) -> ExitCode {
     let (positional, out) = parse_out(args);
     // `--build` (or `--target <t>`, which implies build): after generating, build
@@ -4672,6 +4731,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
     // Same target model + normalisation as `sky build` (see cmd_build): parse
     // `family[:variant]`, reject a non-frontend-shell target, rebind to the
     // legacy shell string for the split engine.
+    let mut parsed_split_target = None;
     let split_target = if let Some(t) = &split_target {
         let tgt = match target::Target::parse(t) {
             Ok(tgt) => tgt,
@@ -4680,6 +4740,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+        parsed_split_target = Some(tgt);
         match tgt.frontend_shell() {
             Some(shell) => Some(shell.to_string()),
             None => {
@@ -4733,25 +4794,68 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
     project::build_stamp::pin_build_stamp(&project_dir);
     let target = split_target.as_deref().unwrap_or("web");
     let embed = args.iter().any(|a| a == "--embed");
-    let od = match spa_split_and_build(
-        &repo_root,
-        &project_dir,
-        entry_module_name(file).as_deref(),
-        &out_dir,
-        broker_url.as_deref(),
-        target,
-        embed,
-        do_build,
-        // Direct `sky spa-split`: the entry still carries its static declaration,
-        // so `generate` reads the mount itself.
-        None,
-        true,
-        None,
-        None,
-    ) {
+    // A `Std.App` entry is split the way `sky build --target web:app` splits
+    // it: from the `Spa.app` entry synthesised from its `App` value. The raw
+    // entry imports `Std.App`, not `Std.Spa`, so a split of it named `Spa.*`
+    // without importing it and its two projects did not build.
+    let std_app = match std_app_split_input(&repo_root, &project_dir, file, parsed_split_target) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    let od = match &std_app {
+        Some(app) => spa_split_and_build(
+            &repo_root,
+            &app.staged,
+            app.entry_module.as_deref(),
+            &out_dir,
+            broker_url.as_deref(),
+            target,
+            embed,
+            do_build,
+            app.static_mount.clone(),
+            true,
+            app.builder_app_url.as_deref(),
+            Some(&project_dir),
+        ),
+        None => spa_split_and_build(
+            &repo_root,
+            &project_dir,
+            entry_module_name(file).as_deref(),
+            &out_dir,
+            broker_url.as_deref(),
+            target,
+            embed,
+            do_build,
+            // Direct `sky spa-split`: the entry still carries its static
+            // declaration, so `generate` reads the mount itself.
+            None,
+            true,
+            None,
+            None,
+        ),
+    };
+    let od = match od {
         Ok(od) => od,
         Err(code) => return code,
     };
+    if let (Some(app), true) = (&std_app, do_build) {
+        // As `sky build --target web:app` does: the synthesised entry dropped
+        // the app's static declaration, so its assets come from the user's
+        // own project.
+        let staged =
+            project::spa_split::stage_declared_static_into_dist(&app.entry_src, &project_dir, &od)
+                .and_then(|()| {
+                    project::spa_split::stage_declared_static_into_backend(
+                        &app.entry_src,
+                        &project_dir,
+                        &od,
+                    )
+                });
+        if let Err(e) = staged {
+            eprintln!("sky spa-split: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
     if !do_build {
         println!("\nBuild: (cd {} && sky build --target web frontend/src/Main.sky) && (cd {} && sky build backend/src/Main.sky)", od.display(), od.display());
         println!("  or re-run with --build (native backend + web frontend) / --target <t> (frontend shell).");

@@ -10112,3 +10112,95 @@ fn generated_wire_grows_linearly_with_whole_model_branches() {
         );
     }
 }
+
+/// `sky spa-split` on a `Std.App` entry (`main = App.run app`) splits the
+/// `Spa.app` entry synthesised from the `App` value, as `sky build --target
+/// web:app` does, so both generated projects compile. It used to split the raw
+/// entry, which imports `Std.App` and not `Std.Spa`: the generated code named
+/// `Spa.reportRpcFailure` and the other `Spa.*` helpers without importing them,
+/// and `sky spa-split --build` failed with [E1001] in code the user never wrote.
+#[test]
+fn a_std_app_entry_splits_into_projects_that_compile() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/app-console-auth/src/Main.sky");
+    let proj = scratch_std_app(
+        "spa-split-std-app",
+        &std::fs::read_to_string(fixture).unwrap(),
+    );
+    let out = Command::new(SKY)
+        .args(["spa-split", "src/Main.sky", "--out", ".split"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        out.status.success(),
+        "sky spa-split should succeed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for leg in ["backend", "frontend"] {
+        if let Err(e) = project::emit_example_source(&repo_root(), &proj.join(".split").join(leg)) {
+            panic!("the split's {leg} must compile:\n{e}");
+        }
+    }
+    // The synthesised entry is staged beside the build's own, never in `src/`.
+    let src = std::fs::read_to_string(proj.join("src/Main.sky")).unwrap();
+    assert!(
+        !src.contains("Spa.app"),
+        "the user's entry must not be rewritten"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// A whole-model server branch whose Model holds an ENUM (a union of nullary
+/// constructors) with no `Codec` is refused, and the refusal names it as an
+/// enum with the `Codec.enum` binding that fixes it. It used to call every bare
+/// union "data-carrying", which an enum is not, and gave no enum codec.
+#[test]
+fn a_bare_enum_wire_field_is_refused_as_an_enum() {
+    let src = "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Task as Task\n\
+         import Sky.Core.File as File\n\
+         import Sky.Core.List as List\n\
+         import Sky.Core.String as String\n\
+         import Std.Spa as Spa\n\
+         import Std.Cmd as Cmd\n\
+         import Std.Sub as Sub\n\
+         import Std.Ui as Ui\n\
+         import Std.Html exposing (Html)\n\n\n\
+         type Page\n    = Home\n    | Settings\n\n\n\
+         type alias Model =\n    { page : Page, saved : Int }\n\n\n\
+         type Msg\n    = Save\n\n\n\
+         init : () -> ( Model, Cmd Msg )\n\
+         init _ =\n    ( { page = Home, saved = 0 }, Cmd.none )\n\n\n\
+         stamp : Model -> String\n\
+         stamp m =\n    String.fromInt (List.length [ m ])\n\n\n\
+         update : Msg -> Model -> ( Model, Cmd Msg )\n\
+         update msg model =\n    case msg of\n        Save ->\n            let\n                _ =\n                    Task.run (File.writeFile \"saved.txt\" (stamp model))\n            in\n            ( { model | saved = model.saved + 1 }, Cmd.none )\n\n\n\
+         view : Model -> Html Msg\n\
+         view model =\n    Ui.layout [] (Ui.text (String.fromInt model.saved))\n\n\n\
+         subscriptions : Model -> Sub Msg\n\
+         subscriptions _ =\n    Sub.none\n\n\n\
+         main : Task Error ()\n\
+         main =\n    Spa.app (Spa.config { init = init, update = update, view = view, subscriptions = subscriptions })\n";
+    let proj = scratch_std_app("spa-enum-wire", src);
+    let out = Command::new(SKY)
+        .args(["spa-split", "src/Main.sky", "--out", ".split"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky spa-split");
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        !out.status.success(),
+        "a bare enum on the wire must be refused"
+    );
+    assert!(
+        err.contains("an enum included") && err.contains("Codec.enum"),
+        "the refusal must name the enum and its codec:\n{err}"
+    );
+    assert!(
+        !err.contains("data-carrying"),
+        "an enum is not a data-carrying union:\n{err}"
+    );
+}
