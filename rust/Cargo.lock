@@ -142,7 +142,9 @@ name = "codegen"
 version = "0.27.8"
 dependencies = [
  "base",
+ "hir",
  "lower",
+ "syntax",
 ]
 
 [[package]]

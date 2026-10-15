@@ -9,7 +9,13 @@ import "sync"
 // compiler emits each such binding as
 //
 //	var Foo_bar__caf rt.LazyCaf[T]
-//	func Foo_bar() T { return Foo_bar__caf.Get(func() T { <body> }) }
+//	func Foo_bar__cafInit() T { <body> }
+//	func Foo_bar() T { return Foo_bar__caf.Get(Foo_bar__cafInit) }
+//
+// The body is a named function, never a closure literal inside the accessor:
+// Go inlines the one-line accessor into every caller, and a closure literal
+// would be copied (and compiled) once per call site, with every closure
+// nested in it. A function passed by name is compiled once.
 //
 // so every reference resolves to the SAME value, computed exactly once, on
 // first use. This is the "memoised handle" contract (CLAUDE.md Cardinal Rule

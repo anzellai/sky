@@ -539,3 +539,33 @@ which also let the console build with inlining on again.
 `rust/crates/sky/tests/go_compile_shape.rs` pins both: no emitted function nests
 closures more than 10 deep, and the build's largest Go process stays under a
 measured budget.
+
+### A CAF's initialiser is a named function, never a closure in its accessor
+
+A zero-parameter top-level binding (a CAF) is memoised through `rt.LazyCaf`
+(`runtime-go/rt/lazycaf.go`). `lower_def` (CAF memoisation, in
+`rust/crates/lower/src/lower.rs`) emits it as three items:
+
+```go
+var X__caf rt.LazyCaf[T]
+func X__cafInit() T { <the binding's body> }
+func X() T { return X__caf.Get(X__cafInit) }
+```
+
+It used to be `func X() T { return X__caf.Get(func() T { <body> }) }`. The
+accessor is a one-line function, so Go inlines it into every caller, and the
+closure literal, with every closure nested in it, was copied and compiled once
+per call site. A Sky.Spa backend's Model wire codec is one CAF that every RPC
+codec reads, so a generated backend at 200 Model fields compiled 100,681
+functions, 82,216 of them copies of that one initialiser (62 s and 6.1 GB in
+`go build`). Go inlines only direct calls, so a function passed by name is
+compiled once. The accessor stays small and is still inlined.
+
+Laziness, once-only evaluation and the session-stamp clearing all stay in
+`LazyCaf.Get`, unchanged. A self-referential binding is still never memoised.
+A profile or stack frame in `X__cafInit` reports as the binding `X`
+(`demangleFrame` in `runtime-go/rt/profile.go`), as the closure `X.func1` did.
+`rust/crates/codegen/tests/caf_accessor_shape.rs` pins the emitted shape.
+`rust/crates/sky/tests/caf_inline_scale_flow.rs` counts the Go back end's
+compiled functions (`-gcflags=sky-app=-bench`) for one CAF read by `n` and `2n`
+functions, and fails when the count grows more than 2.3 times.

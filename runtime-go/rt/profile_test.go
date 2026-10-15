@@ -29,6 +29,12 @@ func TestDemangleFrameKinds(t *testing.T) {
 		{"main.Main_update", "Main.update", kindUser},
 		{"main.Lib_Products_listAllProducts", "Lib.Products.listAllProducts", kindUser},
 		{"main.main", "main (entry point)", kindUser},
+		// A memoised top-level value's initialiser is its own function
+		// (`X__cafInit`); it reports as the Sky binding, as the closure it
+		// replaced (`main.Main_table.func1`) did.
+		{"main.Main_table__cafInit", "Main.table", kindUser},
+		{"main.Main_table__cafInit.func2", "Main.table", kindUser},
+		{"main.Main_table.func1", "Main.table", kindUser},
 		{"sky-app/rt.Db_query", "Db.query", kindStdlib},
 		{"sky-app/rt.Log_println", "Log.println", kindStdlib},
 		{"sky-app/rt.SkyCall", "sky runtime (SkyCall)", kindRuntime},

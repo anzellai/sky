@@ -2636,21 +2636,46 @@ impl<'a> Ctx<'a> {
                     }
                 }
             }
+            // The initialiser is its OWN named function, and the accessor
+            // passes it by name:
+            //
+            //   var X__caf rt.LazyCaf[T]
+            //   func X__cafInit() T { <original body> }
+            //   func X() T { return X__caf.Get(X__cafInit) }
+            //
+            // Never `X__caf.Get(func() T { <body> })`. The accessor is a
+            // one-line function, so the Go inliner copies it into every
+            // caller; a closure literal inside it was copied with it, and so
+            // was every closure nested in the body. A codec CAF referenced
+            // from ~200 places was compiled ~200 times (a generated Sky.Spa
+            // backend at 200 Model fields: 100,681 compiled functions,
+            // 82,216 of them copies of one initialiser). Go inlines only
+            // direct calls, so a function passed by name is compiled once.
+            // Laziness, once-only evaluation and the session-stamp clearing
+            // are LazyCaf.Get's, unchanged.
             let caf_var = format!("{go_name}__caf");
+            let init_name = format!("{go_name}__cafInit");
             let cell_ty = GoTy::Named("rt.LazyCaf".to_string(), vec![ret_ty.clone()]);
-            // compute := func() T { <original body> }
-            let compute = GoExpr::new(
-                GoExprKind::FuncLit(Vec::new(), ret_ty.clone(), body),
+            let init = GoFuncDecl {
+                name: init_name.clone(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                ret: ret_ty.clone(),
+                body,
+                doc: None,
+            };
+            // {caf_var}.Get({init_name})
+            let init_ref = GoExpr::new(
+                GoExprKind::Ident(init_name),
                 GoTy::Func(Vec::new(), Box::new(ret_ty.clone())),
             );
-            // {caf_var}.Get(compute)
             let cell_ident = GoExpr::new(GoExprKind::Ident(caf_var.clone()), cell_ty.clone());
             let get_sel = GoExpr::new(
                 GoExprKind::Selector(Box::new(cell_ident), "Get".to_string()),
                 GoTy::Any,
             );
             let get_call = GoExpr::new(
-                GoExprKind::Call(Box::new(get_sel), vec![compute]),
+                GoExprKind::Call(Box::new(get_sel), vec![init_ref]),
                 ret_ty.clone(),
             );
             let accessor = GoFuncDecl {
@@ -2661,7 +2686,11 @@ impl<'a> Ctx<'a> {
                 body: vec![GoStmt::Return(Some(get_call))],
                 doc: None,
             };
-            return vec![GoItem::Var(caf_var, cell_ty, None), GoItem::Func(accessor)];
+            return vec![
+                GoItem::Var(caf_var, cell_ty, None),
+                GoItem::Func(init),
+                GoItem::Func(accessor),
+            ];
         }
 
         vec![GoItem::Func(GoFuncDecl {
