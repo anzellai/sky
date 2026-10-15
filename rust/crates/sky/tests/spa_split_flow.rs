@@ -10772,21 +10772,11 @@ fn readset_noneleaf_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-readset-noneleaf")
 }
 
-/// The block of a generated `type alias <name> =` up to the next blank line.
-fn alias_block<'a>(shared: &'a str, name: &str) -> &'a str {
-    let Some(start) = shared.find(&format!("type alias {name} =")) else {
-        return "";
-    };
-    let block = &shared[start..];
-    let end = block.find("\n\n").unwrap_or(block.len());
-    &block[..end]
-}
-
-/// The field names of a generated record alias block (`{ a : T, b : U }`).
-fn alias_fields(block: &str) -> Vec<String> {
-    block
+/// The field names in the field lines [`wire_record_fields`] returns
+/// (`{ a : T`, `, b : U`).
+fn wire_fields(lines: &str) -> Vec<String> {
+    lines
         .lines()
-        .skip(1)
         .filter_map(|l| {
             let l = l.trim().trim_start_matches(['{', ',']).trim();
             l.split_once(" :").map(|(n, _)| n.trim().to_string())
@@ -10855,10 +10845,11 @@ fn readset_through_derived_locals_and_none_leaf_sends_no_rpc() {
         ("DestructuredReq", "flag"),
         ("CaseOfReq", "flag"),
     ] {
-        let block = alias_block(&shared, req);
-        assert!(!block.is_empty(), "{req} must exist:\n{shared}");
+        // One wire record per shape: `req` may be a one-line alias of the
+        // record that owns its shape, or embed the whole model.
+        let block = wire_record_fields(&shared, req);
         assert!(
-            alias_fields(block).iter().any(|f| f == field),
+            wire_fields(&block).iter().any(|f| f == field),
             "{req} must carry `{field}`: the branch reads it through a model-derived \
              local, and without it the backend rebuilds it from `init ()`:\n{block}"
         );
@@ -10878,7 +10869,7 @@ fn readset_through_derived_locals_and_none_leaf_sends_no_rpc() {
     // "No task ran" is its own answer: an empty `result` list, which the
     // client maps to `( model, Cmd.none )`.
     for resp in ["GatedResp", "GuardedResp", "ByModeResp", "CaseOfResp"] {
-        let block = alias_block(&shared, resp);
+        let block = wire_record_fields(&shared, resp);
         assert!(
             block.contains("result : List (Result Error String)"),
             "{resp} must answer `result : List (Result Error String)`:\n{block}"
@@ -10966,7 +10957,7 @@ fn readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err() {
         ]
     };
     let post = |ctor: &str, m: &[(&'static str, String)]| -> String {
-        let fields = alias_fields(alias_block(&shared, &format!("{ctor}Req")));
+        let fields = wire_fields(&wire_record_fields(&shared, &format!("{ctor}Req")));
         let body = fields
             .iter()
             .map(|f| {
