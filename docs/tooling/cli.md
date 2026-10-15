@@ -268,6 +268,13 @@ sets `-p <n>` yourself (`auto` decides as above), and a `-p` already in
 `GOFLAGS` is kept. The decision is printed under the `--timings` table as
 `go build: -p …`.
 
+Further build-speed changes were studied and not made in v0.27.9: one Go
+package per Sky module, a parallel front end with a cached stdlib world, a
+linear unifier, one front-end load on the `--target web:app` path, and `fast`
+brotli by default for edit rebuilds. `docs/perf/build-speed-decisions.md`
+records, for each, what was measured, the expected gain, the risk and what
+would make it worth doing.
+
 Build identity. The app's version, commit and build time are automatic: no
 flag, no environment variable, no CI step. `sky build` writes them into
 generated Go source (the `sky-out/skybuildinfo/` package), so any `go build`
