@@ -224,6 +224,27 @@ dupCodec =
         |> Codec.buildObject
 
 
+-- Two keys repeat ("y" then "x"): the error names the key whose second use
+-- comes first while reading the fields in order ("y"), not the key that
+-- appears first ("x").
+type alias Quad =
+    { a : Int
+    , b : Int
+    , c : Int
+    , d : Int
+    }
+
+
+twoDupCodec : Codec Quad
+twoDupCodec =
+    Codec.object Quad
+        |> Codec.field "x" .a Codec.int
+        |> Codec.field "y" .b Codec.int
+        |> Codec.field "y" .c Codec.int
+        |> Codec.field "x" .d Codec.int
+        |> Codec.buildObject
+
+
 -- `label` reuses the inlined `Prim`'s `name` key.
 dupInlineCodec : Codec PrimTagged
 dupInlineCodec =
@@ -326,6 +347,14 @@ tests =
         (\_ -> Test.err (Codec.fromJson dupCodec (Codec.toJson dupCodec { a = 1, b = 2 })))
     , Test.test "repeated key: the error names the key"
         (\_ -> Test.isTrue (String.contains "\"x\"" (errorMessage (Codec.fromJson dupCodec "{\"x\":1}"))))
+    , Test.test "repeated key: the whole error message"
+        (\_ ->
+            Test.equal
+                "Codec.buildObject: the JSON key \"x\" is used by two fields of one record codec; give each field its own key"
+                (errorMessage (Codec.fromJson dupCodec "{\"x\":1}"))
+        )
+    , Test.test "repeated key: two repeats name the first second use"
+        (\_ -> Test.isTrue (String.contains "\"y\"" (errorMessage (Codec.fromJson twoDupCodec "{\"x\":1,\"y\":2}"))))
     , Test.test "repeated key across Codec.inline: decoding is an Err"
         (\_ -> Test.err (Codec.fromJson dupInlineCodec (Codec.toJson dupInlineCodec primTagged)))
     , Test.test "repeated key: encoding is unchanged and keeps both pairs, in order"

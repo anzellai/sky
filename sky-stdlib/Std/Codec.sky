@@ -422,7 +422,7 @@ buildObject (ObjectCodec o) =
 -- of the codec's keys are the same. Checked once, when the codec is built.
 objectDecoder : List ( String, ColType ) -> Decoder a -> Decoder a
 objectDecoder cols dec =
-    case repeatedKey Dict.empty cols of
+    case repeatedKey cols cols of
 
         Just key ->
             D.fail
@@ -433,20 +433,44 @@ objectDecoder cols dec =
             dec
 
 
--- | The first key in `cols` already seen, if any.
-repeatedKey : Dict String () -> List ( String, ColType ) -> Maybe String
-repeatedKey seen cols =
+-- | The first key in `cols` (read in order) that an earlier column already
+-- used, if any. `all` is the whole column list and `cols` a suffix of it: a
+-- key occurs before `cols` exactly when it occurs more often in `all` than in
+-- `cols`.
+--
+-- Written as plain recursion over the typed column list, with no `Dict` and no
+-- `::` accumulator: the Dict and List kernels return Go `any`, and every
+-- record codec in an app would then carry runtime narrowings for a check that
+-- needs none (docs/rust-rewrite/14-runtime-narrowing-taxonomy.md, R5).
+repeatedKey : List ( String, ColType ) -> List ( String, ColType ) -> Maybe String
+repeatedKey all cols =
     case cols of
 
         [] ->
             Nothing
 
         ( key, _ ) :: rest ->
-            if Dict.member key seen then
+            if keyCount key all 0 > keyCount key cols 0 then
                 Just key
 
             else
-                repeatedKey (Dict.insert key () seen) rest
+                repeatedKey all rest
+
+
+-- | How many columns in `cols` use `key`, added to `n`.
+keyCount : String -> List ( String, ColType ) -> Int -> Int
+keyCount key cols n =
+    case cols of
+
+        [] ->
+            n
+
+        ( k, _ ) :: rest ->
+            if k == key then
+                keyCount key rest (n + 1)
+
+            else
+                keyCount key rest n
 
 
 -- ── Derivation ───────────────────────────────────────────────────────────────
