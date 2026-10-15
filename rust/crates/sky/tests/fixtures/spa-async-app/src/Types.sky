@@ -1,0 +1,18 @@
+module Types exposing (Model, Msg(..))
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+
+
+type alias Model =
+    { picked : Int
+    , busy : Bool
+    , note : String
+    , saved : String
+    }
+
+
+type Msg
+    = Pick Int
+    | Toggle
+    | Drafted (Result Error String)

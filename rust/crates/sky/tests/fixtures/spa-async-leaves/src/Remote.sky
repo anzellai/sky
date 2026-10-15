@@ -1,0 +1,31 @@
+module Remote exposing (label, pick)
+
+-- A cross-module helper whose module keeps a frontend subset (`label` is a
+-- pure def the view reads). `pick` reaches the server only through its
+-- command, so the client runs a copy of it with the command replaced by the
+-- RPC.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Cmd as Cmd
+import Types exposing (Model, Msg(..))
+
+
+label : Model -> String
+label m =
+    "log: " ++ m.log
+
+
+fetchRemote : Task Error String
+fetchRemote =
+    Task.succeed (System.getenvOr "SPA_ASYNC_P" "remote")
+
+
+pick : Model -> ( Model, Cmd Msg )
+pick m =
+    if m.flag then
+        ( { m | busy = True, log = "picking" }, Cmd.perform fetchRemote Got )
+
+    else
+        ( { m | log = "not picked" }, Cmd.none )

@@ -1,0 +1,46 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.String as String
+import Types exposing (Model, Msg(..))
+import Logic exposing (update)
+import Std.App as App
+import Std.Ui as Ui exposing (Element)
+
+
+init : () -> ( Model, Cmd Msg )
+init () =
+    ( { picked = 0, busy = False, note = "", saved = "" }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.column
+        []
+        [ Ui.text ("picked " ++ String.fromInt model.picked)
+        , Ui.text model.note
+        , Ui.text model.saved
+        , Ui.button [] { onPress = Just (Pick 1), label = Ui.text "pick" }
+        , Ui.button [] { onPress = Just Toggle, label = Ui.text "toggle" }
+        ]
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound (\_ -> Ui.text "not found")
+
+
+main : Task Error ()
+main =
+    App.run app

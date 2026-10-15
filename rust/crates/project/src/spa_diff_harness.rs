@@ -49,10 +49,13 @@
 //!   result (`leaf3(perform)`). A read the request drops can leave the model
 //!   equal and change only the branch: `if model.flag then ( model,
 //!   Cmd.perform t Got ) else ( model, Cmd.none )`;
-//! * for a client-result arm the client runs itself up to its leaves
-//!   ([`crate::spa_partition::NoneLeafPlan`]), the CLIENT leg: the client must
-//!   send the request (`rpc`) exactly when the direct leg's leaf performs, and
-//!   send nothing on a `Cmd.none` leaf.
+//! * for an async arm the client runs itself
+//!   ([`crate::spa_partition::ClientModelPlan`], v0.27.9), the CLIENT leg,
+//!   built by the split's own emitter ([`crate::spa_split::client_arm_body`]):
+//!   the client must send the request (`rpc`) exactly where the direct leg's
+//!   command is not `Cmd.none`, and, when the arm makes its own model write in
+//!   the client, return the direct leg's model (the split applies no server
+//!   write-set for that arm).
 //!
 //! Before the run it checks that every Model field took more than one value over
 //! the generated models, so each branch that depends on a field (a `Bool`
@@ -137,9 +140,22 @@ pub struct CheckableBranch {
     pub client_arms: std::collections::BTreeMap<usize, ClientArm>,
 }
 
+/// What the harness compares for a [`ClientArm`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClientLegCheck {
+    /// An async arm that makes its own model write in the client (v0.27.9):
+    /// the client's model must be the direct leg's model (the split applies no
+    /// write-set from the server for it), and the client sends the request
+    /// exactly where the direct leg's command is not `Cmd.none`.
+    ModelAndSends,
+    /// An async arm that writes nothing: the client sends the request exactly
+    /// where the direct leg's command is not `Cmd.none`.
+    Sends,
+}
+
 /// The client's copy of one server arm, as the split generates it
-/// ([`crate::spa_split::client_none_leaf_arm_body`]) with the RPC replaced by
-/// the harness's `rpc` stand-in.
+/// ([`crate::spa_split::client_arm_body`]) with the RPC replaced by the
+/// harness's `rpc` stand-in.
 #[derive(Clone, Debug)]
 pub struct ClientArm {
     /// The arm's source pattern.
@@ -147,8 +163,9 @@ pub struct ClientArm {
     /// `update`'s Msg and model parameter names, which the body uses.
     pub msg_param: String,
     pub model_param: String,
-    /// The arm body, laid out at its source column (right of column 8).
+    /// The arm body, laid out to follow a pattern at column 8.
     pub body: String,
+    pub check: ClientLegCheck,
 }
 
 /// Apply the phase-2 fence to a partition report, returning the checkable
@@ -328,6 +345,12 @@ spaDiffRpcCmd_ : () -> cmd\n\
 spaDiffRpcCmd_ =\n\
 \x20   Ffi.kernel \"Spa_diffRpcCmd\"\n\
 \n\
+\n\
+-- A command shape that is `Cmd.none` (bare, or a tagged leaf).\n\
+spaDiffIsNone_ : String -> Bool\n\
+spaDiffIsNone_ s =\n\
+\x20   s == \"none\" || (String.startsWith \"leaf\" s && String.endsWith \"(none)\" s)\n\
+\n\
 \n";
 
 /// `spaDiffLeaf_ <n> (cmd)`: the leaf tag, appended to the module that declares
@@ -458,9 +481,12 @@ fn emit_check_one(
                 .and_then(|a| a.index)
                 .and_then(|idx| b.client_arms.get(&idx).map(|_| idx));
             s.push_str(&body);
+            let check = client
+                .and_then(|idx| b.client_arms.get(&idx))
+                .map(|a| a.check);
             if let Some(idx) = client {
                 s.push_str(&format!(
-                    "\n                ( _, spaClientCmd ) =\n                    {} msg model\n\n\
+                    "\n                ( spaClientModel, spaClientCmd ) =\n                    {} msg model\n\n\
                      \x20               spaClientShape =\n                    spaDiffCmdShape_ spaClientCmd\n",
                     client_fn_name(ctor, idx)
                 ));
@@ -474,11 +500,20 @@ fn emit_check_one(
             s.push_str(&format!(
                 "                Err (\"{ctor}: the split server took another leaf or command than the direct update (a dropped read): direct \" ++ spaDirectShape ++ \", split \" ++ spaSplitShape)\n\n"
             ));
-            if client.is_some() {
-                s.push_str("            else if (spaClientShape == \"rpc\") /= String.contains \"perform\" spaDirectShape then\n");
+            if check == Some(ClientLegCheck::ModelAndSends) {
+                s.push_str("            else if direct /= spaClientModel then\n");
                 s.push_str(&format!(
-                    "                Err (\"{ctor}: the client sends the request on a leaf where the direct update performs nothing, or the other way round: direct \" ++ spaDirectShape ++ \", client \" ++ spaClientShape)\n\n"
+                    "                Err \"{ctor}: the client's own model write differs from the direct update (the split applies no server write-set for this async arm, so the client's write is the one that stays)\"\n\n"
                 ));
+            }
+            match check {
+                Some(_) => {
+                    s.push_str("            else if (spaClientShape == \"rpc\") == spaDiffIsNone_ spaDirectShape then\n");
+                    s.push_str(&format!(
+                        "                Err (\"{ctor}: the client sends the request where the direct update's command is Cmd.none, or keeps Cmd.none where it is not: direct \" ++ spaDirectShape ++ \", client \" ++ spaClientShape)\n\n"
+                    ));
+                }
+                None => {}
             }
             s.push_str("            else\n                Ok ()\n\n");
         }
@@ -855,7 +890,10 @@ mod tests {
             effect_families: vec![],
             arm: None,
             own_model_client: false,
-            none_leaf_plan: None,
+            client_model: Err(crate::spa_partition::ClientModelHold {
+                reason: String::new(),
+                suggestion: String::new(),
+            }),
         }
     }
     fn report_with(branches: Vec<BranchVerdict>) -> SpaPartitionReport {

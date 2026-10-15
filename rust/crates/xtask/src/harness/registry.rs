@@ -388,16 +388,31 @@ pub static GATES: &[Gate] = &[
                 },
             },
             Mutation {
-                id: "spa-diff-fuzz.none-leaf-sends-rpc",
-                description: "make the client copy of a client-result arm send the RPC on its \
-                              `Cmd.none` leaves too; the harness's client leg of \
-                              spa-readset-noneleaf's `Gated` then sends the request where the \
-                              direct update performs nothing, so the client-leg comparison must \
-                              go red (Sky.Live sends nothing on a `Cmd.none` leaf)",
+                id: "spa-diff-fuzz.async-arm-drops-write",
+                description: "make the client copy of a planned async arm return `( model, rpc )` \
+                              instead of the arm as written; the split applies no server \
+                              write-set for such an arm, so its write is lost. The client-leg \
+                              model comparison (spa-readset-noneleaf's `AliasCond`, \
+                              spa-async-leaves' `IfWrap`, …) must go red",
                 kind: MutationKind::ReplaceOnce {
                     path: "rust/crates/project/src/spa_split.rs",
-                    from: "let body = format!(\"{}spaRpc_{}\", &src[bs..ps], &src[pe..be]);",
-                    to: "let body = format!(\"{}spaRpc_{}\", &src[bs..ps], &src[pe..be]).replace(\"Cmd.none\", \"spaRpc_\");",
+                    from: "let planned_arm: &str = body;",
+                    to: "let planned_arm: &str = &format!(\"( {model_param}, spaRpc_ ){}\", &body[..0]);",
+                },
+            },
+            Mutation {
+                id: "spa-diff-fuzz.async-arm-sends-on-keep",
+                description: "make the client plan treat a `Cmd.none` leaf as one that needs the \
+                              server; the client copy of a planned arm (spa-readset-noneleaf's \
+                              `Destructured`, spa-async-leaves' `IfWrap`, …) then sends the \
+                              request where the direct update's command is `Cmd.none`, so the \
+                              client-leg send comparison must go red (Sky.Live sends nothing \
+                              there; this replaces the v0.27.9 none-leaf-sends-rpc mutation, \
+                              whose emitter the planned arm subsumes)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_partition.rs",
+                    from: "if !matches!(leaves.as_slice(), [CmdLeaf::NoneCmd]) {",
+                    to: "if !matches!(leaves.as_slice(), [CmdLeaf::Unresolvable]) {",
                 },
             },
         ]),
