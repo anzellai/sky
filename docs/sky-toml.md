@@ -985,9 +985,13 @@ SKY_PRECOMPRESS=off    # no .br / .gz (same as --no-precompress)
 - It is read by the `sky` CLI at build time, not by the app, so it is never
   prefix-affected and is not a `sky.toml` key.
 - An unknown value fails the build, naming the accepted levels.
-- The Sky backend sends a `.br` / `.gz` that is no older than its source to a
-  request that accepts it; with `off` it gzips each response on the fly. See
-  `docs/tooling/cli.md` (`--precompress`).
+- `max` falls back to `fast`, with a warning, when the available memory does
+  not hold its parallel brotli (see `docs/tooling/cli.md`).
+- The Sky backend sends a `.br` / `.gz` to a request that accepts it only when
+  the build's `dist/sky-precompress.json` lists it and the source and the
+  variant still have the size and SHA-256 it records. With `off` the build
+  removes the variants and the manifest, and the backend gzips each response on
+  the fly. See `docs/tooling/cli.md` (`--precompress`).
 
 ---
 

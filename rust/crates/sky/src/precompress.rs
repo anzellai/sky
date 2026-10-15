@@ -257,8 +257,8 @@ pub enum Level {
     /// A quicker brotli for a fast edit-rebuild loop; the files are a little
     /// larger (see [`Level::brotli`]). gzip is the same as `max`.
     Fast,
-    /// No `.br` / `.gz` files. A static host then compresses on the fly (the
-    /// Sky backend gzips each response).
+    /// No `.br` / `.gz` files (an earlier build's are removed). A static host
+    /// then compresses on the fly (the Sky backend gzips each response).
     Off,
 }
 
@@ -393,6 +393,83 @@ pub fn compress(file: &Path, codec: &Codec, cache: Option<&Path>) -> Outcome {
         prune(dir, CACHE_KEEP);
     }
     Outcome::Compressed
+}
+
+/// The manifest a build writes in a bundle directory, listing the variants it
+/// produced. The Sky backend serves a `.br` / `.gz` only when this file lists
+/// it and the source and the variant still have the size and SHA-256 recorded
+/// here (`runtime-go/rt/static_precompressed.go`), so a variant the build did
+/// not write, or one of an earlier version of its source, is never sent.
+pub const MANIFEST: &str = "sky-precompress.json";
+
+/// The variants of a file: (HTTP content coding, file extension).
+const VARIANTS: [(&str, &str); 2] = [("br", "br"), ("gzip", "gz")];
+
+/// Remove every `.br` / `.gz` of `files` and the manifest of each of their
+/// directories. Every level runs this first, so `off` leaves no variant of an
+/// earlier build behind and a level that fails to write one leaves none.
+pub fn remove_variants(files: &[PathBuf]) {
+    for f in files {
+        for (_, ext) in VARIANTS {
+            let mut v = f.as_os_str().to_owned();
+            v.push(".");
+            v.push(ext);
+            let _ = std::fs::remove_file(PathBuf::from(v));
+        }
+        if let Some(dir) = f.parent() {
+            let _ = std::fs::remove_file(dir.join(MANIFEST));
+        }
+    }
+}
+
+/// Write [`MANIFEST`] in the directory of `files` (all in one directory):
+/// each existing file's size and SHA-256, and those of each variant written
+/// beside it, keyed by content coding. `level` is recorded for people reading
+/// it. Written through a temporary name, so a server never reads half of it.
+pub fn write_manifest(files: &[PathBuf], level: Level) -> std::io::Result<()> {
+    let Some(dir) = files.first().and_then(|f| f.parent()) else {
+        return Ok(());
+    };
+    let entry = |p: &Path| -> Option<serde_json::Value> {
+        let bytes = std::fs::read(p).ok()?;
+        Some(serde_json::json!({
+            "size": bytes.len(),
+            "sha256": crate::db_provision::sha256_hex(&bytes),
+        }))
+    };
+    let mut listed = serde_json::Map::new();
+    for f in files {
+        let (Some(name), Some(mut e)) = (f.file_name(), entry(f)) else {
+            continue;
+        };
+        let mut encodings = serde_json::Map::new();
+        for (coding, ext) in VARIANTS {
+            let mut v = f.as_os_str().to_owned();
+            v.push(".");
+            v.push(ext);
+            if let Some(ve) = entry(Path::new(&v)) {
+                encodings.insert(coding.to_string(), ve);
+            }
+        }
+        if encodings.is_empty() {
+            continue;
+        }
+        e["encodings"] = serde_json::Value::Object(encodings);
+        listed.insert(name.to_string_lossy().into_owned(), e);
+    }
+    let body = serde_json::json!({
+        "version": 1,
+        "level": level.name(),
+        "files": listed,
+    });
+    let tmp = store_tmp_name(dir, "manifest");
+    std::fs::write(
+        &tmp,
+        serde_json::to_vec_pretty(&body).map_err(std::io::Error::other)?,
+    )?;
+    std::fs::rename(&tmp, dir.join(MANIFEST)).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// Distinguishes the temporary store names of one process's calls.
@@ -758,6 +835,40 @@ mod tests {
         brotli::BrotliDecompress(&mut &fast[..], &mut dec).unwrap();
         assert!(dec == content);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A large input in four parallel parts at quality 11 and the 16 MB
+    /// window: every part after the first may refer back into the parts before
+    /// it (the cross-part references the one-part test above cannot reach),
+    /// and the reference decoder (`brotli -d`, what browsers use) and the
+    /// crate's decoder both give exactly the input. Ignored by default: about
+    /// 0.8 GB of memory and 25 s (measured: 808 MB peak, 23 s wall, 65 s CPU). Run it with
+    /// `cargo test --release -p sky --bin sky -- --ignored large_parallel_brotli`.
+    #[test]
+    #[ignore = "about 0.8 GB and 25 s; run with --ignored"]
+    fn a_large_parallel_brotli_decodes_to_the_input() {
+        let have_brotli = Command::new("brotli").arg("--version").output().is_ok();
+        let check_cli = crate::live_gate::required(crate::live_gate::Need::Brotli, have_brotli);
+        let content = wasm_like(24 << 20);
+        assert_eq!(brotli_chunks(content.len()), 4, "four parts");
+        let br = brotli_compress(&content, BROTLI_MAX).expect("compresses");
+        let mut dec = Vec::with_capacity(content.len());
+        brotli::BrotliDecompress(&mut &br[..], &mut dec).unwrap();
+        assert!(dec == content, "the crate's decoder");
+        if check_cli {
+            let d = scratch("large");
+            let p = d.join("large.br");
+            std::fs::write(&p, &br).unwrap();
+            let o = Command::new("brotli")
+                .args(["-d", "-c"])
+                .arg(&p)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "brotli -d failed");
+            assert_eq!(o.stdout.len(), content.len());
+            assert!(o.stdout == content, "brotli -d gives the input");
+            let _ = std::fs::remove_dir_all(&d);
+        }
     }
 
     /// The cache key names the pinned crate version: a version bump can never

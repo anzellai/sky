@@ -632,8 +632,9 @@ a small host. `sky build` does the compressing for you: it writes the hashed
 to `.gz` (gzip -9) and `.br` (brotli quality 11, written by `sky` itself; no
 `brotli` tool needed). For a quicker edit-rebuild loop, `sky build
 --precompress=fast` (brotli 9: seconds instead of tens of seconds, ~18% larger)
-or `--precompress=off` (none; also `SKY_PRECOMPRESS=fast|off`); deploy a
-`max` (default) build. The Sky backend serves them itself: a request
+or `--precompress=off` (none, and it removes an earlier build's; also
+`SKY_PRECOMPRESS=fast|off`); deploy a `max` (default) build. On a machine short
+of memory `max` warns and writes the `fast` files instead. The Sky backend serves them itself: a request
 that accepts `br` (else `gzip`) gets the `.br` (else `.gz`) file next to the
 asset when the build's `dist/sky-precompress.json` lists it and the files still
 match it (a Range request ranges over that file); anything else, including a

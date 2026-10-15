@@ -156,10 +156,24 @@ wins) sets how much work goes into the `.gz` / `.br`:
 | `off` | none | none | 0 s; the server compresses on the fly |
 
 Use `fast` (or `off`) for a quick edit-rebuild loop of a production-shaped
-build, and `max` for what you deploy. `--no-precompress` is `--precompress=off`.
-An unknown level is an error. The Sky backend serves the `.br` / `.gz` files
-itself when a request accepts them, and a Range request or a file with no
-fresh variant gets the raw file, gzipped on the fly.
+build, and `max` for what you deploy. `max` starts up to 8 brotli parts at
+once (1.56 GB peak on a 52 MB wasm). When the available memory is known and
+holds less than that need (64 MB, three times the input and 190 MB per part)
+plus 1 GB kept free, the build warns and writes the `fast` variants instead.
+The number of parts depends only on the file's length, so `max` bytes are the
+same on every machine: a machine short of memory writes `fast` bytes under the
+`fast` name and cache key, and the manifest records `"level": "fast"`. `--no-precompress` is `--precompress=off`.
+An unknown level is an error. Every level first removes the `.br` / `.gz` of
+each asset it manages (the wasm, `wasm_exec.js`, the boot script) and the
+manifest, so `off` leaves none behind. The build then lists what it wrote in
+`dist/sky-precompress.json`: each asset's size and SHA-256, and those of its
+`.br` / `.gz`. The Sky backend serves a `.br` / `.gz` itself only when a
+request accepts it and the manifest lists it with the size and SHA-256 the
+files still have (hashed once per file version per process). A Range request
+that accepts the encoding ranges over that file, with Content-Encoding on the
+206; anything else gets the raw file, gzipped on the fly. A `.gz` / `.br`
+that the build did not write (one committed in an app's own static dir) is
+never served.
 
 A new directory reuses the cache too. Every `go build` Sky runs passes
 `-trimpath`, so a compiled package's cache key does not include the directory

@@ -607,7 +607,9 @@ in `frontend/dist` to `.gz` (`gzip -9`) and `.br` (brotli quality 11, written by
 quicker than `brotli -q 11` for a file within 1% of its size).
 `--precompress=max|fast|off` (or `SKY_PRECOMPRESS`) picks the level: `fast` is
 brotli 9 + gzip -6 (seconds, ~18% larger `.br`), `off` writes none
-(`--no-precompress` is its alias); `max` is the default. The Sky backend's static
+(`--no-precompress` is its alias, and every level first removes the assets'
+earlier `.br` / `.gz`); `max` is the default, and becomes `fast` with a warning
+when the available memory does not hold its parallel brotli. The Sky backend's static
 mounts send them: a request that accepts `br` (else `gzip`; a fixed order, not
 by q-value) gets the `.br` (else `.gz`) file as it is, with the original's
 Content-Type and Last-Modified and an ETag per encoding, only when the build's

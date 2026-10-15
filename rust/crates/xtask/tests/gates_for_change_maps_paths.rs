@@ -85,6 +85,29 @@ fn the_go_runtime_maps_to_go_test_and_the_web_e2e() {
     }
 }
 
+/// A change under runtime-go/rt (a static-serving file, a wasm-facing one)
+/// runs the WHOLE rt package: no `-run` or `-short` filter, so
+/// TestRuntimeBuildsForWasm and TestRuntimeCompilesForEveryTarget run, and an
+/// untagged file calling a `!js` function goes red before the wasm client
+/// build does.
+#[test]
+fn a_runtime_change_runs_the_cross_target_builds() {
+    for (tag, path) in [
+        ("rtstatic", "runtime-go/rt/static_precompressed.go"),
+        ("rtwasm", "runtime-go/rt/live_wasm.go"),
+    ] {
+        let p = plan_for(tag, &[path]);
+        let line = p
+            .lines()
+            .find(|l| l.contains("go test -p 1"))
+            .unwrap_or_else(|| panic!("{path}: no go test:\n{p}"));
+        assert!(
+            line.contains("./rt/...") && !line.contains("-run") && !line.contains("-short"),
+            "{path}: the rt tests must run unfiltered: {line}"
+        );
+    }
+}
+
 #[test]
 fn the_spa_split_maps_to_project_tests_and_the_spa_e2e() {
     let p = plan_for("spa", &["rust/crates/project/src/spa_split.rs"]);

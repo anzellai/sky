@@ -5511,12 +5511,13 @@ fn stage_web_bundle(
     std::fs::write(dist.join("index.html"), index).map_err(|e| format!("write index.html: {e}"))?;
     t_stage.end();
 
-    // Precompress the wasm + loader so a static host / Caddy can serve them with
-    // `precompressed br gzip` — brotli-11 is ~27% smaller than gzip on wasm. gzip
-    // is near-universal; brotli is optional (warned + skipped if the tool is
-    // absent, leaving the gzip fallback). Skipped for a `sky run` build: its
-    // backend serves the bundle itself (gzip on the fly) and never reads the
-    // `.gz` / `.br` files, so brotli-11 there is pure wait.
+    // Precompress the wasm, its loader glue and the boot script so the Sky
+    // backend (from the manifest this writes) or a static host
+    // (`precompressed br gzip`) can send them: brotli-11 is ~27% smaller than
+    // gzip on wasm. Every level first removes these assets' earlier `.br` /
+    // `.gz` and the manifest, so `off` (a `sky run` build, whose backend
+    // gzips on the fly, or a split's child leg, whose parent compresses
+    // afterwards) leaves none behind.
     precompress_assets(
         &[
             dist.join(&wasm_name),
@@ -5540,11 +5541,38 @@ fn dist_precompress_targets(dist: &Path) -> Vec<PathBuf> {
     v
 }
 
-/// Precompress `files` at `level` (nothing for `off`), each in its own thread
-/// (gzip and brotli of each at once too). Each file is its own input, and the
-/// cache stores each result under its own temporary name
+/// Precompress `files` (all in one `dist/`) at `level`, each in its own
+/// thread (gzip and brotli of each at once too), then list what was written
+/// in the manifest the Sky backend serves from (`precompress::MANIFEST`).
+/// Every level first removes the files' earlier variants and the manifest,
+/// so `off` leaves nothing stale. `max` becomes `fast`, with a warning, when
+/// the available memory does not hold its parallel brotli
+/// (`leg_plan::precompress_level_within`). Each file is its own input, and
+/// the cache stores each result under its own temporary name
 /// (`precompress::compress`).
 fn precompress_assets(files: &[PathBuf], level: precompress::Level) {
+    precompress::remove_variants(files);
+    if level == precompress::Level::Off {
+        return;
+    }
+    let need = leg_plan::brotli_need(files, precompress::Level::Max);
+    let available = leg_plan::available_memory();
+    let level = match leg_plan::precompress_level_within(level, need, available) {
+        l if l == level => l,
+        l => {
+            let msg = format!(
+                "--precompress=max needs about {} MB of memory for this bundle and {} MB is \
+                 available: writing the `{}` variants instead (brotli quality 9, gzip -6; the \
+                 .br is about 18% larger). Free memory and rebuild for the smallest files.",
+                need >> 20,
+                available.unwrap_or(0) >> 20,
+                l.name()
+            );
+            eprintln!("sky build: {msg}");
+            project::timings::note(format!("precompress: {msg}"));
+            l
+        }
+    };
     let Some(codecs) = level.codecs() else {
         return;
     };
@@ -5555,6 +5583,13 @@ fn precompress_assets(files: &[PathBuf], level: precompress::Level) {
             s.spawn(move || precompress_web_asset(f, cache, codecs, level));
         }
     });
+    if let Err(e) = precompress::write_manifest(files, level) {
+        eprintln!(
+            "sky build: could not write {}: {e}. The Sky backend serves the raw files, \
+             gzipped on the fly.",
+            precompress::MANIFEST
+        );
+    }
 }
 
 /// Precompress one dist asset into `<file>.gz` (gzip) and `<file>.br` (brotli,
@@ -17506,6 +17541,114 @@ mod tests {
             })
             .count();
         assert_eq!(count, 1, "old hashed wasm must be pruned");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A scratch `out/` holding a built wasm and Go's `wasm_exec.js`.
+    fn staged_bundle_scratch(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "sky-stage-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let out = base.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("main.wasm"), b"AAAA-wasm-bytes".repeat(500)).unwrap();
+        std::fs::write(
+            out.join("wasm_exec.js"),
+            b"// go glue, first toolchain\n".repeat(50),
+        )
+        .unwrap();
+        (base, out)
+    }
+
+    fn dist_names(dist: &std::path::Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dist)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// `--precompress=off` (and `sky run`, which stages at off) leaves no
+    /// `.br` / `.gz` of any asset it manages, `wasm_exec.js` included, and no
+    /// manifest. Before, off removed only the hashed wasm's and the boot
+    /// script's variants: a `wasm_exec.js.br` from an earlier `max` build
+    /// stayed, newer than a new toolchain's `wasm_exec.js` (copied with
+    /// GOROOT's old mtime), and the backend served the old glue.
+    #[test]
+    fn precompress_off_leaves_no_variant_of_any_asset() {
+        let (base, out) = staged_bundle_scratch("off");
+        let dist = base.join("dist");
+        stage_web_bundle(&out, &dist, precompress::Level::Max).unwrap();
+        let names = dist_names(&dist);
+        for ext in [".br", ".gz"] {
+            assert!(
+                names.contains(&format!("wasm_exec.js{ext}")),
+                "max writes wasm_exec.js{ext}: {names:?}"
+            );
+        }
+        // A new toolchain's glue, older than the sidecars on disk.
+        let fresh = b"// go glue, second toolchain\n".repeat(50);
+        std::fs::write(out.join("wasm_exec.js"), &fresh).unwrap();
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        std::fs::File::options()
+            .append(true)
+            .open(out.join("wasm_exec.js"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        stage_web_bundle(&out, &dist, precompress::Level::Off).unwrap();
+        let names = dist_names(&dist);
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.ends_with(".br") || n.ends_with(".gz") || n == "sky-precompress.json"),
+            "off left a variant or the manifest: {names:?}"
+        );
+        assert_eq!(std::fs::read(dist.join("wasm_exec.js")).unwrap(), fresh);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The build lists what it wrote in `dist/sky-precompress.json`, which is
+    /// what the Sky backend serves from (runtime-go/rt/static_precompressed.go):
+    /// each asset's size and SHA-256 and those of its `.br` / `.gz`.
+    #[test]
+    fn the_build_lists_its_variants_in_a_manifest() {
+        let (base, out) = staged_bundle_scratch("manifest");
+        let dist = base.join("dist");
+        stage_web_bundle(&out, &dist, precompress::Level::Fast).unwrap();
+        let m: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dist.join("sky-precompress.json")).expect("a manifest"),
+        )
+        .unwrap();
+        assert_eq!(m["version"], 1);
+        let files = m["files"].as_object().unwrap();
+        let wasm = project::spa_split::built_wasm_name(&dist).unwrap();
+        let mut want = vec![wasm, "wasm_exec.js".to_string(), spa_boot_name()];
+        want.sort();
+        let mut got: Vec<String> = files.keys().cloned().collect();
+        got.sort();
+        assert_eq!(got, want);
+        let sum = |p: &std::path::Path| db_provision::sha256_hex(&std::fs::read(p).unwrap());
+        for (name, e) in files {
+            let p = dist.join(name);
+            assert_eq!(e["sha256"], sum(&p), "{name}");
+            assert_eq!(e["size"], std::fs::metadata(&p).unwrap().len(), "{name}");
+            for (coding, ext) in [("br", "br"), ("gzip", "gz")] {
+                let v = dist.join(format!("{name}.{ext}"));
+                assert_eq!(e["encodings"][coding]["sha256"], sum(&v), "{name}.{ext}");
+                assert_eq!(
+                    e["encodings"][coding]["size"],
+                    std::fs::metadata(&v).unwrap().len()
+                );
+            }
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

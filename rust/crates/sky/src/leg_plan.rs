@@ -226,6 +226,26 @@ pub fn compression_beside(backend: LegNeed, brotli: u64, available: Option<u64>)
     })
 }
 
+/// The precompress level a build can afford in `available` bytes: `max`
+/// becomes `fast` when the available memory is known and holds less than
+/// `max_need` (its [`brotli_need`]) plus the reserve. `max` starts up to 8
+/// brotli parts at once (1.56 GB peak on a 52 MB wasm). The part count stays
+/// a function of the input length, so a level's bytes never depend on the
+/// machine: a machine short of memory writes `fast`'s bytes, under `fast`'s
+/// cache key and name, never a different `max`. Unknown memory keeps the
+/// requested level; `fast` and `off` are kept as they are.
+pub fn precompress_level_within(
+    requested: crate::precompress::Level,
+    max_need: u64,
+    available: Option<u64>,
+) -> crate::precompress::Level {
+    use crate::precompress::Level;
+    match (requested, available) {
+        (Level::Max, Some(a)) if a < max_need.saturating_add(RESERVE_BYTES) => Level::Fast,
+        _ => requested,
+    }
+}
+
 /// Total bytes of `.sky` files under `dir` (recursive; symlinks not followed).
 pub fn sky_source_bytes(dir: &Path) -> u64 {
     let mut total = 0;
@@ -361,6 +381,25 @@ mod tests {
         assert!(!compression_beside(b, br, Some(need - 1)));
         assert!(!compression_beside(b, br, None));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn max_falls_back_to_fast_when_memory_is_short() {
+        use crate::precompress::Level::{Fast, Max, Off};
+        // 52 MB wasm at max: 64 MB + 3 x 52 MB + 8 parts x 190 MB.
+        let need = (64 * MB) + 3 * (52 * MB) + 8 * (190 * MB);
+        let enough = need + RESERVE_BYTES;
+        assert_eq!(precompress_level_within(Max, need, Some(enough)), Max);
+        assert_eq!(precompress_level_within(Max, need, Some(enough - 1)), Fast);
+        assert_eq!(precompress_level_within(Max, need, Some(GB)), Fast);
+        assert_eq!(precompress_level_within(Max, need, Some(0)), Fast);
+        // Unknown memory: the requested level.
+        assert_eq!(precompress_level_within(Max, need, None), Max);
+        // fast and off are never changed.
+        assert_eq!(precompress_level_within(Fast, need, Some(0)), Fast);
+        assert_eq!(precompress_level_within(Off, need, Some(0)), Off);
+        // A small bundle on a small machine keeps max.
+        assert_eq!(precompress_level_within(Max, 500 * MB, Some(2 * GB)), Max);
     }
 
     #[test]
