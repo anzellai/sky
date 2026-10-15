@@ -280,6 +280,14 @@ impl UnionFind {
         }
     }
 
+    /// Overwrite a root's content with no checks — builds the cyclic graphs
+    /// the read-back tests need (the unifier only makes them through paths
+    /// that are hard to drive from a test).
+    #[cfg(test)]
+    pub(crate) fn set_content_for_test(&mut self, v: TyVarId, content: Content) {
+        self.set_content(v, content);
+    }
+
     fn set_content(&mut self, v: TyVarId, content: Content) {
         let r = self.find(v);
         if let Slot::Root { content: c, .. } = &mut self.slots[r.0 as usize] {

@@ -23,10 +23,12 @@
 //! can come of it.
 
 use crate::sig::World;
+use crate::tytable::{TyNode, TyRef, TyTable, TyTableBuilder};
 use crate::unify::{Content, FlatTy, SuperType, UnionFind};
 use crate::{Scheme, Ty, TyVarId};
 use base::{DefId, Name, Span};
 use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SkyDb};
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
 /// A recorded type error (an unify clash). A value, not an exception (L7).
@@ -263,7 +265,56 @@ impl<'a> Infer<'a> {
     /// the input type-directed lowering (doc 07 §2) consumes. Keyed by `ExprId`
     /// (the arena index): the stable per-expression identity in this HIR, a
     /// cleaner key than a source span for an arena-based IR (see report).
-    pub fn infer_def_typed(
+    ///
+    /// Every recorded type is read straight into one hash-consed [`TyTable`]
+    /// ([`Infer::read_back_ref`]): no owned `Ty` is built per expression. The
+    /// stored values are exactly the owned read-backs the previous form of this
+    /// function returned (`infer_def_typed`, kept as the test oracle); the
+    /// differential test `table_readback_matches_owned_readback` holds them equal.
+    pub(crate) fn infer_def_tables(&mut self, body: &Body) -> TypedTables {
+        let Some((v, param_vars)) = self.infer_def_vars(body) else {
+            return TypedTables::default();
+        };
+        let result = self.read_back(v);
+        // Full inferred signature (tooling-only, see `infer_def_typed`).
+        let signature = {
+            let mut sig = result.clone();
+            for &pv in param_vars.iter().rev() {
+                let pt = self.read_back(pv);
+                sig = Ty::Fun(Box::new(pt), Box::new(sig));
+            }
+            sig
+        };
+        // One drain: one builder and one memo, both dropped when it ends (B3).
+        let mut sink = ReadBackSink::new();
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        let mut exprs = HashMap::with_capacity(recorded.len());
+        // Push order, last write wins for a repeated `ExprId` — as the owned
+        // `HashMap::insert` loop did.
+        for (e, tv) in recorded {
+            let r = self.read_back_ref(tv, &mut sink);
+            exprs.insert(e, r);
+        }
+        let recorded_locals: Vec<(LocalId, TyVarId)> = std::mem::take(&mut self.local_vars);
+        let mut locals = HashMap::with_capacity(recorded_locals.len());
+        for (lid, tv) in recorded_locals {
+            let r = self.read_back_ref(tv, &mut sink);
+            locals.insert(lid, r);
+        }
+        TypedTables {
+            result: Some(result),
+            signature: Some(signature),
+            exprs,
+            locals,
+            table: sink.finish(),
+        }
+    }
+
+    /// The owned-tree form of [`Infer::infer_def_tables`]: every recorded type
+    /// read back as its own `Ty`. Kept only as the oracle the table form is
+    /// tested against.
+    #[cfg(test)]
+    pub(crate) fn infer_def_typed(
         &mut self,
         body: &Body,
     ) -> (
@@ -2379,7 +2430,182 @@ impl<'a> Infer<'a> {
         seen.remove(&r);
         out
     }
+
+    /// Read `v` back straight into the drain's table. The value stored is the
+    /// one [`Infer::read_back`] returns for `v` (`TyTable::get` of the result
+    /// equals `read_back(v)`), without building an owned tree.
+    ///
+    /// A top-level read of a union-find root already read in this drain is a
+    /// memo hit. The memo holds only UNTAINTED results (see
+    /// [`Infer::read_back_into`]), so a hit is exactly the value a fresh read
+    /// would produce.
+    pub(crate) fn read_back_ref(&mut self, v: TyVarId, sink: &mut ReadBackSink) -> TyRef {
+        let r = self.uf.find(v);
+        if let Some(&t) = sink.memo.get(&r) {
+            return t;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let (t, tainted) = self.read_back_into(v, &mut seen, sink);
+        if !tainted {
+            sink.memo.insert(r, t);
+        }
+        t
+    }
+
+    /// [`Infer::read_back_seen`] (expression-level: `scheme = false`), writing
+    /// nodes into `sink` instead of building a `Ty`. Returns the node and
+    /// whether the read was TAINTED: a frame is tainted when it, or any frame
+    /// below it, met the cycle guard (a root already on `seen`, read back as
+    /// `Error`). A tainted value depends on the path that reached it — the same
+    /// root read from elsewhere can come back different — so it is never
+    /// memoised. An untainted value never met a node on its own path, so it is
+    /// on no cycle, and reading its root again from any other path visits the
+    /// same nodes and builds the same value.
+    fn read_back_into(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        sink: &mut ReadBackSink,
+    ) -> (TyRef, bool) {
+        crate::counters::READBACK_NODES.bump();
+        sink.frames += 1;
+        let r = self.uf.find(v);
+        if seen.contains(&r) {
+            // cycle guard (anyEquivSeen, Solve.hs:1449)
+            return (sink.builder.intern_node(TyNode::Error), true);
+        }
+        if sink.share_subroots {
+            if let Some(&t) = sink.memo.get(&r) {
+                return (t, false);
+            }
+        }
+        seen.insert(r);
+        let mut tainted = false;
+        let node = match self.uf.content(r) {
+            Content::Flex => TyNode::Var(Name::new(&format!("t{}", r.0))),
+            Content::Rigid(n) => TyNode::Var(n),
+            Content::FlexSuper(b) if b.has(SuperType::Number) => {
+                TyNode::App(Name::new("number"), Box::new([]))
+            }
+            Content::FlexSuper(b) if b.has(SuperType::Appendable) => {
+                TyNode::Var(Name::new("appendable"))
+            }
+            Content::FlexSuper(_) => TyNode::Var(Name::new(&format!("t{}", r.0))),
+            Content::Error => TyNode::Error,
+            Content::Structure(ft) => match ft {
+                FlatTy::App(name, args) => {
+                    let mut refs = Vec::with_capacity(args.len());
+                    for a in args {
+                        let (t, ta) = self.read_back_into(a, seen, sink);
+                        tainted |= ta;
+                        refs.push(t);
+                    }
+                    TyNode::App(name, refs.into_boxed_slice())
+                }
+                FlatTy::Fun(a, b) => {
+                    let (ta, xa) = self.read_back_into(a, seen, sink);
+                    let (tb, xb) = self.read_back_into(b, seen, sink);
+                    tainted |= xa | xb;
+                    TyNode::Fun(ta, tb)
+                }
+                FlatTy::Tuple(xs) => {
+                    let mut refs = Vec::with_capacity(xs.len());
+                    for x in xs {
+                        let (t, tx) = self.read_back_into(x, seen, sink);
+                        tainted |= tx;
+                        refs.push(t);
+                    }
+                    TyNode::Tuple(refs.into_boxed_slice())
+                }
+                FlatTy::Unit => TyNode::Unit,
+                FlatTy::Record(fs, ext) => {
+                    // As `read_back_seen`: flatten a resolved-record extension,
+                    // read the fields in map order, then sort by name.
+                    let (fs, ext) = self.uf.normalize_record(fs, ext);
+                    let mut fields: Vec<(Name, TyRef)> = Vec::with_capacity(fs.len());
+                    for (n, t) in fs {
+                        let (tr, tt) = self.read_back_into(t, seen, sink);
+                        tainted |= tt;
+                        fields.push((n, tr));
+                    }
+                    fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+                    let ext_name = ext.and_then(|e| match self.uf.content(e) {
+                        Content::Flex | Content::FlexSuper(_) => {
+                            Some(Name::new(&format!("r{}", self.uf.find(e).0)))
+                        }
+                        _ => None,
+                    });
+                    TyNode::Record(fields.into_boxed_slice(), ext_name)
+                }
+            },
+        };
+        seen.remove(&r);
+        let t = sink.builder.intern_node(node);
+        if sink.share_subroots && !tainted {
+            sink.memo.insert(r, t);
+        }
+        (t, tainted)
+    }
 }
+
+/// One def's recorded types, read back into one hash-consed table: what
+/// [`crate::BodyTypes`] is built from.
+#[derive(Default)]
+pub(crate) struct TypedTables {
+    pub(crate) result: Option<Ty>,
+    pub(crate) signature: Option<Ty>,
+    pub(crate) exprs: HashMap<ExprId, TyRef>,
+    pub(crate) locals: HashMap<LocalId, TyRef>,
+    pub(crate) table: TyTable,
+}
+
+/// The state of ONE read-back drain: the table being built and the memo of
+/// roots already read into it. It is created at the start of a drain
+/// (`infer_def_tables`, `infer_def_selected`, the checker's recorded table) and
+/// dropped at its end, never stored on [`Infer`]: an earlier read-back (the
+/// arity gate, the value restriction, `collapse_let_poly`) runs before later
+/// unifications and must not be served from, or feed, a memo (B3).
+pub(crate) struct ReadBackSink {
+    builder: TyTableBuilder,
+    memo: FxHashMap<TyVarId, TyRef>,
+    /// Memoise every untainted sub-root, not only the roots a drain asks for.
+    share_subroots: bool,
+    /// Read-back frames run by this drain (the per-drain view of
+    /// `counters::READBACK_NODES`, safe to read in a parallel test run).
+    pub(crate) frames: u64,
+}
+
+impl ReadBackSink {
+    pub(crate) fn new() -> Self {
+        ReadBackSink {
+            builder: TyTableBuilder::new(),
+            memo: FxHashMap::default(),
+            share_subroots: false,
+            frames: 0,
+        }
+    }
+
+    /// Memoise every untainted sub-root as well (see `share_subroots`).
+    #[cfg(test)]
+    pub(crate) fn with_subroot_sharing(mut self, on: bool) -> Self {
+        self.share_subroots = on;
+        self
+    }
+
+    /// Rebuild the owned type at `r` (the builder keeps every node it stored).
+    #[cfg(test)]
+    pub(crate) fn get(&self, r: TyRef) -> Ty {
+        self.builder.get(r)
+    }
+
+    pub(crate) fn finish(self) -> TyTable {
+        self.builder.finish()
+    }
+}
+
+#[cfg(test)]
+#[path = "infer_readback_tests.rs"]
+mod readback_tests;
 
 /// Every local a pattern binds.
 fn collect_pat_binders(body: &Body, p: PatId, out: &mut std::collections::HashSet<LocalId>) {

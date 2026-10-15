@@ -114,6 +114,20 @@ impl BodyTypes {
         }
     }
 
+    /// Build a table from a drain that read every type straight into one
+    /// hash-consed [`TyTable`] (`Infer::infer_def_tables`).
+    pub(crate) fn from_tables(t: crate::infer::TypedTables) -> Self {
+        BodyTypes {
+            result: t.result,
+            signature: t.signature,
+            tables: Arc::new(BodyTables {
+                exprs: t.exprs,
+                locals: t.locals,
+                table: t.table,
+            }),
+        }
+    }
+
     /// The inferred type of expression `e`, if one was recorded.
     pub fn expr(&self, e: ExprId) -> Option<Ty> {
         let t = &self.tables;
@@ -197,8 +211,7 @@ impl<'a> Typer<'a> {
             .with_self_def(Some(def))
             .with_inferred(true)
             .with_expected(self.world.value_sigs.get(&def).cloned());
-        let (result, signature, exprs, locals) = infer.infer_def_typed(body);
-        BodyTypes::new(result, signature, exprs, locals)
+        BodyTypes::from_tables(infer.infer_def_tables(body))
     }
 
     /// The declared/derived scheme for a top-level value def, if known.

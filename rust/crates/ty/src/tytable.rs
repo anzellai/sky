@@ -32,7 +32,7 @@ pub struct TyRef(u32);
 /// One interned node. Children are [`TyRef`]s into the same table, so a shared
 /// sub-tree is stored once.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-enum TyNode {
+pub(crate) enum TyNode {
     Var(Name),
     Fun(TyRef, TyRef),
     App(Name, Box<[TyRef]>),
@@ -51,19 +51,7 @@ pub struct TyTable {
 impl TyTable {
     /// Rebuild the owned type stored at `r`.
     pub fn get(&self, r: TyRef) -> Ty {
-        crate::counters::OWNED_REBUILD_NODES.bump();
-        match &self.nodes[r.0 as usize] {
-            TyNode::Var(n) => Ty::Var(n.clone()),
-            TyNode::Fun(a, b) => Ty::Fun(Box::new(self.get(*a)), Box::new(self.get(*b))),
-            TyNode::App(n, xs) => Ty::App(n.clone(), xs.iter().map(|x| self.get(*x)).collect()),
-            TyNode::Record(fs, ext) => Ty::Record(
-                fs.iter().map(|(n, x)| (n.clone(), self.get(*x))).collect(),
-                ext.clone(),
-            ),
-            TyNode::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| self.get(*x)).collect()),
-            TyNode::Unit => Ty::Unit,
-            TyNode::Error => Ty::Error,
-        }
+        rebuild(&self.nodes, r)
     }
 
     /// The head constructor name when the type at `r` is a nominal
@@ -78,6 +66,25 @@ impl TyTable {
     /// Number of distinct nodes stored — the table's size measure.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+}
+
+/// Rebuild the owned type at `r` from a node arena.
+fn rebuild(nodes: &[TyNode], r: TyRef) -> Ty {
+    crate::counters::OWNED_REBUILD_NODES.bump();
+    match &nodes[r.0 as usize] {
+        TyNode::Var(n) => Ty::Var(n.clone()),
+        TyNode::Fun(a, b) => Ty::Fun(Box::new(rebuild(nodes, *a)), Box::new(rebuild(nodes, *b))),
+        TyNode::App(n, xs) => Ty::App(n.clone(), xs.iter().map(|x| rebuild(nodes, *x)).collect()),
+        TyNode::Record(fs, ext) => Ty::Record(
+            fs.iter()
+                .map(|(n, x)| (n.clone(), rebuild(nodes, *x)))
+                .collect(),
+            ext.clone(),
+        ),
+        TyNode::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| rebuild(nodes, *x)).collect()),
+        TyNode::Unit => Ty::Unit,
+        TyNode::Error => Ty::Error,
     }
 }
 
@@ -97,7 +104,6 @@ impl TyTableBuilder {
 
     /// Intern `t` (and every sub-tree of it) and return its reference.
     pub fn intern(&mut self, t: &Ty) -> TyRef {
-        crate::counters::INTERN_NODES.bump();
         let node = match t {
             Ty::Var(n) => TyNode::Var(n.clone()),
             Ty::Fun(a, b) => {
@@ -116,6 +122,15 @@ impl TyTableBuilder {
             Ty::Unit => TyNode::Unit,
             Ty::Error => TyNode::Error,
         };
+        self.intern_node(node)
+    }
+
+    /// Intern one node whose children are already interned in THIS builder.
+    /// Structurally equal nodes get the same reference, so a type built node by
+    /// node (read straight out of the union-find, `Infer::read_back_into`) is
+    /// stored exactly as [`TyTableBuilder::intern`] stores the equal owned `Ty`.
+    pub(crate) fn intern_node(&mut self, node: TyNode) -> TyRef {
+        crate::counters::INTERN_NODES.bump();
         if let Some(r) = self.index.get(&node) {
             return *r;
         }
@@ -123,6 +138,12 @@ impl TyTableBuilder {
         self.nodes.push(node.clone());
         self.index.insert(node, r);
         r
+    }
+
+    /// Rebuild the owned type at `r` from the nodes stored so far.
+    #[cfg(test)]
+    pub(crate) fn get(&self, r: TyRef) -> Ty {
+        rebuild(&self.nodes, r)
     }
 
     /// Freeze the table. The dedup index is dropped; only the nodes are kept.
