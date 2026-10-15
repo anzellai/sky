@@ -313,3 +313,8 @@ fn harvest_growth(annotated: bool) {
 fn annotated_param_update_helpers_lower_linearly() {
     harvest_growth(true);
 }
+
+#[test]
+fn unannotated_param_update_helpers_lower_linearly() {
+    harvest_growth(false);
+}

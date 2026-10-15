@@ -442,8 +442,15 @@ fn call_arg_ids(
 /// passes at each param position of a single `callee`. The salsa lowering path
 /// uses the declaration-only `type_world` (for backdating) and demands per-def
 /// facts through separate queries, so it can't read the whole-program harvest
-/// baked into `World::build`; this is the per-def primitive that query wraps.
-/// `world` is the (declaration-only) world used to infer each caller — the arg
+/// baked into `World::build`.
+///
+/// This scans every body and infers each caller once PER CALLEE, so N helpers
+/// called from one large body re-infer it N times. The lowering query folds
+/// [`caller_param_records`] summaries instead (one inference per caller), which
+/// gives the same value; this per-callee form stays as that query's answer for
+/// a def the summaries do not cover and as the reference the differential tests
+/// compare against.
+/// `world` is the world used to infer each caller — the arg
 /// types it needs don't depend on the harvest, so this is not circular.
 pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) -> Vec<Option<Ty>> {
     use crate::infer::Infer;
@@ -502,6 +509,157 @@ pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) 
         }
     }
     slot
+}
+
+/// What one caller passes at one param position of one callee, over every
+/// direct call in that caller: one closed record, or two different ones.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParamRecordSeen {
+    /// Every closed record seen at this position is this one.
+    One(Ty),
+    /// Two different closed records were seen at this position.
+    Conflict,
+}
+
+impl ParamRecordSeen {
+    /// Fold one more observation into a slot, as the per-callee harvest does:
+    /// the first record fills it, an equal one keeps it, a different one makes
+    /// it a conflict for good.
+    fn merge(slot: &mut Option<ParamRecordSeen>, next: ParamRecordSeen) {
+        *slot = match (slot.take(), next) {
+            (None, n) => Some(n),
+            (Some(ParamRecordSeen::Conflict), _) | (_, ParamRecordSeen::Conflict) => {
+                Some(ParamRecordSeen::Conflict)
+            }
+            (Some(ParamRecordSeen::One(a)), ParamRecordSeen::One(b)) => {
+                if a == b {
+                    Some(ParamRecordSeen::One(a))
+                } else {
+                    Some(ParamRecordSeen::Conflict)
+                }
+            }
+        };
+    }
+}
+
+/// One caller's contribution to the call-site harvest: for each callee it
+/// calls directly (first-call order), the per-param-position summary of the
+/// closed records it passes. A position with no closed record is `None`; the
+/// vector is as long as the last position that saw one.
+pub type CallerParamRecords = Vec<(DefId, Vec<Option<ParamRecordSeen>>)>;
+
+/// The linear form of [`callsite_param_records_for`]: infer ONE caller body
+/// once and summarise the closed-record argument types of all its direct calls
+/// to every callee accepted by `want`.
+///
+/// Folding these summaries over every caller with [`fold_param_records`] gives
+/// exactly what [`callsite_param_records_for`] gives for that callee:
+/// * the caller is inferred the same way (`Infer::new(world, db)
+///   .with_inferred(true)`, nothing else set), and inference does not read the
+///   selection, which only picks the entries that are read back;
+/// * read-back is pure over the solved union-find (`infer_def_selected`), so
+///   each argument's type is the same whichever other entries are read back
+///   with it;
+/// * the per-callee fold keeps, per position, the one record every call agrees
+///   on, or `None` once two differ, and its length is the last position that
+///   saw a record. That result does not depend on the order of the calls or of
+///   the callers, so summarising per caller and then folding the summaries
+///   (in any order) is the same function.
+pub fn caller_param_records(
+    db: &dyn SkyDb,
+    world: &World,
+    body: &hir::Body,
+    want: impl Fn(DefId) -> bool,
+) -> CallerParamRecords {
+    use crate::infer::Infer;
+    let (want_e, want_l) = call_arg_ids(body, &want);
+    let mut out: CallerParamRecords = Vec::new();
+    if want_e.is_empty() {
+        // No direct call to a wanted callee has an argument: nothing to read.
+        return out;
+    }
+    let mut infer = Infer::new(world, db).with_inferred(true);
+    let (exprs, locals) = infer.infer_def_selected(body, &want_e, &want_l);
+    let mut index: HashMap<DefId, usize> = HashMap::new();
+    for (_eid, expr) in body.exprs.iter() {
+        let (c, args) = match expr {
+            hir::Expr::Call(c, a) => (*c, a),
+            _ => continue,
+        };
+        let f = match &body.exprs[c] {
+            hir::Expr::Var(hir::Res::Def(d)) => *d,
+            _ => continue,
+        };
+        if !want(f) {
+            continue;
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let aty = exprs.get(arg).cloned().or_else(|| {
+                if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*arg] {
+                    locals.get(l).cloned()
+                } else {
+                    None
+                }
+            });
+            let t = match aty {
+                Some(t @ Ty::Record(_, None)) => t,
+                _ => continue,
+            };
+            let at = *index.entry(f).or_insert_with(|| {
+                out.push((f, Vec::new()));
+                out.len() - 1
+            });
+            let slot = &mut out[at].1;
+            while slot.len() <= i {
+                slot.push(None);
+            }
+            ParamRecordSeen::merge(&mut slot[i], ParamRecordSeen::One(t));
+        }
+    }
+    out
+}
+
+/// Fold per-caller summaries ([`caller_param_records`]) for one callee into
+/// the harvest result [`callsite_param_records_for`] returns: per position the
+/// record every caller agrees on, else `None`.
+pub fn fold_param_records<'a>(
+    seen: impl IntoIterator<Item = &'a [Option<ParamRecordSeen>]>,
+) -> Vec<Option<Ty>> {
+    let mut acc: Vec<Option<ParamRecordSeen>> = Vec::new();
+    for one in seen {
+        for (i, s) in one.iter().enumerate() {
+            let Some(s) = s else { continue };
+            while acc.len() <= i {
+                acc.push(None);
+            }
+            ParamRecordSeen::merge(&mut acc[i], s.clone());
+        }
+    }
+    acc.into_iter()
+        .map(|s| match s {
+            Some(ParamRecordSeen::One(t)) => Some(t),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The top-level defs `body` calls directly (`f a …` with `f` a `Res::Def`),
+/// each once, in first-call order — the syntactic edge the call-site harvest
+/// follows. The callers of a def are exactly the bodies whose list holds it.
+pub fn direct_callees(body: &hir::Body) -> Vec<DefId> {
+    let mut out: Vec<DefId> = Vec::new();
+    let mut seen: HashSet<DefId> = HashSet::new();
+    for (_, expr) in body.exprs.iter() {
+        let hir::Expr::Call(c, _) = expr else {
+            continue;
+        };
+        if let hir::Expr::Var(hir::Res::Def(f)) = &body.exprs[*c] {
+            if seen.insert(*f) {
+                out.push(*f);
+            }
+        }
+    }
+    out
 }
 
 /// The positions of the top-level PARAMS (`Res::Local` bound by a param

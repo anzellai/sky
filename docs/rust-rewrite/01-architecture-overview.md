@@ -28,6 +28,8 @@ L2 (incremental for free), and L5 (queries compose along an explicit DAG).
 > | `resolve_query` | `skydb:181` | per module |
 > | `type_world_query` / `check_world_query` | `skydb:202` / `:224` | whole program |
 > | `record_result_sig_query` / `callsite_param_records_query` | `skydb:243` / `:272` | whole program |
+> | `caller_record_args_query` (one inference per caller, shared by every #166 harvest) / `wants_callsite_harvest_query` | `skydb` | per `DefId` |
+> | `direct_callers_query` (syntactic reverse-call index) | `skydb` | whole program |
 > | `infer_query` | `skydb:304` | per `DefId` |
 > | `go_program` | `skydb:434` | **whole program** |
 >

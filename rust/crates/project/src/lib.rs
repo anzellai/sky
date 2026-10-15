@@ -38,6 +38,8 @@ pub mod go_cmd;
 pub mod go_get_memo;
 /// `go build -p`: how many packages compile at once, from available memory.
 pub mod go_jobs;
+#[cfg(test)]
+mod harvest_identity_tests;
 /// Available memory and the per-project peak records (`go_jobs`, the Sky.Spa
 /// leg plan).
 pub mod memory;
