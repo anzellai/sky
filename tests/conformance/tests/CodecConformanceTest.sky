@@ -206,6 +206,43 @@ primFlatCodec =
         |> Codec.buildObject
 
 
+-- A repeated JSON key: two fields, or an inlined record and its host, that
+-- share one key. Encoding writes both pairs; decoding cannot tell them apart
+-- (`D.field` reads the same key for both), so every field of the codec would
+-- silently read one value. The decoder refuses instead.
+type alias Pair =
+    { a : Int
+    , b : Int
+    }
+
+
+dupCodec : Codec Pair
+dupCodec =
+    Codec.object Pair
+        |> Codec.field "x" .a Codec.int
+        |> Codec.field "x" .b Codec.int
+        |> Codec.buildObject
+
+
+-- `label` reuses the inlined `Prim`'s `name` key.
+dupInlineCodec : Codec PrimTagged
+dupInlineCodec =
+    Codec.object PrimTagged
+        |> Codec.inline .prim primFields
+        |> Codec.field "name" .label Codec.string
+        |> Codec.buildObject
+
+
+errorMessage : Result Error a -> String
+errorMessage r =
+    case r of
+        Err (Error.Error _ info) ->
+            info.message
+
+        Ok _ ->
+            ""
+
+
 primTagged : PrimTagged
 primTagged =
     { prim = { name = metaString, count = -3, ratio = 2.5, active = True }, label = "tag" }
@@ -282,6 +319,17 @@ tests =
         (\_ -> roundTrip primTaggedCodec primTagged)
     , Test.test "inline: a missing embedded field is an Err, not a default"
         (\_ -> Test.err (Codec.fromJson primTaggedCodec "{\"name\":\"x\",\"ratio\":1.5,\"active\":true,\"label\":\"t\"}"))
+      -- ── A repeated key fails loudly on decode, never a wrong value ────────
+    , Test.test "repeated key: decoding is an Err, not one value read twice"
+        (\_ -> Test.err (Codec.fromJson dupCodec "{\"x\":1}"))
+    , Test.test "repeated key: the codec's own output does not decode to a wrong value"
+        (\_ -> Test.err (Codec.fromJson dupCodec (Codec.toJson dupCodec { a = 1, b = 2 })))
+    , Test.test "repeated key: the error names the key"
+        (\_ -> Test.isTrue (String.contains "\"x\"" (errorMessage (Codec.fromJson dupCodec "{\"x\":1}"))))
+    , Test.test "repeated key across Codec.inline: decoding is an Err"
+        (\_ -> Test.err (Codec.fromJson dupInlineCodec (Codec.toJson dupInlineCodec primTagged)))
+    , Test.test "repeated key: encoding is unchanged and keeps both pairs, in order"
+        (\_ -> Test.equal "{\"x\":1,\"x\":2}" (Codec.toJson dupCodec { a = 1, b = 2 }))
       -- ── Round-trip identity: records / nested / list / Maybe ──────────────
     , Test.test "round-trip: flat record (auto)"
         (\_ -> roundTrip primCodec { name = "widget", count = 7, ratio = 1.5, active = True })
