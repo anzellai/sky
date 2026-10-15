@@ -280,6 +280,6 @@ examples/60-spa-todos/client	adapter=0	dispatch=0	narrow=260
 examples/60-spa-todos/desktop	adapter=0	dispatch=0	narrow=2
 examples/60-spa-todos/server	adapter=0	dispatch=0	narrow=211
 simple	adapter=0	dispatch=0	narrow=3
-sky-bundled/console	adapter=0	dispatch=0	narrow=292
+sky-bundled/console	adapter=0	dispatch=0	narrow=276
 sky-bundled/doc	adapter=0	dispatch=0	narrow=55
 test_pkg	adapter=0	dispatch=0	narrow=1
