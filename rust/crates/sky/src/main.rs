@@ -2183,6 +2183,7 @@ fn check_std_app_split(
         entry_module_name(&synth_entry).as_deref(),
         static_mount,
         Some(project_dir),
+        None,
     )
 }
 
@@ -3576,6 +3577,7 @@ fn build_std_app(
             compress_level,
             builder_app_url.as_deref(),
             Some(project_dir),
+            None,
         ) {
             Ok(od) => {
                 let t_static = project::timings::phase("stage static assets (dist + backend)");
@@ -3880,20 +3882,34 @@ fn check_spa_split(
     entry_module: Option<&str>,
     static_mount: Option<(String, String)>,
     user_project: Option<&Path>,
+    // The program the caller's front half already loaded and checked from
+    // `analysed`, which the split analyses instead of loading it again.
+    loaded: Option<project::LoadedProgram>,
 ) -> Result<(), ExitCode> {
     let scratch =
         private_fs::private_dir_in(&std::env::temp_dir(), "sky-check-split-").map_err(|e| {
             eprintln!("sky check: {e}");
             ExitCode::FAILURE
         })?;
-    let result = project::spa_split::generate(
-        repo_root,
-        analysed,
-        entry_module,
-        &scratch.join("split"),
-        None,
-        static_mount,
-    );
+    let result = match loaded {
+        Some(loaded) => project::spa_split::generate_with(
+            repo_root,
+            analysed,
+            entry_module,
+            loaded,
+            &scratch.join("split"),
+            None,
+            static_mount,
+        ),
+        None => project::spa_split::generate(
+            repo_root,
+            analysed,
+            entry_module,
+            &scratch.join("split"),
+            None,
+            static_mount,
+        ),
+    };
     let _ = std::fs::remove_dir_all(&scratch);
     match result {
         Ok(_) => Ok(()),
@@ -3942,17 +3958,33 @@ fn spa_split_and_build(
     // error the split reports in derived or generated code is then mapped
     // back to the construct the user wrote (`split_diag`).
     user_project: Option<&Path>,
+    // The program the caller's front half already loaded and checked from
+    // `project_dir` (`project::front_half_loaded`): the split analyses it
+    // instead of loading and type-checking the app a second time.
+    loaded: Option<project::LoadedProgram>,
 ) -> Result<PathBuf, ExitCode> {
     let user_root = user_project.unwrap_or(project_dir);
     let t_split = project::timings::phase("spa split (partition + generate)");
-    let report = match project::spa_split::generate(
-        repo_root,
-        project_dir,
-        entry_module,
-        out_dir,
-        broker,
-        static_mount,
-    ) {
+    let generated = match loaded {
+        Some(loaded) => project::spa_split::generate_with(
+            repo_root,
+            project_dir,
+            entry_module,
+            loaded,
+            out_dir,
+            broker,
+            static_mount,
+        ),
+        None => project::spa_split::generate(
+            repo_root,
+            project_dir,
+            entry_module,
+            out_dir,
+            broker,
+            static_mount,
+        ),
+    };
+    let report = match generated {
         Ok(r) => r,
         Err(e) => {
             report_split_failure(&e, project_dir, user_project);
@@ -4794,6 +4826,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
             compress_level,
             app.builder_app_url.as_deref(),
             Some(&project_dir),
+            None,
         ),
         None => spa_split_and_build(
             &repo_root,
@@ -4808,6 +4841,7 @@ fn cmd_spa_split(args: &[String]) -> ExitCode {
             // declaration, so `generate` reads the mount itself.
             None,
             compress_level,
+            None,
             None,
             None,
         ),
@@ -5083,17 +5117,20 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         && !explicit_wasm
         && is_spa_app_entry(file)
         && !is_generated_split_project(&project_dir)
-        && project::front_half_errors(&repo_root, &project_dir, entry_module_name(file).as_deref())
-            .is_empty()
     {
-        if let Err(code) = check_spa_split(
-            &repo_root,
-            &project_dir,
-            entry_module_name(file).as_deref(),
-            None,
-            None,
-        ) {
-            return code;
+        if let Ok(loaded) =
+            project::front_half_loaded(&repo_root, &project_dir, entry_module_name(file).as_deref())
+        {
+            if let Err(code) = check_spa_split(
+                &repo_root,
+                &project_dir,
+                entry_module_name(file).as_deref(),
+                None,
+                None,
+                Some(loaded),
+            ) {
+                return code;
+            }
         }
     }
     if !check_only
@@ -5107,19 +5144,21 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         // parse, types, lowering). An error there is reported against `src/…`,
         // where the user can fix it, instead of surfacing later from a
         // generated split project. Both output modes print these same values.
-        let front = project::front_half_errors(
+        let loaded = match project::front_half_loaded(
             &repo_root,
             &project_dir,
             entry_module_name(file).as_deref(),
-        );
-        if !front.is_empty() {
-            for d in &front {
-                json_out::diagnostic(d);
+        ) {
+            Ok(loaded) => loaded,
+            Err(front) => {
+                for d in &front {
+                    json_out::diagnostic(d);
+                }
+                let rendered: Vec<&str> = front.iter().map(|d| d.rendered.as_str()).collect();
+                eprintln!("sky build: {}", rendered.join("\n"));
+                return ExitCode::FAILURE;
             }
-            let rendered: Vec<&str> = front.iter().map(|d| d.rendered.as_str()).collect();
-            eprintln!("sky build: {}", rendered.join("\n"));
-            return ExitCode::FAILURE;
-        }
+        };
         return match spa_split_and_build(
             &repo_root,
             &project_dir,
@@ -5134,6 +5173,7 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
             precompress_level,
             builder_app_url.as_deref(),
             None,
+            Some(loaded),
         ) {
             Ok(od) => {
                 let entry = positional
@@ -9914,6 +9954,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
             // Direct Spa entry: `generate` reads the static mount from the entry.
             None,
             precompress::Level::Off,
+            None,
             None,
             None,
         ) {

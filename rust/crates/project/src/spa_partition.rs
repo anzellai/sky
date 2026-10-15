@@ -1972,6 +1972,31 @@ pub fn analyze_loaded_keeping(
     project: String,
     keep_on_server: &BTreeSet<String>,
 ) -> Result<SpaPartitionReport, String> {
+    let checked = check_program(db, check_ids);
+    analyze_checked(db, entry, check_ids, project, keep_on_server, &checked)
+}
+
+/// The type check [`analyze_loaded_keeping`] gates on: `ty::check_modules` over
+/// `check_ids`, counted in the `SKY_TIMINGS` front-end note.
+pub fn check_program(db: &skydb::SkyDatabase, check_ids: &[ModuleId]) -> ty::CheckOutput {
+    crate::timings::count_type_check();
+    ty::check_modules(db, check_ids)
+}
+
+/// [`analyze_loaded_keeping`] over a check already run. `checked` MUST be
+/// `check_program(db, check_ids)` for this same `db` and this same
+/// `check_ids` (the db is never written between the two, so the value is the
+/// one a second check would compute). The `spa-split` generator analyses a
+/// program twice when a continuation must stay on the server, and the build
+/// has checked it once already; both reuse that one check.
+pub fn analyze_checked(
+    db: &skydb::SkyDatabase,
+    entry: ModuleId,
+    check_ids: &[ModuleId],
+    project: String,
+    keep_on_server: &BTreeSet<String>,
+    checked: &ty::CheckOutput,
+) -> Result<SpaPartitionReport, String> {
     let check_ids = check_ids.to_vec();
     let entry_module_name = db.module_name(entry).to_string();
 
@@ -1981,7 +2006,6 @@ pub fn analyze_loaded_keeping(
     // — a bare `1 type error(s)` count discarded exactly the information a user
     // needs, and on the `--target web:app` path the failing entry is a
     // SYNTHESISED file they never wrote, so the count alone is undiagnosable.
-    let checked = ty::check_modules(db, &check_ids);
     if checked.type_errors > 0 || checked.name_errors > 0 {
         let sources = SpaSources::from_db(db, &check_ids);
         // Surface the error/exhaustiveness diagnostics (the `E1…`/`E2…`/`E3001`

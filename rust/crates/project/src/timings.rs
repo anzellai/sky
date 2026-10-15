@@ -16,6 +16,7 @@
 //! handful per build), so the phase guards stay in the code unconditionally;
 //! only the report is gated.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,43 @@ type PhaseRow = (String, Duration, Option<u64>);
 
 static PHASES: Mutex<Vec<PhaseRow>> = Mutex::new(Vec::new());
 static NOTES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// How many times this process assembled a program's source db (stdlib + app)
+/// and type-checked a program's modules. A build runs the front end once per
+/// program it compiles; a second run over the same program is wasted work, and
+/// the report names the count so a regression is visible.
+static SOURCE_LOADS: AtomicU64 = AtomicU64::new(0);
+static TYPE_CHECKS: AtomicU64 = AtomicU64::new(0);
+
+/// Count one assembly of a program's source db.
+pub fn count_source_load() {
+    SOURCE_LOADS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Count one type check of a program's modules (`ty::check_modules`).
+pub fn count_type_check() {
+    TYPE_CHECKS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// `(source loads, type checks)` so far in this process.
+pub fn front_end_counts() -> (u64, u64) {
+    (
+        SOURCE_LOADS.load(Ordering::Relaxed),
+        TYPE_CHECKS.load(Ordering::Relaxed),
+    )
+}
+
+/// The note line the counters render as, or `None` when the process ran no
+/// front end.
+fn front_end_note() -> Option<String> {
+    let (loads, checks) = front_end_counts();
+    if loads == 0 && checks == 0 {
+        return None;
+    }
+    Some(format!(
+        "front end: {loads} source load(s), {checks} type check(s)"
+    ))
+}
 
 /// True when the user asked for the phase report (`SKY_TIMINGS` set to anything
 /// but empty / `0` / `false` / `no`).
@@ -147,6 +185,9 @@ pub fn render(scope: &str, total: Duration) -> String {
         for n in notes.iter() {
             out.push_str(&format!("  note: {n}\n"));
         }
+    }
+    if let Some(n) = front_end_note() {
+        out.push_str(&format!("  note: {n}\n"));
     }
     out
 }

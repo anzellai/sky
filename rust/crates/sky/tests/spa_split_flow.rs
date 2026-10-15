@@ -10204,3 +10204,132 @@ fn a_bare_enum_wire_field_is_refused_as_an_enum() {
         "an enum is not a data-carrying union:\n{err}"
     );
 }
+
+// ── The front end runs once per Sky.Spa build ────────────────────────────────
+
+/// The `note: front end: …` line of the PARENT's `SKY_TIMINGS` table (the one
+/// headed `sky <verb> in <dir>/`; each split leg prints its own table under
+/// its own directory).
+fn parent_front_end_note(stderr: &str, verb: &str, dir: &std::path::Path) -> String {
+    let name = dir.file_name().unwrap().to_string_lossy().to_string();
+    let header = format!("sky timings (sky {verb} in {name}/):");
+    let at = stderr
+        .rfind(&header)
+        .unwrap_or_else(|| panic!("no `{header}` table in:\n{stderr}"));
+    stderr[at..]
+        .lines()
+        .take_while(|l| !l.trim().is_empty())
+        .find_map(|l| l.trim().strip_prefix("note: front end: "))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("no front-end note in the parent table:\n{}", &stderr[at..]))
+}
+
+/// Every generated source file (`.sky` + `sky.toml`) of a split, by path
+/// relative to the split dir. Build outputs (`sky-out`, `dist`) are left out.
+fn split_sources(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    fn walk(
+        root: &std::path::Path,
+        d: &std::path::Path,
+        out: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        for e in std::fs::read_dir(d).unwrap() {
+            let p = e.unwrap().path();
+            let n = p.file_name().unwrap().to_string_lossy().to_string();
+            if p.is_dir() {
+                if !matches!(
+                    n.as_str(),
+                    "sky-out" | "dist" | ".skycache" | "node_modules"
+                ) {
+                    walk(root, &p, out);
+                }
+            } else if n.ends_with(".sky") || n == "sky.toml" {
+                let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                out.insert(rel, std::fs::read_to_string(&p).unwrap());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// `sky build` on a direct `Spa.app` entry checks the app's own source first
+/// (its front half: parse, types, lowering) and then splits it. The split
+/// used to load the sources into a second db and type-check the whole
+/// program again (twice, when a continuation stays on the server), so the
+/// parent ran the front end two or three times for one program. It now
+/// analyses the db the front half loaded: one load, one check. `sky check`
+/// runs the split analysis over that same db too, then its own build of the
+/// app (two of each). The split the build writes is byte-identical to the one
+/// a fresh `sky spa-split` writes.
+#[test]
+fn a_direct_spa_build_runs_the_front_end_once() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(fixture_entry().parent().unwrap().parent().unwrap(), &proj);
+
+    let check = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&proj)
+        .env("SKY_TIMINGS", "1")
+        .output()
+        .expect("run sky check");
+    let check_err = String::from_utf8_lossy(&check.stderr).to_string();
+    assert!(check.status.success(), "sky check failed:\n{check_err}");
+    assert_eq!(
+        parent_front_end_note(&check_err, "check", &proj),
+        "2 source load(s), 2 type check(s)",
+        "`sky check` on a Spa entry: the front half (reused by the split \
+         analysis) and the ordinary check"
+    );
+
+    let build = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&proj)
+        .env("SKY_TIMINGS", "1")
+        .output()
+        .expect("run sky build");
+    let build_err = String::from_utf8_lossy(&build.stderr).to_string();
+    assert!(
+        build.status.success(),
+        "sky build failed:\n{}{build_err}",
+        String::from_utf8_lossy(&build.stdout)
+    );
+    assert_eq!(
+        parent_front_end_note(&build_err, "build", &proj),
+        "1 source load(s), 1 type check(s)",
+        "the split must analyse the db the front half loaded"
+    );
+
+    // The reused db writes exactly the split a fresh load writes.
+    let fresh = scratch();
+    let _ = std::fs::remove_dir_all(&fresh);
+    let split = Command::new(SKY)
+        .args([
+            "spa-split",
+            "src/Main.sky",
+            "--out",
+            fresh.to_str().unwrap(),
+        ])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky spa-split");
+    assert!(split.status.success(), "sky spa-split failed");
+    let built = split_sources(&proj.join(".split"));
+    let generated = split_sources(&fresh);
+    assert!(!built.is_empty(), "the build wrote no split");
+    assert_eq!(
+        built.keys().collect::<Vec<_>>(),
+        generated.keys().collect::<Vec<_>>(),
+        "same files"
+    );
+    for (rel, text) in &built {
+        assert_eq!(text, &generated[rel], "{rel} differs from a fresh split");
+    }
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&proj);
+}
