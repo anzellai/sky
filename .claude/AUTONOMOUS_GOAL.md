@@ -49,3 +49,15 @@ Branch: `perf/build-speed`. The earlier v0.27.0 mandate this file held is done
 3. Tested properly: no regression on built apps.
 4. Merged to `main`, CI green (the full release workflow), and a release tag
    cut.
+
+## Shipping scope decision (user, 2026-10-15)
+
+After the first Judge verdict, the user was asked whether v0.27.9 must also
+carry the per-module Go package split, a parallel (multi-core) front end and a
+linear unifier, or ship with a measured decision record that defers them. The
+user chose: "Ship now, record". So v0.27.9 ships the build-speed work done,
+plus the mobile-shell fix, a benchmark of the final commit and a committed
+decision record (`docs/perf/build-speed-decisions.md`) that states, with its
+numbers, why each deferred lever is deferred. This is a shipping-scope decision
+by the user, not a change to the goal above; the Judge reports the literal and
+the scoped verdicts separately.
