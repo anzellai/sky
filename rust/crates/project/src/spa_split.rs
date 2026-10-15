@@ -4694,6 +4694,105 @@ pub struct DiffFuzzReport {
 /// `main` replaced by the fuzz driver + the emitted per-branch differential
 /// checks (see `spa_diff_harness`). `sky build`+run the result; it exits non-zero
 /// on the first divergence. Read-only against the input project.
+/// The differential fuzzer's leaf tags: each `( model', cmd )` leaf's command
+/// in `update` becomes `(spaDiffLeaf_ <n> (cmd))`, and the module gains the
+/// `spaDiffLeaf_` binding ([`crate::spa_diff_harness::LEAF_TAG_DECL`]). `text`
+/// is the harness's copy of the module, `db_src` the source the spans were taken
+/// from: when they differ the leaves stay untagged (the command shapes are still
+/// compared) and a note says so.
+fn tag_update_leaves(
+    text: &str,
+    db_src: &str,
+    spans: &[(u32, u32)],
+    notes: &mut Vec<String>,
+) -> String {
+    let mut out = text.to_string();
+    if text != db_src {
+        notes.push(
+            "the harness copy of `update`'s module differs from the analysed source: leaves are not tagged"
+                .to_string(),
+        );
+    } else {
+        for (k, (a, b)) in spans.iter().enumerate().rev() {
+            let (a, b) = (*a as usize, *b as usize);
+            let tagged = format!("(spaDiffLeaf_ {k} ({}))", &text[a..b]);
+            out.replace_range(a..b, &tagged);
+        }
+    }
+    out.push_str(crate::spa_diff_harness::LEAF_TAG_DECL);
+    out
+}
+
+/// Fill each client-result root's [`crate::spa_diff_harness::ClientArm`]s:
+/// the client's copy of every server arm that has a
+/// [`spa_partition::NoneLeafPlan`], built by the same emitter the split uses
+/// ([`client_none_leaf_arm_body`]), with the RPC replaced by the harness's
+/// `rpc` stand-in.
+fn add_client_legs(
+    ufile: &SourceFile,
+    usrc: &str,
+    report: &SpaPartitionReport,
+    checkable: &mut [crate::spa_diff_harness::CheckableBranch],
+    notes: &mut Vec<String>,
+) {
+    let Some(update_val) = ufile
+        .decls()
+        .find(|d| decl_name(d).as_deref() == Some("update") && is_value_decl(d))
+    else {
+        return;
+    };
+    let params = value_params(&update_val);
+    let (Some(msg_param), Some(model_param)) = (params.first(), params.get(1)) else {
+        return;
+    };
+    if !is_plain_param(msg_param) || !is_plain_param(model_param) {
+        notes.push("`update`'s parameters are not plain names: no client leg".to_string());
+        return;
+    }
+    let Some(case) = update_val
+        .syntax()
+        .descendants()
+        .find(|n| n.kind() == SyntaxKind::CaseExpr)
+        .and_then(syntax::ast::CaseExpr::cast)
+    else {
+        return;
+    };
+    let arms: Vec<syntax::ast::MatchArm> = case.arms().collect();
+    let roots: HashSet<&str> = report
+        .client_result
+        .iter()
+        .map(|(r, _)| r.as_str())
+        .collect();
+    for b in checkable.iter_mut() {
+        if !roots.contains(b.ctor.as_str()) {
+            continue;
+        }
+        for v in report
+            .branches
+            .iter()
+            .filter(|v| v.server && ctor_name(&v.msg) == b.ctor)
+        {
+            let (Some(a), Some(plan)) = (&v.arm, &v.none_leaf_plan) else {
+                continue;
+            };
+            let Some(arm) = arms.get(a.index) else {
+                continue;
+            };
+            if let Some(body) = client_none_leaf_arm_body(arm, usrc, plan, "(spaDiffRpcCmd_ ())") {
+                b.client_arms.insert(
+                    a.index,
+                    crate::spa_diff_harness::ClientArm {
+                        pat: a.pat_src.clone(),
+                        msg_param: msg_param.trim().to_string(),
+                        model_param: model_param.trim().to_string(),
+                        body,
+                    },
+                );
+            }
+        }
+    }
+}
+
 pub fn generate_diff_fuzz(
     repo_root: &Path,
     project_dir: &Path,
@@ -4747,7 +4846,29 @@ pub fn generate_diff_fuzz(
     let tymap = project_type_map(&db, &check_ids);
 
     // Fence + emit.
-    let (checkable, fence_notes) = crate::spa_diff_harness::select_checkable(&report);
+    let (mut checkable, mut fence_notes) = crate::spa_diff_harness::select_checkable(&report);
+    // The module that declares `update`, and its source: the leaf tags and the
+    // client legs are taken from it.
+    let update_mod = report
+        .update_module_name
+        .as_deref()
+        .and_then(|un| {
+            check_ids
+                .iter()
+                .find(|m| db.module_name(**m) == un)
+                .copied()
+        })
+        .unwrap_or(entry);
+    let uparse = db.module_parse(update_mod);
+    let usrc = uparse.syntax().text().to_string();
+    let ufile = uparse.tree();
+    // The client legs: a client-result arm the client runs itself up to its
+    // leaves, as the split generates it, with the RPC replaced by the harness's
+    // `rpc` stand-in. Only when `update` sits in the entry module, where the
+    // harness snippet lives and the arm's names resolve.
+    if update_mod == entry {
+        add_client_legs(&ufile, &usrc, &report, &mut checkable, &mut fence_notes);
+    }
     let resolver =
         crate::spa_diff_harness::MapTypeResolver::new(tymap, db.module_name(entry).to_string());
     let out = crate::spa_diff_harness::emit_harness(
@@ -4761,6 +4882,7 @@ pub fn generate_diff_fuzz(
     );
     let mut notes = fence_notes;
     notes.extend(out.notes.iter().cloned());
+    let harness_src = out_dir.join("src");
     if out.checked.is_empty() {
         return Err(format!(
             "no runnable differential harness for `{proj_name}` — nothing proven. Notes: {}",
@@ -4771,7 +4893,6 @@ pub fn generate_diff_fuzz(
     // Copy the app's source tree, then rewrite the entry module copy.
     let source_root = crate::build::configured_source_root(project_dir);
     let src_root = project_dir.join(&source_root);
-    let harness_src = out_dir.join("src");
     if harness_src.exists() {
         std::fs::remove_dir_all(&harness_src)
             .map_err(|e| format!("clean {}: {e}", harness_src.display()))?;
@@ -4782,6 +4903,27 @@ pub fn generate_diff_fuzz(
     let entry_file = harness_src.join(&entry_rel);
     let orig = std::fs::read_to_string(&entry_file)
         .map_err(|e| format!("read entry {}: {e}", entry_file.display()))?;
+    // Tag each `( model', cmd )` leaf of `update` with its number, in the
+    // module that declares it, so the two legs show which leaf each took.
+    let spans = spa_partition::update_leaf_cmd_spans(&db, update_mod, &usrc);
+    let orig = if update_mod == entry {
+        tag_update_leaves(&orig, &usrc, &spans, &mut notes)
+    } else {
+        let rel = module_relpath(&db.module_name(update_mod));
+        let ufile_path = harness_src.join(&rel);
+        let utext = std::fs::read_to_string(&ufile_path)
+            .map_err(|e| format!("read update module {}: {e}", ufile_path.display()))?;
+        let tagged = tag_update_leaves(&utext, &usrc, &spans, &mut notes);
+        let tparse = syntax::parse(&tagged, base::FileId(0));
+        let with_ffi = inject_harness_imports(
+            &tagged,
+            &collect_imports(&tparse.tree(), &tagged),
+            &["import Sky.Ffi as Ffi".to_string()],
+        );
+        std::fs::write(&ufile_path, with_ffi)
+            .map_err(|e| format!("write update module {}: {e}", ufile_path.display()))?;
+        orig
+    };
     let oparse = syntax::parse(&orig, base::FileId(0));
     let ofile = oparse.tree();
     // Strip the app's `main` (Spa.app) — the harness supplies its own CLI `main`.

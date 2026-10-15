@@ -78,6 +78,7 @@ At N = 100 the first build went from 51.6 s to 27.9 s and a copy in a new direct
 ### Tests
 
 - **Counted growth guards.** `sky/tests/build_growth_flow.rs` checks that generated Sky and emitted Go grow linearly from N to 2N (the mutation "one Model wire per whole-model arm" fails it). The harness gates `build-growth-linear` and `build-new-dir-compiles-nothing` carry falsifier proofs in `docs/coverage/falsifier-proofs.json`. `skydb/tests/typed_table_growth.rs` asserts that type read-back, interning, the Dict-key scan and Go type mapping grow linearly with record size.
+- **The Sky.Spa differential split fuzzer (`xtask harness --only spa-diff-fuzz`) compares the leaf and the command each leg takes**, not only the model, and checks client-result roots. For a client-result arm the client runs itself, it checks that the client sends the request exactly on the leaf where the direct update performs. It fails when a Model field takes one value over every generated model. New fixture `tests/fixtures/spa-readset-noneleaf`; new falsifiers `spa-diff-fuzz.condition-read-dropped` and `spa-diff-fuzz.none-leaf-sends-rpc`.
 
 ## v0.27.8 — Every Sky Console control works, and a browser gate proves it (2026-10-07)
 

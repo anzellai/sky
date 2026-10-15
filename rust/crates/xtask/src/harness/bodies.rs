@@ -93,13 +93,16 @@ pub const VERIFY_CLI_EXPECTED: u64 = 13;
 /// `examples/*` projects that own a `tests/` directory. Measured: 6.
 pub const SKY_VERIFY_EXPECTED: u64 = 6;
 
-/// Total checkable branches across the diff-fuzz fixtures. Measured: **10** —
+/// Total checkable branches across the diff-fuzz fixtures. Measured: **20** —
 /// `spa-derived-read` 4 (whole-model reads + the Msg-arg collision),
 /// `spa-diff-narrow` 2 (narrow read/write sets), `spa-partition-io` 3
-/// (Save / SaveTagged / Bulk), `spa-guard` 1 (Stamp — an App.app app, analysed
-/// via app_config_defs). Exact: a fence change that drops or adds a checkable
+/// (Save / SaveTagged / Bulk), `spa-guard` 2 (Stamp, and Save — a
+/// client-result root, checked by its leaf and command since v0.27.9; an
+/// App.app app, analysed via app_config_defs), `spa-readset-noneleaf` 9 (reads
+/// through model-derived locals, client-result roots with a `Cmd.none` leaf,
+/// a guard-helper write). Exact: a fence change that drops or adds a checkable
 /// branch flips this and fails.
-pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 10;
+pub const SPA_DIFF_FUZZ_EXPECTED: u64 = 20;
 
 // ---------------------------------------------------------------------------
 // In-process gates
@@ -381,8 +384,12 @@ pub fn verify_cli(ctx: &GateCtx) -> GateOutcome {
 /// analysis is reflected in the harness SOURCE — the falsifier reaches it without
 /// rebuilding the `sky` binary), BUILD it with the fresh compiler, and RUN it
 /// OFFLINE. The harness runs each checkable server branch two ways over the same
-/// random `(Model, Msg)` — direct `update` vs the split plumbing — and exits
-/// non-zero on a divergence (a read/write-set drop or a Msg-arg collision). The
+/// random `(Model, Msg)` — direct `update` vs the split plumbing — comparing the
+/// model, the command shape and the leaf each leg took (and, for a
+/// client-result arm the client runs itself, whether the client sends the
+/// request exactly where the direct leg performs), and exits non-zero on a
+/// divergence (a read/write-set drop, a Msg-arg collision, a dropped branch
+/// read, a request sent on a `Cmd.none` leaf). The
 /// verdict is the harness's exit status; no stdout is parsed for pass/fail.
 pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     let sky = ctx.repo_root.join("sky-out/sky");
@@ -405,13 +412,16 @@ pub fn spa_diff_fuzz(ctx: &GateCtx) -> GateOutcome {
     // reads `update` from `Std.App.app/web` configs too (app_config_defs), so an
     // App.app app is fuzzed in-process without the App -> Spa source synthesis.
     // `spa-guard` is App.app; the harness omits the guard on both legs, so its
-    // plain `Stamp` server branch diffs the App.app plumbing (`Save` performs into a
-    // client arm, so it is a client-result root and is excluded).
+    // plain `Stamp` server branch diffs the App.app plumbing, and `Save` (a
+    // client-result root) its leaf and command. `spa-readset-noneleaf` holds the
+    // reads through model-derived locals and the `Cmd.none` leaves of
+    // client-result roots: the leaf/command and client-leg comparisons.
     const FIXTURES: &[&str] = &[
         "rust/crates/sky/tests/fixtures/spa-derived-read",
         "rust/crates/sky/tests/fixtures/spa-diff-narrow",
         "rust/crates/sky/tests/fixtures/spa-partition-io",
         "rust/crates/sky/tests/fixtures/spa-guard",
+        "rust/crates/sky/tests/fixtures/spa-readset-noneleaf",
     ];
     let mut assertions = 0u64;
     for fx in FIXTURES {

@@ -34,10 +34,29 @@
 //! derived RPC I/O (`io: Some`), it FORCES no run-position effect
 //! ([`BranchVerdict::forces_effect`] — a DB read / fresh Uuid / clock is not
 //! deterministic under identical stubs and is deferred to the phase-3 effect-mock
-//! harness), and it is not a server-internal / chaining / client-result-root
-//! branch (grill fix 4 — field-excluding those makes the check vacuous). A
-//! pure-typed kernel like `System.getenvOr` is deterministic and does NOT force,
-//! so a branch reaching it stays checkable (the `spa-derived-read` fixture).
+//! harness), and it is not a server-internal / chaining branch (grill fix 4 —
+//! field-excluding those makes the check vacuous). A client-result root IS
+//! checkable: its model write is empty, so the check is the LEAF and the
+//! COMMAND each leg chose (below). A pure-typed kernel like `System.getenvOr` is
+//! deterministic and does NOT force, so a branch reaching it stays checkable
+//! (the `spa-derived-read` fixture).
+//!
+//! ## What it compares
+//! * the MODEL each leg returns (a dropped read or write changes it);
+//! * the COMMAND SHAPE each leg returns, with the LEAF that produced it: the
+//!   harness's copy of `update` tags each `( model', cmd )` leaf's command with
+//!   its leaf number (`Spa_diffTagCmd`), and `Spa_diffCmdShape` renders the
+//!   result (`leaf3(perform)`). A read the request drops can leave the model
+//!   equal and change only the branch: `if model.flag then ( model,
+//!   Cmd.perform t Got ) else ( model, Cmd.none )`;
+//! * for a client-result arm the client runs itself up to its leaves
+//!   ([`crate::spa_partition::NoneLeafPlan`]), the CLIENT leg: the client must
+//!   send the request (`rpc`) exactly when the direct leg's leaf performs, and
+//!   send nothing on a `Cmd.none` leaf.
+//!
+//! Before the run it checks that every Model field took more than one value over
+//! the generated models, so each branch that depends on a field (a `Bool`
+//! flag) runs both ways.
 
 use crate::spa_diff_gen::{GenModule, TypeResolver};
 use crate::spa_partition::{BranchIo, ModelFieldTy, SpaPartitionReport};
@@ -112,6 +131,24 @@ pub struct CheckableBranch {
     /// arm (the message never leaves the client) is not. Empty when the report
     /// carries no arm positions: one arm `<Ctor> <msg_args…>` is diffed.
     pub arms: Vec<crate::spa_partition::RouteArm>,
+    /// The client leg of a server arm (by arm index) the client runs itself up
+    /// to its leaves: the harness checks that it sends the request exactly on
+    /// the direct leg's perform leaf. Empty when no arm has one.
+    pub client_arms: std::collections::BTreeMap<usize, ClientArm>,
+}
+
+/// The client's copy of one server arm, as the split generates it
+/// ([`crate::spa_split::client_none_leaf_arm_body`]) with the RPC replaced by
+/// the harness's `rpc` stand-in.
+#[derive(Clone, Debug)]
+pub struct ClientArm {
+    /// The arm's source pattern.
+    pub pat: String,
+    /// `update`'s Msg and model parameter names, which the body uses.
+    pub msg_param: String,
+    pub model_param: String,
+    /// The arm body, laid out at its source column (right of column 8).
+    pub body: String,
 }
 
 /// Apply the phase-2 fence to a partition report, returning the checkable
@@ -120,14 +157,11 @@ pub fn select_checkable(report: &SpaPartitionReport) -> (Vec<CheckableBranch>, V
     let mut out = Vec::new();
     let mut notes = Vec::new();
 
-    // Routes excluded by the chaining / client-result analysis (grill fix 4).
-    // Server-internal Msgs have no route at all.
-    let excluded: std::collections::BTreeSet<String> = report
-        .chaining_branches
-        .iter()
-        .cloned()
-        .chain(report.client_result.iter().map(|(root, _)| root.clone()))
-        .collect();
+    // Routes excluded by the chaining analysis (grill fix 4). Server-internal
+    // Msgs have no route at all. A client-result root is checked: its leaf and
+    // command are what it decides.
+    let excluded: std::collections::BTreeSet<String> =
+        report.chaining_branches.iter().cloned().collect();
     let internal: std::collections::HashSet<String> =
         report.server_internal.iter().cloned().collect();
     let routes = match crate::spa_partition::server_routes(&report.branches, &internal) {
@@ -147,7 +181,7 @@ pub fn select_checkable(report: &SpaPartitionReport) -> (Vec<CheckableBranch>, V
         }
         if excluded.contains(&ctor) {
             notes.push(format!(
-                "skip `{ctor}`: chaining / client-result root (field-excluding its writes would make the check vacuous)"
+                "skip `{ctor}`: chaining root (field-excluding its writes would make the check vacuous)"
             ));
             continue;
         }
@@ -170,6 +204,7 @@ pub fn select_checkable(report: &SpaPartitionReport) -> (Vec<CheckableBranch>, V
             } else {
                 Vec::new()
             },
+            client_arms: std::collections::BTreeMap::new(),
         });
     }
     (out, notes)
@@ -258,7 +293,8 @@ pub fn emit_harness(
         &checked,
     ));
     s.push('\n');
-    s.push_str(&emit_driver(iters, seed0));
+    s.push_str(&emit_client_arms(&checked));
+    s.push_str(&emit_driver(model_type, model_fields, iters, seed0));
 
     out.snippet = s;
     out.checked = checked.iter().map(|b| b.ctor.clone()).collect();
@@ -271,10 +307,60 @@ pub fn emit_harness(
     out.required_imports = vec![
         "import Std.Cmd as Cmd".to_string(),
         "import Sky.Core.String as String".to_string(),
+        "import Sky.Ffi as Ffi".to_string(),
         "import Std.Log as SpaDiffLog".to_string(),
         "import Sky.Core.Error as SpaDiffError".to_string(),
     ];
     out
+}
+
+/// The harness's own `Ffi.kernel` bindings (runtime-go/rt/spa_diff_notjs.go)
+/// and the `spaDiffLeaf_` tag its copy of `update` wraps each leaf's command
+/// in. The tag lives in the module that declares `update`
+/// ([`LEAF_TAG_DECL`]).
+const KERNEL_DECLS: &str = "\
+spaDiffCmdShape_ : cmd -> String\n\
+spaDiffCmdShape_ =\n\
+\x20   Ffi.kernel \"Spa_diffCmdShape\"\n\
+\n\
+\n\
+spaDiffRpcCmd_ : () -> cmd\n\
+spaDiffRpcCmd_ =\n\
+\x20   Ffi.kernel \"Spa_diffRpcCmd\"\n\
+\n\
+\n";
+
+/// `spaDiffLeaf_ <n> (cmd)`: the leaf tag, appended to the module that declares
+/// `update` (which then needs `import Sky.Ffi as Ffi`).
+pub const LEAF_TAG_DECL: &str = "\
+\n\
+\n\
+spaDiffLeaf_ : Int -> cmd -> cmd\n\
+spaDiffLeaf_ =\n\
+\x20   Ffi.kernel \"Spa_diffTagCmd\"\n";
+
+/// The client legs: one function per client arm, `case <msg> of <pat> -> <the
+/// client's copy of the arm>`, laid out as the generated frontend lays it out
+/// (pattern at column 8, body at its source column).
+fn emit_client_arms(checked: &[CheckableBranch]) -> String {
+    let mut s = String::from(KERNEL_DECLS);
+    for b in checked {
+        for (idx, a) in &b.client_arms {
+            s.push_str(&format!(
+                "{name} {msg} {model} =\n    case {msg} of\n        {pat} ->\n{body}\n\n        _ ->\n            ( {model}, Cmd.none )\n\n\n",
+                name = client_fn_name(&b.ctor, *idx),
+                msg = a.msg_param,
+                model = a.model_param,
+                pat = a.pat,
+                body = a.body,
+            ));
+        }
+    }
+    s
+}
+
+fn client_fn_name(ctor: &str, idx: usize) -> String {
+    format!("spaDiffClient{ctor}{idx}_")
 }
 
 /// `checkOne : Model -> Msg -> Result String () ` — one arm per checkable branch,
@@ -340,7 +426,7 @@ fn emit_check_one(
         body.push_str(&reconstruct);
         body.push('\n');
         body.push_str(&format!(
-            "                ( m2, _ ) =\n                    update {ctor_app} m\n\n"
+            "                ( m2, spaSplitCmd ) =\n                    update {ctor_app} m\n\n"
         ));
         body.push_str(&format!(
             "                resp =\n                    {write_set}\n\n"
@@ -348,22 +434,53 @@ fn emit_check_one(
         body.push_str(&format!(
             "                ( applied, _ ) =\n                    {apply}\n\n"
         ));
-        body.push_str("                ( direct, _ ) =\n                    update msg model\n");
-        body.push_str("            in\n");
-        body.push_str("            if direct == applied then\n");
-        body.push_str("                Ok ()\n\n");
-        body.push_str("            else\n");
-        body.push_str(&format!(
-            "                Err \"{}: split-leg model diverged from the direct update (a read/write-set drop or a Msg-arg collision)\"\n\n",
-            b.ctor
-        ));
-        for (pattern, server) in &arms {
+        body.push_str(
+            "                ( direct, spaDirectCmd ) =\n                    update msg model\n\n",
+        );
+        body.push_str(
+            "                spaDirectShape =\n                    spaDiffCmdShape_ spaDirectCmd\n\n",
+        );
+        body.push_str(
+            "                spaSplitShape =\n                    spaDiffCmdShape_ spaSplitCmd\n",
+        );
+        let ctor = &b.ctor;
+        for (i, (pattern, server)) in arms.iter().enumerate() {
             s.push_str(&format!("        {pattern} ->\n"));
-            if *server {
-                s.push_str(&body);
-            } else {
+            if !*server {
                 s.push_str("            Ok ()\n\n");
+                continue;
             }
+            // The arm's index in `update`, when the report carries positions:
+            // its client leg (if any) is keyed by it.
+            let client = b
+                .arms
+                .get(i)
+                .and_then(|a| a.index)
+                .and_then(|idx| b.client_arms.get(&idx).map(|_| idx));
+            s.push_str(&body);
+            if let Some(idx) = client {
+                s.push_str(&format!(
+                    "\n                ( _, spaClientCmd ) =\n                    {} msg model\n\n\
+                     \x20               spaClientShape =\n                    spaDiffCmdShape_ spaClientCmd\n",
+                    client_fn_name(ctor, idx)
+                ));
+            }
+            s.push_str("            in\n");
+            s.push_str("            if direct /= applied then\n");
+            s.push_str(&format!(
+                "                Err \"{ctor}: split-leg model diverged from the direct update (a read/write-set drop or a Msg-arg collision)\"\n\n"
+            ));
+            s.push_str("            else if spaDirectShape /= spaSplitShape then\n");
+            s.push_str(&format!(
+                "                Err (\"{ctor}: the split server took another leaf or command than the direct update (a dropped read): direct \" ++ spaDirectShape ++ \", split \" ++ spaSplitShape)\n\n"
+            ));
+            if client.is_some() {
+                s.push_str("            else if (spaClientShape == \"rpc\") /= String.contains \"perform\" spaDirectShape then\n");
+                s.push_str(&format!(
+                    "                Err (\"{ctor}: the client sends the request on a leaf where the direct update performs nothing, or the other way round: direct \" ++ spaDirectShape ++ \", client \" ++ spaClientShape)\n\n"
+                ));
+            }
+            s.push_str("            else\n                Ok ()\n\n");
         }
     }
 
@@ -375,8 +492,26 @@ fn emit_check_one(
 
 /// The fuzz driver + `main`. Pure loop (`genModel` + `genMsg` + `spaDiffCheckOne`
 /// are pure); `main` prints and `Task.fail`s on the first divergence so the
-/// process exits non-zero — the gate goes red.
-fn emit_driver(iters: usize, seed0: i64) -> String {
+/// process exits non-zero — the gate goes red. Before the loop it checks that
+/// every Model field took more than one value over the generated models: a field
+/// that never varies leaves the branches that test it half-run (a `Bool` flag
+/// that is always `False` never runs the `then` branch).
+fn emit_driver(
+    model_type: &str,
+    model_fields: &[ModelFieldTy],
+    iters: usize,
+    seed0: i64,
+) -> String {
+    let checks = if model_fields.is_empty() {
+        "\x20           Ok ()\n".to_string()
+    } else {
+        // Chain the per-field checks: the first failure wins.
+        let parts: Vec<String> = model_fields
+            .iter()
+            .map(|f| format!("spaDiffVaries_ (\\m -> m.{0} /= m0.{0}) \"{0}\" ms", f.name))
+            .collect();
+        format!("\x20           spaDiffAll_ [ {} ]\n", parts.join(", "))
+    };
     format!(
         "spaDiffOne : Seed -> Result String Seed\n\
          spaDiffOne s0 =\n\
@@ -401,6 +536,58 @@ fn emit_driver(iters: usize, seed0: i64) -> String {
          \x20               spaDiffLoop (remaining - 1) s2 (count + 1)\n\n\
          \x20           Err e ->\n\
          \x20               Err e\n\n\n\
+         -- The models the loop generates, in the same seed order.\n\
+         spaDiffModels : Int -> Seed -> List {model_type} -> List {model_type}\n\
+         spaDiffModels remaining s acc =\n\
+         \x20   if remaining <= 0 then\n\
+         \x20       acc\n\n\
+         \x20   else\n\
+         \x20       let\n\
+         \x20           ( model, s1 ) =\n\
+         \x20               genModel s\n\n\
+         \x20           ( _, s2 ) =\n\
+         \x20               genMsg s1\n\
+         \x20       in\n\
+         \x20       spaDiffModels (remaining - 1) s2 (model :: acc)\n\n\n\
+         spaDiffAny_ : (a -> Bool) -> List a -> Bool\n\
+         spaDiffAny_ p xs =\n\
+         \x20   case xs of\n\
+         \x20       [] ->\n\
+         \x20           False\n\n\
+         \x20       x :: rest ->\n\
+         \x20           if p x then\n\
+         \x20               True\n\n\
+         \x20           else\n\
+         \x20               spaDiffAny_ p rest\n\n\n\
+         spaDiffVaries_ : (a -> Bool) -> String -> List a -> Result String ()\n\
+         spaDiffVaries_ differs name ms =\n\
+         \x20   if spaDiffAny_ differs ms then\n\
+         \x20       Ok ()\n\n\
+         \x20   else\n\
+         \x20       Err (\"model field `\" ++ name ++ \"` took one value over every generated model, so a branch that tests it runs one way only\")\n\n\n\
+         spaDiffAll_ : List (Result String ()) -> Result String ()\n\
+         spaDiffAll_ rs =\n\
+         \x20   case rs of\n\
+         \x20       [] ->\n\
+         \x20           Ok ()\n\n\
+         \x20       (Err e) :: _ ->\n\
+         \x20           Err e\n\n\
+         \x20       (Ok _) :: rest ->\n\
+         \x20           spaDiffAll_ rest\n\n\n\
+         spaDiffCoverage : List {model_type} -> Result String ()\n\
+         spaDiffCoverage ms =\n\
+         \x20   case ms of\n\
+         \x20       [] ->\n\
+         \x20           Err \"no model was generated\"\n\n\
+         \x20       m0 :: _ ->\n\
+         {checks}\n\n\
+         spaDiffRun : () -> Result String Int\n\
+         spaDiffRun _ =\n\
+         \x20   case spaDiffCoverage (spaDiffModels spaDiffIters spaDiffSeed0 []) of\n\
+         \x20       Err e ->\n\
+         \x20           Err e\n\n\
+         \x20       Ok _ ->\n\
+         \x20           spaDiffLoop spaDiffIters spaDiffSeed0 0\n\n\n\
          spaDiffIters : Int\n\
          spaDiffIters =\n\
          \x20   {iters}\n\n\n\
@@ -409,7 +596,7 @@ fn emit_driver(iters: usize, seed0: i64) -> String {
          \x20   {seed0}\n\n\n\
          main : Task Error ()\n\
          main =\n\
-         \x20   case spaDiffLoop spaDiffIters spaDiffSeed0 0 of\n\
+         \x20   case spaDiffRun () of\n\
          \x20       Ok c ->\n\
          \x20           SpaDiffLog.println (\"spa-diff-fuzz ok: \" ++ String.fromInt c ++ \" checks passed\")\n\n\
          \x20       Err e ->\n\
@@ -578,6 +765,7 @@ mod tests {
             io,
             msg_arg_tys: vec![f("scale", "Int")],
             arms: vec![],
+            client_arms: Default::default(),
         }];
         let e = env();
         let out = emit_harness("Model", "Msg", &model_fields, &checkable, &e, 50, 7);
@@ -600,8 +788,11 @@ mod tests {
             "direct leg missing"
         );
         assert!(
-            out.snippet.contains("if direct == applied then"),
-            "diff missing"
+            out.snippet.contains("if direct /= applied then")
+                && out
+                    .snippet
+                    .contains("else if spaDirectShape /= spaSplitShape then"),
+            "diff missing (model and leaf/command)"
         );
         well_formed(&out.snippet);
     }
@@ -625,6 +816,7 @@ mod tests {
             io,
             msg_arg_tys: vec![],
             arms: vec![],
+            client_arms: Default::default(),
         }];
         let e = env();
         let out = emit_harness("Model", "Msg", &model_fields, &checkable, &e, 50, 1);
@@ -709,14 +901,14 @@ mod tests {
             bv("Loads", true, Some(io_args(&[])), true),                     // forces effect → skip
             bv("Internal", true, Some(io_args(&[])), false), // server-internal → skip
             bv("Chained", true, Some(io_args(&[])), false),  // chaining → skip
-            bv("ClientRoot", true, Some(io_args(&[])), false), // client-result root → skip
+            bv("ClientRoot", true, Some(io_args(&[])), false), // client-result root → leaf + command
         ];
         let (checkable, _notes) = select_checkable(&report_with(branches));
         let ctors: Vec<&str> = checkable.iter().map(|c| c.ctor.as_str()).collect();
         assert_eq!(
             ctors,
-            vec!["SetRegion"],
-            "only the effect-free server branch is checkable"
+            vec!["SetRegion", "ClientRoot"],
+            "the effect-free server branch and the client-result root are checkable"
         );
     }
 

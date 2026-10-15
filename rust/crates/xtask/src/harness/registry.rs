@@ -373,6 +373,33 @@ pub static GATES: &[Gate] = &[
                     to: "format!(\"{sep}{f} = base.{f}\")",
                 },
             },
+            Mutation {
+                id: "spa-diff-fuzz.condition-read-dropped",
+                description: "make the read-set walk skip every `if` condition; \
+                              spa-readset-noneleaf's `Gated` request then drops `flag`, the \
+                              split server rebuilds it from `init ()` and takes the `Cmd.none` \
+                              leaf where the direct update performs, so the leaf/command \
+                              comparison must go red (a read that decides the branch, with the \
+                              model write unchanged)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_partition.rs",
+                    from: "go!(*cond, false);",
+                    to: "let _ = cond;",
+                },
+            },
+            Mutation {
+                id: "spa-diff-fuzz.none-leaf-sends-rpc",
+                description: "make the client copy of a client-result arm send the RPC on its \
+                              `Cmd.none` leaves too; the harness's client leg of \
+                              spa-readset-noneleaf's `Gated` then sends the request where the \
+                              direct update performs nothing, so the client-leg comparison must \
+                              go red (Sky.Live sends nothing on a `Cmd.none` leaf)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_split.rs",
+                    from: "let body = format!(\"{}spaRpc_{}\", &src[bs..ps], &src[pe..be]);",
+                    to: "let body = format!(\"{}spaRpc_{}\", &src[bs..ps], &src[pe..be]).replace(\"Cmd.none\", \"spaRpc_\");",
+                },
+            },
         ]),
         body: bodies::spa_diff_fuzz,
     },
