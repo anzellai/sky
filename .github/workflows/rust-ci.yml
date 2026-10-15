@@ -1363,8 +1363,9 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     # ~81s workspace build + ~167s conformance (incl. the release sky build) +
-    # ~48s doc-examples + ~2 min for the release-mode deep-expression tests
-    # ≈ 7 min. 1.5x ≈ 11, rounded up for runner variance.
+    # ~48s doc-examples + ~3 min for the release-mode deep-expression tests
+    # (the 12,000-field LSP codec alone is ~45 s) ≈ 8 min. 1.5x = 12, rounded
+    # up for runner variance.
     timeout-minutes: 16
     env:
       GOCACHE: ${{ github.workspace }}/.gocache

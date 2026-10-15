@@ -1425,9 +1425,17 @@ fn ctor_arg_types(actx: &ArmCtx<'_>, ctor: &hir::CtorRef) -> Option<Vec<ty::Ty>>
     let scheme = actx.typer.ctor_sig_by_def(ctor.def)?;
     let mut args = Vec::new();
     let mut t = scheme.ty.clone();
-    while let ty::Ty::Fun(a, b) = t {
-        args.push(*a);
-        t = *b;
+    loop {
+        match t.into_fun() {
+            Ok((a, b)) => {
+                args.push(a);
+                t = b;
+            }
+            Err(rest) => {
+                t = rest;
+                break;
+            }
+        }
     }
     if args.len() != ctor.arity as usize {
         return None;

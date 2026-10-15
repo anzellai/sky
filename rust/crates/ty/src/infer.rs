@@ -491,13 +491,16 @@ impl<'a> Infer<'a> {
             }
             let mut cur = scheme.ty.clone();
             for &pv in &param_vars {
-                match cur {
-                    Ty::Fun(a, b) => {
+                match cur.into_fun() {
+                    Ok((a, b)) => {
                         let av = self.ty_to_var(&a, &mut sub);
                         self.unify(pv, av);
-                        cur = *b;
+                        cur = b;
                     }
-                    _ => break,
+                    Err(c) => {
+                        cur = c;
+                        break;
+                    }
                 }
             }
             expected_result = Some(self.ty_to_var(&cur, &mut sub));
@@ -604,14 +607,17 @@ impl<'a> Infer<'a> {
         let mut cur = scheme.ty.clone();
         let mut consumed = 0usize;
         for &pv in &param_vars {
-            match cur {
-                Ty::Fun(a, b) => {
+            match cur.into_fun() {
+                Ok((a, b)) => {
                     let av = self.ty_to_var(&a, &mut sub);
                     self.unify(pv, av);
-                    cur = *b;
+                    cur = b;
                     consumed += 1;
                 }
-                _ => break,
+                Err(c) => {
+                    cur = c;
+                    break;
+                }
             }
         }
         // Arity gate (RC1 / audit #4): the body binds MORE top-level params than
