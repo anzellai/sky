@@ -635,8 +635,10 @@ to `.gz` (gzip -9) and `.br` (brotli quality 11, written by `sky` itself; no
 or `--precompress=off` (none; also `SKY_PRECOMPRESS=fast|off`); deploy a
 `max` (default) build. The Sky backend serves them itself: a request
 that accepts `br` (else `gzip`) gets the `.br` (else `.gz`) file next to the
-asset, and a Range request or an asset with no fresh variant gets the raw file,
-gzipped on the fly. A separate static host in front must be told to use them:
+asset when the build's `dist/sky-precompress.json` lists it and the files still
+match it (a Range request ranges over that file); anything else, including a
+`.gz` you committed in your own static dir, gets the raw file, gzipped on the
+fly. A separate static host in front must be told to use them:
 
 - **Caddy** (what the reference deploys use): `file_server { precompressed br gzip }`
   on the `*.wasm` + `wasm_exec.js` routes — Caddy's own `encode` has no brotli, so

@@ -608,10 +608,15 @@ quicker than `brotli -q 11` for a file within 1% of its size).
 `--precompress=max|fast|off` (or `SKY_PRECOMPRESS`) picks the level: `fast` is
 brotli 9 + gzip -6 (seconds, ~18% larger `.br`), `off` writes none
 (`--no-precompress` is its alias); `max` is the default. The Sky backend's static
-mounts send them: a request that accepts `br` (else `gzip`) gets the `.br` (else
-`.gz`) file as it is, with the original's Content-Type and Last-Modified, when it
-is no older than its source; a Range request, or a file with no fresh variant,
-gets the raw file (gzipped on the fly as before; `runtime-go/rt/static_precompressed.go`).
+mounts send them: a request that accepts `br` (else `gzip`; a fixed order, not
+by q-value) gets the `.br` (else `.gz`) file as it is, with the original's
+Content-Type and Last-Modified and an ETag per encoding, only when the build's
+`dist/sky-precompress.json` lists it and the source and sidecar still have the
+size and SHA-256 it records. A Range request that accepts the encoding ranges
+over the sidecar (206 with Content-Encoding); one that does not, a file with no
+listed variant, and a `.gz` / `.br` a user committed in their own static dir get
+the raw file (gzipped on the fly as before; `runtime-go/rt/static_precompressed.go`).
+Every static response says `Vary: Accept-Encoding`.
 A separate static host serves them with Caddy `file_server { precompressed br gzip }`
 (Caddy's `encode` has no brotli), or nginx `gzip_static` + `ngx_brotli`. The wasm
 is content-hashed + `immutable`, so allow a CDN to cache `*.wasm` (Cloudflare does

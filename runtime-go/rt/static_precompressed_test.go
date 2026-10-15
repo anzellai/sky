@@ -5,6 +5,9 @@ package rt
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,7 +53,48 @@ func newPrecompressedFixture(t *testing.T, name string, br, gz bool) precompress
 		f.gz = b.Bytes()
 		writeAt(t, filepath.Join(f.dir, name+".gz"), f.gz, f.modTime.Add(time.Second))
 	}
+	if br || gz {
+		writeManifest(t, f.dir, name)
+	}
 	return f
+}
+
+// writeManifest records names (and whichever of their `.br` / `.gz` sidecars
+// exist) in dir's precompress manifest, as `sky build` does after it writes
+// them: each file's size and SHA-256.
+func writeManifest(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	sum := func(p string) (map[string]any, bool) {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, false
+		}
+		h := sha256.Sum256(b)
+		return map[string]any{"size": len(b), "sha256": hex.EncodeToString(h[:])}, true
+	}
+	files := map[string]any{}
+	for _, n := range names {
+		e, ok := sum(filepath.Join(dir, n))
+		if !ok {
+			t.Fatalf("no %s", n)
+		}
+		enc := map[string]any{}
+		if s, ok := sum(filepath.Join(dir, n+".br")); ok {
+			enc["br"] = s
+		}
+		if s, ok := sum(filepath.Join(dir, n+".gz")); ok {
+			enc["gzip"] = s
+		}
+		e["encodings"] = enc
+		files[n] = e
+	}
+	b, err := json.Marshal(map[string]any{"version": 1, "level": "max", "files": files})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sky-precompress.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeAt(t *testing.T, p string, b []byte, mt time.Time) {
@@ -181,20 +226,167 @@ func TestPrecompressedStaleSidecarIsNotServed(t *testing.T) {
 	}
 }
 
-// A Range request is served from the uncompressed file, as before.
-func TestPrecompressedNotUsedForRange(t *testing.T) {
+// A Range request from a client that accepts brotli is served from the `.br`
+// representation it was given in full (nginx gzip_static does the same, and
+// RFC 9110 ranges apply to the selected representation): a 206 of the
+// sidecar's bytes with Content-Encoding and Vary. Before, the 206 carried the
+// raw file's offsets with no Content-Encoding, so a client resuming a brotli
+// 200 with If-Range (on the shared Last-Modified) spliced raw bytes into
+// brotli bytes.
+func TestPrecompressedRangeAfterSidecar200(t *testing.T) {
 	f := newPrecompressedFixture(t, "main.abc.wasm", true, true)
 	h := staticMount("/static/", f.dir, "")
-	rec := serveStatic(h, "GET", "/static/main.abc.wasm",
-		map[string]string{"Accept-Encoding": "gzip, br", "Range": "bytes=0-9"})
-	if rec.Code != http.StatusPartialContent {
-		t.Fatalf("status %d, want 206", rec.Code)
+	full := serveStatic(h, "GET", "/static/main.abc.wasm", map[string]string{"Accept-Encoding": "br, gzip"})
+	if full.Code != 200 || full.Header().Get("Content-Encoding") != "br" {
+		t.Fatalf("200: status %d, Content-Encoding %q", full.Code, full.Header().Get("Content-Encoding"))
 	}
-	if rec.Header().Get("Content-Encoding") != "" {
-		t.Fatalf("a Range response must not be encoded")
+	if full.Header().Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("the 200 does not offer ranges")
 	}
-	if !bytes.Equal(rec.Body.Bytes(), f.raw[:10]) {
-		t.Fatalf("range body = %q", rec.Body.Bytes())
+	etag := full.Header().Get("ETag")
+	if etag == "" || !strings.Contains(etag, "br") {
+		t.Fatalf("the sidecar 200 needs a validator of its own representation, ETag = %q", etag)
+	}
+	for _, ifRange := range []string{full.Header().Get("Last-Modified"), etag} {
+		rec := serveStatic(h, "GET", "/static/main.abc.wasm", map[string]string{
+			"Accept-Encoding": "br, gzip", "Range": "bytes=5-14", "If-Range": ifRange,
+		})
+		if rec.Code != http.StatusPartialContent {
+			t.Fatalf("If-Range %q: status %d, want 206", ifRange, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Encoding"); got != "br" {
+			t.Fatalf("If-Range %q: Content-Encoding = %q, want br", ifRange, got)
+		}
+		if got := rec.Header().Get("Vary"); got != "Accept-Encoding" {
+			t.Fatalf("If-Range %q: Vary = %q", ifRange, got)
+		}
+		if !bytes.Equal(rec.Body.Bytes(), f.br[5:15]) {
+			t.Fatalf("If-Range %q: body %q is not bytes 5-14 of the sidecar", ifRange, rec.Body.Bytes())
+		}
+		if got, want := rec.Header().Get("Content-Range"), "bytes 5-14/"+strconv.Itoa(len(f.br)); got != want {
+			t.Fatalf("Content-Range = %q, want %q", got, want)
+		}
+		if got := rec.Header().Get("Content-Length"); got != "10" {
+			t.Fatalf("Content-Length = %q, want 10", got)
+		}
+	}
+	// A gzip-only client ranges over the `.gz` representation.
+	rec := serveStatic(h, "GET", "/static/main.abc.wasm", map[string]string{"Accept-Encoding": "gzip", "Range": "bytes=0-3"})
+	if rec.Code != http.StatusPartialContent || rec.Header().Get("Content-Encoding") != "gzip" || !bytes.Equal(rec.Body.Bytes(), f.gz[:4]) {
+		t.Fatalf("gzip range: status %d, Content-Encoding %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+	// A stale validator gets the whole representation.
+	rec = serveStatic(h, "GET", "/static/main.abc.wasm", map[string]string{
+		"Accept-Encoding": "br", "Range": "bytes=0-3", "If-Range": `"stale"`,
+	})
+	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), f.br) {
+		t.Fatalf("stale If-Range: status %d", rec.Code)
+	}
+}
+
+// A Range request from a client that accepts no encoding is served from the
+// raw file, and still says the resource varies by Accept-Encoding (a shared
+// cache must not hand this 206 to a brotli client, or the reverse).
+func TestPrecompressedRangeWithoutEncodingIsRaw(t *testing.T) {
+	f := newPrecompressedFixture(t, "main.abc.wasm", true, true)
+	h := staticMount("/static/", f.dir, "")
+	for _, ae := range []string{"", "identity", "br;q=0, gzip;q=0"} {
+		hdr := map[string]string{"Range": "bytes=0-9"}
+		if ae != "" {
+			hdr["Accept-Encoding"] = ae
+		}
+		rec := serveStatic(h, "GET", "/static/main.abc.wasm", hdr)
+		if rec.Code != http.StatusPartialContent {
+			t.Fatalf("%q: status %d, want 206", ae, rec.Code)
+		}
+		if rec.Header().Get("Content-Encoding") != "" {
+			t.Fatalf("%q: a raw Range response must not be encoded", ae)
+		}
+		if !bytes.Equal(rec.Body.Bytes(), f.raw[:10]) {
+			t.Fatalf("%q: range body = %q", ae, rec.Body.Bytes())
+		}
+		if got := rec.Header().Get("Vary"); got != "Accept-Encoding" {
+			t.Fatalf("%q: Vary = %q", ae, got)
+		}
+	}
+}
+
+// The on-the-fly gzip path never gzips a Range request, and its 206 says
+// Vary: Accept-Encoding like its 200 does.
+func TestOnTheFlyRangeCarriesVary(t *testing.T) {
+	f := newPrecompressedFixture(t, "main.abc.wasm", false, false)
+	h := staticMount("/static/", f.dir, "")
+	for _, method := range []string{"GET", "HEAD"} {
+		rec := serveStatic(h, method, "/static/main.abc.wasm", map[string]string{"Accept-Encoding": "gzip, br", "Range": "bytes=0-9"})
+		if rec.Code != http.StatusPartialContent || rec.Header().Get("Content-Encoding") != "" {
+			t.Fatalf("%s: status %d, Content-Encoding %q", method, rec.Code, rec.Header().Get("Content-Encoding"))
+		}
+		if got := rec.Header().Get("Vary"); got != "Accept-Encoding" {
+			t.Fatalf("%s: Vary = %q", method, got)
+		}
+	}
+}
+
+// Sidecars a user committed in their own static directory (no manifest from
+// `sky build`) are never served, even when the sidecar looks newer than its
+// source (a fresh clone sets every mtime to the checkout time). The request
+// takes the on-the-fly gzip path, as it did before sidecars were served.
+func TestPrecompressedUnlistedSidecarIsNotServed(t *testing.T) {
+	dir := t.TempDir()
+	raw := bytes.Repeat([]byte("console.log('the current app.js');\n"), 100)
+	mt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	writeAt(t, filepath.Join(dir, "app.js"), raw, mt)
+	var b bytes.Buffer
+	zw := gzip.NewWriter(&b)
+	_, _ = zw.Write([]byte("console.log('an old app.js, committed long ago');"))
+	_ = zw.Close()
+	writeAt(t, filepath.Join(dir, "app.js.gz"), b.Bytes(), mt.Add(time.Hour))
+	writeAt(t, filepath.Join(dir, "app.js.br"), []byte("old brotli"), mt.Add(time.Hour))
+	h := staticMount("/static/", dir, "")
+	rec := serveStatic(h, "GET", "/static/app.js", map[string]string{"Accept-Encoding": "br, gzip"})
+	if rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want the on-the-fly gzip", rec.Header().Get("Content-Encoding"))
+	}
+	if !bytes.Equal(gunzip(t, rec.Body.Bytes()), raw) {
+		t.Fatalf("a committed sidecar was served instead of the current file")
+	}
+	// A file the manifest does not list is not served from a sidecar either.
+	writeAt(t, filepath.Join(dir, "other.js"), raw, mt)
+	writeManifest(t, dir, "other.js")
+	rec = serveStatic(h, "GET", "/static/app.js", map[string]string{"Accept-Encoding": "br"})
+	if rec.Header().Get("Content-Encoding") == "br" {
+		t.Fatalf("an unlisted sidecar was served")
+	}
+}
+
+// A manifest entry whose source has changed since the build (same size, so
+// only the content tells; an older mtime than the sidecar, so freshness by
+// mtime would pass) is not served from its sidecar: the current file is.
+func TestPrecompressedManifestSourceChangedIsNotServed(t *testing.T) {
+	f := newPrecompressedFixture(t, "wasm_exec.js", true, true)
+	changed := bytes.Repeat([]byte("x"), len(f.raw))
+	writeAt(t, filepath.Join(f.dir, f.name), changed, f.modTime.Add(-time.Hour))
+	h := staticMount("/static/", f.dir, "")
+	rec := serveStatic(h, "GET", "/static/wasm_exec.js", map[string]string{"Accept-Encoding": "br, gzip"})
+	if rec.Header().Get("Content-Encoding") != "gzip" || !bytes.Equal(gunzip(t, rec.Body.Bytes()), changed) {
+		t.Fatalf("the sidecar of the old source was served (Content-Encoding %q)", rec.Header().Get("Content-Encoding"))
+	}
+	rec = serveStatic(h, "GET", "/static/wasm_exec.js", map[string]string{"Accept-Encoding": "br", "Range": "bytes=0-3"})
+	if rec.Header().Get("Content-Encoding") != "" || !bytes.Equal(rec.Body.Bytes(), changed[:4]) {
+		t.Fatalf("a range of the old sidecar was served")
+	}
+}
+
+// A sidecar replaced after the build (its bytes no longer the ones the
+// manifest records) is not served; the other, intact sidecar still is.
+func TestPrecompressedManifestSidecarChangedIsNotServed(t *testing.T) {
+	f := newPrecompressedFixture(t, "main.abc.wasm", true, true)
+	forged := bytes.Repeat([]byte("Z"), len(f.br))
+	writeAt(t, filepath.Join(f.dir, f.name+".br"), forged, f.modTime.Add(time.Second))
+	h := staticMount("/static/", f.dir, "")
+	rec := serveStatic(h, "GET", "/static/main.abc.wasm", map[string]string{"Accept-Encoding": "br, gzip"})
+	if rec.Header().Get("Content-Encoding") != "gzip" || !bytes.Equal(rec.Body.Bytes(), f.gz) {
+		t.Fatalf("Content-Encoding %q: want the intact .gz sidecar", rec.Header().Get("Content-Encoding"))
 	}
 }
 
@@ -265,6 +457,7 @@ func TestPrecompressedFallbackRoot(t *testing.T) {
 		st, _ := os.Stat(filepath.Join(f.dir, n))
 		writeAt(t, filepath.Join(root, "static", n), b, st.ModTime())
 	}
+	writeManifest(t, root, "static/app.js")
 	primary := t.TempDir() // the app's own static dir, without the file
 	h := staticMount("/static", primary, root)
 	rec := serveStatic(h, "GET", "/static/app.js", map[string]string{"Accept-Encoding": "br"})
@@ -292,7 +485,9 @@ func TestPrecompressedKeepsSecurityHeaders(t *testing.T) {
 	keys := func(h http.Header) []string {
 		var k []string
 		for n := range h {
-			if n != "Content-Length" && n != "Date" {
+			// The sidecar adds its length and a validator of its own
+			// representation; the rest is the same.
+			if n != "Content-Length" && n != "Date" && n != "Etag" {
 				k = append(k, n)
 			}
 		}
