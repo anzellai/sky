@@ -155,6 +155,9 @@ pub struct Infer<'a> {
     /// unify, so a test can compare the fast form against it.
     #[cfg(test)]
     pub(crate) no_fast_paths: bool,
+    /// D2 / #166 closes skipped as no-ops (tests only).
+    #[cfg(test)]
+    pub(crate) ground_close_skips: usize,
 }
 
 #[cfg(test)]
@@ -201,6 +204,8 @@ impl<'a> Infer<'a> {
             overlay: None,
             #[cfg(test)]
             no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
+            #[cfg(test)]
+            ground_close_skips: 0,
         }
     }
 
@@ -1165,6 +1170,40 @@ impl<'a> Infer<'a> {
         }
     }
 
+    /// The D2 / #166 close of an update's base `tb` with a fresh instance of
+    /// the declared record `ty` is a no-op when `tb` already IS `ty`: every
+    /// node reachable from `tb` along `ty` is a structure equal to `ty`'s node
+    /// (same nominal names, same closed field sets), and `ty` holds no type
+    /// variable and no `Error` (`UnionFind::ground_instance_nodes`). Then the
+    /// skipped `ty_to_var` + `unify` would have allocated one fresh node per
+    /// node of `ty`, linked each under the matching node of `tb` (a fresh
+    /// node has rank 0, so `tb`'s side stays the root), and re-set each `tb`
+    /// root's content to an equal value. Nothing else refers to the fresh
+    /// nodes. The only other change is a root's rank rising from 0 to 1 on
+    /// structured classes; a rank only decides which member of a class is its
+    /// root, and a structured class never becomes `Flex` again, so the choice
+    /// is never printed (`t<id>` names come only from `Flex` / `FlexSuper`
+    /// roots) and never reaches a `Flex` class's root. The skip reserves the
+    /// same number of variables, so every later id, and so every later `t<id>`
+    /// name, is unchanged. Returns whether it skipped.
+    fn skip_ground_close(&mut self, tb: TyVarId, ty: &Ty) -> bool {
+        #[cfg(test)]
+        if self.no_fast_paths {
+            return false;
+        }
+        match self.uf.ground_instance_nodes(tb, ty) {
+            Some(n) => {
+                self.uf.reserve_unreachable(n);
+                #[cfg(test)]
+                {
+                    self.ground_close_skips += 1;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Record the outcome of a unification: drain deferred obligations, then
     /// report a clash.
     fn finish_unify(&mut self, res: Result<(), crate::unify::Mismatch>) {
@@ -1273,14 +1312,20 @@ impl<'a> Infer<'a> {
                 if self.use_inferred {
                     match &body.exprs[*base] {
                         Expr::Var(Res::Def(d)) => {
-                            let sig = self
-                                .overlay
+                            // Borrowed for the run's lifetime: the overlay and
+                            // the world are fixed while this `Infer` lives, so
+                            // no copy of the scheme is needed per update.
+                            let (world, overlay) = (self.world, self.overlay);
+                            let sig = overlay
                                 .and_then(|o| o.record_result_sigs.get(d))
-                                .or_else(|| self.world.record_result_sigs.get(d));
+                                .or_else(|| world.record_result_sigs.get(d));
                             if let Some(s) = sig {
-                                let s = s.clone();
-                                let full = self.instantiate(&s);
-                                self.unify(tb, full);
+                                // A scheme with quantifiers allocates one
+                                // variable per quantifier first: never skipped.
+                                if !(s.vars.is_empty() && self.skip_ground_close(tb, &s.ty)) {
+                                    let full = self.instantiate(s);
+                                    self.unify(tb, full);
+                                }
                             }
                         }
                         // #166: the base is a PARAM of this def. Close the update's
@@ -1311,8 +1356,8 @@ impl<'a> Infer<'a> {
                                     // harvested into `callsite_param_records`,
                                     // #166). Both give the full record so the
                                     // update's open row closes to it.
-                                    let param_record: Option<Ty> = self
-                                        .world
+                                    let (world, overlay) = (self.world, self.overlay);
+                                    let param_record: Option<&Ty> = world
                                         .value_sigs
                                         .get(&def)
                                         .and_then(|scheme| {
@@ -1337,24 +1382,24 @@ impl<'a> Infer<'a> {
                                                         Ty::Record(_, None)
                                                     ) =>
                                                 {
-                                                    Some((**a).clone())
+                                                    Some(&**a)
                                                 }
                                                 _ => None,
                                             }
                                         })
                                         .or_else(|| {
-                                            self.overlay
+                                            overlay
                                                 .and_then(|o| o.callsite_param_records.get(&def))
-                                                .or_else(|| {
-                                                    self.world.callsite_param_records.get(&def)
-                                                })
+                                                .or_else(|| world.callsite_param_records.get(&def))
                                                 .and_then(|v| v.get(idx))
-                                                .and_then(|o| o.clone())
+                                                .and_then(|o| o.as_ref())
                                         });
                                     if let Some(rec) = param_record {
-                                        let mut sub: HashMap<String, TyVarId> = HashMap::new();
-                                        let av = self.ty_to_var(&rec, &mut sub);
-                                        self.unify(tb, av);
+                                        if !self.skip_ground_close(tb, rec) {
+                                            let mut sub: HashMap<String, TyVarId> = HashMap::new();
+                                            let av = self.ty_to_var(rec, &mut sub);
+                                            self.unify(tb, av);
+                                        }
                                     }
                                 }
                             }

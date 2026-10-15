@@ -339,9 +339,55 @@ fn generated() -> Vec<(String, String)> {
          f m =\n    ( m.grid, Dict.insert ( 3, 4 ) \"b\" m.grid, \\k -> Dict.get k m.grid, m.nest )\n\n\
          g =\n    Dict.insert { a = 1 } 2 Dict.empty\n\n\
          main =\n    f m0\n";
+    // The D2 / #166 closes: an annotated record param updated in many arms
+    // (the close after the first finds the base already the declared record),
+    // a nested record and a polymorphic field, a callsite-harvested param, an
+    // annotated and an unannotated record def as an update base, and a clash
+    // that leaves `Error` in the base before a later update.
+    let mut amf = vec![
+        "inner : { a : Int, b : List String }".to_string(),
+        "pick : Maybe ( Int, String )".to_string(),
+        "fn : Int -> String".to_string(),
+    ];
+    let mut aarms = Vec::new();
+    for k in 0..12 {
+        amf.push(format!("f{k} : String"));
+        aarms.push(format!(
+            "        Set{k} s ->\n            ( {{ model | f{k} = s ++ model.f{k} }}, model.f{k} )\n"
+        ));
+    }
+    aarms.push(
+        "        Inner n ->\n            ( { model | inner = { a = n, b = [] } }, \"i\" )\n"
+            .to_string(),
+    );
+    aarms.push("        Bad ->\n            ( { model | f0 = 1 }, \"b\" )\n".to_string());
+    let actors: Vec<String> = (0..12).map(|k| format!("Set{k} String")).collect();
+    let afields: Vec<String> = (0..12).map(|k| format!("f{k} = \"\"")).collect();
+    let closes = format!(
+        "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.String as String\nimport Std.Log exposing (println)\n\n\
+         type alias Model =\n    {{ {}\n    }}\n\n\
+         type alias Box a =\n    {{ item : a, label : String }}\n\n\
+         type Msg\n    = {}\n    | Inner Int\n    | Bad\n\n\
+         update : Msg -> Model -> ( Model, String )\n\
+         update msg model =\n    case msg of\n{}\n\
+         m0 : Model\nm0 =\n    {{ inner = {{ a = 0, b = [] }}, pick = Nothing, fn = String.fromInt, {} }}\n\n\
+         plain =\n    {{ x = 1, y = \"y\" }}\n\n\
+         fromAnnotated =\n    ( {{ m0 | f0 = \"a\" }}, {{ m0 | f1 = \"b\" }}, {{ m0 | f2 = \"c\" }} )\n\n\
+         fromPlain =\n    ( {{ plain | x = 2 }}, {{ plain | y = \"z\" }} )\n\n\
+         step model =\n    ( {{ model | f0 = \"x\" }}, {{ model | f1 = \"y\" }}, {{ model | f2 = model.f3 }} )\n\n\
+         useStep =\n    step m0\n\n\
+         boxed : Box Int -> Box Int\nboxed b =\n    {{ {{ b | item = 1 }} | label = \"l\" }}\n\n\
+         main =\n    println \"x\"\n",
+        amf.join("\n    , "),
+        actors.join("\n    | "),
+        aarms.join("\n"),
+        afields.join(", ")
+    );
     vec![
         ("codec_chain".into(), codec),
         ("model_app".into(), model),
+        ("record_closes".into(), closes),
         ("record_errors".into(), errors.to_string()),
         ("dict_keys".into(), dict_keys.to_string()),
     ]
@@ -563,5 +609,35 @@ fn world_is_the_same_with_and_without_fast_paths() {
         }
         assert!(programs.len() > 50);
         assert!(bad.is_empty(), "worlds differ: {bad:?}");
+    });
+}
+
+/// The D2 / #166 close is skipped when the update's base is already the
+/// declared record, and the skip changes nothing a caller can observe (the
+/// differential above runs the same program with the skip off).
+#[test]
+fn ground_close_is_skipped_and_changes_nothing() {
+    on_big_stack(|| {
+        let src = generated()
+            .into_iter()
+            .find(|(l, _)| l == "record_closes")
+            .unwrap()
+            .1;
+        let (db, ids) = program(vec![parse_named(&src)]);
+        let world = World::build(&db);
+        let resolved = db.resolve(ids[0]);
+        let mut skips = Vec::new();
+        for (def, body) in resolved.bodies.iter() {
+            let (fast, fast_sum) = drive(&world, &db, *def, body, Mode::Lower, false);
+            let n = fast.ground_close_skips;
+            let (slow, slow_sum) = drive(&world, &db, *def, body, Mode::Lower, true);
+            assert_eq!(slow.ground_close_skips, 0);
+            assert_eq!(fast_sum, slow_sum, "{def:?}: the skip changed the result");
+            skips.push(n);
+        }
+        // `update`'s twelve string arms and `step`'s later updates close a
+        // base that is already the full record.
+        let total: usize = skips.iter().sum();
+        assert!(total >= 12, "closes skipped: {skips:?}");
     });
 }

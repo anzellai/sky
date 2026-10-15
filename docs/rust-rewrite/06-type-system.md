@@ -218,7 +218,16 @@ fn occurs(&mut self, target: TyVarId) -> bool {
 
 As built (`UnionFind::occurs`, `rust/crates/ty/src/unify.rs`), the walk runs on
 an explicit stack and reads each root's children in place: it copies no record
-field map per node, and its depth does not depend on the thread's stack.
+field map per node, and its depth does not depend on the thread's stack. The
+visited set is not a fresh hash set per call: it is a mark per variable on the
+`UnionFind`, valid for one call through an epoch counter, and the stack is
+reused too, so a check allocates nothing.
+
+**Binding a variable moves, it does not copy.** In `unify_vars` the `Error` and
+`Flex` cases read the two roots by kind only, and the bound side's content
+moves into the merged root (`union` overwrites both slots). Only the rigid,
+bounded and structured cases take owned copies, because `unify_flat` and
+`satisfy` may read either root while they run.
 
 **A field access or a record update on a closed record does not unify the
 whole record.** `model.f` and `{ model | f = x }` unify the base with a fresh
@@ -235,13 +244,29 @@ access costs O(log fields) instead of O(size of the record). The
 and off and compares errors, variables allocated, every recorded type, the
 obligations and the whole `World`.
 
+**The #166 / D2 close is skipped when it is a no-op.** On the lowering path an
+update of a record param (or of a record def) closes its row by unifying the
+base with a fresh instance of the declared record. Once the base IS that record
+(every node reachable along the declared type is a structure of the same shape:
+identical nominal names, closed records with the same field names, no type
+variable and no `Error` in the declared type), that unify only links fresh
+nodes under the base's nodes and re-sets each root to an equal content.
+`Infer::skip_ground_close` checks this with one read-only walk
+(`UnionFind::ground_instance_nodes`) and then only reserves the same number of
+variables, so every later id, and every `t<id>` name, is unchanged. The other
+effect of the skipped unify, a rank rising from 0 to 1 on a structured class,
+only decides which member of a non-`Flex` class is its root; a structured class
+never becomes `Flex` again and only `Flex` / `FlexSuper` roots are printed. The
+`infer_readback_tests` differential runs every corpus def with the skip on and
+off (`ground_close_is_skipped_and_changes_nothing` pins that it fires).
+
 **Still quadratic (known):** binding an instantiated scheme variable to a large
 structure walks the structure for the occurs check (a `Codec.field` step binds
 `r` to the record and `b` to the rest of the constructor arrow), and the
-lowering path's #166 / D2 close of an update on an annotated record param
-instantiates and unifies the declared record once per update. The ignored test
+skipped close still walks the declared record once per update (no allocation
+and no unify, but O(size)). The ignored test
 `unifier_work_is_linear_in_record_size` (`skydb/tests/typed_table_growth.rs`)
-measures both.
+measures the unifier's part.
 
 ## Go-FFI references — typed on the `Result` wrapper (v0.27.0)
 

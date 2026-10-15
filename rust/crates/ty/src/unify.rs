@@ -1032,6 +1032,77 @@ impl UnionFind {
         self.slots[child.0 as usize] = Slot::Link(root);
     }
 
+    /// The number of nodes of `ty` when `v`'s graph, unfolded along `ty`, IS
+    /// `ty`: at every node of `ty` the class there is a structure with the
+    /// same shape (an identical nominal name, a closed record with the same
+    /// field names, a tuple of the same width, a function, unit). `None` when
+    /// any node differs, or when `ty` holds a type variable, an `Error` or an
+    /// open record — the cases where unifying a fresh instance of `ty` with
+    /// `v` could bind, rename, widen or allocate beyond one node per node of
+    /// `ty`. The walk only reads (and compresses paths).
+    ///
+    /// A match is finite, as `ty` is: every leaf of `ty` matches only a class
+    /// with no children, so a cyclic graph never matches.
+    pub(crate) fn ground_instance_nodes(&mut self, v: TyVarId, ty: &crate::Ty) -> Option<usize> {
+        use crate::Ty;
+        let mut nodes = 0usize;
+        let mut stack: Vec<(TyVarId, &Ty)> = vec![(v, ty)];
+        while let Some((x, t)) = stack.pop() {
+            nodes += 1;
+            let r = self.find(x);
+            let Slot::Root {
+                content: Content::Structure(ft),
+                ..
+            } = &self.slots[r.0 as usize]
+            else {
+                return None;
+            };
+            match (ft, t) {
+                (FlatTy::App(n, args), Ty::App(m, targs))
+                    if n == m && args.len() == targs.len() =>
+                {
+                    stack.extend(args.iter().copied().zip(targs.iter()));
+                }
+                (FlatTy::Fun(a, b), Ty::Fun(ta, tb)) => {
+                    stack.push((*a, &**ta));
+                    stack.push((*b, &**tb));
+                }
+                (FlatTy::Tuple(xs), Ty::Tuple(ts)) if xs.len() == ts.len() => {
+                    stack.extend(xs.iter().copied().zip(ts.iter()));
+                }
+                (FlatTy::Unit, Ty::Unit) => {}
+                (FlatTy::Record(fs, None), Ty::Record(tfs, None)) if fs.len() == tfs.len() => {
+                    // A `Ty` record lists its fields in declaration order.
+                    // Every name must be a field of the class, once: with
+                    // equal lengths that makes the two name sets equal. (A
+                    // repeated name would collapse in `ty_to_var`'s map and
+                    // the unify would then clash, so it never matches.)
+                    if !tfs.windows(2).all(|w| w[0].0 < w[1].0) {
+                        let mut names: Vec<&Name> = tfs.iter().map(|(n, _)| n).collect();
+                        names.sort_unstable();
+                        if names.windows(2).any(|w| w[0] == w[1]) {
+                            return None;
+                        }
+                    }
+                    for (tk, tt) in tfs {
+                        stack.push((*fs.get(tk)?, tt));
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(nodes)
+    }
+
+    /// Allocate `n` variables nothing refers to: they keep every later id
+    /// where an elided allocation of `n` fresh nodes would have put it.
+    pub(crate) fn reserve_unreachable(&mut self, n: usize) {
+        self.slots.reserve(n);
+        for _ in 0..n {
+            self.fresh_flex();
+        }
+    }
+
     /// `unify_records` (`Unify.hs:468`) — the closed/open discipline.
     fn unify_records(
         &mut self,
