@@ -9630,6 +9630,123 @@ fn whole_model_branches_share_one_model_wire_codec() {
         let _ = std::fs::remove_dir_all(&proj);
         return;
     }
+
+    // The CLIENT leg encodes the request the server reads. Build the request
+    // expression each `rpcHold` in the generated frontend writes (the
+    // `spaWholeModel_` embed for Tag1/Tag2/SetScale), encode it with the
+    // generated Shared codec in a native probe, and compare the bytes with the
+    // flat JSON the previous compiler's client sent.
+    let client_cases = [
+        ("Save2", r#"{"log":"z","n":2,"scale":3}"#),
+        ("Tag1", r#"{"log":"","n":2,"scale":3,"k":5}"#),
+        ("Tag2", r#"{"log":"","n":2,"scale":3,"k":5}"#),
+        ("Label", r#"{"n":2,"s":"a"}"#),
+        (
+            "SetScale",
+            r#"{"log":"","n":2,"scale":3,"spaMsgArg_scale":7}"#,
+        ),
+    ];
+    let mut encodes = Vec::new();
+    for (msg, _) in &client_cases {
+        let call = format!("\"/_rpc/{msg}\" ");
+        let at = front
+            .find(&call)
+            .unwrap_or_else(|| panic!("the frontend posts {msg}:\n{front}"));
+        let rest = &front[at + call.len()..];
+        let end = rest
+            .find(&format!(" Applied{msg}"))
+            .unwrap_or_else(|| panic!("the {msg} request ends at Applied{msg}:\n{rest}"));
+        let codec = {
+            let mut c = msg.chars();
+            let first = c.next().unwrap().to_ascii_lowercase();
+            format!("{first}{}ReqCodec", c.as_str())
+        };
+        // Save2 sends a model whose `log` is "z"; the rest send log "".
+        let log = if *msg == "Save2" { "z" } else { "" };
+        encodes.push(format!(
+            "enc{msg} : String\nenc{msg} =\n    let\n        model =\n            {{ log = \"{log}\", n = 2, scale = 3 }}\n\n        k =\n            5\n\n        s =\n            \"a\"\n\n        scale =\n            7\n    in\n    Codec.toJson {codec} {}\n\n\n",
+            &rest[..end]
+        ));
+    }
+    let probe_dir = proj.join("client-probe");
+    std::fs::create_dir_all(probe_dir.join("src")).unwrap();
+    std::fs::write(
+        probe_dir.join("sky.toml"),
+        "name = \"client-probe\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::copy(
+        out.join("frontend/src/Shared.sky"),
+        probe_dir.join("src/Shared.sky"),
+    )
+    .unwrap();
+    let names: Vec<String> = client_cases
+        .iter()
+        .map(|(msg, _)| format!("enc{msg}"))
+        .collect();
+    std::fs::write(
+        probe_dir.join("src/Main.sky"),
+        format!(
+            "module Main exposing (main)\n\n\
+             import Sky.Core.Prelude exposing (..)\n\
+             import Sky.Core.String as String\n\
+             import Std.Codec as Codec\n\
+             import Std.Log exposing (println)\n\
+             import Shared exposing (..)\n\n\n\
+             {}\
+             main =\n    println (String.join \"\\n\" [ {} ])\n",
+            encodes.join(""),
+            names.join(", ")
+        ),
+    )
+    .unwrap();
+    let probe = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(&probe_dir)
+        .output()
+        .expect("run sky build (client probe)");
+    assert!(
+        probe.status.success(),
+        "the client-encode probe must build:\n{}{}\n{}",
+        String::from_utf8_lossy(&probe.stdout),
+        String::from_utf8_lossy(&probe.stderr),
+        std::fs::read_to_string(probe_dir.join("src/Main.sky")).unwrap_or_default()
+    );
+    let ran = Command::new(probe_dir.join("sky-out/app"))
+        .current_dir(&probe_dir)
+        .output()
+        .expect("run the client-encode probe");
+    let encoded = String::from_utf8_lossy(&ran.stdout).to_string();
+    let lines: Vec<&str> = encoded.lines().collect();
+    assert_eq!(
+        lines.len(),
+        client_cases.len(),
+        "one encoded request per case:\n{encoded}"
+    );
+    for ((msg, want), got) in client_cases.iter().zip(lines) {
+        assert_eq!(
+            got, *want,
+            "the client's {msg} request must encode to the flat JSON"
+        );
+    }
+
+    // The frontend leg (wasm) compiles the `spaWholeModel_ = model` requests.
+    let frontend = Command::new(SKY)
+        .args(["build", "--target", "web", "src/Main.sky"])
+        .current_dir(out.join("frontend"))
+        .output()
+        .expect("run sky build --target web (frontend)");
+    assert!(
+        frontend.status.success(),
+        "the whole-model wire frontend must build to wasm:\n{}{}",
+        String::from_utf8_lossy(&frontend.stdout),
+        String::from_utf8_lossy(&frontend.stderr)
+    );
+    assert!(
+        dist_has_wasm(&out.join("frontend/dist")),
+        "the frontend build must stage a content-hashed main.<hash>.wasm"
+    );
+
     let backend_dir = out.join("backend");
     let built = Command::new(SKY)
         .args(["build", "src/Main.sky"])
