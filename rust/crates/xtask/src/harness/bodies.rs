@@ -3774,3 +3774,73 @@ mod corpus_count_sync {
         );
     }
 }
+
+// ---- build speed: counted guards -------------------------------------------
+
+/// Run ONE named `#[test]` of a `sky` integration suite, exactly, and require
+/// libtest to report exactly one passed test. A filter that matches nothing
+/// exits 0 having run nothing, so the exit status alone cannot be the verdict.
+fn one_sky_test(ctx: &GateCtx, suite: &str, test: &str) -> GateOutcome {
+    let src = ctx
+        .repo_root
+        .join("rust/crates/sky/tests")
+        .join(format!("{suite}.rs"));
+    let Ok(text) = std::fs::read_to_string(&src) else {
+        return GateOutcome::new(false, 0, format!("cannot read {}", src.display()));
+    };
+    if !text.contains(&format!("fn {test}()")) {
+        return GateOutcome::new(false, 0, format!("{} has no `fn {test}()`", src.display()));
+    }
+    // `CARGO_TARGET_DIR` is unset deliberately, as in `cli_verbs`.
+    let out = Command::new("cargo")
+        .args(["test", "-p", "sky", "--test", suite, "--", "--exact", test])
+        .current_dir(ctx.repo_root.join("rust"))
+        .env_remove("CARGO_TARGET_DIR")
+        .stdin(std::process::Stdio::null())
+        .output();
+    match out {
+        Err(e) => GateOutcome::new(false, 0, format!("could not run cargo test: {e}")),
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let ran_one = stdout.contains("test result: ok. 1 passed;");
+            if o.status.success() && ran_one {
+                GateOutcome::new(true, 1, format!("{suite}::{test} green"))
+            } else {
+                GateOutcome::new(
+                    false,
+                    1,
+                    format!(
+                        "{suite}::{test} failed or did not run (exit {:?}):\n{}\n{}",
+                        o.status.code(),
+                        super::layer2::tail(&stdout, 25),
+                        super::layer2::tail(&String::from_utf8_lossy(&o.stderr), 15)
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/// One assertion: the benchmark app at N and 2N grows the split's generated
+/// Sky and the emitted Go by less than 2.3x (`build_growth_flow.rs`).
+pub const BUILD_GROWTH_LINEAR_EXPECTED: u64 = 1;
+
+pub fn build_growth_linear(ctx: &GateCtx) -> GateOutcome {
+    one_sky_test(
+        ctx,
+        "build_growth_flow",
+        "generated_sky_and_emitted_go_grow_linearly",
+    )
+}
+
+/// One assertion: a copy of a built project in a new directory compiles zero
+/// Go packages (`go_build_cache_flow.rs`).
+pub const BUILD_NEW_DIR_EXPECTED: u64 = 1;
+
+pub fn build_new_dir_compiles_nothing(ctx: &GateCtx) -> GateOutcome {
+    one_sky_test(
+        ctx,
+        "go_build_cache_flow",
+        "a_copy_in_a_new_directory_compiles_nothing",
+    )
+}

@@ -694,6 +694,56 @@ pub static GATES: &[Gate] = &[
         }]),
         body: bodies::cli_verbs,
     },
+    // ---- build speed: counted guards (wall time is the `build-perf` CI job) ---
+    Gate {
+        name: "build-growth-linear",
+        tier: Tier::T1,
+        platforms: ALL_PLATFORMS,
+        // ~10 s of split + emit (no `go build`); the ceiling is for the
+        // `cargo test` compile on a cold CI target dir.
+        budget_s: 600,
+        expected: bodies::BUILD_GROWTH_LINEAR_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "the build-speed benchmark app at N and 2N fields grows generated Sky and emitted Go linearly",
+        // The mutation brings back the shape the wire dedupe removed: every
+        // whole-model arm with Msg args declares its own copy of the Model's
+        // field list. Generated Sky then grows as arms x fields (measured
+        // 2.54x from N=80 to N=160, against 1.80x without it).
+        mutations: Mutations::new(&[Mutation {
+            id: "build-growth.one-model-wire-per-arm",
+            description: "declare a new SpaModelWire for every whole-model arm instead \
+                          of reusing the one for the same Model shape; the split's \
+                          generated lines must exceed the linear bound",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/project/src/spa_split.rs",
+                from: "        if let Some(found) = self.models.get(&key) {\n            return found.clone();\n        }\n        let n = self.models.len();",
+                to: "        let n = self.model_decls.len();",
+            },
+        }]),
+        body: bodies::build_growth_linear,
+    },
+    Gate {
+        name: "build-new-dir-compiles-nothing",
+        tier: Tier::T2,
+        platforms: UNIX,
+        // Two `go build`s of a small Sky.Live app, the second a cache hit,
+        // plus the `cargo test` compile.
+        budget_s: 900,
+        expected: bodies::BUILD_NEW_DIR_EXPECTED,
+        expect: Expect::Falsifiable,
+        summary: "a copy of a built project in a new directory compiles zero Go packages",
+        mutations: Mutations::new(&[Mutation {
+            id: "build-new-dir.no-trimpath",
+            description: "build without -trimpath: Go keys each package on its absolute \
+                          directory again, and the copy recompiles every package",
+            kind: MutationKind::ReplaceOnce {
+                path: "rust/crates/project/src/go_cmd.rs",
+                from: "cmd.current_dir(self.dir).args(self.args(trimpath()));",
+                to: "cmd.current_dir(self.dir).args(self.args(false));",
+            },
+        }]),
+        body: bodies::build_new_dir_compiles_nothing,
+    },
     Gate {
         name: "apps-ledger",
         tier: Tier::T1,

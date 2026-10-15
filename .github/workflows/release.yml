@@ -716,7 +716,7 @@ jobs:
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 125
+    timeout-minutes: 135
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -728,7 +728,7 @@ jobs:
         working-directory: rust
         env:
           SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only apps-bundled,cli-verbs,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,config-matrix
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only apps-bundled,cli-verbs,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,config-matrix,build-growth-linear
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -835,7 +835,7 @@ jobs:
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 70
+    timeout-minutes: 85
     env:
       GO_CACHE_BUDGET_MB: '4096'
     steps:
@@ -846,7 +846,7 @@ jobs:
 
       - name: Gate harness (T2 — isolation / witness / spa-diff-fuzz / fieldbook) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-isolation,corpus-witness,spa-diff-fuzz,apps-fieldbook --require-proofs
+        run: cargo run --release --locked -q -p xtask -- harness --tier t2 --only corpus-isolation,corpus-witness,spa-diff-fuzz,apps-fieldbook,build-new-dir-compiles-nothing --require-proofs
 
       - name: Bound the Go caches before save
         if: always()
@@ -997,7 +997,7 @@ jobs:
   # only place they are gated — they ride here.
   gate-falsifiers-3:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/gate-setup
@@ -1006,7 +1006,7 @@ jobs:
           postgres: 'true'
       - name: Falsifier verification (group 3 — Layer-2 apps)
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-verify,apps-bundled,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-verify,apps-bundled,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,build-growth-linear
 
       # Denominator + ledger + config-migration ratchets. These do not test the
       # compiler; they assert that the coverage + config-migration claims shipped
@@ -1067,7 +1067,7 @@ jobs:
   # service (the same container and DSN as gate-app).
   gate-falsifiers-5:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     services:
       postgres:
         image: postgres:16
@@ -1093,7 +1093,7 @@ jobs:
         env:
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
           DATABASE_URL: postgres://sky:sky@localhost:5432/sky?sslmode=disable
-        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only spa-diff-fuzz,corpus-isolation,corpus-witness,apps-fieldbook,apps-ledger-postgres,apps-dispatch-postgres,apps-fleet
+        run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only spa-diff-fuzz,corpus-isolation,corpus-witness,apps-fieldbook,apps-ledger-postgres,apps-dispatch-postgres,apps-fleet,build-new-dir-compiles-nothing
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
