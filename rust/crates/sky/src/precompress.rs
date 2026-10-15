@@ -129,12 +129,7 @@ pub fn compress(file: &Path, tool: &Tool, cache: Option<&Path>) -> Outcome {
         // half-written entry. The name is unique to this call (process, and a
         // counter across this process's threads), so two compressions running
         // at once never share it.
-        let tmp = dir.join(format!(
-            ".tmp-{}-{}-{}",
-            std::process::id(),
-            TMP_SEQ.fetch_add(1, Ordering::Relaxed),
-            tool.ext
-        ));
+        let tmp = store_tmp_name(dir, tool);
         if std::fs::copy(&out, &tmp).is_ok() && std::fs::rename(&tmp, c).is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
@@ -145,6 +140,17 @@ pub fn compress(file: &Path, tool: &Tool, cache: Option<&Path>) -> Outcome {
 
 /// Distinguishes the temporary store names of one process's calls.
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// A temporary name in `dir` for one store, unique to this call: the process
+/// and a counter across its threads.
+fn store_tmp_name(dir: &Path, tool: &Tool) -> PathBuf {
+    dir.join(format!(
+        ".tmp-{}-{}-{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+        tool.ext
+    ))
+}
 
 /// Whether the cached `entry` decompresses (with `tool`) to exactly `input`.
 /// Any failure to check is a "no": the caller compresses again.
@@ -296,45 +302,25 @@ mod tests {
     /// Regression (B1): several assets compressed at once by one process. The
     /// temporary store name was `.tmp-<pid>-<ext>`, shared by every thread of
     /// the process, so one thread could rename another's output into its own
-    /// cache key. Every stored entry must be its own input's result.
+    /// cache key. Deterministic: every store's temporary name is its own,
+    /// for the same tool, in the same process, on any thread. (Whether two
+    /// threads actually raced depended on timing, so the test checks the
+    /// cause, not a race; `a_cache_entry_that_is_not_the_inputs_result_is_replaced`
+    /// covers an entry that was poisoned before the fix.)
     #[test]
-    fn files_compressed_at_once_each_store_their_own_result() {
-        let d = scratch("parallel");
-        let (tool, _log) = fake_tool(&d);
-        let cache = d.join("cache");
-        for round in 0..3u8 {
-            let files: Vec<PathBuf> = (0..16u8)
-                .map(|i| {
-                    let f = d.join(format!("r{round}-f{i}.wasm"));
-                    std::fs::write(&f, vec![round.wrapping_mul(31).wrapping_add(i); 2 << 20])
-                        .unwrap();
-                    f
-                })
+    fn every_store_has_its_own_temporary_name() {
+        let dir = Path::new("/cache");
+        let names: Vec<PathBuf> = std::thread::scope(|s| {
+            let hs: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| store_tmp_name(dir, &BROTLI)))
                 .collect();
-            let start = std::sync::Barrier::new(files.len());
-            std::thread::scope(|s| {
-                for f in &files {
-                    let (start, tool, cache) = (&start, &tool, &cache);
-                    s.spawn(move || {
-                        start.wait();
-                        compress(f, tool, Some(cache))
-                    });
-                }
-            });
-            for f in &files {
-                let input = std::fs::read(f).unwrap();
-                let entry = cache.join(cache_key(&input, &tool));
-                if let Ok(stored) = std::fs::read(&entry) {
-                    assert!(
-                        stored == input,
-                        "the cache entry of {} holds another file's output",
-                        f.display()
-                    );
-                }
-            }
-            prune(&cache, 0);
-        }
-        let _ = std::fs::remove_dir_all(&d);
+            hs.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "{names:?}");
+        assert_ne!(store_tmp_name(dir, &GZIP), store_tmp_name(dir, &GZIP));
     }
 
     /// A cached entry is used only when it decompresses to the input. A wrong

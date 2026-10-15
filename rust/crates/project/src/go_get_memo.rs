@@ -9,9 +9,11 @@
 //!
 //! When every fetched module is pinned to an EXACT version (a full semver tag
 //! or pseudo-version), the `go.mod` and `go.sum` the `go get`s produce are a
-//! function of their inputs: the `go.mod` before the first `go get`, the
-//! ordered list of `module@version`s, and the Go toolchain and the settings
-//! that change resolution. So the result is stored under a hash of exactly
+//! function of their inputs: the `go.mod` and `go.sum` before the first `go
+//! get`, the ordered list of `module@version`s, and the Go toolchain and the
+//! settings that change resolution. (`go get` keeps the starting `go.sum`'s
+//! lines, so a different starting `go.sum` with the same `go.mod` gives a
+//! different result.) So the result is stored under a hash of exactly
 //! those inputs ([`key`]) in `sky-out/.sky-gomod/<key>/` and copied back on
 //! the next build instead of running `go get`.
 //!
@@ -60,10 +62,11 @@ pub fn exact_version(spec: &str) -> bool {
             .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// The memo key: the starting `go.mod`, the ordered `module@version` list, the
-/// Go version and the resolution settings.
+/// The memo key: the starting `go.mod` and `go.sum`, the ordered
+/// `module@version` list, the Go version and the resolution settings.
 pub fn key(
     go_mod: &str,
+    go_sum: &str,
     pins: &[(String, String)],
     go_version: &str,
     env: &[(&str, String)],
@@ -75,6 +78,7 @@ pub fn key(
         h.update(v.as_bytes());
     };
     put("go.mod", go_mod);
+    put("go.sum", go_sum);
     for (m, v) in pins {
         put("pin", &format!("{m}@{v}"));
     }
@@ -214,13 +218,18 @@ mod tests {
     fn the_key_covers_every_input() {
         let env = vec![("GOFLAGS", String::new()), ("GOTOOLCHAIN", String::new())];
         let p = pins(&[("a.io/x", "v1.0.0"), ("b.io/y", "v2.0.0")]);
-        let k = key("module m\n", &p, "go1.26.1", &env);
-        assert_eq!(k, key("module m\n", &p, "go1.26.1", &env), "deterministic");
-        assert_ne!(k, key("module m\nrequire z v1\n", &p, "go1.26.1", &env));
+        let k = key("module m\n", "", &p, "go1.26.1", &env);
+        assert_eq!(
+            k,
+            key("module m\n", "", &p, "go1.26.1", &env),
+            "deterministic"
+        );
+        assert_ne!(k, key("module m\nrequire z v1\n", "", &p, "go1.26.1", &env));
         assert_ne!(
             k,
             key(
                 "module m\n",
+                "",
                 &pins(&[("a.io/x", "v1.0.1"), ("b.io/y", "v2.0.0")]),
                 "go1.26.1",
                 &env
@@ -230,18 +239,30 @@ mod tests {
             k,
             key(
                 "module m\n",
+                "",
                 &pins(&[("b.io/y", "v2.0.0"), ("a.io/x", "v1.0.0")]),
                 "go1.26.1",
                 &env
             ),
             "order"
         );
-        assert_ne!(k, key("module m\n", &p, "go1.26.2", &env));
+        assert_ne!(k, key("module m\n", "", &p, "go1.26.2", &env));
+        // S5: the same go.mod with another starting go.sum is another result.
+        assert_ne!(
+            k,
+            key(
+                "module m\n",
+                "a.io/x v1.0.0 h1:abc=\n",
+                &p,
+                "go1.26.1",
+                &env
+            )
+        );
         let env2 = vec![
             ("GOFLAGS", "-mod=vendor".to_string()),
             ("GOTOOLCHAIN", String::new()),
         ];
-        assert_ne!(k, key("module m\n", &p, "go1.26.1", &env2));
+        assert_ne!(k, key("module m\n", "", &p, "go1.26.1", &env2));
     }
 
     #[test]

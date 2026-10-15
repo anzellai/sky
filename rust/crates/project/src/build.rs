@@ -1138,12 +1138,20 @@ fn build_inner(
     // manual cross-compile, a Dockerfile, a custom CI. Resolved at the user's
     // project root (or pinned there by the parent `sky` for a generated split /
     // Std.App leg); stable across no-change rebuilds (build_stamp.rs).
-    let stamp = crate::build_stamp::resolve_build_stamp(&opts.example_dir);
-    // A Sky.Spa SSR backend leg that waits for the frontend's wasm name keeps
-    // the name its last build linked until the new one arrives, so a build
-    // whose frontend did not change links nothing new (spa_wasm_handoff.rs).
-    let linked_wasm = crate::spa_wasm_handoff::get()
-        .and_then(|_| crate::build_stamp::linked_spa_wasm_name(&out_dir));
+    //
+    // A wasm client links a constant stamp instead (build_stamp::client_stamp):
+    // nothing under GOOS=js reads it, and a per-commit value would change the
+    // wasm bytes, and so its content-hashed name, on every commit.
+    let stamp = if opts.wasm {
+        crate::build_stamp::client_stamp()
+    } else {
+        crate::build_stamp::resolve_build_stamp(&opts.example_dir)
+    };
+    // A Sky.Spa SSR backend keeps the wasm name its last build linked: until
+    // the new one arrives when its parent hands one over (spa_wasm_handoff.rs),
+    // so a build whose frontend did not change links nothing new, and for good
+    // when it is built on its own (`cd .split/backend && sky build`).
+    let linked_wasm = kept_spa_wasm_name(&out_dir);
     if let Err(e) =
         crate::build_stamp::write_go_stamp_with(&out_dir, &stamp, linked_wasm.as_deref())
     {
@@ -1204,7 +1212,6 @@ fn build_inner(
             Ok(()) => report.go_build_ok = true,
             Err(e) => report.go_build_stderr = e,
         }
-        crate::go_jobs::record_peaks(&out_dir);
         return report;
     }
     let t_go = crate::timings::phase("go build (native)");
@@ -1216,7 +1223,6 @@ fn build_inner(
         }
         None => run_go_build_detecting_cgo(&out_dir, &source, &bin_name, jobs_arg),
     };
-    crate::go_jobs::record_peaks(&out_dir);
     match go_result {
         Ok(outcome) => {
             report.go_build_ok = outcome.ok;
@@ -1283,7 +1289,7 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     // `-debug-actiongraph` tells `go_jobs::record_peaks` which packages
     // compiled; it is not part of any cache key.
     let graph = crate::go_jobs::action_graph_flag(out_dir);
-    let mut cmd = crate::go_cmd::GoBuild {
+    let cmd = crate::go_cmd::GoBuild {
         dir: out_dir,
         target: crate::go_cmd::Target::Wasm,
         jobs,
@@ -1294,11 +1300,18 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
-    let out = cmd
-        .output()
+    let out = run_bounded(cmd, GO_BUILD_TIMEOUT)
         .map_err(|e| format!("failed to run `go build` (GOOS=js GOARCH=wasm): {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    crate::go_jobs::record_peaks(out_dir, out.peak_rss);
+    if out.timed_out {
+        return Err(format!(
+            "go build (GOOS=js GOARCH=wasm) exceeded {}s and was killed — the Go toolchain hung. Partial stderr:\n{}",
+            GO_BUILD_TIMEOUT.as_secs(),
+            out.stderr.trim_end()
+        ));
+    }
+    if !out.status.is_some_and(|s| s.success()) {
+        return Err(out.stderr);
     }
     let goroot = Command::new("go")
         .args(["env", "GOROOT"])
@@ -1326,6 +1339,14 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     std::fs::copy(src, &dest)
         .map_err(|e| format!("copy wasm_exec.js -> {}: {e}", dest.display()))?;
     Ok(())
+}
+
+/// The frontend's wasm name an SSR backend's build writes into its stamp
+/// package before any new name arrives: the one its last build linked. Kept
+/// whether or not a parent hands a new one over, so a backend built on its
+/// own (`cd .split/backend && sky build`) still names its frontend's wasm.
+fn kept_spa_wasm_name(out_dir: &Path) -> Option<String> {
+    crate::build_stamp::linked_spa_wasm_name(out_dir)
 }
 
 /// The native build of a Sky.Spa SSR backend leg that runs beside its frontend
@@ -1463,7 +1484,12 @@ fn run_go_build_once(
     .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
-    match run_bounded(cmd, GO_BUILD_TIMEOUT) {
+    let ran = run_bounded(cmd, GO_BUILD_TIMEOUT);
+    // Each `go build` records its own peak with its own action graph
+    // (go_jobs::record_peaks): the cgo retry and a Sky.Spa SSR backend's
+    // second build never inherit the first one's.
+    crate::go_jobs::record_peaks(out_dir, ran.as_ref().ok().and_then(|b| b.peak_rss));
+    match ran {
         Ok(b) if b.timed_out => Err(format!(
             "go build (CGO_ENABLED={cgo}) exceeded {}s and was killed — the Go toolchain hung (stuck linker / module fetch). Partial stderr:\n{}",
             GO_BUILD_TIMEOUT.as_secs(),
@@ -1484,6 +1510,9 @@ struct BoundedOutcome {
     status: Option<std::process::ExitStatus>,
     stderr: String,
     timed_out: bool,
+    /// The child's own peak resident set, its descendants included
+    /// (`memory::wait_child`); `None` where the platform does not say.
+    peak_rss: Option<u64>,
 }
 
 /// Spawn `cmd`, drain its stderr on a background thread, and wait up to
@@ -1491,7 +1520,11 @@ struct BoundedOutcome {
 /// is piped-and-dropped so a chatty child can't block on a full pipe. Returns
 /// the exit status (or `timed_out`) plus captured stderr.
 fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOutcome> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // No stdin: a Sky.Spa SSR backend leg reads its wasm-name handoff from its
+    // own stdin (spa_wasm_handoff.rs), and no Go tool reads one.
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -1500,26 +1533,30 @@ fn run_bounded(mut cmd: Command, timeout: Duration) -> std::io::Result<BoundedOu
 
     let deadline = Instant::now() + timeout;
     loop {
-        match child.try_wait()? {
-            Some(status) => {
+        match crate::memory::try_wait_child(&mut child)? {
+            Some(exit) => {
                 let _ = out_h.join();
                 let stderr = err_h.join().unwrap_or_default();
                 return Ok(BoundedOutcome {
-                    status: Some(status),
+                    status: Some(exit.status),
                     stderr,
                     timed_out: false,
+                    peak_rss: exit.peak_rss,
                 });
             }
             None => {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
-                    let _ = child.wait();
+                    let peak_rss = crate::memory::wait_child(&mut child)
+                        .ok()
+                        .and_then(|e| e.peak_rss);
                     let _ = out_h.join();
                     let stderr = err_h.join().unwrap_or_default();
                     return Ok(BoundedOutcome {
                         status: None,
                         stderr,
                         timed_out: true,
+                        peak_rss,
                     });
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -2624,7 +2661,17 @@ fn inject_ffi_deps(
     let memo_key = (all_exact && local.is_empty())
         .then(crate::go_get_memo::go_version)
         .flatten()
-        .map(|v| crate::go_get_memo::key(&existing, &pins, &v, &crate::go_get_memo::env_inputs()));
+        .map(|v| {
+            // The starting go.sum is an input too: `go get` keeps its lines.
+            let sum = std::fs::read_to_string(out_dir.join("go.sum")).unwrap_or_default();
+            crate::go_get_memo::key(
+                &existing,
+                &sum,
+                &pins,
+                &v,
+                &crate::go_get_memo::env_inputs(),
+            )
+        });
     if let Some(k) = &memo_key {
         if crate::go_get_memo::restore(out_dir, k) {
             crate::timings::note("go get: skipped (the exact pins' go.mod/go.sum are known)");
@@ -4826,5 +4873,51 @@ mod ffi_trust_tests {
             n += 1;
         }
         assert!(n >= 17, "found only {n} generator kernel bindings");
+    }
+}
+
+#[cfg(test)]
+mod go_build_child_tests {
+    //! Each `go build` child measured on its own; an SSR backend's wasm name kept.
+    use super::*;
+
+    /// S1: `run_bounded` reports the peak of ITS child. Before, the peak came
+    /// from `getrusage(RUSAGE_CHILDREN)` after the build, the largest child the
+    /// process had ever waited for, so a second, small `go build` reported the
+    /// first one's peak.
+    #[test]
+    #[cfg(unix)]
+    fn each_bounded_child_reports_its_own_peak() {
+        let dd = |mb: u64| {
+            let mut c = Command::new("dd");
+            c.args([
+                "if=/dev/zero",
+                "of=/dev/null",
+                &format!("bs={}", mb << 20),
+                "count=1",
+            ]);
+            c
+        };
+        let big = run_bounded(dd(300), Duration::from_secs(60)).unwrap();
+        let small = run_bounded(dd(1), Duration::from_secs(60)).unwrap();
+        assert!(big.status.is_some_and(|s| s.success()));
+        assert!(big.peak_rss.unwrap() >= 300 << 20, "{:?}", big.peak_rss);
+        let small = small.peak_rss.unwrap();
+        assert!(small < 100 << 20, "the second child reported {small} bytes");
+    }
+
+    /// N3: a backend built on its own (`cd .split/backend && sky build`, no
+    /// parent handing a name over) keeps the wasm name its last build linked.
+    #[test]
+    fn a_backend_built_alone_keeps_its_linked_wasm_name() {
+        let d = std::env::temp_dir().join(format!("sky-keptwasm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(crate::spa_wasm_handoff::get().is_none());
+        assert_eq!(kept_spa_wasm_name(&d), None);
+        let s = crate::build_stamp::client_stamp();
+        crate::build_stamp::write_go_stamp_with(&d, &s, Some("main.0a1b.wasm")).unwrap();
+        assert_eq!(kept_spa_wasm_name(&d).as_deref(), Some("main.0a1b.wasm"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

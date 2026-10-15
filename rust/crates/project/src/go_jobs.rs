@@ -22,6 +22,10 @@
 //!   big packages). go1.26.1, darwin/arm64.
 //! * `-p n`: the largest dependency plus `n - 1` others fit in the available
 //!   memory less a 1 GB reserve. When one per CPU fits, Go keeps its default.
+//! * A small machine (under [`SMALL_ROOM_BYTES`] of room, an 8 GB laptop or
+//!   runner) does not trust the 0.25 GB figure, which was measured on
+//!   darwin/arm64 only: each other compile counts as [`OTHER_COMPILE_BYTES`]
+//!   and `-p` is at most [`SMALL_ROOM_MAX_JOBS`].
 //! * `SKY_GO_BUILD_JOBS=<n>` (or `sky build --go-jobs <n>`) sets `-p <n>`;
 //!   `auto` (or unset) decides.
 //! * Unknown available memory → `-p 1`: a slower build is recoverable, an
@@ -84,8 +88,22 @@ const ESTIMATE_BYTES_PER_GO_BYTE: u64 = 700;
 pub const OTHER_COMPILE_BYTES: u64 = 700 << 20;
 
 /// Each compile running beside the largest one: 2.5 times the measured
-/// average (~0.1 GB per slot at `-p 8`, see the module docs).
+/// average (~0.1 GB per slot at `-p 8`, see the module docs). Measured on
+/// darwin/arm64 only, so it is used only where a wrong guess cannot exhaust
+/// the machine: see [`SMALL_ROOM_BYTES`].
 pub const TYPICAL_COMPILE_BYTES: u64 = 250 << 20;
+
+/// Below this much room (available memory less the reserve) the 0.25 GB
+/// figure is not trusted: it was measured on one platform, and a project with
+/// several large FFI modules can run several large compiles side by side.
+/// There every other compile is counted as large as the largest ordinary one
+/// ([`OTHER_COMPILE_BYTES`]), and `-p` is capped at
+/// [`SMALL_ROOM_MAX_JOBS`]. A 16 GB machine (about 12 GB room) is above it
+/// and keeps Go's default; an 8 GB one is below it.
+pub const SMALL_ROOM_BYTES: u64 = 6 << 30;
+
+/// The `-p` cap below [`SMALL_ROOM_BYTES`].
+pub const SMALL_ROOM_MAX_JOBS: usize = 4;
 
 /// Peak bytes per byte of generated `skyffi` Go: 13.9 MB compiled in 4.06 GB
 /// ((4.06 GB - 500 MB) / 13.9 MB ≈ 270).
@@ -135,12 +153,28 @@ pub fn largest_dep_peak(recorded: Option<u64>, ffi_estimate: u64) -> (u64, &'sta
 }
 
 /// How many compiles fit in `room` bytes: the largest one plus as many others
-/// as fit beside it, at least one.
+/// as fit beside it, at least one. Each other compile is counted at
+/// [`other_compile_bytes`] for that room, and below [`SMALL_ROOM_BYTES`] the
+/// count is capped at [`SMALL_ROOM_MAX_JOBS`].
 pub fn compiles_that_fit(room: u64, largest: u64) -> usize {
     if room <= largest {
         return 1;
     }
-    1 + ((room - largest) / TYPICAL_COMPILE_BYTES.max(1)) as usize
+    let n = 1 + ((room - largest) / other_compile_bytes(room).max(1)) as usize;
+    if room < SMALL_ROOM_BYTES {
+        n.min(SMALL_ROOM_MAX_JOBS)
+    } else {
+        n
+    }
+}
+
+/// What each compile beside the largest is counted at in `room` bytes.
+pub fn other_compile_bytes(room: u64) -> u64 {
+    if room < SMALL_ROOM_BYTES {
+        OTHER_COMPILE_BYTES
+    } else {
+        TYPICAL_COMPILE_BYTES
+    }
 }
 
 /// The decision, from its inputs. Pure, so every branch is unit-tested.
@@ -181,12 +215,17 @@ pub fn decide(
         });
     }
     let n = compiles_that_fit(room, largest);
+    let cap = if room < SMALL_ROOM_BYTES {
+        format!(", at most {SMALL_ROOM_MAX_JOBS} on a small machine")
+    } else {
+        String::new()
+    };
     let what = format!(
-        "{} available holds the largest dependency compile ~{} {peak_source} + {} of ~{} each + {} reserve",
+        "{} available holds the largest dependency compile ~{} {peak_source} + {} of ~{} each + {} reserve{cap}",
         gib(avail),
         gib(largest),
         n - 1,
-        gib(TYPICAL_COMPILE_BYTES),
+        gib(other_compile_bytes(room)),
         gib(RESERVE_BYTES)
     );
     if n >= cpus {
@@ -285,8 +324,16 @@ pub fn action_graph_flag(out_dir: &Path) -> String {
     format!("-debug-actiongraph={}", file.to_string_lossy())
 }
 
+/// The generated build-stamp package (`build_stamp::STAMP_PKG`): a few lines
+/// of Go. A build in which it is the only dependency that compiled (a new
+/// commit, or a Sky.Spa SSR backend's second build that links the frontend's
+/// wasm name) measured the link, not a dependency compile, so it is not
+/// counted as one.
+const STAMP_IMPORT_PATH: &str = "sky-app/skybuildinfo";
+
 /// What compiled in a build, from Go's action graph: `(dependencies, main)`.
-/// `None` when the graph cannot be read.
+/// The stamp package alone is not a dependency compile. `None` when the graph
+/// cannot be read.
 pub fn compiled(action_graph: &str) -> Option<(bool, bool)> {
     let v: serde_json::Value = serde_json::from_str(action_graph).ok()?;
     let mut deps = false;
@@ -302,10 +349,10 @@ pub fn compiled(action_graph: &str) -> Option<(bool, bool)> {
         if !ran {
             continue;
         }
-        if a.get("Package").and_then(|p| p.as_str()) == Some("sky-app") {
-            main = true;
-        } else {
-            deps = true;
+        match a.get("Package").and_then(|p| p.as_str()) {
+            Some("sky-app") => main = true,
+            Some(STAMP_IMPORT_PATH) => {}
+            _ => deps = true,
         }
     }
     Some((deps, main))
@@ -317,16 +364,19 @@ pub fn dep_peak_is_measured(ran: Option<(bool, bool)>) -> bool {
     matches!(ran, Some((true, false)))
 }
 
-/// After `go build` returns: record its largest tool process (for the leg
+/// After ONE `go build` returns: record its largest tool process (for the leg
 /// plan), the dependency peak when only dependencies compiled (for `-p`), and
-/// this process's own peak. Best-effort.
-pub fn record_peaks(out_dir: &Path) {
+/// this process's own peak. `go_peak` is that `go build` child's own peak
+/// (`memory::wait_child`), never an earlier child's: a build that runs `go
+/// build` twice records each run with its own peak and its own action graph.
+/// Best-effort.
+pub fn record_peaks(out_dir: &Path, go_peak: Option<u64>) {
     let graph = out_dir.join(ACTION_GRAPH);
     let ran = std::fs::read_to_string(&graph)
         .ok()
         .and_then(|t| compiled(&t));
     let _ = std::fs::remove_file(&graph);
-    if let Some(p) = crate::memory::children_peak_rss() {
+    if let Some(p) = go_peak {
         crate::memory::record_peak(&out_dir.join(GO_PEAK_RECORD), p);
         if dep_peak_is_measured(ran) {
             crate::memory::record_peak(&out_dir.join(DEP_PEAK_RECORD), p);
@@ -363,9 +413,10 @@ mod tests {
         assert!((3900 * MB..4200 * MB).contains(&est), "{est}");
         let (largest, why) = largest_dep_peak(None, est);
         assert_eq!(why, "(estimated from skyffi)");
-        // 6 GB available: 5 GB room - ~4.1 GB leaves 3 others → -p 4 of 8.
+        // 6 GB available: 5 GB room (a small machine) - ~4.1 GB leaves room
+        // for one other compile counted at 0.7 GB → -p 2 of 8.
         let j = decide(None, largest, why, Some(6 * GB), 8).unwrap();
-        assert_eq!(j.jobs, Some(4), "{j:?}");
+        assert_eq!(j.jobs, Some(2), "{j:?}");
         // Plenty of memory: default.
         assert_eq!(
             decide(None, largest, why, Some(32 * GB), 8).unwrap().jobs,
@@ -378,6 +429,39 @@ mod tests {
             j.reason.contains("< the largest dependency compile"),
             "{j:?}"
         );
+    }
+
+    /// An 8 GB machine has about 5 GB available: the 0.25 GB per other
+    /// compile (measured on darwin/arm64 only) is not trusted there. Before,
+    /// 4 GB of room gave 14 compiles → Go's default -p 8, enough to exhaust
+    /// the machine when several large FFI modules compile side by side.
+    #[test]
+    fn an_8gb_machine_sizes_the_other_compiles_conservatively() {
+        let (largest, why) = largest_dep_peak(None, 0);
+        // 5 GB available, 4 room: 0.7 + 4 others at 0.7 → 5, capped at 4.
+        let j = decide(None, largest, why, Some(5 * GB), 8).unwrap();
+        assert_eq!(j.jobs, Some(SMALL_ROOM_MAX_JOBS), "{j:?}");
+        assert!(j.reason.contains("at most 4 on a small machine"), "{j:?}");
+        assert!(j.reason.contains("of ~0.7 GB each"), "{j:?}");
+        // A 2.5 GB measured dependency peak: 4 GB room leaves 1.5 GB → 2 others.
+        let j = decide(None, 2560 * MB, "(measured)", Some(5 * GB), 8).unwrap();
+        assert_eq!(j.jobs, Some(3), "{j:?}");
+        // Two CPUs: the cap does not lift -p above Go's default.
+        let j = decide(None, largest, why, Some(5 * GB), 2).unwrap();
+        assert_eq!(j.jobs, None, "{j:?}");
+    }
+
+    /// The 16 GB / 4 vCPU CI runner (about 13 GB available) keeps Go's
+    /// default, with or without a large `skyffi`.
+    #[test]
+    fn a_16gb_runner_keeps_gos_default() {
+        let (largest, why) = largest_dep_peak(None, 0);
+        let j = decide(None, largest, why, Some(13 * GB), 4).unwrap();
+        assert_eq!(j.jobs, None, "{j:?}");
+        let est = estimate_ffi(13_928 * 1024);
+        let (largest, why) = largest_dep_peak(None, est);
+        let j = decide(None, largest, why, Some(13 * GB), 4).unwrap();
+        assert_eq!(j.jobs, None, "{j:?}");
     }
 
     #[test]
@@ -438,10 +522,11 @@ mod tests {
         std::fs::write(d.join("main.go"), vec![b'x'; 3 << 20]).unwrap();
         let j = plan_with(&d, None, "", Some(9 * GB), 8).unwrap();
         assert_eq!(j.jobs, None, "{j:?}");
-        // A measured dependency peak does count: 3.5 GB room - 3 GB = 2 others.
-        crate::memory::record_peak(&d.join(DEP_PEAK_RECORD), 3 * GB);
-        let j = plan_with(&d, None, "", Some(4608 * MB), 8).unwrap();
-        assert_eq!(j.jobs, Some(3), "{j:?}");
+        // A measured dependency peak does count: 7 GB room - 6 GB leaves 1 GB,
+        // 4 others at 0.25 GB.
+        crate::memory::record_peak(&d.join(DEP_PEAK_RECORD), 6 * GB);
+        let j = plan_with(&d, None, "", Some(8 * GB), 8).unwrap();
+        assert_eq!(j.jobs, Some(5), "{j:?}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -463,6 +548,17 @@ mod tests {
             format!("[{}]", acts.join(","))
         };
         let only_deps = graph(&[("sky-app/rt", true), ("sky-app", false)]);
+        // Only the stamp package compiled (a new commit; a Sky.Spa SSR
+        // backend's second build that links the frontend's wasm name): the
+        // largest process was the link, not a dependency compile.
+        let stamp_only = graph(&[
+            ("sky-app/rt", false),
+            ("sky-app/skybuildinfo", true),
+            ("sky-app", false),
+        ]);
+        assert!(!dep_peak_is_measured(compiled(&stamp_only)));
+        let stamp_and_deps = graph(&[("sky-app/rt", true), ("sky-app/skybuildinfo", true)]);
+        assert!(dep_peak_is_measured(compiled(&stamp_and_deps)));
         let with_main = graph(&[("sky-app/rt", true), ("sky-app", true)]);
         let main_only = graph(&[("sky-app/rt", false), ("sky-app", true)]);
         let cached = graph(&[("sky-app/rt", false), ("sky-app", false)]);
@@ -472,6 +568,50 @@ mod tests {
         assert!(!dep_peak_is_measured(compiled(&main_only)));
         assert!(!dep_peak_is_measured(compiled(&cached)));
         assert!(!dep_peak_is_measured(compiled("not json")));
+    }
+
+    /// S1: a Sky.Spa SSR backend builds twice in one process: everything
+    /// first (a large `main`), then only the stamp package and the link. The
+    /// second build's record must come from its own child and its own action
+    /// graph, so the first build's `main` never becomes the dependency peak.
+    #[test]
+    fn a_stamp_only_second_build_does_not_raise_the_dep_record() {
+        let d = std::env::temp_dir().join(format!("sky-gojobs-stamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let write_graph = |pkgs: &[(&str, bool)]| {
+            let acts: Vec<String> = pkgs
+                .iter()
+                .map(|(p, ran)| {
+                    format!(
+                        r#"{{"Mode":"build","Package":"{p}","Cmd":{}}}"#,
+                        if *ran { r#"["compile"]"# } else { "null" }
+                    )
+                })
+                .collect();
+            std::fs::write(d.join(ACTION_GRAPH), format!("[{}]", acts.join(","))).unwrap();
+        };
+        // Build 1: dependencies and `main` compiled; `main` peaked at 5 GB.
+        write_graph(&[("sky-app/rt", true), ("sky-app", true)]);
+        record_peaks(&d, Some(5 * GB));
+        assert_eq!(crate::memory::recorded_peak(&d.join(DEP_PEAK_RECORD)), None);
+        assert_eq!(
+            crate::memory::recorded_peak(&d.join(GO_PEAK_RECORD)),
+            Some(5 * GB)
+        );
+        // Build 2: only the stamp package and the link, a 1.3 GB link.
+        write_graph(&[
+            ("sky-app/rt", false),
+            ("sky-app/skybuildinfo", true),
+            ("sky-app", false),
+        ]);
+        record_peaks(&d, Some(1300 * MB));
+        assert_eq!(
+            crate::memory::recorded_peak(&d.join(DEP_PEAK_RECORD)),
+            None,
+            "a stamp-only build must not record a dependency peak"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

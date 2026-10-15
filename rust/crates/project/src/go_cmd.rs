@@ -95,6 +95,22 @@ pub fn goflags() -> String {
     goflags_from(&std::env::var("GOFLAGS").unwrap_or_default())
 }
 
+/// `GOFLAGS` for a build of a module Sky does NOT generate (the Sky Console
+/// hub, built from the runtime's own `runtime-go/` module): the user's flags
+/// with `-mod=readonly`, so the build never rewrites that module's `go.mod` /
+/// `go.sum` (in a source checkout they are the repository's own files), and
+/// `-buildvcs=false` as for every Sky build.
+pub fn goflags_readonly_from(existing: &str) -> String {
+    let mut flags: Vec<String> = existing
+        .split_whitespace()
+        .filter(|f| !f.starts_with("-mod=") && !f.starts_with("-buildvcs="))
+        .map(String::from)
+        .collect();
+    flags.push("-mod=readonly".to_string());
+    flags.push("-buildvcs=false".to_string());
+    flags.join(" ")
+}
+
 impl GoBuild<'_> {
     /// The argv after `go`, for a given `-trimpath` setting. Pure.
     pub fn args(&self, trimpath: bool) -> Vec<OsString> {
@@ -138,9 +154,21 @@ impl GoBuild<'_> {
     /// (`go_cache::apply`). The caller holds `go_cache::hold_shared()` while it
     /// runs.
     pub fn command(&self) -> Command {
+        self.command_with_goflags(&goflags())
+    }
+
+    /// [`Self::command`] for a module Sky does not generate: `go.mod` /
+    /// `go.sum` stay read-only ([`goflags_readonly_from`]).
+    pub fn command_readonly(&self) -> Command {
+        self.command_with_goflags(&goflags_readonly_from(
+            &std::env::var("GOFLAGS").unwrap_or_default(),
+        ))
+    }
+
+    fn command_with_goflags(&self, goflags: &str) -> Command {
         let mut cmd = Command::new("go");
         cmd.current_dir(self.dir).args(self.args(trimpath()));
-        for (k, v) in self.env(&goflags()) {
+        for (k, v) in self.env(goflags) {
             cmd.env(k, v);
         }
         crate::go_cache::apply(&mut cmd);
@@ -237,6 +265,33 @@ mod tests {
         for v in ["0", "false", "NO", " off "] {
             assert!(!trimpath_from(Some(v)), "{v}");
         }
+    }
+
+    /// N7: a module Sky does not generate is built read-only. `-mod=mod`
+    /// there let `go build` rewrite the runtime's own go.mod / go.sum.
+    #[test]
+    fn a_module_sky_does_not_generate_is_built_read_only() {
+        assert_eq!(goflags_readonly_from(""), "-mod=readonly -buildvcs=false");
+        assert_eq!(
+            goflags_readonly_from("-mod=mod -tags=x"),
+            "-tags=x -mod=readonly -buildvcs=false"
+        );
+        let b = GoBuild {
+            dir: Path::new("/x"),
+            target: Target::Native { cgo: false },
+            jobs: None,
+            output: Some(OsStr::new("hub")),
+            packages: &["./cmd/sky-hub"],
+            extra: &[],
+        };
+        let flags = b
+            .command_readonly()
+            .get_envs()
+            .find(|(k, _)| *k == "GOFLAGS")
+            .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+            .unwrap();
+        assert!(flags.contains("-mod=readonly"), "{flags}");
+        assert!(!flags.contains("-mod=mod"), "{flags}");
     }
 
     #[test]

@@ -119,20 +119,14 @@ fn main() -> ExitCode {
         args
     };
     // Internal: a Sky.Spa SSR backend leg's wasm-name handoff (passed by the
-    // parent build only; project::spa_wasm_handoff).
+    // parent build only): the name arrives on stdin
+    // (project::spa_wasm_handoff).
     let args = if args.first().map(String::as_str) == Some("build") {
-        match take_spa_await_flags(&args) {
-            Ok((rest, wait)) => {
-                if let Some(w) = wait {
-                    project::spa_wasm_handoff::set(w);
-                }
-                rest
-            }
-            Err(e) => {
-                eprintln!("sky build: {e}");
-                return ExitCode::FAILURE;
-            }
+        let (rest, wait) = take_spa_await_flag(&args);
+        if wait {
+            project::spa_wasm_handoff::set(project::spa_wasm_handoff::listen(std::io::stdin()));
         }
+        rest
     } else {
         args
     };
@@ -181,36 +175,34 @@ fn take_go_build_flags(
     Ok((rest, env))
 }
 
-/// Remove the internal wasm-name handoff flags a Sky.Spa parent passes its
-/// SSR backend leg (`--spa-await-wasm-name <file> --spa-await-nonce <n>`).
-/// Both or neither. Pure, so it is unit-tested.
-fn take_spa_await_flags(
-    args: &[String],
-) -> Result<(Vec<String>, Option<project::spa_wasm_handoff::Await>), String> {
-    use project::spa_wasm_handoff::{Await, FLAG_FILE, FLAG_NONCE};
-    let mut rest = Vec::with_capacity(args.len());
-    let (mut file, mut nonce) = (None, None);
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == FLAG_FILE || a == FLAG_NONCE {
-            let v = it
-                .next()
-                .ok_or_else(|| format!("{a} needs a value"))?
-                .clone();
-            if a == FLAG_FILE {
-                file = Some(PathBuf::from(v));
-            } else {
-                nonce = Some(v);
-            }
-        } else {
-            rest.push(a.clone());
+/// Remove the internal wasm-name handoff flag a Sky.Spa parent passes its
+/// SSR backend leg (`--spa-await-wasm-name-on-stdin`); `true` when it was
+/// there. Pure, so it is unit-tested.
+fn take_spa_await_flag(args: &[String]) -> (Vec<String>, bool) {
+    let flag = project::spa_wasm_handoff::FLAG;
+    let found = args.iter().any(|a| a == flag);
+    (args.iter().filter(|a| *a != flag).cloned().collect(), found)
+}
+
+/// Run a Sky.Spa SSR backend leg with its wasm-name handoff on its stdin
+/// (project::spa_wasm_handoff): spawn it with [`project::spa_wasm_handoff::FLAG`]
+/// and a piped stdin, hand the pipe to `tx` (which writes a delivery already
+/// made), and collect its output.
+fn run_with_handoff(
+    mut c: Command,
+    tx: &project::spa_wasm_handoff::Sender,
+) -> std::io::Result<std::process::Output> {
+    c.arg(project::spa_wasm_handoff::FLAG)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = c.spawn()?;
+    if let Some(stdin) = child.stdin.take() {
+        if let Err(e) = tx.attach(stdin) {
+            eprintln!("sky build: could not hand the frontend's wasm name to the backend leg: {e}");
         }
     }
-    match (file, nonce) {
-        (Some(file), Some(nonce)) => Ok((rest, Some(Await { file, nonce }))),
-        (None, None) => Ok((rest, None)),
-        _ => Err(format!("{FLAG_FILE} and {FLAG_NONCE} go together")),
-    }
+    child.wait_with_output()
 }
 
 /// The environment a `sky run` build needs for `--profile`: no `-trimpath`,
@@ -3840,26 +3832,6 @@ fn build_std_app(
     }
 }
 
-/// Write the built frontend's wasm file name into the generated backend source
-/// (see `project::spa_split::bake_built_wasm_name`). A dist with no wasm, or a
-/// source already baked, leaves the backend on its run-time dist scan.
-fn bake_backend_wasm_name(backend_main: &Path, dist: &Path) {
-    let Some(name) = project::spa_split::built_wasm_name(dist) else {
-        return;
-    };
-    let Ok(src) = std::fs::read_to_string(backend_main) else {
-        return;
-    };
-    if let Some(baked) = project::spa_split::bake_built_wasm_name(&src, &name) {
-        if let Err(e) = std::fs::write(backend_main, baked) {
-            eprintln!(
-                "sky spa-split --build: could not write the wasm name into {}: {e}",
-                backend_main.display()
-            );
-        }
-    }
-}
-
 /// Report a split the generator refused, as `sky build` and `sky check` both
 /// do: the message on stderr, mapped back to the user's construct when the
 /// analysed project was derived from theirs, and one unlocated diagnostic.
@@ -4052,12 +4024,12 @@ fn spa_split_and_build(
     // In parallel, each leg's `go build -p` is set here, from the memory both
     // legs share; a user's own SKY_GO_BUILD_JOBS reaches the legs unchanged.
     //
-    // An SSR backend names the frontend's `main.<hash>.wasm` in its page. The
-    // name is baked into the backend source (spaBuiltWasmName_) so the backend
-    // does not have to reach `../frontend/dist` at run time (a slot directory
-    // behind a proxy that serves the wasm itself). That needs the frontend
-    // built first, so an SSR split builds its legs in order: frontend, then
-    // backend.
+    // An SSR backend names the frontend's `main.<hash>.wasm` in its page, so
+    // it does not have to reach `../frontend/dist` at run time (a slot
+    // directory behind a proxy that serves the wasm itself). The name is
+    // linked into the backend's small `skybuildinfo` package when the
+    // frontend has built (project::spa_wasm_handoff): beside the frontend
+    // when memory allows, else after it.
     let backend_main = backend_dir.join("src").join("Main.sky");
     // A web bundle (no native shell) is compressed here, in the parent, all
     // assets at once, and alongside the backend leg when that is still
@@ -4069,21 +4041,11 @@ fn spa_split_and_build(
     let leg_go_jobs = plan
         .go_jobs
         .filter(|_| std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
-    // The SSR backend gets the frontend's wasm name through a file the parent
-    // writes when the frontend leg ends (project::spa_wasm_handoff): in
-    // parallel, the backend builds meanwhile and only links the name at the
-    // end. The file of an earlier build is removed before either leg starts,
-    // and each build has its own nonce.
-    let handoff = bake_wasm_name.then(|| {
-        let file = od.join(project::spa_wasm_handoff::FILE_NAME);
-        let file = std::path::absolute(&file).unwrap_or(file);
-        project::spa_wasm_handoff::clear(&file);
-        project::spa_wasm_handoff::Await {
-            file,
-            nonce: project::spa_wasm_handoff::new_nonce(),
-        }
-    });
-    let handoff_on = std::sync::atomic::AtomicBool::new(handoff.is_some());
+    // The SSR backend gets the frontend's wasm name on its stdin, written when
+    // the frontend leg ends (project::spa_wasm_handoff): in parallel, the
+    // backend builds meanwhile and only links the name at the end. The pipe
+    // belongs to this build alone, and closes if this process dies.
+    let handoff = bake_wasm_name.then(project::spa_wasm_handoff::Sender::new);
     let leg_reason = match (bake_wasm_name, plan.parallel) {
         (true, true) => format!(
             "{} — the SSR backend links the frontend's wasm name when the frontend is built",
@@ -4122,16 +4084,12 @@ fn spa_split_and_build(
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
         }
-        if let Some(h) = handoff
-            .as_ref()
-            .filter(|_| handoff_on.load(std::sync::atomic::Ordering::SeqCst))
-        {
-            c.arg(project::spa_wasm_handoff::FLAG_FILE)
-                .arg(&h.file)
-                .args([project::spa_wasm_handoff::FLAG_NONCE, h.nonce.as_str()]);
-        }
         let t = project::timings::phase("backend leg (child sky build, native)");
-        let out = c.arg("src/Main.sky").current_dir(&backend_dir).output();
+        c.arg("src/Main.sky").current_dir(&backend_dir);
+        let out = match &handoff {
+            Some(tx) => run_with_handoff(c, tx),
+            None => c.output(),
+        };
         t.end();
         out
     };
@@ -4164,26 +4122,20 @@ fn spa_split_and_build(
         precompress_assets(&dist_precompress_targets(&frontend_dir.join("dist")));
         t.end();
     };
-    // Deliver the frontend's wasm name (or `failed`) to the backend leg.
-    // `false` when the file cannot be written.
-    let deliver_name = |frontend: &std::io::Result<std::process::Output>| -> bool {
-        let Some(h) = &handoff else { return true };
-        use project::spa_wasm_handoff::{deliver, Delivered};
+    // Deliver the frontend's wasm name (or `failed`) to the backend leg. A
+    // write error means the backend child has already exited; its own output
+    // (reported below) says why.
+    let deliver_name = |frontend: &std::io::Result<std::process::Output>| {
+        let Some(tx) = &handoff else { return };
+        use project::spa_wasm_handoff::Delivered;
         let what = if frontend_ok(frontend) {
             project::spa_split::built_wasm_name(&frontend_dir.join("dist"))
                 .map_or(Delivered::Failed, Delivered::Name)
         } else {
             Delivered::Failed
         };
-        match deliver(&h.file, &h.nonce, &what) {
-            Ok(()) => true,
-            Err(e) => {
-                eprintln!(
-                    "sky build: could not hand the frontend's wasm name to the backend leg ({}): {e}",
-                    h.file.display()
-                );
-                false
-            }
+        if let Err(e) = tx.deliver(what) {
+            eprintln!("sky build: could not hand the frontend's wasm name to the backend leg: {e}");
         }
     };
     let t_legs = project::timings::phase("both legs (wall)");
@@ -4191,6 +4143,8 @@ fn spa_split_and_build(
         std::thread::scope(|s| {
             let b = s.spawn(build_backend);
             let f = s.spawn(|| {
+                // Delivers `failed` if this thread ends before it delivers.
+                let _guard = handoff.as_ref().map(|tx| tx.guard());
                 let r = build_frontend();
                 deliver_name(&r);
                 if parent_compresses && frontend_ok(&r) {
@@ -4203,14 +4157,8 @@ fn spa_split_and_build(
     } else if bake_wasm_name {
         let frontend = build_frontend();
         let built = frontend_ok(&frontend);
-        if !deliver_name(&frontend) {
-            // The name file could not be written: build the backend the way
-            // it was built before the handoff, with the name in its source.
-            handoff_on.store(false, std::sync::atomic::Ordering::SeqCst);
-            if built {
-                bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
-            }
-        }
+        // Held, and written as the backend child starts.
+        deliver_name(&frontend);
         if built && parent_compresses {
             // Compress while the backend builds, when memory holds both.
             let brotli =
@@ -5559,6 +5507,12 @@ fn build_desktop_shell(
     std::fs::create_dir_all(shell.join("src"))
         .map_err(|e| format!("create {}: {e}", shell.display()))?;
     let _lock = lock_exclusive(&shell.join(".lock"))?;
+    // Which project this shell is for, and when it was last used: the
+    // pruning of the other shells reads both.
+    mark_desktop_shell_use(&shell, project_dir);
+    if let Some(root) = shell.parent() {
+        prune_desktop_shells(root, &shell, DESKTOP_SHELLS_KEEP);
+    }
     let shell_name = format!("{}-desktop", sanitize_pkg_segment(app));
     write_if_changed(
         &shell.join("sky.toml"),
@@ -5611,6 +5565,71 @@ fn desktop_shell_dir(cache_root: &Path, project_dir: &Path) -> PathBuf {
         .unwrap_or_else(|_| project_dir.to_path_buf());
     let h = db_provision::sha256_hex(canonical.to_string_lossy().as_bytes());
     cache_root.join("desktop-shell").join(&h[..16])
+}
+
+/// How many desktop shell directories to keep (each holds a built shell and
+/// its emitted Go, tens of MB).
+const DESKTOP_SHELLS_KEEP: usize = 8;
+
+/// The file in a desktop shell directory naming its app project (canonical
+/// path). Its mtime is the shell's last use.
+const DESKTOP_SHELL_PROJECT: &str = ".project";
+
+/// Record that the shell at `shell` serves `project_dir`, now.
+fn mark_desktop_shell_use(shell: &Path, project_dir: &Path) {
+    let canonical = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let f = shell.join(DESKTOP_SHELL_PROJECT);
+    let _ = std::fs::write(&f, canonical.to_string_lossy().as_bytes());
+}
+
+/// Remove desktop shell directories under `root` (`<cache>/desktop-shell`),
+/// never `current` and never one another build holds locked: first those
+/// whose app project no longer exists, then the least recently used beyond
+/// `keep` (`current` counted). Best-effort.
+fn prune_desktop_shells(root: &Path, current: &Path, keep: usize) {
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
+    let mut live: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for e in rd.flatten() {
+        let dir = e.path();
+        if !dir.is_dir() || dir == current {
+            continue;
+        }
+        let marker = dir.join(DESKTOP_SHELL_PROJECT);
+        let project_gone = std::fs::read_to_string(&marker)
+            .map(|p| !Path::new(p.trim()).exists())
+            .unwrap_or(false);
+        if project_gone {
+            remove_unlocked_shell(&dir);
+            continue;
+        }
+        let used = std::fs::metadata(&marker)
+            .or_else(|_| std::fs::metadata(&dir))
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        live.push((used, dir));
+    }
+    live.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, dir) in live.into_iter().skip(keep.saturating_sub(1)) {
+        remove_unlocked_shell(&dir);
+    }
+}
+
+/// Remove a desktop shell directory unless a build holds its lock.
+fn remove_unlocked_shell(dir: &Path) {
+    let lock = dir.join(".lock");
+    let held = match std::fs::OpenOptions::new().write(true).open(&lock) {
+        Ok(f) => match f.try_lock() {
+            Ok(()) => Some(f),
+            Err(_) => return,
+        },
+        Err(_) => None,
+    };
+    let _ = std::fs::remove_dir_all(dir);
+    drop(held);
 }
 
 /// An exclusive lock on `path` (created if absent), held until the returned
@@ -11738,6 +11757,8 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
         // Through the one Go command builder (`-trimpath`, Sky's GOFLAGS and
         // build cache), held shared so a cache clean waits.
         let _cache = project::go_cache::hold_shared();
+        // Read-only module: `runtime-go/` is not generated, and in a source
+        // checkout its go.mod / go.sum are the repository's own files.
         let status = project::go_cmd::GoBuild {
             dir: &runtime_go,
             target: project::go_cmd::Target::Native { cgo: false },
@@ -11746,7 +11767,7 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
             packages: &["./cmd/sky-hub"],
             extra: &[],
         }
-        .command()
+        .command_readonly()
         .status();
         match status {
             Ok(s) if s.success() => {}
@@ -16359,28 +16380,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// N10: desktop shell directories do not pile up. A shell whose app
+    /// project is gone is removed, and beyond the kept count the least
+    /// recently used go; the current shell and a locked one stay.
     #[test]
-    fn the_wasm_name_handoff_flags_are_taken_out_together() {
+    fn desktop_shell_dirs_are_pruned() {
+        let root = std::env::temp_dir().join(format!("sky-shellprune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let shells = root.join("desktop-shell");
+        let proj = root.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        let mk = |name: &str, project: &Path, age: u64| -> PathBuf {
+            let d = shells.join(name);
+            std::fs::create_dir_all(d.join("sky-out")).unwrap();
+            mark_desktop_shell_use(&d, project);
+            let t = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+            std::fs::File::options()
+                .append(true)
+                .open(d.join(DESKTOP_SHELL_PROJECT))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+            d
+        };
+        let current = mk("current", &proj, 0);
+        let gone = mk("gone", &root.join("deleted-project"), 10);
+        let newer = mk("newer", &proj, 20);
+        let older = mk("older", &proj, 30);
+        let oldest_locked = mk("locked", &proj, 40);
+        let held = lock_exclusive(&oldest_locked.join(".lock")).unwrap();
+        // Keep 2: the current one and the most recent other.
+        prune_desktop_shells(&shells, &current, 2);
+        assert!(current.is_dir());
+        assert!(!gone.exists(), "a shell whose project is gone is removed");
+        assert!(newer.is_dir(), "the most recent other shell is kept");
+        assert!(!older.exists(), "a shell beyond the kept count is removed");
+        assert!(oldest_locked.is_dir(), "a shell in use is never removed");
+        drop(held);
+        prune_desktop_shells(&shells, &current, 2);
+        assert!(!oldest_locked.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_wasm_name_handoff_flag_is_taken_out() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let (rest, w) = take_spa_await_flags(&v(&[
+        let (rest, w) = take_spa_await_flag(&v(&[
             "build",
-            "--spa-await-wasm-name",
-            "/x/.sky-spa-wasm-name",
-            "--spa-await-nonce",
-            "12-ab",
+            "--spa-await-wasm-name-on-stdin",
             "src/Main.sky",
-        ]))
-        .unwrap();
+        ]));
         assert_eq!(rest, ["build", "src/Main.sky"]);
-        let w = w.unwrap();
-        assert_eq!(w.file, PathBuf::from("/x/.sky-spa-wasm-name"));
-        assert_eq!(w.nonce, "12-ab");
-        assert_eq!(
-            take_spa_await_flags(&v(&["build", "a.sky"])).unwrap().1,
-            None
-        );
-        assert!(take_spa_await_flags(&v(&["build", "--spa-await-nonce", "n"])).is_err());
-        assert!(take_spa_await_flags(&v(&["build", "--spa-await-wasm-name"])).is_err());
+        assert!(w);
+        let (rest, w) = take_spa_await_flag(&v(&["build", "a.sky"]));
+        assert_eq!(rest, ["build", "a.sky"]);
+        assert!(!w);
     }
 
     #[test]

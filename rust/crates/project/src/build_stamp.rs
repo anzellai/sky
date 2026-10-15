@@ -99,6 +99,22 @@ pub struct AppBuildStamp {
     pub source: String,
 }
 
+/// The stamp a Sky.Spa wasm client links: constant for a given compiler.
+/// Nothing under `GOOS=js` reads the stamp (`/_sky/buildinfo` and the Console
+/// are server-side, `//go:build !js`), and a per-commit or per-mtime value
+/// would change the wasm's bytes, and with them its content-hashed
+/// `main.<hash>.wasm` name, on every commit: the precompress cache would miss,
+/// browsers would download the same client again, and the SSR backend would
+/// re-link for the new name. The server keeps the real stamp.
+pub fn client_stamp() -> AppBuildStamp {
+    AppBuildStamp {
+        sky_version: compiler_version(),
+        commit: "client".to_string(),
+        built_at: "client".to_string(),
+        source: "client".to_string(),
+    }
+}
+
 /// The compiler's own version, `v<workspace version>` (`[workspace.package]
 /// version` in rust/Cargo.toml, the one version source).
 pub fn compiler_version() -> String {
@@ -718,6 +734,16 @@ mod tests {
         assert_eq!(linked_spa_wasm_name(&d), None);
         assert_eq!(go_source_with(&s, Some("../evil\".wasm")), go_source(&s));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// S2: the client stamp holds nothing per commit or per source mtime.
+    #[test]
+    fn the_client_stamp_is_the_same_for_every_commit() {
+        let a = client_stamp();
+        assert_eq!(a, client_stamp());
+        assert_eq!(go_source(&a), go_source(&client_stamp()));
+        assert_eq!(a.commit, "client");
+        assert_eq!(a.sky_version, compiler_version());
     }
 
     /// A new commit rewrites only the small stamp package; the file in the

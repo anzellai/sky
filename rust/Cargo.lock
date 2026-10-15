@@ -881,6 +881,7 @@ dependencies = [
  "diagnostics",
  "ffi",
  "hir",
+ "libc",
  "lower",
  "nix",
  "pulldown-cmark",
@@ -889,6 +890,7 @@ dependencies = [
  "skydb",
  "syntax",
  "ty",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
