@@ -15,15 +15,21 @@
 //!
 //! Needs a `go` toolchain.
 
+#![cfg(unix)]
+
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 const LIMIT: Duration = Duration::from_secs(420);
@@ -66,19 +72,18 @@ fn copy_dir(from: &Path, to: &Path) {
 fn run_bounded(cmd: &mut Command, what: &str) -> Output {
     let out_path = unique("tpp-out");
     let err_path = unique("tpp-err");
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
-        .spawn()
-        .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
+    let mut child = ChildGroup::spawn(
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+            .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap())),
+    )
+    .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
     let deadline = Instant::now() + LIMIT;
     let status = loop {
-        match child.try_wait().unwrap() {
+        match child.child().try_wait().unwrap() {
             Some(s) => break s,
             None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                child.kill();
                 panic!("`{what}` did not finish within {}s", LIMIT.as_secs());
             }
             None => std::thread::sleep(Duration::from_millis(50)),
@@ -126,16 +131,11 @@ fn get_status(port: u16, path: &str) -> Option<u16> {
     line.split_whitespace().nth(1)?.parse().ok()
 }
 
+/// The server under test. `ChildGroup` ends it on every path, a failed
+/// assertion included.
 struct Server {
-    child: Child,
+    child: ChildGroup,
     log: PathBuf,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 impl Server {
@@ -168,18 +168,19 @@ fn a_panic_in_a_parallel_branch_is_a_500_and_the_server_stays_up() {
 
     let port = free_port();
     let log = unique("tpp-server-log");
-    let child = Command::new(&app)
-        .current_dir(&project)
-        .env("FLOW_PORT", port.to_string())
-        .env_remove("ENV")
-        .env_remove("SKY_ENV")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(std::fs::File::create(&log).unwrap()))
-        .stderr(Stdio::from(
-            std::fs::OpenOptions::new().append(true).open(&log).unwrap(),
-        ))
-        .spawn()
-        .expect("start the server");
+    let child = ChildGroup::spawn(
+        Command::new(&app)
+            .current_dir(&project)
+            .env("FLOW_PORT", port.to_string())
+            .env_remove("ENV")
+            .env_remove("SKY_ENV")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(std::fs::File::create(&log).unwrap()))
+            .stderr(Stdio::from(
+                std::fs::OpenOptions::new().append(true).open(&log).unwrap(),
+            )),
+    )
+    .expect("start the server");
     let mut server = Server { child, log };
 
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -189,7 +190,7 @@ fn a_panic_in_a_parallel_branch_is_a_500_and_the_server_stays_up() {
             "the server never answered /ok:\n{}",
             server.log_text()
         );
-        if let Ok(Some(st)) = server.child.try_wait() {
+        if let Ok(Some(st)) = server.child.child().try_wait() {
             panic!(
                 "the server exited ({st}) before it answered:\n{}",
                 server.log_text()
@@ -207,7 +208,7 @@ fn a_panic_in_a_parallel_branch_is_a_500_and_the_server_stays_up() {
             server.log_text()
         );
         assert!(
-            server.child.try_wait().unwrap().is_none(),
+            server.child.child().try_wait().unwrap().is_none(),
             "{path}: a panic in a parallel branch ended the server:\n{}",
             server.log_text()
         );

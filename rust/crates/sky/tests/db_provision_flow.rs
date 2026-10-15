@@ -24,6 +24,12 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 /// A version no real machine has provisioned, so a stray `~/.sky` or a sibling
@@ -629,21 +635,25 @@ fn an_extract_that_fails_partway_leaves_no_usable_cache() {
 /// one that matters and that holds wherever the kill lands — the cache entry is
 /// either complete or absent, never half-populated.
 #[test]
+#[cfg(unix)]
 fn a_killed_provision_never_leaves_a_half_populated_cache() {
     let fx = Fx::new("killed");
     build_bundle(&fx.serve_dir, 24);
     let srv = Server::start(fx.serve_dir.clone());
 
-    let mut child = Command::new(SKY)
-        .args(["db", "provision", "--embed", "--version", V])
-        .current_dir(&fx.project)
-        .env("SKY_HOME", &fx.sky_home)
-        .env("SKY_POSTGRES_BUNDLE_URL", srv.base())
-        .env_remove("SKY_POSTGRES_BIN")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    // A `ChildGroup`: the provision and the `curl` / `tar` it runs end with the
+    // test on every path, a panic below included.
+    let mut child = ChildGroup::spawn(
+        Command::new(SKY)
+            .args(["db", "provision", "--embed", "--version", V])
+            .current_dir(&fx.project)
+            .env("SKY_HOME", &fx.sky_home)
+            .env("SKY_POSTGRES_BUNDLE_URL", srv.base())
+            .env_remove("SKY_POSTGRES_BIN")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
 
     // Kill once EXTRACTION has started — not merely once the download has —
     // because unpacking is the phase that can leave a tree behind. Polled rather
@@ -661,13 +671,18 @@ fn a_killed_provision_never_leaves_a_half_populated_cache() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while !extracting() {
         if std::time::Instant::now() > deadline {
-            let _ = child.kill();
+            child.kill();
             panic!("provision never reached extraction");
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    // SIGKILL the provision itself, as before: one pid, in flight. `wait`
+    // then reaps it and ends what is left of its group (a `tar` it started).
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+    child.wait();
 
     if dest.exists() {
         // The kill landed after the rename: the install completed, and what is

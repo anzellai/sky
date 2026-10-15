@@ -24,6 +24,12 @@ use std::time::{Duration, Instant};
 mod live_gate;
 use live_gate::{required, Need};
 
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 fn go_on_path() -> bool {
@@ -177,19 +183,10 @@ fn http_get(port: u16, path: &str) -> Option<(u16, String)> {
     Some((status, body))
 }
 
-/// SIGKILL the child's entire process group (the bundled server is a grandchild
-/// of the spawned `sky` process; they share the group we created).
-fn kill_group(child: &std::process::Child) {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::{killpg, Signal};
-        use nix::unistd::Pid;
-        let _ = killpg(Pid::from_raw(child.id() as i32), Signal::SIGTERM);
-        std::thread::sleep(Duration::from_millis(300));
-        let _ = killpg(Pid::from_raw(child.id() as i32), Signal::SIGKILL);
-    }
-}
-
+/// The server runs under a `ChildGroup`: the bundled doc server is a
+/// grandchild of the spawned `sky` process, in the same group, so ending the
+/// group reaches it, on a panic as well as on the happy path.
+#[cfg(unix)]
 #[test]
 fn doc_serve_answers_http_200() {
     if !required(Need::Go, go_on_path()) {
@@ -205,13 +202,7 @@ fn doc_serve_answers_http_200() {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    #[cfg(unix)]
-    {
-        // New process group so we can reap the whole server tree.
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    let mut child = cmd.spawn().expect("spawn sky doc --serve");
+    let mut child = ChildGroup::spawn(&mut cmd).expect("spawn sky doc --serve");
 
     // Poll the port until it answers 200 (or the deadline elapses). First run may
     // build the bundled Sky.Http.Server doc app, so the window is generous.
@@ -219,8 +210,8 @@ fn doc_serve_answers_http_200() {
     let mut got: Option<(u16, String)> = None;
     while Instant::now() < deadline {
         // If the server crashed early, stop waiting.
-        if let Ok(Some(status)) = child.try_wait() {
-            kill_group(&child);
+        if let Ok(Some(status)) = child.child().try_wait() {
+            child.kill();
             panic!("doc --serve exited early with {status:?} before binding port {port}");
         }
         if let Some((code, body)) = http_get(port, "/") {
@@ -238,7 +229,7 @@ fn doc_serve_answers_http_200() {
             body
         }
         None => {
-            kill_group(&child);
+            child.kill();
             let _ = std::fs::remove_dir_all(&dir);
             panic!("doc --serve never answered 200 on port {port} within 180s");
         }
@@ -261,7 +252,7 @@ fn doc_serve_answers_http_200() {
             &body[..body.len().min(400)]
         );
     } else {
-        kill_group(&child);
+        child.kill();
         let _ = std::fs::remove_dir_all(&dir);
         panic!("/api/symbols.json connection failed");
     }
@@ -280,8 +271,7 @@ fn doc_serve_answers_http_200() {
         None
     };
 
-    kill_group(&child);
-    let _ = child.wait();
+    child.stop();
     let _ = std::fs::remove_dir_all(&dir);
 
     match search {

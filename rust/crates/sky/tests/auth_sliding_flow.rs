@@ -15,6 +15,10 @@
 //! the sliding cookie is issued with the builder's attributes (HttpOnly,
 //! Path=/, SameSite=Strict) — the same attributes the re-issue middleware uses.
 
+// The runtime leg holds the server in a `ChildGroup`, which needs unix
+// process groups.
+#![cfg(unix)]
+
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
@@ -22,6 +26,10 @@ use std::process::Command;
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -176,19 +184,20 @@ fn sliding_auth_app_builds_and_serves() {
     let app_bin = dir.join("sky-out").join("app");
     let log_path = dir.join("server.log");
     let log = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&dir)
-        .env("SKY_LIVE_PORT", port.to_string())
-        .env("SKY_AUTH_TOKEN_SECRET", SLIDING_SECRET)
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("spawn compiled sliding-auth app");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&dir)
+            .env("SKY_LIVE_PORT", port.to_string())
+            .env("SKY_AUTH_TOKEN_SECRET", SLIDING_SECRET)
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    )
+    .expect("spawn compiled sliding-auth app");
 
     // Poll the log for the listening line (fieldbook's readiness pattern).
     let ready = wait_for_listening(&log_path, port, 60);
     if !ready {
-        let _ = child.kill();
+        child.kill();
         let mut buf = String::new();
         let _ = std::fs::File::open(&log_path).and_then(|mut f| f.read_to_string(&mut buf));
         panic!("app never reported listening on :{port}\nlog:\n{buf}");
@@ -197,8 +206,7 @@ fn sliding_auth_app_builds_and_serves() {
     let cookie_line = curl_header(port, "/login", "set-cookie");
     let root_code = curl_status(port, "/");
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 
     // GET / serves the app.
