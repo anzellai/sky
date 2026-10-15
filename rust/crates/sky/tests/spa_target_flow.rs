@@ -692,6 +692,75 @@ fn web_app_no_change_rebuild_reuses_outputs() {
     let _ = std::fs::remove_dir_all(&web);
 }
 
+/// A `--target web:app` bundle is compressed by the parent build, every asset
+/// at once and beside the backend leg (v0.27.9): before, the frontend child
+/// compressed its three assets one after another, and an SSR backend waited
+/// for all of it. Each `.gz` / `.br` must still decompress to its asset.
+///
+/// Heavy (a full web:app build) — #[ignore]d for the T1 budget; nightly via
+/// `--ignored`. Per-commit legs: `precompress::tests` (parallel stores, hit
+/// check, bytes equal to the tools) and `leg_plan::tests`.
+#[cfg(unix)]
+#[ignore = "heavy web:app build; nightly via --ignored; per-commit legs: sky precompress::tests + leg_plan::tests"]
+#[test]
+fn web_app_bundle_is_precompressed_by_the_parent() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let have_brotli = Command::new("brotli").arg("--version").output().is_ok();
+    let dir = scratch("parentzip");
+    std::fs::write(dir.join("src").join("Main.sky"), RPC_ERROR_APP).unwrap();
+    let out = build_timed(&dir, &["--target", "web:app", "src/Main.sky"]);
+    assert!(
+        out.contains("precompress dist (parent, all assets at once)"),
+        "the parent must compress the bundle:\n{out}"
+    );
+    let dist = dir
+        .join(".skyapp")
+        .join("web-app")
+        .join(".split")
+        .join("frontend")
+        .join("dist");
+    let names: Vec<String> = std::fs::read_dir(&dist)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    let assets: Vec<&String> = names
+        .iter()
+        .filter(|n| {
+            (n.starts_with("main.") && n.ends_with(".wasm"))
+                || *n == "wasm_exec.js"
+                || (n.starts_with("spa-boot.") && n.ends_with(".js"))
+        })
+        .collect();
+    assert_eq!(assets.len(), 3, "{names:?}");
+    let mut tools = vec![("gzip", "gz")];
+    if required(Need::Brotli, have_brotli) {
+        tools.push(("brotli", "br"));
+    }
+    for a in assets {
+        let raw = std::fs::read(dist.join(a)).unwrap();
+        for (tool, ext) in &tools {
+            let packed = dist.join(format!("{a}.{ext}"));
+            let o = Command::new(tool)
+                .args(["-d", "-c"])
+                .stdin(
+                    std::fs::File::open(&packed)
+                        .unwrap_or_else(|e| panic!("{}: {e}\n{names:?}", packed.display())),
+                )
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success() && o.stdout == raw,
+                "{} is not {a}",
+                packed.display()
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The real-app deploy flow through `--target web:app`, end to end: the source
 /// is extracted with `git archive HEAD | tar -x` (no `.git`), GITHUB_SHA is set
 /// (GitHub Actions always sets it), `sky build --target web:app` runs, and the

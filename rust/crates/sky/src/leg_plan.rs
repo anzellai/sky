@@ -182,6 +182,35 @@ pub fn leg_need(leg_dir: &Path) -> (LegNeed, bool) {
     )
 }
 
+/// brotli -q 11's peak: measured 170 MB on a 9.4 MB wasm; counted as 64 MB plus
+/// 20 bytes per input byte.
+const BROTLI_BASE_BYTES: u64 = 64 << 20;
+const BROTLI_BYTES_PER_INPUT_BYTE: u64 = 20;
+
+/// The memory the precompression of `files` needs at once: all files are
+/// compressed together (gzip's few MB are inside the base).
+pub fn brotli_need(files: &[std::path::PathBuf]) -> u64 {
+    files
+        .iter()
+        .map(|f| {
+            let n = std::fs::metadata(f).map_or(0, |m| m.len());
+            BROTLI_BASE_BYTES.saturating_add(n.saturating_mul(BROTLI_BYTES_PER_INPUT_BYTE))
+        })
+        .sum()
+}
+
+/// Whether the dist's precompression may run beside the backend leg: the
+/// available memory holds the backend's `sky` and Go peaks, the compressors,
+/// and the reserve. Unknown memory: no.
+pub fn compression_beside(backend: LegNeed, brotli: u64, available: Option<u64>) -> bool {
+    available.is_some_and(|a| {
+        a >= backend
+            .total()
+            .saturating_add(brotli)
+            .saturating_add(RESERVE_BYTES)
+    })
+}
+
 /// Total bytes of `.sky` files under `dir` (recursive; symlinks not followed).
 pub fn sky_source_bytes(dir: &Path) -> u64 {
     let mut total = 0;
@@ -291,6 +320,23 @@ mod tests {
         assert!(decide(false, true, huge, huge, "", None, 8).parallel);
         // Both set: serial is the safe one.
         assert!(!decide(true, true, small, small, "", Some(100 * GB), 8).parallel);
+    }
+
+    #[test]
+    fn compression_runs_beside_the_backend_only_when_memory_holds_both() {
+        let d = std::env::temp_dir().join(format!("sky-legplan-br-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let w = d.join("main.ab.wasm");
+        std::fs::write(&w, vec![0u8; 10 << 20]).unwrap();
+        let br = brotli_need(&[w.clone(), d.join("absent.js")]);
+        // 10 MB wasm: 64 + 200 MB; an absent file still counts its base.
+        assert_eq!(br, (64 << 20) * 2 + (200 << 20));
+        let b = leg(737 * MB, 2200 * MB);
+        let need = b.total() + br + RESERVE_BYTES;
+        assert!(compression_beside(b, br, Some(need)));
+        assert!(!compression_beside(b, br, Some(need - 1)));
+        assert!(!compression_beside(b, br, None));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

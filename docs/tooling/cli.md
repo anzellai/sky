@@ -132,7 +132,13 @@ keeps each leg's `sky-out/` between builds, so a rebuild whose Go did not change
 does not re-link the backend or the wasm client either. The `.gz` / `.br`
 variants in `dist/` are cached by the SHA-256 of the file they compress (in
 `~/.cache/sky/precompress`, or under `$XDG_CACHE_HOME`), so brotli-11 runs only
-when the wasm bytes change. `sky run` does not write them at all: its backend
+when the wasm bytes change. The bundle's assets (the wasm, `wasm_exec.js`, the
+boot script) are compressed at once, gzip and brotli each, and in a client
+build the parent `sky build` compresses them while the backend leg is still
+building, when the available memory holds both (brotli -q 11 is counted at
+64 MB plus 20 bytes per input byte). The bytes are those of `gzip -9` and
+`brotli -q 11` run one by one, and a cached result is used only after it
+decompresses to the file. `sky run` does not write them at all: its backend
 serves the bundle itself and compresses on the fly.
 
 A new directory reuses the cache too. Every `go build` Sky runs passes

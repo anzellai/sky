@@ -4009,6 +4009,10 @@ fn spa_split_and_build(
     // built first, so an SSR split builds its legs in order: frontend, then
     // backend.
     let backend_main = backend_dir.join("src").join("Main.sky");
+    // A web bundle (no native shell) is compressed here, in the parent, all
+    // assets at once, and alongside the backend leg when that is still
+    // building; a native shell's frontend child compresses its own bundle.
+    let parent_compresses = precompress && app_url::Shell::from_frontend_shell(target).is_none();
     let bake_wasm_name = std::fs::read_to_string(&backend_main)
         .map(|s| project::spa_split::needs_built_wasm_name(&s))
         .unwrap_or(false);
@@ -4062,7 +4066,9 @@ fn spa_split_and_build(
         if let Some(u) = builder_app_url {
             c.arg(format!("{}{u}", app_url::BUILDER_FLAG));
         }
-        if !precompress {
+        // The parent compresses a web bundle itself (below), so the child
+        // never does; a native shell's child keeps compressing its own.
+        if !precompress || parent_compresses {
             c.arg("--no-precompress");
         }
         if let Some(n) = leg_go_jobs {
@@ -4072,19 +4078,60 @@ fn spa_split_and_build(
         t.end();
         out
     };
+    let frontend_ok =
+        |r: &std::io::Result<std::process::Output>| matches!(r, Ok(o) if o.status.success());
+    let compress_dist = || {
+        let t = project::timings::phase("precompress dist (parent, all assets at once)");
+        precompress_assets(&dist_precompress_targets(&frontend_dir.join("dist")));
+        t.end();
+    };
     let t_legs = project::timings::phase("both legs (wall)");
     let (backend_res, frontend_res) = if bake_wasm_name {
         let frontend = build_frontend();
-        if matches!(&frontend, Ok(out) if out.status.success()) {
+        let built = frontend_ok(&frontend);
+        if built {
             bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
         }
-        (Ok(build_backend()), Ok(frontend))
+        if built && parent_compresses {
+            // Compress while the backend builds, when memory holds both.
+            let brotli =
+                leg_plan::brotli_need(&dist_precompress_targets(&frontend_dir.join("dist")));
+            if leg_plan::compression_beside(backend_need, brotli, leg_plan::available_memory()) {
+                project::timings::note("precompress: beside the backend leg".to_string());
+                let backend = std::thread::scope(|s| {
+                    let b = s.spawn(build_backend);
+                    compress_dist();
+                    b.join()
+                });
+                (backend, Ok(frontend))
+            } else {
+                project::timings::note("precompress: after the backend leg (memory)".to_string());
+                let backend = build_backend();
+                compress_dist();
+                (Ok(backend), Ok(frontend))
+            }
+        } else {
+            (Ok(build_backend()), Ok(frontend))
+        }
     } else if !plan.parallel {
-        (Ok(build_backend()), Ok(build_frontend()))
+        let backend = build_backend();
+        let frontend = build_frontend();
+        if parent_compresses && frontend_ok(&frontend) {
+            compress_dist();
+        }
+        (Ok(backend), Ok(frontend))
     } else {
         std::thread::scope(|s| {
             let b = s.spawn(build_backend);
-            let f = s.spawn(build_frontend);
+            // The frontend's memory is free once its child exits; its
+            // compression fits in what the plan counted for that leg.
+            let f = s.spawn(|| {
+                let r = build_frontend();
+                if parent_compresses && frontend_ok(&r) {
+                    compress_dist();
+                }
+                r
+            });
             (b.join(), f.join())
         })
     };
@@ -5257,12 +5304,39 @@ fn stage_web_bundle(out_dir: &Path, dist: &Path, precompress: bool) -> Result<()
     // backend serves the bundle itself (gzip on the fly) and never reads the
     // `.gz` / `.br` files, so brotli-11 there is pure wait.
     if precompress {
-        let cache = precompress::default_cache_dir();
-        precompress_web_asset(&dist.join(&wasm_name), cache.as_deref());
-        precompress_web_asset(&dist.join("wasm_exec.js"), cache.as_deref());
-        precompress_web_asset(&dist.join(&boot_name), cache.as_deref());
+        precompress_assets(&[
+            dist.join(&wasm_name),
+            dist.join("wasm_exec.js"),
+            dist.join(&boot_name),
+        ]);
     }
     Ok(())
+}
+
+/// The assets of a staged `dist/` that are precompressed: the hashed wasm, its
+/// loader glue and the boot script (see [`stage_web_bundle`]).
+fn dist_precompress_targets(dist: &Path) -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(w) = project::spa_split::built_wasm_name(dist) {
+        v.push(dist.join(w));
+    }
+    v.push(dist.join("wasm_exec.js"));
+    v.push(dist.join(spa_boot_name()));
+    v
+}
+
+/// Precompress `files` at once, each in its own thread (each one runs gzip and
+/// brotli at once too). The output bytes are those of the tools run one by
+/// one: each file is its own input, and the cache stores each under its own
+/// temporary name (`precompress::compress`).
+fn precompress_assets(files: &[PathBuf]) {
+    let cache = precompress::default_cache_dir();
+    let cache = cache.as_deref();
+    std::thread::scope(|s| {
+        for f in files {
+            s.spawn(move || precompress_web_asset(f, cache));
+        }
+    });
 }
 
 /// Precompress one dist asset into `<file>.gz` (gzip -9) and, when the `brotli`
