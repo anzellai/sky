@@ -2401,7 +2401,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		// session stores can decode them on future Get calls.
 		gobRegisterAll(model)
 		sess = &liveSession{
-			sseCh:     make(chan sseFrame, sseChanBuffer),
+			sseCh:     make(chan sseFrame, sseBufferSize()),
 			cancelSub: make(chan struct{}),
 			done:      make(chan struct{}),
 		}
@@ -5505,23 +5505,31 @@ const (
 	sseChanBufferMax     = 1024
 )
 
-var sseChanBuffer = sseChanBufferDefault
+// sseChanBuffer is an atomic because the env-prefix refresh hooks rewrite it
+// (loadSseChanBuffer) while sessions are being opened: ApplyConfig runs the
+// hooks, and `Sky.Config.apply` calls it from a running Task. Read it through
+// sseBufferSize.
+var sseChanBuffer atomic.Int32
+
+// sseBufferSize is the capacity of a new SSE / topic channel.
+func sseBufferSize() int { return int(sseChanBuffer.Load()) }
 
 // loadSseChanBuffer reads SKY_LIVE_SSE_BUFFER + clamp + assign.
 // Idempotent; safe to call from init() + onEnvPrefixChange hooks.
 func loadSseChanBuffer() {
-	v := skyGetenv("LIVE_SSE_BUFFER")
+	sseChanBuffer.Store(int32(parseSseChanBuffer(skyGetenv("LIVE_SSE_BUFFER"))))
+}
+
+// parseSseChanBuffer: malformed or non-positive falls back to the default
+// rather than refusing to boot (the pattern of parsePositiveInt callers
+// throughout live.go); a positive value is clamped to [min, max].
+func parseSseChanBuffer(v string) int {
 	if v == "" {
-		sseChanBuffer = sseChanBufferDefault
-		return
+		return sseChanBufferDefault
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n <= 0 {
-		// Malformed or non-positive — fall back to default rather
-		// than refusing to boot. Matches the pattern of
-		// parsePositiveInt callers throughout live.go.
-		sseChanBuffer = sseChanBufferDefault
-		return
+		return sseChanBufferDefault
 	}
 	if n < sseChanBufferMin {
 		n = sseChanBufferMin
@@ -5529,7 +5537,7 @@ func loadSseChanBuffer() {
 	if n > sseChanBufferMax {
 		n = sseChanBufferMax
 	}
-	sseChanBuffer = n
+	return n
 }
 
 func init() {
@@ -5598,7 +5606,7 @@ func (s *liveSession) registerSSEConn(tab string) (uint64, chan sseFrame, chan s
 	}
 	s.sseConnSeq++
 	id := s.sseConnSeq
-	ch := make(chan sseFrame, sseChanBuffer)
+	ch := make(chan sseFrame, sseBufferSize())
 	resync := make(chan struct{}, 1)
 	c := &sseConn{ch: ch, tab: tab, resync: resync, kick: make(chan struct{})}
 	s.sseConns[id] = c

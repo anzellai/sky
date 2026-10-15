@@ -169,7 +169,7 @@ var subIDCounter atomic.Uint64
 // A subBuf of 0 falls back to sseChanBuffer.
 func newTopicRegistry(subBuf int) *topicRegistry {
 	if subBuf <= 0 {
-		subBuf = sseChanBuffer
+		subBuf = sseBufferSize()
 	}
 	return &topicRegistry{
 		entries: map[string]*topicEntry{},
