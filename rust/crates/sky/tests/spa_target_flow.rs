@@ -599,8 +599,8 @@ fn inode(p: &std::path::Path) -> u64 {
 ///     its longest symbol name ~200 bytes).
 /// Before the fix every rebuild wiped `.skyapp/web-app/`, re-linked both legs
 /// and re-ran brotli-11 on the multi-MB wasm (measured: 19 s warm, most of it
-/// brotli). A second part pins the internal `--no-precompress` flag the
-/// `sky run` path passes to its frontend leg.
+/// brotli). A second part pins `--precompress=off` and its alias
+/// `--no-precompress` (what `sky run` passes its frontend leg).
 ///
 /// Heavy (two full web:app builds + a wasm build) — #[ignore]d for the T1
 /// budget; nightly via `--ignored`. Per-commit legs: the `precompress::tests`
@@ -659,7 +659,7 @@ fn web_app_no_change_rebuild_reuses_outputs() {
         "a no-change rebuild must not re-link the wasm client:\n{second}"
     );
     assert!(
-        second.contains("precompress gzip -9 (cached)"),
+        second.contains("precompress gzip (max) (cached)"),
         "a no-change rebuild must take the .gz from the content cache:\n{second}"
     );
     let dist = split.join("frontend").join("dist");
@@ -671,23 +671,22 @@ fn web_app_no_change_rebuild_reuses_outputs() {
     };
     assert!(has(".wasm.gz"), "the cached .gz must be staged into dist/");
 
-    // `--no-precompress` (what `sky run` passes its frontend leg) stages the
-    // bundle without the `.gz` / `.br` variants.
+    // `--precompress=off` and its alias `--no-precompress` (what `sky run`
+    // passes its frontend leg) stage the bundle without the `.gz` / `.br`.
     let web = scratch("noprecompress");
-    build_timed(
-        &web,
-        &["--target", "web", "--no-precompress", "src/Main.sky"],
-    );
-    let variants: Vec<String> = std::fs::read_dir(web.join("dist"))
-        .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".gz") || n.ends_with(".br"))
-        .collect();
-    assert!(
-        variants.is_empty(),
-        "--no-precompress must not write .gz / .br: {variants:?}"
-    );
+    for flag in ["--precompress=off", "--no-precompress"] {
+        build_timed(&web, &["--target", "web", flag, "src/Main.sky"]);
+        let variants: Vec<String> = std::fs::read_dir(web.join("dist"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".gz") || n.ends_with(".br"))
+            .collect();
+        assert!(
+            variants.is_empty(),
+            "{flag} must not write .gz / .br: {variants:?}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&web);
 }

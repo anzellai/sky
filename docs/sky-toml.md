@@ -969,6 +969,26 @@ app's public origin. `SKY_PUBLIC_URL` names that origin.
   an environment variable, not a `sky.toml` key, and it is prefix-affected
   (`FENCE_PUBLIC_URL` under `[env] prefix = "FENCE"`).
 
+### Bundle precompression — `SKY_PRECOMPRESS`
+
+`sky build` of a client target (`web:app`, `--target web`) writes `.br` and
+`.gz` variants of the wasm, `wasm_exec.js` and the boot script into `dist/`.
+`SKY_PRECOMPRESS` sets how much work goes into them when the command line does
+not say (`--precompress=<level>` wins):
+
+```bash
+SKY_PRECOMPRESS=max    # the default: brotli quality 11 (parallel), gzip -9
+SKY_PRECOMPRESS=fast   # brotli quality 9, gzip -6: seconds, ~18% larger .br
+SKY_PRECOMPRESS=off    # no .br / .gz (same as --no-precompress)
+```
+
+- It is read by the `sky` CLI at build time, not by the app, so it is never
+  prefix-affected and is not a `sky.toml` key.
+- An unknown value fails the build, naming the accepted levels.
+- The Sky backend sends a `.br` / `.gz` that is no older than its source to a
+  request that accepts it; with `off` it gzips each response on the fly. See
+  `docs/tooling/cli.md` (`--precompress`).
+
 ---
 
 ## Packaging identity — `Std.Bundle` *(v0.21+)*

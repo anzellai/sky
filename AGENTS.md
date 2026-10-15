@@ -602,8 +602,12 @@ A `Dict k v` field crosses the wire through `Codec.dict`.
 
 **Serving the wasm — precompressed.** A Go→wasm client is multi-MB raw (~2.5 MB
 brotli), so `sky build` precompresses the hashed `main.<hash>.wasm` + `wasm_exec.js`
-in `frontend/dist` to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool
-is installed — else it warns once and ships gzip only). The Sky backend's static
+in `frontend/dist` to `.gz` (`gzip -9`) and `.br` (brotli quality 11, written by
+`sky` itself with the `brotli` crate in parallel parts: no tool needed, ~3x
+quicker than `brotli -q 11` for a file within 1% of its size).
+`--precompress=max|fast|off` (or `SKY_PRECOMPRESS`) picks the level: `fast` is
+brotli 9 + gzip -6 (seconds, ~18% larger `.br`), `off` writes none
+(`--no-precompress` is its alias); `max` is the default. The Sky backend's static
 mounts send them: a request that accepts `br` (else `gzip`) gets the `.br` (else
 `.gz`) file as it is, with the original's Content-Type and Last-Modified, when it
 is no older than its source; a Range request, or a file with no fresh variant,

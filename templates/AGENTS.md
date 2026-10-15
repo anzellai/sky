@@ -629,9 +629,11 @@ real unhandled one. A `Dict k v` field crosses the wire through `Codec.dict`.
 raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on
 a small host. `sky build` does the compressing for you: it writes the hashed
 `main.<hash>.wasm` into `frontend/dist` and precompresses it (and `wasm_exec.js`)
-to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool is on the build
-machine — `brew install brotli` / `apt install brotli`; the build warns once and
-falls back to gzip otherwise). The Sky backend serves them itself: a request
+to `.gz` (gzip -9) and `.br` (brotli quality 11, written by `sky` itself; no
+`brotli` tool needed). For a quicker edit-rebuild loop, `sky build
+--precompress=fast` (brotli 9: seconds instead of tens of seconds, ~18% larger)
+or `--precompress=off` (none; also `SKY_PRECOMPRESS=fast|off`); deploy a
+`max` (default) build. The Sky backend serves them itself: a request
 that accepts `br` (else `gzip`) gets the `.br` (else `.gz`) file next to the
 asset, and a Range request or an asset with no fresh variant gets the raw file,
 gzipped on the fly. A separate static host in front must be told to use them:

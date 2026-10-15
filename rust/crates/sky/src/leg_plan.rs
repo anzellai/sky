@@ -182,19 +182,34 @@ pub fn leg_need(leg_dir: &Path) -> (LegNeed, bool) {
     )
 }
 
-/// brotli -q 11's peak: measured 170 MB on a 9.4 MB wasm; counted as 64 MB plus
-/// 20 bytes per input byte.
+/// The in-process brotli's peak (`precompress::brotli_compress`), per file:
+/// a 64 MB base, three copies of the input (read, the encoder's own, the
+/// output buffer) and 190 MB per part compressed at once (each part's encoder
+/// state at the 16 MB window). Measured on a 52 MB Go wasm: 1,559 MB peak for
+/// 8 parts at quality 11 (model: 1,740 MB) and 334 MB for one part (model:
+/// 410 MB).
 const BROTLI_BASE_BYTES: u64 = 64 << 20;
-const BROTLI_BYTES_PER_INPUT_BYTE: u64 = 20;
+const BROTLI_INPUT_COPIES: u64 = 3;
+const BROTLI_BYTES_PER_PART: u64 = 190 << 20;
 
-/// The memory the precompression of `files` needs at once: all files are
-/// compressed together (gzip's few MB are inside the base).
-pub fn brotli_need(files: &[std::path::PathBuf]) -> u64 {
+/// The memory the precompression of `files` at `level` needs at once: all
+/// files are compressed together (gzip's few MB are inside the base).
+pub fn brotli_need(files: &[std::path::PathBuf], level: crate::precompress::Level) -> u64 {
+    let Some((_, crate::precompress::Codec::Brotli(b))) = level.codecs() else {
+        return 0;
+    };
     files
         .iter()
         .map(|f| {
             let n = std::fs::metadata(f).map_or(0, |m| m.len());
-            BROTLI_BASE_BYTES.saturating_add(n.saturating_mul(BROTLI_BYTES_PER_INPUT_BYTE))
+            let parts = if b.parallel {
+                crate::precompress::brotli_chunks(n as usize) as u64
+            } else {
+                1
+            };
+            BROTLI_BASE_BYTES
+                .saturating_add(n.saturating_mul(BROTLI_INPUT_COPIES))
+                .saturating_add(parts.saturating_mul(BROTLI_BYTES_PER_PART))
         })
         .sum()
 }
@@ -330,9 +345,16 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let w = d.join("main.ab.wasm");
         std::fs::write(&w, vec![0u8; 10 << 20]).unwrap();
-        let br = brotli_need(&[w.clone(), d.join("absent.js")]);
-        // 10 MB wasm: 64 + 200 MB; an absent file still counts its base.
-        assert_eq!(br, (64 << 20) * 2 + (200 << 20));
+        use crate::precompress::Level;
+        let br = brotli_need(&[w.clone(), d.join("absent.js")], Level::Max);
+        // 10 MB wasm: 64 + 30 MB + 2 parts of 190 MB; an absent file still
+        // counts its base and one part.
+        assert_eq!(br, (64 << 20) * 2 + (30 << 20) + 3 * (190 << 20));
+        assert_eq!(
+            brotli_need(&[w.clone()], Level::Fast),
+            (64 << 20) + (30 << 20) + (190 << 20)
+        );
+        assert_eq!(brotli_need(&[w.clone()], Level::Off), 0);
         let b = leg(737 * MB, 2200 * MB);
         let need = b.total() + br + RESERVE_BYTES;
         assert!(compression_beside(b, br, Some(need)));

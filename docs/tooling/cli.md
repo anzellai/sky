@@ -131,15 +131,35 @@ is deterministic, so an unchanged module is never recompiled. A client build
 keeps each leg's `sky-out/` between builds, so a rebuild whose Go did not change
 does not re-link the backend or the wasm client either. The `.gz` / `.br`
 variants in `dist/` are cached by the SHA-256 of the file they compress (in
-`~/.cache/sky/precompress`, or under `$XDG_CACHE_HOME`), so brotli-11 runs only
+`~/.cache/sky/precompress`, or under `$XDG_CACHE_HOME`), so brotli runs only
 when the wasm bytes change. The bundle's assets (the wasm, `wasm_exec.js`, the
 boot script) are compressed at once, gzip and brotli each, and in a client
 build the parent `sky build` compresses them while the backend leg is still
-building, when the available memory holds both (brotli -q 11 is counted at
-64 MB plus 20 bytes per input byte). The bytes are those of `gzip -9` and
-`brotli -q 11` run one by one, and a cached result is used only after it
-decompresses to the file. `sky run` does not write them at all: its backend
-serves the bundle itself and compresses on the fly.
+building, when the available memory holds both (brotli is counted at 64 MB,
+three times the input, and 190 MB per part it compresses at once). The `.gz`
+is the bytes of `gzip -9`. The `.br` is written by `sky` itself (the `brotli`
+crate, no tool needed): quality 11 with a 16 MB window, a large file split
+into up to 8 parts of 6 MB or more that are compressed at once, each part
+able to refer back into the parts before it. On a 52 MB wasm that is 26 s
+against 81 s for `brotli -q 11`, for a file 0.3% larger; any brotli decoder
+reads it. A cached result is used only after it decompresses to the file.
+`sky run` and `sky watch` do not write them at all: their backend serves the
+bundle itself and compresses on the fly.
+
+**`--precompress=max|fast|off`** (or `SKY_PRECOMPRESS=max|fast|off`; the flag
+wins) sets how much work goes into the `.gz` / `.br`:
+
+| Level | brotli | gzip | 52 MB wasm: time, `.br` size |
+|---|---|---|---|
+| `max` (default) | quality 11, parallel | `-9` | 26 s, 2.77 MB |
+| `fast` | quality 9, one thread | `-6` | ~1.5 s, 3.25 MB (+18%) |
+| `off` | none | none | 0 s; the server compresses on the fly |
+
+Use `fast` (or `off`) for a quick edit-rebuild loop of a production-shaped
+build, and `max` for what you deploy. `--no-precompress` is `--precompress=off`.
+An unknown level is an error. The Sky backend serves the `.br` / `.gz` files
+itself when a request accepts them, and a Range request or a file with no
+fresh variant gets the raw file, gzipped on the fly.
 
 A new directory reuses the cache too. Every `go build` Sky runs passes
 `-trimpath`, so a compiled package's cache key does not include the directory
