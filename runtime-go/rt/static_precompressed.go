@@ -1,3 +1,5 @@
+//go:build !js
+
 package rt
 
 // Precompressed static files. `sky build` writes `<file>.br` (brotli) and
