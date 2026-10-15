@@ -60,13 +60,57 @@ type staticRoot struct {
 // file that dir does not have from that directory at the same URL path (see
 // staticFallThrough). Every static mount goes through here.
 func staticMount(prefix, dir, fallbackRoot string) http.Handler {
-	var files http.Handler = http.StripPrefix(prefix, http.FileServer(http.Dir(dir)))
+	var files http.Handler = http.StripPrefix(prefix, http.FileServer(manifestHidingDir(dir)))
 	roots := []staticRoot{{prefix: prefix, dir: dir}}
 	if fallbackRoot != "" {
-		files = staticFallThrough(files, http.StripPrefix("/", http.FileServer(http.Dir(fallbackRoot))))
+		files = staticFallThrough(files, http.StripPrefix("/", http.FileServer(manifestHidingDir(fallbackRoot))))
 		roots = append(roots, staticRoot{prefix: "/", dir: fallbackRoot})
 	}
 	return gzipStatic(precompressedStatic(files, roots))
+}
+
+// manifestHidingDir is http.Dir with the build's precompress manifest hidden:
+// the file is metadata for this server (precompressedStatic reads it), not an
+// asset, so a request for it is answered as for a file that does not exist
+// and a directory listing leaves it out. Only a manifest the server would use
+// is hidden (loadPrecompressManifest parses it); a file of that name that is
+// not one, such as a user's own file in their static directory, is served.
+type manifestHidingDir string
+
+func (d manifestHidingDir) Open(name string) (http.File, error) {
+	dir := http.Dir(d)
+	clean := path.Clean("/" + name)
+	if strings.EqualFold(path.Base(clean), precompressManifestName) &&
+		loadPrecompressManifest(filepath.Join(string(d), filepath.FromSlash(path.Dir(clean)))) != nil {
+		return nil, os.ErrNotExist
+	}
+	f, err := dir.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return manifestHidingFile{File: f, dir: filepath.Join(string(d), filepath.FromSlash(clean))}, nil
+}
+
+// manifestHidingFile leaves a used precompress manifest out of a directory
+// listing (http.FileServer lists through Readdir when the file has no
+// ReadDir).
+type manifestHidingFile struct {
+	http.File
+	dir string
+}
+
+func (f manifestHidingFile) Readdir(count int) ([]os.FileInfo, error) {
+	infos, err := f.File.Readdir(count)
+	if loadPrecompressManifest(f.dir) == nil {
+		return infos, err
+	}
+	kept := infos[:0]
+	for _, fi := range infos {
+		if !strings.EqualFold(fi.Name(), precompressManifestName) {
+			kept = append(kept, fi)
+		}
+	}
+	return kept, err
 }
 
 // precompressedEncodings are the sidecars tried, best first. The order is

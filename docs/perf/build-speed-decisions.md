@@ -39,7 +39,7 @@ would emit one Go package per Sky module (`sky-app/sky/m/<prefix>`), keep the
 entry module and the registration `init()`s in `main`, and dot-import between
 module packages. After an edit, Go would recompile the changed module's
 package, the packages that import it, and `main`, instead of the whole
-program. The design is in `streams/architect-PLAN.md` ("Phase 2") in the
+program. The design is in `docs/history/build-speed-v0.27.9/streams/architect-PLAN.md` ("Phase 2") in the
 deferred run dir.
 
 **What was measured.** The large cost that a split was meant to address turned
@@ -50,11 +50,11 @@ out to have other causes, and those are fixed in v0.27.9:
   81.50 % of 54.3 s at `-c=8`
   (`go-compile-bench/caf-before-backend-200-c8.txt`). The Go inliner copied
   each CAF initialiser, with all its closures, into every reader. After the
-  fix: 13,123 functions, 4.62 s, 1,111 MB (`streams/caf-outline-RESULTS.md`).
+  fix: 13,123 functions, 4.62 s, 1,111 MB (`docs/history/build-speed-v0.27.9/streams/caf-outline-RESULTS.md`).
 - Wasm frontend package `main` of a generated app at N = 200 (400 Model
   fields, 400 RPCs), before the `rt.Coerce` generic-shell fix: 13.65 s at
   `-c=8`, 4,327 MB; after: 3.70 s, 1,055 MB, with `compilefuncs` 2.05 s for
-  19,753 functions (`streams/wasm-generic-shell-RESULTS.md`,
+  19,753 functions (`docs/history/build-speed-v0.27.9/streams/wasm-generic-shell-RESULTS.md`,
   `go-compile-bench/genwhole-fe-*-200-c8.txt`). After the fix no class of
   function dominates. The largest single functions are `Main_update` (0.39 s)
   and `Main_view` (0.33 s), and they compile in parallel with the rest at
@@ -75,10 +75,10 @@ times above. The split itself was not built or measured.
 - The runtime reads Go type and function names in many places: gob
   registration of session state, the Msg ADT key, wire codecs, handler
   identity, profile demangling, and `%T` in 18 files
-  (`streams/architect-PLAN.md`, correction 4). A missed site changes
+  (`docs/history/build-speed-v0.27.9/streams/architect-PLAN.md`, correction 4). A missed site changes
   behaviour at run time, not at build time. A mixed naming of gob types
   panics inside `tryGobRegisterVal`, the panic is swallowed, and session saves
-  fail (`streams/grill-safety.md`, M6).
+  fail (`docs/history/build-speed-v0.27.9/streams/grill-safety.md`, M6).
 - Session data written by an app built with one layout must decode in an app
   built with the other, across a deploy.
 - Synthesised items (eta and coerce adapters, lifted lambdas, codec code that
@@ -120,9 +120,9 @@ test, which is safe on today's single-package layout.
 - The effectiveness review found that on the generated Sky.Spa shapes the cost
   is concentrated in one or two modules (the generated `Shared` module and the
   module with `update`), which per-module parallelism does not split
-  (`streams/grill-effectiveness.md`).
+  (`docs/history/build-speed-v0.27.9/streams/grill-effectiveness.md`).
 - The `bench-gen` app at N = 200: the parent's front half takes 0.28 s
-  (`streams/front-end-once-RESULTS.md`).
+  (`docs/history/build-speed-v0.27.9/streams/front-end-once-RESULTS.md`).
 
 **Expected gain: estimate.** 3b gains only as far as independent modules carry
 the cost. Where one module carries most of it, as in the measured generated
@@ -159,14 +159,14 @@ for 3b; or a measured leg where the stdlib world build is a large share, for
 the record: the occurs check walks the whole structure a variable is bound
 to, and each call that passes the Model to an annotated function instantiates
 the declared Model record and unifies it field by field. The design in
-`streams/unifier-linear-PLAN.md` gives each union-find root a ground stamp, so
+`docs/history/build-speed-v0.27.9/streams/unifier-linear-PLAN.md` gives each union-find root a ground stamp, so
 the occurs check skips classes known to hold no variables, and instantiates
 ground types lazily. The ratchet test that would hold it is
 `unifier_work_is_linear_in_record_size` in
 `rust/crates/skydb/tests/typed_table_growth.rs` (around line 184). It is
 `#[ignore]`d because it fails today.
 
-**What was measured** (`streams/unifier-copies-RESULTS.md`).
+**What was measured** (`docs/history/build-speed-v0.27.9/streams/unifier-copies-RESULTS.md`).
 
 - Ratchet ratios per doubling of record size (2.0 is linear): `codec_chain`
   occurs 3.92 / 3.92 and record_fields 3.85 / 3.91 (type check / lowering);
@@ -215,7 +215,7 @@ A `--target web:app` build of a `Std.App` entry still loads and checks twice:
 once for the user's entry, once for the derived client entry synthesised from
 it, because they are two programs.
 
-**What was measured** (`streams/front-end-once-RESULTS.md`, median of 3 warm
+**What was measured** (`docs/history/build-speed-v0.27.9/streams/front-end-once-RESULTS.md`, median of 3 warm
 runs).
 
 | App | Path | Split step | Whole build | Loads, checks |

@@ -20,7 +20,12 @@ generated app's package `main`.
   N = 200, before (`base`) and after (`new`) the generic-shell fix to
   `rt.Coerce`.
 
-## `streams/`
+## `streams/` (moved)
+
+The stream results, plans and grills cited by the decision record now live in
+`docs/history/build-speed-v0.27.9/streams/`. They are planning records, so they
+sit with the other historical material, outside the live-docs gates.
+
 
 - `architect-PLAN.md`: the architect's plan, including Phase 2 (per-module Go
   packages) and Phase 3 (parallel front end, stdlib world snapshot,

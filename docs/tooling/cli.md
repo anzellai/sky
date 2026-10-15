@@ -177,7 +177,10 @@ manifest, so `off` leaves none behind. The build then lists what it wrote in
 `dist/sky-precompress.json`: each asset's size and SHA-256, and those of its
 `.br` / `.gz`. The Sky backend serves a `.br` / `.gz` itself only when a
 request accepts it and the manifest lists it with the size and SHA-256 the
-files still have (hashed once per file version per process). A Range request
+files still have (hashed once per file version per process). The manifest is
+read by the backend and is not served: a request for it is answered as for a
+file that does not exist (404, or the app's NotFound page on the Sky.Spa `/`
+mount). A Range request
 that accepts the encoding ranges over that file, with Content-Encoding on the
 206; anything else gets the raw file, gzipped on the fly. A `.gz` / `.br`
 that the build did not write (one committed in an app's own static dir) is

@@ -9998,10 +9998,25 @@ fn whole_model_branches_share_one_model_wire_codec() {
         probe_dir.join("src/Shared.sky"),
     )
     .unwrap();
-    let names: Vec<String> = client_cases
+    // The SSR `sky-model` seed and the client's saved model are
+    // `Codec.toJson (Codec.auto m) m` of the app's Model. Go lowering gives
+    // every record alias with one field set one struct, declared in the order
+    // of the first alias it meets, and `Codec.auto` writes keys in struct
+    // order. A wire record with the Model's fields declared in chain order
+    // (`log` first) re-ordered the seed. The probe declares the Model in a
+    // module that imports `Shared`, as an app's `Types` module does.
+    let types_src = "module Types exposing (Model, encSeed)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Codec as Codec\n\
+         import Shared exposing (..)\n\n\n\
+         type alias Model =\n    { n : Int\n    , scale : Int\n    , log : String\n    }\n\n\n\
+         seedModel : Model\nseedModel =\n    { n = 2, scale = 3, log = \"\" }\n\n\n\
+         encSeed : String\nencSeed =\n    Codec.toJson (Codec.auto seedModel) seedModel\n";
+    let mut names: Vec<String> = client_cases
         .iter()
         .map(|(msg, _)| format!("enc{msg}"))
         .collect();
+    names.push("encSeed".to_string());
     std::fs::write(
         probe_dir.join("src/Main.sky"),
         format!(
@@ -10010,7 +10025,8 @@ fn whole_model_branches_share_one_model_wire_codec() {
              import Sky.Core.String as String\n\
              import Std.Codec as Codec\n\
              import Std.Log exposing (println)\n\
-             import Shared exposing (..)\n\n\n\
+             import Shared exposing (..)\n\
+             import Types exposing (encSeed)\n\n\n\
              {}\
              main =\n    println (String.join \"\\n\" [ {} ])\n",
             encodes.join(""),
@@ -10018,6 +10034,7 @@ fn whole_model_branches_share_one_model_wire_codec() {
         ),
     )
     .unwrap();
+    std::fs::write(probe_dir.join("src/Types.sky"), types_src).unwrap();
     let probe = Command::new(SKY)
         .args(["build", "src/Main.sky"])
         .current_dir(&probe_dir)
@@ -10038,8 +10055,13 @@ fn whole_model_branches_share_one_model_wire_codec() {
     let lines: Vec<&str> = encoded.lines().collect();
     assert_eq!(
         lines.len(),
-        client_cases.len(),
-        "one encoded request per case:\n{encoded}"
+        client_cases.len() + 1,
+        "one encoded request per case, then the seed:\n{encoded}"
+    );
+    assert_eq!(
+        lines[client_cases.len()],
+        r#"{"n":2,"scale":3,"log":""}"#,
+        "the Model seed keeps the Model's declaration order"
     );
     for ((msg, want), got) in client_cases.iter().zip(lines) {
         assert_eq!(
@@ -10868,6 +10890,154 @@ fn a_spa_backend_honours_the_store_the_app_names_with_with_config() {
     assert!(
         both.contains("The session store \"memory\", set by SKY_LIVE_STORE in the environment"),
         "the operator's variable wins over the code:\n{both}"
+    );
+}
+
+/// A `--target web:app` backend run as a deploy runs it: the binary and its
+/// `sky.toml` in `<root>/backend` (the working directory), the client in
+/// `<root>/frontend/dist`, and NOT the build's `backend/<static>` copy. The
+/// app's `App.withConfig` names a port, `static` and `staticUrl`. The backend
+/// listens on the operator's `PORT`, never the code's port; `/brand/<file>`
+/// serves the committed file (from `dist/brand`, the deploy's only copy); the
+/// page and the wasm serve; and the build's precompress manifest does not.
+#[test]
+fn a_spa_backend_with_code_static_config_serves_in_the_deploy_layout() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-deeplink"),
+        &proj,
+    );
+    let logo = "<svg xmlns=\"http://www.w3.org/2000/svg\"><title>brand-logo</title></svg>";
+    std::fs::create_dir_all(proj.join("brand")).unwrap();
+    std::fs::write(proj.join("brand/logo.svg"), logo).unwrap();
+    let code_port = free_port();
+    let main = proj.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    let from = "        |> App.withNotFound NotFoundPage\n";
+    assert_eq!(src.matches(from).count(), 1);
+    std::fs::write(
+        &main,
+        src.replacen(
+            from,
+            &format!(
+                "{from}        |> App.withConfig (App.WebConfig {{ App.webDefaults | port = {code_port}, inputMode = Just \"debounce\", static = Just \"brand\", staticUrl = Just \"/brand\" }})\n"
+            ),
+            1,
+        ),
+    )
+    .unwrap();
+    let out = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    let split = proj.join(".skyapp/web-app/.split");
+    let dist = split.join("frontend/dist");
+    assert!(
+        dist.join("brand/logo.svg").is_file(),
+        "the build copies the static dir into dist"
+    );
+    // The deploy layout.
+    let root = proj.join("deploy-root");
+    std::fs::create_dir_all(root.join("backend")).unwrap();
+    std::fs::copy(split.join("backend/sky-out/app"), root.join("backend/app")).unwrap();
+    std::fs::copy(
+        split.join("backend/sky.toml"),
+        root.join("backend/sky.toml"),
+    )
+    .unwrap();
+    copy_tree(&dist, &root.join("frontend/dist"));
+    assert!(!root.join("backend/brand").exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.join("backend/app"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    let wasm = std::fs::read_dir(&dist)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+        .expect("a hashed wasm in dist");
+    let port = free_port();
+    let stdout = root.join("server.log");
+    let stderr = root.join("server.err");
+    let child = ChildGroup::spawn(
+        Command::new(root.join("backend/app"))
+            .current_dir(root.join("backend"))
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("ENV")
+            .env_remove("SKY_LIVE_PORT")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap()),
+    )
+    .expect("start the split backend");
+    let up = wait_for_spa_backend(&stdout, 120);
+    let logs = || {
+        format!(
+            "{}{}",
+            std::fs::read_to_string(&stdout).unwrap_or_default(),
+            std::fs::read_to_string(&stderr).unwrap_or_default()
+        )
+    };
+    assert!(up, "the split backend did not start:\n{}", logs());
+    let page = curl_status_ctype(port, "/");
+    let brand = curl_status_ctype(port, "/brand/logo.svg");
+    let brand_body = curl_body_p(port, "/brand/logo.svg");
+    let wasm_st = curl_status_ctype(port, &format!("/{wasm}"));
+    let manifest = curl_body_p(port, "/sky-precompress.json");
+    let code_port_bound = std::net::TcpStream::connect(("127.0.0.1", code_port)).is_ok();
+    let all = logs();
+    drop(child);
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        all.contains(&format!(":{port}")),
+        "the backend listens on the operator's PORT:\n{all}"
+    );
+    assert!(
+        !code_port_bound,
+        "the code's `port` must not be bound when PORT is set:\n{all}"
+    );
+    let (code, ctype) = page.expect("GET /");
+    assert!(
+        code == 200 && ctype.starts_with("text/html"),
+        "GET /: {code} {ctype}"
+    );
+    let (code, ctype) = brand.expect("GET /brand/logo.svg");
+    assert!(
+        code == 200 && ctype.starts_with("image/svg+xml"),
+        "GET /brand/logo.svg: {code} {ctype}"
+    );
+    assert_eq!(
+        brand_body.as_deref(),
+        Some(logo),
+        "the committed brand file"
+    );
+    let (code, ctype) = wasm_st.expect("GET the wasm");
+    assert!(
+        code == 200 && ctype == "application/wasm",
+        "GET /{wasm}: {code} {ctype}"
+    );
+    assert!(
+        !manifest.unwrap_or_default().contains("sha256"),
+        "the build's precompress manifest is not served"
     );
 }
 
