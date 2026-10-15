@@ -457,9 +457,8 @@ fn verify_one(
     // mtime back, so that binary looked fresh and the NEXT gate measured the
     // mutated compiler: config-matrix's own baseline came back red on a clean
     // tree (`live.port` builder "ignored", the inverted-provenance mutation).
-    let built_under_mutation = cargo_target_dir_of(&opts.exe)
-        .map(|t| !post_revert_rebuilds(&t, mutation_started).is_empty())
-        .unwrap_or(false);
+    let built_under_mutation =
+        !post_revert_targets(&opts.repo_root, &opts.exe, mutation_started).is_empty();
     let rebuilt_source = rust_source || built_under_mutation;
     // Capture the reverted file + its ORIGINAL mtime before the patch drops. The
     // revert restores byte-identical content AND puts the old mtime back (so a
@@ -582,13 +581,45 @@ fn rebuild_after_revert(
     if rust_source {
         rebuild_xtask(root, exe, budget)?;
     }
-    let Some(target_dir) = cargo_target_dir_of(exe) else {
-        return Ok(());
-    };
-    for args in post_revert_rebuilds(&target_dir, since) {
-        cargo_build_into(root, exe, args, budget)?;
+    for (target_dir, args) in post_revert_targets(root, exe, since) {
+        cargo_build_in(root, &target_dir, args, budget)?;
     }
     Ok(())
+}
+
+/// Every `sky` a gate may have built under the mutation, as (target directory,
+/// cargo arguments that rebuild it there). Gates build into two directories:
+/// the one the running `xtask` lives in (`lsp` and `config-matrix` inherit its
+/// `CARGO_TARGET_DIR`), and the in-tree `rust/target`, because the gates that
+/// run `cargo test -p sky` (`cli-verbs`, `build-new-dir-compiles-nothing`,
+/// `build-growth-linear`) unset `CARGO_TARGET_DIR` on purpose. When `xtask`
+/// was built elsewhere, only the first used to be checked: the in-tree debug
+/// `sky` kept the mutation (its source got its old mtime back, so cargo read
+/// it as fresh), and the next run of the gate measured the mutated compiler.
+/// Observed: `build-new-dir-compiles-nothing` red on a clean tree after
+/// `--verify-falsifiers`, its copy recompiling every package as the
+/// no-trimpath mutation does.
+fn post_revert_targets(
+    root: &Path,
+    exe: &Path,
+    since: std::time::SystemTime,
+) -> Vec<(PathBuf, &'static [&'static str])> {
+    let mut dirs: Vec<PathBuf> = cargo_target_dir_of(exe).into_iter().collect();
+    let in_tree = root.join("rust").join("target");
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    };
+    if !dirs.iter().any(|d| same(d, &in_tree)) {
+        dirs.push(in_tree);
+    }
+    dirs.into_iter()
+        .flat_map(|d| {
+            post_revert_rebuilds(&d, since)
+                .into_iter()
+                .map(move |args| (d.clone(), args))
+        })
+        .collect()
 }
 
 /// Run `cargo <args>` into the target directory `exe` lives in, bounded.
@@ -598,8 +629,6 @@ fn cargo_build_into(
     args: &[&str],
     budget: Duration,
 ) -> Result<(), String> {
-    use std::process::{Command, Stdio};
-
     // Build into the target directory `exe` lives in, whatever it is called.
     // Neither an inherited CARGO_TARGET_DIR nor the default `rust/target` is
     // right in general: a harness started from `rust/isolated-target` that
@@ -613,10 +642,22 @@ fn cargo_build_into(
             exe.display()
         ));
     };
+    cargo_build_in(root, &target_dir, args, budget)
+}
+
+/// Run `cargo <args>` into `target_dir`, bounded.
+fn cargo_build_in(
+    root: &Path,
+    target_dir: &Path,
+    args: &[&str],
+    budget: Duration,
+) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
     let mut cmd = Command::new("cargo");
     cmd.args(args)
         .current_dir(root.join("rust"))
-        .env("CARGO_TARGET_DIR", &target_dir)
+        .env("CARGO_TARGET_DIR", target_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -707,6 +748,37 @@ mod tests {
             "a release sky built during the mutated run is rebuilt too"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A debug `sky` that a `cargo test -p sky` gate built under the mutation
+    // sits in the in-tree `rust/target` (those gates unset CARGO_TARGET_DIR),
+    // not where the running `xtask` lives. It must be rebuilt there too.
+    #[test]
+    fn an_in_tree_sky_built_under_the_mutation_is_rebuilt_when_xtask_lives_elsewhere() {
+        let root = tmp("in-tree");
+        let elsewhere = tmp("xtask-target");
+        let exe = elsewhere.join("release").join("xtask");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        let in_tree_debug = root.join("rust/target/debug");
+        std::fs::create_dir_all(&in_tree_debug).unwrap();
+        let before = std::time::SystemTime::now() - Duration::from_secs(60);
+        assert!(post_revert_targets(&root, &exe, before).is_empty());
+        std::fs::write(
+            in_tree_debug.join(if cfg!(windows) { "sky.exe" } else { "sky" }),
+            b"mutated",
+        )
+        .unwrap();
+        assert_eq!(
+            post_revert_targets(&root, &exe, before),
+            vec![(root.join("rust/target"), &["build", "-p", "sky"][..])],
+            "the in-tree debug sky was built during the mutated run"
+        );
+        // When xtask itself lives in rust/target, the directory is listed once.
+        let exe_in_tree = root.join("rust/target/release/xtask");
+        std::fs::create_dir_all(exe_in_tree.parent().unwrap()).unwrap();
+        assert_eq!(post_revert_targets(&root, &exe_in_tree, before).len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&elsewhere);
     }
 
     // The rebuild targets the directory the RUNNING binary lives in. A harness
