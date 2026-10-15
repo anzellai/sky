@@ -252,7 +252,12 @@ the available memory holds after the 1 GB reserve (measured at Go's default
 `-p 8` on darwin/arm64, the compiles beside the largest one average about 0.1
 GB). When that is one per CPU, Go keeps its default. Below 6 GB of room (an 8
 GB machine) the 0.25 GB figure is not trusted: each other compile counts about
-0.7 GB and `-p` is at most 4. A 16 GB machine keeps Go's default. Each `go
+0.7 GB and `-p` is at most 4. A 16 GB machine keeps Go's default. The
+generated `skyffi` package is a special case: it imports the runtime and every
+bound Go package, so Go compiles it after all of them, and only the console
+package and the build stamp can compile beside it, whatever `-p` is. It must
+fit with the console compile beside it (else `-p 1`), and `-p` is sized from
+the ordinary compiles that run before it. Each `go
 build` is measured on its own (its own child process, never the largest of
 every child before it), and a build records a dependency peak only when its
 dependencies compiled and its `main` did not (Go's action graph says which
