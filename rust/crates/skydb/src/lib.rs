@@ -277,16 +277,28 @@ pub fn record_result_sig_query(
 /// the narrow subset of updated fields (which codegen would emit as an anon
 /// struct, silently dropping every un-updated field / nil-panicking an ADT one).
 ///
-/// Demanded ONLY when `ty::body_updates_a_param(body)` — so a body without a
-/// param-update creates no dependency, preserving backdating for the common case.
+/// Demanded ONLY when `ty::wants_callsite_harvest` holds: the body updates a
+/// param whose declared type is not a closed record. A body without such an
+/// update creates no dependency, preserving backdating for the common case, and
+/// an annotated def never pays for inferring its callers.
 /// Built against the FULL [`check_world_query`] so caller inference is
 /// byte-identical to the eager backend's whole-program harvest
-/// (`World::harvest_callsite_param_records`). Cheap when `callee` is only ever
-/// reached reflectively (e.g. the TEA `update` dispatch): the internal `calls_it`
-/// scan finds no direct `Call` site and skips all caller inference.
-/// `_module` / `_file` are salsa carrier keys (the CONSUMING def's module/file);
-/// the value depends only on `callee` + the world, so at worst they cause a benign
-/// duplicate memo, and invalidation flows through the `check_world_query` read.
+/// (`World::harvest_callsite_param_records`).
+///
+/// **Linear in the callers.** The callers come from the syntactic reverse-call
+/// index [`direct_callers_query`], and each caller's contribution is
+/// [`caller_record_args_query`]: ONE inference of that caller, memoised, that
+/// summarises its calls to EVERY def that wants a harvest. A large `update`
+/// that calls N such helpers is inferred once, not once per helper. Folding
+/// the summaries (`ty::fold_param_records`) equals the per-callee
+/// `ty::callsite_param_records_for` (see `ty::caller_param_records` for the
+/// argument). That per-callee path stays the answer for a `def` the per-caller
+/// summaries do not cover: one that does not want a harvest (nothing in this
+/// crate demands that) or whose `_module` is not its defining module.
+///
+/// `_module` / `_file` are salsa carrier keys (the CONSUMING def's module/file,
+/// which for `infer_query` is the def's own); invalidation flows through the
+/// `check_world_query`, `resolve` and index reads.
 #[salsa::tracked]
 pub fn callsite_param_records_query(
     db: &dyn ResolveDb,
@@ -295,7 +307,84 @@ pub fn callsite_param_records_query(
     _file: SourceFile,
 ) -> Vec<Option<ty::Ty>> {
     let world = check_world_query(db);
-    ty::callsite_param_records_for(db.sky_db(), &world, def)
+    let sky = db.sky_db();
+    let covered = sky.def_loc(def).map(|l| l.module) == Some(_module)
+        && *wants_callsite_harvest_query(db, def, _module);
+    if !covered {
+        return ty::callsite_param_records_for(sky, world, def);
+    }
+    let Some(callers) = direct_callers_query(db).get(&def) else {
+        return Vec::new();
+    };
+    let seen: Vec<&[Option<ty::ParamRecordSeen>]> = callers
+        .iter()
+        .filter_map(|&(m, caller)| {
+            caller_record_args_query(db, caller, m)
+                .iter()
+                .find(|(f, _)| *f == def)
+                .map(|(_, v)| v.as_slice())
+        })
+        .collect();
+    ty::fold_param_records(seen)
+}
+
+/// Does `def` (defined in `module`) want the #166 call-site harvest? See
+/// `ty::wants_callsite_harvest`: it updates a param whose declared type is not a
+/// closed record. Reads the same declaration world and body `infer_query`
+/// reads, so the two agree. Backdated (a `bool`), so an edit that leaves the
+/// answer unchanged does not re-run the caller summaries that read it.
+#[salsa::tracked]
+pub fn wants_callsite_harvest_query(db: &dyn ResolveDb, def: DefId, module: ModuleId) -> bool {
+    let world = type_world_query(db);
+    let resolved = db.sky_db().resolve(module);
+    resolved
+        .bodies
+        .get(&def)
+        .is_some_and(|body| ty::wants_callsite_harvest(world, def, body))
+}
+
+/// The syntactic reverse-call index: for each top-level def, the bodies
+/// (`(module, def)`, in module then body order, each once) that call it
+/// directly — exactly the bodies the per-callee harvest's `calls_it` scan
+/// accepts. One scan of every body replaces one scan per harvested def.
+/// Backdated, so a body edit that adds or removes no call edge leaves every
+/// harvest that reads it valid.
+#[salsa::tracked(returns(ref))]
+pub fn direct_callers_query(db: &dyn ResolveDb) -> HashMap<DefId, Vec<(ModuleId, DefId)>> {
+    let sky = db.sky_db();
+    let mut out: HashMap<DefId, Vec<(ModuleId, DefId)>> = HashMap::new();
+    for m in sky.module_ids() {
+        let resolved = sky.resolve(m);
+        for (caller, body) in resolved.bodies.iter() {
+            for f in ty::direct_callees(body) {
+                out.entry(f).or_default().push((m, *caller));
+            }
+        }
+    }
+    out
+}
+
+/// One caller's contribution to every #166 call-site harvest: infer the body of
+/// `caller` (defined in `module`) ONCE against the full [`check_world_query`]
+/// and summarise the closed records it passes to each def it calls that wants
+/// a harvest ([`wants_callsite_harvest_query`]). Memoised per caller, so the
+/// harvests of N helpers called from one body share one inference of it.
+#[salsa::tracked(returns(ref))]
+pub fn caller_record_args_query(
+    db: &dyn ResolveDb,
+    caller: DefId,
+    module: ModuleId,
+) -> ty::CallerParamRecords {
+    let world = check_world_query(db);
+    let sky = db.sky_db();
+    let resolved = sky.resolve(module);
+    let Some(body) = resolved.bodies.get(&caller) else {
+        return Vec::new();
+    };
+    ty::caller_param_records(sky, world, body, |f| {
+        sky.def_loc(f)
+            .is_some_and(|l| *wants_callsite_harvest_query(db, f, l.module))
+    })
 }
 
 /// `infer(DefId)` as a `#[salsa::tracked]` query (doc 01 `infer(DefId) -> types,
@@ -339,11 +428,18 @@ pub fn infer_query(
     let resolved = sky.resolve(module);
     if let Some(body) = resolved.bodies.get(&def) {
         let bases = ty::update_base_defs(body);
-        // #166: an UNANNOTATED def that record-updates one of its own params has
-        // no sig to close the row from — harvest the concrete record its callers
-        // pass. Demanded ONLY when the body actually has such a param-update, so
-        // the common case keeps its `type_world`-only (backdated) dependency.
-        let updates_param = ty::body_updates_a_param(body);
+        // #166: a def that record-updates one of its own params closes the row
+        // from that param's DECLARED closed record when its signature gives one
+        // (`ty::declared_param_record`); only otherwise does the close read the
+        // concrete record its callers pass. The harvest infers every caller's
+        // whole body, so it is demanded ONLY when some updated param lacks a
+        // declared closed record — the one case where the close reads it. An
+        // annotated `update : Msg -> Model -> Model` therefore costs no caller
+        // inference, and the common case keeps its `type_world`-only
+        // (backdated) dependency. The decision reads the same `world` the close
+        // reads, so adding or removing an annotation re-executes this query
+        // (its `type_world` dependency changes) and re-decides.
+        let updates_param = ty::wants_callsite_harvest(&world, def, body);
         if !bases.is_empty() || updates_param {
             // The demanded entries are read in place of the world's own (a
             // `RecordOverlay`), exactly as inserting them into a clone of the

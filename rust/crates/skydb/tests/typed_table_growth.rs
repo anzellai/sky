@@ -223,3 +223,98 @@ fn growth_body(counters: &[&str]) {
         failures.join("\n")
     );
 }
+
+// ---- #166 call-site harvest growth -------------------------------------------
+//
+// N helpers each update one field of a fixed 30-field `Model` param, and one
+// `update` of N arms calls every helper on an updated `model` (so each arm
+// does a fixed amount of record work). The lowering path harvests, for a
+// helper that updates its param, the record each caller passes, by inferring
+// the caller. Done per helper, that re-infers the N-arm `update` N times: work
+// grows as N². The two tests below build the shape at N and 2N and require the
+// lowering phase's `record_fields` work to grow at most 2.3 times.
+
+const HELPER_MODEL_FIELDS: usize = 30;
+
+/// `annotated`: each helper carries `setK : String -> Model -> Model`.
+fn param_update_helpers(n: usize, annotated: bool) -> String {
+    let m = HELPER_MODEL_FIELDS;
+    let fields: Vec<String> = (0..m).map(|i| format!("f{i} : String")).collect();
+    let init: Vec<String> = (0..m).map(|i| format!("f{i} = \"\"")).collect();
+    let ctors: Vec<String> = (0..n).map(|k| format!("Set{k} String")).collect();
+    let mut helpers = String::new();
+    let mut arms = Vec::new();
+    for k in 0..n {
+        if annotated {
+            helpers.push_str(&format!("set{k} : String -> Model -> Model\n"));
+        }
+        helpers.push_str(&format!(
+            "set{k} s model =\n    {{ model | f{} = s }}\n\n\n",
+            k % m
+        ));
+        arms.push(format!(
+            "        Set{k} s ->\n            set{k} s {{ model | f{} = s }}\n",
+            (k + 1) % m
+        ));
+    }
+    format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\n\n\
+         type alias Model =\n    {{ {fields}\n    }}\n\n\n\
+         type Msg\n    = {ctors}\n\n\n\
+         init : Model\ninit =\n    {{ {init} }}\n\n\n\
+         {helpers}\
+         update : Msg -> Model -> Model\nupdate msg model =\n    case msg of\n{arms}\n\n\
+         main =\n    println (update (Set0 \"x\") init).f0\n",
+        fields = fields.join("\n    , "),
+        ctors = ctors.join("\n    | "),
+        init = init.join(", "),
+        arms = arms.join("\n"),
+    )
+}
+
+fn harvest_growth(annotated: bool) {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(move || {
+            let root = repo_root();
+            let stdlib: Vec<(String, String)> = ty::reject_corpus::load_stdlib(&root)
+                .into_iter()
+                .map(|(n, p)| (n, p.syntax().text().to_string()))
+                .collect();
+            let fields = |n: usize| {
+                let (_, lower) = run(&stdlib, &param_update_helpers(n, annotated));
+                lower
+                    .fields()
+                    .iter()
+                    .find(|(name, _)| *name == "record_fields")
+                    .map(|(_, v)| *v)
+                    .expect("record_fields counter")
+            };
+            let (a, b) = (fields(60), fields(120));
+            let ratio = b as f64 / a as f64;
+            eprintln!(
+                "param_update_helpers(annotated={annotated})/lower/record_fields: N=60 {a}, N=120 {b}, ratio {ratio:.2}"
+            );
+            assert!(
+                ratio <= 2.3,
+                "lowering record_fields grows {ratio:.2}x from N=60 to N=120 \
+                 (annotated={annotated}); the call-site harvest is re-inferring callers"
+            );
+        })
+        .expect("spawn")
+        .join()
+        .expect("harvest growth check panicked");
+}
+
+#[test]
+fn annotated_param_update_helpers_lower_linearly() {
+    harvest_growth(true);
+}
+
+#[test]
+fn unannotated_param_update_helpers_lower_linearly() {
+    harvest_growth(false);
+}

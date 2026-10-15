@@ -260,6 +260,25 @@ never becomes `Flex` again and only `Flex` / `FlexSuper` roots are printed. The
 `infer_readback_tests` differential runs every corpus def with the skip on and
 off (`ground_close_is_skipped_and_changes_nothing` pins that it fires).
 
+**The #166 call-site harvest is demanded only when it is read, and is linear.**
+When a param's declared type gives no closed record, the close of an update of
+that param reads the closed record its callers pass (`callsite_param_records_query`).
+`ty::declared_param_record` is the one signature walk: the close reads it first,
+and the lowering `infer_query` demands the harvest only when it is `None` for
+some updated param (`ty::wants_callsite_harvest`). So an annotated
+`set : String -> Model -> Model` infers no caller. When the harvest is needed,
+each caller is inferred once (`caller_record_args_query`, which summarises its
+calls to every def that wants a harvest), the callers come from a syntactic
+reverse-call index (`direct_callers_query`), and the per-caller summaries are
+folded. The fold keeps, per position, the record every call agrees on, or
+`None` once two differ. That does not depend on order, and read-back does not
+depend on which other entries are read back, so the result equals the
+per-callee `ty::callsite_param_records_for`. The differentials
+`skydb/tests/callsite_harvest_identity.rs` and
+`project/src/harvest_identity_tests.rs` (every example) compare the two, and
+`skydb/tests/typed_table_growth.rs` pins linear growth for annotated and
+unannotated helpers.
+
 **Still quadratic (known):** binding an instantiated scheme variable to a large
 structure walks the structure for the occurs check (a `Codec.field` step binds
 `r` to the record and `b` to the rest of the constructor arrow), and the

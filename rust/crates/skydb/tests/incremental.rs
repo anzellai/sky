@@ -634,3 +634,101 @@ fn body_edit_reexecutes_go_program_byte_correct() {
         "incremental go_program diverged from a fresh build after a body edit"
     );
 }
+
+// ---- #166 call-site harvest: demanded only when its answer can be read ----
+//
+// `infer_query` reads a def's call-site param-record harvest only for an
+// updated param whose declared type is NOT a closed record. An annotated
+// `bump : M -> M` that updates `m` closes the update from its own signature, so
+// the harvest (which infers every caller's whole body) must not run for it.
+// Removing the annotation must bring the harvest back, and adding it again must
+// drop it, with the typed table equal to a fresh build each time.
+
+const HARVEST_ANNOTATED: &str = "module Main exposing (main)\n\n\
+type alias M =\n    { a : Int, b : Int }\n\n\
+bump : M -> M\nbump m =\n    { m | a = 1 }\n\n\
+main =\n    bump { a = 0, b = 0 }\n";
+
+const HARVEST_UNANNOTATED: &str = "module Main exposing (main)\n\n\
+type alias M =\n    { a : Int, b : Int }\n\n\
+bump m =\n    { m | a = 1 }\n\n\
+main =\n    bump { a = 0, b = 0 }\n";
+
+fn harvest_db(src: &str) -> (SkyDatabase, Arc<Mutex<Vec<String>>>, SourceFile, ModuleId) {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut db = SkyDatabase::with_kernel_events(log.clone());
+    let f = db.new_source(0, src.to_string());
+    let m = db.add_module("Main", f);
+    (db, log, f, m)
+}
+
+fn bump_types(db: &SkyDatabase, m: ModuleId) -> String {
+    project_bt(&db.body_types_of(m, def_of(db, m, "bump")))
+}
+
+#[test]
+fn annotated_param_update_does_not_demand_the_callsite_harvest() {
+    let (mut db, log, file, m) = harvest_db(HARVEST_ANNOTATED);
+
+    // Annotated: the declared `M` closes the update, so no harvest runs.
+    log.lock().unwrap().clear();
+    let annotated = bump_types(&db, m);
+    let l = std::mem::take(&mut *log.lock().unwrap());
+    assert!(
+        executed(&l, "infer_query"),
+        "infer(bump) must run on a cold db; log={l:?}"
+    );
+    assert!(
+        !executed(&l, "callsite_param_records_query"),
+        "an annotated def that updates its param must not demand the call-site harvest; log={l:?}"
+    );
+
+    // Edit: drop the annotation. Now nothing declares `m`, so the harvest runs.
+    file.set_text(&mut db).to(HARVEST_UNANNOTATED.to_string());
+    log.lock().unwrap().clear();
+    let unannotated = bump_types(&db, m);
+    let l = std::mem::take(&mut *log.lock().unwrap());
+    assert!(
+        executed(&l, "callsite_param_records_query"),
+        "an unannotated def that updates its param must demand the harvest; log={l:?}"
+    );
+    let (fresh, _, _, fm) = harvest_db(HARVEST_UNANNOTATED);
+    assert_eq!(
+        unannotated,
+        bump_types(&fresh, fm),
+        "incremental infer(bump) after removing the annotation diverged from a fresh build"
+    );
+
+    // Edit: put the annotation back. The harvest is no longer demanded.
+    file.set_text(&mut db).to(HARVEST_ANNOTATED.to_string());
+    log.lock().unwrap().clear();
+    let again = bump_types(&db, m);
+    let l = std::mem::take(&mut *log.lock().unwrap());
+    assert!(
+        executed(&l, "infer_query"),
+        "infer(bump) must re-run after the annotation edit; log={l:?}"
+    );
+    assert!(
+        !executed(&l, "callsite_param_records_query"),
+        "re-adding the annotation must stop the harvest; log={l:?}"
+    );
+    assert_eq!(
+        again, annotated,
+        "re-annotated infer(bump) differs from the first"
+    );
+    let (fresh, _, _, fm) = harvest_db(HARVEST_ANNOTATED);
+    assert_eq!(
+        again,
+        bump_types(&fresh, fm),
+        "incremental infer(bump) after re-adding the annotation diverged from a fresh build"
+    );
+    // Both shapes close the update to the full record.
+    assert!(
+        annotated.contains("b"),
+        "annotated update lost field b: {annotated}"
+    );
+    assert!(
+        unannotated.contains("b"),
+        "unannotated update lost field b: {unannotated}"
+    );
+}
