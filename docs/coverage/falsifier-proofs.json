@@ -164,7 +164,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1792092927
+      "proven_at_unix": 1792094149
     },
     "cli-verbs": {
       "inputs_files": 3,
@@ -179,15 +179,14 @@
     },
     "config-matrix": {
       "inputs_files": 1370,
-      "inputs_hash": "f69d42d4ef36815196f4c28e04279d6d5b326f12",
-      "last_inconclusive_at_unix": 1792092802,
+      "inputs_hash": "b4a37c1eeb03e0f0416c7bdc4dc8ca02f6fbe7d3",
       "mutation": "config-matrix.invert-operator-env-provenance",
       "mutations": [
         "config-matrix.invert-operator-env-provenance"
       ],
       "observed": "PROVEN",
       "outcome": "as-declared",
-      "proven_at_unix": 1792087775
+      "proven_at_unix": 1792094149
     },
     "config-migrate": {
       "inputs_files": 5,
