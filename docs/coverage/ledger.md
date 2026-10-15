@@ -25,7 +25,7 @@ Every number below was measured from the tree. The stdlib denominator is cross-c
 | verdict `stronger` | 164 |
 | verdict `equal` | 16 |
 | verdict `weaker` | 0 |
-| corpus units | 131 |
+| corpus units | 132 |
 | stdlib modules (denominator) | 113 |
 | stdlib entries (denominator) | 2224 |
 
@@ -58,7 +58,7 @@ Computed over distinct paths, not member rows: `apps/manifest.toml` backs two me
 | table | entries |
 |---|---|
 | stdlib modules owned by exactly one `examples/*` | 24 |
-| stdlib modules owned by exactly one unit of any role | 14 |
+| stdlib modules owned by exactly one unit of any role | 13 |
 | sky.toml sections owned by exactly one unit | 2 |
 | **lost if `examples/` retired** — modules | **0** |
 | **lost if `examples/` retired** — config sections | **1** |
@@ -278,6 +278,8 @@ None.
 | `apps-ledger` | T1 | PROVEN | `db.sqlite` · `db.migrations` · `db.codec-store` · `auth.password-session` · `skylive.session-sse-csrf` · `config.sky-toml` |
 | `apps-ledger-postgres` | T3 | PROVEN | `db.postgres` · `db.migrations` |
 | `apps-relay` | T1 | PROVEN | `http.middleware-ratelimit` · `http.sse-websocket` · `runtime.panic-classes` |
+| `build-growth-linear` | T1 | PROVEN | `compiler.lower-emit-shape` · `cli.spa-split` · `stdlib.Std.Spa` · `stdlib.Std.App` |
+| `build-new-dir-compiles-nothing` | T2 | PROVEN | `cli.build` |
 | `cli-verbs` | T1 | PROVEN | `cli.init` · `cli.clean` · `cli.watch` · `cli.db` · `cli.install` · `cli.update` · `cli.upgrade` |
 | `config-matrix` | T1 | PROVEN | `meta.config-effective-values` |
 | `config-migrate` | T1 | PROVEN | `meta.config-migrate` |

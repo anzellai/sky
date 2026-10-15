@@ -133,6 +133,28 @@
       "outcome": "as-declared",
       "proven_at_unix": 1791420946
     },
+    "build-growth-linear": {
+      "inputs_files": 444,
+      "inputs_hash": "5cf743ad72151c67a5ef4bedc1363b224e76953c",
+      "mutation": "build-growth.one-model-wire-per-arm",
+      "mutations": [
+        "build-growth.one-model-wire-per-arm"
+      ],
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1792042802
+    },
+    "build-new-dir-compiles-nothing": {
+      "inputs_files": 444,
+      "inputs_hash": "13a9d67bf17b172997fcd1e4d2433e13d832239a",
+      "mutation": "build-new-dir.no-trimpath",
+      "mutations": [
+        "build-new-dir.no-trimpath"
+      ],
+      "observed": "PROVEN",
+      "outcome": "as-declared",
+      "proven_at_unix": 1792042802
+    },
     "canary": {
       "inputs_files": 2,
       "inputs_hash": "19b6cdcdee905d63b346daeb45cfbeaaf4499ec3",
@@ -142,7 +164,7 @@
       ],
       "observed": "VACUOUS",
       "outcome": "as-declared",
-      "proven_at_unix": 1791464568
+      "proven_at_unix": 1792042802
     },
     "cli-verbs": {
       "inputs_files": 3,
