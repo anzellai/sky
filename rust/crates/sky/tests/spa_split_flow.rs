@@ -2910,6 +2910,151 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     let _ = std::fs::remove_dir_all(&proj);
 }
 
+/// S2 + N3 + N4 (v0.27.9 build-speed review). One SSR web:app, built with
+/// the legs forced in parallel (`SKY_BUILD_PARALLEL=1`, whatever the memory
+/// plan says), so the backend builds while the frontend builds and links the
+/// wasm name it is handed:
+///   * S2: two builds of the same source with a different commit and built-at
+///     give a byte-identical wasm with the same hashed name (the client links
+///     a constant stamp), while the server's `/_sky/buildinfo` reports the new
+///     commit;
+///   * N4: after a change to the app, the rebuild links the NEW wasm name in
+///     place of the old one;
+///   * N3: the backend built on its own (`cd .split/backend && sky build`)
+///     keeps the name its last build linked.
+#[ignore = "heavy: three web:app builds; nightly + release gate-app via --ignored; per-commit legs: project build_stamp the_client_stamp_is_the_same_for_every_commit + build a_backend_built_alone_keeps_its_linked_wasm_name + spa_wasm_handoff::tests"]
+#[test]
+fn spa_ssr_wasm_name_is_content_derived_and_relinked_on_change() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&ssr_app_fixture_dir(), &proj);
+    let split = proj.join(".skyapp/web-app/.split");
+    let build = |commit: &str, epoch: &str| -> String {
+        let out = Command::new(SKY)
+            .args([
+                "build",
+                "--target",
+                "web:app",
+                "--no-precompress",
+                "src/Main.sky",
+            ])
+            .current_dir(&proj)
+            .env("SKY_BUILD_PARALLEL", "1")
+            .env_remove("SKY_BUILD_SERIAL")
+            .env("SKY_BUILD_COMMIT", commit)
+            .env("SKY_BUILD_EPOCH", epoch)
+            .output()
+            .expect("run sky build --target web:app");
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.status.success(), "the build failed:\n{log}");
+        assert!(
+            log.contains(
+                "the SSR backend links the frontend's wasm name when the frontend is built"
+            ),
+            "the legs must run in parallel (forced):\n{log}"
+        );
+        log
+    };
+    let wasm = || -> (String, Vec<u8>) {
+        let dist = split.join("frontend/dist");
+        let name = std::fs::read_dir(&dist)
+            .expect("frontend dist")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
+            .expect("a main.<hash>.wasm in the dist");
+        let bytes = std::fs::read(dist.join(&name)).unwrap();
+        (name, bytes)
+    };
+    let linked = || -> String {
+        std::fs::read_to_string(split.join("backend/sky-out/skybuildinfo/skybuildinfo.go"))
+            .unwrap_or_default()
+    };
+
+    build("aaaaaaaaaaaa", "1700000000");
+    let (name1, bytes1) = wasm();
+    assert!(linked().contains(&format!("rt.SetSpaBuiltWasmName(\"{name1}\")")));
+
+    // S2: another commit and built-at, same source.
+    build("bbbbbbbbbbbb", "1800000000");
+    let (name2, bytes2) = wasm();
+    assert_eq!(
+        name2, name1,
+        "the wasm name must not change with the commit"
+    );
+    assert!(
+        bytes2 == bytes1,
+        "the wasm bytes must not change with the commit"
+    );
+    // The server keeps the real stamp.
+    let port = free_port();
+    let log_path = proj.join("server.log");
+    let server = Killed(
+        Command::new(split.join("backend/sky-out/app"))
+            .current_dir(split.join("backend"))
+            .env("PORT", port.to_string())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 120),
+        "the backend did not start:\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    let info = curl_get_jar(port, "/_sky/buildinfo", &proj.join("jar"));
+    assert!(
+        info.contains("bbbbbbbbbbbb"),
+        "/_sky/buildinfo must carry the new commit:\n{info}"
+    );
+    drop(server);
+
+    // N4: change the app; the rebuild links the new name over the old one.
+    let main = proj.join("src/Main.sky");
+    let src = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(
+        &main,
+        src.replace("Sky SSR fixture — n = ", "Sky SSR fixture (changed) — n = "),
+    )
+    .unwrap();
+    build("bbbbbbbbbbbb", "1800000000");
+    let (name3, _) = wasm();
+    assert_ne!(name3, name1, "a changed frontend has a new wasm name");
+    let stamp = linked();
+    assert!(
+        stamp.contains(&format!("rt.SetSpaBuiltWasmName(\"{name3}\")")),
+        "the rebuild must link the new name {name3} (was {name1}):\n{stamp}"
+    );
+
+    // N3: the backend built on its own keeps the linked name.
+    let out = Command::new(SKY)
+        .args(["build", "src/Main.sky"])
+        .current_dir(split.join("backend"))
+        .output()
+        .expect("sky build in .split/backend");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        linked().contains(&format!("rt.SetSpaBuiltWasmName(\"{name3}\")")),
+        "a backend built alone must keep {name3}:\n{}",
+        linked()
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
 fn ssr_p3_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-ssr-p3")
 }
