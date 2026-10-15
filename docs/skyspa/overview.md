@@ -421,7 +421,11 @@ The names read exactly like the web target:
   route an id your app rejects to `App.withNotFound`.
 - `App.withRoutes routes` — resolves `location.pathname` on mount, on an
   intercepted internal-link click, and on Back/Forward, setting `model.page`.
-- `App.withNotFound page` — the page shown when nothing matches.
+- `App.withNotFound page` — the page shown when nothing matches. The backend's
+  server-rendered first paint of such a path is sent with HTTP 404 (the full
+  page, which boots the client); a path that matches a route is 200. A
+  client-side navigation to an unknown route renders the page in the browser
+  and sends no request.
 - `App.withOnNavigate (page -> msg)` — fired after the route is applied, so the
   app can run an effect per navigation.
 

@@ -9293,7 +9293,12 @@ fn gen_backend(
                  -- exactly as the client does at boot (Spa_ssrResolveModel).\n\
                  spaSsrResolveModel : any -> any -> model -> String -> model\n\
                  spaSsrResolveModel =\n\
-                 \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n",
+                 \x20   Ffi.kernel \"Spa_ssrResolveModel\"\n\n\n\
+                 -- The page's HTTP status: 404 when the path matches no route and the\n\
+                 -- NotFound page renders, else 200 (Spa_ssrStatus).\n\
+                 spaSsrStatus : any -> any -> String -> Int\n\
+                 spaSsrStatus =\n\
+                 \x20   Ffi.kernel \"Spa_ssrStatus\"\n\n\n",
             );
         }
         // Settle decisions (fix 2). `settle_init` settles init's GET-safe read
@@ -9392,6 +9397,12 @@ fn gen_backend(
             lets.push_str(&format!(
                 "        routed =\n            spaSsrResolveModel spaRoutes_ spaNotFound_ {seed_base} req.path\n\n"
             ));
+            // The status the page is sent with: an unmatched path renders the
+            // NotFound page with 404, not 200 (a soft 404 reads as a real page
+            // to a crawler and as healthy to a probe).
+            lets.push_str(
+                "        ssrStatus_ =\n            spaSsrStatus spaRoutes_ spaNotFound_ req.path\n\n",
+            );
             "routed".to_string()
         } else {
             seed_base.to_string()
@@ -9504,6 +9515,12 @@ fn gen_backend(
                 "ssrHandler : Handler\nssrHandler req =\n    spaWithSession_ req (ssrInner_ req)\n\n\n",
             );
         }
+        // A routed app sends its NotFound page with 404 (`ssrStatus_` above).
+        let with_status = if has_synth_routes {
+            "Server.withStatus ssrStatus_ <| "
+        } else {
+            ""
+        };
         handlers.push_str(&format!(
             "-- Server-render the REQUESTED route's first paint (design §4.1/§4.2):\n\
              -- run init, seed it from the request (withRequest), resolve the path to\n\
@@ -9521,7 +9538,7 @@ fn gen_backend(
              {lets}\
              \x20   in\n\
              \x20   Task.succeed\n\
-             \x20       (Server.html\n\
+             \x20       ({with_status}Server.html\n\
              \x20           (spaSsrPageSeeded\n\
              \x20               (\"<meta name=\\\"sky-wire\\\" content=\\\"{wire_hash}\\\">\" ++ spaSsrRenderHead spaHead_ resolved)\n\
              \x20               (spaSsrRenderBody (spaView_ resolved))\n\

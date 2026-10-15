@@ -357,8 +357,10 @@ func TestInitial_NotFoundPageOnEveryRequest(t *testing.T) {
 	req.Header.Set("Cookie", cookie)
 	rr := httptest.NewRecorder()
 	app.handleInitial(rr, req)
-	if rr.Code == http.StatusNotFound || !strings.Contains(rr.Body.String(), "sky-root") {
-		t.Fatalf("an app with withNotFound must render its not-found page on a later request too; got %d %q",
+	// v0.27.9: the not-found page is sent with 404 (not a soft 200), and it is
+	// the full page (sky-root, the client), not a bare Go 404.
+	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "sky-root") {
+		t.Fatalf("an app with withNotFound must render its not-found page (404) on a later request too; got %d %q",
 			rr.Code, rr.Body.String())
 	}
 }

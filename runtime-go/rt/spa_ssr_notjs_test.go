@@ -135,6 +135,36 @@ func TestSpaSSRResolveModel_SetsPagePerRoute(t *testing.T) {
 	}
 }
 
+// v0.27.9: the SSR page of an unmatched path is the app's NotFound page, and it
+// is sent with 404, not 200. Spa_ssrStatus is the status the generated
+// ssrHandler sends: 404 exactly when Spa_ssrResolveModel picks the notFound
+// page, else 200.
+func TestSpaSSRStatus_404ExactlyWhenTheNotFoundPageRenders(t *testing.T) {
+	routes := []any{Spa_route("/", "HomePage"), Spa_route("/items", "ItemsPage"),
+		Spa_route("/post/:id", func(id any) any { return "Post " + AsString(id) })}
+	notFound := any("NotFoundPage")
+	for _, c := range []struct {
+		path string
+		want int
+	}{
+		{"/", 200}, {"/items", 200}, {"/post/7", 200},
+		{"/nope", 404}, {"/items/extra", 404}, {"/post", 404},
+	} {
+		if got := Spa_ssrStatus(routes, notFound, c.path); got != c.want {
+			t.Errorf("Spa_ssrStatus(%q) = %d, want %d", c.path, got, c.want)
+		}
+	}
+	// No notFound page: the model's page renders unchanged, which is not a
+	// NotFound page, so 200 (as before).
+	if got := Spa_ssrStatus(routes, nil, "/nope"); got != 200 {
+		t.Errorf("Spa_ssrStatus with no notFound page = %d, want 200", got)
+	}
+	// A route-less app renders its root for every path: 200.
+	if got := Spa_ssrStatus([]any{}, notFound, "/nope"); got != 200 {
+		t.Errorf("Spa_ssrStatus with no routes = %d, want 200", got)
+	}
+}
+
 // SSR-P3 data-resolved settle (design §4.2). Spa_ssrSettle must run the perform
 // command's task, map its Result to a Msg, and fold it through `update` — so the
 // server renders a data-BEARING model. This is what makes a route's real content

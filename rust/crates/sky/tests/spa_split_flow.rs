@@ -4002,6 +4002,8 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
 /// shell and SSRs the NotFound page (`data-sky-ssr` + the NotFound view) exactly
 /// as a known route would, while a request that maps to a REAL asset still serves
 /// the file. RED before the fix (a plain `Server.static` catch-all → 404).
+/// v0.27.9: the NotFound page is sent with 404 (the page body, booting the
+/// client), and declared routes stay 200; RED before (200 for every path).
 #[test]
 #[cfg(unix)]
 fn spa_unknown_deep_path_ssrs_the_not_found_page() {
@@ -4032,6 +4034,10 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     assert!(
         !backend.contains("Server.static \"/\" \"../frontend/dist\""),
         "an SSR+routed app must NOT emit a bare Server.static catch-all:\n{backend}"
+    );
+    assert!(
+        backend.contains("Server.withStatus ssrStatus_ <| Server.html"),
+        "a routed SSR page must carry its route status (404 for NotFound):\n{backend}"
     );
 
     if !required(Need::Go, have_go()) {
@@ -4064,16 +4070,24 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     }
     let unknown_status = curl_status_ctype(port, "/some/unknown/deep/path");
     let unknown_body = curl_body_p(port, "/some/unknown/deep/path");
+    let root_status = curl_status_ctype(port, "/");
+    let post_status = curl_status_ctype(port, "/blog/hello-world");
     let asset = curl_status_ctype(port, "/wasm_exec.js");
     child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
-    // An unmatched deep path SSRs the NotFound page — 200, not a bare 404.
+    // An unmatched deep path SSRs the NotFound page, sent with 404 (v0.27.9;
+    // it was a soft 200 before), not a bare file-server 404.
     let (code, ctype) = unknown_status.expect("GET unknown path should answer");
     assert_eq!(
-        code, 200,
-        "unmatched path must SSR NotFound (200), got {code} ({ctype})"
+        code, 404,
+        "unmatched path must SSR NotFound with 404, got {code} ({ctype})"
     );
+    // Declared routes stay 200.
+    for (path, st) in [("/", root_status), ("/blog/hello-world", post_status)] {
+        let (c, t) = st.unwrap_or_else(|| panic!("GET {path} should answer"));
+        assert_eq!(c, 200, "declared route {path} must stay 200, got {c} ({t})");
+    }
     assert!(
         ctype.starts_with("text/html"),
         "the NotFound SSR must be text/html, got {ctype}"

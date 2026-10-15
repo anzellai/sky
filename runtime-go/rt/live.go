@@ -2633,6 +2633,15 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// override in the app's head. Empty string when app didn't
 	// supply `head` — byte-identical to pre-v0.15.58 output.
 	headExtra := renderAppHead(app.head, model)
+	// An unknown path renders the app's NotFound page with 404, not 200 (a
+	// "soft 404" is indexed as a real page and reads as healthy to a probe).
+	// The body is the full page: it boots the client and its session like any
+	// page, so the user can navigate away, and a sky-nav fetch patches it in
+	// (the client accepts a 404 that carries X-Sky-View). Declared routes, and
+	// the implicit "/" of a route-less app, stay 200.
+	if !routed && app.notFound != nil {
+		w.WriteHeader(http.StatusNotFound)
+	}
 	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">%s%s<style>%s</style></head><body><div id=\"sky-root\">%s</div>%s%s</body></html>", baseMeta, headExtra, liveBaseCSS, body, livePageScripts(sid, app.bannerCfg, csrfToken, app.basePath, initialView, pageTab, pageToken), devBanner)
 }
 
