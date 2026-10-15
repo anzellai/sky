@@ -2168,7 +2168,7 @@ impl<'a> Resolver<'a> {
     /// the lowerer ignores it, so this is codegen-neutral.
     fn resolve_expr(&mut self, e: &ast::Expr) -> ExprId {
         let r = e.syntax().text_range();
-        let id = self.resolve_expr_inner(e);
+        let id = base::ensure_stack(|| self.resolve_expr_inner(e));
         self.body.expr_spans.insert(id, self.span_of(r));
         id
     }

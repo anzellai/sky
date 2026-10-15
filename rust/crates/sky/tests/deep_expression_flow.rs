@@ -1,15 +1,20 @@
-//! A deep expression compiles; it does not overflow the compiler's stack.
+//! A deep expression compiles end to end; it does not overflow the compiler's
+//! stack.
 //!
-//! Parsing, inference, lowering and Go emission recurse over the expression
-//! tree. A left-nested `|>` pipeline is as deep as it is long, and a generated
-//! record codec (`Codec.object Ctor |> Codec.field … |> …`) has one step per
-//! field. A 1,600-step pipeline overflowed the 8 MiB main-thread stack in
-//! lowering and aborted `sky check` ("thread 'main' has overflowed its stack").
-//! The compiler now runs on a thread with a 512 MiB stack (`main.rs`,
-//! `COMPILER_STACK_BYTES`).
+//! Parsing, name resolution, inference, lowering and Go emission recurse over
+//! the expression tree. A left-nested `|>` pipeline is as deep as it is long,
+//! and a generated record codec (`Codec.object Ctor |> Codec.field … |> …`) has
+//! one step per field. A 1,600-step pipeline overflowed the 8 MiB main-thread
+//! stack in lowering and aborted `sky check` ("thread 'main' has overflowed its
+//! stack"). Each recursive walker now grows its stack on demand
+//! (`base::ensure_stack`).
 //!
-//! Falsifier: run `sky_main` on the main thread again (or give the thread the
-//! default stack) and this test aborts with the stack overflow.
+//! This test is the end-to-end leg: `sky check` and `sky build` on the real
+//! binary, then run the app. The binary also runs the compiler on a thread with
+//! a large stack (`main.rs`, `COMPILER_STACK_BYTES`), so the guards themselves
+//! are falsified on a 2 MiB thread by `project/tests/deep_expression_emit.rs`
+//! (parse to Go emission) and `sky-lsp/tests/deep_expression.rs` (diagnostics
+//! and hover).
 
 use std::process::Command;
 
@@ -68,6 +73,26 @@ fn a_four_thousand_step_pipeline_compiles() {
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
+    // `sky check` and `sky build` share the front end, and `check` also
+    // lowers and emits Go before `go build`: both must get through.
+    let check = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky check");
+    let check_log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        !check_log.contains("overflowed its stack"),
+        "sky check overflowed its stack on a deep pipeline:\n{check_log}"
+    );
+    assert!(
+        check.status.success(),
+        "sky check must succeed:\n{check_log}"
+    );
     let out = Command::new(SKY)
         .args(["build", "src/Main.sky"])
         .current_dir(&dir)

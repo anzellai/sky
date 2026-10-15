@@ -35,6 +35,26 @@ macro_rules! bug {
     };
 }
 
+/// Stack left below which [`ensure_stack`] moves onto a new segment.
+const STACK_RED_ZONE: usize = 256 * 1024;
+/// Size of each new stack segment [`ensure_stack`] allocates.
+const STACK_SEGMENT: usize = 4 * 1024 * 1024;
+
+/// Run `f`, first moving onto a fresh heap-allocated stack segment when less
+/// than [`STACK_RED_ZONE`] of the current thread's stack is left.
+///
+/// Every pass over the expression tree (resolve, infer, lower, emit and the
+/// checks between them) recurses, and a left-nested `|>` pipeline or a
+/// generated record codec (`Codec.object C |> Codec.field … |> …`) is as deep
+/// as it is long. Call this at the recursive entry of each such walker so depth
+/// is bounded by memory, not by the thread's stack: the same code then runs on
+/// `sky`'s main thread and on a 2 MiB LSP worker. It costs one stack-pointer
+/// comparison when the stack is not low.
+#[inline]
+pub fn ensure_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
+}
+
 /// Declares a transparent `u32` newtype id: Copy, cheap, `==`-comparable (L3).
 macro_rules! id_newtype {
     ($(#[$m:meta])* $name:ident) => {

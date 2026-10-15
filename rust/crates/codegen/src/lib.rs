@@ -378,6 +378,12 @@ fn emit_stmt(w: &mut Writer, st: &GoStmt) {
 
 /// Render an expression to a single-line string (statements own newlines).
 pub fn render_expr(e: &GoExpr) -> String {
+    // A deep expression (a long `|>` pipeline lowers to nested calls) is as
+    // deep as the recursion here; grow the stack on demand.
+    base::ensure_stack(|| render_expr_inner(e))
+}
+
+fn render_expr_inner(e: &GoExpr) -> String {
     match &e.kind {
         GoExprKind::Ident(n) => n.clone(),
         GoExprKind::IntLit(n) => n.to_string(),
