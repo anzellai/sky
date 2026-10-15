@@ -7677,6 +7677,13 @@ fn gen_backend(
     // the server runs the setup before it starts serving; otherwise a deployed
     // backend serves empty data (no schema / no seed). It is dropped from the
     // wasm frontend by the taint analysis, so only the backend runs it.
+    // Configuration is code: the synthesis carries `App.withConfig` /
+    // `App.withBase` into a `spaServerConfig_` task (`App.applyServerConfig`),
+    // run first at boot so the store, TTL, log and database the code names are
+    // in place before anything opens them.
+    let has_synth_server_config = file
+        .decls()
+        .any(|d| decl_name(&d).as_deref() == Some("spaServerConfig_"));
     let has_synth_boot_setup = file
         .decls()
         .any(|d| decl_name(&d).as_deref() == Some("spaBootSetup_"));
@@ -8898,7 +8905,17 @@ fn gen_backend(
     // report that the backend keeps no server-side session (so a configured
     // `[live] store` is not used, and the log says so rather than leaving the
     // inline console's own memory store as the only store line).
-    let mut boot: Vec<String> = vec![format!("spaSetWireHash_ \"{wire_hash}\"")];
+    let mut boot: Vec<String> = Vec::new();
+    // The app's code configuration first: a boot TASK in the sequence (a
+    // `_ =` let only evaluates it), so the store, TTL, log and database are in
+    // place before the session store opens and the server listens.
+    // A static-only backend carries none of the entry's bindings (it serves
+    // the client and keeps no session, database or store), so there is
+    // nothing for the configuration to reach.
+    if has_synth_server_config && !static_only_backend {
+        boot.push("spaServerConfig_".to_string());
+    }
+    boot.push(format!("spaSetWireHash_ \"{wire_hash}\""));
     boot.push(format!(
         "spaSessionBoot_ {}",
         if session_proj.is_empty() {

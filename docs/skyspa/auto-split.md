@@ -1396,11 +1396,24 @@ is logged (`spa.session-check.failed`). The check never fails open.
 Sky.Live uses for a retired session id (the `sky_session_aliases` table on
 sqlite and postgres, a `sky:alias:` key on redis), under the key prefix
 `spa-sid:`. It expires with the token it ends, and the store's own alias sweep
-removes it. The store is resolved as for Sky.Live: `SKY_LIVE_STORE` /
-`SKY_LIVE_STORE_PATH`, else the project's `sky.toml` `[live] store` /
-`storePath` (the split copies these two lines into the backend manifest).
-`App.withConfig { store = … }` in the source is not read by the split backend:
-set the store in `sky.toml` or in the environment.
+removes it. The store is resolved as for Sky.Live: the operator's
+`SKY_LIVE_STORE` / `SKY_LIVE_STORE_PATH`, else the code
+(`App.withConfig (WebConfig { store = … })`, a top-level `config` with
+`Sky.Config.withSessions`), else a legacy `sky.toml` `[live] store` /
+`storePath`. The `--target web:app` synthesis carries `App.withConfig` and
+`App.withBase` into a `spaServerConfig_` boot task
+(`App.applyServerConfig`), which the backend runs before it listens: the
+session store, its `ttl` and `idleEvict`, `maxBodyBytes`, `csrf`, and the
+base log, database and telemetry land in the builder layer, so an operator's
+variable still wins and a `sky.toml` default does not (v0.27.9; before, the
+synthesis dropped both builders and the backend saw only `sky.toml` and the
+environment). The boot line names the source: `set by App.withConfig in the
+app's code`. The backend's port is not taken from `WebConfig`: it listens on
+`PORT` (default 8951). A static-only backend (no server branch) runs no
+configuration task: it keeps no session, store or database for it to reach. The split also copies the runtime tables of a legacy
+`sky.toml` (`[live] store` / `storePath`, `[database]`, `[log]`, `[analytics]`,
+`[jobs]`, `[env]`, `[security]`) into the backend manifest, for projects that
+still keep them; settings belong in code.
 
 **The boot log names the store, or says there is none.** A backend with a
 signed session opens the store at boot and logs

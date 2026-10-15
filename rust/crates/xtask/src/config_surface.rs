@@ -182,6 +182,15 @@ const NON_LITERAL_PREFIXED_READS: &[(&str, &str)] = &[
          configLayers directly)",
     ),
     (
+        "runtime-go/rt/spa_server_settings.go",
+        "Spa_applyServerSettings (v0.27.9) writes the builder layer of the Sky.Spa \
+         split backend from App.applyServerConfig: the suffix is a parameter, but \
+         every caller passes a literal from the closed set in Std.App \
+         (LIVE_STORE / LIVE_TTL / LIVE_IDLE_EVICT / LIVE_MAX_BODY_BYTES), each \
+         already read through a literal configLayers call. It is a seed-aware \
+         WRITE of the withX layer, not a new read of a hidden suffix",
+    ),
+    (
         "runtime-go/rt/sky_config.go",
         "ApplyConfig resolves each Sky.Config key's env suffix with \
          skyEnvName(suffix), so the write is non-literal HERE while every suffix \
