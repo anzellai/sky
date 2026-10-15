@@ -51,6 +51,7 @@ mod native_pkg;
 mod plist;
 mod precompress;
 mod private_fs;
+mod shell_inputs;
 mod split_diag;
 mod store_upload;
 mod target;
@@ -6948,6 +6949,22 @@ fn build_android_apk(
     out_dir: &Path,
     url: &app_url::AppUrl,
 ) -> Result<PathBuf, String> {
+    build_android_apk_in(project_dir, out_dir, url, &shell_inputs::ToolEnv::process())
+}
+
+/// [`build_android_apk`] with its tools run in `env`. The shell project stays
+/// in `<out>/android` between builds and its files are written only when their
+/// bytes change. The debug APK build (aapt2, javac, d8, zipalign, apksigner)
+/// runs only when an input differs from the last complete build: the sources,
+/// the resources and manifest, the library jars, the build script, the debug
+/// keystore or the toolchain (see `shell_inputs`). Two builds of the same
+/// project take turns: the lock is held until the APK is built.
+fn build_android_apk_in(
+    project_dir: &Path,
+    out_dir: &Path,
+    url: &app_url::AppUrl,
+    env: &shell_inputs::ToolEnv,
+) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let package = &id.bundle_id;
     let pkg_path = package.replace('.', "/");
@@ -6967,6 +6984,17 @@ fn build_android_apk(
     std::fs::create_dir_all(&java_dir)
         .map_err(|e| format!("create {}: {e}", java_dir.display()))?;
     std::fs::create_dir_all(&res_dir).map_err(|e| format!("create {}: {e}", res_dir.display()))?;
+    let _lock = lock_exclusive(&root.join(".lock"))?;
+    // The Java sources this build writes. Any other `.java` file under the
+    // source root (a native extension removed since the last build, the
+    // activity of an earlier bundle id) is removed, so it is not compiled in.
+    let java_root = root.join("app/src/main/java");
+    let mut java_files = std::collections::BTreeSet::new();
+    let mut put_java = |path: PathBuf, text: &str| -> Result<(), String> {
+        shell_inputs::write_bytes_if_changed(&path, text.as_bytes())?;
+        java_files.insert(path);
+        Ok(())
+    };
 
     // App icon → mipmap-<density>/ic_launcher.png; the manifest points at it only
     // when we actually generated the mipmaps (else Android uses its default).
@@ -6975,7 +7003,17 @@ fn build_android_apk(
             generate_android_icons(&icon, &res_root)?;
             "\n        android:icon=\"@mipmap/ic_launcher\""
         }
-        None => "",
+        None => {
+            // No icon now: the mipmaps of an earlier build's icon go.
+            if let Ok(rd) = std::fs::read_dir(&res_root) {
+                for e in rd.flatten() {
+                    if e.file_name().to_string_lossy().starts_with("mipmap-") {
+                        let _ = std::fs::remove_dir_all(e.path());
+                    }
+                }
+            }
+            ""
+        }
     };
 
     // Native permissions (Bundle.withPermission / withUsage): manifest
@@ -7011,12 +7049,15 @@ fn build_android_apk(
     // for exactly that host; https permits no cleartext.
     let (cleartext_attr, network_config) = app_url::android_cleartext(url);
     let xml_dir = res_root.join("xml");
-    let _ = std::fs::remove_file(xml_dir.join("network_security_config.xml"));
-    if let Some(cfg) = &network_config {
-        std::fs::create_dir_all(&xml_dir)
-            .map_err(|e| format!("create {}: {e}", xml_dir.display()))?;
-        std::fs::write(xml_dir.join("network_security_config.xml"), cfg)
-            .map_err(|e| format!("write network_security_config.xml: {e}"))?;
+    match &network_config {
+        Some(cfg) => shell_inputs::write_bytes_if_changed(
+            &xml_dir.join("network_security_config.xml"),
+            cfg.as_bytes(),
+        )?,
+        None => {
+            let _ = std::fs::remove_file(xml_dir.join("network_security_config.xml"));
+            let _ = std::fs::remove_dir(&xml_dir);
+        }
     }
 
     // Bundle.AssociatedDomain on Android: an `applinks:` domain becomes an
@@ -7031,9 +7072,9 @@ fn build_android_apk(
              build leaves it out (it applies to the Apple builds)."
         );
     }
-    std::fs::write(
-        root.join("app/src/main/AndroidManifest.xml"),
-        render_android_manifest(&AndroidManifestParts {
+    write_if_changed(
+        &root.join("app/src/main/AndroidManifest.xml"),
+        &render_android_manifest(&AndroidManifestParts {
             package,
             label: &id.display_name,
             version_name: &id.short_version,
@@ -7045,14 +7086,14 @@ fn build_android_apk(
         }),
     )
     .map_err(|e| format!("write AndroidManifest.xml: {e}"))?;
-    std::fs::write(
-        res_dir.join("strings.xml"),
-        render_android_strings(&id.display_name, &links),
+    write_if_changed(
+        &res_dir.join("strings.xml"),
+        &render_android_strings(&id.display_name, &links),
     )
     .map_err(|e| format!("write strings.xml: {e}"))?;
-    std::fs::write(
+    put_java(
         java_dir.join("MainActivity.java"),
-        render_android_main_activity(package, url)
+        &render_android_main_activity(package, url)
             .replace("{{LINK_HOSTS}}", &native_pkg::link_host_literals(&links))
             .replace("{{PERMISSION_IMPORTS}}", &perm_imports)
             .replace("{{WEBCHROME}}", &webchrome)
@@ -7061,67 +7102,57 @@ fn build_android_apk(
                 "{{WEBVIEW_DEBUG}}",
                 if release.is_some() { "false" } else { "true" },
             ),
-    )
-    .map_err(|e| format!("write MainActivity.java: {e}"))?;
+    )?;
 
     // Std.Native.scanCode: the camera scanner and its ZXing decoder, only for
     // an app that calls it (a pinned jar from Maven Central, verified by its
     // SHA-256 and cached); every other app gets a stub and no extra jar.
-    let perm_dir = root.join("app/src/main/java/sky/perm");
-    std::fs::create_dir_all(&perm_dir)
-        .map_err(|e| format!("create {}: {e}", perm_dir.display()))?;
-    std::fs::write(
-        perm_dir.join("SkyPermissions.java"),
+    put_java(
+        java_root.join("sky/perm/SkyPermissions.java"),
         ANDROID_PERMISSIONS_JAVA,
-    )
-    .map_err(|e| format!("write SkyPermissions.java: {e}"))?;
-    let scan_dir = root.join("app/src/main/java/sky/scan");
-    std::fs::create_dir_all(&scan_dir)
-        .map_err(|e| format!("create {}: {e}", scan_dir.display()))?;
+    )?;
     let libs = root.join("app/libs");
-    let _ = std::fs::remove_dir_all(&libs);
-    std::fs::create_dir_all(&libs).map_err(|e| format!("create {}: {e}", libs.display()))?;
+    let mut lib_files = std::collections::BTreeSet::new();
     let scans = decl.capabilities.contains("scanCode");
     if scans {
         let jar = native_pkg::zxing_jar()?;
-        std::fs::copy(&jar, libs.join(native_pkg::ZXING_JAR_NAME))
-            .map_err(|e| format!("copy {}: {e}", jar.display()))?;
+        let dest = libs.join(native_pkg::ZXING_JAR_NAME);
+        shell_inputs::copy_if_changed(&jar, &dest)?;
+        lib_files.insert(dest);
     }
-    std::fs::write(
-        scan_dir.join("SkyScanner.java"),
+    shell_inputs::prune_tree(&libs, &lib_files);
+    put_java(
+        java_root.join("sky/scan/SkyScanner.java"),
         if scans {
             ANDROID_SCANNER_JAVA
         } else {
             ANDROID_SCANNER_STUB_JAVA
         },
-    )
-    .map_err(|e| format!("write SkyScanner.java: {e}"))?;
+    )?;
 
     // Native extensions (Std.Native.bridge): the registry + installer + each
     // injected native/android/*.java from the project + its Sky deps, all in
     // package sky.nativeext (javac globs app/src/main/java, so they compile).
-    let ext_java_dir = root.join("app/src/main/java/sky/nativeext");
-    std::fs::create_dir_all(&ext_java_dir)
-        .map_err(|e| format!("create {}: {e}", ext_java_dir.display()))?;
-    std::fs::write(ext_java_dir.join("SkyRegistry.java"), ANDROID_EXT_REGISTRY)
-        .map_err(|e| format!("write SkyRegistry.java: {e}"))?;
+    let ext_java_dir = java_root.join("sky/nativeext");
+    put_java(ext_java_dir.join("SkyRegistry.java"), ANDROID_EXT_REGISTRY)?;
     let java_exts = collect_native_files(project_dir, "android", "java");
     for (stem, path) in &java_exts {
-        std::fs::copy(path, ext_java_dir.join(format!("{stem}.java")))
+        let text = std::fs::read_to_string(path)
             .map_err(|e| format!("copy native/android/{stem}.java: {e}"))?;
+        put_java(ext_java_dir.join(format!("{stem}.java")), &text)?;
     }
     let install_calls: String = java_exts
         .iter()
         .map(|(stem, _)| format!("        {stem}.register();\n"))
         .collect();
-    std::fs::write(
+    put_java(
         ext_java_dir.join("SkyNativeExtInstall.java"),
-        format!(
+        &format!(
             "package sky.nativeext;\n\npublic final class SkyNativeExtInstall {{\n    \
              public static void installAll() {{\n{install_calls}    }}\n}}\n"
         ),
-    )
-    .map_err(|e| format!("write SkyNativeExtInstall.java: {e}"))?;
+    )?;
+    shell_inputs::prune_tree(&java_root, &java_files);
     if !java_exts.is_empty() {
         eprintln!(
             "  native/android: linked {} extension file(s): {}",
@@ -7176,19 +7207,36 @@ fn build_android_apk(
         }
         return Ok(apk);
     }
-    std::fs::write(
-        root.join("build-apk.sh"),
-        ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
+    write_if_changed(
+        &root.join("build-apk.sh"),
+        &ANDROID_BUILD_APK.replace("{{APK}}", &apk_name),
     )
     .map_err(|e| format!("write build-apk.sh: {e}"))?;
 
-    let status = Command::new("bash")
-        .arg("build-apk.sh")
-        .current_dir(&root)
-        .status()
-        .map_err(|e| format!("run build-apk.sh: {e}"))?;
-    if !status.success() {
-        return Err("the APK build failed (see the errors above)".to_string());
+    let build_dir = root.join("build");
+    let mut inputs = shell_inputs::Inputs::new("android-debug");
+    inputs.tree("app", &root.join("app"));
+    inputs.file("build script", &root.join("build-apk.sh"));
+    shell_inputs::android_tools(&mut inputs, env);
+    let digest = inputs.finish();
+    if shell_inputs::up_to_date(
+        &build_dir,
+        &digest,
+        &[build_dir.join(&apk_name), build_dir.join("signer.txt")],
+    ) {
+        eprintln!("  Android shell unchanged since the last build; aapt2, javac and d8 not run");
+    } else {
+        shell_inputs::clear_stamp(&build_dir);
+        let status = env
+            .command("bash")
+            .arg("build-apk.sh")
+            .current_dir(&root)
+            .status()
+            .map_err(|e| format!("run build-apk.sh: {e}"))?;
+        if !status.success() {
+            return Err("the APK build failed (see the errors above)".to_string());
+        }
+        shell_inputs::mark_built(&build_dir, &digest)?;
     }
     if let Some(file) = write_assetlinks(&root.join("build"), package, &links)? {
         print_assetlinks_note(&file, &links, "debug key");
@@ -7529,6 +7577,22 @@ fn build_ios_app(
     out_dir: &Path,
     url: &app_url::AppUrl,
 ) -> Result<PathBuf, String> {
+    build_ios_app_in(project_dir, out_dir, url, &shell_inputs::ToolEnv::process())
+}
+
+/// [`build_ios_app`] with its tools run in `env`. The shell project stays in
+/// `<out>/ios` between builds and its files are written only when their bytes
+/// change. The simulator build (swiftc, the icons, the ad hoc signature) runs
+/// only when an input differs from the last complete build: the sources, the
+/// Info.plist, the entitlements, the icon, the build script or the toolchain
+/// (see `shell_inputs`). Two builds of the same project take turns: the lock
+/// is held until the app is built.
+fn build_ios_app_in(
+    project_dir: &Path,
+    out_dir: &Path,
+    url: &app_url::AppUrl,
+    env: &shell_inputs::ToolEnv,
+) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let name = &id.exe_name;
     let icon_src = bundle_icon_source(project_dir, &id);
@@ -7548,28 +7612,38 @@ fn build_ios_app(
     let root = out_dir.join("ios");
     let src = root.join(name);
     std::fs::create_dir_all(&src).map_err(|e| format!("create {}: {e}", src.display()))?;
-    std::fs::write(
-        src.join("App.swift"),
-        render_ios_app_swift(name, url)
-            .replace(
-                "{{LINK_HOSTS}}",
-                &native_pkg::link_host_literals(&native_pkg::link_domains(&decl.entitlements)),
-            )
-            .replace("{{LOCATION_IMPORT}}", loc_import)
-            .replace("{{LOCATION_MANAGER}}", loc_manager)
-            .replace("{{LOCATION_ONAPPEAR}}", loc_onappear),
-    )
-    .map_err(|e| format!("write App.swift: {e}"))?;
-    std::fs::write(
-        src.join("WebView.swift"),
-        IOS_WEBVIEW_SWIFT.replace(
-            "{{INSPECTABLE}}",
-            if release.is_some() { "false" } else { "true" },
+    let _lock = lock_exclusive(&root.join(".lock"))?;
+    prune_ios_shell_root(&root, name);
+    // The shell's source files, written below only when their bytes change;
+    // any other file in the source directory (a native extension removed
+    // since the last build) is removed, so it is not compiled in.
+    let mut sources: Vec<(String, Vec<u8>)> = vec![
+        (
+            "App.swift".to_string(),
+            render_ios_app_swift(name, url)
+                .replace(
+                    "{{LINK_HOSTS}}",
+                    &native_pkg::link_host_literals(&native_pkg::link_domains(&decl.entitlements)),
+                )
+                .replace("{{LOCATION_IMPORT}}", loc_import)
+                .replace("{{LOCATION_MANAGER}}", loc_manager)
+                .replace("{{LOCATION_ONAPPEAR}}", loc_onappear)
+                .into_bytes(),
         ),
-    )
-    .map_err(|e| format!("write WebView.swift: {e}"))?;
-    std::fs::write(src.join("SkyCodeScanner.swift"), IOS_CODE_SCANNER_SWIFT)
-        .map_err(|e| format!("write SkyCodeScanner.swift: {e}"))?;
+        (
+            "WebView.swift".to_string(),
+            IOS_WEBVIEW_SWIFT
+                .replace(
+                    "{{INSPECTABLE}}",
+                    if release.is_some() { "false" } else { "true" },
+                )
+                .into_bytes(),
+        ),
+        (
+            "SkyCodeScanner.swift".to_string(),
+            IOS_CODE_SCANNER_SWIFT.as_bytes().to_vec(),
+        ),
+    ];
 
     // Native extensions (Std.Native.bridge): copy each native/ios/*.swift from
     // the project + its Sky deps into the shell, and generate the registry
@@ -7577,18 +7651,19 @@ fn build_ios_app(
     // Swift handler and the app just imports it.
     let swift_exts = collect_native_files(project_dir, "ios", "swift");
     for (stem, path) in &swift_exts {
-        std::fs::copy(path, src.join(format!("{stem}.swift")))
-            .map_err(|e| format!("copy native/ios/{stem}.swift: {e}"))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("copy native/ios/{stem}.swift: {e}"))?;
+        sources.push((format!("{stem}.swift"), bytes));
     }
     let installer_calls: String = swift_exts
         .iter()
         .map(|(stem, _)| format!("    register{stem}(skyNativeRegistry)\n"))
         .collect();
-    std::fs::write(
-        src.join("SkyNativeExt.swift"),
-        format!("{IOS_EXT_REGISTRY}\nfunc installSkyNativeExtensions() {{\n{installer_calls}}}\n"),
-    )
-    .map_err(|e| format!("write SkyNativeExt.swift: {e}"))?;
+    sources.push((
+        "SkyNativeExt.swift".to_string(),
+        format!("{IOS_EXT_REGISTRY}\nfunc installSkyNativeExtensions() {{\n{installer_calls}}}\n")
+            .into_bytes(),
+    ));
     if !swift_exts.is_empty() {
         eprintln!(
             "  native/ios: linked {} extension file(s): {}",
@@ -7621,11 +7696,17 @@ fn build_ios_app(
         &native_pkg::fragments(&native_dirs, project_dir, "Info.plist.append"),
         project_dir,
     )?);
-    std::fs::write(
-        src.join("Info.plist"),
-        native_pkg::merge_document("Info.plist", &info_layers)?,
-    )
-    .map_err(|e| format!("write Info.plist: {e}"))?;
+    sources.push((
+        "Info.plist".to_string(),
+        native_pkg::merge_document("Info.plist", &info_layers)?.into_bytes(),
+    ));
+    let mut keep = std::collections::BTreeSet::new();
+    for (file, bytes) in &sources {
+        let path = src.join(file);
+        shell_inputs::write_bytes_if_changed(&path, bytes)?;
+        keep.insert(path);
+    }
+    shell_inputs::prune_tree(&src, &keep);
 
     // Entitlements: Bundle.withEntitlement + every native/ios/app.entitlements
     // fragment, merged the same way. A signed release also carries the
@@ -7662,13 +7743,14 @@ fn build_ios_app(
     }
     let ent_has_keys = ent_layers.iter().any(|l| !l.entries.is_empty());
     let ent_path = root.join(format!("{name}.entitlements"));
-    let _ = std::fs::remove_file(&ent_path);
     if ent_has_keys {
-        std::fs::write(
+        write_if_changed(
             &ent_path,
-            native_pkg::merge_document("entitlements", &ent_layers)?,
+            &native_pkg::merge_document("entitlements", &ent_layers)?,
         )
         .map_err(|e| format!("write entitlements: {e}"))?;
+    } else {
+        let _ = std::fs::remove_file(&ent_path);
     }
 
     if let Some(release_dir) = release {
@@ -7696,11 +7778,12 @@ fn build_ios_app(
         .entries;
     let simulated = native_pkg::simulated_entitlements(&id.bundle_id, &requested);
     let sim_ent = root.join(format!("{name}-Simulated.entitlements"));
-    std::fs::write(&sim_ent, plist::render_document(&simulated))
+    write_if_changed(&sim_ent, &plist::render_document(&simulated))
         .map_err(|e| format!("write {}: {e}", sim_ent.display()))?;
     let sim_der = root.join(format!("{name}-Simulated.entitlements.der"));
     let _ = std::fs::remove_file(&sim_der);
-    let derq = Command::new("derq")
+    let derq = env
+        .command("derq")
         .args(["query", "-f", "xml", "-i"])
         .arg(&sim_ent)
         .arg("-o")
@@ -7715,30 +7798,56 @@ fn build_ios_app(
             String::from_utf8_lossy(&derq.stderr).trim()
         ));
     }
-    std::fs::write(
-        root.join("build-app.sh"),
-        IOS_BUILD_APP.replace("{{NAME}}", name),
+    write_if_changed(
+        &root.join("build-app.sh"),
+        &IOS_BUILD_APP.replace("{{NAME}}", name),
     )
     .map_err(|e| format!("write build-app.sh: {e}"))?;
 
-    let status = Command::new("bash")
+    let developer_dir = ios_developer_dir_in(env)?;
+    let build_dir = root.join("build");
+    let app = build_dir.join(format!("{name}.app"));
+    let mut inputs = shell_inputs::Inputs::new("ios-simulator");
+    inputs.tree("sources", &src);
+    inputs.file("build script", &root.join("build-app.sh"));
+    inputs.file("simulated entitlements", &sim_ent);
+    inputs.file("simulated entitlements der", &sim_der);
+    inputs.os("icon", icon_src.as_deref().map(Path::as_os_str));
+    if let Some(icon) = &icon_src {
+        inputs.file("icon bytes", icon);
+    }
+    inputs.text("signature", "ad hoc, no entitlements");
+    shell_inputs::ios_tools(&mut inputs, env, &developer_dir);
+    let digest = inputs.finish();
+    if shell_inputs::up_to_date(
+        &build_dir,
+        &digest,
+        &[app.join(name), app.join("Info.plist")],
+    ) {
+        eprintln!("  iOS shell unchanged since the last build; swiftc not run");
+        return Ok(app);
+    }
+    shell_inputs::clear_stamp(&build_dir);
+
+    let status = env
+        .command("bash")
         .arg("build-app.sh")
         .current_dir(&root)
-        .env("DEVELOPER_DIR", ios_developer_dir()?)
+        .env("DEVELOPER_DIR", &developer_dir)
         .env_remove("SDKROOT")
         .status()
         .map_err(|e| format!("run build-app.sh: {e}"))?;
     if !status.success() {
         return Err("the iOS app failed to build (see the errors above)".to_string());
     }
-    let app = root.join("build").join(format!("{name}.app"));
     if let Some(icon) = &icon_src {
         generate_ios_app_icons(icon, &app)?;
     }
     // Sign the simulator build ad hoc with no entitlements, as Xcode does: the
     // entitlements are in the executable's sections (above), where the
     // simulator reads them. The app must carry a signature for the Keychain.
-    let st = Command::new("codesign")
+    let st = env
+        .command("codesign")
         .args(["--force", "--sign", "-"])
         .arg(&app)
         .status()
@@ -7746,7 +7855,39 @@ fn build_ios_app(
     if !st.success() {
         return Err(format!("codesign --sign - {} failed", app.display()));
     }
+    shell_inputs::mark_built(&build_dir, &digest)?;
     Ok(app)
+}
+
+/// Remove what an earlier build left in the iOS shell directory `root` and
+/// this build does not write: the source directory and entitlements of an
+/// earlier product name. `root` is generated output.
+fn prune_ios_shell_root(root: &Path, name: &str) {
+    let keep = [
+        name.to_string(),
+        "build".to_string(),
+        "release".to_string(),
+        ".lock".to_string(),
+        "build-app.sh".to_string(),
+        "build-release.sh".to_string(),
+        format!("{name}.entitlements"),
+        format!("{name}-Simulated.entitlements"),
+        format!("{name}-Simulated.entitlements.der"),
+    ];
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return;
+    };
+    for e in rd.flatten() {
+        if keep.iter().any(|k| e.file_name() == k.as_str()) {
+            continue;
+        }
+        let p = e.path();
+        if e.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(&p);
+        } else {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
 }
 
 /// The Info.plist keys Sky owns for the iOS shell: identity, version, device
@@ -9696,8 +9837,13 @@ fn native_preflight(
 /// both a working Xcode is installed and the build should use it. The chosen
 /// directory is passed to the build scripts explicitly.
 fn ios_developer_dir() -> Result<std::ffi::OsString, String> {
-    pick_ios_developer_dir(std::env::var_os("DEVELOPER_DIR"), |dir| {
-        Command::new("xcrun")
+    ios_developer_dir_in(&shell_inputs::ToolEnv::process())
+}
+
+/// [`ios_developer_dir`] with `xcrun` and `DEVELOPER_DIR` taken from `env`.
+fn ios_developer_dir_in(env: &shell_inputs::ToolEnv) -> Result<std::ffi::OsString, String> {
+    pick_ios_developer_dir(env.var("DEVELOPER_DIR"), |dir| {
+        env.command("xcrun")
             .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
             .env("DEVELOPER_DIR", dir)
             .env_remove("SDKROOT")
@@ -16683,8 +16829,296 @@ mod tests {
         assert!(!older.exists(), "a shell beyond the kept count is removed");
         assert!(oldest_locked.is_dir(), "a shell in use is never removed");
         drop(held);
-        prune_desktop_shells(&shells, &current, 2);
+        // A flock belongs to the open file, and a child another test thread
+        // is spawning shares it until its exec closes it. So the lock can
+        // outlive `drop` for a moment while other tests start processes:
+        // prune again until it is free (bounded).
+        for _ in 0..200 {
+            prune_desktop_shells(&shells, &current, 2);
+            if !oldest_locked.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert!(!oldest_locked.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- Mobile shells: an unchanged shell runs no tool ----
+
+    /// Write an executable shim script.
+    #[cfg(unix)]
+    fn write_tool(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("#!/bin/bash\n{body}")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A project for the shell builds: an entry with a `bundle` binding.
+    #[cfg(unix)]
+    fn write_shell_project(dir: &Path, id: &str, version: &str, extra: &str) {
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("sky.toml"),
+            "name = \"shellapp\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("src/Main.sky"),
+            format!(
+                "module Main exposing (main)\n\nimport Std.Bundle as Bundle\n\n\n\
+                 bundle =\n    Bundle.default\n        |> Bundle.withId \"{id}\"\n        \
+                 |> Bundle.withVersion \"{version}\"{extra}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// How many of the shim log's lines start with one of `tools`, then
+    /// empty the log.
+    #[cfg(unix)]
+    fn take_tool_runs(log: &Path, tools: &[&str], skip: &[&str]) -> usize {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        let _ = std::fs::remove_file(log);
+        text.lines()
+            .filter(|l| tools.iter().any(|t| l.starts_with(&format!("{t} "))))
+            .filter(|l| !skip.iter().any(|s| l.contains(s)))
+            .count()
+    }
+
+    /// The Android shell is rebuilt only when an input changes. The SDK
+    /// tools and javac are shims on PATH that log each run, so the test runs
+    /// without an Android SDK or a JDK.
+    #[cfg(unix)]
+    #[test]
+    fn an_unchanged_android_shell_runs_no_tool() {
+        let root = std::env::temp_dir().join(format!("sky-android-incr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let log = root.join("tools.log");
+        let bin = root.join("bin");
+        let sdk = root.join("sdk");
+        let bt = sdk.join("build-tools/35.0.0");
+        let lg = log.display().to_string();
+        let out_arg = r#"o=""; prev=""; for a in "$@"; do case "$prev" in -o|--out|--output|-d) o="$a";; esac; prev="$a"; done"#;
+        write_tool(
+            &bin.join("javac"),
+            &format!(
+                "echo \"javac $*\" >> {lg}\n{out_arg}\nmkdir -p \"$o\"; touch \"$o/A.class\"\n"
+            ),
+        );
+        write_tool(&bin.join("zip"), "exit 0\n");
+        write_tool(
+            &bt.join("aapt2"),
+            &format!("echo \"aapt2 $*\" >> {lg}\n{out_arg}\ntouch \"$o\"\nfor a in \"$@\"; do [ \"$p\" = --java ] && mkdir -p \"$a\"; p=\"$a\"; done\n"),
+        );
+        write_tool(
+            &bt.join("d8"),
+            &format!("echo \"d8 $*\" >> {lg}\n{out_arg}\ntouch \"$o/classes.dex\"\n"),
+        );
+        write_tool(
+            &bt.join("zipalign"),
+            &format!("echo \"zipalign $*\" >> {lg}\ncp \"$3\" \"$4\"\n"),
+        );
+        write_tool(
+            &bt.join("apksigner"),
+            &format!(
+                "echo \"apksigner $*\" >> {lg}\nif [ \"$1\" = sign ]; then {out_arg}; touch \"$o\"; \
+                 else echo 'Signer #1 certificate SHA-256 digest: 00'; fi\n"
+            ),
+        );
+        std::fs::write(bt.join("source.properties"), "Pkg.Revision=35.0.0\n").unwrap();
+        let plat = sdk.join("platforms/android-35");
+        std::fs::create_dir_all(&plat).unwrap();
+        std::fs::write(plat.join("android.jar"), "").unwrap();
+        std::fs::write(plat.join("source.properties"), "Pkg.Revision=1\n").unwrap();
+        let home = root.join("home");
+        std::fs::create_dir_all(home.join(".android")).unwrap();
+        std::fs::write(home.join(".android/debug.keystore"), "key-1").unwrap();
+        let env = shell_inputs::ToolEnv::process()
+            .with("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .with("ANDROID_HOME", sdk.as_os_str())
+            .with("HOME", home.as_os_str())
+            .with("JAVA_HOME", root.join("jdk").as_os_str());
+        let proj = root.join("shellapp");
+        let out = proj.join("sky-out");
+        write_shell_project(&proj, "com.example.shell", "1.0", "");
+        let u1 = url(
+            app_url::Shell::Android,
+            None,
+            Some("https://one.example.test/"),
+            None,
+        );
+        let u2 = url(
+            app_url::Shell::Android,
+            None,
+            Some("https://two.example.test/"),
+            None,
+        );
+        let tools = ["aapt2", "javac", "d8"];
+        let build = |u: &app_url::AppUrl| -> usize {
+            let apk = build_android_apk_in(&proj, &out, u, &env).expect("android build");
+            assert!(apk.is_file());
+            take_tool_runs(&log, &tools, &[])
+        };
+
+        let first = build(&u1);
+        assert!(
+            first >= 4,
+            "the first build runs aapt2, javac and d8: {first}"
+        );
+        assert_eq!(build(&u1), 0, "an identical build runs no tool");
+        // Source: the backend address is compiled into MainActivity.
+        assert!(build(&u2) > 0, "a changed source rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Asset: a native extension file is copied into the shell.
+        let ext = proj.join("native/android/Ext.java");
+        std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
+        std::fs::write(
+            &ext,
+            "package sky.nativeext;\nclass Ext { static void register() {} }\n",
+        )
+        .unwrap();
+        assert!(build(&u2) > 0, "an added native file rebuilds");
+        assert_eq!(build(&u2), 0);
+        std::fs::write(
+            &ext,
+            "package sky.nativeext;\nclass Ext { static void register() { } }\n",
+        )
+        .unwrap();
+        assert!(build(&u2) > 0, "a changed native file rebuilds");
+        std::fs::remove_file(&ext).unwrap();
+        assert!(build(&u2) > 0, "a removed native file rebuilds");
+        let copied = out.join("android/app/src/main/java/sky/nativeext/Ext.java");
+        assert!(!copied.exists(), "a removed native file is not compiled in");
+        // Manifest: the version name.
+        write_shell_project(&proj, "com.example.shell", "2.0", "");
+        assert!(build(&u2) > 0, "a changed manifest rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Bundle id: the package, and the old package's sources go.
+        write_shell_project(&proj, "com.example.other", "2.0", "");
+        assert!(build(&u2) > 0, "a changed bundle id rebuilds");
+        assert!(!out
+            .join("android/app/src/main/java/com/example/shell")
+            .exists());
+        assert_eq!(build(&u2), 0);
+        // Signing: the debug keystore.
+        std::fs::write(home.join(".android/debug.keystore"), "key-2").unwrap();
+        assert!(build(&u2) > 0, "a changed signing key rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Tool version: the build-tools revision.
+        std::fs::write(bt.join("source.properties"), "Pkg.Revision=35.0.1\n").unwrap();
+        assert!(build(&u2) > 0, "a changed toolchain rebuilds");
+        assert_eq!(build(&u2), 0);
+        // A lost artefact is rebuilt.
+        std::fs::remove_file(out.join("android/build/shellapp.apk")).unwrap();
+        assert!(build(&u2) > 0, "a missing APK rebuilds");
+        assert_eq!(build(&u2), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The iOS shell is rebuilt only when an input changes. xcrun (and so
+    /// swiftc), derq and codesign are shims on PATH that log each run, so the
+    /// test runs without Xcode.
+    #[cfg(unix)]
+    #[test]
+    fn an_unchanged_ios_shell_runs_no_tool() {
+        let root = std::env::temp_dir().join(format!("sky-ios-incr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let log = root.join("tools.log");
+        let bin = root.join("bin");
+        let dev = root.join("Xcode.app/Contents/Developer");
+        let sdk = dev.join("Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk");
+        std::fs::create_dir_all(&sdk).unwrap();
+        std::fs::write(sdk.join("SDKSettings.json"), "{\"Version\":\"18.0\"}").unwrap();
+        std::fs::write(root.join("Xcode.app/Contents/version.plist"), "16A1").unwrap();
+        let swiftc = dev.join("Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc");
+        write_tool(&swiftc, "exit 0\n");
+        let lg = log.display().to_string();
+        write_tool(
+            &bin.join("xcrun"),
+            &format!(
+                "echo \"xcrun $*\" >> {lg}\n\
+                 case \"$*\" in *--show-sdk-path*) echo {}; exit 0;; *--find*) echo {}; exit 0;; esac\n\
+                 o=\"\"; prev=\"\"; for a in \"$@\"; do [ \"$prev\" = -o ] && o=\"$a\"; prev=\"$a\"; done\n\
+                 mkdir -p \"$(dirname \"$o\")\"; touch \"$o\"\n",
+                sdk.display(),
+                swiftc.display()
+            ),
+        );
+        write_tool(&bin.join("derq"), "cp \"$5\" \"$7\"\n");
+        write_tool(
+            &bin.join("codesign"),
+            &format!("echo \"codesign $*\" >> {lg}\n"),
+        );
+        let env = shell_inputs::ToolEnv::process()
+            .with("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .with("DEVELOPER_DIR", dev.as_os_str());
+        let proj = root.join("shellapp");
+        let out = proj.join("sky-out");
+        write_shell_project(&proj, "com.example.shell", "1.0", "");
+        let u1 = url(
+            app_url::Shell::Ios,
+            None,
+            Some("https://one.example.test/"),
+            None,
+        );
+        let u2 = url(
+            app_url::Shell::Ios,
+            None,
+            Some("https://two.example.test/"),
+            None,
+        );
+        // swiftc runs through `xcrun … swiftc`; a lookup (`--find`,
+        // `--show-sdk-path`) is not a compile.
+        let build = |u: &app_url::AppUrl| -> usize {
+            let app = build_ios_app_in(&proj, &out, u, &env).expect("ios build");
+            assert!(app.join("shellapp").is_file());
+            take_tool_runs(&log, &["xcrun", "codesign"], &["--find", "--show-sdk-path"])
+        };
+
+        assert_eq!(build(&u1), 2, "the first build runs swiftc and codesign");
+        assert_eq!(build(&u1), 0, "an identical build runs no tool");
+        // Source: the backend address is compiled into App.swift.
+        assert_eq!(build(&u2), 2, "a changed source rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Asset: a native extension file is copied into the shell.
+        let ext = proj.join("native/ios/Ext.swift");
+        std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
+        std::fs::write(&ext, "func registerExt(_ r: SkyNativeRegistry) {}\n").unwrap();
+        assert_eq!(build(&u2), 2, "an added native file rebuilds");
+        assert_eq!(build(&u2), 0);
+        std::fs::remove_file(&ext).unwrap();
+        assert_eq!(build(&u2), 2, "a removed native file rebuilds");
+        assert!(
+            !out.join("ios/shellapp/Ext.swift").exists(),
+            "and is not compiled in"
+        );
+        // Info.plist: the version.
+        write_shell_project(&proj, "com.example.shell", "2.0", "");
+        assert_eq!(build(&u2), 2, "a changed Info.plist rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Bundle id.
+        write_shell_project(&proj, "com.example.other", "2.0", "");
+        assert_eq!(build(&u2), 2, "a changed bundle id rebuilds");
+        assert_eq!(build(&u2), 0);
+        // Signing: the entitlements the simulator build carries.
+        write_shell_project(
+            &proj,
+            "com.example.other",
+            "2.0",
+            "\n        |> Bundle.withEntitlement (Bundle.AppGroup \"group.com.example.other\")",
+        );
+        assert_eq!(build(&u2), 2, "changed entitlements rebuild");
+        assert_eq!(build(&u2), 0);
+        // Tool version: another Xcode.
+        std::fs::write(root.join("Xcode.app/Contents/version.plist"), "16B2").unwrap();
+        assert_eq!(build(&u2), 2, "a changed toolchain rebuilds");
+        assert_eq!(build(&u2), 0);
+        // A lost artefact is rebuilt.
+        std::fs::remove_file(out.join("ios/build/shellapp.app/shellapp")).unwrap();
+        assert_eq!(build(&u2), 2, "a missing executable rebuilds");
+        assert_eq!(build(&u2), 0);
         let _ = std::fs::remove_dir_all(&root);
     }
 
