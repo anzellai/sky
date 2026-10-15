@@ -510,3 +510,72 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// The build's precompress manifest is metadata for the server, not an asset:
+// a mount that uses it answers its exact path as it answers a file that does
+// not exist (404 here, the app's NotFound page under Server.staticNotFound),
+// and leaves it out of a directory listing. Before, every Sky.Spa backend
+// served `/sky-precompress.json` publicly. A file of another name, and a
+// `sky-precompress.json` that is not a manifest the build wrote (a user's own
+// file in their static directory), are served as before.
+func TestPrecompressManifestIsNotServed(t *testing.T) {
+	f := newPrecompressedFixture(t, "app.js", true, true)
+	h := staticMount("/", f.dir, "")
+	for _, target := range []string{"/sky-precompress.json", "/SKY-PRECOMPRESS.JSON", "/./sky-precompress.json"} {
+		for _, hdr := range []map[string]string{nil, {"Accept-Encoding": "br, gzip"}} {
+			rec := serveStatic(h, "GET", target, hdr)
+			if rec.Code != http.StatusNotFound && rec.Code != http.StatusMovedPermanently {
+				t.Fatalf("GET %s (%v) = %d, want 404: %q", target, hdr, rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "sha256") {
+				t.Fatalf("GET %s (%v) leaked the manifest: %q", target, hdr, rec.Body.String())
+			}
+		}
+	}
+	if rec := serveStatic(h, "HEAD", "/sky-precompress.json", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("HEAD manifest = %d, want 404", rec.Code)
+	}
+	// The manifest is still used: the sidecar is sent.
+	rec := serveStatic(h, "GET", "/app.js", map[string]string{"Accept-Encoding": "br"})
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "br" || !bytes.Equal(rec.Body.Bytes(), f.br) {
+		t.Fatalf("the manifest must still drive the sidecar: %d %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+	// A directory listing leaves it out.
+	sub := filepath.Join(f.dir, "assets")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAt(t, filepath.Join(sub, "x.css"), []byte("a{}"), f.modTime)
+	writeManifest(t, sub, "x.css")
+	if rec := serveStatic(h, "GET", "/assets/", nil); rec.Code != http.StatusOK ||
+		strings.Contains(rec.Body.String(), "sky-precompress") || !strings.Contains(rec.Body.String(), "x.css") {
+		t.Fatalf("listing: %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := serveStatic(h, "GET", "/assets/sky-precompress.json", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("a nested manifest = %d, want 404", rec.Code)
+	}
+	// Other names are untouched.
+	writeAt(t, filepath.Join(f.dir, "sky-precompress.json.txt"), []byte("mine"), f.modTime)
+	if rec := serveStatic(h, "GET", "/sky-precompress.json.txt", nil); rec.Code != http.StatusOK || rec.Body.String() != "mine" {
+		t.Fatalf("a user file of another name: %d %q", rec.Code, rec.Body.String())
+	}
+	// A file of that name the build did not write is the user's: served.
+	own := t.TempDir()
+	writeAt(t, filepath.Join(own, "sky-precompress.json"), []byte(`{"mine":true}`), f.modTime)
+	if rec := serveStatic(staticMount("/", own, ""), "GET", "/sky-precompress.json", nil); rec.Code != http.StatusOK || rec.Body.String() != `{"mine":true}` {
+		t.Fatalf("a user's own sky-precompress.json: %d %q", rec.Code, rec.Body.String())
+	}
+	// A sub-path mount whose file falls back to the `/` dist does not reach
+	// the dist's manifest either.
+	if rec := serveStatic(staticMount("/static", t.TempDir(), f.dir), "GET", "/sky-precompress.json", nil); rec.Code == http.StatusOK {
+		t.Fatalf("fallback root served the manifest: %q", rec.Body.String())
+	}
+	// Under Server.staticNotFound the path takes the NotFound handler, as a
+	// missing file does.
+	nf := spaStaticFallbackHandler(h, func(_ any) any {
+		return Task_succeed[any, any](Server_html("not-found-page"))
+	})
+	if rec := serveStatic(nf, "GET", "/sky-precompress.json", nil); !strings.HasPrefix(rec.Body.String(), "not-found-page") {
+		t.Fatalf("staticNotFound: %d %q, want the NotFound page", rec.Code, rec.Body.String())
+	}
+}

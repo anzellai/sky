@@ -989,7 +989,8 @@ SKY_PRECOMPRESS=off    # no .br / .gz (same as --no-precompress)
   not hold its parallel brotli (see `docs/tooling/cli.md`).
 - The Sky backend sends a `.br` / `.gz` to a request that accepts it only when
   the build's `dist/sky-precompress.json` lists it and the source and the
-  variant still have the size and SHA-256 it records. With `off` the build
+  variant still have the size and SHA-256 it records. The manifest itself is
+  not served. With `off` the build
   removes the variants and the manifest, and the backend gzips each response on
   the fly. See `docs/tooling/cli.md` (`--precompress`).
 
