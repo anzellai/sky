@@ -660,7 +660,9 @@ each Sky.Spa leg, a desktop shell); `--no-trimpath` opts out and `sky run
 compiles (`go_jobs.rs`; `main` compiles alone), `--go-jobs <n>` overrides it.
 Exactly pinned Go FFI modules skip `go get` on a rebuild (`go_get_memo.rs`).
 An SSR client build's backend leg builds beside its frontend leg and links the
-wasm name through `skybuildinfo` (`spa_wasm_handoff.rs`). The bundle's `.gz` /
+wasm name through `skybuildinfo`, handed over on the backend's stdin
+(`spa_wasm_handoff.rs`); the wasm client links a constant stamp, so its hashed
+name changes only with its source. The bundle's `.gz` /
 `.br` are compressed at once, beside the backend leg. Over its cap the Go cache
 loses its least recently used entries, not everything. For CI, cache
 `~/.sky/go-build`, `~/go/pkg/mod` and `~/.cache/sky/precompress` — not

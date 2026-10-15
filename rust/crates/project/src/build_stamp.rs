@@ -21,8 +21,9 @@
 //! `.skyapp/.../.split/{backend,frontend}` directory (those are rewritten on
 //! every build). `sky build` / `sky run` / `sky spa-split` pin the resolved
 //! stamp in [`PINNED_ENV`] so every child build they spawn (a Std.App target's
-//! derived entry, both legs of a Sky.Spa split, a desktop shell) embeds the
-//! same identity. See [`resolve_with`] for the order.
+//! derived entry, the backend leg of a Sky.Spa split, a desktop shell) embeds
+//! the same identity; a wasm client links [`client_stamp`]. See
+//! [`resolve_with`] for the order.
 //!
 //! **Never the wall clock.** A value that changes on every build changes the
 //! generated file, and Go then recompiles and re-links the binary on a

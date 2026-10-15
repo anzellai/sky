@@ -158,8 +158,10 @@ memory while its `go build` runs) plus its largest Go compile. The backend and
 frontend legs of a client build run in parallel only when the machine's
 available memory holds both legs' `sky` and Go peaks plus a 1 GB reserve;
 otherwise they run one after the other. Available memory is
-`free + inactive + speculative` pages on macOS (`vm_stat`) and `MemAvailable` on
-Linux, capped by the cgroup's remaining limit in a container. The plan
+`free + inactive + speculative` pages on macOS (`vm_stat`), `MemAvailable` on
+Linux, capped by the cgroup's remaining limit in a container, `free + inactive`
+pages on FreeBSD (`sysctl`), and the available physical memory on Windows
+(`GlobalMemoryStatusEx`). The plan
 estimates each leg from the size of its generated sources, and raises each
 figure to the peak the leg measured on a previous build when that was more
 (each leg keeps the largest it has seen in its own `sky-out/`,
@@ -176,13 +178,24 @@ leg has built. The backend gets the name through its generated
 `sky-out/skybuildinfo` package (a small package of its own), not through its
 `main` package. So in parallel the backend leg builds while the frontend leg
 builds, `main` included; when the frontend ends, the parent writes the name to
-`.sky-spa-wasm-name` in the split's directory, and the backend recompiles only
-that small package and links (the `--timings` rows `go build (native, before
-the frontend's wasm name)` and `wait for the frontend's wasm name`). A build
-whose frontend did not change links nothing new. Serially, the frontend builds
-first and the backend then reads the name at once. If the frontend fails, the
+the backend leg's standard input (a pipe that belongs to this build alone), and
+the backend recompiles only that small package and links (the `--timings` rows
+`go build (native, before the frontend's wasm name)` and `wait for the
+frontend's wasm name`). A build whose frontend did not change links nothing
+new. Serially, the frontend builds first and the backend reads the name as it
+starts. If the frontend fails, or its thread in the parent ends early, the
 backend is still built, without a name: its page then finds the wasm by
-scanning `../frontend/dist` at run time, as before.
+scanning `../frontend/dist` at run time, as before. If the parent `sky build`
+exits (Ctrl-C, a crash), the pipe closes and the backend stops waiting at once,
+with an error. The wait ends at most 600 s after the backend leg started. A
+backend built on its own (`cd .split/backend && sky build`) keeps the name its
+last build linked.
+
+The wasm client links a constant build stamp (nothing in the browser reads
+it), so its bytes, and its `main.<hash>.wasm` name, depend on the app's source
+only: a new commit does not change them, the `.gz` / `.br` cache hits, browsers
+keep their cached copy, and the backend has no new name to link. The server
+still reports the commit and build time at `/_sky/buildinfo`.
 
 Go compile parallelism. `go build` compiles up to one package per CPU at the
 same time. Inside one `go build` the generated `main` package always compiles
@@ -194,11 +207,15 @@ FFI bindings, estimated from its size, else about 0.7 GB, or the largest
 dependency peak measured on an earlier build of the project,
 `sky-out/.sky-go-dep-peak-bytes`) plus as many others of about 0.25 GB each as
 the available memory holds after the 1 GB reserve (measured at Go's default
-`-p 8`, the compiles beside the largest one average about 0.1 GB). When that is one per CPU, Go
-keeps its default. A build records a dependency peak only when its dependencies
-compiled and its `main` did not (Go's action graph says which ran), so a cache
-hit or a `main` compile never sets it. Unknown memory builds one package at a
-time. When a client build runs its legs in parallel, it sets each leg's `-p`
+`-p 8` on darwin/arm64, the compiles beside the largest one average about 0.1
+GB). When that is one per CPU, Go keeps its default. Below 6 GB of room (an 8
+GB machine) the 0.25 GB figure is not trusted: each other compile counts about
+0.7 GB and `-p` is at most 4. A 16 GB machine keeps Go's default. Each `go
+build` is measured on its own (its own child process, never the largest of
+every child before it), and a build records a dependency peak only when its
+dependencies compiled and its `main` did not (Go's action graph says which
+ran), so a cache hit, a `main` compile, or a build that compiled only the build
+stamp package never sets it. Unknown memory builds one package at a time. When a client build runs its legs in parallel, it sets each leg's `-p`
 from the memory both legs share. `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
 sets `-p <n>` yourself (`auto` decides as above), and a `-p` already in
 `GOFLAGS` is kept. The decision is printed under the `--timings` table as
@@ -209,7 +226,9 @@ flag, no environment variable, no CI step. `sky build` writes them into
 generated Go source (the `sky-out/skybuildinfo/` package), so any `go build`
 of `sky-out/` carries them, including your own cross-compile
 (`CGO_ENABLED=0 GOOS=linux go build .`). They are resolved once, at the project
-root, and every leg of the build embeds the same values. The commit is, first
+root, and every server leg of the build embeds the same values (a Sky.Spa
+wasm client links a constant stamp, so that its bytes depend on the source
+only). The commit is, first
 match wins: `SKY_BUILD_COMMIT` (optional override); `git rev-parse HEAD` in the
 project directory or any parent; the commit variable your CI sets by default
 (`GITHUB_SHA`, `CI_COMMIT_SHA`, `BITBUCKET_COMMIT`, `CIRCLE_SHA1`,

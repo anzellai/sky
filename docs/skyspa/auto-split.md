@@ -1465,3 +1465,53 @@ paths, a fresh sign-in, the default store across a restart); the unit tests
 `scripts/session-revocation-e2e.sh` (Chrome / Chromium and WebKit, strict CSP:
 a copied live cookie works from a second browser, a copy taken before either
 sign-out does not).
+
+## 26. Building the two legs: concurrency and the wasm-name handoff (v0.27.9)
+
+`sky build --target web:app` (and every client target) builds the split as two
+child `sky build` processes: the native backend leg and the wasm frontend leg.
+
+**Concurrent or in order.** The legs run at the same time when the machine's
+available memory holds both legs' `sky` process and Go peaks plus a 1 GB
+reserve (`rust/crates/sky/src/leg_plan.rs`), else one after the other.
+`SKY_BUILD_PARALLEL=1` forces them together, `SKY_BUILD_SERIAL=1` in order.
+When they run together, the parent sets each leg's `go build -p` from the
+memory they share (unless the user set `SKY_GO_BUILD_JOBS` / `--go-jobs`). A
+web bundle's `.gz` / `.br` are compressed by the parent, all assets at once,
+beside the backend leg when memory holds both.
+
+**The SSR wasm name.** A backend that server-renders the first page names the
+frontend's `main.<hash>.wasm` in it, and the hash exists only once the
+frontend has built. The name is linked into the backend's generated
+`skybuildinfo` package (`rt.SetSpaBuiltWasmName`), a small package of its own,
+so the backend's `main` does not change with the frontend. In parallel the
+backend leg runs its Sky front end and a first `go build` (everything, `main`
+included) while the frontend builds; when the name arrives it rewrites the
+small package and builds again (one small compile and the link).
+
+**The handoff** (`rust/crates/project/src/spa_wasm_handoff.rs`) is the backend
+child's standard input. The parent starts the backend with
+`--spa-await-wasm-name-on-stdin` and a piped stdin, and writes one line when
+the frontend leg ends: `ok main.<hex>.wasm` or `failed`, then closes the pipe.
+A delivery made before the backend started (the in-order path) is written as
+it starts.
+
+- The pipe belongs to one build. Two builds of the same project cannot read
+  or delete each other's delivery.
+- The frontend thread in the parent holds a guard that delivers `failed` if
+  the thread ends without a delivery (a panic).
+- An end of file with no line (the parent exited or was killed) ends the
+  backend's wait at once, with an error, on every platform.
+- The wait ends at most the `go build` time limit (600 s) after the backend
+  leg started, its first `go build` included.
+- `failed` builds the backend without a name. Its page then finds the wasm by
+  scanning `../frontend/dist` at run time.
+- A backend built on its own (`cd .split/backend && sky build`) keeps the
+  name its last build linked.
+
+**The client's stamp is constant.** The wasm client links a constant build
+stamp (`build_stamp::client_stamp`): nothing under `GOOS=js` reads it, and a
+per-commit value would change the wasm's bytes and its hashed name on every
+commit (a precompress cache miss, a new download for every browser, a new name
+for the backend to link). The backend keeps the real stamp at
+`/_sky/buildinfo`.

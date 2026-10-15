@@ -15,7 +15,9 @@ package rt
 // `-ldflags "-X sky-app/rt.buildCommit=..."` (and buildAt / skyVersion) wins,
 // field by field, over this stamp; the stamp wins over the dev defaults.
 //
-// No build tag: the wasm client links the same generated package.
+// No build tag: the wasm client links the same generated package, with a
+// constant stamp (build_stamp::client_stamp in the compiler), because nothing
+// under js reads it and a per-commit value would change the wasm's hashed name.
 
 type buildStamp struct {
 	version string
