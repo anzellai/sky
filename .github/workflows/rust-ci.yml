@@ -1567,8 +1567,10 @@ jobs:
   # `needs: setup` (it builds the compiler in release itself).
   build-perf:
     runs-on: ubuntu-latest
-    # Not yet measured on a runner (the first run seeds the linux budget, see
-    # docs/perf/build-budget.json); 75 bounds a cache-cold run.
+    # The linux-x86_64 budget is seeded from rust-ci run 38764872817 (see
+    # docs/perf/build-budget.json). The whole job took 22 minutes there and
+    # 30 minutes in run 38797890228 with the full measure; 75 bounds a
+    # cache-cold run.
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
@@ -1639,10 +1641,20 @@ jobs:
         if: steps.paths.outputs.run == 'true'
         working-directory: .
         run: bash scripts/build.sh
+      # Two scopes, one budget. A push (main) or a manual run on main measures
+      # every budgeted case. A pull request, or a manual run on another branch,
+      # measures the 50-field app only (both targets) against the same budget
+      # entries: `--budget-subset` requires every budgeted key of a measured
+      # case and still fails on a rise. The nightly measures the full set too.
+      # xtask workflows_parse pins the full invocation, so it cannot shrink.
       - name: 'Gate — build speed within budget (medians of 3, budget x 1.5)'
-        if: steps.paths.outputs.run == 'true'
+        if: steps.paths.outputs.run == 'true' && (github.event_name == 'push' || github.ref == 'refs/heads/main')
         working-directory: .
         run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
+      - name: 'Gate — build speed within budget, pull-request scope (app at 50, medians of 3, budget x 1.5)'
+        if: steps.paths.outputs.run == 'true' && github.event_name != 'push' && github.ref != 'refs/heads/main'
+        working-directory: .
+        run: bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 --out build-perf.json --budget docs/perf/build-budget.json --budget-subset
       - name: Keep the measurements
         if: always() && steps.paths.outputs.run == 'true'
         uses: actions/upload-artifact@v4

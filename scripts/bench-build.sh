@@ -32,12 +32,21 @@
 #                          [--targets "web:app web"]
 #                          [--out FILE.json] [--budget docs/perf/build-budget.json]
 #                          [--write-budget FILE] [--sky PATH --tree DIR] [--work DIR]
+#                          [--budget-subset]
 #
 #   --budget        compare the medians (over --reps) to the budget for this
 #                   platform; exit 1 when any is above budget x factor (and
 #                   above budget + slack, so a 1.6 s warm build does not fail on
 #                   runner noise), or when the budget has no entry for this
 #                   platform or a budgeted key was not measured
+#   --budget-subset with --budget, for a run that measures a subset of the
+#                   budgeted cases (a pull request runs `--cases app --sizes
+#                   50`): a budgeted key is required only when this run
+#                   measured its case (`app50-web`, `skyshop-web`, the part
+#                   before the `/`), and every key of such a case is compared
+#                   as usual. It fails when no budgeted case was measured. The
+#                   full run (main, nightly) never passes it, so there every
+#                   budgeted key must be measured.
 #   --write-budget  write this run's medians (prime excluded) as this
 #                   platform's budget entry
 #   --report FILE   measure nothing; compare / write the budget from a report
@@ -69,6 +78,7 @@ BUDGET=""
 WRITE_BUDGET=""
 WORK=""
 FROM_REPORT=""
+BUDGET_SUBSET=0
 BUILD_TIMEOUT="${BENCH_BUILD_TIMEOUT:-3600}"
 
 while [ "$#" -gt 0 ]; do
@@ -84,6 +94,7 @@ while [ "$#" -gt 0 ]; do
         --write-budget) WRITE_BUDGET="$2"; shift 2 ;;
         --work) WORK="$2"; shift 2 ;;
         --report) FROM_REPORT="$2"; shift 2 ;;
+        --budget-subset) BUDGET_SUBSET=1; shift ;;
         -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
         *) echo "bench-build: unknown argument '$1' (see --help)" >&2; exit 2 ;;
     esac
@@ -350,7 +361,8 @@ if [ -n "$WRITE_BUDGET" ]; then
 fi
 
 if [ -n "$BUDGET" ]; then
-    verdict="$(jq -r --slurpfile r "$REPORT" --arg platform "$PLATFORM" '
+    verdict="$(jq -r --slurpfile r "$REPORT" --arg platform "$PLATFORM" \
+        --argjson subset "$BUDGET_SUBSET" '
         (.factor // 1.5) as $f
         | (.slack_s // 0) as $ss
         | (.slack_bytes // 0) as $sb
@@ -358,7 +370,16 @@ if [ -n "$BUDGET" ]; then
         | if $p == null then
             "NO-BUDGET"
           else
-            [ $p.budget | to_entries[] | . as $b
+            # A case is the key before the "/" (app50-web:app, skyshop-web).
+            ($r[0].medians | keys | map(split("/")[0]) | unique) as $measured
+            | ($p.budget | to_entries
+               | if $subset == 1 then map(select((.key | split("/")[0]) as $c
+                                                 | $measured | index($c)))
+                 else . end) as $entries
+            | if $subset == 1 and ($entries | length) == 0 then
+                "NO-CASE: --budget-subset, but this run measured no budgeted case"
+              else
+            [ $entries[] | . as $b
               | ($r[0].medians[$b.key]) as $m
               | if $m == null then "MISSING \($b.key): budgeted but not measured"
                 elif $m.wall_s > $b.value.wall_s * $f and $m.wall_s > $b.value.wall_s + $ss then
@@ -367,6 +388,7 @@ if [ -n "$BUDGET" ]; then
                     and $m.peak_rss_bytes > $b.value.peak_rss_bytes + $sb then
                   "OVER \($b.key): peak RSS \($m.peak_rss_bytes) > \($b.value.peak_rss_bytes) x \($f)"
                 else empty end ] | join("\n")
+              end
           end' "$BUDGET")"
     if [ "$verdict" = "NO-BUDGET" ]; then
         echo "FAIL: $BUDGET has no budget for $PLATFORM." >&2

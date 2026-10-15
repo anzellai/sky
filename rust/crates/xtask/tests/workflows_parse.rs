@@ -1799,3 +1799,138 @@ fn every_job_running_the_sky_tests_installs_brotli() {
         bad.join("\n  ")
     );
 }
+
+/// The full build-speed measure, as the nightly and every push to main run it.
+const FULL_BENCH: &str = "bash scripts/bench-build.sh --reps 3 --cases \"app skyshop\" \
+     --out build-perf.json --write-budget build-budget.proposed.json \
+     --budget docs/perf/build-budget.json";
+
+/// What is wrong with a workflow's `build-perf` job, measured against the
+/// full build-speed invocation. `on_main` is the `if:` the full step must
+/// carry (rust-ci.yml: a push or a run on main), or `None` when the step runs
+/// unconditionally (the nightly).
+fn build_perf_problems(file: &str, text: &str, on_main: Option<&str>) -> Vec<String> {
+    let doc: serde_yaml::Value = match serde_yaml::from_str(text) {
+        Ok(d) => d,
+        Err(e) => return vec![format!("{file}: does not parse: {e}")],
+    };
+    let job = &doc["jobs"]["build-perf"];
+    if job.is_null() || job_is_disabled(job) {
+        return vec![format!("{file}: no enabled build-perf job")];
+    }
+    let mut problems = Vec::new();
+    let benches: Vec<&serde_yaml::Value> = job["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .filter(|s| {
+            s["run"]
+                .as_str()
+                .is_some_and(|r| r.contains("scripts/bench-build.sh"))
+        })
+        .collect();
+    let full: Vec<&&serde_yaml::Value> = benches
+        .iter()
+        .filter(|s| s["run"].as_str().map(str::trim) == Some(FULL_BENCH))
+        .collect();
+    if full.len() != 1 {
+        problems.push(format!(
+            "{file}: build-perf has {} steps running exactly `{FULL_BENCH}`, want 1",
+            full.len()
+        ));
+    }
+    for s in &full {
+        let cond = s["if"].as_str().map(str::trim);
+        if cond != on_main {
+            problems.push(format!(
+                "{file}: the full build-perf step runs under `if: {cond:?}`, want {on_main:?}"
+            ));
+        }
+    }
+    // Any other bench step is the pull-request scope: it must exclude a push
+    // and main, so it can never stand in for the full measure there.
+    for s in benches
+        .iter()
+        .filter(|s| s["run"].as_str().map(str::trim) != Some(FULL_BENCH))
+    {
+        let cond = s["if"].as_str().unwrap_or("");
+        if on_main.is_none()
+            || !cond.contains("github.event_name != 'push'")
+            || !cond.contains("github.ref != 'refs/heads/main'")
+        {
+            problems.push(format!(
+                "{file}: a reduced build-perf step (`{}`) can run where the full \
+                 measure must (if: {cond:?})",
+                s["run"].as_str().unwrap_or("").trim()
+            ));
+        }
+    }
+    problems
+}
+
+const RUST_CI_FULL_IF: &str = "steps.paths.outputs.run == 'true' && \
+     (github.event_name == 'push' || github.ref == 'refs/heads/main')";
+
+/// The build-speed gate keeps its full scope on main and in the nightly.
+///
+/// A pull request measures a small case (`--cases app --sizes 50
+/// --budget-subset`) to keep its CI short. The full set (both app sizes and
+/// examples/13-skyshop, every budgeted key) must still run on every push to
+/// main and every night, or a rise in an unmeasured case reaches a release
+/// unseen. This pins that invocation and its condition.
+#[test]
+fn the_full_build_speed_measure_runs_on_main_and_in_the_nightly() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let mut problems = Vec::new();
+    for (file, on_main) in [
+        ("rust-ci.yml", Some(RUST_CI_FULL_IF)),
+        ("nightly-sweep.yml", None),
+    ] {
+        let text = std::fs::read_to_string(root.join(".github/workflows").join(file))
+            .unwrap_or_else(|e| panic!("read {file}: {e}"));
+        problems.extend(build_perf_problems(file, &text, on_main));
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The check above goes red on the shapes that would shrink the full measure.
+#[test]
+fn the_full_build_speed_check_catches_a_shrunk_measure() {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.."));
+    let text = std::fs::read_to_string(root.join(".github/workflows/rust-ci.yml"))
+        .expect("read rust-ci.yml");
+    let shrunk = text.replacen(
+        "--reps 3 --cases \"app skyshop\" --out",
+        "--reps 3 --cases app --out",
+        1,
+    );
+    assert!(shrunk != text, "the full invocation is not in rust-ci.yml");
+    let pr_only = text.replacen(
+        RUST_CI_FULL_IF,
+        "steps.paths.outputs.run == 'true' && github.event_name != 'push'",
+        1,
+    );
+    assert!(
+        pr_only != text,
+        "the full step's condition is not in rust-ci.yml"
+    );
+    let reduced_on_main = text.replacen(
+        "github.event_name != 'push' && github.ref != 'refs/heads/main'",
+        "true",
+        1,
+    );
+    assert!(
+        reduced_on_main != text,
+        "the pull-request step's condition is not in rust-ci.yml"
+    );
+    for (what, t) in [
+        ("skyshop dropped", shrunk),
+        ("full step limited to non-push runs", pr_only),
+        ("reduced step allowed on main", reduced_on_main),
+    ] {
+        assert!(
+            !build_perf_problems("rust-ci.yml", &t, Some(RUST_CI_FULL_IF)).is_empty(),
+            "the check missed: {what}"
+        );
+    }
+}
