@@ -772,8 +772,10 @@ fn web_app_bundle_is_precompressed_by_the_parent() {
 /// backend's `sky-out/` is then compiled by a PLAIN `CGO_ENABLED=0 go build`
 /// (host GOOS/GOARCH so it runs here; once more for linux/amd64 to prove the
 /// cross-compile builds). `/_sky/buildinfo` reports the CI commit, the commit
-/// date and `source = ci:GITHUB_SHA`, and the wasm client carries the same
-/// stamp — resolved once at the project root, not per split leg.
+/// date and `source = ci:GITHUB_SHA` (resolved once at the project root, not
+/// per split leg). The wasm client links the constant client stamp instead
+/// (v0.27.9, build_stamp::client_stamp), so its bytes and its content-hashed
+/// name depend only on the frontend code.
 ///
 /// RED on v0.25.20: the stamp was a `-X` linker flag on sky's own `go build`
 /// only, so this binary reported `{"commit":"dev","builtAt":"unknown",
@@ -876,20 +878,34 @@ fn web_app_archive_build_reports_the_ci_commit() {
     let split = build.join(".skyapp").join("web-app").join(".split");
     let backend_dir = split.join("backend");
     let sky_out = backend_dir.join("sky-out");
-    // Both legs carry the identity resolved at the project root.
-    let want = format!(
-        "\"{}\", \"2026-09-21T14:13:20Z\", \"ci:GITHUB_SHA\"",
-        &sha[..12]
-    );
-    for leg in ["backend", "frontend"] {
+    // The backend leg (it serves /_sky/buildinfo) carries the identity
+    // resolved at the project root. The wasm client links the constant client
+    // stamp (build_stamp::client_stamp): nothing under GOOS=js reads it, and a
+    // per-commit value would change the wasm bytes, and so its content-hashed
+    // name, on every commit.
+    let stamp_of = |leg: &str| {
         let f = split
             .join(leg)
             .join("sky-out")
             .join("skybuildinfo")
             .join("skybuildinfo.go");
-        let src = std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
-        assert!(src.contains(&want), "{leg} leg stamp:\n{src}");
-    }
+        std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{}: {e}", f.display()))
+    };
+    let want = format!(
+        "\"{}\", \"2026-09-21T14:13:20Z\", \"ci:GITHUB_SHA\"",
+        &sha[..12]
+    );
+    let backend_stamp = stamp_of("backend");
+    assert!(
+        backend_stamp.contains(&want),
+        "backend leg stamp:\n{backend_stamp}"
+    );
+    let frontend_stamp = stamp_of("frontend");
+    let client = "\"client\", \"client\", \"client\")";
+    assert!(
+        frontend_stamp.contains(client) && !frontend_stamp.contains(&sha[..12]),
+        "frontend leg stamp (want the constant client stamp, no commit):\n{frontend_stamp}"
+    );
 
     let go_build = |out: &str, target: Option<(&str, &str)>| {
         let mut c = clean("go");
