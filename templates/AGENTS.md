@@ -564,6 +564,18 @@ sky package --release --target mobile:ios   # signed store artefact → sky-out/
 sky package --release --target mobile:ios --upload testflight   # + validate and upload to TestFlight (SKY_ASC_KEY_ID/ISSUER_ID/KEY_PATH)
 ```
 
+**Build speed and CI caches.** Every `go build` Sky runs passes `-trimpath`, so
+a project's compiled packages are reused from any directory. In CI, cache
+`~/.sky/go-build` (Sky's Go build cache), `~/go/pkg/mod` (Go modules) and
+`~/.cache/sky/precompress` (the `.gz` / `.br` bundle results), keyed on the OS
+and a hash of `sky.toml` + `sky.lock`. `actions/setup-go`'s own cache saves
+`~/.cache/go-build`, which Sky does not use (`cache: false`). Never restore a
+cache an untrusted job (a fork's pull request) can write into a release or
+deploy job: a build cache is trusted as compiled code. Pin Go FFI modules to
+exact versions (`"v1.6.0"`, not `"latest"`) and a rebuild skips `go get`. On a
+small runner, `--go-jobs <n>` caps parallel compiles. Details: `docs/tooling/cli.md`
+("Caching builds in CI").
+
 **Sky.Spa entries auto-split.** Building the same `App.app` source to a client
 target (`--target web:app` · `desktop:mac` · `tablet:ipad` · `mobile:ios`)
 synthesises a Spa app and runs the Sky.Spa auto-split: `sky build src/Main.sky`

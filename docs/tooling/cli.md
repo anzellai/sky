@@ -716,6 +716,53 @@ without ever touching the cache your other Go projects rely on.
 - **Escape hatch.** Set your own `GOCACHE` and Sky uses it as-is and manages
   nothing (its size and lifetime become yours to control).
 
+#### Caching builds in CI
+
+A CI job starts with empty caches unless it restores them, and a cold build of
+an app compiles the runtime and every Go dependency. Cache these three paths:
+
+| Path | What it holds |
+|---|---|
+| `~/.sky/go-build` | Sky's Go build cache (or your `GOCACHE`, when you set one) |
+| `~/go/pkg/mod` | the Go module cache (`go env GOMODCACHE`) |
+| `~/.cache/sky/precompress` | the `.gz` / `.br` results of a client build (`$XDG_CACHE_HOME/sky/precompress` when that is set) |
+
+`actions/setup-go`'s built-in cache saves `~/.cache/go-build` (Go's default
+build cache), which Sky does not use: turn it off (`cache: false`) and cache the
+paths above. Key the cache on the runner OS and a hash of `sky.toml` and
+`sky.lock` (add the Go and Sky versions when your workflow pins them, so an
+upgrade starts a new cache instead of growing the old one); a prefix of that
+key is a safe fallback, because every cache entry is keyed on its content. The
+checkout path does not matter: every `go build` Sky runs passes `-trimpath`.
+
+```yaml
+- uses: actions/setup-go@v5
+  with:
+    go-version: "1.26"   # the Go your app builds with
+    cache: false
+- uses: actions/cache@v4
+  with:
+    path: |
+      ~/.sky/go-build
+      ~/go/pkg/mod
+      ~/.cache/sky/precompress
+    key: sky-${{ runner.os }}-${{ hashFiles('sky.toml', 'sky.lock') }}-${{ github.sha }}
+    restore-keys: |
+      sky-${{ runner.os }}-${{ hashFiles('sky.toml', 'sky.lock') }}-
+      sky-${{ runner.os }}-
+```
+
+A restored build cache is trusted as compiled code: `go build` links what it
+finds there. Never restore a cache that an untrusted job could write (a pull
+request from a fork, another repository, a shared self-hosted runner) into a job
+that builds a release or holds deploy secrets. GitHub Actions does not give a
+pull request's caches to the default branch, but other CI systems may share one
+cache across all jobs; key protected builds separately there.
+
+On a runner with little memory, `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
+caps how many packages `go build` compiles at once, and `SKY_BUILD_SERIAL=1`
+builds a client app's two legs one after the other.
+
 Exit codes: `0` clean, `1` warnings, `2` errors. CI-friendly.
 
 ### `sky verify [example]`

@@ -83,6 +83,15 @@ throwaway local directory while the user believes it is talking to the server
 they named. If you are handed a DSN, do not add `--embed` "to be safe" — pick
 the tier the user asked for.
 
+### A slow build in CI is usually a cold cache
+
+When a CI build of this project is slow, check the cache first, not the code:
+the job must restore `~/.sky/go-build`, `~/go/pkg/mod` and
+`~/.cache/sky/precompress` (not `~/.cache/go-build`, which is what
+`actions/setup-go` caches). See AGENTS.md "Build speed and CI caches". Do not
+add a cache restore to a release or deploy job that a fork's pull request
+could have written.
+
 ### A Sky.Spa client handles network blips itself
 
 Do not write retry loops, "network error, try again" banners or reconnect

@@ -652,6 +652,22 @@ container-with-a-volume**; stateless serverless → **managed PG** (Cloud SQL /
 RDS). Where the bundle cannot run the runtime **refuses loudly** (the "PostgreSQL
 binaries do not run" check), it does not silently lose data.
 
+**Build speed — what the build reuses.** Every `go build` goes through one
+builder (`rust/crates/project/src/go_cmd.rs`) and passes `-trimpath`, so a
+package compiled in one directory is a cache hit in any other (a new checkout,
+each Sky.Spa leg, a desktop shell); `--no-trimpath` opts out and `sky run
+--profile` builds without it. `go build -p` is sized from the dependency
+compiles (`go_jobs.rs`; `main` compiles alone), `--go-jobs <n>` overrides it.
+Exactly pinned Go FFI modules skip `go get` on a rebuild (`go_get_memo.rs`).
+An SSR client build's backend leg builds beside its frontend leg and links the
+wasm name through `skybuildinfo` (`spa_wasm_handoff.rs`). The bundle's `.gz` /
+`.br` are compressed at once, beside the backend leg. Over its cap the Go cache
+loses its least recently used entries, not everything. For CI, cache
+`~/.sky/go-build`, `~/go/pkg/mod` and `~/.cache/sky/precompress` — not
+`~/.cache/go-build`, which `actions/setup-go` caches — and never restore a
+cache an untrusted job can write into a release job (`docs/tooling/cli.md`,
+"Caching builds in CI").
+
 **Never run `sky build` from the repo root** — it overwrites the compiler binary
 in `sky-out/`. Always `cd` into the example/project dir first.
 
