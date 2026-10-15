@@ -238,6 +238,10 @@ func demangleFrame(fn string) (string, frameKind) {
 		if s == "" || s == "main" {
 			return "main (entry point)", kindUser
 		}
+		// A memoised top-level value (a CAF) runs its body in its own
+		// function, `X__cafInit`, which the accessor `X` hands to
+		// LazyCaf.Get. Report it as the binding `X`.
+		s = strings.TrimSuffix(s, "__cafInit")
 		return demangleSkyName(s), kindUser
 	}
 	if s, ok := strings.CutPrefix(fn, "sky-app/rt."); ok {
