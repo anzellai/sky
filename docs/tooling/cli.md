@@ -122,6 +122,14 @@ the parent's table gives the wall-clock of each leg. `sky check --timings` works
 the same way. Use it to see where a slow build spends its time before you report
 it.
 
+Under the table, `note: front end: N source load(s), M type check(s)` counts
+how many times the process loaded a program's sources and type-checked its
+modules. A build runs the front end once for each program it compiles. A direct
+`Spa.app` entry is checked once, and the split analyses that same checked
+program, so the parent reports one of each. A `--target web:app` build checks
+your own entry and then splits the client entry it derives from it, which is a
+second program, so the parent reports two of each.
+
 ```bash
 sky build --timings --target web:app src/Main.sky
 ```

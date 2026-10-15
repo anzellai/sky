@@ -274,6 +274,74 @@ fn assemble_and_emit_with(
     progress: bool,
     scope: AppScope,
 ) -> Result<Emitted, BuildFailure> {
+    assemble_and_emit_loaded(
+        repo_root,
+        example_dir,
+        extra_dirs,
+        entry_module,
+        progress,
+        scope,
+    )
+    .map(|(emitted, loaded)| {
+        // Free the db here, before the caller uses the emitted program, as
+        // this function did when it owned the db.
+        drop(loaded);
+        emitted
+    })
+}
+
+/// A program the front half of a build loaded and checked: the source db, and
+/// what the Sky.Spa split needs to analyse the SAME db instead of loading and
+/// type-checking the program a second time (see [`front_half_loaded`]).
+///
+/// `split_entry` and `split_check_ids` are chosen by exactly the rule
+/// [`load_source_db`] applies (the project's own modules, in load order, the
+/// LAST module named like the entry), so a split over this db sees the module
+/// list a fresh [`load_source_db`] would hand it.
+pub struct LoadedProgram {
+    pub(crate) db: skydb::SkyDatabase,
+    pub(crate) split_entry: Option<base::ModuleId>,
+    pub(crate) split_check_ids: Vec<base::ModuleId>,
+    /// `ty::check_modules(&db, &checked_ids)`, the front half's own check.
+    pub(crate) checked: ty::CheckOutput,
+    pub(crate) checked_ids: Vec<base::ModuleId>,
+    /// False when the project has Sky dependencies (registry packages or path
+    /// dependencies): [`load_source_db`] then builds its FFI trust and its
+    /// dependency check over a different module list, so the split loads its
+    /// own db.
+    pub(crate) reusable_for_split: bool,
+}
+
+impl LoadedProgram {
+    /// The db, entry and module list for the Sky.Spa split, and the front
+    /// half's check when it is the check the split would run itself (the same
+    /// module list over this same db). `None` when this db is not the one a
+    /// fresh [`load_source_db`] builds.
+    pub(crate) fn for_split(
+        self,
+    ) -> Option<(
+        skydb::SkyDatabase,
+        base::ModuleId,
+        Vec<base::ModuleId>,
+        Option<ty::CheckOutput>,
+    )> {
+        if !self.reusable_for_split {
+            return None;
+        }
+        let entry = self.split_entry?;
+        let checked = (self.checked_ids == self.split_check_ids).then_some(self.checked);
+        Some((self.db, entry, self.split_check_ids, checked))
+    }
+}
+
+fn assemble_and_emit_loaded(
+    repo_root: &Path,
+    example_dir: &Path,
+    extra_dirs: &[PathBuf],
+    entry_module: Option<&str>,
+    progress: bool,
+    scope: AppScope,
+) -> Result<(Emitted, LoadedProgram), BuildFailure> {
     // ---- assemble the source db (stdlib + example src) ----
     // Stage A/B (doc 01, doc 12): a salsa db holds the source set as `SourceFile`
     // inputs and the `parse` leaf query memoises each module's CST. Every parse
@@ -291,6 +359,7 @@ fn assemble_and_emit_with(
         return Err(problem.into());
     }
     let t_load = crate::timings::phase("load sources (stdlib + app)");
+    crate::timings::count_source_load();
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
     let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
@@ -329,6 +398,7 @@ fn assemble_and_emit_with(
     dep_files.extend(registry.iter().map(|(_, _, p)| p.clone()));
     let mut dep_locals = registry;
     dep_locals.extend(path_locals);
+    let has_sky_dependencies = !dep_locals.is_empty();
 
     let source_root = configured_source_root(&example_dir);
     let mut roots = vec![example_dir.join(&source_root)];
@@ -373,6 +443,9 @@ fn assemble_and_emit_with(
     }
     let mut entry = None;
     let mut check_ids: Vec<base::ModuleId> = Vec::new();
+    // The entry and module list `load_source_db` picks (see `LoadedProgram`).
+    let mut split_entry = None;
+    let mut split_check_ids: Vec<base::ModuleId> = Vec::new();
     // Parse-error gate accumulator (`[E0001]` class). Collected HERE, in the
     // app-module loop, reading each app module's parse (from the tracked `parse`
     // query, keyed by its `SourceFile` input) BEFORE `&mut db` registration — the
@@ -436,6 +509,16 @@ fn assemble_and_emit_with(
         path_map.insert(base::FileId(id.index()), display_path(example_dir, &p));
         if registry_paths.contains(&p) {
             registry_mods.insert(id.index());
+        }
+        if !dep_files.contains(&p) {
+            split_check_ids.push(id);
+            let named_entry = match entry_module {
+                Some(want) => n == want,
+                None => n == "Main" || n.ends_with(".Main") || n == "main",
+            };
+            if named_entry {
+                split_entry = Some(id);
+            }
         }
         // Every module in this loop (the project's own `src/`, any `extra_dirs`
         // like `tests/`, the path dependencies and the fetched `.skydeps`
@@ -530,6 +613,7 @@ fn assemble_and_emit_with(
     db.set_ffi_surface(std::sync::Arc::new(surface));
     let t_check = crate::timings::phase("canonicalise + typecheck");
     let counters_start = ty::counters::snapshot();
+    crate::timings::count_type_check();
     let mut checked = ty::check_modules(&db, &check_ids);
     t_check.end();
     let counters_checked = ty::counters::snapshot();
@@ -816,7 +900,7 @@ fn assemble_and_emit_with(
     // path dependency whose API changed, so it names the surface and the verb
     // that regenerates it.
     warnings.extend(outdated_surface_warnings(example_dir));
-    Ok(Emitted {
+    let emitted = Emitted {
         source,
         registry,
         ffi_used: prog.ffi_used.clone(),
@@ -824,7 +908,25 @@ fn assemble_and_emit_with(
         located_warnings,
         migration_hint,
         console_needed: prog.console_needed,
-    })
+    };
+    let loaded = LoadedProgram {
+        db,
+        split_entry,
+        split_check_ids,
+        // The split reads the verdict and the diagnostics, never the per-def
+        // types, so those are not carried.
+        checked: ty::CheckOutput {
+            def_types: Vec::new(),
+            ..checked
+        },
+        checked_ids: check_ids,
+        // Only the plain load (no extra source roots, the whole app) builds
+        // the db `load_source_db` builds.
+        reusable_for_split: !has_sky_dependencies
+            && extra_dirs.is_empty()
+            && matches!(scope, AppScope::All),
+    };
+    Ok((emitted, loaded))
 }
 
 /// Resolve a lowering diagnostic against the build's sources. A leading
@@ -915,6 +1017,31 @@ pub fn front_half_errors(
     ) {
         Ok(_) => Vec::new(),
         Err(f) => f.diagnostics,
+    }
+}
+
+/// [`front_half_errors`], keeping what it loaded: on success, the checked
+/// program, which `spa_split::generate_with` analyses instead of loading and
+/// type-checking the app again. The diagnostics on failure are the same values
+/// [`front_half_errors`] returns.
+pub fn front_half_loaded(
+    repo_root: &Path,
+    example_dir: &Path,
+    entry_module: Option<&str>,
+) -> Result<LoadedProgram, Vec<diagnostics::Reported>> {
+    match assemble_and_emit_loaded(
+        repo_root,
+        example_dir,
+        &[],
+        entry_module,
+        false,
+        AppScope::All,
+    ) {
+        Ok((emitted, loaded)) => {
+            drop(emitted);
+            Ok(loaded)
+        }
+        Err(f) => Err(f.diagnostics),
     }
 }
 
@@ -3065,6 +3192,7 @@ pub(crate) fn load_source_db(
     example_dir: &Path,
     entry_module: Option<&str>,
 ) -> Result<(skydb::SkyDatabase, base::ModuleId, Vec<base::ModuleId>), String> {
+    crate::timings::count_source_load();
     let mut db = skydb::SkyDatabase::with_kernel();
     let mut next_id: u32 = 0;
     let stdlib = load_dir(&db, &mut next_id, &repo_root.join("sky-stdlib"));
@@ -3136,6 +3264,7 @@ pub(crate) fn load_source_db(
     path_mods.retain(|(m, _)| !check_ids.contains(m));
     if !path_mods.is_empty() {
         let ids: Vec<base::ModuleId> = path_mods.iter().map(|(m, _)| *m).collect();
+        crate::timings::count_type_check();
         let checked = ty::check_modules(&db, &ids);
         let errors: Vec<diagnostics::Diagnostic> = checked
             .diagnostics

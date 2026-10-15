@@ -2917,6 +2917,34 @@ pub fn generate(
         repo_root,
         project_dir,
         entry_module,
+        None,
+        out_dir,
+        broker_url,
+        static_mount_override,
+    )
+    .map_err(refusal_link_last)
+}
+
+/// [`generate`] over a program the build's front half has already loaded and
+/// checked ([`crate::build::front_half_loaded`] on this same `project_dir` and
+/// `entry_module`). The split then analyses that db instead of loading the
+/// sources and type-checking them again. A program whose db is not the one
+/// the split would load itself (a project with Sky dependencies) is loaded
+/// afresh, exactly as [`generate`] does. The output is the same either way.
+pub fn generate_with(
+    repo_root: &Path,
+    project_dir: &Path,
+    entry_module: Option<&str>,
+    loaded: crate::build::LoadedProgram,
+    out_dir: &Path,
+    broker_url: Option<&str>,
+    static_mount_override: Option<(String, String)>,
+) -> Result<SpaSplitReport, String> {
+    generate_inner(
+        repo_root,
+        project_dir,
+        entry_module,
+        Some(loaded),
         out_dir,
         broker_url,
         static_mount_override,
@@ -2928,6 +2956,7 @@ fn generate_inner(
     repo_root: &Path,
     project_dir: &Path,
     entry_module: Option<&str>,
+    loaded: Option<crate::build::LoadedProgram>,
     out_dir: &Path,
     broker_url: Option<&str>,
     // The app's declared static mount `(dir, url-prefix)`, supplied by the caller
@@ -2951,13 +2980,20 @@ fn generate_inner(
         ));
     }
 
-    let (db, entry, check_ids) =
-        crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+    let (db, entry, check_ids, checked) = match loaded.and_then(|l| l.for_split()) {
+        Some(reused) => reused,
+        None => {
+            let (db, entry, check_ids) =
+                crate::build::load_source_db(repo_root, project_dir, entry_module)?;
+            (db, entry, check_ids, None)
+        }
+    };
     let proj_name = project_dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "app".to_string());
-    let (report, chain_notes) = analyze_for_split(&db, entry, &check_ids, proj_name.clone())?;
+    let (report, chain_notes) =
+        analyze_for_split(&db, entry, &check_ids, proj_name.clone(), checked)?;
 
     // The generator needs a per-branch `case msg of` split — EXCEPT for an
     // `update` with no `case` that is entirely PURE: every Msg then runs in the
@@ -4548,7 +4584,7 @@ pub fn generate_diff_fuzz(
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "app".to_string());
-    let (report, _) = analyze_for_split(&db, entry, &check_ids, proj_name.clone())?;
+    let (report, _) = analyze_for_split(&db, entry, &check_ids, proj_name.clone(), None)?;
     if report.whole_update.is_some() || report.branches.is_empty() {
         return Err(
             "cannot fuzz: `update` has no resolvable `case msg of` (per-branch analysis unavailable)".into(),
@@ -9683,7 +9719,7 @@ pub fn analyze_project(
         .unwrap_or(project_dir)
         .to_string_lossy()
         .to_string();
-    analyze_for_split(&db, entry, &check_ids, project).map(|(report, _)| report)
+    analyze_for_split(&db, entry, &check_ids, project, None).map(|(report, _)| report)
 }
 
 /// The partition the split generates from. A continuation whose arm is client
@@ -9696,14 +9732,31 @@ fn analyze_for_split(
     entry: ModuleId,
     check_ids: &[ModuleId],
     project: String,
+    // `spa_partition::check_program(db, check_ids)` when the caller has it
+    // already (the build's own front half, over this same db).
+    checked: Option<ty::CheckOutput>,
 ) -> Result<(SpaPartitionReport, Vec<String>), String> {
-    let report = spa_partition::analyze_loaded(db, entry, check_ids, project.clone())?;
+    // One check serves both analyses: the db is not written between them, so
+    // a second `check_modules` over the same modules returns the same value.
+    let checked = match checked {
+        Some(c) => c,
+        None => spa_partition::check_program(db, check_ids),
+    };
+    // The analyses read the verdict and the diagnostics, never the per-def
+    // types: free those now rather than hold them through both analyses.
+    let checked = ty::CheckOutput {
+        def_types: Vec::new(),
+        ..checked
+    };
+    let none = BTreeSet::new();
+    let report =
+        spa_partition::analyze_checked(db, entry, check_ids, project.clone(), &none, &checked)?;
     let keep_on_server = unwireable_continuations(db, check_ids, &report);
     if keep_on_server.is_empty() {
         return Ok((report, Vec::new()));
     }
     let report =
-        spa_partition::analyze_loaded_keeping(db, entry, check_ids, project, &keep_on_server)?;
+        spa_partition::analyze_checked(db, entry, check_ids, project, &keep_on_server, &checked)?;
     let note = format!(
         "continuation(s) {:?} run on the server inside the RPC that performs them: their argument has no wire codec, so they cannot run in the client. That RPC holds later Msgs until it answers; declare a `Codec` for the argument to run them in the client.",
         keep_on_server.iter().collect::<Vec<_>>()
