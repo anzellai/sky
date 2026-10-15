@@ -175,6 +175,7 @@ pub fn sky_ty_to_go_params(
 /// as before, so the emitted Go stays byte-for-byte identical. See
 /// `TypeEnv::goty_cache`.
 fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, GoTy>) -> GoTy {
+    ty::counters::GOTY_NODES.bump();
     // A parametric record's Go type depends on `params`; never cache those. Guard
     // hits inside still propagate to `MIN_GUARD_HIT`, so an ancestor that DOES
     // cache correctly sees this subtree's context dependence.

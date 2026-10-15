@@ -15,6 +15,7 @@ use base::Name;
 
 mod check;
 pub mod codec_elem;
+pub mod counters;
 mod db;
 pub mod dictkey;
 pub mod encodable;

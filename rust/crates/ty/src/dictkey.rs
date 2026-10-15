@@ -190,6 +190,7 @@ pub fn unsupported_keys(t: &Ty) -> Vec<Ty> {
 }
 
 fn walk(t: &Ty, out: &mut Vec<Ty>) {
+    crate::counters::DICTKEY_NODES.bump();
     if let Ty::App(name, args) = t {
         if name.as_str() == DICT && args.len() == 2 && classify(&args[0]) == KeyVerdict::Unsupported
         {

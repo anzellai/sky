@@ -51,6 +51,7 @@ pub struct TyTable {
 impl TyTable {
     /// Rebuild the owned type stored at `r`.
     pub fn get(&self, r: TyRef) -> Ty {
+        crate::counters::OWNED_REBUILD_NODES.bump();
         match &self.nodes[r.0 as usize] {
             TyNode::Var(n) => Ty::Var(n.clone()),
             TyNode::Fun(a, b) => Ty::Fun(Box::new(self.get(*a)), Box::new(self.get(*b))),
@@ -96,6 +97,7 @@ impl TyTableBuilder {
 
     /// Intern `t` (and every sub-tree of it) and return its reference.
     pub fn intern(&mut self, t: &Ty) -> TyRef {
+        crate::counters::INTERN_NODES.bump();
         let node = match t {
             Ty::Var(n) => TyNode::Var(n.clone()),
             Ty::Fun(a, b) => {

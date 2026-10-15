@@ -270,7 +270,12 @@ impl UnionFind {
     pub fn content(&mut self, v: TyVarId) -> Content {
         let r = self.find(v);
         match &self.slots[r.0 as usize] {
-            Slot::Root { content, .. } => content.clone(),
+            Slot::Root { content, .. } => {
+                if let Content::Structure(FlatTy::Record(fs, _)) = content {
+                    crate::counters::RECORD_FIELDS.add(fs.len() as u64);
+                }
+                content.clone()
+            }
             Slot::Link(_) => Content::Flex,
         }
     }
@@ -319,6 +324,7 @@ impl UnionFind {
         target: TyVarId,
         seen: &mut std::collections::HashSet<TyVarId>,
     ) -> bool {
+        crate::counters::OCCURS_NODES.bump();
         let r = self.find(v);
         if r == target {
             return true;
@@ -812,6 +818,7 @@ impl UnionFind {
         // both ext vars are still flex (the common case at call time).
         let (fs1, e1) = self.normalize_record(fs1, e1);
         let (fs2, e2) = self.normalize_record(fs2, e2);
+        crate::counters::RECORD_FIELDS.add((fs1.len() + fs2.len()) as u64);
         // shared fields unify pairwise
         let shared: Vec<(TyVarId, TyVarId)> = fs1
             .iter()

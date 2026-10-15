@@ -2302,6 +2302,7 @@ impl<'a> Infer<'a> {
         scheme: bool,
         concretize_super: bool,
     ) -> Ty {
+        crate::counters::READBACK_NODES.bump();
         let r = self.uf.find(v);
         if !seen.insert(r) {
             return Ty::Error; // cycle guard (anyEquivSeen, Solve.hs:1449)

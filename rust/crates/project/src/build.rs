@@ -529,8 +529,14 @@ fn assemble_and_emit_with(
     surface.set_trust(trust);
     db.set_ffi_surface(std::sync::Arc::new(surface));
     let t_check = crate::timings::phase("canonicalise + typecheck");
+    let counters_start = ty::counters::snapshot();
     let mut checked = ty::check_modules(&db, &check_ids);
     t_check.end();
+    let counters_checked = ty::counters::snapshot();
+    crate::timings::note(format!(
+        "typecheck counters: {}",
+        counters_checked.since(&counters_start)
+    ));
     // Since v0.27.0 a fetched `.skydeps` package is checked like the project's
     // own code (it was trusted before). A diagnostic in one says so and links
     // the migration entry.
@@ -771,6 +777,10 @@ fn assemble_and_emit_with(
     let abi_diags =
         crate::abi_guard::check_abi_symbols(&source, crate::abi_guard::runtime_exports(repo_root));
     t_lower.end();
+    crate::timings::note(format!(
+        "lower counters: {}",
+        ty::counters::snapshot().since(&counters_checked)
+    ));
     if !abi_diags.is_empty() {
         return Err(render_diags(&abi_diags, &sources));
     }

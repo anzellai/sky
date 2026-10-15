@@ -31,4 +31,5 @@ hir = { path = "../hir" }
 ty = { path = "../ty" }
 # The Stage-E harness builds a `BuildConfig` from a `lower::LowerConfig`.
 lower = { path = "../lower" }
+diagnostics = { path = "../diagnostics" }
 salsa.workspace = true
