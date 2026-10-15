@@ -223,10 +223,31 @@ pub struct UnionFind {
     /// callers. A missing `Comparable`/`Number`/`Appendable` is refused
     /// (Elm's rule).
     pub(crate) rigid_needs: Vec<(Name, SuperType)>,
+    /// Reused buffers of the occurs check (no type state: see
+    /// [`OccursScratch`]).
+    occurs_scratch: OccursScratch,
     /// Record fields copied out by [`UnionFind::content`] (tests only): pins
     /// that binding a variable moves a structure instead of copying it.
     #[cfg(test)]
     record_copies: u64,
+}
+
+/// The occurs check's visited marks and work stack, kept between calls so a
+/// check allocates nothing. A root is visited in the current call when its
+/// mark equals `epoch`; each call bumps `epoch`, which clears every mark at
+/// once. It holds no type information: a clone starts empty, and two stores
+/// that differ only here behave identically.
+#[derive(Default)]
+struct OccursScratch {
+    mark: Vec<u32>,
+    epoch: u32,
+    stack: Vec<TyVarId>,
+}
+
+impl Clone for OccursScratch {
+    fn clone(&self) -> Self {
+        OccursScratch::default()
+    }
 }
 
 /// How [`UnionFind::unify_vars`] first splits a pair of roots.
@@ -372,37 +393,57 @@ impl UnionFind {
     /// A reachability question, so the walk order does not matter: it runs on
     /// an explicit stack and reads each node's children in place (no copy of a
     /// record's field map per node, no recursion depth bound by the type's).
+    ///
+    /// The visited set and the stack are the reused [`OccursScratch`]: a mark
+    /// per variable, valid for one call through the epoch. The walk visits
+    /// the same nodes in the same order as a fresh set per call would.
     fn occurs(&mut self, v: TyVarId, target: TyVarId) -> bool {
         let target = self.find(target);
-        let mut seen = std::collections::HashSet::new();
-        let mut stack = vec![v];
-        while let Some(x) = stack.pop() {
+        let mut sc = std::mem::take(&mut self.occurs_scratch);
+        sc.epoch = sc.epoch.wrapping_add(1);
+        if sc.epoch == 0 {
+            // The epoch wrapped: old marks could equal a new one.
+            sc.mark.iter_mut().for_each(|m| *m = 0);
+            sc.epoch = 1;
+        }
+        // The walk allocates no variable, so marks sized now cover it.
+        if sc.mark.len() < self.slots.len() {
+            sc.mark.resize(self.slots.len(), 0);
+        }
+        sc.stack.clear();
+        sc.stack.push(v);
+        let mut found = false;
+        while let Some(x) = sc.stack.pop() {
             crate::counters::OCCURS_NODES.bump();
             let r = self.find(x);
             if r == target {
-                return true;
+                found = true;
+                break;
             }
-            if !seen.insert(r) {
+            let mark = &mut sc.mark[r.0 as usize];
+            if *mark == sc.epoch {
                 continue;
             }
+            *mark = sc.epoch;
             if let Slot::Root {
                 content: Content::Structure(ft),
                 ..
             } = &self.slots[r.0 as usize]
             {
                 match ft {
-                    FlatTy::App(_, args) => stack.extend(args.iter().copied()),
-                    FlatTy::Fun(a, b) => stack.extend([*a, *b]),
+                    FlatTy::App(_, args) => sc.stack.extend(args.iter().copied()),
+                    FlatTy::Fun(a, b) => sc.stack.extend([*a, *b]),
                     FlatTy::Record(fs, e) => {
-                        stack.extend(fs.values().copied());
-                        stack.extend(e.iter().copied());
+                        sc.stack.extend(fs.values().copied());
+                        sc.stack.extend(e.iter().copied());
                     }
-                    FlatTy::Tuple(xs) => stack.extend(xs.iter().copied()),
+                    FlatTy::Tuple(xs) => sc.stack.extend(xs.iter().copied()),
                     FlatTy::Unit => {}
                 }
             }
         }
-        false
+        self.occurs_scratch = sc;
+        found
     }
 
     // ---- unification (Unify.hs actuallyUnify) ---------------------------
@@ -1402,5 +1443,29 @@ mod tests {
         assert!(uf.unify(a, list).is_err());
         assert!(matches!(uf.content(a), Content::Error));
         assert!(matches!(uf.content(list), Content::Error));
+    }
+
+    /// The occurs check's reused marks: each call sees only its own visits,
+    /// across many calls and across a wrap of the epoch counter.
+    #[test]
+    fn occurs_marks_are_per_call() {
+        let mut uf = UnionFind::new();
+        let a = uf.fresh_flex();
+        let b = uf.fresh_flex();
+        let pair = uf.fresh(Content::Structure(FlatTy::Tuple(vec![a, a])));
+        for _ in 0..3 {
+            assert!(uf.occurs(pair, a));
+            assert!(!uf.occurs(pair, b));
+        }
+        uf.occurs_scratch.epoch = u32::MAX - 1;
+        for _ in 0..4 {
+            assert!(uf.occurs(pair, a));
+            assert!(!uf.occurs(pair, b));
+        }
+        assert!(uf.occurs_scratch.epoch >= 1);
+        // A clone carries no marks and still answers the same.
+        let mut c = uf.clone();
+        assert!(c.occurs(pair, a));
+        assert!(!c.occurs(pair, b));
     }
 }
