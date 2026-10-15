@@ -567,7 +567,9 @@ sky package --release --target mobile:ios --upload testflight   # + validate and
 ```
 
 **Build speed and CI caches.** Every `go build` Sky runs passes `-trimpath`, so
-a project's compiled packages are reused from any directory. In CI, cache
+a project's compiled packages are reused from any directory; a panic stack
+trace then names files by module path (`sky-app/main.go`). `--no-trimpath` (or
+`SKY_GO_TRIMPATH=0`) builds without it, and `sky run --profile` always does. In CI, cache
 `~/.sky/go-build` (Sky's Go build cache), `~/go/pkg/mod` (Go modules) and
 `~/.cache/sky/precompress` (the `.gz` / `.br` bundle results), keyed on the OS
 and a hash of `sky.toml` + `sky.lock`. `actions/setup-go`'s own cache saves
