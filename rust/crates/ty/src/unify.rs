@@ -367,7 +367,15 @@ impl UnionFind {
 
     /// Unify `a` and `b`. Returns `Err(Mismatch)` on a genuine clash — the
     /// caller records a diagnostic and commits both vars to `Error` (L7).
+    ///
+    /// A curried function type is as deep as its arity (a record constructor
+    /// with one argument per field), so the recursion through [`Self::unify_flat`]
+    /// grows the stack on demand ([`base::ensure_stack`]).
     pub fn unify(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
+        base::ensure_stack(|| self.unify_vars(a, b))
+    }
+
+    fn unify_vars(&mut self, a: TyVarId, b: TyVarId) -> Result<(), Mismatch> {
         let ra = self.find(a);
         let rb = self.find(b);
         if ra == rb {

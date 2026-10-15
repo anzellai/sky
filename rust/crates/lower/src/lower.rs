@@ -3169,7 +3169,7 @@ impl<'a> Ctx<'a> {
         if let Some(sp) = self.body.expr_span(e) {
             self.cur_span = Some(sp);
         }
-        let out = self.lower_expr_at(e, expected);
+        let out = base::ensure_stack(|| self.lower_expr_at(e, expected));
         self.cur_span = prev;
         out
     }

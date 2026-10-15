@@ -155,6 +155,18 @@ pub fn sky_ty_ref_to_go_in(
     cur_mod: Option<&str>,
     memo: &mut HashMap<ty::tytable::TyRef, GoTy>,
 ) -> GoTy {
+    // A type is as deep as a curried constructor's arity (one arrow per field of
+    // a record constructor): grow the stack on demand rather than overflow it.
+    base::ensure_stack(|| sky_ty_ref_to_go_guarded(table, r, env, cur_mod, memo))
+}
+
+fn sky_ty_ref_to_go_guarded(
+    table: &ty::tytable::TyTable,
+    r: ty::tytable::TyRef,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    memo: &mut HashMap<ty::tytable::TyRef, GoTy>,
+) -> GoTy {
     use ty::tytable::TyView;
     if let Some(g) = memo.get(&r) {
         return g.clone();
@@ -237,6 +249,17 @@ pub fn sky_ty_to_go_params(
 /// `TypeEnv::goty_cache`.
 fn go_ty(t: &Ty, env: &TypeEnv, cur_mod: Option<&str>, params: &HashMap<Name, GoTy>) -> GoTy {
     ty::counters::GOTY_NODES.bump();
+    // A type is as deep as a curried constructor's arity; grow the stack on
+    // demand rather than overflow it.
+    base::ensure_stack(|| go_ty_guarded(t, env, cur_mod, params))
+}
+
+fn go_ty_guarded(
+    t: &Ty,
+    env: &TypeEnv,
+    cur_mod: Option<&str>,
+    params: &HashMap<Name, GoTy>,
+) -> GoTy {
     // A parametric record's Go type depends on `params`; never cache those. Guard
     // hits inside still propagate to `MIN_GUARD_HIT`, so an ancestor that DOES
     // cache correctly sees this subtree's context dependence.

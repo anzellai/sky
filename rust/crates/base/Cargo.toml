@@ -10,3 +10,4 @@ workspace = true
 la-arena.workspace = true
 smol_str.workspace = true
 indexmap.workspace = true
+stacker.workspace = true

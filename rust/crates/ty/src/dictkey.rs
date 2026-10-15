@@ -190,6 +190,12 @@ pub fn unsupported_keys(t: &Ty) -> Vec<Ty> {
 }
 
 fn walk(t: &Ty, out: &mut Vec<Ty>) {
+    // A type is as deep as a curried constructor's arity (one arrow per field of
+    // a record constructor): grow the stack on demand rather than overflow it.
+    base::ensure_stack(|| walk_guarded(t, out))
+}
+
+fn walk_guarded(t: &Ty, out: &mut Vec<Ty>) {
     crate::counters::DICTKEY_NODES.bump();
     if let Ty::App(name, args) = t {
         if name.as_str() == DICT && args.len() == 2 && classify(&args[0]) == KeyVerdict::Unsupported

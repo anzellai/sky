@@ -1178,7 +1178,7 @@ impl<'a> Infer<'a> {
         // keeps a parent's span when this node has no recorded range.
         let prev = self.cur_span;
         self.cur_span = body.expr_span(e).or(prev);
-        let tv = self.infer_expr_inner(body, e);
+        let tv = base::ensure_stack(|| self.infer_expr_inner(body, e));
         self.cur_span = prev;
         if self.record_exprs {
             self.expr_vars.push((e, tv));
@@ -2420,6 +2420,18 @@ impl<'a> Infer<'a> {
         scheme: bool,
         concretize_super: bool,
     ) -> Ty {
+        // A type is as deep as a curried constructor's arity (one arrow per field of
+        // a record constructor): grow the stack on demand rather than overflow it.
+        base::ensure_stack(|| self.read_back_seen_guarded(v, seen, scheme, concretize_super))
+    }
+
+    fn read_back_seen_guarded(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        scheme: bool,
+        concretize_super: bool,
+    ) -> Ty {
         crate::counters::READBACK_NODES.bump();
         let r = self.uf.find(v);
         if !seen.insert(r) {
@@ -2529,6 +2541,17 @@ impl<'a> Infer<'a> {
     /// on no cycle, and reading its root again from any other path visits the
     /// same nodes and builds the same value.
     fn read_back_into(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        sink: &mut ReadBackSink,
+    ) -> (TyRef, bool) {
+        // A type is as deep as a curried constructor's arity (one arrow per field of
+        // a record constructor): grow the stack on demand rather than overflow it.
+        base::ensure_stack(|| self.read_back_into_guarded(v, seen, sink))
+    }
+
+    fn read_back_into_guarded(
         &mut self,
         v: TyVarId,
         seen: &mut std::collections::HashSet<TyVarId>,

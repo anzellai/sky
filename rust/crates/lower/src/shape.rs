@@ -140,6 +140,10 @@ fn stmt(s: GoStmt, ret: Option<&GoTy>, out: &mut Vec<GoStmt>) {
 /// Walk an expression and flatten the bodies of the closures and IIFEs inside
 /// it, each against its OWN result type.
 fn expr(e: &mut GoExpr) {
+    base::ensure_stack(|| expr_inner(e))
+}
+
+fn expr_inner(e: &mut GoExpr) {
     match &mut e.kind {
         GoExprKind::FuncLit(_, ret, body) => {
             let ret = ret.clone();

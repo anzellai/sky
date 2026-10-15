@@ -57,30 +57,54 @@ mod target;
 mod version_notice;
 mod xmlmini;
 
-/// The stack the compiler runs on. Parsing, type inference, lowering and Go
-/// emission recurse over the expression tree, so a deep expression needs a
-/// deep stack: a 1,600-step `|>` pipeline (a generated record codec over a
-/// large Model has one step per field) overflowed the 8 MiB main-thread stack
-/// in lowering and aborted the process. The compiler runs on its own thread
-/// with this much stack instead. Only the pages a run touches are committed.
+/// The stack the compiler thread asks for.
+///
+/// A deep expression (a long `|>` pipeline, a generated record codec with one
+/// step per field) does not depend on it: the recursive expression and type
+/// walkers in resolve, infer, unify, lowering and emit grow their stack on
+/// demand through `base::ensure_stack`, so they run on any thread (the LSP's
+/// 2 MiB workers included). This reserve covers recursion that is not yet
+/// guarded, chiefly the type-table read-back (`ty::tytable`), which recurses
+/// once per arrow of a curried constructor: a 1,500-field record codec needs
+/// more than the 8 MiB main stack there. Only the pages a run touches are
+/// committed. If the thread cannot be created (an address-space limit, strict
+/// overcommit), the compiler runs on the main thread instead.
 const COMPILER_STACK_BYTES: usize = 512 << 20;
 
 fn main() -> ExitCode {
-    match std::thread::Builder::new()
+    run_with_stack(COMPILER_STACK_BYTES, sky_main)
+}
+
+/// Run `f` on a new thread with `stack_bytes` of stack, or on the current
+/// thread when that thread cannot be created.
+fn run_with_stack<R: Send + 'static>(
+    stack_bytes: usize,
+    f: impl FnOnce() -> R + Send + 'static,
+) -> R {
+    // `spawn` consumes its closure even when it fails, so `f` waits in a shared
+    // slot: whichever side runs takes it.
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Some(f)));
+    let theirs = slot.clone();
+    let take = |s: &std::sync::Mutex<Option<_>>| {
+        s.lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .expect("the compiler body runs once")
+    };
+    let spawned = std::thread::Builder::new()
         .name("sky".to_string())
-        .stack_size(COMPILER_STACK_BYTES)
-        .spawn(sky_main)
-    {
+        .stack_size(stack_bytes)
+        .spawn(move || take(&theirs)());
+    match spawned {
         Ok(handle) => match handle.join() {
-            Ok(code) => code,
+            Ok(r) => r,
             // Keep a panic a panic: same message (already printed by the
             // thread), same exit status.
             Err(payload) => std::panic::resume_unwind(payload),
         },
-        Err(e) => {
-            eprintln!("sky: cannot start the compiler thread: {e}");
-            ExitCode::FAILURE
-        }
+        // No room for the big stack: run here. The guarded walkers do not
+        // need it (see `COMPILER_STACK_BYTES`).
+        Err(_) => take(&slot)(),
     }
 }
 
@@ -15079,6 +15103,22 @@ mod tests {
     // Spa spawn sites must point `SKY_DATA_DIR` at the PROJECT's `.skydata` (an
     // ABSOLUTE path) so the embedded cluster survives rebuilds, is shared across
     // targets, and `sky db ps` sees it — unless the user set `SKY_DATA_DIR` first.
+    // The compiler thread asks for a large stack. Where that stack cannot be
+    // reserved (an address-space limit, strict overcommit), `sky` must still run,
+    // on the main thread, instead of failing every command.
+    #[test]
+    fn compiler_runs_on_the_current_thread_when_its_stack_cannot_be_reserved() {
+        let here = std::thread::current().id();
+        // No machine can map this much stack, so the spawn fails.
+        let (ran_on, answer) =
+            run_with_stack(1usize << 60, move || (std::thread::current().id(), 42));
+        assert_eq!(answer, 42);
+        assert_eq!(ran_on, here, "the fallback runs on the calling thread");
+        // And a stack that fits runs on its own thread.
+        let (ran_on, _) = run_with_stack(4 << 20, move || (std::thread::current().id(), ()));
+        assert_ne!(ran_on, here);
+    }
+
     #[test]
     fn spa_data_dir_uses_absolute_project_skydata_unless_user_set() {
         let tmp = std::env::temp_dir().join(format!("sky-spa-dd-{}", std::process::id()));

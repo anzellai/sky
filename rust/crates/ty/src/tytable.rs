@@ -105,6 +105,12 @@ impl TyTable {
 
 /// Rebuild the owned type at `r` from a node arena.
 fn rebuild(nodes: &[TyNode], r: TyRef) -> Ty {
+    // A type is as deep as a curried constructor's arity (one arrow per field of
+    // a record constructor): grow the stack on demand rather than overflow it.
+    base::ensure_stack(|| rebuild_guarded(nodes, r))
+}
+
+fn rebuild_guarded(nodes: &[TyNode], r: TyRef) -> Ty {
     crate::counters::OWNED_REBUILD_NODES.bump();
     match &nodes[r.0 as usize] {
         TyNode::Var(n) => Ty::Var(n.clone()),
@@ -138,6 +144,12 @@ impl TyTableBuilder {
 
     /// Intern `t` (and every sub-tree of it) and return its reference.
     pub fn intern(&mut self, t: &Ty) -> TyRef {
+        // A type is as deep as a curried constructor's arity (one arrow per field of
+        // a record constructor): grow the stack on demand rather than overflow it.
+        base::ensure_stack(|| self.intern_guarded(t))
+    }
+
+    fn intern_guarded(&mut self, t: &Ty) -> TyRef {
         let node = match t {
             Ty::Var(n) => TyNode::Var(n.clone()),
             Ty::Fun(a, b) => {
