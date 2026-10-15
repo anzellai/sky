@@ -378,7 +378,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -431,7 +431,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -480,7 +480,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -534,7 +534,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -593,7 +593,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -643,7 +643,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -693,7 +693,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -750,7 +750,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
@@ -800,7 +800,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
+          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
           for b in initdb pg_ctl postgres psql; do
             [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
               echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }

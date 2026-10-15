@@ -1729,3 +1729,73 @@ fn the_nix_entry_points_are_built_by_the_nightly_and_the_release_gate() {
         );
     }
 }
+
+/// Every job that runs the `sky` crate's tests installs the `brotli` tool.
+///
+/// The precompress tests (`sky` unit tests, `spa_target_flow`'s `--ignored`
+/// leg) compare Sky's `.br` assets with brotli's own output, through
+/// `live_gate::required(Need::Brotli, …)`: without the tool they FAIL (live
+/// tests never skip silently). A job that runs them without installing it goes
+/// red for a reason that is not the code. The release gate jobs get it from the
+/// `gate-setup` action (`postgres: 'true'`); the others install it themselves.
+#[test]
+fn every_job_running_the_sky_tests_installs_brotli() {
+    let action = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/actions/gate-setup/action.yml"
+    ))
+    .expect("read gate-setup");
+    let setup_has_brotli = action.contains("brotli");
+    let mut bad = Vec::new();
+    for path in workflows() {
+        let text = std::fs::read_to_string(&path).expect("read workflow");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parsed above");
+        let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) else {
+            continue;
+        };
+        for (name, job) in jobs {
+            let steps: Vec<&serde_yaml::Value> = job
+                .get("steps")
+                .and_then(|s| s.as_sequence())
+                .into_iter()
+                .flatten()
+                .collect();
+            let runs: Vec<&str> = steps
+                .iter()
+                .filter_map(|s| s.get("run").and_then(|r| r.as_str()))
+                .collect();
+            let runs_sky_tests = runs.iter().any(|r| {
+                r.lines().any(|l| {
+                    (l.contains("nextest run -p sky") || l.contains("cargo test -p sky"))
+                        && !l.contains("--test native_shell_flow")
+                        && !l.contains("--no-run")
+                })
+            });
+            if !runs_sky_tests {
+                continue;
+            }
+            let installs = runs.iter().any(|r| r.contains("brotli"));
+            let via_setup = setup_has_brotli
+                && steps.iter().any(|s| {
+                    s.get("uses").and_then(|u| u.as_str()) == Some("./.github/actions/gate-setup")
+                        && s.get("with")
+                            .and_then(|w| w.get("postgres"))
+                            .and_then(|p| p.as_str())
+                            == Some("true")
+                });
+            if !installs && !via_setup {
+                bad.push(format!(
+                    "{}: {}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    name.as_str().unwrap_or("?")
+                ));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "these jobs run the sky crate's tests without installing brotli (the \
+         precompress tests then fail on Need::Brotli):\n  {}",
+        bad.join("\n  ")
+    );
+}

@@ -27,9 +27,10 @@ inputs:
     default: 'true'
   postgres:
     description: >-
-      apt-install postgresql-16 + sqlite3 for the live tests. The workspace
-      live tests, the T3 app tier, and the T1 falsifiers need a real
-      PostgreSQL; steps set SKY_POSTGRES_BIN themselves.
+      apt-install postgresql-16 + sqlite3 + brotli for the live tests. The
+      workspace live tests, the T3 app tier, and the T1 falsifiers need a real
+      PostgreSQL; steps set SKY_POSTGRES_BIN themselves. The sky crate's
+      precompress tests need the brotli tool (live_gate Need::Brotli).
     required: false
     default: 'false'
   neovim:
@@ -131,13 +132,13 @@ runs:
     # tier, the T1 falsifiers). Without one they used to return and report `ok`
     # — a release gate is the last place that should count tests that did not
     # run.
-    - name: PostgreSQL + sqlite3 for the live tests
+    - name: PostgreSQL + sqlite3 + brotli for the live tests
       if: inputs.postgres == 'true'
       shell: bash
       run: |
         set -euo pipefail
         sudo apt-get update -qq
-        sudo apt-get install -y -qq postgresql-16 sqlite3
+        sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
         for b in initdb pg_ctl postgres; do
           [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
             echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
