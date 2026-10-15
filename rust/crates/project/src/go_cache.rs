@@ -172,7 +172,13 @@ fn try_exclusive_in(dir: &Path) -> Option<CacheGuard> {
 }
 
 /// Bound the Sky cache size. The directory walk is throttled (CAP_CHECK_EVERY) so
-/// an ordinary build never pays for it. Over the cap ⇒ clean.
+/// an ordinary build never pays for it. Over the cap ⇒ remove the least recently
+/// used entries until the cache is at [`TRIM_TO_PERCENT`] of the cap.
+///
+/// It used to run `go clean -cache` over the cap, so the next build of every
+/// project compiled the runtime and its dependencies from nothing. Go stamps an
+/// entry's mtime when a build uses it (at most hourly), so the oldest mtimes are
+/// the entries no recent build needed.
 fn enforce_cap(dir: &Path) {
     let marker = dir.join(CAP_MARKER);
     if let Ok(m) = std::fs::metadata(&marker) {
@@ -189,11 +195,60 @@ fn enforce_cap(dir: &Path) {
     let _ = std::fs::write(&marker, b"");
 
     let cap = cap_gb().saturating_mul(1024 * 1024 * 1024);
-    if cap == 0 || dir_size_bytes(dir) <= cap {
+    let size = dir_size_bytes(dir);
+    if cap == 0 || size <= cap {
         return;
     }
-    clean(dir);
-    let _ = std::fs::create_dir_all(dir);
+    trim(dir, size, cap / 100 * TRIM_TO_PERCENT);
+}
+
+/// What an over-cap cache is trimmed to, in percent of the cap.
+const TRIM_TO_PERCENT: u64 = 80;
+
+/// Remove Go cache entries, oldest mtime first, until the cache's `size` is at
+/// most `target` bytes. Only Go's entry files are removed: `<hash>-a` (action)
+/// and `<hash>-d` (output) in the two-hex-digit subdirectories. A missing half
+/// of an entry is an ordinary cache miss for Go. Returns the bytes removed.
+fn trim(dir: &Path, size: u64, target: u64) -> u64 {
+    let mut entries: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for sub in rd.flatten() {
+        let name = sub.file_name().to_string_lossy().into_owned();
+        let is_shard = name.len() == 2 && name.chars().all(|c| c.is_ascii_hexdigit());
+        if !is_shard || !sub.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(sub.path()) else {
+            continue;
+        };
+        for f in files.flatten() {
+            let n = f.file_name().to_string_lossy().into_owned();
+            if !(n.ends_with("-a") || n.ends_with("-d")) {
+                continue;
+            }
+            let Ok(m) = f.metadata() else { continue };
+            if !m.is_file() {
+                continue;
+            }
+            let t = m.modified().unwrap_or(std::time::UNIX_EPOCH);
+            entries.push((t, m.len(), f.path()));
+        }
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut left = size;
+    let mut freed = 0;
+    for (_, len, path) in entries {
+        if left <= target {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            left = left.saturating_sub(len);
+            freed += len;
+        }
+    }
+    freed
 }
 
 fn cap_gb() -> u64 {
@@ -201,14 +256,6 @@ fn cap_gb() -> u64 {
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_CAP_GB)
-}
-
-/// `go clean -cache` against the Sky cache dir only. Best-effort.
-fn clean(dir: &Path) {
-    let _ = Command::new("go")
-        .args(["clean", "-cache"])
-        .env(GOCACHE, dir)
-        .status();
 }
 
 /// Sum of regular-file sizes under `dir`. Symlinks are not followed and errors
@@ -305,6 +352,48 @@ mod tests {
         // Default when unset (this test process does not set it).
         std::env::remove_var("SKY_GO_CACHE_MAX_GB");
         assert_eq!(cap_gb(), DEFAULT_CAP_GB);
+    }
+
+    /// Over the cap the cache keeps its most recently used entries; it is no
+    /// longer wiped (`go clean -cache` made the next build of every project
+    /// compile everything again).
+    #[test]
+    fn an_over_cap_cache_keeps_its_newest_entries() {
+        let d = std::env::temp_dir().join(format!("sky-gocache-trim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("ab")).unwrap();
+        std::fs::create_dir_all(d.join("cd")).unwrap();
+        let put = |rel: &str, secs: u64| {
+            let p = d.join(rel);
+            std::fs::write(&p, vec![0u8; 100]).unwrap();
+            std::fs::File::options()
+                .append(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .unwrap();
+        };
+        put("ab/0001-a", 1000);
+        put("ab/0001-d", 1000);
+        put("cd/0002-a", 2000);
+        put("cd/0002-d", 2000);
+        put("ab/0003-a", 3000);
+        put("ab/0003-d", 3000);
+        // Not Go entries: never removed.
+        put("README", 1);
+        put("trim.txt", 1);
+        std::fs::write(d.join(LOCK_FILE), b"").unwrap();
+        let size = dir_size_bytes(&d);
+        assert_eq!(size, 800);
+        // Down to 450 bytes: the two oldest entries go (4 files, 400 bytes).
+        assert_eq!(trim(&d, size, 450), 400);
+        for gone in ["ab/0001-a", "ab/0001-d", "cd/0002-a", "cd/0002-d"] {
+            assert!(!d.join(gone).exists(), "{gone}");
+        }
+        for kept in ["ab/0003-a", "ab/0003-d", "README", "trim.txt", LOCK_FILE] {
+            assert!(d.join(kept).exists(), "{kept}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

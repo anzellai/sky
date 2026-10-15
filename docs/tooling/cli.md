@@ -702,8 +702,11 @@ without ever touching the cache your other Go projects rely on.
 - **Warm the cache** with `sky doctor --warm-cache` — it compiles the runtime for
   native and js/wasm so the first real build is fast instead of a cold compile.
   `sky upgrade` runs this automatically for the new version.
-- **Size is bounded.** The cache is pruned when it grows past a cap (default
-  10 GB, set `SKY_GO_CACHE_MAX_GB` to change it), so it never fills your disk.
+- **Size is bounded.** When the cache grows past a cap (default 10 GB, set
+  `SKY_GO_CACHE_MAX_GB` to change it), Sky removes the least recently used
+  entries until it is at 80% of the cap, so it never fills your disk and the
+  objects your recent builds use stay. (Before v0.27.9 it emptied the whole
+  cache, and the next build compiled everything again.)
 - **Shared safely across versions.** A new compiler embeds a new runtime, and
   its objects get new content-addressed keys, so two `sky` versions (an
   installed release and a dev build, or an upgrade while an editor still runs
