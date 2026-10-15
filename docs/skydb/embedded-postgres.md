@@ -1114,7 +1114,9 @@ Why those numbers:
   which consults **cgroup v2 → cgroup v1 → `/proc/meminfo` → macOS `sysctl`**
   in that order. `/proc/meminfo` is not namespaced, so a 512 MB container on a
   64 GB node reads 64 GB; a limit derived from it would inherit exactly that
-  bug.
+  bug. On macOS the runtime runs `/usr/sbin/sysctl` by its absolute path (then
+  PATH), so a process started with an empty or short PATH (a systemd unit, a
+  launchd job) still detects its memory.
 
 **An explicit `GOGC` or `GOMEMLIMIT` in the environment always wins**, and
 setting one does not suppress the other. The decision — including a decision to

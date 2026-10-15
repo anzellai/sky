@@ -512,6 +512,11 @@ The app-shape details (Sky.Live TEA loop, routing, session lifecycle, forms,
   `__Host-sky_sid` over HTTPS, and its value changes at sign-in), and
   cross-instance pub/sub (`store=redis` or
   `SKY_LIVE_BROKER_URL`). `memory` and `sqlite` are single-instance only.
+- Health checks: probe **`/_sky/healthz`** (liveness, always 200) or
+  **`/_sky/readyz`** (503 until the store and database answer, and while
+  draining). Never probe a path the app does not declare (`/healthz`,
+  `/health`): since v0.27.9 the app's `withNotFound` page is sent with **404**,
+  so such a probe fails.
 - Bind address: production binds **all interfaces** by design (containers,
   VMs and proxies need it); dev binds `127.0.0.1`. `SKY_HOST` overrides either
   (`SKY_HOST=127.0.0.1` to keep a production process on loopback behind a local

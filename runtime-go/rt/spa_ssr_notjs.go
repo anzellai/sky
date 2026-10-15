@@ -130,6 +130,23 @@ func Spa_ssrResolveModel(routesV, notFound, model, path any) any {
 	return RecordUpdate(model, map[string]any{"Page": page})
 }
 
+// Spa_ssrStatus is the `Ffi.kernel "Spa_ssrStatus"` alias the generated
+// ssrHandler wraps its page in (`Server.withStatus`): 404 when the app has
+// routes, none matches path and it has a notFound page (the page
+// Spa_ssrResolveModel renders for path), else 200. The body is the full SSR
+// page either way, so the wasm client boots and the user can navigate away.
+// Before v0.27.9 the NotFound page was sent with 200 (a "soft 404").
+func Spa_ssrStatus(routesV, notFound, path any) int {
+	routes := asSpaRoutes(routesV)
+	if len(routes) == 0 || notFound == nil {
+		return 200
+	}
+	if _, ok := spaResolveRoutes(routes, AsString(path)); ok {
+		return 200
+	}
+	return 404
+}
+
 // Spa_ssrSettle drives the data-resolved SSR step (design §4.2): it runs the
 // initial command's GET-safe reads to a settled model server-side, so the first
 // paint carries REAL per-route content (the blog post body, the item list) that

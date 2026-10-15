@@ -421,7 +421,11 @@ The names read exactly like the web target:
   route an id your app rejects to `App.withNotFound`.
 - `App.withRoutes routes` — resolves `location.pathname` on mount, on an
   intercepted internal-link click, and on Back/Forward, setting `model.page`.
-- `App.withNotFound page` — the page shown when nothing matches.
+- `App.withNotFound page` — the page shown when nothing matches. The backend's
+  server-rendered first paint of such a path is sent with HTTP 404 (the full
+  page, which boots the client); a path that matches a route is 200. A
+  client-side navigation to an unknown route renders the page in the browser
+  and sends no request.
 - `App.withOnNavigate (page -> msg)` — fired after the route is applied, so the
   app can run an effect per navigation.
 
@@ -538,7 +542,9 @@ is the same for every build and its name changes only when the loader
 changes. The `#sky-model` seed stays a `<script type="application/json">`
 block, which a browser never executes. The backend serves
 `/spa-boot.<hash>.js` itself, from memory, so the SSR page boots whether or not
-the backend can reach `dist/`. A static host (nginx, Caddy, a CDN) that serves
+the backend can reach `dist/`. It sends brotli to a client that accepts `br`
+(about 16 kB for the 59 kB script, built into the runtime) and gzip to one that
+accepts only gzip, with `Vary: Accept-Encoding`. A static host (nginx, Caddy, a CDN) that serves
 the `dist/index.html` shell can serve the dist copy: the bytes are the same.
 `'wasm-unsafe-eval'` is required because it allows
 `WebAssembly.instantiateStreaming`. It does not allow JS `eval`. Set
@@ -555,7 +561,7 @@ contract for each asset the SSR page and `dist/index.html` name:
 | Path | Who serves it |
 |---|---|
 | `/`, every app route, `/_rpc/*`, `/_sky/sub` | The backend. These must reach it. |
-| `/spa-boot.<hash>.js` (the wasm loader) | The backend, from memory. A static host may also serve the dist copy. |
+| `/spa-boot.<hash>.js` (the wasm loader) | The backend, from memory (brotli or gzip). A static host may also serve the dist copy. |
 | `/_sky/console/…`, `/_sky/console-shell.<hash>.js` | The backend, from memory (the Sky Console). |
 | `/main.<hash>.wasm`, `/wasm_exec.js` | A `dist/` file. The backend serves it from `../frontend/dist` when that directory is reachable from its working directory. Otherwise the static host must serve both. The SSR page names the wasm from a value `sky build` writes into the backend, so the backend does not need the dist to name it. |
 | `/index.html` (the static shell) | A `dist/` file, as above. The SSR page at `/` does not need it. |

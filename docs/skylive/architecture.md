@@ -503,7 +503,17 @@ subscriptions. A dispatch sets up subscriptions before it runs the Cmds, so a
 `Cmd.publish` reaches a subscription the same update opened.
 
 **Not found and failures.** An app with `withNotFound` renders its not-found
-page on every request, not only the first request of a session. A classified
+page on every request, not only the first request of a session. Since v0.27.9
+that page is sent with **HTTP 404**, not 200: a crawler does not index it and a
+probe on a path the app does not declare does not read it as healthy. The body
+is the full page, so it boots the client and starts a session, and the user can
+navigate away from it; a `sky-nav` or Back/Forward fetch patches it in (the
+client accepts a 404 that carries the `X-Sky-View` render id, and reloads for
+any other non-2xx). Declared routes, and the implicit `/` of a route-less app,
+stay 200. A health check must name a path the app serves: use `/_sky/healthz`
+(always 200 while the process runs) or `/_sky/readyz` (200 once the session
+store and database answer), never a path such as `/healthz` that the app does
+not declare. A classified
 panic in `update` shows a small runtime banner on every tab of the session,
 whether or not the model has a `Notification` field.
 

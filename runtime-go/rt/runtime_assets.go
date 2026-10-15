@@ -34,10 +34,14 @@ package rt
 // script.
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // serveStaticJS serves a constant script under a content-hashed name. It goes
@@ -45,7 +49,39 @@ import (
 // it, and the strict policy under SKY_CSP=strict), and it carries the same
 // security headers as a Sky handler response.
 func serveStaticJS(js string) http.HandlerFunc {
+	return serveStaticJSWithBrotli(js, "")
+}
+
+// serveStaticJSWithBrotli is serveStaticJS with a brotli form of js, built
+// ahead of time (the Go standard library has no brotli encoder). A GET or HEAD
+// that accepts `br` and asks for no Range gets those bytes, with an exact
+// Content-Length and an ETag of the brotli representation (the SHA-256 prefix
+// of the script plus "-br", the form the precompressed static sidecars use, so
+// a revalidation is a 304). Every other request takes the gzip path above. An
+// empty br means no brotli form.
+func serveStaticJSWithBrotli(js, br string) http.HandlerFunc {
 	body := []byte(js)
+	var brotli http.Handler
+	if br != "" {
+		brBody := []byte(br)
+		sum := sha256.Sum256(body)
+		etag := `"` + hex.EncodeToString(sum[:])[:32] + `-br"`
+		length := strconv.Itoa(len(brBody))
+		brotli = withStrictCSP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			h.Set("Content-Type", "text/javascript; charset=utf-8")
+			h.Set("Cache-Control", "public, max-age=31536000, immutable")
+			setSecurityHeaders(h)
+			addHeaderValue(h, "Vary", "Accept-Encoding")
+			h.Set("ETag", etag)
+			h.Set("Content-Encoding", "br")
+			// ServeContent sets no Content-Length on an encoded body, so it is
+			// set here; ServeContent answers HEAD with no body and a matching
+			// If-None-Match with a 304 (dropping the length and encoding).
+			h.Set("Content-Length", length)
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(brBody))
+		}))
+	}
 	inner := gzipStatic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Type", "text/javascript; charset=utf-8")
@@ -63,6 +99,11 @@ func serveStaticJS(js string) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if brotli != nil && r.Header.Get("Range") == "" &&
+			acceptsCoding(r.Header.Get("Accept-Encoding"), "br") {
+			brotli.ServeHTTP(w, r)
+			return
+		}
 		inner.ServeHTTP(w, r)
 	}
 }
@@ -78,7 +119,19 @@ func registerSpaBootLoader(mux *http.ServeMux, routeList []any) {
 			return
 		}
 	}
-	mux.Handle(http.MethodGet+" "+SpaBootPath, serveStaticJS(SpaBootJS))
+	mux.Handle(http.MethodGet+" "+SpaBootPath, serveStaticJSWithBrotli(SpaBootJS, spaBootBrotliBody()))
+}
+
+// spaBootBrotliBody is the built-in brotli form of SpaBootJS
+// (spa_boot_brotli.go), or "" when it was compressed from other bytes than
+// this SpaBootJS: stale bytes are never sent. TestSpaBootBrotliIsCurrent fails
+// on a stale form and names the command that rebuilds it.
+func spaBootBrotliBody() string {
+	sum := sha256.Sum256([]byte(SpaBootJS))
+	if hex.EncodeToString(sum[:]) != spaBootBrotliOf {
+		return ""
+	}
+	return spaBootBrotli
 }
 
 // skyAssetKind classifies a request path by whether Sky owns the name.

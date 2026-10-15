@@ -23,7 +23,8 @@ import (
 //     reported to Sub.onFragment;
 //  5. a URL off this site is refused: no fetch, no history change, an error
 //     in the console;
-//  6. a page fetch the server refuses falls back to a real navigation;
+//  6. a page fetch the server refuses falls back to a real navigation, but
+//     the app's NotFound page (404 with X-Sky-View) is patched in;
 //  7. the SSE "nav" frame waits for the events this tab already sent: it
 //     runs after the event POST chain.
 func TestNavJS_LiveClientAppliesNavigation(t *testing.T) {
@@ -45,7 +46,7 @@ const history = {
   pushState(s, _t, u) { pushes.push(u); cur = new URL(u, cur.href); },
   replaceState(s, _t, u) { replaces.push(u); cur = new URL(u, cur.href); },
 };
-let fetchStatus = 200;
+let fetchStatus = 200, fetchView = null;
 const sse = {};
 const sandbox = {
   console: { warn() {}, log() {}, error(m) { errors.push(String(m)); } },
@@ -62,7 +63,7 @@ const sandbox = {
   EventSource: function () { this.addEventListener = (ev, fn) => { sse[ev] = fn; }; this.close = () => {}; },
   fetch: (u, opts) => {
     fetches.push([String(u), opts && opts.headers ? opts.headers["X-Sky-Nav"] || "" : ""]);
-    return Promise.resolve({ ok: fetchStatus === 200, status: fetchStatus, headers: { get: () => null },
+    return Promise.resolve({ ok: fetchStatus === 200, status: fetchStatus, headers: { get: (k) => (k === "X-Sky-View" ? fetchView : null) },
       text: async () => "<p>page</p>", json: async () => ({}) });
   },
   Uint8Array, JSON, Math, Date, Promise, Object, Array, String, Number, parseInt, encodeURIComponent,
@@ -107,7 +108,12 @@ const tick = () => new Promise((r) => setImmediate(r));
   reset(); fetchStatus = 404;
   await g("__skyNavApply")("/gone", false);
   T("a refused page fetch falls back to a real navigation", [assigned, pushes], [[["assign", "/gone"]], []]);
-  fetchStatus = 200;
+  // 6b: the app's NotFound page comes with 404 and its render id; it is a
+  // page, patched in like any other.
+  reset(); fetchView = "v9";
+  await g("__skyNavApply")("/nowhere", false);
+  T("the NotFound page (404 + X-Sky-View) is patched in", [assigned, pushes, g("__skyView")], [[], ["/nowhere"], "v9"]);
+  fetchStatus = 200; fetchView = null;
   // 7
   reset();
   let release;

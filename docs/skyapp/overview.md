@@ -111,6 +111,13 @@ requires a fallback page — add `|> App.withNotFound <page>`"*. A terminal-only
 (`NoFallback`) is never forced to add one; it just can't target `web` until it
 does. Everything else (`routes`, `window`, `input`) stays optional.
 
+**The fallback page is sent with HTTP 404** on the web targets (`web`,
+`tablet`, `desktop` through Sky.Live, and the server-rendered first paint of
+`web:app`). It is the full page, so the client boots and the user can navigate
+away. A path that matches a declared route is 200, even when the page
+constructor then shows "not found" for an id it rejects. Point health checks at
+`/_sky/healthz` or `/_sky/readyz`, not at a path the app does not declare.
+
 ## Configuration — `withBase` (shared) + `withConfig` (per-target)
 
 Two layers, both plain data you record-update from an exposed default:
