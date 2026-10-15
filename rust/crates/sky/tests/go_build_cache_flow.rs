@@ -265,6 +265,8 @@ fn an_exact_pin_is_fetched_once() {
         return;
     };
     // The module must be reachable (the proxy, or the local module cache).
+    // Need::Network, as in ffi_verb_flow.rs: fetching a public Go module is the
+    // one thing this test cannot provide for itself (NETWORK_SITES).
     let probe = Command::new(&go)
         .args(["mod", "download", "github.com/google/uuid@v1.6.0"])
         .output()
