@@ -1,0 +1,100 @@
+{
+  "note": "Build-speed budget for scripts/bench-build.sh --budget (the build-perf CI job). Per platform: the median wall seconds and peak RSS bytes of each case/scenario over --reps runs; a median above budget x factor AND above budget + slack fails. darwin-arm64 was seeded on 2026-10-15 from docs/perf/runs/build-speed-20261015/ci-shape.json: an Apple silicon Mac, 8 CPUs, 16 GB, go1.26.1, branch perf/build-speed, --reps 3 --cases \"app skyshop\". It is NOT a budget for the ubuntu CI runner: CI fails with no linux-x86_64 entry until one is seeded from a CI run (the build-perf job uploads build-budget.proposed.json; merge its platforms entry here).",
+  "factor": 1.5,
+  "slack_s": 2,
+  "slack_bytes": 67108864,
+  "platforms": {
+    "darwin-arm64": {
+      "machine": {
+        "platform": "darwin-arm64",
+        "cpus": 8,
+        "mem_bytes": 17179869184,
+        "go": "go version go1.26.1 darwin/arm64",
+        "sky": "sky v0.27.8 (44770d5cd-dirty)"
+      },
+      "reps": 3,
+      "budget": {
+        "app100-web/cold": {
+          "wall_s": 20.69,
+          "peak_rss_bytes": 863567872
+        },
+        "app100-web/edit": {
+          "wall_s": 2.71,
+          "peak_rss_bytes": 626229248
+        },
+        "app100-web/newdir": {
+          "wall_s": 1.65,
+          "peak_rss_bytes": 634765312
+        },
+        "app100-web/warm": {
+          "wall_s": 0.74,
+          "peak_rss_bytes": 110968832
+        },
+        "app100-web:app/cold": {
+          "wall_s": 31.80,
+          "peak_rss_bytes": 814956544
+        },
+        "app100-web:app/edit": {
+          "wall_s": 27.46,
+          "peak_rss_bytes": 647987200
+        },
+        "app100-web:app/newdir": {
+          "wall_s": 4.15,
+          "peak_rss_bytes": 631554048
+        },
+        "app100-web:app/warm": {
+          "wall_s": 2.42,
+          "peak_rss_bytes": 191463424
+        },
+        "app50-web/cold": {
+          "wall_s": 20.61,
+          "peak_rss_bytes": 826441728
+        },
+        "app50-web/edit": {
+          "wall_s": 2.48,
+          "peak_rss_bytes": 620134400
+        },
+        "app50-web/newdir": {
+          "wall_s": 1.52,
+          "peak_rss_bytes": 619610112
+        },
+        "app50-web/warm": {
+          "wall_s": 0.61,
+          "peak_rss_bytes": 84230144
+        },
+        "app50-web:app/cold": {
+          "wall_s": 30.64,
+          "peak_rss_bytes": 802996224
+        },
+        "app50-web:app/edit": {
+          "wall_s": 23.81,
+          "peak_rss_bytes": 620986368
+        },
+        "app50-web:app/newdir": {
+          "wall_s": 3.49,
+          "peak_rss_bytes": 622657536
+        },
+        "app50-web:app/warm": {
+          "wall_s": 1.73,
+          "peak_rss_bytes": 135970816
+        },
+        "skyshop-web/cold": {
+          "wall_s": 79.88,
+          "peak_rss_bytes": 4107501568
+        },
+        "skyshop-web/edit": {
+          "wall_s": 8.31,
+          "peak_rss_bytes": 1338900480
+        },
+        "skyshop-web/newdir": {
+          "wall_s": 4.97,
+          "peak_rss_bytes": 1326678016
+        },
+        "skyshop-web/warm": {
+          "wall_s": 3.40,
+          "peak_rss_bytes": 327827456
+        }
+      }
+    }
+  }
+}

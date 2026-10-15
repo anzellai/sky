@@ -25,7 +25,7 @@ on:
         # Every job's `if:` names itself here. `behaviour-corpus` gated on a
         # value this list did not offer, so it could never be dispatched alone —
         # the dropdown had no way to say it, and any other value skipped it.
-        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix]
+        options: [both, example-sweep, web-runtime, behaviour-corpus, harness-t3, falsifier-verification, postgres-bundle-licence, nix, build-perf]
 
 # Don't stack nightly runs; a newer run supersedes an in-flight one.
 concurrency:
@@ -758,3 +758,50 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - name: Build both Nix entry points and check sky --version + sky-ffi-inspect
         run: bash scripts/ci/nix-build-check.sh
+
+  # Build speed against docs/perf/build-budget.json, every night whatever
+  # changed (rust-ci's `build-perf` measures only when a build-speed input
+  # changed). Same script, same budget, same factor.
+  build-perf:
+    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["both", "build-perf"]'), inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Cache the Sky Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sky/go-build
+            ~/go/pkg/mod
+            ~/.cache/sky/precompress
+          key: build-perf-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: build-perf-linux-
+      - name: Install brotli, jq and time
+        run: sudo apt-get update -q && sudo apt-get install -y -q brotli jq time
+      - name: Build and install the compiler (sky-out/sky)
+        run: bash scripts/build.sh
+      - name: 'Gate — build speed within budget (medians of 3, budget x 1.5)'
+        run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
+      - name: Keep the measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-perf-nightly
+          path: |
+            build-perf.json
+            build-budget.proposed.json
+          if-no-files-found: ignore
+      - name: Bound the Go caches before save
+        if: always()
+        run: GOCACHE="$HOME/.sky/go-build" GOMODCACHE="$HOME/go/pkg/mod" bash scripts/ci/bound-go-cache.sh

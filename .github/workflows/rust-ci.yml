@@ -1535,6 +1535,112 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
+  # ── build-perf: build wall time, CPU and peak memory against a budget ──────
+  #
+  # `scripts/bench-build.sh` builds the `xtask bench-gen` app (a medium Std.App
+  # web app) at two sizes for --target web:app and web, and examples/13-skyshop:
+  # first build, warm rebuild, a copy in a new directory, a one-module edit,
+  # and a cold build with an empty GOCACHE, three times each. The medians are
+  # compared to docs/perf/build-budget.json; above budget x 1.5 fails. The
+  # counted guards (growth, new-directory) run in every push's sky tests and
+  # in the harness; this job is the wall-time measure of the same thing.
+  #
+  # PATH-FILTERED INSIDE THE JOB, never by skipping it: `ci-green` treats a
+  # skipped job as a failure. On a change that touches nothing a build's speed
+  # depends on, the job says so and succeeds without measuring. It does not
+  # `needs: setup` (it builds the compiler in release itself).
+  build-perf:
+    runs-on: ubuntu-latest
+    # Not yet measured on a runner (the first run seeds the linux budget, see
+    # docs/perf/build-budget.json); 75 bounds a cache-cold run.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Does this change touch what a build's speed depends on?
+        id: paths
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          pattern='^(rust/crates/(project|sky|codegen|lower|ty|hir|skydb)/|runtime-go/|sky-stdlib/|scripts/bench-build\.sh$|rust/crates/xtask/src/bench_(app|gen)\.rs$|docs/perf/build-budget\.json$)'
+          case "$EVENT" in
+            pull_request) changed=$(git diff --name-only "origin/$BASE_REF...HEAD") ;;
+            push)
+              if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                changed="(no previous commit: measure)"
+              else
+                changed=$(git diff --name-only "$BEFORE" HEAD)
+              fi ;;
+            *) changed="(manual run: measure)" ;;
+          esac
+          if [ "$EVENT" != pull_request ] && [ "$EVENT" != push ] \
+              || printf '%s\n' "$changed" | grep -Eq "$pattern" \
+              || printf '%s\n' "$changed" | grep -q '^(no previous commit'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "build-perf: measuring (a build-speed input changed or this is a manual run)"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "build-perf: no build-speed input changed; nothing to measure:"
+            printf '%s\n' "$changed" | head -20
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.paths.outputs.run == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.paths.outputs.run == 'true'
+        with:
+          workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
+      - uses: actions/setup-go@v5
+        if: steps.paths.outputs.run == 'true'
+        with:
+          go-version: '1.26'
+          cache: false
+      # Sky's own Go build cache (~/.sky/go-build, used when GOCACHE is unset),
+      # the module cache and Sky's precompress cache: the state a user's
+      # second build has. The bench's `cold` scenario uses an empty temporary
+      # GOCACHE of its own, so this cache never makes a cold number warm.
+      - name: Cache the Sky Go build cache
+        if: steps.paths.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sky/go-build
+            ~/go/pkg/mod
+            ~/.cache/sky/precompress
+          key: build-perf-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          restore-keys: build-perf-linux-
+      - name: Install brotli, jq and time
+        if: steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: sudo apt-get update -q && sudo apt-get install -y -q brotli jq time
+      - name: Build and install the compiler (sky-out/sky)
+        if: steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: bash scripts/build.sh
+      - name: 'Gate — build speed within budget (medians of 3, budget x 1.5)'
+        if: steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
+      - name: Keep the measurements
+        if: always() && steps.paths.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-perf
+          path: |
+            build-perf.json
+            build-budget.proposed.json
+          if-no-files-found: ignore
+      - name: Bound the Go caches before save
+        if: always() && steps.paths.outputs.run == 'true'
+        working-directory: .
+        run: GOCACHE="$HOME/.sky/go-build" GOMODCACHE="$HOME/go/pkg/mod" bash scripts/ci/bound-go-cache.sh
+
   # ── Editor-parity (Neovim) + fuzzer (small; isolated setup) ─────────────────
   lsp-fuzz:
     needs: setup
@@ -2048,6 +2154,7 @@ jobs:
       - erasure-fuzz-2
       - behaviour-docs
       - config-gates
+      - build-perf
       - lsp-fuzz
       - licence-gate-linux
       - licence-gate-macos
@@ -2114,7 +2221,7 @@ jobs:
           # REST-API name contains a space (a `matrix` leg reports as
           # `name (leg)`) could never match one. That is why the licence gate is
           # two explicitly-named jobs rather than one two-legged matrix.
-          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
+          SETUP_INDEPENDENT_JOBS: 'integration-postgres build-perf build-corpus build-corpus-2 build-corpus-3 erasure-fuzz erasure-fuzz-2 test-sky test-sky-2 test-sky-3 test-sky-4 test-sky-5 test-sky-6 test-sky-7 test-sky-8 test-sky-9 runtime-rt licence-gate-linux'
           MACOS_JOBS: 'macos-determinism macos-determinism-2 macos-determinism-3 macos-behaviour macos-conformance licence-gate-macos'
         run: |
           set -euo pipefail
