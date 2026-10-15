@@ -111,3 +111,38 @@ fn a_whole_model_response_with_a_keeping_leaf_sends_the_whole_model() {
         "every leaf of `Reset` is fresh: its request stays narrow: {reset:?}"
     );
 }
+
+/// `init`'s command runs on the server (`SpaInit_`), so a constructor it
+/// performs is an EXACT follow-up. One whose argument has no wire codec cannot
+/// reach the client, and that is a build error naming `SpaInit_` and the
+/// constructor, not the warning an unreadable command earns (contrast
+/// `an_unreadable_command_warns_about_an_uncodable_msg_instead_of_failing`).
+#[test]
+fn an_init_follow_up_without_a_wire_codec_fails_the_split() {
+    let proj = std::env::temp_dir().join(format!("sky-spa-rc-init-{}", std::process::id()));
+    let out = std::env::temp_dir().join(format!("sky-spa-rc-init-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&proj);
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(proj.join("src")).unwrap();
+    std::fs::copy(fixture().join("sky.toml"), proj.join("sky.toml")).unwrap();
+    let src = std::fs::read_to_string(fixture().join("src/Main.sky")).unwrap();
+    let none = "    ( emptyModel, Cmd.none )\n";
+    assert_eq!(
+        src.matches(none).count(),
+        1,
+        "the fixture's `init` returns Cmd.none"
+    );
+    let src = src.replacen(none, "    ( emptyModel, Cmd.perform loadConfig GotConfig )\n", 1)
+        + "\n\nloadConfig : Task Error (List (Set String))\nloadConfig =\n    File.readFile \"config.txt\"\n        |> Task.map (\\s -> [ Set.fromList [ s ] ])\n";
+    std::fs::write(proj.join("src/Main.sky"), src).unwrap();
+    let err = match spa_split::generate(&repo_root(), &proj, None, &out, None, None) {
+        Ok(_) => panic!("an `init` follow-up with no wire codec must fail the split"),
+        Err(e) => e,
+    };
+    assert!(
+        err.contains("`SpaInit_`") && err.contains("`GotConfig`") && err.contains("no wire codec"),
+        "the error names the init branch, the constructor and the missing codec: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+    let _ = std::fs::remove_dir_all(&out);
+}
