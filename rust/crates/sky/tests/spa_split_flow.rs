@@ -21,6 +21,14 @@ use std::process::Command;
 mod live_gate;
 use live_gate::{required, Need};
 
+// Every server this file starts is held by a `ChildGroup`: it and everything
+// it starts end with the test, on a panic too.
+#[cfg(unix)]
+#[path = "support/child_group.rs"]
+mod child_group;
+#[cfg(unix)]
+use child_group::ChildGroup;
+
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
 // Each test in this file generates + `go build`s two projects (backend native +
@@ -574,6 +582,7 @@ fn client_crypto_std_app_builds_and_leaves_keys_out_of_the_first_paint() {
 /// `Model`, the key field is found from that alias (the inferred model did
 /// not list it), and the running backend's first paint carries `"hs":null`.
 #[test]
+#[cfg(unix)]
 fn a_device_key_field_with_a_server_branch_builds_and_paints_nothing() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -614,16 +623,15 @@ fn a_device_key_field_with_a_server_branch_builds_and_paints_nothing() {
     let port = free_port();
     let back_dir = split.join("backend");
     let log_path = back_dir.join("server.log");
-    let child = Killed(
+    let child = ChildGroup::spawn(
         Command::new(back_dir.join("sky-out/app"))
             .current_dir(&back_dir)
             .env("PORT", port.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&log_path).unwrap())
-            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap())
-            .spawn()
-            .expect("start the backend"),
-    );
+            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap()),
+    )
+    .expect("start the backend");
     assert!(
         wait_for_spa_backend(&log_path, 120),
         "the backend did not start"
@@ -2911,15 +2919,14 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     .unwrap();
     let port = free_port();
     let log_path = away.join("server.log");
-    let server = Killed(
+    let server = ChildGroup::spawn(
         Command::new(away.join("app"))
             .current_dir(&away)
             .env("PORT", port.to_string())
             .stdout(std::fs::File::create(&log_path).unwrap())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
     assert!(
         wait_for_spa_backend(&log_path, 120),
         "the backend did not start:\n{}",
@@ -3023,15 +3030,14 @@ fn spa_ssr_wasm_name_is_content_derived_and_relinked_on_change() {
     // The server keeps the real stamp.
     let port = free_port();
     let log_path = proj.join("server.log");
-    let server = Killed(
+    let server = ChildGroup::spawn(
         Command::new(split.join("backend/sky-out/app"))
             .current_dir(split.join("backend"))
             .env("PORT", port.to_string())
             .stdout(std::fs::File::create(&log_path).unwrap())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
     assert!(
         wait_for_spa_backend(&log_path, 120),
         "the backend did not start:\n{}",
@@ -3108,6 +3114,7 @@ fn spa_onnav_fixture_dir() -> PathBuf {
 ///     each in the rendered body and the `#sky-model` blob; `GET /` (no per-route
 ///     data) carries an empty body — proving the data is per-route + server-resolved.
 #[test]
+#[cfg(unix)]
 fn spa_ssr_settles_per_route_onnavigate_data() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -3168,13 +3175,14 @@ fn spa_ssr_settles_per_route_onnavigate_data() {
     let port = 8977u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled spa-ssr-onnav backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-ssr-onnav backend");
     let ready = wait_for_spa_backend(&log_path, 80);
     if !ready {
         let _ = child.kill();
@@ -3184,8 +3192,7 @@ fn spa_ssr_settles_per_route_onnavigate_data() {
     let a_body = curl_body_p(port, "/a");
     let b_body = curl_body_p(port, "/b");
     let home_body = curl_body_p(port, "/");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     let a_body = a_body.expect("GET /a should return a body");
@@ -3246,6 +3253,7 @@ fn spa_ssr_settles_per_route_onnavigate_data() {
 ///   * Go-gated e2e: a valid `POST /_rpc/Save` that the guard DENIES returns 403
 ///     and leaves the write target untouched (the effect never ran).
 #[test]
+#[cfg(unix)]
 fn spa_guard_is_enforced_server_side_on_rpc() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -3342,13 +3350,14 @@ fn spa_guard_is_enforced_server_side_on_rpc() {
     let port = 8974u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled spa-guard backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-guard backend");
     let ready = wait_for_spa_backend(&log_path, 80);
     if !ready {
         let _ = child.kill();
@@ -3359,8 +3368,7 @@ fn spa_guard_is_enforced_server_side_on_rpc() {
     // not the 400 decode-error path. The guard DENIES Save → 403.
     let posted = curl_post_status_body(port, "/_rpc/Save", r#"{"content":"pwned"}"#);
     let after = std::fs::read_to_string(backend_dir.join("data/out.txt")).unwrap_or_default();
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     let (code, _body) = posted.expect("POST /_rpc/Save should return");
@@ -3476,6 +3484,7 @@ fn web_app_sibling_update_with_rpc_error_builds() {
 /// else-path. A shape-only test is exactly what let this ship, so the e2e leg is
 /// the one that matters.
 #[test]
+#[cfg(unix)]
 fn spa_split_request_carries_a_preserved_write_field_round_trip() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -3544,13 +3553,14 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
     let port = 8977u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled spa-writeset-roundtrip backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-writeset-roundtrip backend");
     let ready = wait_for_spa_backend(&log_path, 80);
     if !ready {
         let _ = child.kill();
@@ -3562,8 +3572,7 @@ fn spa_split_request_carries_a_preserved_write_field_round_trip() {
     // request and return unchanged. On the pre-fix code the response held
     // `"note":""` (rebuilt default).
     let posted = curl_post_status_body(port, "/_rpc/Act", r#"{"counter":3,"note":"keep"}"#);
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     let (code, body) = posted.expect("POST /_rpc/Act should return");
@@ -3616,6 +3625,7 @@ fn wait_for_spa_backend(log_path: &std::path::Path, tries: u32) -> bool {
 ///     resolved item list a crawler sees; `GET /` carries the Home content and
 ///     NOT the items — proving per-route + data-resolved SSR end to end.
 #[test]
+#[cfg(unix)]
 fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -3702,13 +3712,14 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     let port = 8973u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled SSR-P3 backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled SSR-P3 backend");
     let ready = wait_for_spa_backend(&log_path, 80);
     if !ready {
         let _ = child.kill();
@@ -3720,8 +3731,7 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
     }
     let items_body = curl_body_p(port, "/items");
     let home_body = curl_body_p(port, "/");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     let items_body = items_body.expect("GET /items should return a body");
@@ -3780,6 +3790,7 @@ fn spa_ssr_p3_resolves_real_per_route_data_for_a_get_safe_init() {
 /// document's asset URLs are root-absolute AND that `/wasm_exec.js` is a 200
 /// JavaScript asset.
 #[test]
+#[cfg(unix)]
 fn spa_deep_link_ssr_references_root_absolute_assets() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -3821,13 +3832,14 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
     let port = 8974u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled deep-link backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled deep-link backend");
     if !wait_for_spa_backend(&log_path, 80) {
         let _ = child.kill();
         let _ = std::fs::remove_dir_all(&proj);
@@ -3835,8 +3847,7 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
     }
     let deep_body = curl_body_p(port, "/blog/hello");
     let asset = curl_status_ctype(port, "/wasm_exec.js");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 
     let deep_body = deep_body.expect("GET /blog/hello should return a body");
     // The cold deep-link SSRs the Post route (crawlable) with the SSR marker.
@@ -3889,6 +3900,7 @@ fn spa_deep_link_ssr_references_root_absolute_assets() {
 /// as a known route would, while a request that maps to a REAL asset still serves
 /// the file. RED before the fix (a plain `Server.static` catch-all → 404).
 #[test]
+#[cfg(unix)]
 fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -3934,13 +3946,14 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     let port = 8975u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled deep-link backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled deep-link backend");
     if !wait_for_spa_backend(&log_path, 80) {
         let _ = child.kill();
         let _ = std::fs::remove_dir_all(&proj);
@@ -3949,8 +3962,7 @@ fn spa_unknown_deep_path_ssrs_the_not_found_page() {
     let unknown_status = curl_status_ctype(port, "/some/unknown/deep/path");
     let unknown_body = curl_body_p(port, "/some/unknown/deep/path");
     let asset = curl_status_ctype(port, "/wasm_exec.js");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     // An unmatched deep path SSRs the NotFound page — 200, not a bare 404.
@@ -4413,6 +4425,7 @@ fn dup_route_fixture_dir() -> PathBuf {
 /// the same METHOD+PATH is suppressed — so the backend boots. (The Live build
 /// tolerates the mix via its single `/` dispatcher, so this is split-only.)
 #[test]
+#[cfg(unix)]
 fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -4480,22 +4493,22 @@ fn mixed_page_and_get_api_route_on_same_path_does_not_double_register() {
     let backend_dir = proj.join(".skyapp/web-app/.split/backend");
     let boot_log = backend_dir.join("boot.log");
     let logf = std::fs::File::create(&boot_log).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", "8973")
-        .stdout(logf.try_clone().unwrap())
-        .stderr(logf)
-        .spawn()
-        .expect("spawn the split backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", "8973")
+            .stdout(logf.try_clone().unwrap())
+            .stderr(logf),
+    )
+    .expect("spawn the split backend");
     // Give the mux setup (where the duplicate-pattern panic fires, before the
     // listen loop) time to run, then check the process is still alive.
     std::thread::sleep(std::time::Duration::from_millis(1500));
-    let status = child.try_wait().expect("poll the backend process");
+    let status = child.child().try_wait().expect("poll the backend process");
     let mut boot = String::new();
     use std::io::Read as _;
     let _ = std::fs::File::open(&boot_log).and_then(|mut f| f.read_to_string(&mut boot));
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     assert!(
@@ -4651,6 +4664,7 @@ fn have_sqlite3() -> bool {
 /// from that blob), so the client tree compiles WITHOUT the `db` CAF while the
 /// backend still SSRs + embeds the resolved rows.
 #[test]
+#[cfg(unix)]
 fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -4774,14 +4788,15 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
     let port = 8977u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(backend_dir.join("sky-out/app"))
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .env("SSR_DB_PATH", "app.db")
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled SSR db backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env("SSR_DB_PATH", "app.db")
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled SSR db backend");
     let ready = wait_for_spa_backend(&log_path, 80);
     if !ready {
         let _ = child.kill();
@@ -4789,8 +4804,7 @@ fn spa_ssr_db_client_leg_excludes_the_db_caf() {
         panic!("SSR db backend never reported listening on :{port}");
     }
     let items_body = curl_body_p(port, "/items");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 
     let items_body = items_body.expect("GET /items should return a body");
     let blob_start = items_body
@@ -5046,6 +5060,7 @@ fn signed_session_fixture_dir() -> PathBuf {
 ///     the admin effect; a login issues a signed cookie; the admin RPC WITH that
 ///     cookie runs the effect.
 #[test]
+#[cfg(unix)]
 fn spa_stateless_signed_session_defeats_wire_forgery() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -5152,18 +5167,19 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     let port = 8979u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        // Pin the signing secret so a lone process signs + verifies with one key.
-        .env(
-            "SKY_SPA_SESSION_SECRET",
-            "0123456789abcdef0123456789abcdef0123456789",
-        )
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled spa-signed-session backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            // Pin the signing secret so a lone process signs + verifies with one key.
+            .env(
+                "SKY_SPA_SESSION_SECRET",
+                "0123456789abcdef0123456789abcdef0123456789",
+            )
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-signed-session backend");
     let ready = wait_for_spa_backend(&log_path, 80);
     if !ready {
         let _ = child.kill();
@@ -5198,8 +5214,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
     });
     let admin_after_ok = std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     let (fcode, _, _) = forged.expect("forged SaveAdmin should return");
@@ -5229,6 +5244,7 @@ fn spa_stateless_signed_session_defeats_wire_forgery() {
 /// sign-in ran signed out. The handler parameter must be `Request`, and an RPC
 /// that carries the signed cookie must see the session.
 #[test]
+#[cfg(unix)]
 fn spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -5272,17 +5288,18 @@ fn spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body() {
     let port = 8989u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(backend_dir.join("sky-out/app"))
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .env(
-            "SKY_SPA_SESSION_SECRET",
-            "0123456789abcdef0123456789abcdef0123456789",
-        )
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled spa-body-alias backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env(
+                "SKY_SPA_SESSION_SECRET",
+                "0123456789abcdef0123456789abcdef0123456789",
+            )
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-body-alias backend");
     if !wait_for_spa_backend(&log_path, 80) {
         let _ = child.kill();
         let _ = std::fs::remove_dir_all(&proj);
@@ -5299,8 +5316,7 @@ fn spa_rpc_keeps_its_cookie_when_an_alias_is_exactly_body() {
         )
     });
     let admin_txt = std::fs::read_to_string(backend_dir.join("admin.txt")).unwrap_or_default();
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     assert!(
@@ -5374,6 +5390,7 @@ fn curl_set_cookies(
 /// `sky_sid` forever. Both lines must reach the wire, on the SSR page and on
 /// an RPC answer.
 #[test]
+#[cfg(unix)]
 fn spa_legacy_cookie_conversion_sends_every_cookie() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     if !required(Need::Go, have_go()) {
@@ -5407,17 +5424,18 @@ fn spa_legacy_cookie_conversion_sends_every_cookie() {
     let port = 19651u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(backend_dir.join("sky-out/app"))
-        .current_dir(&proj)
-        .env("PORT", port.to_string())
-        .env(
-            "SKY_SPA_SESSION_SECRET",
-            "0123456789abcdef0123456789abcdef0123456789",
-        )
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled spa-identity-slot backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&proj)
+            .env("PORT", port.to_string())
+            .env(
+                "SKY_SPA_SESSION_SECRET",
+                "0123456789abcdef0123456789abcdef0123456789",
+            )
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-identity-slot backend");
     if !wait_for_spa_backend(&log_path, 80) {
         let _ = child.kill();
         let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
@@ -5439,8 +5457,7 @@ fn spa_legacy_cookie_conversion_sends_every_cookie() {
     let rpc = legacy
         .as_deref()
         .map(|c| curl_set_cookies(port, "POST", "/_rpc/SignIn", Some(sign_in), c));
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let server_log = std::fs::read_to_string(&log_path).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&proj);
 
@@ -5479,12 +5496,13 @@ fn session_revocation_fixture_dir() -> PathBuf {
 /// Spawn the compiled split backend in `backend_dir` on `port` with `envs`,
 /// logging to `<backend_dir>/<log_name>`, and wait for its listening line.
 /// Panics (after killing the child) when it never starts.
+#[cfg(unix)]
 fn spawn_spa_backend(
     backend_dir: &std::path::Path,
     port: u16,
     log_name: &str,
     envs: &[(&str, String)],
-) -> std::process::Child {
+) -> ChildGroup {
     let log_path = backend_dir.join(log_name);
     let log_file = std::fs::File::create(&log_path).unwrap();
     let mut cmd = Command::new(backend_dir.join("sky-out/app"));
@@ -5501,7 +5519,7 @@ fn spawn_spa_backend(
     for (k, v) in envs {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn().expect("spawn the compiled split backend");
+    let mut child = ChildGroup::spawn(&mut cmd).expect("spawn the compiled split backend");
     if !wait_for_spa_backend(&log_path, 80) {
         let _ = child.kill();
         let log = std::fs::read_to_string(&log_path).unwrap_or_default();
@@ -5528,6 +5546,7 @@ fn spawn_spa_backend(
 ///   * the default store (none configured) keeps the record across a restart,
 ///     and a cookie that was NOT signed out still works after the restart.
 #[test]
+#[cfg(unix)]
 fn spa_sign_out_revokes_the_signed_session_cookie() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -5624,10 +5643,8 @@ fn spa_sign_out_revokes_the_signed_session_cookie() {
     let r_five = save(pb, "five", &c2);
     let after_five = admin();
 
-    let _ = a.kill();
-    let _ = a.wait();
-    let _ = b.kill();
-    let _ = b.wait();
+    a.kill();
+    b.kill();
     let replica_logs = format!(
         "{}\n{}",
         std::fs::read_to_string(backend_dir.join("replica-a.log")).unwrap_or_default(),
@@ -5646,15 +5663,13 @@ fn spa_sign_out_revokes_the_signed_session_cookie() {
         .expect("a second LogIn on the default store must issue a cookie");
     let signout4 =
         curl_post_full(pc, "/_rpc/__spaSignOut", "{}", Some(&c4)).expect("sign-out answers");
-    let _ = c.kill();
-    let _ = c.wait();
+    c.kill();
     let mut c = spawn_spa_backend(&backend_dir, pc, "default-2.log", &[]);
     let r_six = save(pc, "six", &c4);
     let after_six = admin();
     let r_seven = save(pc, "seven", &c5);
     let after_seven = admin();
-    let _ = c.kill();
-    let _ = c.wait();
+    c.kill();
     let default_logs = format!(
         "{}\n{}",
         std::fs::read_to_string(backend_dir.join("default-1.log")).unwrap_or_default(),
@@ -5861,6 +5876,7 @@ main =
 /// The security spine still holds: the effectful `Store` module is backend-only
 /// and never reaches the wasm frontend.
 #[test]
+#[cfg(unix)]
 fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -5978,13 +5994,14 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     let port = 8976u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled multi-module SSR backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled multi-module SSR backend");
     let ready = wait_for_spa_backend(&log_path, 80);
     if !ready {
         let _ = child.kill();
@@ -5996,8 +6013,7 @@ fn splits_a_multi_module_app_with_tea_core_in_imported_modules() {
     }
     let items_body = curl_body_p(port, "/items");
     let home_body = curl_body_p(port, "/");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     let items_body = items_body.expect("GET /items should return a body");
@@ -6468,6 +6484,7 @@ fn server_read_deferred_to_init_command_is_not_refused() {
 /// in the client, on the model the client holds when the read ends). Builds +
 /// RUNS the backend, then POSTs — Go-gated (needs the toolchain + curl).
 #[test]
+#[cfg(unix)]
 fn server_internal_chain_e2e_post_reload_returns_file_note() {
     if !required(Need::Go, have_go()) {
         return;
@@ -6513,15 +6530,16 @@ fn server_internal_chain_e2e_post_reload_returns_file_note() {
     assert!(app_bin.is_file(), "backend build must produce sky-out/app");
     let log_path = backend_dir.join("server.log");
     let log = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .env("ENV", "production")
-        .env("SKY_CONSOLE_AUTH", "off")
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("spawn the compiled backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env("ENV", "production")
+            .env("SKY_CONSOLE_AUTH", "off")
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    )
+    .expect("spawn the compiled backend");
 
     let ready = wait_for_listening_substr(&log_path, port, 120);
     if !ready {
@@ -6537,8 +6555,7 @@ fn server_internal_chain_e2e_post_reload_returns_file_note() {
     // the file's contents in `note`.
     let body = curl_post(port, "/_rpc/Reload", "{}");
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&out);
 
     let body = body.expect("POST /_rpc/Reload should return a body");
@@ -6726,7 +6743,7 @@ fn guard_wrapper_narrows_and_whole_model_msg_arg_send_is_explicit() {
 ///   2. the result Msg `Saved` is NOT a wire branch (no `/_rpc/Saved`, no
 ///      `SavedReq`, no `AppliedSaved`) — it stays a CLIENT arm;
 ///   3. the whole `Result` value is carried (frontend dispatches
-///      `update (Saved resp.result) model`; the response codec is
+///      `update (Saved spaResult_) model`; the response codec is
 ///      `Codec.result …`), never a Req that decomposes it into `url`/`e`
 ///      binders (the `missing field(s): url` bug);
 ///   4. FAIL-CLOSED — `Stored`, whose own arm reaches a server effect
@@ -6798,13 +6815,13 @@ fn client_result_perform_wires_task_result_to_client() {
     // GATE 3: the WHOLE `Result` value crosses and is dispatched — never
     // decomposed into `url`/`e` binders.
     assert!(
-        front.contains("update (Saved resp.result) model"),
+        front.contains("update (Saved spaResult_) model"),
         "the frontend `AppliedUpload` must dispatch `Saved` with the WHOLE result value:\n{front}"
     );
     assert!(
-        shared.contains("result : Result Error String")
+        shared.contains("result : List (Result Error String)")
             && shared.contains("Codec.result Codec.error Codec.string"),
-        "the `Upload` response wire must carry the task RESULT as `result : Result Error String` via `Codec.result`:\n{shared}"
+        "the `Upload` response wire must carry the task RESULT as `result : List (Result Error String)` via `Codec.result`:\n{shared}"
     );
     // The backend RUNS the task and returns its result (never drops the perform).
     assert!(
@@ -6888,6 +6905,7 @@ fn client_result_both_trees_build() {
 /// an empty write-set and the upload silently did nothing. Builds + RUNS the
 /// backend, then POSTs — Go-gated (needs the toolchain + curl).
 #[test]
+#[cfg(unix)]
 fn client_result_e2e_post_upload_returns_task_result() {
     if !required(Need::Go, have_go()) {
         return;
@@ -6924,15 +6942,16 @@ fn client_result_e2e_post_upload_returns_task_result() {
     assert!(app_bin.is_file(), "backend build must produce sky-out/app");
     let log_path = backend_dir.join("server.log");
     let log = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .env("ENV", "production")
-        .env("SKY_CONSOLE_AUTH", "off")
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .expect("spawn the compiled backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env("ENV", "production")
+            .env("SKY_CONSOLE_AUTH", "off")
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    )
+    .expect("spawn the compiled backend");
 
     let ready = wait_for_listening_substr(&log_path, port, 120);
     if !ready {
@@ -6967,8 +6986,7 @@ fn client_result_e2e_post_upload_returns_task_result() {
 
     let blob = std::fs::read_to_string(backend_dir.join("blob.txt")).ok();
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 
     let body = body.expect("POST /_rpc/Upload should return a body");
     assert!(
@@ -7453,6 +7471,7 @@ fn curl_req(
 ///
 /// Emission is asserted without Go; the live probes are Go-gated.
 #[test]
+#[cfg(unix)]
 fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -7517,18 +7536,19 @@ fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
     let port = 8983u16;
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let mut child = Command::new(&app_bin)
-        .current_dir(&backend_dir)
-        .env("PORT", port.to_string())
-        .env(
-            "SKY_SPA_SESSION_SECRET",
-            "0123456789abcdef0123456789abcdef0123456789",
-        )
-        .env_remove("SKY_PUBLIC_URL")
-        .stdout(log_file.try_clone().unwrap())
-        .stderr(log_file)
-        .spawn()
-        .expect("spawn the compiled spa-sub-auth backend");
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env(
+                "SKY_SPA_SESSION_SECRET",
+                "0123456789abcdef0123456789abcdef0123456789",
+            )
+            .env_remove("SKY_PUBLIC_URL")
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the compiled spa-sub-auth backend");
     if !wait_for_spa_backend(&log_path, 80) {
         let _ = child.kill();
         let _ = std::fs::remove_dir_all(&proj);
@@ -7589,8 +7609,7 @@ fn spa_rpc_origin_guard_and_sub_topic_authorisation() {
     let u2_cookie = curl_req(port, "GET", "/_sky/sub?topic=user:u2", &[&ck], None, "2");
     let empty_topic = curl_req(port, "GET", "/_sky/sub", &[&ck], None, "2");
 
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
     let _ = std::fs::remove_dir_all(&proj);
 
     assert_eq!(
@@ -7647,17 +7666,6 @@ fn free_port() -> u16 {
         .local_addr()
         .unwrap()
         .port()
-}
-
-/// A child process that is killed when dropped (a failed assertion must not
-/// leave a server holding its port).
-struct Killed(std::process::Child);
-
-impl Drop for Killed {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 fn wait_for_log(path: &std::path::Path, needle: &str, tries: u32) -> bool {
@@ -7758,6 +7766,7 @@ fn rendered_status(body: &str) -> Option<String> {
 /// `case` order (the first matching arm wins), as it must for the client's
 /// routing to be sound.
 #[test]
+#[cfg(unix)]
 fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -7817,7 +7826,7 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
     // The monolithic Sky.Live app.
     let live_port = free_port();
     let live_log = proj.join("live.log");
-    let live_child = Killed(
+    let live_child = ChildGroup::spawn(
         Command::new(proj.join("sky-out/app"))
             .current_dir(&proj)
             .env("SKY_LIVE_PORT", live_port.to_string())
@@ -7826,10 +7835,9 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
             .env_remove("SKY_LIVE_STORE")
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&live_log).unwrap())
-            .stderr(std::fs::File::create(proj.join("live.err")).unwrap())
-            .spawn()
-            .expect("start the Sky.Live app"),
-    );
+            .stderr(std::fs::File::create(proj.join("live.err")).unwrap()),
+    )
+    .expect("start the Sky.Live app");
     assert!(
         wait_for_log(&live_log, &format!("listening on :{live_port}"), 120),
         "the Sky.Live app did not start:\n{}",
@@ -7839,17 +7847,16 @@ fn server_arms_that_match_inside_their_msg_arguments_behave_as_the_live_app() {
     let back_port = free_port();
     let back_dir = split_dir.join("backend");
     let back_log = back_dir.join("server.log");
-    let back_child = Killed(
+    let back_child = ChildGroup::spawn(
         Command::new(back_dir.join("sky-out/app"))
             .current_dir(&back_dir)
             .env("PORT", back_port.to_string())
             .env("SKY_ARM_TAG", "srv")
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&back_log).unwrap())
-            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap())
-            .spawn()
-            .expect("start the split backend"),
-    );
+            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap()),
+    )
+    .expect("start the split backend");
     assert!(
         wait_for_spa_backend(&back_log, 120),
         "the split backend did not start:\n{}",
@@ -8000,7 +8007,7 @@ fn rpc_order_fixture_sends_async_rpcs_whose_results_run_in_the_client() {
         ("SlowB", "GotB"),
     ] {
         assert!(
-            front.contains(&format!("update ({result} resp.result) model")),
+            front.contains(&format!("update ({result} spaResult_) model")),
             "`{root}`'s result must be dispatched as `{result}` in the client:\n{front}"
         );
         assert!(
@@ -8167,20 +8174,20 @@ fn split_wire_header(proj: &std::path::Path) -> String {
 }
 
 /// Start the split backend of `proj` on a free port.
-fn start_split_backend(proj: &std::path::Path) -> (Killed, u16) {
+#[cfg(unix)]
+fn start_split_backend(proj: &std::path::Path) -> (ChildGroup, u16) {
     let port = free_port();
     let dir = proj.join(".skyapp/web-app/.split/backend");
     let log = dir.join("server.log");
-    let child = Killed(
+    let child = ChildGroup::spawn(
         Command::new(dir.join("sky-out/app"))
             .current_dir(&dir)
             .env("PORT", port.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&log).unwrap())
-            .stderr(std::fs::File::create(dir.join("server.err")).unwrap())
-            .spawn()
-            .expect("start the split backend"),
-    );
+            .stderr(std::fs::File::create(dir.join("server.err")).unwrap()),
+    )
+    .expect("start the split backend");
     assert!(
         wait_for_spa_backend(&log, 120),
         "the split backend did not start:\n{}",
@@ -8190,7 +8197,8 @@ fn start_split_backend(proj: &std::path::Path) -> (Killed, u16) {
 }
 
 /// Build `proj` as a Sky.Live app and start it on a free port.
-fn start_live_app(proj: &std::path::Path) -> (Killed, u16) {
+#[cfg(unix)]
+fn start_live_app(proj: &std::path::Path) -> (ChildGroup, u16) {
     let live = Command::new(SKY)
         .args(["build", "src/Main.sky"])
         .current_dir(proj)
@@ -8204,7 +8212,7 @@ fn start_live_app(proj: &std::path::Path) -> (Killed, u16) {
     );
     let port = free_port();
     let log = proj.join("live.log");
-    let child = Killed(
+    let child = ChildGroup::spawn(
         Command::new(proj.join("sky-out/app"))
             .current_dir(proj)
             .env("SKY_LIVE_PORT", port.to_string())
@@ -8212,10 +8220,9 @@ fn start_live_app(proj: &std::path::Path) -> (Killed, u16) {
             .env_remove("SKY_LIVE_STORE")
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&log).unwrap())
-            .stderr(std::fs::File::create(proj.join("live.err")).unwrap())
-            .spawn()
-            .expect("start the Sky.Live app"),
-    );
+            .stderr(std::fs::File::create(proj.join("live.err")).unwrap()),
+    )
+    .expect("start the Sky.Live app");
     assert!(
         wait_for_log(&log, &format!("listening on :{port}"), 120),
         "the Sky.Live app did not start:\n{}",
@@ -8280,11 +8287,11 @@ fn live_press_and_read(port: u16, jar: &std::path::Path, i: usize, prefix: &str)
 /// write `"failed"` for an `Err`; an `Ok` is not expected (port 1 refuses).
 fn client_got_out(front: &str, posted: &(u32, String)) -> String {
     assert!(
-        front.contains("update (Got resp.result)"),
+        front.contains("update (Got spaResult_)"),
         "the client dispatches the RPC's result to its own `Got` arm:\n{front}"
     );
     let v: serde_json::Value = serde_json::from_str(&posted.1).unwrap();
-    match v["result"][0].as_str() {
+    match v["result"][0][0].as_str() {
         Some("Err") => "failed".to_string(),
         other => panic!("the RPC must answer the task's Err result, got {other:?}: {posted:?}"),
     }
@@ -8376,6 +8383,7 @@ fn a_comment_above_a_server_arm_does_not_change_the_split() {
 /// dropped and the client failed with `Undefined name: send`. The server arm
 /// answers as the Live app does.
 #[test]
+#[cfg(unix)]
 fn a_server_only_function_excludes_only_itself_not_a_same_named_client_function() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("spa-tainted-name-scope", &[]);
@@ -8420,6 +8428,7 @@ fn a_server_only_function_excludes_only_itself_not_a_same_named_client_function(
 /// `Msg` lost `Shape.Batch` (`Undefined name: Shape.Batch`). The client-result
 /// RPC answers the batch the Live app renders.
 #[test]
+#[cfg(unix)]
 fn a_server_only_module_keeps_its_types_in_the_client() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("spa-server-module-types", &[]);
@@ -8459,6 +8468,7 @@ fn a_server_only_module_keeps_its_types_in_the_client() {
 /// copy lost it (`Undefined name: Chan.Batch`; in this fixture a type
 /// mismatch). The client-result RPC answers the nested record.
 #[test]
+#[cfg(unix)]
 fn a_copied_wire_record_brings_the_types_it_names() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let go = required(Need::Go, have_go());
@@ -8546,12 +8556,13 @@ fn a_copied_wire_record_brings_the_types_it_names() {
 /// split made a client-result RPC and the client called `update (Got
 /// resp.result)`, without `url`, which did not type-check.
 #[test]
+#[cfg(unix)]
 fn a_result_msg_with_a_captured_argument_crosses_with_the_argument() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("spa-captured-result-msg", &[]);
     let front = split_file(&proj, "frontend/src/Main.sky");
     assert!(
-        !front.contains("update (Got resp.result)"),
+        !front.contains("update (Got resp.result)") && !front.contains("update (Got spaResult_)"),
         "the client must not rebuild `Got` from the result alone:\n{front}"
     );
     if !required(Need::Go, have_go()) {
@@ -8596,6 +8607,7 @@ fn a_result_msg_with_a_captured_argument_crosses_with_the_argument() {
 /// that called an undefined `init`. The inline form is also run: its server
 /// arm answers as the Live app does.
 #[test]
+#[cfg(unix)]
 fn app_fields_in_any_form_build_with_a_server_branch() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let go = required(Need::Go, have_go());
@@ -8681,6 +8693,7 @@ fn app_fields_in_any_form_build_with_a_server_branch() {
 /// record (`[macHandler] type mismatch: String vs record`). The RPC answers
 /// the MAC the Live app renders.
 #[test]
+#[cfg(unix)]
 fn a_non_record_model_crosses_the_wire_whole() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("spa-nonrecord-model", &[]);
@@ -8775,6 +8788,7 @@ fn a_wrong_init_seed_is_reported_at_init_for_every_target() {
 /// Sky.Spa client whose subscriptions keep the leaf (the wasm client reads
 /// `location.hash`), and checks for a terminal target, where it is inert.
 #[test]
+#[cfg(unix)]
 fn the_url_fragment_reaches_update_on_live_and_builds_for_every_target() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("std-app-fragment", &[]);
@@ -8856,6 +8870,7 @@ fn the_url_fragment_reaches_update_on_live_and_builds_for_every_target() {
 /// derived from the dependency's declaration (named by its module in
 /// `Shared`), and the RPC answers what the Sky.Live app renders.
 #[test]
+#[cfg(unix)]
 fn a_record_alias_from_a_path_dependency_crosses_the_split() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let root = scratch();
@@ -9098,10 +9113,20 @@ fn a_whole_model_write_with_a_follow_up_builds() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("spa-whole-model-follow", &[]);
     let front = split_file(&proj, "frontend/src/Main.sky");
+    // `AskServer` writes a server value, so it holds and folds the server's
+    // whole-model response back field by field. `Ask`'s model write runs in the
+    // client (v0.28.0: an async arm through a helper), so its `Applied` arm
+    // applies no write-set.
+    let held = frontend_arm(&front, "AppliedAskServer (Ok resp)");
     assert!(
-        front.contains("( { model | draft = resp.draft, notice = resp.notice }, Cmd.none )")
+        held.contains("( { model | draft = resp.draft, notice = resp.notice }, Cmd.none )")
             && !front.contains("( resp, Cmd.none )"),
         "the whole-model follow-up response is folded back field by field:\n{front}"
+    );
+    let asked = frontend_arm(&front, "AppliedAsk (Ok resp)");
+    assert!(
+        !asked.contains("resp.draft") && arm_rpc_kind(frontend_arm(&front, "Ask text")) == "async",
+        "`Ask` is async and applies no server write-set:\n{front}"
     );
     if required(Need::Go, have_go()) {
         assert!(out.status.success(), "the web:app build failed:\n{log}");
@@ -9153,6 +9178,7 @@ fn curl_post_with_headers(
 /// - a current request answers the follow-up for the client to run;
 /// - a header-less (legacy) request runs it on the server and answers none.
 #[test]
+#[cfg(unix)]
 fn the_wire_hash_and_legacy_follow_ups_are_generated() {
     if !required(Need::Go, have_go()) {
         return;
@@ -9288,6 +9314,7 @@ fn a_type_error_in_a_path_dependency_stops_the_split_at_its_own_file() {
 /// `subscriptions` names "count"; renamed to `subs`, the same app must answer
 /// 403 for "count" rather than stream it.
 #[test]
+#[cfg(unix)]
 fn sub_endpoint_refuses_every_topic_when_subscriptions_cannot_be_found() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let proj = scratch();
@@ -9366,15 +9393,14 @@ fn sub_endpoint_refuses_every_topic_when_subscriptions_cannot_be_found() {
     let port = free_port();
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let child = Killed(
+    let child = ChildGroup::spawn(
         Command::new(backend_dir.join("sky-out/app"))
             .current_dir(&backend_dir)
             .env("PORT", port.to_string())
             .stdout(log_file.try_clone().unwrap())
-            .stderr(log_file)
-            .spawn()
-            .expect("spawn the backend"),
-    );
+            .stderr(log_file),
+    )
+    .expect("spawn the backend");
     assert!(
         wait_for_spa_backend(&log_path, 80),
         "the backend never reported listening on :{port}"
@@ -9397,6 +9423,7 @@ fn sub_endpoint_refuses_every_topic_when_subscriptions_cannot_be_found() {
 /// empty tag `["",""]`, the client refused it and kept the old model: count
 /// stayed 0 (the downstream "Add to basket" regression). Go-gated.
 #[test]
+#[cfg(unix)]
 fn a_follow_up_also_reached_by_a_server_chain_crosses_and_the_write_applies() {
     if !required(Need::Go, have_go()) {
         return;
@@ -9423,16 +9450,15 @@ fn a_follow_up_also_reached_by_a_server_chain_crosses_and_the_write_applies() {
     std::fs::copy(proj.join("sky.toml"), back_dir.join("sky.toml")).ok();
     let port = free_port();
     let log_path = back_dir.join("server.log");
-    let child = Killed(
+    let child = ChildGroup::spawn(
         Command::new(back_dir.join("sky-out/app"))
             .current_dir(&back_dir)
             .env("PORT", port.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&log_path).unwrap())
-            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap())
-            .spawn()
-            .expect("start the backend"),
-    );
+            .stderr(std::fs::File::create(back_dir.join("server.err")).unwrap()),
+    )
+    .expect("start the backend");
     assert!(
         wait_for_spa_backend(&log_path, 120),
         "the backend did not start"
@@ -9465,6 +9491,7 @@ fn a_follow_up_also_reached_by_a_server_chain_crosses_and_the_write_applies() {
 /// printed nothing. Now the console names itself, and the backend reports that
 /// the configured store is not used.
 #[test]
+#[cfg(unix)]
 fn a_spa_backend_without_a_session_says_its_store_is_unused() {
     if !required(Need::Go, have_go()) {
         return;
@@ -9497,7 +9524,7 @@ fn a_spa_backend_without_a_session_says_its_store_is_unused() {
     let dir = proj.join(".skyapp/web-app/.split/backend");
     let stdout = dir.join("server.log");
     let stderr = dir.join("server.err");
-    let _child = Killed(
+    let _child = ChildGroup::spawn(
         Command::new(dir.join("sky-out/app"))
             .current_dir(&dir)
             .env("PORT", port.to_string())
@@ -9512,10 +9539,9 @@ fn a_spa_backend_without_a_session_says_its_store_is_unused() {
             )
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&stdout).unwrap())
-            .stderr(std::fs::File::create(&stderr).unwrap())
-            .spawn()
-            .expect("start the split backend"),
-    );
+            .stderr(std::fs::File::create(&stderr).unwrap()),
+    )
+    .expect("start the split backend");
     assert!(
         wait_for_spa_backend(&stdout, 120),
         "the split backend did not start:\n{}\n{}",
@@ -9555,6 +9581,7 @@ fn a_spa_backend_without_a_session_says_its_store_is_unused() {
 /// nothing. This builds that exact shape and asserts the line names the
 /// builder.
 #[test]
+#[cfg(unix)]
 fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
     if !required(Need::Go, have_go()) {
         return;
@@ -9588,7 +9615,7 @@ fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
     let dir = proj.join(".skyapp/web-app/.split/backend");
     let stdout = dir.join("server.log");
     let stderr = dir.join("server.err");
-    let _child = Killed(
+    let _child = ChildGroup::spawn(
         Command::new(dir.join("sky-out/app"))
             .current_dir(&dir)
             .env("PORT", port.to_string())
@@ -9602,10 +9629,9 @@ fn a_spa_backend_names_the_config_binding_that_set_an_unused_store() {
             )
             .stdin(std::process::Stdio::null())
             .stdout(std::fs::File::create(&stdout).unwrap())
-            .stderr(std::fs::File::create(&stderr).unwrap())
-            .spawn()
-            .expect("start the split backend"),
-    );
+            .stderr(std::fs::File::create(&stderr).unwrap()),
+    )
+    .expect("start the split backend");
     assert!(
         wait_for_spa_backend(&stdout, 120),
         "the split backend did not start:\n{}\n{}",
@@ -9952,15 +9978,14 @@ fn whole_model_branches_share_one_model_wire_codec() {
     let port = free_port();
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let child = Killed(
+    let child = ChildGroup::spawn(
         Command::new(backend_dir.join("sky-out/app"))
             .current_dir(&backend_dir)
             .env("PORT", port.to_string())
             .stdout(log_file.try_clone().unwrap())
-            .stderr(log_file)
-            .spawn()
-            .expect("spawn the whole-model wire backend"),
-    );
+            .stderr(log_file),
+    )
+    .expect("spawn the whole-model wire backend");
     assert!(
         wait_for_spa_backend(&log_path, 80),
         "backend never reported listening on :{port}"
@@ -10332,4 +10357,1037 @@ fn a_direct_spa_build_runs_the_front_end_once() {
     }
     let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&proj);
+}
+
+// ── `init`'s command reaches server-only bindings ───────────────────────────
+//
+// Regression (v0.27.9, found building a database-backed app with
+// `--target web:app`): `update` arms that return `Cmd.perform <server task>
+// ToMsg` were rewritten into an RPC, but `init` was copied into the wasm client
+// verbatim, so its `Cmd.perform loadTickets Loaded` named a binding the
+// frontend excludes and the client failed with `Undefined name: loadTickets`
+// (reported by Sky as a split defect). The split now sends one RPC from the
+// client `init` (`POST /_rpc/SpaInit_`); the backend runs `init ()`'s command
+// and answers the follow-up Msgs, which the client dispatches through `update`.
+
+/// The server module both fixtures use: two tasks that touch the file system.
+const INIT_RPC_BOOT_SKY: &str = r#"module Boot exposing (status, note)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+
+
+status : Task Error String
+status =
+    File.writeFile "status.txt" "ready"
+        |> Task.andThen (\_ -> File.readFile "status.txt")
+
+
+note : Task Error String
+note =
+    File.readFile "note.txt"
+        |> Task.onError (\_ -> Task.succeed "no note")
+"#;
+
+/// Every shape that reaches `init`'s command: a direct `Cmd.perform` of an
+/// entry binding, a qualified binding of another module through a helper
+/// command, a `let`-bound command, all inside one `Cmd.batch`.
+const INIT_RPC_ENTRY_MAIN_SKY: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error as Error exposing (Error)
+import Sky.Core.Task as Task
+import Sky.Core.File as File
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Boot
+
+
+type alias Model =
+    { items : String, status : String, note : String }
+
+
+type Msg
+    = Loaded (Result Error String)
+    | StatusRead (Result Error String)
+    | Noted (Result Error String)
+    | Refresh
+
+
+loadItems : Task Error String
+loadItems =
+    File.writeFile "seed.txt" "apples"
+        |> Task.andThen (\_ -> File.readFile "seed.txt")
+
+
+refreshCmd : Cmd Msg
+refreshCmd =
+    Cmd.perform Boot.status StatusRead
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    let
+        noteCmd =
+            Cmd.perform Boot.note Noted
+    in
+    ( { items = "", status = "", note = "" }
+    , Cmd.batch [ Cmd.perform loadItems Loaded, refreshCmd, noteCmd ]
+    )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Loaded r ->
+            ( { model | items = Result.withDefault "?" r }, Cmd.none )
+
+        StatusRead r ->
+            ( { model | status = Result.withDefault "?" r }, Cmd.none )
+
+        Noted r ->
+            ( { model | note = Result.withDefault "?" r }, Cmd.none )
+
+        Refresh ->
+            ( model, refreshCmd )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text (model.items ++ " " ++ model.status ++ " " ++ model.note)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app
+"#;
+
+/// `init` in a sibling module (`State`), the Msg union in another (`Types`).
+const INIT_RPC_TYPES_SKY: &str = r#"module Types exposing (Model, Msg(..))
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Error exposing (Error)
+
+
+type alias Model =
+    { status : String, note : String }
+
+
+type Msg
+    = StatusRead (Result Error String)
+    | Noted (Result Error String)
+"#;
+
+const INIT_RPC_STATE_SKY: &str = r#"module State exposing (init)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Cmd as Cmd
+import Types exposing (Model, Msg(..))
+import Boot
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { status = "", note = "" }
+    , Cmd.batch [ Cmd.perform Boot.status StatusRead, Cmd.perform Boot.note Noted ]
+    )
+"#;
+
+const INIT_RPC_SIBLING_MAIN_SKY: &str = r#"module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.App as App
+import Std.Sub as Sub
+import Std.Cmd as Cmd
+import Std.Ui as Ui exposing (Element)
+import Types exposing (Model, Msg(..))
+import State exposing (init)
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        StatusRead r ->
+            ( { model | status = Result.withDefault "?" r }, Cmd.none )
+
+        Noted r ->
+            ( { model | note = Result.withDefault "?" r }, Cmd.none )
+
+
+view : Model -> Element Msg
+view model =
+    Ui.text (model.status ++ " " ++ model.note)
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
+
+
+app =
+    App.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }
+        |> App.withNotFound ()
+
+
+main =
+    App.run app
+"#;
+
+/// Build `proj` with `--target web:app`, assert the client never names a
+/// server-only binding and `init` sends the RPC, then (Go-gated) run the
+/// backend and check `POST /_rpc/SpaInit_` answers every follow-up Msg.
+#[cfg(unix)]
+fn assert_init_rpc_split(
+    proj: &std::path::Path,
+    init_rel: &str,
+    banned: &[&str],
+    follows: &[&str],
+) {
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = proj.join(".skyapp/web-app/.split");
+    let front_init = std::fs::read_to_string(split.join("frontend/src").join(init_rel))
+        .unwrap_or_else(|e| panic!("frontend copy of {init_rel} must exist ({e}):\n{log}"));
+    for b in banned {
+        assert!(
+            !front_init.contains(b),
+            "the client `init` must not name the server-only `{b}`:\n{front_init}\n{log}"
+        );
+    }
+    assert!(
+        front_init.contains("\"/_rpc/SpaInit_\""),
+        "the client `init` must send the init RPC:\n{front_init}"
+    );
+    let back = std::fs::read_to_string(split.join("backend/src/Main.sky")).unwrap();
+    assert!(
+        back.contains("Server.rpc \"POST /_rpc/SpaInit_\""),
+        "the backend must serve the init RPC:\n{back}"
+    );
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    assert!(
+        output.status.success(),
+        "--target web:app must build when init's command reaches the server:\n{log}"
+    );
+    let backend_dir = split.join("backend");
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let child = ChildGroup::spawn(
+        Command::new(backend_dir.join("sky-out/app"))
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the split backend");
+    assert!(
+        wait_for_spa_backend(&log_path, 80),
+        "the split backend never listened:\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    let (code, body) = curl_post_status_body(port, "/_rpc/SpaInit_", "\"\"")
+        .expect("POST /_rpc/SpaInit_ should answer");
+    drop(child);
+    assert_eq!(code, 200, "the init RPC must answer 200: {body}");
+    for f in follows {
+        assert!(
+            body.contains(f),
+            "the init RPC must answer the follow-up `{f}`: {body}"
+        );
+    }
+}
+
+#[test]
+fn init_command_reaching_server_bindings_runs_through_an_init_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app("init-rpc-entry", INIT_RPC_ENTRY_MAIN_SKY);
+    std::fs::write(proj.join("src/Boot.sky"), INIT_RPC_BOOT_SKY).unwrap();
+    assert_init_rpc_split(
+        &proj,
+        "Main.sky",
+        &["loadItems", "Boot.status", "Boot.note"],
+        &[
+            "Loaded",
+            "apples",
+            "StatusRead",
+            "ready",
+            "Noted",
+            "no note",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+#[test]
+fn init_in_a_sibling_module_reaching_server_bindings_runs_through_an_init_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let proj = scratch_std_app("init-rpc-sibling", INIT_RPC_SIBLING_MAIN_SKY);
+    std::fs::write(proj.join("src/Boot.sky"), INIT_RPC_BOOT_SKY).unwrap();
+    std::fs::write(proj.join("src/Types.sky"), INIT_RPC_TYPES_SKY).unwrap();
+    std::fs::write(proj.join("src/State.sky"), INIT_RPC_STATE_SKY).unwrap();
+    assert_init_rpc_split(
+        &proj,
+        "State.sky",
+        &["Boot.status", "Boot.note"],
+        &["StatusRead", "ready", "Noted", "no note"],
+    );
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+/// Configuration is code (v0.27.9): the split backend honours the app's
+/// `App.withConfig (WebConfig { store = … })` and `App.withBase`, as the
+/// Sky.Live build does (operator env > code > default). Before, the App→Spa
+/// synthesis dropped both builders, so the backend took its session store only
+/// from `sky.toml` `[live]` or the environment: this app's code-named store
+/// was never seen and the boot line named no store at all.
+#[test]
+#[cfg(unix)]
+fn a_spa_backend_honours_the_store_the_app_names_with_with_config() {
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (proj, out, log) = web_app_build(
+        "spa-deeplink",
+        &[(
+            "src/Main.sky",
+            "        |> App.withNotFound NotFoundPage\n",
+            "        |> App.withNotFound NotFoundPage\n        |> App.withConfig (App.WebConfig { App.webDefaults | store = Just \"postgres\" })\n        |> App.withBase { App.baseDefaults | logLevel = Config.Debug }\n",
+        ), (
+            "src/Main.sky",
+            "import Std.App as App\n",
+            "import Std.App as App\nimport Sky.Config as Config\n",
+        )],
+    );
+    assert!(out.status.success(), "the web:app build failed:\n{log}");
+    assert!(
+        !log.contains("withConfig") || !log.contains("NOT carried"),
+        "withConfig must be carried, not dropped:\n{log}"
+    );
+    let dir = proj.join(".skyapp/web-app/.split/backend");
+    let backend = std::fs::read_to_string(dir.join("src/Main.sky")).unwrap_or_default();
+    assert!(
+        backend.contains("spaServerConfig_"),
+        "the backend applies the app's code configuration at boot:\n{backend}"
+    );
+    let front = std::fs::read_to_string(proj.join(".skyapp/web-app/.split/frontend/src/Main.sky"))
+        .unwrap_or_default();
+    assert!(
+        !front.contains("spaServerConfig_"),
+        "the server configuration never reaches the wasm client:\n{front}"
+    );
+    let port = free_port();
+    let stdout = dir.join("server.log");
+    let stderr = dir.join("server.err");
+    let _child = ChildGroup::spawn(
+        Command::new(dir.join("sky-out/app"))
+            .current_dir(&dir)
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("ENV")
+            .env_remove("SKY_LIVE_STORE")
+            .env_remove("SKY_LIVE_STORE_PATH")
+            .env_remove("SKY_LOG_LEVEL")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap()),
+    )
+    .expect("start the split backend");
+    assert!(
+        wait_for_spa_backend(&stdout, 120),
+        "the split backend did not start:\n{}\n{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    let both = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    assert!(
+        both.contains("The session store \"postgres\", set by App.withConfig"),
+        "the backend resolves the store the code names, and says who named it:\n{both}"
+    );
+    // The operator's variable still wins over the code.
+    drop(_child);
+    let port = free_port();
+    let _child = ChildGroup::spawn(
+        Command::new(dir.join("sky-out/app"))
+            .current_dir(&dir)
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("ENV")
+            .env("SKY_LIVE_STORE", "memory")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::fs::File::create(&stdout).unwrap())
+            .stderr(std::fs::File::create(&stderr).unwrap()),
+    )
+    .expect("start the split backend");
+    assert!(wait_for_spa_backend(&stdout, 120), "restart failed");
+    let both = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout).unwrap_or_default(),
+        std::fs::read_to_string(&stderr).unwrap_or_default()
+    );
+    assert!(
+        both.contains("The session store \"memory\", set by SKY_LIVE_STORE in the environment"),
+        "the operator's variable wins over the code:\n{both}"
+    );
+}
+
+fn readset_noneleaf_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-readset-noneleaf")
+}
+
+/// The field names in the field lines [`wire_record_fields`] returns
+/// (`{ a : T`, `, b : U`).
+fn wire_fields(lines: &str) -> Vec<String> {
+    lines
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim().trim_start_matches(['{', ',']).trim();
+            l.split_once(" :").map(|(n, _)| n.trim().to_string())
+        })
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+/// The generated client arm `<ctor> ->` of the frontend `update`, up to the
+/// next arm at the same indentation.
+fn frontend_arm<'a>(front: &'a str, ctor: &str) -> &'a str {
+    let head = format!("\n        {ctor} ->\n");
+    let Some(start) = front.find(&head) else {
+        return "";
+    };
+    let rest = &front[start + 1..];
+    let mut end = rest.len();
+    for (i, _) in rest.match_indices("\n        ") {
+        let after = &rest[i + 9..];
+        if i > 0 && after.starts_with(|c: char| c.is_ascii_uppercase()) {
+            end = i;
+            break;
+        }
+    }
+    &rest[..end]
+}
+
+/// Sky.Spa soundness: a model field read through a MODEL-DERIVED local must
+/// ride the RPC request, and a client-result root's `Cmd.none` leaf must send no
+/// RPC and must never dispatch `Got (Err …)`.
+///
+/// Generation leg (always runs): each derived-read arm's `<Msg>Req` carries the
+/// field its branch reads (before the fix the read through `m2` was dropped and
+/// the request was `{}`), the `Gated` / `ByMode` client arms keep `Cmd.none` on
+/// the none leaf and send the RPC only on the perform leaf, and the client-result
+/// response says "no task ran" as an empty `result` list.
+#[test]
+fn readset_through_derived_locals_and_none_leaf_sends_no_rpc() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+    let entry = readset_noneleaf_fixture_dir().join("src/Main.sky");
+    let o = Command::new(SKY)
+        .args([
+            "spa-split",
+            entry.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        o.status.success(),
+        "sky spa-split should succeed:\n{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+
+    for (req, field) in [
+        ("AliasCondReq", "flag"),
+        ("AliasReadReq", "mode"),
+        ("StampedReq", "flag"),
+        ("DestructuredReq", "flag"),
+        ("CaseOfReq", "flag"),
+    ] {
+        // One wire record per shape: `req` may be a one-line alias of the
+        // record that owns its shape, or embed the whole model.
+        let block = wire_record_fields(&shared, req);
+        assert!(
+            wire_fields(&block).iter().any(|f| f == field),
+            "{req} must carry `{field}`: the branch reads it through a model-derived \
+             local, and without it the backend rebuilds it from `init ()`:\n{block}"
+        );
+    }
+
+    // The none leaf keeps `Cmd.none` in the client and sends no request.
+    for ctor in ["Gated", "ByMode"] {
+        let arm = frontend_arm(&front, ctor);
+        assert!(!arm.is_empty(), "client arm `{ctor}` missing:\n{front}");
+        assert!(
+            arm.contains("Cmd.none") && arm.contains("spaRpc_"),
+            "client arm `{ctor}` must keep its `Cmd.none` leaf and send the RPC \
+             only on the perform leaf:\n{arm}"
+        );
+    }
+
+    // "No task ran" is its own answer: an empty `result` list, which the
+    // client maps to `( model, Cmd.none )`.
+    for resp in ["GatedResp", "GuardedResp", "ByModeResp", "CaseOfResp"] {
+        let block = wire_record_fields(&shared, resp);
+        assert!(
+            block.contains("result : List (Result Error String)"),
+            "{resp} must answer `result : List (Result Error String)`:\n{block}"
+        );
+    }
+    let applied = frontend_arm(&front, "AppliedGated (Ok resp)");
+    assert!(
+        applied.contains("case resp.result of") && applied.contains("Cmd.none"),
+        "AppliedGated must map an empty result to `( model, Cmd.none )`:\n{applied}"
+    );
+}
+
+/// The behaviour leg: the split backend takes the branch Sky.Live takes, and a
+/// `Cmd.none` leaf answers "no task ran", never `Err`. Each request is the one
+/// the generated client builds: the fields of the generated `<Msg>Req`, taken
+/// from the client model.
+#[test]
+#[cfg(unix)]
+fn readset_noneleaf_backend_takes_the_live_branch_and_sends_no_false_err() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&readset_noneleaf_fixture_dir(), &proj);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "web:app build failed:\n{log}");
+    let shared = std::fs::read_to_string(proj.join(".split/shared/Shared.sky"))
+        .expect("generated shared module");
+    let backend_dir = proj.join(".split/backend");
+    // The wire hash the generated client sends (`X-Sky-Wire`). Without it the
+    // backend treats the request as a pre-v0.27.0 client's and settles the
+    // follow-ups itself, which would hide the branch it took.
+    let backend_src = std::fs::read_to_string(backend_dir.join("src/Main.sky"))
+        .expect("generated backend module");
+    let wire = backend_src
+        .split_once("spaSetWireHash_ \"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(h, _)| h.to_string())
+        .expect("the backend sets its wire hash");
+    let app_bin = backend_dir.join("sky-out/app");
+    assert!(app_bin.is_file(), "backend binary must be built:\n{log}");
+    std::fs::create_dir_all(backend_dir.join("data")).unwrap();
+
+    let port = free_port();
+    let log_path = backend_dir.join("server.log");
+    let log_file = std::fs::File::create(&log_path).unwrap();
+    let mut child = ChildGroup::spawn(
+        Command::new(&app_bin)
+            .current_dir(&backend_dir)
+            .env("PORT", port.to_string())
+            .env("SKY_CONSOLE_AUTH", "off")
+            .env_remove("SPA_NONELEAF_P")
+            .stdin(std::process::Stdio::null())
+            .stdout(log_file.try_clone().unwrap())
+            .stderr(log_file),
+    )
+    .expect("spawn the split backend");
+    if !wait_for_spa_backend(&log_path, 120) {
+        let _ = child.kill();
+        let _ = std::fs::remove_dir_all(&proj);
+        panic!("the split backend never reported listening on :{port}");
+    }
+
+    // The client model a request is built from, as JSON values per field.
+    let model = |flag: bool, mode: Option<&str>| -> Vec<(&'static str, String)> {
+        vec![
+            ("n", "7".to_string()),
+            ("flag", flag.to_string()),
+            (
+                "mode",
+                mode.map(|m| format!("\"{m}\"")).unwrap_or("null".into()),
+            ),
+            ("log", "\"L\"".to_string()),
+        ]
+    };
+    let post = |ctor: &str, m: &[(&'static str, String)]| -> String {
+        let fields = wire_fields(&wire_record_fields(&shared, &format!("{ctor}Req")));
+        let body = fields
+            .iter()
+            .map(|f| {
+                let v = m
+                    .iter()
+                    .find(|(n, _)| n == f)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| panic!("{ctor}Req field `{f}` is not a model field"));
+                format!("\"{f}\":{v}")
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let out = Command::new("curl")
+            .args([
+                "-s",
+                "-w",
+                "\n%{http_code}",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-H",
+                &format!("X-Sky-Wire: {wire}"),
+                "-d",
+                &format!("{{{body}}}"),
+                &format!("http://127.0.0.1:{port}/_rpc/{ctor}"),
+            ])
+            .output()
+            .expect("run curl");
+        let s = String::from_utf8_lossy(&out.stdout).to_string();
+        let (resp, code) = s
+            .rsplit_once('\n')
+            .unwrap_or_else(|| panic!("POST /_rpc/{ctor} did not answer: {s}"));
+        let code: u32 = code.trim().parse().unwrap_or(0);
+        let resp = resp.to_string();
+        assert_eq!(code, 200, "POST /_rpc/{ctor} must answer 200: {resp}");
+        resp
+    };
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut expect = |what: &str, ok: bool, resp: &str| {
+        if !ok {
+            failures.push(format!("{what}: {resp}"));
+        }
+    };
+    // Derived reads: with flag = True Sky.Live takes the perform branch, so the
+    // response carries the `Got` follow-up. With the dropped read the backend
+    // saw `init ()`'s flag = False and answered no follow-up.
+    for ctor in ["AliasCond", "Stamped", "Destructured"] {
+        let r = post(ctor, &model(true, None));
+        expect(
+            &format!("{ctor} flag=True runs the perform (Got follow-up)"),
+            r.contains("Got"),
+            &r,
+        );
+        let r = post(ctor, &model(false, None));
+        expect(
+            &format!("{ctor} flag=False runs no perform"),
+            !r.contains("Got"),
+            &r,
+        );
+    }
+    // `case m2.mode of Just s -> ( { m2 | log = s }, Cmd.none )`: with mode =
+    // Just "x" Sky.Live writes log = "x" and performs nothing. The dropped read
+    // saw `init ()`'s Nothing and performed.
+    let r = post("AliasRead", &model(false, Some("x")));
+    expect(
+        "AliasRead mode=Just writes the mode, runs no perform",
+        r.contains("\"log\":\"x\"") && !r.contains("Got"),
+        &r,
+    );
+    let r = post("AliasRead", &model(false, None));
+    expect(
+        "AliasRead mode=Nothing runs the perform",
+        r.contains("Got"),
+        &r,
+    );
+    // A client-result root through a derived case subject: flag = True runs the
+    // task and answers its Ok result.
+    let r = post("CaseOf", &model(true, None));
+    expect(
+        "CaseOf flag=True answers the task result",
+        r.contains("[[\"Ok\""),
+        &r,
+    );
+    // A `Cmd.none` leaf answers "no task ran", never an Err the client would
+    // dispatch as `Got (Err …)`.
+    for (ctor, m) in [
+        ("Gated", model(false, None)),
+        ("Guarded", model(false, None)),
+        ("ByMode", model(false, None)),
+        ("CaseOf", model(false, None)),
+    ] {
+        let r = post(ctor, &m);
+        expect(
+            &format!("{ctor} none leaf answers an empty result, no Err"),
+            r.contains("\"result\":[]") && !r.contains("Err"),
+            &r,
+        );
+    }
+    // The guard rejects (flag = False): Sky.Live keeps `log`. The allow path
+    // writes `log`, the reject path keeps it, so the request must carry it.
+    let r = post("GuardedWrite", &model(false, None));
+    expect(
+        "GuardedWrite rejected keeps the client's log",
+        r.contains("\"log\":\"L\""),
+        &r,
+    );
+    let r = post("Gated", &model(true, None));
+    expect(
+        "Gated flag=True answers the task result",
+        r.contains("[[\"Ok\""),
+        &r,
+    );
+    let r = post("ByMode", &model(false, Some("hi")));
+    expect(
+        "ByMode mode=Just answers the task result",
+        r.contains("[[\"Ok\""),
+        &r,
+    );
+
+    let _ = child.kill();
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(
+        failures.is_empty(),
+        "the split backend diverged from Sky.Live:\n{}",
+        failures.join("\n")
+    );
+}
+
+fn async_leaves_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-async-leaves")
+}
+
+/// Run `sky spa-split <entry> --out <scratch>`: the report (stdout + stderr)
+/// and the output directory. Panics when the split fails.
+fn spa_split_into(entry: &std::path::Path) -> (String, PathBuf) {
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+    let o = Command::new(SKY)
+        .args([
+            "spa-split",
+            entry.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(o.status.success(), "sky spa-split should succeed:\n{log}");
+    (log, out)
+}
+
+/// Every generated client arm whose pattern starts with constructor `ctor`.
+fn frontend_arms_of(front: &str, ctor: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, _) in front.match_indices("\n        ") {
+        let rest = &front[i + 9..];
+        let head = rest.lines().next().unwrap_or("");
+        if head.starts_with(ctor)
+            && (head[ctor.len()..].starts_with(' ') || head[ctor.len()..].is_empty())
+            && head.trim_end().ends_with("->")
+        {
+            let pat = head.trim_end().trim_end_matches("->").trim_end();
+            out.push(frontend_arm(front, pat).to_string());
+        }
+    }
+    out
+}
+
+/// The RPC function a generated client arm calls (`Spa.rpc` / `Spa.rpcHold`).
+fn arm_rpc_kind(arm: &str) -> &'static str {
+    if arm.contains("Spa.rpcHold ") {
+        "hold"
+    } else if arm.contains("Spa.rpc ") {
+        "async"
+    } else {
+        "none"
+    }
+}
+
+/// Sky.Spa (v0.27.9): a server arm whose model write the client can compute
+/// runs ASYNC through `case` / `if` / `let` and helpers, not only as a direct
+/// `( model, cmd )` tuple. The client runs the arm as written, with each command
+/// half that needs the server replaced by the RPC (bound once, `spaRpc_`), and
+/// keeps each `Cmd.none` leaf, so it sends nothing where Sky.Live performs
+/// nothing. Every arm that still holds gets a build note naming it.
+#[test]
+fn async_leaves_run_their_model_write_in_the_client() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (log, out) = spa_split_into(&async_leaves_fixture_dir().join("src/Main.sky"));
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let remote = std::fs::read_to_string(out.join("frontend/src/Remote.sky")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let mut failures: Vec<String> = Vec::new();
+    for ctor in [
+        "CaseWrap",
+        "IfWrap",
+        "Helper id",
+        "HelperPipe id",
+        "HelperTwice",
+        "Nested",
+        "Shadow k",
+        "ElseIf",
+        "Commented",
+        "Untainted",
+        "KeepOnly",
+        "BodyInline",
+        "CrossHelper",
+        "PolyArm",
+        "NoAnno",
+        "AliasAnno",
+        "MultiAnno",
+    ] {
+        let arm = frontend_arm(&front, ctor);
+        if arm.is_empty() {
+            failures.push(format!("client arm `{ctor}` missing"));
+            continue;
+        }
+        if arm_rpc_kind(arm) != "async" || !arm.contains("spaRpc_") {
+            failures.push(format!(
+                "`{ctor}` must be async with the RPC bound once:\n{arm}"
+            ));
+        }
+        if log.contains(&format!("`{ctor}` holds")) {
+            failures.push(format!("`{ctor}` is async but has a hold note"));
+        }
+    }
+    // A `Cmd.none` leaf stays in the client: no request on that branch.
+    for ctor in [
+        "CaseWrap",
+        "IfWrap",
+        "Nested",
+        "ElseIf",
+        "Commented",
+        "Untainted",
+    ] {
+        let arm = frontend_arm(&front, ctor);
+        if !arm.contains("Cmd.none") {
+            failures.push(format!("`{ctor}` must keep its `Cmd.none` leaf:\n{arm}"));
+        }
+    }
+    // The model writes stay as written.
+    let ifwrap = frontend_arm(&front, "IfWrap");
+    if !(ifwrap.contains("{ model | busy = True }") && ifwrap.contains("{ model | log = \"off\" }"))
+    {
+        failures.push(format!("`IfWrap` must keep both model writes:\n{ifwrap}"));
+    }
+    // A helper on the path runs as a client copy that takes the RPC first; one
+    // copy however many arms call it.
+    let copies = front.matches("\nopenItemSpaClient_ spaRpc_ ").count();
+    if copies != 1 {
+        failures.push(format!(
+            "one client copy of `openItem` expected, found {copies}"
+        ));
+    }
+    if !frontend_arm(&front, "HelperPipe id").contains("(openItemSpaClient_ spaRpc_)") {
+        failures.push("`HelperPipe` must call the client copy through the pipe".into());
+    }
+    // A pure helper in tail position is called as it is (no copy).
+    if front.contains("keepHelperSpaClient_") {
+        failures.push("`keepHelper` reaches no server: no client copy".into());
+    }
+    // The cross-module helper is copied into its module's client subset.
+    if !remote.contains("\npickSpaClient_ spaRpc_ ") {
+        failures.push(format!(
+            "Remote's client subset must hold `pickSpaClient_`:\n{remote}"
+        ));
+    }
+    if !frontend_arm(&front, "CrossHelper").contains("(Remote.pickSpaClient_ spaRpc_)") {
+        failures.push("`CrossHelper` must call `Remote.pickSpaClient_`".into());
+    }
+    // A copy's annotation takes the helper's own command type (`Cmd msg` for
+    // a helper polymorphic in its Msg), and is left out for an alias result.
+    if !front.contains("\npolyPickSpaClient_ : Cmd msg -> (Result Error String -> msg) -> Model -> ( Model, Cmd msg )\n") {
+        failures.push("`polyPick`'s copy must take `Cmd msg`".into());
+    }
+    if !front.contains("\nmultiPickSpaClient_ : Cmd Msg -> Int -> Model -> ( Model, Cmd Msg )\n") {
+        failures.push("`multiPick`'s copy must flatten its multi-line annotation".into());
+    }
+    if front.contains("aliasPickSpaClient_ :") || front.contains("noAnnoSpaClient_ :") {
+        failures.push("an alias result or a missing annotation gives the copy none".into());
+    }
+    // An async head whose client made the write applies no write-set.
+    let applied = frontend_arm(&front, "AppliedIfWrap (Ok resp)");
+    if applied.contains("resp.busy") || applied.contains("resp.log") {
+        failures.push(format!("AppliedIfWrap must apply no write-set:\n{applied}"));
+    }
+
+    for ctor in [
+        "ModelTaint",
+        "CondTaint",
+        "Mixed",
+        "LetTask",
+        "Forced",
+        "FarHelper",
+        "Recursive",
+        "ByName",
+        "Wrapped",
+    ] {
+        let arms = frontend_arms_of(&front, ctor);
+        if arms.is_empty() || arms.iter().any(|a| arm_rpc_kind(a) != "hold") {
+            failures.push(format!("`{ctor}` must hold:\n{}", arms.join("\n")));
+        }
+        if !log.contains(&format!("`{ctor}")) || !log.contains("holds later Msgs") {
+            failures.push(format!("`{ctor}` holds: the build must say so and name it"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "async server arms:\n{}\n\n--- report ---\n{log}\n--- frontend ---\n{front}",
+        failures.join("\n")
+    );
+}
+
+fn async_identity_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-async-identity")
+}
+
+/// Sky.Spa: the signed-session identity comes from the signed cookie on the
+/// server, never from the client's model. An arm that branches on it or
+/// writes it holds (the client cannot make the server's write), with a note;
+/// an arm that does not touch it runs async. When the app's guard reads the
+/// identity, the client cannot know whether the guard lets a write happen, so
+/// every arm that writes the model holds.
+#[test]
+fn identity_arms_hold_and_a_guard_on_identity_holds_every_write() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (log, out) = spa_split_into(&async_identity_fixture_dir().join("src/Main.sky"));
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    for ctor in ["LogIn", "IdentityCond", "IdentityWrite"] {
+        let arm = frontend_arm(&front, ctor);
+        assert_eq!(arm_rpc_kind(arm), "hold", "`{ctor}` must hold:\n{arm}");
+        assert!(
+            log.contains(&format!("`{ctor}` holds later Msgs")) && log.contains("signed identity"),
+            "`{ctor}` must have a note naming the identity:\n{log}"
+        );
+    }
+    let plain = frontend_arm(&front, "Plain");
+    assert_eq!(
+        arm_rpc_kind(plain),
+        "async",
+        "`Plain` must be async:\n{plain}"
+    );
+
+    // The same app with a guard that reads the identity.
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&async_identity_fixture_dir(), &proj);
+    let main = proj.join("src/Main.sky");
+    let mut src = std::fs::read_to_string(&main).unwrap();
+    src.push_str(
+        "\n\nspaGuard_ : Msg -> Model -> Result Error ()\nspaGuard_ _ model =\n    case model.session of\n\n        Just _ ->\n            Ok ()\n\n        Nothing ->\n            Ok ()\n",
+    );
+    std::fs::write(&main, src).unwrap();
+    let (log, out) = spa_split_into(&main);
+    let front = std::fs::read_to_string(out.join("frontend/src/Main.sky")).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&proj);
+    let plain = frontend_arm(&front, "Plain");
+    assert_eq!(
+        arm_rpc_kind(plain),
+        "hold",
+        "with a guard on the identity, `Plain` must hold:\n{plain}"
+    );
+    assert!(
+        log.contains("`Plain` holds later Msgs") && log.contains("App.withGuard"),
+        "`Plain` must have a note naming the guard:\n{log}"
+    );
+}
+
+fn async_app_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-async-app")
+}
+
+/// A `Std.App` app whose `update` sits in a sibling module laid out with
+/// two-space indentation: `Pick` (a helper) and `Toggle` (a `case`) run async
+/// under `--target web:app`, and both trees build. The client arms, written at
+/// column 8 in the generated `update`, move right as a block (before v0.27.9
+/// their bodies stayed at column 6 and the generated `update` did not parse).
+#[test]
+#[cfg(unix)]
+fn std_app_sibling_update_two_space_layout_runs_async_and_builds() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !required(Need::Go, have_go()) {
+        return;
+    }
+    let proj = scratch();
+    let _ = std::fs::remove_dir_all(&proj);
+    copy_tree(&async_app_fixture_dir(), &proj);
+    let output = Command::new(SKY)
+        .args(["build", "--target", "web:app", "src/Main.sky"])
+        .current_dir(&proj)
+        .output()
+        .expect("run sky build --target web:app");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let split = if proj.join(".skyapp/web-app/.split").is_dir() {
+        proj.join(".skyapp/web-app/.split")
+    } else {
+        proj.join(".split")
+    };
+    let logic = std::fs::read_to_string(split.join("frontend/src/Logic.sky")).unwrap_or_default();
+    let backend_built = split.join("backend/sky-out/app").is_file();
+    let frontend_built = dist_has_wasm(&split.join("frontend/dist"));
+    let _ = std::fs::remove_dir_all(&proj);
+    assert!(output.status.success(), "web:app build failed:\n{log}");
+    assert!(
+        backend_built && frontend_built,
+        "both trees must build:\n{log}"
+    );
+    for ctor in ["Pick n", "Toggle"] {
+        let arm = frontend_arm(&logic, ctor);
+        assert_eq!(
+            arm_rpc_kind(arm),
+            "async",
+            "`{ctor}` must be async:\n{logic}"
+        );
+    }
+    assert!(
+        logic.contains("\npickSpaClient_ spaRpc_ n model ="),
+        "the helper `pick` must have a client copy:\n{logic}"
+    );
 }

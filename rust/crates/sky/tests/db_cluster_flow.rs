@@ -18,12 +18,21 @@
 //! The tests that need no server (discovery failure, `ps` on an unknown project)
 //! always run.
 
+// Every `sky` verb and the pid impostor run in a `ChildGroup`, which needs
+// unix process groups. (`pg_ctl start` detaches the postmaster with
+// `setsid`, so a cluster a verb starts is not in the verb's group.)
+#![cfg(unix)]
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{gate_if_postgres_cannot_start, required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 // Every cluster test does `sky db start`, which `initdb`s + boots a real
 // PostgreSQL — each grabbing a System V shared-memory segment. Cargo runs a
@@ -200,37 +209,37 @@ impl Fixture {
         let tag = unique("cmd");
         let out_path = std::env::temp_dir().join(format!("{tag}.out"));
         let err_path = std::env::temp_dir().join(format!("{tag}.err"));
-        let mut child = Command::new(SKY)
-            .args(args)
-            .current_dir(&self.project)
-            // An isolated registry: the test must not write to the developer's
-            // own ~/.sky/clusters.json, and must not read clusters it did not create.
-            .env("SKY_HOME", &self.sky_home)
-            .env("SKY_POSTGRES_BIN", &self.pg_bin)
-            // Force the /tmp fallback so the assertion below is about the path
-            // this code derives, not about whatever the CI runner sets.
-            .env_remove("XDG_RUNTIME_DIR")
-            // `Command::output()` nulls stdin for you; `spawn()` INHERITS it, and
-            // a verb that ever reads from a terminal would then block on the
-            // harness's own stdin.
-            .stdin(std::process::Stdio::null())
-            // Files, not pipes: nothing depends on a reader keeping up, and the
-            // partial output survives a timeout.
-            .stdout(std::process::Stdio::from(
-                std::fs::File::create(&out_path).unwrap(),
-            ))
-            .stderr(std::process::Stdio::from(
-                std::fs::File::create(&err_path).unwrap(),
-            ))
-            .spawn()
-            .expect("failed to run sky");
+        let mut child = ChildGroup::spawn(
+            Command::new(SKY)
+                .args(args)
+                .current_dir(&self.project)
+                // An isolated registry: the test must not write to the developer's
+                // own ~/.sky/clusters.json, and must not read clusters it did not create.
+                .env("SKY_HOME", &self.sky_home)
+                .env("SKY_POSTGRES_BIN", &self.pg_bin)
+                // Force the /tmp fallback so the assertion below is about the path
+                // this code derives, not about whatever the CI runner sets.
+                .env_remove("XDG_RUNTIME_DIR")
+                // `Command::output()` nulls stdin for you; `spawn()` INHERITS it, and
+                // a verb that ever reads from a terminal would then block on the
+                // harness's own stdin.
+                .stdin(std::process::Stdio::null())
+                // Files, not pipes: nothing depends on a reader keeping up, and the
+                // partial output survives a timeout.
+                .stdout(std::process::Stdio::from(
+                    std::fs::File::create(&out_path).unwrap(),
+                ))
+                .stderr(std::process::Stdio::from(
+                    std::fs::File::create(&err_path).unwrap(),
+                )),
+        )
+        .expect("failed to run sky");
         let deadline = std::time::Instant::now() + SKY_LIMIT;
         let status = loop {
-            match child.try_wait().unwrap() {
+            match child.child().try_wait().unwrap() {
                 Some(s) => break s,
                 None if std::time::Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    child.kill();
                     panic!(
                         "`sky {}` did not finish within {}s — killed.\n\
                          --- stdout ---\n{}\n--- stderr ---\n{}",
@@ -532,12 +541,15 @@ fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
     // stdio nulled: the `sleep` grandchild would otherwise inherit the test
     // harness's captured stdout and hold it open for its whole lifetime, which
     // stalls the run long after this test has finished.
-    let mut helper = Command::new(&helper_bin)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    // A `ChildGroup`: the impostor and its `sleep` child end with the test on
+    // every path, a failed assertion below included.
+    let mut helper = ChildGroup::spawn(
+        Command::new(&helper_bin)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
     let helper_pid = helper.id();
     // The fixture is only a fixture while the impostor is ALIVE and wears a name
     // a substring test would fall for. Both are asserted, because either one
@@ -598,13 +610,10 @@ fn a_recycled_pid_in_a_stale_pidfile_does_not_wedge_the_next_start() {
     assert_ne!(new_pid, helper_pid as i32);
 
     let _ = fx.sky(&["db", "stop"]);
-    // The impostor's own `sleep` child too — scoped to this test's pid, never a
-    // pattern that could reach another agent's or another test's processes.
-    let _ = Command::new("pkill")
-        .args(["-P", &helper_pid.to_string()])
-        .status();
-    let _ = helper.kill();
-    let _ = helper.wait();
+    // The impostor and its own `sleep` child: one SIGKILL to its process group,
+    // never a pattern that could reach another agent's or another test's
+    // processes.
+    helper.kill();
     let _ = std::fs::remove_dir_all(helper_bin.parent().unwrap());
 }
 

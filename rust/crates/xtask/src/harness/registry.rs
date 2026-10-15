@@ -373,6 +373,48 @@ pub static GATES: &[Gate] = &[
                     to: "format!(\"{sep}{f} = base.{f}\")",
                 },
             },
+            Mutation {
+                id: "spa-diff-fuzz.condition-read-dropped",
+                description: "make the read-set walk skip every `if` condition; \
+                              spa-readset-noneleaf's `Gated` request then drops `flag`, the \
+                              split server rebuilds it from `init ()` and takes the `Cmd.none` \
+                              leaf where the direct update performs, so the leaf/command \
+                              comparison must go red (a read that decides the branch, with the \
+                              model write unchanged)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_partition.rs",
+                    from: "go!(*cond, false);",
+                    to: "let _ = cond;",
+                },
+            },
+            Mutation {
+                id: "spa-diff-fuzz.async-arm-drops-write",
+                description: "make the client copy of a planned async arm return `( model, rpc )` \
+                              instead of the arm as written; the split applies no server \
+                              write-set for such an arm, so its write is lost. The client-leg \
+                              model comparison (spa-readset-noneleaf's `AliasCond`, \
+                              spa-async-leaves' `IfWrap`, …) must go red",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_split.rs",
+                    from: "let planned_arm: &str = body;",
+                    to: "let planned_arm: &str = &format!(\"( {model_param}, spaRpc_ ){}\", &body[..0]);",
+                },
+            },
+            Mutation {
+                id: "spa-diff-fuzz.async-arm-sends-on-keep",
+                description: "make the client plan treat a `Cmd.none` leaf as one that needs the \
+                              server; the client copy of a planned arm (spa-readset-noneleaf's \
+                              `Destructured`, spa-async-leaves' `IfWrap`, …) then sends the \
+                              request where the direct update's command is `Cmd.none`, so the \
+                              client-leg send comparison must go red (Sky.Live sends nothing \
+                              there; this replaces the v0.27.9 none-leaf-sends-rpc mutation, \
+                              whose emitter the planned arm subsumes)",
+                kind: MutationKind::ReplaceOnce {
+                    path: "rust/crates/project/src/spa_partition.rs",
+                    from: "if !matches!(leaves.as_slice(), [CmdLeaf::NoneCmd]) {",
+                    to: "if !matches!(leaves.as_slice(), [CmdLeaf::Unresolvable]) {",
+                },
+            },
         ]),
         body: bodies::spa_diff_fuzz,
     },

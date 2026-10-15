@@ -520,10 +520,12 @@ the inline form `main = App.run (App.app { … } |> …)`, and any import spelli
 builder step is either carried into the client build (`withRoutes`,
 `withNotFound`, `withHead`, `withOnNavigate`, `withRequest`, `withGuard`,
 `withRpcError`, and `withClientCrypto`, which keeps end-to-end keys on the
-device: `docs/skyspa/client-crypto.md`), read by the build for the native shell
+device: `docs/skyspa/client-crypto.md`), applied by the backend at boot
+(`withConfig` and `withBase`: the session store, TTL, CSRF switch, log, database
+and telemetry the code names, operator env > code > default, see
+`docs/skyspa/auto-split.md` §25), read by the build for the native shell
 (`withAppUrl`, see below), or listed in a build warning as not applying to a client
-(`withConfig`, `withInput`, `withWindow`, `withOnKey`, `withBase`,
-`withDurable`, `withDurableId`). Anything else fails the build with an error
+(`withInput`, `withWindow`, `withOnKey`, `withDurable`, `withDurableId`). Anything else fails the build with an error
 that names it: an unknown builder, a function from another module applied to the
 app, or a builder argument that uses a local of the code building the app (the
 client build places that argument at top level). A guard is never dropped

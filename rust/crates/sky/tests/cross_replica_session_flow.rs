@@ -49,14 +49,22 @@
 //! (naming what to install) rather than skipping — `SKY_LIVE_TESTS=skip` is the
 //! one documented opt-out (see `live_gate.rs`).
 
+// Replicas and commands run in a `ChildGroup`, which needs unix process
+// groups.
+#![cfg(unix)]
+
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{gate_if_postgres_cannot_start, required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -336,20 +344,21 @@ impl App {
     fn launch_replica(&self, tag: &str, port: u16, dsn: &str) -> Replica {
         let log_path = std::env::temp_dir().join(unique(&format!("xr-{tag}")));
         let log = std::fs::File::create(&log_path).unwrap();
-        let child = Command::new(&self.app_bin)
-            .current_dir(&self.project)
-            .env("SKY_LIVE_PORT", port.to_string())
-            .env("SKY_LIVE_STORE", "postgres")
-            .env("SKY_LIVE_STORE_PATH", dsn)
-            // Belt to the SKY_LIVE_STORE_PATH braces: an inherited DSN must not
-            // be mistaken for a second source of truth.
-            .env_remove("DATABASE_URL")
-            .env_remove("SKY_DB_PATH")
-            .stdin(Stdio::null())
-            .stdout(log.try_clone().unwrap())
-            .stderr(log)
-            .spawn()
-            .unwrap_or_else(|e| panic!("failed to spawn replica {tag} on :{port}: {e}"));
+        let child = ChildGroup::spawn(
+            Command::new(&self.app_bin)
+                .current_dir(&self.project)
+                .env("SKY_LIVE_PORT", port.to_string())
+                .env("SKY_LIVE_STORE", "postgres")
+                .env("SKY_LIVE_STORE_PATH", dsn)
+                // Belt to the SKY_LIVE_STORE_PATH braces: an inherited DSN must not
+                // be mistaken for a second source of truth.
+                .env_remove("DATABASE_URL")
+                .env_remove("SKY_DB_PATH")
+                .stdin(Stdio::null())
+                .stdout(log.try_clone().unwrap())
+                .stderr(log),
+        )
+        .unwrap_or_else(|e| panic!("failed to spawn replica {tag} on :{port}: {e}"));
         let mut r = Replica {
             child,
             port,
@@ -382,7 +391,7 @@ impl Drop for App {
 }
 
 struct Replica {
-    child: Child,
+    child: ChildGroup,
     port: u16,
     log_path: PathBuf,
 }
@@ -395,7 +404,7 @@ impl Replica {
     fn wait_for_log(&mut self, needle: &str, tries: u32) -> bool {
         for _ in 0..tries {
             // A replica that died is never going to print the line.
-            if let Ok(Some(status)) = self.child.try_wait() {
+            if let Ok(Some(status)) = self.child.child().try_wait() {
                 panic!(
                     "replica on :{} exited early ({status}) before logging {needle:?}\nlog:\n{}",
                     self.port,
@@ -419,8 +428,8 @@ impl Replica {
 
 impl Drop for Replica {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // The whole group, not one pid: anything the replica started goes too.
+        self.child.kill();
         let _ = std::fs::remove_file(&self.log_path);
     }
 }
@@ -435,19 +444,20 @@ impl Drop for Replica {
 fn run_bounded(cmd: &mut Command, what: &str) -> Output {
     let out_path = std::env::temp_dir().join(unique("xr-cmd-out"));
     let err_path = std::env::temp_dir().join(unique("xr-cmd-err"));
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
-        .spawn()
-        .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
+    // A group of its own: the timeout kill, and Drop on any panic, reach the
+    // descendants that outlive the command too.
+    let mut child = ChildGroup::spawn(
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+            .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap())),
+    )
+    .unwrap_or_else(|e| panic!("failed to run `{what}`: {e}"));
     let deadline = Instant::now() + SKY_LIMIT;
     let status = loop {
-        match child.try_wait().unwrap() {
+        match child.child().try_wait().unwrap() {
             Some(s) => break s,
             None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                child.kill();
                 panic!(
                     "`{what}` did not finish within {}s — killed.\n--- stdout ---\n{}\n--- stderr ---\n{}",
                     SKY_LIMIT.as_secs(),

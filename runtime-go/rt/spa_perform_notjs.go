@@ -9,9 +9,9 @@ package rt
 // The generated backend RPC handler (rust/crates/project/src/spa_split.rs
 // gen_backend) runs the app's own `update` for the triggering Msg, then hands the
 // returned command here. This kernel finds the single server `perform` leaf, RUNS
-// its task server-side, and returns the task RESULT (`Result Error a`) — which the
-// RPC answers with, so the wasm CLIENT can dispatch `ResultMsg result` through the
-// client `update`. The server task NEVER crosses to the client; only its typed
+// its task server-side, and returns the task RESULT (`[ Result Error a ]`, or `[]`
+// when the command ran no task) — which the RPC answers with, so the wasm CLIENT
+// can dispatch `ResultMsg result` through the client `update`. The server task NEVER crosses to the client; only its typed
 // result does. It references this as `Ffi.kernel "Spa_runServerPerform"`.
 //
 // It is the pattern-2 complement of Spa_settleServerChain (spa_chain_notjs.go):
@@ -21,10 +21,17 @@ package rt
 
 // Spa_runServerPerform is the `Ffi.kernel "Spa_runServerPerform"` alias the
 // generated backend calls: `spaRunPerform_ cmd`. It walks `cmd` (a `cmdT` tree),
-// runs the FIRST server `perform` leaf's task, and returns its `Result` value. A
-// `batch` is searched; `none` / `publish` leaves are skipped. When no runnable
-// perform is present (the auto-split analysis guarantees exactly one — this is
-// defensive), it returns a classified `Err` rather than a malformed value.
+// runs the FIRST server `perform` leaf's task, and returns its `Result` value as
+// a one-element list. A `batch` is searched; `none` / `publish` leaves are
+// skipped.
+//
+// When the command holds no runnable perform it returns the EMPTY list. That is
+// an ordinary answer, not a failure: the branch took a path whose command is
+// `Cmd.none` (`if model.flag then ( model, Cmd.perform t Got ) else ( model,
+// Cmd.none )`, or a guard helper's reject path). Sky.Live dispatches nothing
+// there, and the generated client maps `[]` to `( model, Cmd.none )`. Before
+// this it answered `Err "…carried no server task to run"`, which the client
+// dispatched as `Got (Err …)`: a failure the app never had.
 func Spa_runServerPerform(cmd any) any {
 	queue := []any{cmd}
 	for len(queue) > 0 {
@@ -42,11 +49,11 @@ func Spa_runServerPerform(cmd any) any {
 			// directly — the same first step spaChainSettle / spaSsrSettle take,
 			// but WITHOUT mapping it back through a toMsg + update: the client does
 			// that with the returned result.
-			return sky_call(ct.task, nil)
+			return []any{sky_call(ct.task, nil)}
 		default:
 			// "none" / "publish" / "publishNoEcho" / unrecognised — not a runnable
 			// server task; keep draining the queue.
 		}
 	}
-	return Err[any, any](makeError(2, "Ffi", "spaRunServerPerform: the branch's command carried no server task to run"))
+	return []any{}
 }

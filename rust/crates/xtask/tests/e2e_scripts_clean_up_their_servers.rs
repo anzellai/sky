@@ -377,6 +377,84 @@ fn the_guard_kills_the_child_on_every_exit_path() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The guard asks before it kills: SIGTERM, a bounded grace, then SIGKILL. A
+/// Sky app started by a verifier (a browser verifier's backend) ends the
+/// engine it started on SIGTERM; a bare SIGKILL left that engine running
+/// under pid 1. The child here plays the app: it starts a grandchild and ends
+/// it on SIGTERM. Before the fix the guard sent SIGKILL at once, the trap
+/// never ran, and the grandchild survived.
+#[test]
+fn the_guard_lets_the_child_end_its_own_children() {
+    if !required(Need::Node, node_on_path()) {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "sky-child-guard-term-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let guard = repo().join(GUARD).canonicalize().unwrap();
+    let grand_file = dir.join("grandchild.pid");
+    let script = format!(
+        "sleep 300 & g=$!; echo $g > {:?}; trap 'kill $g; exit 0' TERM; wait $g",
+        grand_file.to_string_lossy()
+    );
+    let prog = dir.join("parent-term.mjs");
+    std::fs::write(
+        &prog,
+        format!(
+            "import {{ spawn }} from \"node:child_process\";\n\
+             import {{ existsSync }} from \"node:fs\";\n\
+             import {{ guardChild }} from {:?};\n\
+             const c = guardChild(spawn(\"/bin/sh\", [\"-c\", {:?}]));\n\
+             const t = setInterval(() => {{ if (existsSync({:?})) {{ clearInterval(t); \
+             console.log(c.pid); setTimeout(() => {{ throw new Error(\"boom\"); }}, 100); }} }}, 20);\n",
+            guard.to_string_lossy(),
+            script,
+            grand_file.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let mut parent = Command::new("node")
+        .arg(&prog)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn node");
+    let mut line = String::new();
+    {
+        use std::io::BufRead;
+        let out = parent.stdout.take().unwrap();
+        std::io::BufReader::new(out).read_line(&mut line).unwrap();
+    }
+    let _ = parent.wait();
+    let child: u32 = line.trim().parse().expect("child pid");
+    let grandchild: u32 = std::fs::read_to_string(&grand_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .expect("grandchild pid");
+    let child_gone = wait_gone(child);
+    let grandchild_gone = wait_gone(grandchild);
+    for pid in [child, grandchild] {
+        if alive(pid) {
+            let _ = Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .status();
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(child_gone, "the guarded child outlived its parent");
+    assert!(
+        grandchild_gone,
+        "the guarded child's own child survived: the guard killed before it asked"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // A verifier that hits an error ENDS, and an e2e script bounds every verifier.
 //

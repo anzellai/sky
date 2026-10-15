@@ -193,9 +193,14 @@ client (`web:app` and the other client targets) holds its own socket over the
 browser WebSocket API: `WebSocket.connect "/ws"` runs in the client and is
 same-origin (it passes `connect-src 'self'`); serve it with `App.api "GET /ws"`
 and `Ws.upgrade`. A Sky.Spa client runs every Msg once, in arrival order, and
-several server RPCs can be in flight together; an arm whose model write needs
-server data holds later Msgs until it answers (`docs/skyspa/overview.md`, "Msg
-order and server calls").
+several server RPCs can be in flight together. A server arm whose model write
+reads no server data runs async: the client makes that write when the Msg
+runs, also through `case` / `if` / `let` and top-level helpers called with all
+their arguments, and a `Cmd.none` branch sends no request and dispatches
+nothing, as on Sky.Live. An arm whose model write needs server data (or reads
+the signed session) holds later Msgs until it answers; the build prints a
+`holds later Msgs` note naming each such arm and the change that makes it
+async (`docs/skyspa/overview.md`, "Msg order and server calls").
 The client re-sends a transiently failing request by itself (no answer, a
 30 s timeout, 408 / 425 / 429 / 502 / 503 / 504; full-jitter backoff, `Retry-After`
 wins, in failure order, 8 attempts or 60 s), shows a quiet "Reconnecting…" only

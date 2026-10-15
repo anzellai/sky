@@ -19,16 +19,18 @@
 //! early-return with a note rather than failing, matching `db_cluster_flow.rs`
 //! and `db_flow.rs`.
 
-use std::io::Write;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{gate_if_postgres_cannot_start, required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -258,27 +260,26 @@ impl Fixture {
         let tag = unique("cmd");
         let out_path = self.logs.join(format!("{tag}.out"));
         let err_path = self.logs.join(format!("{tag}.err"));
-        let mut child = self
-            .cmd(args)
-            // `Command::output()` nulls stdin for you; `spawn()` INHERITS it.
-            // Keeping the null is not tidiness — a verb that ever reads from a
-            // terminal would otherwise block on the harness's own stdin, and
-            // that is a hang with no output at all to explain itself.
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-            .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
-            // Its own group, so a timeout can take down the tree rather than
-            // just the process that happens to be holding the handle.
-            .process_group(0)
-            .spawn()
-            .expect("failed to spawn sky");
+        // A `ChildGroup`: its own process group, so a timeout (and Drop, on
+        // any panic) takes down the tree rather than just the process that
+        // happens to be holding the handle.
+        let mut child = ChildGroup::spawn(
+            self.cmd(args)
+                // `Command::output()` nulls stdin for you; `spawn()` INHERITS it.
+                // Keeping the null is not tidiness — a verb that ever reads from a
+                // terminal would otherwise block on the harness's own stdin, and
+                // that is a hang with no output at all to explain itself.
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+                .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap())),
+        )
+        .expect("failed to spawn sky");
         let deadline = Instant::now() + limit;
         let status = loop {
-            match child.try_wait().unwrap() {
+            match child.child().try_wait().unwrap() {
                 Some(s) => break s,
                 None if Instant::now() >= deadline => {
-                    kill_process_group(child.id() as i32);
-                    let _ = child.wait();
+                    child.kill();
                     panic!(
                         "`sky {}` did not finish within {}s — killed.\n\
                          --- stdout ---\n{}\n--- stderr ---\n{}",
@@ -308,14 +309,13 @@ impl Fixture {
         let log = self.logs.join(format!("{name}.log"));
         let file = std::fs::File::create(&log).unwrap();
         let err = file.try_clone().unwrap();
-        let child = self
-            .cmd(&["run", "src/Main.sky"])
-            .env("SKY_P4_HOLD", hold_ms.to_string())
-            .stdout(Stdio::from(file))
-            .stderr(Stdio::from(err))
-            .process_group(0)
-            .spawn()
-            .expect("failed to spawn sky run");
+        let child = ChildGroup::spawn(
+            self.cmd(&["run", "src/Main.sky"])
+                .env("SKY_P4_HOLD", hold_ms.to_string())
+                .stdout(Stdio::from(file))
+                .stderr(Stdio::from(err)),
+        )
+        .expect("failed to spawn sky run");
         Run { child, log }
     }
 
@@ -325,14 +325,13 @@ impl Fixture {
         let log = self.logs.join(format!("{name}.log"));
         let file = std::fs::File::create(&log).unwrap();
         let err = file.try_clone().unwrap();
-        let child = self
-            .cmd(&["watch", "src/Main.sky"])
-            .env("SKY_P4_HOLD", hold_ms.to_string())
-            .stdout(Stdio::from(file))
-            .stderr(Stdio::from(err))
-            .process_group(0)
-            .spawn()
-            .expect("failed to spawn sky watch");
+        let child = ChildGroup::spawn(
+            self.cmd(&["watch", "src/Main.sky"])
+                .env("SKY_P4_HOLD", hold_ms.to_string())
+                .stdout(Stdio::from(file))
+                .stderr(Stdio::from(err)),
+        )
+        .expect("failed to spawn sky watch");
         Run { child, log }
     }
 
@@ -384,7 +383,7 @@ impl Drop for Fixture {
 
 /// A backgrounded `sky run`, plus the file its output is going to.
 struct Run {
-    child: Child,
+    child: ChildGroup,
     log: PathBuf,
 }
 
@@ -425,7 +424,7 @@ impl Run {
             if gate_if_postgres_cannot_start(&out) {
                 return false;
             }
-            if self.child.try_wait().unwrap().is_some() {
+            if self.child.child().try_wait().unwrap().is_some() {
                 panic!("{what} exited before it connected to the cluster. Its output:\n{out}");
             }
             assert!(
@@ -439,7 +438,7 @@ impl Run {
     fn wait_for_exit(&mut self, what: &str) -> std::process::ExitStatus {
         let deadline = Instant::now() + Duration::from_secs(180);
         loop {
-            match self.child.try_wait().unwrap() {
+            match self.child.child().try_wait().unwrap() {
                 Some(s) => return s,
                 None => {
                     assert!(
@@ -454,40 +453,15 @@ impl Run {
     }
 
     fn is_running(&mut self) -> bool {
-        self.child.try_wait().unwrap().is_none()
+        self.child.child().try_wait().unwrap().is_none()
     }
 
-    /// Take down the whole tree — `sky run` and the app it spawned.
+    /// Take down the whole tree — `sky run` and the app it spawned — with one
+    /// SIGKILL to its process group, and reap it. No release runs. The group
+    /// id cannot be recycled first: `ChildGroup`'s reaper is a member of the
+    /// group until this returns.
     fn kill_group(&mut self) {
-        if self.child.try_wait().map(|s| s.is_some()).unwrap_or(true) {
-            // Already reaped. Signalling the group now could reach a recycled
-            // pgid, which is a worse outcome than leaving it alone.
-            return;
-        }
-        kill_process_group(self.child.id() as i32);
-        // BOUNDED. Reaping a process we have just SIGKILLed is immediate, so
-        // this loop is normally one iteration — but `sky watch` never exits on
-        // its own, and an unbounded `wait()` on a process that (for whatever
-        // reason) was not signalled is an unbounded TEST. Give up loudly rather
-        // than hold the harness open: this runs from `Drop` too, where a panic
-        // during unwinding would abort the process.
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) | Err(_) => return,
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = writeln!(
-                        std::io::stderr(),
-                        "warning: pid {} outlived a SIGKILL to its process group",
-                        self.child.id()
-                    );
-                    let _ = self.child.kill();
-                    let _ = self.child.try_wait();
-                    return;
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            }
-        }
+        self.child.kill();
     }
 }
 
@@ -499,24 +473,6 @@ impl Drop for Run {
     fn drop(&mut self) {
         self.kill_group();
     }
-}
-
-/// SIGKILL an entire process group, without shelling out.
-///
-/// The `kill` this used to spawn is a BINARY, resolved on PATH: procps-ng on
-/// Linux, BSD kill on macOS, and on a slim image not present at all. Its spawn
-/// error was discarded, so "there is no kill binary here" and "the group is
-/// dead" were the same observation — followed by a `wait()` on a process that
-/// had never been signalled. One `kill(2)`, no PATH, no package set, and the
-/// two implementations cannot disagree about what a negative pid means.
-fn kill_process_group(pid: i32) {
-    if pid <= 0 {
-        return;
-    }
-    let _ = nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(-pid),
-        nix::sys::signal::Signal::SIGKILL,
-    );
 }
 
 fn pid_alive(pid: i32) -> bool {

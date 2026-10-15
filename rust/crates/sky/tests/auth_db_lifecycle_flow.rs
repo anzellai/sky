@@ -49,7 +49,6 @@
 //! (naming what to install) rather than skipping — `SKY_LIVE_TESTS=skip` is the
 //! one documented opt-out.
 
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -57,6 +56,10 @@ use std::time::{Duration, Instant};
 #[path = "../src/live_gate.rs"]
 mod live_gate;
 use live_gate::{required, Need};
+
+#[path = "support/child_group.rs"]
+mod child_group;
+use child_group::ChildGroup;
 
 const SKY: &str = env!("CARGO_BIN_EXE_sky");
 
@@ -492,32 +495,29 @@ impl Fixture {
     fn run(&self) -> Output {
         let out_path = self.logs.join("run.out");
         let err_path = self.logs.join("run.err");
-        let mut child = Command::new(SKY)
-            .args(["run", "src/Main.sky"])
-            .current_dir(&self.project)
-            .env("SKY_HOME", &self.sky_home)
-            .env("SKY_POSTGRES_BIN", &self.pg_bin)
-            .env_remove("XDG_RUNTIME_DIR")
-            // An inherited DSN would be read as the ambiguity `embedded` refuses.
-            .env_remove("SKY_DB_PATH")
-            .env_remove("DATABASE_URL")
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-            .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
-            .process_group(0)
-            .spawn()
-            .expect("failed to spawn sky run");
+        // `ChildGroup` runs it in a process group of its own, so the timeout
+        // kill (and Drop, on any panic) reaches the cluster + app it spawned.
+        let mut child = ChildGroup::spawn(
+            Command::new(SKY)
+                .args(["run", "src/Main.sky"])
+                .current_dir(&self.project)
+                .env("SKY_HOME", &self.sky_home)
+                .env("SKY_POSTGRES_BIN", &self.pg_bin)
+                .env_remove("XDG_RUNTIME_DIR")
+                // An inherited DSN would be read as the ambiguity `embedded` refuses.
+                .env_remove("SKY_DB_PATH")
+                .env_remove("DATABASE_URL")
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
+                .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap())),
+        )
+        .expect("failed to spawn sky run");
         let deadline = Instant::now() + RUN_LIMIT;
         let status = loop {
-            match child.try_wait().unwrap() {
+            match child.child().try_wait().unwrap() {
                 Some(s) => break s,
                 None if Instant::now() >= deadline => {
-                    let pid = child.id() as i32;
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(-pid),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
-                    let _ = child.wait();
+                    child.kill();
                     panic!(
                         "`sky run` did not finish within {}s — killed.\n\
                          --- stdout ---\n{}\n--- stderr ---\n{}",

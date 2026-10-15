@@ -1414,6 +1414,9 @@ mod incremental_tests {
         let both = [
             mk("spa-diff-fuzz.drop-msgarg-rename", true),
             mk("spa-diff-fuzz.drop-read-field", true),
+            mk("spa-diff-fuzz.condition-read-dropped", true),
+            mk("spa-diff-fuzz.async-arm-drops-write", true),
+            mk("spa-diff-fuzz.async-arm-sends-on-keep", true),
         ];
         Proofs::record(&root, &both, &digests).unwrap();
         let after = Proofs::load(&root);
