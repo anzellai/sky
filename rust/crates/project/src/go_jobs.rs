@@ -13,9 +13,13 @@
 //!   else an ordinary package. It is the larger of the estimate from
 //!   `skyffi`'s size, [`OTHER_COMPILE_BYTES`], and the largest dependency peak
 //!   MEASURED on this project ([`DEP_PEAK_RECORD`]).
-//! * Every other compile beside it is counted at [`OTHER_COMPILE_BYTES`] (the
-//!   largest measured: stripe-go 648 MB, `sky-app/rt` 594 MB,
-//!   `modernc.org/sqlite/lib` 557 MB; go1.26.1, darwin/arm64).
+//! * Every other compile beside it is counted at [`TYPICAL_COMPILE_BYTES`].
+//!   Measured with every compile and link process sampled at Go's default
+//!   `-p 8` on a cold cache: examples/09-live-counter peaked at 1.32 GB in
+//!   total (its largest single compile ~0.6 GB, so ~0.1 GB per other slot),
+//!   examples/13-skyshop at 4.13 GB (its 4.06 GB `skyffi` and almost nothing
+//!   beside it: the dependency graph leaves few compiles running next to the
+//!   big packages). go1.26.1, darwin/arm64.
 //! * `-p n`: the largest dependency plus `n - 1` others fit in the available
 //!   memory less a 1 GB reserve. When one per CPU fits, Go keeps its default.
 //! * `SKY_GO_BUILD_JOBS=<n>` (or `sky build --go-jobs <n>`) sets `-p <n>`;
@@ -74,10 +78,14 @@ const ESTIMATE_BASE_BYTES: u64 = 500 << 20;
 /// `main.go` peaked at 2.2 GB (500 MB + 2.53 MB × 700 = 2.2 GB).
 const ESTIMATE_BYTES_PER_GO_BYTE: u64 = 700;
 
-/// A dependency compile other than the largest: the largest measured
-/// (stripe-go 648 MB, `sky-app/rt` 594 MB, `modernc.org/sqlite/lib` 557 MB),
-/// rounded up.
+/// The floor for the largest dependency compile: the largest ordinary one
+/// measured (stripe-go 648 MB, `sky-app/rt` 594 MB, `modernc.org/sqlite/lib`
+/// 557 MB), rounded up.
 pub const OTHER_COMPILE_BYTES: u64 = 700 << 20;
+
+/// Each compile running beside the largest one: 2.5 times the measured
+/// average (~0.1 GB per slot at `-p 8`, see the module docs).
+pub const TYPICAL_COMPILE_BYTES: u64 = 250 << 20;
 
 /// Peak bytes per byte of generated `skyffi` Go: 13.9 MB compiled in 4.06 GB
 /// ((4.06 GB - 500 MB) / 13.9 MB ≈ 270).
@@ -132,7 +140,7 @@ pub fn compiles_that_fit(room: u64, largest: u64) -> usize {
     if room <= largest {
         return 1;
     }
-    1 + ((room - largest) / OTHER_COMPILE_BYTES.max(1)) as usize
+    1 + ((room - largest) / TYPICAL_COMPILE_BYTES.max(1)) as usize
 }
 
 /// The decision, from its inputs. Pure, so every branch is unit-tested.
@@ -178,7 +186,7 @@ pub fn decide(
         gib(avail),
         gib(largest),
         n - 1,
-        gib(OTHER_COMPILE_BYTES),
+        gib(TYPICAL_COMPILE_BYTES),
         gib(RESERVE_BYTES)
     );
     if n >= cpus {
@@ -340,7 +348,7 @@ mod tests {
     fn a_large_main_alone_keeps_gos_default() {
         // The 5.6 GB `main` compile of the pre-v0.25.18 target app, 12 GB
         // available, 8 CPUs. `main` compiles alone, so it does not size -p:
-        // 11 GB holds the largest dependency (0.7 GB) + 15 others. Before
+        // 11 GB holds the largest dependency (0.7 GB) + 42 others. Before
         // v0.27.9 `-p` was sized by that `main` and gave -p 1.
         let (largest, why) = largest_dep_peak(None, 0);
         let j = decide(None, largest, why, Some(12 * GB), 8).unwrap();
@@ -355,9 +363,9 @@ mod tests {
         assert!((3900 * MB..4200 * MB).contains(&est), "{est}");
         let (largest, why) = largest_dep_peak(None, est);
         assert_eq!(why, "(estimated from skyffi)");
-        // 8 GB available: 7 GB room - ~4.1 GB leaves 4 others → -p 5 of 8.
-        let j = decide(None, largest, why, Some(8 * GB), 8).unwrap();
-        assert_eq!(j.jobs, Some(5), "{j:?}");
+        // 6 GB available: 5 GB room - ~4.1 GB leaves 3 others → -p 4 of 8.
+        let j = decide(None, largest, why, Some(6 * GB), 8).unwrap();
+        assert_eq!(j.jobs, Some(4), "{j:?}");
         // Plenty of memory: default.
         assert_eq!(
             decide(None, largest, why, Some(32 * GB), 8).unwrap().jobs,
@@ -430,9 +438,9 @@ mod tests {
         std::fs::write(d.join("main.go"), vec![b'x'; 3 << 20]).unwrap();
         let j = plan_with(&d, None, "", Some(9 * GB), 8).unwrap();
         assert_eq!(j.jobs, None, "{j:?}");
-        // A measured dependency peak does count: 5 GB room - 3 GB = 2 others.
+        // A measured dependency peak does count: 3.5 GB room - 3 GB = 2 others.
         crate::memory::record_peak(&d.join(DEP_PEAK_RECORD), 3 * GB);
-        let j = plan_with(&d, None, "", Some(6 * GB), 8).unwrap();
+        let j = plan_with(&d, None, "", Some(4608 * MB), 8).unwrap();
         assert_eq!(j.jobs, Some(3), "{j:?}");
         let _ = std::fs::remove_dir_all(&d);
     }

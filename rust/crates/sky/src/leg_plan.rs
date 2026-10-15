@@ -257,15 +257,15 @@ mod tests {
         assert!(p.parallel, "{p:?}");
         assert!(p.reason.starts_with("parallel ("), "{p:?}");
         // 10 GB - 1 GB - 1.4 GB leaves 7.6 GB; half is 3.8 GB, which holds a
-        // 0.7 GB dependency compile + 4 others: -p 5 per leg.
-        assert_eq!(p.go_jobs, Some(5), "{p:?}");
-        assert!(p.reason.contains("go build -p 5 per leg"), "{p:?}");
-        // Exactly at the line is still parallel, with one compile per leg:
-        // what is left beside the backend's 2.2 GB `main` holds one.
+        // 0.7 GB dependency compile + 12 others: Go's default per leg.
+        assert_eq!(p.go_jobs, None, "{p:?}");
+        // Exactly at the line is still parallel: what is left beside the
+        // backend's 2.2 GB `main` (1.1 GB) holds the 0.7 GB compile + 1 other.
         let at = b.total() + f.total() + RESERVE_BYTES;
         let p = decide(false, false, b, f, "", Some(at), 8);
         assert!(p.parallel);
-        assert_eq!(p.go_jobs, Some(1));
+        assert_eq!(p.go_jobs, Some(2));
+        assert!(p.reason.contains("go build -p 2 per leg"), "{p:?}");
         // Plenty of memory: one compile per CPU fits, so Go keeps its default.
         let p = decide(false, false, b, f, "", Some(64 * GB), 8);
         assert_eq!((p.parallel, p.go_jobs), (true, None), "{p:?}");

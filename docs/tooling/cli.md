@@ -192,8 +192,9 @@ beside one another. So `sky build` sizes `-p` from the dependency compiles: the
 largest one (the generated `sky-out/skyffi` package for a project with large Go
 FFI bindings, estimated from its size, else about 0.7 GB, or the largest
 dependency peak measured on an earlier build of the project,
-`sky-out/.sky-go-dep-peak-bytes`) plus as many others of about 0.7 GB each as
-the available memory holds after the 1 GB reserve. When that is one per CPU, Go
+`sky-out/.sky-go-dep-peak-bytes`) plus as many others of about 0.25 GB each as
+the available memory holds after the 1 GB reserve (measured at Go's default
+`-p 8`, the compiles beside the largest one average about 0.1 GB). When that is one per CPU, Go
 keeps its default. A build records a dependency peak only when its dependencies
 compiled and its `main` did not (Go's action graph says which ran), so a cache
 hit or a `main` compile never sets it. Unknown memory builds one package at a
