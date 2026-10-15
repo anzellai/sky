@@ -135,6 +135,18 @@ variants in `dist/` are cached by the SHA-256 of the file they compress (in
 when the wasm bytes change. `sky run` does not write them at all: its backend
 serves the bundle itself and compresses on the fly.
 
+A new directory reuses the cache too. Every `go build` Sky runs passes
+`-trimpath`, so a compiled package's cache key does not include the directory
+it was compiled in: the same program in a new checkout, a CI runner's workspace,
+each leg of a client build, or a desktop shell compiles no package again. One
+effect on the built app: a panic stack trace names files by module path
+(`sky-app/main.go`, `sky-app/rt/live.go`) instead of the build machine's
+absolute path. Function names and line numbers are unchanged, and a `go build`
+error still names `./main.go:LINE:COL`. `--no-trimpath` (or
+`SKY_GO_TRIMPATH=0`) builds without it. `sky run --profile` builds without it on
+its own, because `pprof -list` / `pprof -http` source views and Delve find the
+sources by the absolute paths in the binary.
+
 Serial or parallel legs. A leg needs its own `sky` process (which stays in
 memory while its `go build` runs) plus its largest Go compile. The backend and
 frontend legs of a client build run in parallel only when the machine's

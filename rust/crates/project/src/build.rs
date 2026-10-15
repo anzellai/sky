@@ -1263,22 +1263,18 @@ struct GoBuildOutcome {
 /// has full reflect, so no de-reflection is needed; the bundle is larger but runs
 /// in any browser / WKWebView / Android WebView.
 fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
-    // `-ldflags=-s -w` strips the symbol table (`-s`) and DWARF (`-w`). A
-    // browser never reads either, and for GOARCH=wasm they are pure download
-    // weight — the client is delivered over the wire, so this is the one target
-    // where stripping is unambiguously right. (Passed as a SINGLE argv element
-    // so `-s -w` is the flag VALUE, not two separate build flags.)
-    let mut cmd = Command::new("go");
-    cmd.current_dir(out_dir)
-        .env("GOOS", "js")
-        .env("GOARCH", "wasm")
-        .arg("build")
-        .args(jobs)
-        .args(["-ldflags=-s -w", "-o", "main.wasm", "."]);
-    // Same isolated, bounded Sky build cache as the native build. The wasm build
-    // is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm), so it never shared the
-    // constrained-HOME fallback before — apply it here too.
-    crate::go_cache::apply(&mut cmd);
+    // The one Go command builder (go_cmd.rs): `-trimpath`, Sky's GOFLAGS,
+    // `-ldflags=-s -w`, GOOS=js GOARCH=wasm, and Sky's isolated, bounded build
+    // cache. The wasm build is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm).
+    let mut cmd = crate::go_cmd::GoBuild {
+        dir: out_dir,
+        target: crate::go_cmd::Target::Wasm,
+        jobs,
+        output: Some(std::ffi::OsStr::new("main.wasm")),
+        packages: &["."],
+        extra: &[],
+    }
+    .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
     let out = cmd
@@ -1382,51 +1378,27 @@ struct GoBuildAttempt {
     stderr: String,
 }
 
-/// `GOFLAGS` for `go build`. Preserves whatever the user set (so a container's
-/// `-buildvcs=false` survives — the old hard-coded `GOFLAGS=-mod=mod` OVERWROTE
-/// the env, so Go then tried to VCS-stamp a Go-workspace synthetic parent repo
-/// and failed), then forces the two Sky always needs: `-mod=mod` (Sky manages
-/// the emitted `go.mod`) and `-buildvcs=false` (the emitted Go is generated —
-/// there is never a source revision to stamp, and stamping breaks inside odd
-/// git/workspace boundaries). Sky's values replace any conflicting user `-mod=`
-/// / `-buildvcs=`; every other user flag is kept.
-fn sky_build_goflags() -> String {
-    sky_build_goflags_from(&std::env::var("GOFLAGS").unwrap_or_default())
-}
-
-fn sky_build_goflags_from(existing: &str) -> String {
-    let mut flags: Vec<String> = existing
-        .split_whitespace()
-        .filter(|f| !f.starts_with("-mod=") && !f.starts_with("-buildvcs="))
-        .map(String::from)
-        .collect();
-    flags.push("-mod=mod".to_string());
-    flags.push("-buildvcs=false".to_string());
-    flags.join(" ")
-}
-
 fn run_go_build_once(
     out_dir: &Path,
     cgo: &str,
     bin_name: &str,
     jobs: Option<&str>,
 ) -> Result<GoBuildAttempt, String> {
-    let mut cmd = Command::new("go");
     // No `-ldflags` for the build identity: it is Go source (the `skybuildinfo` package,
     // build_stamp.rs), so a plain `go build` of sky-out carries it too.
-    cmd.arg("build").args(jobs);
-    cmd.arg("-o")
-        .arg(bin_name)
-        .arg(".")
-        .current_dir(out_dir)
-        .env("GOFLAGS", sky_build_goflags())
-        .env("CGO_ENABLED", cgo);
-    // Route `go build` through Sky's isolated, size-bounded build cache
-    // (~/.sky/go-build), honouring an explicit user GOCACHE, and keep the
-    // unwritable-$HOME module-cache fallback (#7). All no-ops on a normal setup
-    // with a user GOCACHE; otherwise Sky owns and bounds its own cache
-    // (go_cache.rs). No-op / default on any failure.
-    crate::go_cache::apply(&mut cmd);
+    // The one Go command builder (go_cmd.rs): `-trimpath`, Sky's GOFLAGS (the
+    // user's, plus `-mod=mod -buildvcs=false`), the explicit CGO_ENABLED, and
+    // Sky's isolated, size-bounded build cache (~/.sky/go-build, honouring an
+    // explicit user GOCACHE, with the unwritable-$HOME module-cache fallback).
+    let cmd = crate::go_cmd::GoBuild {
+        dir: out_dir,
+        target: crate::go_cmd::Target::Native { cgo: cgo == "1" },
+        jobs,
+        output: Some(std::ffi::OsStr::new(bin_name)),
+        packages: &["."],
+        extra: &[],
+    }
+    .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
     let _cache = crate::go_cache::hold_shared();
     match run_bounded(cmd, GO_BUILD_TIMEOUT) {
@@ -3657,23 +3629,23 @@ mod embed_bundle_tests {
 mod sky_toml_tests {
     use super::{
         accepted_config_keys, configured_bin_name, configured_source_root, db_driver_conflict,
-        driver_for_dsn, read_sky_toml_config, sky_build_goflags_from, sky_toml_flag,
-        sky_toml_section_key, unknown_config_keys,
+        driver_for_dsn, read_sky_toml_config, sky_toml_flag, sky_toml_section_key,
+        unknown_config_keys,
     };
 
     #[test]
     fn goflags_preserve_user_flags_and_force_mod_and_buildvcs() {
         // Empty env → just Sky's two required flags.
-        assert_eq!(sky_build_goflags_from(""), "-mod=mod -buildvcs=false");
+        assert_eq!(crate::go_cmd::goflags_from(""), "-mod=mod -buildvcs=false");
         // A user's -buildvcs=false is honoured (dedup — Sky forces it anyway);
         // an unrelated flag is kept.
         assert_eq!(
-            sky_build_goflags_from("-buildvcs=false -tags netgo"),
+            crate::go_cmd::goflags_from("-buildvcs=false -tags netgo"),
             "-tags netgo -mod=mod -buildvcs=false"
         );
         // A conflicting user -mod / -buildvcs is replaced by Sky's values.
         assert_eq!(
-            sky_build_goflags_from("-mod=vendor -buildvcs=true"),
+            crate::go_cmd::goflags_from("-mod=vendor -buildvcs=true"),
             "-mod=mod -buildvcs=false"
         );
     }

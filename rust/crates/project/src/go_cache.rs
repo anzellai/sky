@@ -123,7 +123,7 @@ fn maintain_in(dir: &Path) {
 /// A shared hold on Sky's cache for the duration of one `go build`. Keep the
 /// value alive across the build; dropping it releases the lock. `None`-backed
 /// (no lock) when Sky does not own the cache or the lock file is unwritable.
-pub(crate) struct CacheGuard(Option<std::fs::File>);
+pub struct CacheGuard(Option<std::fs::File>);
 
 impl Drop for CacheGuard {
     fn drop(&mut self) {
@@ -135,7 +135,7 @@ impl Drop for CacheGuard {
 
 /// Take the shared lock before running `go build`. Blocks while a clean is in
 /// progress (a clean is short); never fails a build.
-pub(crate) fn hold_shared() -> CacheGuard {
+pub fn hold_shared() -> CacheGuard {
     match owned_cache_dir() {
         Some(dir) => hold_shared_in(&dir),
         None => CacheGuard(None),
@@ -260,21 +260,18 @@ pub fn prime() -> String {
     if let Some(dir) = owned_cache_dir() {
         let _ = std::fs::create_dir_all(&dir);
     }
-    let targets: [(&str, Option<&str>, Option<&str>); 2] =
-        [("native", None, None), ("wasm", Some("js"), Some("wasm"))];
+    // The same builder, flags and GOFLAGS as a project build (go_cmd.rs), so
+    // the objects this compiles are the project build's cache hits: with
+    // `-trimpath` a package's cache key no longer depends on the directory it
+    // was compiled in. (The old warm-up passed a fixed GOFLAGS and no
+    // `-trimpath`, so a project build in another directory never hit it.)
+    let targets = [
+        ("native", crate::go_cmd::Target::Native { cgo: false }),
+        ("wasm", crate::go_cmd::Target::Wasm),
+    ];
     let mut notes = Vec::new();
-    for (label, goos, goarch) in targets {
-        let mut cmd = Command::new("go");
-        cmd.args(["build", "./rt/..."]).current_dir(&runtime_dir);
-        apply(&mut cmd);
-        if let Some(os) = goos {
-            cmd.env("GOOS", os);
-        }
-        if let Some(arch) = goarch {
-            cmd.env("GOARCH", arch);
-        }
-        cmd.env("CGO_ENABLED", "0");
-        cmd.env("GOFLAGS", "-mod=mod -buildvcs=false");
+    for (label, target) in targets {
+        let mut cmd = prime_command(&runtime_dir, target);
         let _cache = hold_shared();
         match cmd.status() {
             Ok(s) if s.success() => notes.push(format!("{label} ✓")),
@@ -283,6 +280,20 @@ pub fn prime() -> String {
         }
     }
     format!("Go cache primed for native + wasm ({})", notes.join(", "))
+}
+
+/// The warm-up's `go build ./rt/...` for one target, from the project build's
+/// command builder.
+pub fn prime_command(runtime_dir: &Path, target: crate::go_cmd::Target) -> Command {
+    crate::go_cmd::GoBuild {
+        dir: runtime_dir,
+        target,
+        jobs: None,
+        output: None,
+        packages: &["./rt/..."],
+        extra: &[],
+    }
+    .command()
 }
 
 #[cfg(test)]

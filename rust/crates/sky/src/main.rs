@@ -95,6 +95,29 @@ fn main() -> ExitCode {
     if timed && args.iter().any(|a| a == "--timings") {
         std::env::set_var("SKY_TIMINGS", "1");
     }
+    // The Go build flags (`--no-trimpath`, `--go-jobs N`) of build / check /
+    // run. Like `--timings`, each is carried as an environment variable so
+    // every child `sky build` (Sky.Spa legs, a Std.App entry, a desktop
+    // shell) builds the same way; they are removed from the arguments here.
+    let args = if matches!(
+        args.first().map(String::as_str),
+        Some("build" | "check" | "run")
+    ) {
+        match take_go_build_flags(&args) {
+            Ok((rest, env)) => {
+                for (k, v) in env {
+                    std::env::set_var(k, v);
+                }
+                rest
+            }
+            Err(e) => {
+                eprintln!("sky {}: {e}", args[0]);
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        args
+    };
     let started = std::time::Instant::now();
     let code = dispatch(&args);
     if timed {
@@ -106,6 +129,31 @@ fn main() -> ExitCode {
         project::timings::report(&format!("sky {verb} in {here}/"), started.elapsed());
     }
     code
+}
+
+/// Remove the Go build flags from a build / check / run argument list, and
+/// return the environment they set (see `project::go_cmd` and
+/// `project::go_jobs`). Pure, so it is unit-tested.
+fn take_go_build_flags(
+    args: &[String],
+) -> Result<(Vec<String>, Vec<(&'static str, String)>), String> {
+    let mut rest = Vec::with_capacity(args.len());
+    let mut env = Vec::new();
+    for a in args {
+        if a == "--no-trimpath" {
+            env.push((project::go_cmd::ENV_TRIMPATH, "0".to_string()));
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    Ok((rest, env))
+}
+
+/// The environment a `sky run` build needs for `--profile`: no `-trimpath`,
+/// so `pprof -list` / `pprof -http` source views and Delve find the sources
+/// by the absolute paths the binary records.
+fn profiling_build_env(profiling: bool) -> Option<(&'static str, &'static str)> {
+    profiling.then_some((project::go_cmd::ENV_TRIMPATH, "0"))
 }
 
 fn dispatch(args: &[String]) -> ExitCode {
@@ -9326,6 +9374,9 @@ fn cmd_run(args: &[String]) -> ExitCode {
         .collect();
     let args = args.as_slice();
     let (args, profile) = parse_profile(args);
+    if let Some((k, v)) = profiling_build_env(profile.is_some()) {
+        std::env::set_var(k, v);
+    }
     // `--open` launches the platform browser at the app's `listening` URL once
     // it is up (web/server apps). A bare boolean; `parse_out` ignores it.
     let open = args.iter().any(|a| a == "--open");
@@ -11444,13 +11495,19 @@ fn cmd_console_serve(args: &[String]) -> ExitCode {
         // CGO_ENABLED=0: rt/hub transitively imports rt (webview.go, cgo+WebKit
         // on darwin); disabling cgo routes through webview_stub.go and dodges the
         // Apple ld_prime long-symbol assertion. The hub never calls webview.
-        let status = Command::new("go")
-            .args(["build", "-o"])
-            .arg(&hub_bin)
-            .arg("./cmd/sky-hub")
-            .current_dir(&runtime_go)
-            .env("CGO_ENABLED", "0")
-            .status();
+        // Through the one Go command builder (`-trimpath`, Sky's GOFLAGS and
+        // build cache), held shared so a cache clean waits.
+        let _cache = project::go_cache::hold_shared();
+        let status = project::go_cmd::GoBuild {
+            dir: &runtime_go,
+            target: project::go_cmd::Target::Native { cgo: false },
+            jobs: None,
+            output: Some(hub_bin.as_os_str()),
+            packages: &["./cmd/sky-hub"],
+            extra: &[],
+        }
+        .command()
+        .status();
         match status {
             Ok(s) if s.success() => {}
             Ok(s) => {
@@ -16009,6 +16066,31 @@ mod tests {
             "the compiler repo runs the examples sweep"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_profiling_run_builds_without_trimpath() {
+        // pprof source views and Delve read the absolute source paths a binary
+        // records; `-trimpath` would replace them with module paths.
+        assert_eq!(
+            profiling_build_env(true),
+            Some((project::go_cmd::ENV_TRIMPATH, "0"))
+        );
+        assert!(!project::go_cmd::trimpath_from(Some(
+            profiling_build_env(true).unwrap().1
+        )));
+        assert_eq!(profiling_build_env(false), None);
+    }
+
+    #[test]
+    fn go_build_flags_are_taken_out_of_the_arguments() {
+        let args: Vec<String> = ["build", "--no-trimpath", "src/Main.sky"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (rest, env) = take_go_build_flags(&args).unwrap();
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        assert_eq!(env, vec![(project::go_cmd::ENV_TRIMPATH, "0".to_string())]);
     }
 
     #[test]
