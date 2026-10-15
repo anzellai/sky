@@ -17,6 +17,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -119,9 +120,14 @@ func (w *gzipStaticWriter) close() {
 // dist/index.html is served by Server.static.
 func gzipStatic(h http.Handler) http.Handler {
 	return withStrictCSP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every response of a static mount may differ by Accept-Encoding (a
+		// gzip 200, a precompressed sidecar or its 206), so every response
+		// says so, the raw ones included: a shared cache must not hand a raw
+		// 206 to a brotli client, or the reverse.
+		addHeaderValue(w.Header(), "Vary", "Accept-Encoding")
 		if r.Method != http.MethodGet ||
 			r.Header.Get("Range") != "" ||
-			!acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			!acceptsCoding(r.Header.Get("Accept-Encoding"), "gzip") {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -131,24 +137,36 @@ func gzipStatic(h http.Handler) http.Handler {
 	}))
 }
 
-// acceptsGzip reports whether the Accept-Encoding header allows gzip. It honours
-// an explicit `gzip;q=0` disable, which a bare `strings.Contains` would miss.
-func acceptsGzip(accept string) bool {
+// acceptsCoding reports whether the Accept-Encoding header allows coding. An
+// entry naming the coding decides, wherever it stands; only when none does,
+// `*` decides. A q-value of zero, or one that is not a number, refuses.
+// (Before, gzip was checked by a parser that returned at the first `gzip` or
+// `*` entry, so `*, gzip;q=0` was taken as accepting gzip.)
+func acceptsCoding(accept, coding string) bool {
+	wildcard := false
 	for _, part := range strings.Split(accept, ",") {
 		fields := strings.Split(strings.TrimSpace(part), ";")
-		coding := strings.ToLower(strings.TrimSpace(fields[0]))
-		if coding != "gzip" && coding != "*" {
+		c := strings.ToLower(strings.TrimSpace(fields[0]))
+		if c != coding && c != "*" {
 			continue
 		}
+		allowed := true
 		for _, p := range fields[1:] {
-			p = strings.ToLower(strings.TrimSpace(p))
-			if p == "q=0" || p == "q=0.0" || p == "q=0.00" || p == "q=0.000" {
-				return false
+			k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
+			if !ok || !strings.EqualFold(strings.TrimSpace(k), "q") {
+				continue
+			}
+			q, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+			if err != nil || !(q > 0) {
+				allowed = false
 			}
 		}
-		return true
+		if c == coding {
+			return allowed
+		}
+		wildcard = allowed
 	}
-	return false
+	return wildcard
 }
 
 // addHeaderValue appends val to a comma/multi-valued header once, skipping a

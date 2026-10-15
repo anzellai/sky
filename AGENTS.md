@@ -602,9 +602,24 @@ A `Dict k v` field crosses the wire through `Codec.dict`.
 
 **Serving the wasm — precompressed.** A Go→wasm client is multi-MB raw (~2.5 MB
 brotli), so `sky build` precompresses the hashed `main.<hash>.wasm` + `wasm_exec.js`
-in `frontend/dist` to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool
-is installed — else it warns once and ships gzip only). Those files sit unused
-until the static host serves them: Caddy `file_server { precompressed br gzip }`
+in `frontend/dist` to `.gz` (`gzip -9`) and `.br` (brotli quality 11, written by
+`sky` itself with the `brotli` crate in parallel parts: no tool needed, ~3x
+quicker than `brotli -q 11` for a file within 1% of its size).
+`--precompress=max|fast|off` (or `SKY_PRECOMPRESS`) picks the level: `fast` is
+brotli 9 + gzip -6 (seconds, ~18% larger `.br`), `off` writes none
+(`--no-precompress` is its alias, and every level first removes the assets'
+earlier `.br` / `.gz`); `max` is the default, and becomes `fast` with a warning
+when the available memory does not hold its parallel brotli. The Sky backend's static
+mounts send them: a request that accepts `br` (else `gzip`; a fixed order, not
+by q-value) gets the `.br` (else `.gz`) file as it is, with the original's
+Content-Type and Last-Modified and an ETag per encoding, only when the build's
+`dist/sky-precompress.json` lists it and the source and sidecar still have the
+size and SHA-256 it records. A Range request that accepts the encoding ranges
+over the sidecar (206 with Content-Encoding); one that does not, a file with no
+listed variant, and a `.gz` / `.br` a user committed in their own static dir get
+the raw file (gzipped on the fly as before; `runtime-go/rt/static_precompressed.go`).
+Every static response says `Vary: Accept-Encoding`.
+A separate static host serves them with Caddy `file_server { precompressed br gzip }`
 (Caddy's `encode` has no brotli), or nginx `gzip_static` + `ngx_brotli`. The wasm
 is content-hashed + `immutable`, so allow a CDN to cache `*.wasm` (Cloudflare does
 not by default). Deploy-time `brotli` bridges are no longer needed — the build

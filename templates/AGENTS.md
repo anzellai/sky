@@ -629,10 +629,17 @@ real unhandled one. A `Dict k v` field crosses the wire through `Codec.dict`.
 raw (~2.5 MB brotli), so it MUST be served compressed or the first paint drags on
 a small host. `sky build` does the compressing for you: it writes the hashed
 `main.<hash>.wasm` into `frontend/dist` and precompresses it (and `wasm_exec.js`)
-to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool is on the build
-machine — `brew install brotli` / `apt install brotli`; the build warns once and
-falls back to gzip otherwise). The `.br`/`.gz` sit in `dist` UNUSED until your
-static host serves them, so configure content-negotiation at the edge:
+to `.gz` (gzip -9) and `.br` (brotli quality 11, written by `sky` itself; no
+`brotli` tool needed). For a quicker edit-rebuild loop, `sky build
+--precompress=fast` (brotli 9: seconds instead of tens of seconds, ~18% larger)
+or `--precompress=off` (none, and it removes an earlier build's; also
+`SKY_PRECOMPRESS=fast|off`); deploy a `max` (default) build. On a machine short
+of memory `max` warns and writes the `fast` files instead. The Sky backend serves them itself: a request
+that accepts `br` (else `gzip`) gets the `.br` (else `.gz`) file next to the
+asset when the build's `dist/sky-precompress.json` lists it and the files still
+match it (a Range request ranges over that file); anything else, including a
+`.gz` you committed in your own static dir, gets the raw file, gzipped on the
+fly. A separate static host in front must be told to use them:
 
 - **Caddy** (what the reference deploys use): `file_server { precompressed br gzip }`
   on the `*.wasm` + `wasm_exec.js` routes — Caddy's own `encode` has no brotli, so
