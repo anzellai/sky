@@ -12504,7 +12504,7 @@ mod plan_tests {
         let (db, entry, check_ids) =
             crate::build::load_source_db(&repo, &fx, None).expect("load fixture");
         let (mut report, _) =
-            analyze_for_split(&db, entry, &check_ids, "fx".into()).expect("analyse");
+            analyze_for_split(&db, entry, &check_ids, "fx".into(), None).expect("analyse");
         for b in report.branches.iter_mut() {
             if ctor_name(&b.msg) == "IfWrap" {
                 if let Ok(plan) = &mut b.client_model {
