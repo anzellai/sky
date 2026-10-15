@@ -211,6 +211,17 @@ fastOptions =
     Watch.defaultOptions |> Watch.withDebounce 30
 
 
+-- The create-then-remove case asserts what happens INSIDE one window, so the
+-- window must be longer than the program's own gap between the write and the
+-- remove. On a loaded CI runner that gap passed 30 ms (rust-ci run
+-- 38813788240): the file then existed for a whole quiet window and was rightly
+-- reported. The assertion is unchanged; only the window is wide enough to hold
+-- both steps, as TestWatchCoalescesBursts does in Go.
+wideOptions : Watch.Options
+wideOptions =
+    Watch.defaultOptions |> Watch.withDebounce 300
+
+
 changeText : Change -> String
 changeText c =
     case c of
@@ -415,7 +426,7 @@ tests =
               Test.equal
                   (Ok [ "Created keep.txt" ])
                   (firstBatch
-                      fastOptions
+                      wideOptions
                       (\dir ->
                           File.writeFile (dir ++ "/gone.txt") "1"
                               |> Task.andThen

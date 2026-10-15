@@ -362,6 +362,96 @@ func TestPendingSetMergeRules(t *testing.T) {
 	}
 }
 
+// coalescerOnly starts a watcher's coalescer without an OS backend, so a
+// test decides exactly when each raw event arrives.
+func coalescerOnly(t *testing.T, dir string, debounce time.Duration) *watcher {
+	t.Helper()
+	w := &watcher{
+		roots:    []watchRoot{{path: dir, isDir: true}},
+		opts:     watchOptions{debounce: debounce},
+		raw:      make(chan rawEvent, 64),
+		stop:     make(chan struct{}),
+		stopped:  make(chan struct{}),
+		changed:  make(chan struct{}),
+		batchCap: 16,
+	}
+	go w.coalesce()
+	t.Cleanup(func() { close(w.stop); <-w.stopped })
+	return w
+}
+
+// takeWithin waits for the next batch from a coalescerOnly watcher.
+func takeWithin(t *testing.T, w *watcher, within time.Duration) ([]string, bool) {
+	t.Helper()
+	deadline := time.After(within)
+	for {
+		b, ok, _, changed := w.take()
+		if ok {
+			var out []string
+			for _, c := range b {
+				out = append(out, changeString(changeValue(c)))
+			}
+			return out, true
+		}
+		select {
+		case <-changed:
+		case <-deadline:
+			return nil, false
+		}
+	}
+}
+
+// A file created and removed before its batch closes is not reported, even
+// when the backend delivers the removal after the window (CI rust-ci run
+// 38813788240, macos-conformance: on a loaded runner the kqueue goroutine
+// re-listed the directory late, the 30 ms window closed on the Created
+// alone, and the batch was [Created gone.txt]). The batch is checked
+// against the disk when it closes; the late Removed is then dropped.
+func TestWatchCreatedThenRemovedAcrossTheWindowIsNotReported(t *testing.T) {
+	dir := watchDir(t)
+	w := coalescerOnly(t, dir, 20*time.Millisecond)
+	gone := filepath.Join(dir, "gone.txt")
+	keep := filepath.Join(dir, "keep.txt")
+	// The file was created and is already removed on disk; the backend has
+	// so far delivered only the Created.
+	w.send(rawEvent{kind: watchCreated, path: gone})
+	time.Sleep(200 * time.Millisecond) // the window closes on the Created alone
+	writeFile(t, keep, "1")
+	w.send(rawEvent{kind: watchRemoved, path: gone})
+	w.send(rawEvent{kind: watchCreated, path: keep})
+	b, ok := takeWithin(t, w, 5*time.Second)
+	if !ok {
+		t.Fatal("no batch")
+	}
+	if strings.Join(b, ",") != "Created keep.txt" {
+		t.Fatalf("first batch = %v, want [Created keep.txt]", b)
+	}
+	if more, ok := takeWithin(t, w, 300*time.Millisecond); ok {
+		t.Fatalf("a later batch reported %v", more)
+	}
+
+	// The name comes back (a new inode, which kqueue reports as Modified):
+	// the app never heard of the old file, so the new one is Created.
+	again := filepath.Join(dir, "again.txt")
+	w.send(rawEvent{kind: watchCreated, path: again})
+	time.Sleep(200 * time.Millisecond)
+	writeFile(t, again, "2")
+	w.send(rawEvent{kind: watchModified, path: again})
+	b, ok = takeWithin(t, w, 5*time.Second)
+	if !ok || strings.Join(b, ",") != "Created again.txt" {
+		t.Fatalf("batch = %v (ok=%v), want [Created again.txt]", b, ok)
+	}
+
+	// A Created file that still exists is reported as before.
+	still := filepath.Join(dir, "still.txt")
+	writeFile(t, still, "1")
+	w.send(rawEvent{kind: watchCreated, path: still})
+	b, ok = takeWithin(t, w, 5*time.Second)
+	if !ok || strings.Join(b, ",") != "Created still.txt" {
+		t.Fatalf("batch = %v (ok=%v), want [Created still.txt]", b, ok)
+	}
+}
+
 // ── Replacement by rename and re-creation (editor saves) ────────────────
 //
 // An editor saves by writing a temporary file and renaming it over the

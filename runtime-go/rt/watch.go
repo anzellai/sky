@@ -32,6 +32,16 @@ package rt
 //	a Removed and a Created of the same file (inode / rename cookie)
 //	                        → Renamed old new
 //
+// "Inside the window" is judged by the file system, not by when the backend
+// delivered the events. The backend reports a removal some time after it
+// happened (kqueue re-lists the directory on its own goroutine; on a loaded
+// machine that can be later than the window), so a batch is checked against
+// the disk when it closes: a path reported Created that no longer exists was
+// created and removed before the batch closed, and is left out like any other
+// Created-then-Removed pair. Its Removed, when the backend delivers it later,
+// is dropped too, since the app never heard of the file; a Modified of it
+// (the name came back with a new inode) is reported as Created.
+//
 // # Overflow
 //
 // When the OS event queue overflowed (inotify IN_Q_OVERFLOW), or the
@@ -281,6 +291,63 @@ func (p *pendingSet) add(ev rawEvent) {
 	}
 }
 
+// dropVanished leaves out every Created path that no longer exists (exists
+// reports false): the file was created and removed before the batch closed.
+// It returns the dropped paths.
+func (p *pendingSet) dropVanished(exists func(string) bool) []string {
+	var dropped []string
+	for _, e := range p.order {
+		if !e.gone && e.kind == watchCreated && !exists(e.path) {
+			e.gone = true
+			delete(p.byKey, e.path)
+			dropped = append(dropped, e.path)
+		}
+	}
+	return dropped
+}
+
+// watchVanishedCap bounds the remembered vanished paths (a backend that never
+// reports their removal must not grow the set without limit).
+const watchVanishedCap = 4096
+
+// vanishedSet remembers the Created paths a batch left out because they no
+// longer existed, until the backend reports what happened to them.
+type vanishedSet map[string]bool
+
+// admit rewrites one raw event for a path the app never heard of. ok=false:
+// drop the event.
+func (v vanishedSet) admit(ev rawEvent) (rawEvent, bool) {
+	if ev.overflow || !v[ev.path] {
+		return ev, true
+	}
+	delete(v, ev.path)
+	switch ev.kind {
+	case watchRemoved:
+		// The removal of a file the app was never told about.
+		return ev, false
+	case watchModified:
+		// The name exists again (a new inode): to the app it is new.
+		ev.kind, ev.pairKey = watchCreated, ""
+	}
+	return ev, true
+}
+
+func (v vanishedSet) remember(paths []string) {
+	for _, p := range paths {
+		if len(v) >= watchVanishedCap {
+			clear(v)
+		}
+		v[p] = true
+	}
+}
+
+// pathExists reports whether path names an entry now (a dangling symlink
+// counts). Only a definite "does not exist" is false.
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil || !errors.Is(err, fs.ErrNotExist)
+}
+
 // batch resolves the pending set into the emitted batch, pairing a Removed
 // and a Created that share a pair key into one Renamed.
 func (p *pendingSet) batch() []change {
@@ -312,6 +379,7 @@ func (p *pendingSet) batch() []change {
 func (w *watcher) coalesce() {
 	defer close(w.stopped)
 	pending := newPendingSet()
+	vanished := vanishedSet{}
 	var quiet, cap *time.Timer
 	var quietC, capC <-chan time.Time
 	flushTimersOff := func() {
@@ -330,6 +398,7 @@ func (w *watcher) coalesce() {
 		if pending.empty() {
 			return
 		}
+		vanished.remember(pending.dropVanished(pathExists))
 		b := pending.batch()
 		pending = newPendingSet()
 		if len(b) > 0 {
@@ -341,6 +410,10 @@ func (w *watcher) coalesce() {
 		case <-w.stop:
 			return
 		case ev := <-w.raw:
+			ev, ok := vanished.admit(ev)
+			if !ok {
+				continue
+			}
 			pending.add(ev)
 			if quiet == nil {
 				quiet = time.NewTimer(w.opts.debounce)

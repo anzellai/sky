@@ -1236,6 +1236,8 @@ Changes are coalesced: the runtime waits until the tree is quiet for the
 debounce window and delivers one batch in which each path appears once (a file
 created then written is `Created`; created then deleted is not reported;
 deleted then re-created is `Modified`; a move inside the tree is `Renamed`).
+A batch is checked against the disk when it closes: a file created and already
+gone then is not reported, even when the OS reports its deletion late.
 When the OS queue overflowed, or batches piled up unread, the next batch is
 exactly `[ Overflow ]`: rescan. A file saved by rename (write a temporary
 file, rename it over the original) is `Modified`, and later changes to the new
