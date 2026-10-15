@@ -1423,8 +1423,9 @@ jobs:
         shard: [0, 1, 2, 3, 4]
     # A shard is ~1/5 of the ~60 min full sweep + the compiler install. 45
     # keeps the ~1.5x margin (the skyshop FFI shard's cold `sky install` is the
-    # variable one).
-    timeout-minutes: 45
+    # variable one). 55: the shard that sweeps 13-skyshop also compiles and
+    # runs the `project` lib tests for the harvest differential below.
+    timeout-minutes: 55
     env:
       # The sweep builds the FFI examples, whose Go deps float on "latest", so
       # its Go module cache grows fast. 6 GiB here (the nightly sweep's budget),
@@ -1445,6 +1446,24 @@ jobs:
           SWEEP_SHARD_INDEX: ${{ matrix.shard }}
           SWEEP_SHARD_TOTAL: '5'
         run: scripts/example-sweep.sh
+
+      # The #166 call-site harvest differential over EVERY example project
+      # (`rust/crates/project/src/harvest_identity_tests.rs`, the `#[ignore]`d
+      # test). Per-push CI runs the same differential without the examples
+      # that need a fetched dependency (its NEEDS_FETCH list: 13-skyshop, whose
+      # Sky dependency comes from `sky install`). This runs it with them, in
+      # the shard whose sweep has just run `sky install` in 13-skyshop. The
+      # per-push test fails if a NEEDS_FETCH example leaves the sweep's list,
+      # so some shard always runs this step's test.
+      - name: Harvest differential over every example (the shard that sweeps 13-skyshop)
+        working-directory: .
+        run: |
+          set -euo pipefail
+          if scripts/example-sweep.sh --list --shard "${{ matrix.shard }}/5" | grep -qx 13-skyshop; then
+            cd rust && cargo test --locked -p project --lib harvest_identity -- --ignored
+          else
+            echo "13-skyshop is swept in another shard; the full harvest differential runs there"
+          fi
 
       - name: Bound the Go caches before save
         if: always()
