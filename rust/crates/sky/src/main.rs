@@ -5548,31 +5548,29 @@ fn build_desktop_shell(
 ) -> Result<PathBuf, String> {
     let id = resolve_bundle_identity(project_dir)?;
     let app = &id.display_name;
-    // The shell PROJECT is generated in a temp dir, NOT under `out_dir`: the
-    // project resolver refuses a sky.toml nested inside a `sky-out/` build tree
-    // ("no .sky under src/"). Build there, then copy the binary into `out_dir`
-    // so the user's project tree stays clean and the artifact lands under
-    // sky-out with everything else.
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let shell =
-        std::env::temp_dir().join(format!("sky-desktop-shell-{}-{stamp}", std::process::id()));
+    // The shell PROJECT is generated outside `out_dir` (the project resolver
+    // refuses a sky.toml nested inside a `sky-out/` build tree: "no .sky under
+    // src/"), in a directory of its own per app project that stays between
+    // builds (`desktop_shell_dir`), so a rebuild finds its `sky-out/` and Go
+    // re-links nothing that did not change. Its files are written only when
+    // their bytes change. Two builds of the same project take turns: the lock
+    // is held for the shell's build and the copy of its binary.
+    let shell = desktop_shell_dir(&bundled::cache_root(), project_dir);
     std::fs::create_dir_all(shell.join("src"))
         .map_err(|e| format!("create {}: {e}", shell.display()))?;
+    let _lock = lock_exclusive(&shell.join(".lock"))?;
     let shell_name = format!("{}-desktop", sanitize_pkg_segment(app));
-    std::fs::write(
-        shell.join("sky.toml"),
-        format!("name = \"{shell_name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
+    write_if_changed(
+        &shell.join("sky.toml"),
+        &format!("name = \"{shell_name}\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n[source]\nroot = \"src\"\n"),
     )
     .map_err(|e| format!("write sky.toml: {e}"))?;
     // `app` (the display name) goes into a Sky string literal — escape it so a
     // name containing `"` or `\` can't break the generated source.
     let title = sky_str_escape(&format!("{app} — Desktop"));
-    std::fs::write(
-        shell.join("src").join("Main.sky"),
-        render_desktop_shell(&title, url),
+    write_if_changed(
+        &shell.join("src").join("Main.sky"),
+        &render_desktop_shell(&title, url),
     )
     .map_err(|e| format!("write Main.sky: {e}"))?;
 
@@ -5585,7 +5583,6 @@ fn build_desktop_shell(
         .status()
         .map_err(|e| format!("run `sky build` on the desktop shell: {e}"))?;
     if !status.success() {
-        let _ = std::fs::remove_dir_all(&shell);
         return Err("the desktop shell failed to build (see the errors above)".to_string());
     }
     let bin_name = project::configured_bin_name(&shell);
@@ -5597,11 +5594,47 @@ fn build_desktop_shell(
     let _ = std::fs::remove_file(&dest);
     std::fs::copy(&built, &dest)
         .map_err(|e| format!("copy the desktop binary to {}: {e}", dest.display()))?;
-    let _ = std::fs::remove_dir_all(&shell);
+    drop(_lock);
     if let Some(release_dir) = native_pkg::release_dir() {
         return package_macos_release(project_dir, out_dir, &dest, &id, &release_dir);
     }
     Ok(dest)
+}
+
+/// The desktop shell project's directory for the app project at
+/// `project_dir`: `<cache>/desktop-shell/<sha256 of the canonical path, 16 hex>`.
+/// The same project (however its path is written) always gets the same
+/// directory, and two projects never share one.
+fn desktop_shell_dir(cache_root: &Path, project_dir: &Path) -> PathBuf {
+    let canonical = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let h = db_provision::sha256_hex(canonical.to_string_lossy().as_bytes());
+    cache_root.join("desktop-shell").join(&h[..16])
+}
+
+/// An exclusive lock on `path` (created if absent), held until the returned
+/// file is dropped. Blocks while another process holds it.
+fn lock_exclusive(path: &Path) -> Result<std::fs::File, String> {
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    f.lock()
+        .map_err(|e| format!("lock {}: {e}", path.display()))?;
+    Ok(f)
+}
+
+/// Write `text` to `path` unless it already holds exactly those bytes, so an
+/// unchanged generated file keeps its mtime.
+fn write_if_changed(path: &Path, text: &str) -> std::io::Result<()> {
+    if std::fs::read(path).is_ok_and(|b| b == text.as_bytes()) {
+        return Ok(());
+    }
+    std::fs::write(path, text)
 }
 
 /// `sky package --release --target desktop:mac`: wrap the desktop shell binary
@@ -16287,6 +16320,43 @@ mod tests {
             profiling_build_env(true).unwrap().1
         )));
         assert_eq!(profiling_build_env(false), None);
+    }
+
+    #[test]
+    fn a_project_keeps_one_desktop_shell_dir() {
+        let root = std::env::temp_dir().join(format!("sky-shelldir-{}", std::process::id()));
+        let a = root.join("proj-a");
+        let b = root.join("proj-b");
+        std::fs::create_dir_all(a.join("src")).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let cache = root.join("cache");
+        let da = desktop_shell_dir(&cache, &a);
+        // The same project through another spelling of its path.
+        assert_eq!(desktop_shell_dir(&cache, &a.join("src").join("..")), da);
+        assert_ne!(desktop_shell_dir(&cache, &b), da);
+        assert!(da.starts_with(cache.join("desktop-shell")));
+        // An unchanged file keeps its mtime.
+        std::fs::create_dir_all(&da).unwrap();
+        let f = da.join("sky.toml");
+        write_if_changed(&f, "x").unwrap();
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .append(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        write_if_changed(&f, "x").unwrap();
+        assert_eq!(std::fs::metadata(&f).unwrap().modified().unwrap(), t);
+        write_if_changed(&f, "y").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "y");
+        // The lock excludes a second holder until it is dropped.
+        let held = lock_exclusive(&da.join(".lock")).unwrap();
+        let other = std::fs::File::open(da.join(".lock")).unwrap();
+        assert!(other.try_lock().is_err());
+        drop(held);
+        assert!(other.try_lock().is_ok());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
