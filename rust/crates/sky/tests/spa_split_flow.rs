@@ -2919,15 +2919,14 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
     .unwrap();
     let port = free_port();
     let log_path = away.join("server.log");
-    let server = Killed(
+    let server = ChildGroup::spawn(
         Command::new(away.join("app"))
             .current_dir(&away)
             .env("PORT", port.to_string())
             .stdout(std::fs::File::create(&log_path).unwrap())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
     assert!(
         wait_for_spa_backend(&log_path, 120),
         "the backend did not start:\n{}",
@@ -3031,15 +3030,14 @@ fn spa_ssr_wasm_name_is_content_derived_and_relinked_on_change() {
     // The server keeps the real stamp.
     let port = free_port();
     let log_path = proj.join("server.log");
-    let server = Killed(
+    let server = ChildGroup::spawn(
         Command::new(split.join("backend/sky-out/app"))
             .current_dir(split.join("backend"))
             .env("PORT", port.to_string())
             .stdout(std::fs::File::create(&log_path).unwrap())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+            .stderr(std::process::Stdio::null()),
+    )
+    .unwrap();
     assert!(
         wait_for_spa_backend(&log_path, 120),
         "the backend did not start:\n{}",
@@ -9980,15 +9978,14 @@ fn whole_model_branches_share_one_model_wire_codec() {
     let port = free_port();
     let log_path = backend_dir.join("server.log");
     let log_file = std::fs::File::create(&log_path).unwrap();
-    let child = Killed(
+    let child = ChildGroup::spawn(
         Command::new(backend_dir.join("sky-out/app"))
             .current_dir(&backend_dir)
             .env("PORT", port.to_string())
             .stdout(log_file.try_clone().unwrap())
-            .stderr(log_file)
-            .spawn()
-            .expect("spawn the whole-model wire backend"),
-    );
+            .stderr(log_file),
+    )
+    .expect("spawn the whole-model wire backend");
     assert!(
         wait_for_spa_backend(&log_path, 80),
         "backend never reported listening on :{port}"
