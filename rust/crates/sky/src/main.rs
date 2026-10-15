@@ -57,7 +57,34 @@ mod target;
 mod version_notice;
 mod xmlmini;
 
+/// The stack the compiler runs on. Parsing, type inference, lowering and Go
+/// emission recurse over the expression tree, so a deep expression needs a
+/// deep stack: a 1,600-step `|>` pipeline (a generated record codec over a
+/// large Model has one step per field) overflowed the 8 MiB main-thread stack
+/// in lowering and aborted the process. The compiler runs on its own thread
+/// with this much stack instead. Only the pages a run touches are committed.
+const COMPILER_STACK_BYTES: usize = 512 << 20;
+
 fn main() -> ExitCode {
+    match std::thread::Builder::new()
+        .name("sky".to_string())
+        .stack_size(COMPILER_STACK_BYTES)
+        .spawn(sky_main)
+    {
+        Ok(handle) => match handle.join() {
+            Ok(code) => code,
+            // Keep a panic a panic: same message (already printed by the
+            // thread), same exit status.
+            Err(payload) => std::panic::resume_unwind(payload),
+        },
+        Err(e) => {
+            eprintln!("sky: cannot start the compiler thread: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn sky_main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     // Hidden worker: refresh the update-check cache, then exit. Spawned detached

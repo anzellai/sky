@@ -47,6 +47,7 @@ module Std.Codec exposing
     , map
     , object
     , field
+    , inline
     , buildObject
     , auto
     , autoCamel
@@ -370,6 +371,34 @@ field name getter (Codec fc) (ObjectCodec o) =
             \rec -> o.encFields rec ++ [ ( name, fc.enc (getter rec) ) ]
         , decValue = codecAndMap (D.field name fc.dec) o.decValue
         , cols = o.cols ++ [ ( name, colTypeOf fc.shp ) ]
+        }
+
+
+-- | Add every field of another record's object builder to this one, flat:
+-- the embedded record's JSON keys sit inline, in their order, beside this
+-- record's own fields (no nested object). `getter` reads the embedded record.
+-- Keys must not repeat across the two records.
+--
+--     pointFields : ObjectCodec Point Point
+--     pointFields =
+--         Codec.object Point
+--             |> Codec.field "x" .x Codec.int
+--             |> Codec.field "y" .y Codec.int
+--
+--     pinCodec : Codec Pin
+--     pinCodec =
+--         Codec.object Pin
+--             |> Codec.inline .at pointFields
+--             |> Codec.field "label" .label Codec.string
+--             |> Codec.buildObject
+--
+--     -- { at = { x = 1, y = 2 }, label = "a" } encodes as {"x":1,"y":2,"label":"a"}
+inline : (a -> r) -> ObjectCodec r r -> ObjectCodec a (r -> b) -> ObjectCodec a b
+inline getter (ObjectCodec inner) (ObjectCodec o) =
+    ObjectCodec
+        { encFields = \rec -> o.encFields rec ++ inner.encFields (getter rec)
+        , decValue = codecAndMap inner.decValue o.decValue
+        , cols = o.cols ++ inner.cols
         }
 
 

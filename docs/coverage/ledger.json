@@ -672,7 +672,7 @@
     "4": "Falsified — assertions in a REGISTERED gate whose falsifying mutation is recorded PROVEN in docs/coverage/falsifier-proofs.json"
   },
   "summary": {
-    "stdlib_entries": 2223,
+    "stdlib_entries": 2224,
     "stdlib_modules": 113,
     "surfaces_covered": 169,
     "surfaces_covered_pct": 93.9,
@@ -15340,10 +15340,9 @@
           ]
         },
         "Std.Codec": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "ColType",
-            "ObjectCodec",
             "Shape",
             "Variant",
             "dict",
@@ -16028,7 +16027,7 @@
           ]
         }
       },
-      "count": 668,
+      "count": 667,
       "pct_of_denominator": 30.0
     },
     "symbols_unreferenced_strict": {
@@ -16464,10 +16463,9 @@
           ]
         },
         "Std.Codec": {
-          "count": 8,
+          "count": 7,
           "symbols": [
             "ColType",
-            "ObjectCodec",
             "Shape",
             "Variant",
             "dict",
@@ -17233,7 +17231,7 @@
           ]
         }
       },
-      "count": 759,
+      "count": 758,
       "pct_of_denominator": 34.1
     }
   },
@@ -18990,8 +18988,8 @@
       "id": "tests/conformance",
       "modules_imported": 55,
       "path": "tests/conformance",
-      "refs_generous": 741,
-      "refs_qualified": 724,
+      "refs_generous": 743,
+      "refs_qualified": 726,
       "role": "Conformance",
       "sky_files": 44,
       "sky_toml_sections": []
