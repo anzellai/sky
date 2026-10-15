@@ -1207,6 +1207,26 @@ pub struct BranchVerdict {
     /// answers (`Spa.rpcHold`, runtime-go spa_rpcqueue.go). `false` for a
     /// client arm and for every shape the analysis cannot read.
     pub own_model_client: bool,
+    /// For a SERVER arm whose tail the client can run itself up to its leaves:
+    /// the source spans the split needs to keep the arm's `Cmd.none` leaves in
+    /// the client and send the RPC only from the one `Cmd.perform` leaf (see
+    /// [`none_leaf_plan`]). `None` for every other arm.
+    pub none_leaf_plan: Option<NoneLeafPlan>,
+}
+
+/// How the client runs a server arm whose tail it can see: the arm body as
+/// written, with the one `Cmd.perform` leaf's command half replaced by the RPC
+/// and every `Cmd.none` leaf kept. Sky.Live sends nothing on a `Cmd.none` leaf,
+/// so the client must not send a request there. Byte offsets are into the
+/// source of the module that declares `update`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NoneLeafPlan {
+    /// The arm body's `[start, end)` byte range.
+    pub arm_span: (u32, u32),
+    /// The perform leaf's command half (`Cmd.perform task ToMsg`).
+    pub perform_span: (u32, u32),
+    /// The source text at `perform_span`, for a fail-closed check by the split.
+    pub perform_text: String,
 }
 
 /// One `case msg of` arm's position and pattern, for routing it (see
@@ -3452,6 +3472,7 @@ fn classify_case_arms(
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
                 own_model_client: own_model_client(db, graph, body, arms[i].body, shared, ctx),
+                none_leaf_plan: none_leaf_plan(db, graph, body, arms[i].body, shared, ctx, src),
             });
         } else if server[i] {
             out.push(BranchVerdict {
@@ -3472,6 +3493,7 @@ fn classify_case_arms(
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, true)),
                 own_model_client: own_model_client(db, graph, body, arms[i].body, shared, ctx),
+                none_leaf_plan: none_leaf_plan(db, graph, body, arms[i].body, shared, ctx, src),
             });
         } else {
             let reason = match f.refs.client_effect_note() {
@@ -3496,6 +3518,7 @@ fn classify_case_arms(
                 effect_families: graph.families_for(&f.refs),
                 arm: Some(arm_shape(body, i, arms[i].pat, actx, false)),
                 own_model_client: false,
+                none_leaf_plan: None,
             });
         }
     }
@@ -6807,6 +6830,145 @@ fn own_model_client(
         && !acc.callees.iter().any(|c| graph.forces(*c))
 }
 
+/// The [`NoneLeafPlan`] of a server arm, when the client can run the arm's tail
+/// itself up to its leaves:
+///   * the tail is `let` / `if` / `case` scaffolding over direct `( model',
+///     cmd )` tuples (no helper delegate, no guard wrapper, no by-name tuple);
+///   * exactly one leaf's command half IS a `Cmd.perform task ToMsg` call, and
+///     every other leaf's command half resolves to `Cmd.none` alone (at least
+///     one such leaf, or there is nothing to keep);
+///   * everything the client evaluates — every condition, `case` subject,
+///     `let` binding, model half and `Cmd.none` half; every part of the arm
+///     except the perform leaf's command — reaches no server effect and no
+///     server-tainted value, composes no other arm and forces no effect (the
+///     same test as [`own_model_client`]).
+///
+/// The client then evaluates the same conditions on the same model as the
+/// server, so it sends the request exactly when Sky.Live would run the task.
+fn none_leaf_plan(
+    db: &dyn SkyDb,
+    graph: &Graph,
+    body: &Body,
+    arm_body: ExprId,
+    shared: &Refs,
+    ctx: &CollectCtx,
+    src: &str,
+) -> Option<NoneLeafPlan> {
+    struct Walk<'a> {
+        db: &'a dyn SkyDb,
+        body: &'a Body,
+        ctx: &'a CollectCtx<'a>,
+        acc: Refs,
+        perform: Option<ExprId>,
+        none_leaves: usize,
+    }
+    impl Walk<'_> {
+        fn tail(&mut self, e: ExprId) -> Option<()> {
+            match &self.body.exprs[e] {
+                Expr::Tuple(xs) if xs.len() == 2 => {
+                    collect(self.body, xs[0], &mut self.acc, self.ctx);
+                    let mut leaves = Vec::new();
+                    resolve_cmd_leaves(self.db, self.body, xs[1], &mut leaves);
+                    if matches!(leaves.as_slice(), [CmdLeaf::NoneCmd]) {
+                        collect(self.body, xs[1], &mut self.acc, self.ctx);
+                        self.none_leaves += 1;
+                        Some(())
+                    } else if self.perform.is_none() && is_direct_perform(self.db, self.body, xs[1])
+                    {
+                        self.perform = Some(xs[1]);
+                        Some(())
+                    } else {
+                        None
+                    }
+                }
+                Expr::Let { defs, body: b } => {
+                    for d in defs {
+                        collect(self.body, d.body, &mut self.acc, self.ctx);
+                    }
+                    self.tail(*b)
+                }
+                Expr::If { arms, els } => {
+                    for (c, t) in arms {
+                        collect(self.body, *c, &mut self.acc, self.ctx);
+                        self.tail(*t)?;
+                    }
+                    self.tail(*els)
+                }
+                Expr::Case { subject, branches } => {
+                    collect(self.body, *subject, &mut self.acc, self.ctx);
+                    for br in branches {
+                        self.tail(br.body)?;
+                    }
+                    Some(())
+                }
+                _ => None,
+            }
+        }
+    }
+    let mut w = Walk {
+        db,
+        body,
+        ctx,
+        acc: shared.clone(),
+        perform: None,
+        none_leaves: 0,
+    };
+    w.tail(arm_body)?;
+    let perform = w.perform?;
+    if w.none_leaves == 0 {
+        return None;
+    }
+    let acc = &w.acc;
+    let client_pure = arm_direct_reason(db, acc, graph).is_none()
+        && acc.scoped_updates.is_empty()
+        && !acc.inline_force
+        && !acc.callees.iter().any(|c| graph.forces(*c));
+    if !client_pure {
+        return None;
+    }
+    let arm_span = trim_span(src, body.expr_spans.get(arm_body)?.range)?;
+    let perform_span = trim_span(src, body.expr_spans.get(perform)?.range)?;
+    if perform_span.0 < arm_span.0 || perform_span.1 > arm_span.1 {
+        return None;
+    }
+    let perform_text = src
+        .get(perform_span.0 as usize..perform_span.1 as usize)?
+        .to_string();
+    Some(NoneLeafPlan {
+        arm_span,
+        perform_span,
+        perform_text,
+    })
+}
+
+/// A node's span can carry its leading trivia (the newline and indent before
+/// it): the span of its text alone. `None` when the span does not fit `src`.
+fn trim_span(src: &str, r: (u32, u32)) -> Option<(u32, u32)> {
+    let t = src.get(r.0 as usize..r.1 as usize)?;
+    let lead = (t.len() - t.trim_start().len()) as u32;
+    let trail = (t.len() - t.trim_end().len()) as u32;
+    (r.0 + lead < r.1 - trail).then_some((r.0 + lead, r.1 - trail))
+}
+
+/// Is `e` itself a `Cmd.perform task ToMsg` call (not a helper that returns
+/// one)?
+fn is_direct_perform(db: &dyn SkyDb, body: &Body, e: ExprId) -> bool {
+    let Expr::Call(callee, args) = &body.exprs[e] else {
+        return false;
+    };
+    if args.len() != 2 {
+        return false;
+    }
+    match &body.exprs[*callee] {
+        Expr::Var(Res::Def(d)) => matches!(cmd_def_kind(db, *d), CmdDefKind::Perform),
+        Expr::Var(Res::Kernel { module, func }) => matches!(
+            cmd_kernel_kind(module.as_str(), func.as_str()),
+            Some(CmdDefKind::Perform)
+        ),
+        _ => false,
+    }
+}
+
 /// The reason a composing arm is server: name the first scoped call it makes to
 /// a server arm, carrying that arm's origin ("composes DoServer (…)").
 fn compose_reason(
@@ -6902,6 +7064,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             effect_families: graph.families_for(acc),
             arm: None,
             own_model_client: false,
+            none_leaf_plan: None,
         };
     }
     // Deterministic: pick the lowest-id server callee.
@@ -6933,6 +7096,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
             effect_families: graph.families_for(acc),
             arm: None,
             own_model_client: false,
+            none_leaf_plan: None,
         };
     }
     // Client — note a client effect if present.
@@ -6951,6 +7115,7 @@ fn verdict(db: &dyn SkyDb, label: &str, acc: &Refs, graph: &Graph) -> BranchVerd
         effect_families: graph.families_for(acc),
         arm: None,
         own_model_client: false,
+        none_leaf_plan: None,
     }
 }
 

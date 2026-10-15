@@ -28,9 +28,13 @@ func TestSpaRunServerPerform_RunsTheTaskAndReturnsItsResult(t *testing.T) {
 	if !ran {
 		t.Fatal("Spa_runServerPerform must RUN the server task (saveBlob never fired)")
 	}
-	res, ok := out.(SkyResult[any, any])
+	list, ok := out.([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("Spa_runServerPerform must return the task RESULT as a one-element list, got %#v", out)
+	}
+	res, ok := list[0].(SkyResult[any, any])
 	if !ok {
-		t.Fatalf("Spa_runServerPerform must return the task RESULT (a Result), got %T", out)
+		t.Fatalf("Spa_runServerPerform must return the task RESULT (a Result), got %T", list[0])
 	}
 	if res.Tag != 0 || res.OkValue != "blob.txt" {
 		t.Fatalf("must return the RAW task result Ok \"blob.txt\" (never folded through toMsg/update); got %+v", res)
@@ -45,19 +49,31 @@ func TestSpaRunServerPerform_FindsThePerformInABatch(t *testing.T) {
 	cmd := cmdT{kind: "batch", batch: []any{Cmd_none(), perform}}
 
 	out := Spa_runServerPerform(cmd)
-	res, ok := out.(SkyResult[any, any])
+	list, ok := out.([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("must find + run the server perform inside a batch; got %#v", out)
+	}
+	res, ok := list[0].(SkyResult[any, any])
 	if !ok || res.Tag != 0 || res.OkValue != "saved-id" {
 		t.Fatalf("must find + run the server perform inside a batch; got %#v", out)
 	}
 }
 
-// Defensive: a command with no runnable server perform returns a classified Err
-// (never a malformed value that would break the response codec). The auto-split
-// analysis guarantees one perform, so this only guards a mis-generation.
-func TestSpaRunServerPerform_NoPerformReturnsClassifiedErr(t *testing.T) {
-	out := Spa_runServerPerform(Cmd_none())
-	res, ok := out.(SkyResult[any, any])
-	if !ok || res.Tag != 1 {
-		t.Fatalf("a command with no server perform must return an Err Result; got %#v", out)
+// A command with no runnable server perform (the branch took its `Cmd.none`
+// leaf: `if model.flag then ( model, Cmd.perform t Got ) else ( model,
+// Cmd.none )`) answers the EMPTY list: no task ran, so the client dispatches
+// nothing, as Sky.Live does. It must never be an `Err`: the client would
+// dispatch it as `Got (Err …)`, a failure the app never had. A batch of no-ops
+// is the same answer.
+func TestSpaRunServerPerform_NoPerformAnswersNoTaskRan(t *testing.T) {
+	for name, cmd := range map[string]any{
+		"none":          Cmd_none(),
+		"batch of none": cmdT{kind: "batch", batch: []any{Cmd_none(), Cmd_none()}},
+	} {
+		out := Spa_runServerPerform(cmd)
+		list, ok := out.([]any)
+		if !ok || len(list) != 0 {
+			t.Fatalf("%s: a command with no server perform must answer the empty list (no task ran), never an Err; got %#v", name, out)
+		}
 	}
 }
