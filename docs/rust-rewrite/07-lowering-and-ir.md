@@ -318,6 +318,19 @@ callback field keeps its typed callee parameter (`func(Msg) …`, never
 record aliases", with the subset-record case falling out of ordinary
 `GoTy::TyVar` unification rather than synthesised TVars.
 
+**Per reference, not per expression.** The lowerer asks for an expression's or
+a local's type by its reference into the def's `TyTable` (`BodyTypes::expr_ref`)
+and maps it once per distinct reference (`Ctx::goty_ref`, memo per `Ctx`: one
+def, one table, one env, one module). `sky_ty_ref_to_go_in` walks the table node
+by node: a function, tuple or application node gets its Go type from its head
+and its children's Go types, as `go_ty_uncached` computes at the top level, where
+no record is mid-resolution; a record node is rebuilt and resolved by the owned
+path, so record resolution and its cycle guard are unchanged. `app_to_go` takes
+its arguments as a lazy callback shared by both paths. A def whose expressions
+have many distinct types sharing large tails (a `Codec` pipeline) therefore
+costs the size of its table, not the sum of its types. `lower/tests/goty_ref.rs`
+compares the two paths on every node of a table of D1/D2 shapes.
+
 Structs (data records), sealed-interface ADTs, and iota enums are all chosen
 here from the alias/union classification (the Rust port of `classifyAlias`,
 `Go/Record.hs:458`, and `shouldEmitSealedIface`). **Sealed-interface ADT

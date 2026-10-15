@@ -16,6 +16,12 @@ use std::path::PathBuf;
 
 const SMALL_STACK: usize = 2 * 1024 * 1024;
 
+/// The codec test's stack: well under what one unguarded walk down a
+/// 1,500-arrow type needs in this profile, so a walker that recurses without
+/// `base::ensure_stack` overflows here, as it does on a larger stack in an
+/// optimised build.
+const TINY_STACK: usize = 512 * 1024;
+
 fn repo_root() -> PathBuf {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
@@ -78,5 +84,52 @@ fn a_four_thousand_step_pipeline_emits_on_a_2_mib_thread() {
     assert!(
         calls >= 4000,
         "expected one `inc` call per step, found {calls}"
+    );
+}
+
+/// A generated record codec is as deep as its record is wide: the step types
+/// are curried arrows with one argument per remaining field, and the type
+/// layer's read-back table, owned rebuild and Go-type walk recurse down them.
+/// A 1,500-field codec overflowed an 8 MiB stack in
+/// `ty::tytable::TyTableBuilder::intern`. Check and lowering now grow the
+/// stack on demand in those walkers too, so this runs on a 512 KiB thread.
+///
+/// Falsifier: drop `base::ensure_stack` from the type-table walkers and this
+/// test binary aborts with "has overflowed its stack".
+#[test]
+fn a_fifteen_hundred_field_record_codec_checks_and_emits_on_a_small_thread() {
+    let n = 1500;
+    let fields: Vec<String> = (0..n).map(|i| format!("f{i} : String")).collect();
+    let steps: Vec<String> = (0..n)
+        .map(|i| format!("        |> Codec.field \"f{i}\" .f{i} Codec.string"))
+        .collect();
+    let blank: Vec<String> = (0..n).map(|i| format!("f{i} = \"\"")).collect();
+    let src = format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Codec as Codec exposing (Codec)\n\
+         import Std.Log exposing (println)\n\n\n\
+         type alias Big =\n    {{ {}\n    }}\n\n\n\
+         bigCodec : Codec Big\nbigCodec =\n    Codec.object Big\n{}\n        |> Codec.buildObject\n\n\n\
+         blank : Big\nblank =\n    {{ {} }}\n\n\n\
+         main =\n    println (Codec.toJson bigCodec blank)\n",
+        fields.join("\n    , "),
+        steps.join("\n"),
+        blank.join(", ")
+    );
+    let repo = repo_root();
+    let project = scratch_project(&src);
+    let dir = project.clone();
+    let emitted = std::thread::Builder::new()
+        .stack_size(TINY_STACK)
+        .spawn(move || project::emit_example_source(&repo, &dir))
+        .expect("spawn the small-stack thread")
+        .join()
+        .expect("check and emission must not panic");
+    let _ = std::fs::remove_dir_all(&project);
+    let go = emitted.unwrap_or_else(|e| panic!("emit failed: {e}"));
+    assert!(
+        go.contains("\"f1499\""),
+        "the last field's codec step reaches the Go"
     );
 }

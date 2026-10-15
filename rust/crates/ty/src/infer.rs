@@ -23,10 +23,12 @@
 //! can come of it.
 
 use crate::sig::World;
+use crate::tytable::{TyNode, TyRef, TyTable, TyTableBuilder};
 use crate::unify::{Content, FlatTy, SuperType, UnionFind};
 use crate::{Scheme, Ty, TyVarId};
 use base::{DefId, Name, Span};
 use hir::{Body, Expr, ExprId, LocalId, PatId, Pattern, Res, SkyDb};
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
 /// A recorded type error (an unify clash). A value, not an exception (L7).
@@ -146,6 +148,35 @@ pub struct Infer<'a> {
     /// `Codec.auto`. Read by `World::infer_annotated_bounds`, which adds them
     /// to the scheme callers see.
     pub inferred_bounds: Vec<(Name, SuperType)>,
+    /// Per-def entries that take the place of the world's own in its two
+    /// lowering-only record channels (see [`RecordOverlay`]).
+    overlay: Option<&'a RecordOverlay>,
+    /// Test seam: run every record access / update through the general
+    /// unify, so a test can compare the fast form against it.
+    #[cfg(test)]
+    pub(crate) no_fast_paths: bool,
+    /// D2 / #166 closes skipped as no-ops (tests only).
+    #[cfg(test)]
+    pub(crate) ground_close_skips: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: every `Infer` created on this thread starts with the record
+    /// fast paths off, so a test can build a whole `World` both ways.
+    pub(crate) static FORCE_GENERAL_PATHS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Entries for a world's `record_result_sigs` and `callsite_param_records`
+/// that one inference run reads IN PLACE OF the world's own entry for the same
+/// def — what inserting them into a clone of the world would give, without the
+/// clone. The salsa `infer_query` demands these per def; cloning the whole
+/// world for each def that needed one cost O(defs × world size).
+#[derive(Default)]
+pub struct RecordOverlay {
+    pub record_result_sigs: HashMap<DefId, Scheme>,
+    pub callsite_param_records: HashMap<DefId, Vec<Option<Ty>>>,
 }
 
 impl<'a> Infer<'a> {
@@ -170,7 +201,19 @@ impl<'a> Infer<'a> {
             obligations: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
+            overlay: None,
+            #[cfg(test)]
+            no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
+            #[cfg(test)]
+            ground_close_skips: 0,
         }
+    }
+
+    /// Read `overlay`'s record entries in place of the world's own (see
+    /// [`RecordOverlay`]).
+    pub fn with_overlay(mut self, overlay: Option<&'a RecordOverlay>) -> Self {
+        self.overlay = overlay;
+        self
     }
 
     /// Provide the def's declared scheme so `infer_def_typed` seeds param types
@@ -214,6 +257,23 @@ impl<'a> Infer<'a> {
         self
     }
 
+    /// Drain the recorded per-expression table into one hash-consed table: the
+    /// checker's view of the solved types. One entry per recording, in PUSH
+    /// order (post-order inference, `infer_expr`), an expression recorded
+    /// twice appearing twice — the order and multiplicity the `[E2008]` scan's
+    /// first-seen dedup and the scans' last-wins lookup depend on. Every value
+    /// equals the owned read-back (`recorded_expr_types`, kept as the oracle).
+    /// Empty unless [`Infer::with_record_exprs`] was set.
+    pub fn recorded_expr_table(&mut self) -> (Vec<(ExprId, TyRef)>, TyTable) {
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        let mut sink = ReadBackSink::new();
+        let out = recorded
+            .into_iter()
+            .map(|(e, tv)| (e, self.read_back_ref(tv, &mut sink)))
+            .collect();
+        (out, sink.finish())
+    }
+
     /// Drain the recorded per-expression table, reading each type back.
     ///
     /// Read-back is memoised per union-find ROOT: a def's expressions share very
@@ -221,6 +281,7 @@ impl<'a> Infer<'a> {
     /// same root), so this costs strictly less than `infer_def_typed`'s
     /// unconditional per-expression `read_back` — which the build path already
     /// pays for every def. Empty unless [`Infer::with_record_exprs`] was set.
+    #[cfg(test)]
     pub fn recorded_expr_types(&mut self) -> Vec<(ExprId, Ty)> {
         let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
         let mut memo: HashMap<TyVarId, Ty> = HashMap::new();
@@ -263,7 +324,56 @@ impl<'a> Infer<'a> {
     /// the input type-directed lowering (doc 07 §2) consumes. Keyed by `ExprId`
     /// (the arena index): the stable per-expression identity in this HIR, a
     /// cleaner key than a source span for an arena-based IR (see report).
-    pub fn infer_def_typed(
+    ///
+    /// Every recorded type is read straight into one hash-consed [`TyTable`]
+    /// ([`Infer::read_back_ref`]): no owned `Ty` is built per expression. The
+    /// stored values are exactly the owned read-backs the previous form of this
+    /// function returned (`infer_def_typed`, kept as the test oracle); the
+    /// differential test `table_readback_matches_owned_readback` holds them equal.
+    pub(crate) fn infer_def_tables(&mut self, body: &Body) -> TypedTables {
+        let Some((v, param_vars)) = self.infer_def_vars(body) else {
+            return TypedTables::default();
+        };
+        let result = self.read_back(v);
+        // Full inferred signature (tooling-only, see `infer_def_typed`).
+        let signature = {
+            let mut sig = result.clone();
+            for &pv in param_vars.iter().rev() {
+                let pt = self.read_back(pv);
+                sig = Ty::Fun(Box::new(pt), Box::new(sig));
+            }
+            sig
+        };
+        // One drain: one builder and one memo, both dropped when it ends (B3).
+        let mut sink = ReadBackSink::new();
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        let mut exprs = HashMap::with_capacity(recorded.len());
+        // Push order, last write wins for a repeated `ExprId` — as the owned
+        // `HashMap::insert` loop did.
+        for (e, tv) in recorded {
+            let r = self.read_back_ref(tv, &mut sink);
+            exprs.insert(e, r);
+        }
+        let recorded_locals: Vec<(LocalId, TyVarId)> = std::mem::take(&mut self.local_vars);
+        let mut locals = HashMap::with_capacity(recorded_locals.len());
+        for (lid, tv) in recorded_locals {
+            let r = self.read_back_ref(tv, &mut sink);
+            locals.insert(lid, r);
+        }
+        TypedTables {
+            result: Some(result),
+            signature: Some(signature),
+            exprs,
+            locals,
+            table: sink.finish(),
+        }
+    }
+
+    /// The owned-tree form of [`Infer::infer_def_tables`]: every recorded type
+    /// read back as its own `Ty`. Kept only as the oracle the table form is
+    /// tested against.
+    #[cfg(test)]
+    pub(crate) fn infer_def_typed(
         &mut self,
         body: &Body,
     ) -> (
@@ -1030,6 +1140,73 @@ impl<'a> Infer<'a> {
 
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
         let res = self.uf.unify(a, b);
+        self.finish_unify(res);
+    }
+
+    /// [`Infer::unify`] of `base` with the fresh constraint node `rec =
+    /// { fields | row }` built by a field access or a record update, through
+    /// the unifier's fast form when the base is a closed record holding the
+    /// fields (`UnionFind::unify_closed_record_fresh_row`, same result and the
+    /// same live union-find state), else the general unify.
+    fn unify_record_constraint(
+        &mut self,
+        base: TyVarId,
+        rec: TyVarId,
+        row: TyVarId,
+        fields: &std::collections::BTreeMap<Name, TyVarId>,
+        fresh_values: bool,
+    ) {
+        #[cfg(test)]
+        if self.no_fast_paths {
+            self.unify(base, rec);
+            return;
+        }
+        match self
+            .uf
+            .unify_closed_record_fresh_row(base, rec, row, fields, fresh_values)
+        {
+            Some(res) => self.finish_unify(res),
+            None => self.unify(base, rec),
+        }
+    }
+
+    /// The D2 / #166 close of an update's base `tb` with a fresh instance of
+    /// the declared record `ty` is a no-op when `tb` already IS `ty`: every
+    /// node reachable from `tb` along `ty` is a structure equal to `ty`'s node
+    /// (same nominal names, same closed field sets), and `ty` holds no type
+    /// variable and no `Error` (`UnionFind::ground_instance_nodes`). Then the
+    /// skipped `ty_to_var` + `unify` would have allocated one fresh node per
+    /// node of `ty`, linked each under the matching node of `tb` (a fresh
+    /// node has rank 0, so `tb`'s side stays the root), and re-set each `tb`
+    /// root's content to an equal value. Nothing else refers to the fresh
+    /// nodes. The only other change is a root's rank rising from 0 to 1 on
+    /// structured classes; a rank only decides which member of a class is its
+    /// root, and a structured class never becomes `Flex` again, so the choice
+    /// is never printed (`t<id>` names come only from `Flex` / `FlexSuper`
+    /// roots) and never reaches a `Flex` class's root. The skip reserves the
+    /// same number of variables, so every later id, and so every later `t<id>`
+    /// name, is unchanged. Returns whether it skipped.
+    fn skip_ground_close(&mut self, tb: TyVarId, ty: &Ty) -> bool {
+        #[cfg(test)]
+        if self.no_fast_paths {
+            return false;
+        }
+        match self.uf.ground_instance_nodes(tb, ty) {
+            Some(n) => {
+                self.uf.reserve_unreachable(n);
+                #[cfg(test)]
+                {
+                    self.ground_close_skips += 1;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Record the outcome of a unification: drain deferred obligations, then
+    /// report a clash.
+    fn finish_unify(&mut self, res: Result<(), crate::unify::Mismatch>) {
         // Obligations the unifier deferred are anchored where they arose.
         self.drain_pending();
         if let Err(m) = res {
@@ -1122,8 +1299,8 @@ impl<'a> Infer<'a> {
                 let row = self.uf.fresh_flex();
                 let constraint = self
                     .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.unify(tb, constraint);
+                    .fresh(Content::Structure(FlatTy::Record(map.clone(), Some(row))));
+                self.unify_record_constraint(tb, constraint, row, &map, false);
                 // D2 (lowering-path only): if the base is an unannotated sibling
                 // `Res::Def`, it resolved to a fresh flex above, so `tb`'s row
                 // stays open and reads back as the SUBSET of updated fields — but
@@ -1135,10 +1312,20 @@ impl<'a> Infer<'a> {
                 if self.use_inferred {
                     match &body.exprs[*base] {
                         Expr::Var(Res::Def(d)) => {
-                            if let Some(s) = self.world.record_result_sigs.get(d) {
-                                let s = s.clone();
-                                let full = self.instantiate(&s);
-                                self.unify(tb, full);
+                            // Borrowed for the run's lifetime: the overlay and
+                            // the world are fixed while this `Infer` lives, so
+                            // no copy of the scheme is needed per update.
+                            let (world, overlay) = (self.world, self.overlay);
+                            let sig = overlay
+                                .and_then(|o| o.record_result_sigs.get(d))
+                                .or_else(|| world.record_result_sigs.get(d));
+                            if let Some(s) = sig {
+                                // A scheme with quantifiers allocates one
+                                // variable per quantifier first: never skipped.
+                                if !(s.vars.is_empty() && self.skip_ground_close(tb, &s.ty)) {
+                                    let full = self.instantiate(s);
+                                    self.unify(tb, full);
+                                }
                             }
                         }
                         // #166: the base is a PARAM of this def. Close the update's
@@ -1169,8 +1356,8 @@ impl<'a> Infer<'a> {
                                     // harvested into `callsite_param_records`,
                                     // #166). Both give the full record so the
                                     // update's open row closes to it.
-                                    let param_record: Option<Ty> = self
-                                        .world
+                                    let (world, overlay) = (self.world, self.overlay);
+                                    let param_record: Option<&Ty> = world
                                         .value_sigs
                                         .get(&def)
                                         .and_then(|scheme| {
@@ -1195,22 +1382,24 @@ impl<'a> Infer<'a> {
                                                         Ty::Record(_, None)
                                                     ) =>
                                                 {
-                                                    Some((**a).clone())
+                                                    Some(&**a)
                                                 }
                                                 _ => None,
                                             }
                                         })
                                         .or_else(|| {
-                                            self.world
-                                                .callsite_param_records
-                                                .get(&def)
+                                            overlay
+                                                .and_then(|o| o.callsite_param_records.get(&def))
+                                                .or_else(|| world.callsite_param_records.get(&def))
                                                 .and_then(|v| v.get(idx))
-                                                .and_then(|o| o.clone())
+                                                .and_then(|o| o.as_ref())
                                         });
                                     if let Some(rec) = param_record {
-                                        let mut sub: HashMap<String, TyVarId> = HashMap::new();
-                                        let av = self.ty_to_var(&rec, &mut sub);
-                                        self.unify(tb, av);
+                                        if !self.skip_ground_close(tb, rec) {
+                                            let mut sub: HashMap<String, TyVarId> = HashMap::new();
+                                            let av = self.ty_to_var(rec, &mut sub);
+                                            self.unify(tb, av);
+                                        }
                                     }
                                 }
                             }
@@ -1388,8 +1577,8 @@ impl<'a> Infer<'a> {
                 map.insert(field.clone(), fv);
                 let rec = self
                     .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.unify(tb, rec);
+                    .fresh(Content::Structure(FlatTy::Record(map.clone(), Some(row))));
+                self.unify_record_constraint(tb, rec, row, &map, true);
                 fv
             }
             Expr::Error => self.uf.fresh_flex(),
@@ -2302,6 +2491,19 @@ impl<'a> Infer<'a> {
         scheme: bool,
         concretize_super: bool,
     ) -> Ty {
+        // A type is as deep as a curried constructor's arity (one arrow per field of
+        // a record constructor): grow the stack on demand rather than overflow it.
+        base::ensure_stack(|| self.read_back_seen_guarded(v, seen, scheme, concretize_super))
+    }
+
+    fn read_back_seen_guarded(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        scheme: bool,
+        concretize_super: bool,
+    ) -> Ty {
+        crate::counters::READBACK_NODES.bump();
         let r = self.uf.find(v);
         if !seen.insert(r) {
             return Ty::Error; // cycle guard (anyEquivSeen, Solve.hs:1449)
@@ -2378,7 +2580,193 @@ impl<'a> Infer<'a> {
         seen.remove(&r);
         out
     }
+
+    /// Read `v` back straight into the drain's table. The value stored is the
+    /// one [`Infer::read_back`] returns for `v` (`TyTable::get` of the result
+    /// equals `read_back(v)`), without building an owned tree.
+    ///
+    /// A top-level read of a union-find root already read in this drain is a
+    /// memo hit. The memo holds only UNTAINTED results (see
+    /// [`Infer::read_back_into`]), so a hit is exactly the value a fresh read
+    /// would produce.
+    pub(crate) fn read_back_ref(&mut self, v: TyVarId, sink: &mut ReadBackSink) -> TyRef {
+        let r = self.uf.find(v);
+        if let Some(&t) = sink.memo.get(&r) {
+            return t;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let (t, tainted) = self.read_back_into(v, &mut seen, sink);
+        if !tainted {
+            sink.memo.insert(r, t);
+        }
+        t
+    }
+
+    /// [`Infer::read_back_seen`] (expression-level: `scheme = false`), writing
+    /// nodes into `sink` instead of building a `Ty`. Returns the node and
+    /// whether the read was TAINTED: a frame is tainted when it, or any frame
+    /// below it, met the cycle guard (a root already on `seen`, read back as
+    /// `Error`). A tainted value depends on the path that reached it — the same
+    /// root read from elsewhere can come back different — so it is never
+    /// memoised. An untainted value never met a node on its own path, so it is
+    /// on no cycle, and reading its root again from any other path visits the
+    /// same nodes and builds the same value.
+    fn read_back_into(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        sink: &mut ReadBackSink,
+    ) -> (TyRef, bool) {
+        // A type is as deep as a curried constructor's arity (one arrow per field of
+        // a record constructor): grow the stack on demand rather than overflow it.
+        base::ensure_stack(|| self.read_back_into_guarded(v, seen, sink))
+    }
+
+    fn read_back_into_guarded(
+        &mut self,
+        v: TyVarId,
+        seen: &mut std::collections::HashSet<TyVarId>,
+        sink: &mut ReadBackSink,
+    ) -> (TyRef, bool) {
+        crate::counters::READBACK_NODES.bump();
+        sink.frames += 1;
+        let r = self.uf.find(v);
+        if seen.contains(&r) {
+            // cycle guard (anyEquivSeen, Solve.hs:1449)
+            return (sink.builder.intern_node(TyNode::Error), true);
+        }
+        if sink.share_subroots {
+            if let Some(&t) = sink.memo.get(&r) {
+                return (t, false);
+            }
+        }
+        seen.insert(r);
+        let mut tainted = false;
+        let node = match self.uf.content(r) {
+            Content::Flex => TyNode::Var(Name::new(&format!("t{}", r.0))),
+            Content::Rigid(n) => TyNode::Var(n),
+            Content::FlexSuper(b) if b.has(SuperType::Number) => {
+                TyNode::App(Name::new("number"), Box::new([]))
+            }
+            Content::FlexSuper(b) if b.has(SuperType::Appendable) => {
+                TyNode::Var(Name::new("appendable"))
+            }
+            Content::FlexSuper(_) => TyNode::Var(Name::new(&format!("t{}", r.0))),
+            Content::Error => TyNode::Error,
+            Content::Structure(ft) => match ft {
+                FlatTy::App(name, args) => {
+                    let mut refs = Vec::with_capacity(args.len());
+                    for a in args {
+                        let (t, ta) = self.read_back_into(a, seen, sink);
+                        tainted |= ta;
+                        refs.push(t);
+                    }
+                    TyNode::App(name, refs.into_boxed_slice())
+                }
+                FlatTy::Fun(a, b) => {
+                    let (ta, xa) = self.read_back_into(a, seen, sink);
+                    let (tb, xb) = self.read_back_into(b, seen, sink);
+                    tainted |= xa | xb;
+                    TyNode::Fun(ta, tb)
+                }
+                FlatTy::Tuple(xs) => {
+                    let mut refs = Vec::with_capacity(xs.len());
+                    for x in xs {
+                        let (t, tx) = self.read_back_into(x, seen, sink);
+                        tainted |= tx;
+                        refs.push(t);
+                    }
+                    TyNode::Tuple(refs.into_boxed_slice())
+                }
+                FlatTy::Unit => TyNode::Unit,
+                FlatTy::Record(fs, ext) => {
+                    // As `read_back_seen`: flatten a resolved-record extension,
+                    // read the fields in map order, then sort by name.
+                    let (fs, ext) = self.uf.normalize_record(fs, ext);
+                    let mut fields: Vec<(Name, TyRef)> = Vec::with_capacity(fs.len());
+                    for (n, t) in fs {
+                        let (tr, tt) = self.read_back_into(t, seen, sink);
+                        tainted |= tt;
+                        fields.push((n, tr));
+                    }
+                    fields.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+                    let ext_name = ext.and_then(|e| match self.uf.content(e) {
+                        Content::Flex | Content::FlexSuper(_) => {
+                            Some(Name::new(&format!("r{}", self.uf.find(e).0)))
+                        }
+                        _ => None,
+                    });
+                    TyNode::Record(fields.into_boxed_slice(), ext_name)
+                }
+            },
+        };
+        seen.remove(&r);
+        let t = sink.builder.intern_node(node);
+        if sink.share_subroots && !tainted {
+            sink.memo.insert(r, t);
+        }
+        (t, tainted)
+    }
 }
+
+/// One def's recorded types, read back into one hash-consed table: what
+/// [`crate::BodyTypes`] is built from.
+#[derive(Default)]
+pub(crate) struct TypedTables {
+    pub(crate) result: Option<Ty>,
+    pub(crate) signature: Option<Ty>,
+    pub(crate) exprs: HashMap<ExprId, TyRef>,
+    pub(crate) locals: HashMap<LocalId, TyRef>,
+    pub(crate) table: TyTable,
+}
+
+/// The state of ONE read-back drain: the table being built and the memo of
+/// roots already read into it. It is created at the start of a drain
+/// (`infer_def_tables`, `infer_def_selected`, the checker's recorded table) and
+/// dropped at its end, never stored on [`Infer`]: an earlier read-back (the
+/// arity gate, the value restriction, `collapse_let_poly`) runs before later
+/// unifications and must not be served from, or feed, a memo (B3).
+pub(crate) struct ReadBackSink {
+    builder: TyTableBuilder,
+    memo: FxHashMap<TyVarId, TyRef>,
+    /// Memoise every untainted sub-root, not only the roots a drain asks for.
+    share_subroots: bool,
+    /// Read-back frames run by this drain (the per-drain view of
+    /// `counters::READBACK_NODES`, safe to read in a parallel test run).
+    pub(crate) frames: u64,
+}
+
+impl ReadBackSink {
+    pub(crate) fn new() -> Self {
+        ReadBackSink {
+            builder: TyTableBuilder::new(),
+            memo: FxHashMap::default(),
+            share_subroots: true,
+            frames: 0,
+        }
+    }
+
+    /// Memoise every untainted sub-root as well (see `share_subroots`).
+    #[cfg(test)]
+    pub(crate) fn with_subroot_sharing(mut self, on: bool) -> Self {
+        self.share_subroots = on;
+        self
+    }
+
+    /// Rebuild the owned type at `r` (the builder keeps every node it stored).
+    #[cfg(test)]
+    pub(crate) fn get(&self, r: TyRef) -> Ty {
+        self.builder.get(r)
+    }
+
+    pub(crate) fn finish(self) -> TyTable {
+        self.builder.finish()
+    }
+}
+
+#[cfg(test)]
+#[path = "infer_readback_tests.rs"]
+mod readback_tests;
 
 /// Every local a pattern binds.
 fn collect_pat_binders(body: &Body, p: PatId, out: &mut std::collections::HashSet<LocalId>) {

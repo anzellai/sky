@@ -218,7 +218,7 @@ pub fn resolve_query(
 /// bridge) so the `parse`/`resolve`/interning edges are recorded against this
 /// query exactly as they are for [`resolve_query`].
 #[salsa::tracked]
-pub fn type_world_query(db: &dyn ResolveDb) -> ty::World {
+pub fn type_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
     // DECLARATIONS ONLY (passes 1-4). The body-derived channels (`app_check_sigs`
     // / `any_result_check_sigs` / `record_result_sigs`, passes 5-7) are NOT baked
     // in here — they read app defs' BODIES, which would couple every `infer` to
@@ -228,7 +228,7 @@ pub fn type_world_query(db: &dyn ResolveDb) -> ty::World {
     // this query to a *value-equal* world → salsa backdates → an unrelated def's
     // `infer` validates from memo instead of re-inferring (the headline
     // incremental property; incremental-test `body_edit_recomputes_only_that_defs_infer`).
-    ty::World::build_decls(db.sky_db())
+    std::sync::Arc::new(ty::World::build_decls(db.sky_db()))
 }
 
 /// The FULL world (declarations + the body-derived CHECK-ONLY channels, passes
@@ -240,8 +240,8 @@ pub fn type_world_query(db: &dyn ResolveDb) -> ty::World {
 /// backdating the incremental harness asserts. Value-identical to the pre-split
 /// `World::build` the checker read directly.
 #[salsa::tracked]
-pub fn check_world_query(db: &dyn ResolveDb) -> ty::World {
-    ty::World::build(db.sky_db())
+pub fn check_world_query(db: &dyn ResolveDb) -> std::sync::Arc<ty::World> {
+    std::sync::Arc::new(ty::World::build(db.sky_db()))
 }
 
 /// The D2 record-result scheme for one def (pass 7), demanded LAZILY by the
@@ -307,9 +307,9 @@ pub fn callsite_param_records_query(
 ///
 /// The union-find stays **local to this query's execution**: `compute_body_types`
 /// creates the `Infer` (and its `UnionFind`), drives it, and reads every result
-/// back to a canonical `ty::Ty` before returning — a `TyVarId` never escapes into
-/// the memoised `BodyTypes` (doc 12 #M1; verified: `infer_def_typed` calls
-/// `read_back` on the result + every recorded expr/local var).
+/// back to canonical types before returning — a `TyVarId` never escapes into
+/// the memoised `BodyTypes` (doc 12 #M1; verified: `infer_def_tables` reads the
+/// result and every recorded expr/local var back into a hash-consed `TyTable`).
 ///
 /// `no_eq`: `BodyTypes` carries `HashMap`s and is consumed eagerly by the lowerer
 /// (not yet a query), so recompute-on-demand is fine — no backdate needed. Keyed
@@ -345,7 +345,10 @@ pub fn infer_query(
         // the common case keeps its `type_world`-only (backdated) dependency.
         let updates_param = ty::body_updates_a_param(body);
         if !bases.is_empty() || updates_param {
-            let mut w = world.clone();
+            // The demanded entries are read in place of the world's own (a
+            // `RecordOverlay`), exactly as inserting them into a clone of the
+            // world would be, without cloning the world per def.
+            let mut w = ty::RecordOverlay::default();
             for d in bases {
                 if let Some(scheme) = record_result_sig_query(db, d, module, _file) {
                     w.record_result_sigs.insert(d, scheme.clone());
@@ -357,7 +360,7 @@ pub fn infer_query(
                     w.callsite_param_records.insert(def, recs.clone());
                 }
             }
-            return ty::compute_body_types(&w, sky, module, def);
+            return ty::compute_body_types_with(world, Some(&w), sky, module, def);
         }
     }
     ty::compute_body_types(world, sky, module, def)
@@ -692,15 +695,19 @@ impl SkyDb for SkyDatabase {
 
 /// The salsa-backed [`ty::TyDb`]: the assembled world and each def's typed table
 /// route to the memoised [`type_world_query`] / [`infer_query`]. Mirrors the
-/// `SkyDb` impl above (route to a tracked query, clone out of the memo into the
-/// owning `Rc` shape both backends return) — the seam that keeps salsa in `skydb`
+/// `SkyDb` impl above (route to a tracked query, hand out an owning handle —
+/// the memoised world's own `Arc`, or a body table cloned into an `Rc`) — the
+/// seam that keeps salsa in `skydb`
 /// while `ty`/`lower` author against the forbid-clean `TyDb` interface.
 impl ty::TyDb for SkyDatabase {
-    fn type_world(&self) -> Rc<ty::World> {
-        Rc::new(type_world_query(self).clone())
+    // The memo holds the world behind an `Arc`, so a caller shares it: no
+    // copy of the world per call (the split's per-field encodability check
+    // and every LSP hover used to deep-clone the whole world here).
+    fn type_world(&self) -> std::sync::Arc<ty::World> {
+        type_world_query(self).clone()
     }
-    fn check_world(&self) -> Rc<ty::World> {
-        Rc::new(check_world_query(self).clone())
+    fn check_world(&self) -> std::sync::Arc<ty::World> {
+        check_world_query(self).clone()
     }
     fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<ty::BodyTypes> {
         // `module` comes from the caller (revision-safe — no interned read here);

@@ -83,7 +83,7 @@ fn literal_topic(body: &Body, e: ExprId, sky: &dyn SkyDb) -> Option<String> {
 /// Collect the literal-topic sites of one body.
 pub fn scan_body(
     body: &Body,
-    expr_ty: &HashMap<ExprId, Ty>,
+    expr_ty: &crate::tytable::ExprTypes<'_>,
     sky: &dyn SkyDb,
     module: &str,
     module_src: &str,
@@ -109,7 +109,7 @@ pub fn scan_body(
         };
         let ty = match role {
             Role::Publish => t.clone(),
-            Role::Subscribe => match t {
+            Role::Subscribe => match &t {
                 Ty::Fun(a, _) => (**a).clone(),
                 _ => continue,
             },

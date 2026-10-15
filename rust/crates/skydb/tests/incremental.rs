@@ -389,6 +389,17 @@ fn type_world_and_infer_are_memoised_within_a_revision() {
         *w1 == *w2,
         "type_world must be value-stable within a revision"
     );
+    // Shared, not copied: both demands hand out the memo's own world. A deep
+    // copy per call cost a whole world per split field check and per hover.
+    assert!(
+        std::ptr::eq(&*w1, &*w2),
+        "type_world must share the memoised world, not copy it"
+    );
+    let (c1, c2) = (fx.db.check_world(), fx.db.check_world());
+    assert!(
+        std::ptr::eq(&*c1, &*c2),
+        "check_world must share the memoised world, not copy it"
+    );
     assert_eq!(
         bt1, bt2,
         "infer(App.main) must be byte-stable within a revision"

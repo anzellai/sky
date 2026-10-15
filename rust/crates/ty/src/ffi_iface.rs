@@ -34,7 +34,6 @@ use crate::ffi_sig::IfaceSlot;
 use crate::Ty;
 use base::Span;
 use hir::{Body, Expr, ExprId, Res, SkyDb};
-use std::collections::HashMap;
 
 /// One offending argument.
 #[derive(Clone, Debug)]
@@ -208,7 +207,7 @@ pub(crate) fn bound_iface_slots(ty: &Ty, slots: &[IfaceSlot]) -> Ty {
 
 pub fn scan_body(
     body: &Body,
-    expr_ty: &HashMap<ExprId, Ty>,
+    expr_ty: &crate::tytable::ExprTypes<'_>,
     sky: &dyn SkyDb,
     def_name: &str,
     out: &mut IfaceScan,
@@ -227,7 +226,7 @@ pub fn scan_body(
                 continue;
             };
             let mut bad = Vec::new();
-            violations(&slot, given, &mut bad);
+            violations(&slot, &given, &mut bad);
             for (iface, given) in bad {
                 let span = body.expr_span(*arg).or_else(|| body.expr_span(call));
                 if out
