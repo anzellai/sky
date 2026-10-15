@@ -631,8 +631,10 @@ a small host. `sky build` does the compressing for you: it writes the hashed
 `main.<hash>.wasm` into `frontend/dist` and precompresses it (and `wasm_exec.js`)
 to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool is on the build
 machine — `brew install brotli` / `apt install brotli`; the build warns once and
-falls back to gzip otherwise). The `.br`/`.gz` sit in `dist` UNUSED until your
-static host serves them, so configure content-negotiation at the edge:
+falls back to gzip otherwise). The Sky backend serves them itself: a request
+that accepts `br` (else `gzip`) gets the `.br` (else `.gz`) file next to the
+asset, and a Range request or an asset with no fresh variant gets the raw file,
+gzipped on the fly. A separate static host in front must be told to use them:
 
 - **Caddy** (what the reference deploys use): `file_server { precompressed br gzip }`
   on the `*.wasm` + `wasm_exec.js` routes — Caddy's own `encode` has no brotli, so

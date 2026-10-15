@@ -603,8 +603,12 @@ A `Dict k v` field crosses the wire through `Codec.dict`.
 **Serving the wasm — precompressed.** A Go→wasm client is multi-MB raw (~2.5 MB
 brotli), so `sky build` precompresses the hashed `main.<hash>.wasm` + `wasm_exec.js`
 in `frontend/dist` to `.gz` (always) and `.br` (brotli-11, when the `brotli` tool
-is installed — else it warns once and ships gzip only). Those files sit unused
-until the static host serves them: Caddy `file_server { precompressed br gzip }`
+is installed — else it warns once and ships gzip only). The Sky backend's static
+mounts send them: a request that accepts `br` (else `gzip`) gets the `.br` (else
+`.gz`) file as it is, with the original's Content-Type and Last-Modified, when it
+is no older than its source; a Range request, or a file with no fresh variant,
+gets the raw file (gzipped on the fly as before; `runtime-go/rt/static_precompressed.go`).
+A separate static host serves them with Caddy `file_server { precompressed br gzip }`
 (Caddy's `encode` has no brotli), or nginx `gzip_static` + `ngx_brotli`. The wasm
 is content-hashed + `immutable`, so allow a CDN to cache `*.wasm` (Cloudflare does
 not by default). Deploy-time `brotli` bridges are no longer needed — the build
