@@ -83,16 +83,19 @@ func Spa_ssrWasmName(dir any) string {
 	return "main.wasm"
 }
 
-// Spa_ssrWasmNameBuilt is Spa_ssrWasmName with the name the build baked into
-// the backend. The auto-split build writes the frontend's `main.<hash>.wasm`
-// into the generated backend source before it builds the backend, so the SSR
-// page names the right wasm when the backend runs where `../frontend/dist` is
-// not reachable (a slot directory behind a proxy that serves the wasm from
-// the dist). An empty `built` (a split generated without --build) falls back
-// to scanning `dir`.
+// Spa_ssrWasmNameBuilt is Spa_ssrWasmName with the name the build gave the
+// backend, so the SSR page names the right wasm when the backend runs where
+// `../frontend/dist` is not reachable (a slot directory behind a proxy that
+// serves the wasm from the dist). In order: a name baked into the generated
+// backend source (`built`), then the name the auto-split build linked into
+// the backend's `skybuildinfo` package (SetSpaBuiltWasmName), then a scan of
+// `dir` (a split generated without --build).
 func Spa_ssrWasmNameBuilt(built, dir any) string {
 	if b := strings.TrimSpace(AsString(built)); b != "" {
 		return b
+	}
+	if spaLinkedWasmName != "" {
+		return spaLinkedWasmName
 	}
 	return Spa_ssrWasmName(dir)
 }

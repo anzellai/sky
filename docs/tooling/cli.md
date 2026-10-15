@@ -170,6 +170,20 @@ before v0.25.18 is ignored). When memory cannot be read, the legs run serially.
 The build prints its decision in the `== building … ==` line and in the
 `--timings` report.
 
+An app whose backend renders the first page (SSR) names the frontend's
+`main.<hash>.wasm` in that page, and the hash exists only once the frontend
+leg has built. The backend gets the name through its generated
+`sky-out/skybuildinfo` package (a small package of its own), not through its
+`main` package. So in parallel the backend leg builds while the frontend leg
+builds, `main` included; when the frontend ends, the parent writes the name to
+`.sky-spa-wasm-name` in the split's directory, and the backend recompiles only
+that small package and links (the `--timings` rows `go build (native, before
+the frontend's wasm name)` and `wait for the frontend's wasm name`). A build
+whose frontend did not change links nothing new. Serially, the frontend builds
+first and the backend then reads the name at once. If the frontend fails, the
+backend is still built, without a name: its page then finds the wasm by
+scanning `../frontend/dist` at run time, as before.
+
 Go compile parallelism. `go build` compiles up to one package per CPU at the
 same time. Inside one `go build` the generated `main` package always compiles
 alone (every other package is one of its dependencies), so a limit on `-p`

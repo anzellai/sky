@@ -2811,8 +2811,12 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
             "SSR-P1: the generated backend must carry the SSR route piece `{needle}`:\n{backend}"
         );
     }
-    // v0.25.20: the build wrote the frontend's wasm name into the backend, so the
-    // SSR page names it without reading ../frontend/dist at run time.
+    // v0.25.20: the build gives the backend the frontend's wasm name, so the SSR
+    // page names it without reading ../frontend/dist at run time. Since
+    // v0.27.9 the name is linked into the backend's small `skybuildinfo`
+    // package (rt.SetSpaBuiltWasmName), not written into its Sky source: the
+    // backend's `main` stays the same when the frontend changes, and the
+    // backend leg can build while the frontend leg builds.
     let dist = proj.join(".skyapp/web-app/.split/frontend/dist");
     let wasm = std::fs::read_dir(&dist)
         .expect("frontend dist")
@@ -2821,8 +2825,16 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         .find(|n| n.starts_with("main.") && n.ends_with(".wasm"))
         .expect("a main.<hash>.wasm in the dist");
     assert!(
-        backend.contains(&format!("spaBuiltWasmName_ =\n    \"{wasm}\"")),
-        "the build must bake the dist's {wasm} into the backend:\n{backend}"
+        backend.contains("spaBuiltWasmName_ =\n    \"\""),
+        "the backend's Sky source keeps its empty wasm-name binding:\n{backend}"
+    );
+    let stamp_pkg = std::fs::read_to_string(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/skybuildinfo/skybuildinfo.go"),
+    )
+    .unwrap_or_default();
+    assert!(
+        stamp_pkg.contains(&format!("rt.SetSpaBuiltWasmName(\"{wasm}\")")),
+        "the build must link the dist's {wasm} into the backend:\n{stamp_pkg}\n{log}"
     );
     // The SSR route must be registered BEFORE the static fallthrough so asset
     // GETs (main.<hash>.wasm, wasm_exec.js) still reach the file server.
@@ -2862,6 +2874,38 @@ fn spa_ssr_app_emits_a_server_render_route_for_the_root() {
         dist_has_wasm(&proj.join(".skyapp/web-app/.split/frontend/dist")),
         "frontend wasm must be staged:\n{log}"
     );
+    // The served page names the linked wasm with no dist in reach: run the
+    // backend binary from a directory with no ../frontend/dist.
+    let away = proj.join("away").join("slot");
+    std::fs::create_dir_all(&away).unwrap();
+    std::fs::copy(
+        proj.join(".skyapp/web-app/.split/backend/sky-out/app"),
+        away.join("app"),
+    )
+    .unwrap();
+    let port = free_port();
+    let log_path = away.join("server.log");
+    let server = Killed(
+        Command::new(away.join("app"))
+            .current_dir(&away)
+            .env("PORT", port.to_string())
+            .stdout(std::fs::File::create(&log_path).unwrap())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    assert!(
+        wait_for_spa_backend(&log_path, 120),
+        "the backend did not start:\n{}",
+        std::fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    let jar = away.join("jar");
+    let page = curl_get_jar(port, "/", &jar);
+    assert!(
+        page.contains(&format!("/{wasm}")),
+        "the SSR page must load {wasm} without a dist:\n{page}"
+    );
+    drop(server);
 
     let _ = std::fs::remove_dir_all(&proj);
 }

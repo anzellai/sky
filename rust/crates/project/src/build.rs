@@ -1139,7 +1139,14 @@ fn build_inner(
     // project root (or pinned there by the parent `sky` for a generated split /
     // Std.App leg); stable across no-change rebuilds (build_stamp.rs).
     let stamp = crate::build_stamp::resolve_build_stamp(&opts.example_dir);
-    if let Err(e) = crate::build_stamp::write_go_stamp(&out_dir, &stamp) {
+    // A Sky.Spa SSR backend leg that waits for the frontend's wasm name keeps
+    // the name its last build linked until the new one arrives, so a build
+    // whose frontend did not change links nothing new (spa_wasm_handoff.rs).
+    let linked_wasm = crate::spa_wasm_handoff::get()
+        .and_then(|_| crate::build_stamp::linked_spa_wasm_name(&out_dir));
+    if let Err(e) =
+        crate::build_stamp::write_go_stamp_with(&out_dir, &stamp, linked_wasm.as_deref())
+    {
         report.emitted = false;
         report.note = format!("write {}: {e}", crate::build_stamp::STAMP_GO_FILE);
         return report;
@@ -1201,7 +1208,14 @@ fn build_inner(
         return report;
     }
     let t_go = crate::timings::phase("go build (native)");
-    let go_result = run_go_build_detecting_cgo(&out_dir, &source, &bin_name, jobs_arg);
+    let go_result = match crate::spa_wasm_handoff::get() {
+        // A Sky.Spa SSR backend leg built beside its frontend leg: build
+        // first, then link the frontend's wasm name (spa_wasm_handoff.rs).
+        Some(wait) => {
+            build_awaiting_wasm_name(&out_dir, &source, &bin_name, jobs_arg, &stamp, wait)
+        }
+        None => run_go_build_detecting_cgo(&out_dir, &source, &bin_name, jobs_arg),
+    };
     crate::go_jobs::record_peaks(&out_dir);
     match go_result {
         Ok(outcome) => {
@@ -1312,6 +1326,48 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     std::fs::copy(src, &dest)
         .map_err(|e| format!("copy wasm_exec.js -> {}: {e}", dest.display()))?;
     Ok(())
+}
+
+/// The native build of a Sky.Spa SSR backend leg that runs beside its frontend
+/// leg (see `spa_wasm_handoff`). When the frontend's wasm name is not there
+/// yet, a first `go build` without it compiles everything, `main` included,
+/// while the frontend builds. Then it waits for the name, writes it into the
+/// small `skybuildinfo` package, and builds again: that package and the link.
+/// A failed first build is the result (the name cannot fix it). A frontend
+/// that did not build delivers no name, and the backend's SSR page then scans
+/// the dist, as when the frontend failed before.
+fn build_awaiting_wasm_name(
+    out_dir: &Path,
+    source: &str,
+    bin_name: &str,
+    jobs: Option<&str>,
+    stamp: &crate::build_stamp::AppBuildStamp,
+    wait: &crate::spa_wasm_handoff::Await,
+) -> Result<GoBuildOutcome, String> {
+    use crate::spa_wasm_handoff::{self as handoff, Delivered};
+    if handoff::ready(wait).is_none() {
+        let t = crate::timings::phase("go build (native, before the frontend's wasm name)");
+        let first = run_go_build_detecting_cgo(out_dir, source, bin_name, jobs)?;
+        t.end();
+        if !first.ok {
+            return Ok(first);
+        }
+    }
+    let t = crate::timings::phase("wait for the frontend's wasm name");
+    let delivered = handoff::wait(wait, GO_BUILD_TIMEOUT)?;
+    t.end();
+    let name = match &delivered {
+        Delivered::Name(n) => Some(n.as_str()),
+        Delivered::Failed => None,
+    };
+    crate::build_stamp::write_go_stamp_with(out_dir, stamp, name).map_err(|e| {
+        format!(
+            "write {}/{}: {e}",
+            crate::build_stamp::STAMP_PKG,
+            crate::build_stamp::STAMP_PKG
+        )
+    })?;
+    run_go_build_detecting_cgo(out_dir, source, bin_name, jobs)
 }
 
 /// Run `go build` with static-first cgo detection. `source` is the emitted

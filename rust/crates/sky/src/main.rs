@@ -118,6 +118,24 @@ fn main() -> ExitCode {
     } else {
         args
     };
+    // Internal: a Sky.Spa SSR backend leg's wasm-name handoff (passed by the
+    // parent build only; project::spa_wasm_handoff).
+    let args = if args.first().map(String::as_str) == Some("build") {
+        match take_spa_await_flags(&args) {
+            Ok((rest, wait)) => {
+                if let Some(w) = wait {
+                    project::spa_wasm_handoff::set(w);
+                }
+                rest
+            }
+            Err(e) => {
+                eprintln!("sky build: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        args
+    };
     let started = std::time::Instant::now();
     let code = dispatch(&args);
     if timed {
@@ -161,6 +179,38 @@ fn take_go_build_flags(
         }
     }
     Ok((rest, env))
+}
+
+/// Remove the internal wasm-name handoff flags a Sky.Spa parent passes its
+/// SSR backend leg (`--spa-await-wasm-name <file> --spa-await-nonce <n>`).
+/// Both or neither. Pure, so it is unit-tested.
+fn take_spa_await_flags(
+    args: &[String],
+) -> Result<(Vec<String>, Option<project::spa_wasm_handoff::Await>), String> {
+    use project::spa_wasm_handoff::{Await, FLAG_FILE, FLAG_NONCE};
+    let mut rest = Vec::with_capacity(args.len());
+    let (mut file, mut nonce) = (None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == FLAG_FILE || a == FLAG_NONCE {
+            let v = it
+                .next()
+                .ok_or_else(|| format!("{a} needs a value"))?
+                .clone();
+            if a == FLAG_FILE {
+                file = Some(PathBuf::from(v));
+            } else {
+                nonce = Some(v);
+            }
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    match (file, nonce) {
+        (Some(file), Some(nonce)) => Ok((rest, Some(Await { file, nonce }))),
+        (None, None) => Ok((rest, None)),
+        _ => Err(format!("{FLAG_FILE} and {FLAG_NONCE} go together")),
+    }
 }
 
 /// The environment a `sky run` build needs for `--profile`: no `-trimpath`,
@@ -4018,11 +4068,32 @@ fn spa_split_and_build(
         .unwrap_or(false);
     let leg_go_jobs = plan
         .go_jobs
-        .filter(|_| !bake_wasm_name && std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
-    let leg_reason = if bake_wasm_name {
-        "in order: frontend, then backend (the SSR page names the frontend's wasm)".to_string()
-    } else {
-        plan.reason.to_string()
+        .filter(|_| std::env::var_os(project::go_jobs::ENV_JOBS).is_none());
+    // The SSR backend gets the frontend's wasm name through a file the parent
+    // writes when the frontend leg ends (project::spa_wasm_handoff): in
+    // parallel, the backend builds meanwhile and only links the name at the
+    // end. The file of an earlier build is removed before either leg starts,
+    // and each build has its own nonce.
+    let handoff = bake_wasm_name.then(|| {
+        let file = od.join(project::spa_wasm_handoff::FILE_NAME);
+        let file = std::path::absolute(&file).unwrap_or(file);
+        project::spa_wasm_handoff::clear(&file);
+        project::spa_wasm_handoff::Await {
+            file,
+            nonce: project::spa_wasm_handoff::new_nonce(),
+        }
+    });
+    let handoff_on = std::sync::atomic::AtomicBool::new(handoff.is_some());
+    let leg_reason = match (bake_wasm_name, plan.parallel) {
+        (true, true) => format!(
+            "{} — the SSR backend links the frontend's wasm name when the frontend is built",
+            plan.reason
+        ),
+        (true, false) => format!(
+            "in order: frontend, then backend (the SSR page names the frontend's wasm); {}",
+            plan.reason
+        ),
+        (false, _) => plan.reason.to_string(),
     };
     project::timings::note(format!("legs: {leg_reason}"));
     println!(
@@ -4050,6 +4121,14 @@ fn spa_split_and_build(
         }
         if let Some(n) = leg_go_jobs {
             c.env(project::go_jobs::ENV_JOBS, n.to_string());
+        }
+        if let Some(h) = handoff
+            .as_ref()
+            .filter(|_| handoff_on.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            c.arg(project::spa_wasm_handoff::FLAG_FILE)
+                .arg(&h.file)
+                .args([project::spa_wasm_handoff::FLAG_NONCE, h.nonce.as_str()]);
         }
         let t = project::timings::phase("backend leg (child sky build, native)");
         let out = c.arg("src/Main.sky").current_dir(&backend_dir).output();
@@ -4085,12 +4164,52 @@ fn spa_split_and_build(
         precompress_assets(&dist_precompress_targets(&frontend_dir.join("dist")));
         t.end();
     };
+    // Deliver the frontend's wasm name (or `failed`) to the backend leg.
+    // `false` when the file cannot be written.
+    let deliver_name = |frontend: &std::io::Result<std::process::Output>| -> bool {
+        let Some(h) = &handoff else { return true };
+        use project::spa_wasm_handoff::{deliver, Delivered};
+        let what = if frontend_ok(frontend) {
+            project::spa_split::built_wasm_name(&frontend_dir.join("dist"))
+                .map_or(Delivered::Failed, Delivered::Name)
+        } else {
+            Delivered::Failed
+        };
+        match deliver(&h.file, &h.nonce, &what) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!(
+                    "sky build: could not hand the frontend's wasm name to the backend leg ({}): {e}",
+                    h.file.display()
+                );
+                false
+            }
+        }
+    };
     let t_legs = project::timings::phase("both legs (wall)");
-    let (backend_res, frontend_res) = if bake_wasm_name {
+    let (backend_res, frontend_res) = if bake_wasm_name && plan.parallel {
+        std::thread::scope(|s| {
+            let b = s.spawn(build_backend);
+            let f = s.spawn(|| {
+                let r = build_frontend();
+                deliver_name(&r);
+                if parent_compresses && frontend_ok(&r) {
+                    compress_dist();
+                }
+                r
+            });
+            (b.join(), f.join())
+        })
+    } else if bake_wasm_name {
         let frontend = build_frontend();
         let built = frontend_ok(&frontend);
-        if built {
-            bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
+        if !deliver_name(&frontend) {
+            // The name file could not be written: build the backend the way
+            // it was built before the handoff, with the name in its source.
+            handoff_on.store(false, std::sync::atomic::Ordering::SeqCst);
+            if built {
+                bake_backend_wasm_name(&backend_main, &frontend_dir.join("dist"));
+            }
         }
         if built && parent_compresses {
             // Compress while the backend builds, when memory holds both.
@@ -16168,6 +16287,30 @@ mod tests {
             profiling_build_env(true).unwrap().1
         )));
         assert_eq!(profiling_build_env(false), None);
+    }
+
+    #[test]
+    fn the_wasm_name_handoff_flags_are_taken_out_together() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (rest, w) = take_spa_await_flags(&v(&[
+            "build",
+            "--spa-await-wasm-name",
+            "/x/.sky-spa-wasm-name",
+            "--spa-await-nonce",
+            "12-ab",
+            "src/Main.sky",
+        ]))
+        .unwrap();
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        let w = w.unwrap();
+        assert_eq!(w.file, PathBuf::from("/x/.sky-spa-wasm-name"));
+        assert_eq!(w.nonce, "12-ab");
+        assert_eq!(
+            take_spa_await_flags(&v(&["build", "a.sky"])).unwrap().1,
+            None
+        );
+        assert!(take_spa_await_flags(&v(&["build", "--spa-await-nonce", "n"])).is_err());
+        assert!(take_spa_await_flags(&v(&["build", "--spa-await-wasm-name"])).is_err());
     }
 
     #[test]

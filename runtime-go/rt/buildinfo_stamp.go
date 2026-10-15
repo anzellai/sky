@@ -26,6 +26,20 @@ type buildStamp struct {
 
 var embeddedStamp buildStamp
 
+// spaLinkedWasmName is the Sky.Spa frontend's content-hashed wasm file name,
+// set by the generated `skybuildinfo` package of an SSR backend
+// (SetSpaBuiltWasmName). It lives in that small package, not in the backend's
+// generated Sky source, so the backend can build while the frontend builds,
+// and a new frontend recompiles only that package (see
+// rust/crates/project/src/spa_wasm_handoff.rs). Empty when unset.
+var spaLinkedWasmName string
+
+// SetSpaBuiltWasmName records the frontend's wasm file name. Called once,
+// from the generated `skybuildinfo` package's `init`, before `main`.
+func SetSpaBuiltWasmName(name string) {
+	spaLinkedWasmName = name
+}
+
 // SetBuildStamp records the build identity from the generated
 // `skybuildinfo` package. Called once, from its `init`, before `main`.
 func SetBuildStamp(version, commit, builtAt, source string) {
