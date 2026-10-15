@@ -9115,10 +9115,20 @@ fn a_whole_model_write_with_a_follow_up_builds() {
     let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let (proj, out, log) = web_app_build("spa-whole-model-follow", &[]);
     let front = split_file(&proj, "frontend/src/Main.sky");
+    // `AskServer` writes a server value, so it holds and folds the server's
+    // whole-model response back field by field. `Ask`'s model write runs in the
+    // client (v0.28.0: an async arm through a helper), so its `Applied` arm
+    // applies no write-set.
+    let held = frontend_arm(&front, "AppliedAskServer (Ok resp)");
     assert!(
-        front.contains("( { model | draft = resp.draft, notice = resp.notice }, Cmd.none )")
+        held.contains("( { model | draft = resp.draft, notice = resp.notice }, Cmd.none )")
             && !front.contains("( resp, Cmd.none )"),
         "the whole-model follow-up response is folded back field by field:\n{front}"
+    );
+    let asked = frontend_arm(&front, "AppliedAsk (Ok resp)");
+    assert!(
+        !asked.contains("resp.draft") && arm_rpc_kind(frontend_arm(&front, "Ask text")) == "async",
+        "`Ask` is async and applies no server write-set:\n{front}"
     );
     if required(Need::Go, have_go()) {
         assert!(out.status.success(), "the web:app build failed:\n{log}");
