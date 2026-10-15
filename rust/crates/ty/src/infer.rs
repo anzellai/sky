@@ -1357,43 +1357,20 @@ impl<'a> Infer<'a> {
                                     // #166). Both give the full record so the
                                     // update's open row closes to it.
                                     let (world, overlay) = (self.world, self.overlay);
-                                    let param_record: Option<&Ty> = world
-                                        .value_sigs
-                                        .get(&def)
-                                        .and_then(|scheme| {
-                                            let mut cur = &scheme.ty;
-                                            for _ in 0..idx {
-                                                match cur {
-                                                    Ty::Fun(_, b) => cur = b,
-                                                    _ => return None,
-                                                }
-                                            }
-                                            match cur {
-                                                // ONLY a CLOSED record from the sig closes
-                                                // the row. An annotated `model : M` gives
-                                                // `Record(_, None)`. An UNANNOTATED param's
-                                                // inferred sig is an OPEN row (the narrow
-                                                // subset of updated fields) — that must NOT
-                                                // win, or it re-narrows the update; fall
-                                                // through to the callsite harvest below.
-                                                Ty::Fun(a, _)
-                                                    if matches!(
-                                                        a.as_ref(),
-                                                        Ty::Record(_, None)
-                                                    ) =>
-                                                {
-                                                    Some(&**a)
-                                                }
-                                                _ => None,
-                                            }
-                                        })
-                                        .or_else(|| {
-                                            overlay
-                                                .and_then(|o| o.callsite_param_records.get(&def))
-                                                .or_else(|| world.callsite_param_records.get(&def))
-                                                .and_then(|v| v.get(idx))
-                                                .and_then(|o| o.as_ref())
-                                        });
+                                    let param_record: Option<&Ty> =
+                                        crate::sig::declared_param_record(world, def, idx).or_else(
+                                            || {
+                                                overlay
+                                                    .and_then(|o| {
+                                                        o.callsite_param_records.get(&def)
+                                                    })
+                                                    .or_else(|| {
+                                                        world.callsite_param_records.get(&def)
+                                                    })
+                                                    .and_then(|v| v.get(idx))
+                                                    .and_then(|o| o.as_ref())
+                                            },
+                                        );
                                     if let Some(rec) = param_record {
                                         if !self.skip_ground_close(tb, rec) {
                                             let mut sub: HashMap<String, TyVarId> = HashMap::new();

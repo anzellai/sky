@@ -40,8 +40,9 @@ pub use check::{
 pub use db::{compute_body_types, compute_body_types_with, TyDb};
 pub use infer::RecordOverlay;
 pub use sig::{
-    body_updates_a_param, callsite_param_records_for, record_alias_fields, update_base_defs,
-    variant_arg_types, variant_arg_types_qualified, World,
+    body_updates_a_param, callsite_param_records_for, declared_param_record, record_alias_fields,
+    update_base_defs, variant_arg_types, variant_arg_types_qualified, wants_callsite_harvest,
+    World,
 };
 pub use unify::{SuperType, UnionFind};
 

@@ -504,28 +504,68 @@ pub fn callsite_param_records_for(db: &dyn SkyDb, world: &World, callee: DefId) 
     slot
 }
 
-/// True iff `body` contains a record update whose base is a top-level PARAM
-/// (`Res::Local` bound by a param pattern). Used by the lowering `infer_query`
-/// to decide whether to demand this def's call-site param records (#166).
-pub fn body_updates_a_param(body: &hir::Body) -> bool {
-    let param_locals: std::collections::HashSet<hir::LocalId> = body
-        .params
-        .iter()
-        .filter_map(|p| match &body.pats[*p] {
-            hir::Pattern::Var(l) => Some(*l),
-            _ => None,
-        })
-        .collect();
+/// The positions of the top-level PARAMS (`Res::Local` bound by a param
+/// pattern) that `body` record-updates (`{ p | … }`), sorted and deduplicated.
+/// Empty when the body updates no param. The lowering `infer_query` uses it to
+/// decide whether to demand this def's call-site param records (#166).
+///
+/// A position is the index of the param whose pattern binds the update's base,
+/// exactly as the record-update close in `infer` computes it.
+pub fn body_updates_a_param(body: &hir::Body) -> Vec<usize> {
+    let mut out: Vec<usize> = Vec::new();
     for (_, expr) in body.exprs.iter() {
-        if let hir::Expr::Update { base, .. } = expr {
-            if let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*base] {
-                if param_locals.contains(l) {
-                    return true;
-                }
+        let hir::Expr::Update { base, .. } = expr else {
+            continue;
+        };
+        let hir::Expr::Var(hir::Res::Local(l)) = &body.exprs[*base] else {
+            continue;
+        };
+        let idx = body
+            .params
+            .iter()
+            .position(|p| matches!(&body.pats[*p], hir::Pattern::Var(pid) if pid == l));
+        if let Some(idx) = idx {
+            if !out.contains(&idx) {
+                out.push(idx);
             }
         }
     }
-    false
+    out.sort_unstable();
+    out
+}
+
+/// The CLOSED record `def`'s declared signature gives its param `idx`, if any.
+///
+/// The one place that decides whether a record update of a param closes from
+/// the def's own annotation (#166): the close in `infer` reads this first and
+/// consults the call-site harvest only when it is `None`, and the lowering
+/// `infer_query` demands the harvest only when it is `None` for some updated
+/// param ([`wants_callsite_harvest`]). Only a closed record counts: an
+/// unannotated def has no `value_sigs` entry, and a declared open row or type
+/// variable adds nothing to the close.
+pub fn declared_param_record(world: &World, def: DefId, idx: usize) -> Option<&Ty> {
+    let scheme = world.value_sigs.get(&def)?;
+    let mut cur = &scheme.ty;
+    for _ in 0..idx {
+        match cur {
+            Ty::Fun(_, b) => cur = b,
+            _ => return None,
+        }
+    }
+    match cur {
+        Ty::Fun(a, _) if matches!(a.as_ref(), Ty::Record(_, None)) => Some(&**a),
+        _ => None,
+    }
+}
+
+/// Does the record-update close in `def`'s own inference read its call-site
+/// harvest? True iff `body` updates some param whose declared type is not a
+/// closed record ([`declared_param_record`] is `None`). When false the harvest
+/// cannot change `def`'s typed table, so the lowering path does not demand it.
+pub fn wants_callsite_harvest(world: &World, def: DefId, body: &hir::Body) -> bool {
+    body_updates_a_param(body)
+        .into_iter()
+        .any(|idx| declared_param_record(world, def, idx).is_none())
 }
 
 impl World {

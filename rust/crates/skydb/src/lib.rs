@@ -277,8 +277,10 @@ pub fn record_result_sig_query(
 /// the narrow subset of updated fields (which codegen would emit as an anon
 /// struct, silently dropping every un-updated field / nil-panicking an ADT one).
 ///
-/// Demanded ONLY when `ty::body_updates_a_param(body)` — so a body without a
-/// param-update creates no dependency, preserving backdating for the common case.
+/// Demanded ONLY when `ty::wants_callsite_harvest` holds: the body updates a
+/// param whose declared type is not a closed record. A body without such an
+/// update creates no dependency, preserving backdating for the common case, and
+/// an annotated def never pays for inferring its callers.
 /// Built against the FULL [`check_world_query`] so caller inference is
 /// byte-identical to the eager backend's whole-program harvest
 /// (`World::harvest_callsite_param_records`). Cheap when `callee` is only ever
@@ -339,11 +341,18 @@ pub fn infer_query(
     let resolved = sky.resolve(module);
     if let Some(body) = resolved.bodies.get(&def) {
         let bases = ty::update_base_defs(body);
-        // #166: an UNANNOTATED def that record-updates one of its own params has
-        // no sig to close the row from — harvest the concrete record its callers
-        // pass. Demanded ONLY when the body actually has such a param-update, so
-        // the common case keeps its `type_world`-only (backdated) dependency.
-        let updates_param = ty::body_updates_a_param(body);
+        // #166: a def that record-updates one of its own params closes the row
+        // from that param's DECLARED closed record when its signature gives one
+        // (`ty::declared_param_record`); only otherwise does the close read the
+        // concrete record its callers pass. The harvest infers every caller's
+        // whole body, so it is demanded ONLY when some updated param lacks a
+        // declared closed record — the one case where the close reads it. An
+        // annotated `update : Msg -> Model -> Model` therefore costs no caller
+        // inference, and the common case keeps its `type_world`-only
+        // (backdated) dependency. The decision reads the same `world` the close
+        // reads, so adding or removing an annotation re-executes this query
+        // (its `type_world` dependency changes) and re-decides.
+        let updates_param = ty::wants_callsite_harvest(&world, def, body);
         if !bases.is_empty() || updates_param {
             // The demanded entries are read in place of the world's own (a
             // `RecordOverlay`), exactly as inserting them into a clone of the
