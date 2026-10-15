@@ -254,3 +254,86 @@ fn a_copy_in_a_new_directory_compiles_nothing() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A project whose Go FFI module is pinned to an exact version runs `go get`
+/// on its first build only: the second build reuses the go.mod / go.sum that
+/// `go get` produced (project::go_get_memo) and builds the identical binary.
+#[test]
+fn an_exact_pin_is_fetched_once() {
+    let Some(go) = real_go() else {
+        assert!(!required(Need::Go, false));
+        return;
+    };
+    // The module must be reachable (the proxy, or the local module cache).
+    let probe = Command::new(&go)
+        .args(["mod", "download", "github.com/google/uuid@v1.6.0"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !required(Need::Network, probe) {
+        return;
+    }
+    let _g = BUILD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = scratch("gogetmemo");
+    let shim = root.join("shim");
+    std::fs::create_dir_all(&shim).unwrap();
+    write_shim(&shim, &go);
+    let dir = root.join("app");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("sky.toml"),
+        "name = \"gogetmemo\"\nversion = \"0.1.0\"\nentry = \"src/Main.sky\"\n\n\
+         [\"go.dependencies\"]\n\"github.com/google/uuid\" = \"v1.6.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/Main.sky"),
+        "module Main exposing (main)\n\n\
+         import Github.Com.Google.Uuid as Uuid\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Result as Result\n\
+         import Std.Log exposing (println)\n\n\n\
+         main =\n    println (Result.withDefault \"none\" (Uuid.newString ()))\n",
+    )
+    .unwrap();
+    // Generate the binding surface the way a user does.
+    let mut c = Command::new(SKY);
+    c.arg("install").current_dir(&dir);
+    let inst = fixed_stamp(&mut c).output().unwrap();
+    assert!(
+        inst.status.success(),
+        "sky install: {}",
+        String::from_utf8_lossy(&inst.stderr)
+    );
+    let gets = || {
+        std::fs::read_to_string(shim.join("go.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains("| get "))
+            .count()
+    };
+    let bin = dir.join("sky-out").join("app");
+    sky_build(&dir, &shim, &[], &["src/Main.sky"]);
+    assert_eq!(gets(), 1, "the first build fetches the pin");
+    let first = std::fs::read(&bin).unwrap();
+    std::fs::remove_file(shim.join("go.log")).unwrap();
+    sky_build(&dir, &shim, &[], &["src/Main.sky"]);
+    assert_eq!(
+        gets(),
+        0,
+        "the second build must reuse the fetched go.mod / go.sum"
+    );
+    assert!(
+        std::fs::read(&bin).unwrap() == first,
+        "the binary must be identical"
+    );
+    // A floating spec still resolves on every build.
+    let toml = std::fs::read_to_string(dir.join("sky.toml"))
+        .unwrap()
+        .replace("\"v1.6.0\"", "\"latest\"");
+    std::fs::write(dir.join("sky.toml"), toml).unwrap();
+    std::fs::remove_file(shim.join("go.log")).unwrap();
+    sky_build(&dir, &shim, &[], &["src/Main.sky"]);
+    sky_build(&dir, &shim, &[], &["src/Main.sky"]);
+    assert_eq!(gets(), 2, "@latest must be fetched on every build");
+    let _ = std::fs::remove_dir_all(&root);
+}

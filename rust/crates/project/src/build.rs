@@ -2571,6 +2571,13 @@ fn inject_ffi_deps(
     let go_mod = out_dir.join("go.mod");
     let existing = std::fs::read_to_string(&go_mod).unwrap_or_default();
 
+    // The `go get` list, in order: `module@spec` for a declared module (the
+    // sky.toml pin must win), or the bare path (`@latest`) for an undeclared
+    // one that the inherited go.mod does not already require.
+    let mut fetches: Vec<String> = Vec::new();
+    // `(module, version)` for each fetch pinned to an exact version.
+    let mut pins: Vec<(String, String)> = Vec::new();
+    let mut all_exact = true;
     for path in &paths {
         // Longest declared import-path prefix wins (module root over subpackage).
         let matched = declared
@@ -2580,14 +2587,18 @@ fn inject_ffi_deps(
 
         match matched {
             Some((module, spec)) => {
-                let target = format!("{module}@{}", crate::ffi_ops::spec_or_latest(spec));
-                // `go get module@<spec>` edits go.mod (up- OR down-grade), writes
-                // go.sum, and downloads — overriding any inherited require.
-                let _ = Command::new("go")
-                    .args(["get", &target])
-                    .current_dir(out_dir)
-                    .env("GOFLAGS", "-mod=mod")
-                    .output();
+                let spec = crate::ffi_ops::spec_or_latest(spec);
+                let target = format!("{module}@{spec}");
+                // Two used paths under one module fetch it once.
+                if fetches.contains(&target) {
+                    continue;
+                }
+                fetches.push(target);
+                if crate::go_get_memo::exact_version(spec) {
+                    pins.push((module.clone(), spec.to_string()));
+                } else {
+                    all_exact = false;
+                }
             }
             None => {
                 // Undeclared transitive: leave an existing require untouched;
@@ -2598,12 +2609,46 @@ fn inject_ffi_deps(
                 warnings.push(format!(
                     "ffi go.mod: {path} used but not declared in sky.toml [\"go.dependencies\"]; resolving @latest"
                 ));
-                let _ = Command::new("go")
-                    .args(["get", path])
-                    .current_dir(out_dir)
-                    .env("GOFLAGS", "-mod=mod")
-                    .output();
+                fetches.push(path.clone());
+                all_exact = false;
             }
+        }
+    }
+    if fetches.is_empty() {
+        return Ok(());
+    }
+
+    // With every fetch pinned exactly and no Go path dependency, the go.mod /
+    // go.sum these `go get`s produce are known from their inputs: reuse them
+    // (go_get_memo.rs). A floating spec re-resolves on every build, as before.
+    let memo_key = (all_exact && local.is_empty())
+        .then(crate::go_get_memo::go_version)
+        .flatten()
+        .map(|v| crate::go_get_memo::key(&existing, &pins, &v, &crate::go_get_memo::env_inputs()));
+    if let Some(k) = &memo_key {
+        if crate::go_get_memo::restore(out_dir, k) {
+            crate::timings::note("go get: skipped (the exact pins' go.mod/go.sum are known)");
+            return Ok(());
+        }
+    }
+
+    let mut all_ok = true;
+    for target in &fetches {
+        // `go get module@<spec>` edits go.mod (up- OR down-grade), writes
+        // go.sum, and downloads — overriding any inherited require. A failure
+        // surfaces in the `go build` that follows, as before.
+        let ok = Command::new("go")
+            .args(["get", target])
+            .current_dir(out_dir)
+            .env("GOFLAGS", "-mod=mod")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        all_ok &= ok;
+    }
+    if let Some(k) = &memo_key {
+        let after = std::fs::read_to_string(&go_mod).unwrap_or_default();
+        if all_ok && crate::go_get_memo::requires_all(&after, &pins) {
+            crate::go_get_memo::store(out_dir, k);
         }
     }
     Ok(())

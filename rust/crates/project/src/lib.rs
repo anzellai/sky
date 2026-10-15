@@ -34,6 +34,8 @@ mod ffi_ops;
 pub mod go_cache;
 /// The one `go build` command builder (`-trimpath`, GOFLAGS, cache).
 pub mod go_cmd;
+/// Reuse of the `go get` result for exactly pinned Go FFI modules.
+pub mod go_get_memo;
 /// `go build -p`: how many packages compile at once, from available memory.
 pub mod go_jobs;
 /// Available memory and the per-project peak records (`go_jobs`, the Sky.Spa
