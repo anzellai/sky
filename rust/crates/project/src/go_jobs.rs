@@ -22,6 +22,13 @@
 //!   big packages). go1.26.1, darwin/arm64.
 //! * `-p n`: the largest dependency plus `n - 1` others fit in the available
 //!   memory less a 1 GB reserve. When one per CPU fits, Go keeps its default.
+//! * When the largest is the generated FFI package, nothing but the console
+//!   package and the build stamp can compile beside it ([`BESIDE_FFI_BYTES`]):
+//!   it imports `sky-app/rt` and every bound Go package, so Go starts it after
+//!   all of them. It must fit with the console beside it, and `-p n` is sized
+//!   from the ordinary compiles that run before it. Counting `n - 1` others
+//!   beside it gave `-p 2` with 6 GB available, and a cold
+//!   examples/13-skyshop build 7 s slower than at `-p 4`, with the same peak.
 //! * A small machine (under [`SMALL_ROOM_BYTES`] of room, an 8 GB laptop or
 //!   runner) does not trust the 0.25 GB figure, which was measured on
 //!   darwin/arm64 only: each other compile counts as [`OTHER_COMPILE_BYTES`]
@@ -105,6 +112,16 @@ pub const SMALL_ROOM_BYTES: u64 = 6 << 30;
 /// The `-p` cap below [`SMALL_ROOM_BYTES`].
 pub const SMALL_ROOM_MAX_JOBS: usize = 4;
 
+/// What compiles beside the generated FFI package: the console package
+/// (`sky-app/rt/console_app`, about 520 MB) and the build stamp (a few lines).
+/// Counted as the largest ordinary compile. `skyffi` dot-imports `sky-app/rt`
+/// and every bound Go package, so Go starts it only after all of them; the
+/// packages `main` imports outside that set are the only ones that can run
+/// beside it, whatever `-p` is. Measured on a cold examples/13-skyshop build
+/// (`go build -debug-trace`, 1,700 actions): of the 19.2 s `skyffi` compile,
+/// `console_app` overlapped 2.4 s and the stamp 0.01 s, and nothing else.
+pub const BESIDE_FFI_BYTES: u64 = OTHER_COMPILE_BYTES;
+
 /// Peak bytes per byte of generated `skyffi` Go: 13.9 MB compiled in 4.06 GB
 /// ((4.06 GB - 500 MB) / 13.9 MB ≈ 270).
 const FFI_BYTES_PER_GO_BYTE: u64 = 270;
@@ -139,6 +156,10 @@ pub fn estimate_ffi(skyffi_bytes: u64) -> u64 {
     ESTIMATE_BASE_BYTES.saturating_add(skyffi_bytes.saturating_mul(FFI_BYTES_PER_GO_BYTE))
 }
 
+/// The source label [`largest_dep_peak`] gives when the generated FFI package
+/// is the largest dependency compile. [`decide`] plans that case on its own.
+pub const FFI_ESTIMATE_SOURCE: &str = "(estimated from skyffi)";
+
 /// The largest dependency compile to plan with: the largest of an ordinary
 /// package, the `skyffi` estimate and the measured record.
 pub fn largest_dep_peak(recorded: Option<u64>, ffi_estimate: u64) -> (u64, &'static str) {
@@ -146,7 +167,7 @@ pub fn largest_dep_peak(recorded: Option<u64>, ffi_estimate: u64) -> (u64, &'sta
     if r > ffi_estimate && r > OTHER_COMPILE_BYTES {
         (r, "(measured on an earlier build)")
     } else if ffi_estimate > OTHER_COMPILE_BYTES {
-        (ffi_estimate, "(estimated from skyffi)")
+        (ffi_estimate, FFI_ESTIMATE_SOURCE)
     } else {
         (OTHER_COMPILE_BYTES, "(largest measured dependency)")
     }
@@ -214,20 +235,51 @@ pub fn decide(
             ),
         });
     }
-    let n = compiles_that_fit(room, largest);
     let cap = if room < SMALL_ROOM_BYTES {
         format!(", at most {SMALL_ROOM_MAX_JOBS} on a small machine")
     } else {
         String::new()
     };
-    let what = format!(
-        "{} available holds the largest dependency compile ~{} {peak_source} + {} of ~{} each + {} reserve{cap}",
-        gib(avail),
-        gib(largest),
-        n - 1,
-        gib(other_compile_bytes(room)),
-        gib(RESERVE_BYTES)
-    );
+    let (n, what) = if peak_source == FFI_ESTIMATE_SOURCE {
+        // The generated FFI package compiles after every package it imports,
+        // with only the console and the stamp beside it (BESIDE_FFI_BYTES), so
+        // `-p` does not change what runs beside it. `-p` limits the compiles
+        // before it, which are ordinary packages.
+        if room < largest.saturating_add(BESIDE_FFI_BYTES) {
+            return Ok(GoJobs {
+                jobs: Some(1),
+                reason: format!(
+                    "-p 1 ({} available < the generated FFI compile ~{} {peak_source} + the console compile beside it ~{} + {} reserve)",
+                    gib(avail),
+                    gib(largest),
+                    gib(BESIDE_FFI_BYTES),
+                    gib(RESERVE_BYTES)
+                ),
+            });
+        }
+        let n = compiles_that_fit(room, OTHER_COMPILE_BYTES);
+        let what = format!(
+            "{} available holds the generated FFI compile ~{} {peak_source} + the console compile beside it ~{}, and before it {} compiles of ~{} each + {} reserve{cap}",
+            gib(avail),
+            gib(largest),
+            gib(BESIDE_FFI_BYTES),
+            n,
+            gib(other_compile_bytes(room)),
+            gib(RESERVE_BYTES)
+        );
+        (n, what)
+    } else {
+        let n = compiles_that_fit(room, largest);
+        let what = format!(
+            "{} available holds the largest dependency compile ~{} {peak_source} + {} of ~{} each + {} reserve{cap}",
+            gib(avail),
+            gib(largest),
+            n - 1,
+            gib(other_compile_bytes(room)),
+            gib(RESERVE_BYTES)
+        );
+        (n, what)
+    };
     if n >= cpus {
         return Ok(GoJobs {
             jobs: None,
@@ -407,15 +459,36 @@ mod tests {
     }
 
     #[test]
-    fn a_large_ffi_package_limits_the_compiles_beside_it() {
+    fn a_large_ffi_package_compiles_beside_the_console_only() {
         // examples/13-skyshop: a 13.9 MB skyffi, measured at 4.06 GB.
         let est = estimate_ffi(13_928 * 1024);
         assert!((3900 * MB..4200 * MB).contains(&est), "{est}");
         let (largest, why) = largest_dep_peak(None, est);
-        assert_eq!(why, "(estimated from skyffi)");
-        // 6 GB available: 5 GB room (a small machine) - ~4.1 GB leaves room
-        // for one other compile counted at 0.7 GB → -p 2 of 8.
+        assert_eq!(why, FFI_ESTIMATE_SOURCE);
+        // 6 GB available: 5 GB room (a small machine). The FFI compile (~4.1
+        // GB) runs beside the console compile only (0.7 GB): 4.8 GB fits.
+        // Before it, the ordinary compiles count 0.7 GB each: 1 + 6, capped
+        // at 4. This was -p 2 (the FFI compile + one other at 0.7 GB), which
+        // made a cold build 7 s slower (52.2 s of `go build` at -p 2, 45.8 s
+        // at -p 4, 45.6 s at -p 8; the total of all Go processes peaked at
+        // 3.9, 4.1 and 4.1 GB).
         let j = decide(None, largest, why, Some(6 * GB), 8).unwrap();
+        assert_eq!(j.jobs, Some(4), "{j:?}");
+        assert!(j.reason.contains("the console compile beside it"), "{j:?}");
+        // 5.5 GB available: 4.5 GB room holds the FFI compile but not the
+        // console compile beside it: one at a time.
+        let j = decide(None, largest, why, Some(5632 * MB), 8).unwrap();
+        assert_eq!(j.jobs, Some(1), "{j:?}");
+        // A measured peak keeps the general rule: it may be any package, so
+        // every other compile is counted beside it.
+        let j = decide(
+            None,
+            largest,
+            "(measured on an earlier build)",
+            Some(6 * GB),
+            8,
+        )
+        .unwrap();
         assert_eq!(j.jobs, Some(2), "{j:?}");
         // Plenty of memory: default.
         assert_eq!(

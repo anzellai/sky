@@ -84,7 +84,8 @@ fn scalar_gen(t: &str) -> Option<&'static str> {
 /// A Sky-identifier-safe fragment for a type, used to name its generator
 /// (`List Int` → `List_Int`, `Maybe Todo` → `Maybe_Todo`).
 fn mangle(t: &ty::Ty) -> String {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         ty::Ty::App(name, args) => {
             let tl = tail(name.as_str());
             if args.is_empty() {
@@ -109,13 +110,14 @@ fn mangle(t: &ty::Ty) -> String {
         ty::Ty::Var(n) => format!("Var_{}", n.as_str()),
         ty::Ty::Fun(_, _) => "Fun".to_string(),
         ty::Ty::Error => "Error".to_string(),
-    }
+    })
 }
 
 /// Render a type as Sky surface syntax for a generator's annotation
 /// (`List Int`, `Maybe Todo`, `Todo`). `None` for a shape we cannot spell.
 fn sky_ty(t: &ty::Ty) -> Option<String> {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         ty::Ty::App(name, args) => {
             let tl = tail(name.as_str());
             if args.is_empty() {
@@ -138,7 +140,7 @@ fn sky_ty(t: &ty::Ty) -> Option<String> {
         }
         ty::Ty::Unit => Some("()".to_string()),
         ty::Ty::Var(_) | ty::Ty::Fun(_, _) | ty::Ty::Error => None,
-    }
+    })
 }
 
 /// Parenthesise a rendered type in ARGUMENT position (`List Int` → `(List Int)`).
@@ -216,34 +218,39 @@ impl<'a> GenModule<'a> {
     }
 
     fn finite_rec(&mut self, ty: &ty::Ty, visiting: &mut HashSet<String>) -> bool {
-        match ty {
-            ty::Ty::App(name, args) => {
-                let tl = tail(name.as_str());
-                match (tl, args.len()) {
-                    (s, 0) if is_scalar_tail(s) => true,
-                    // A List / Maybe always has a finite value ([] / Nothing),
-                    // even when the element type is not itself generatable.
-                    ("List", 1) | ("Maybe", 1) => true,
-                    ("Result", 2) => {
-                        // Ok a OR Err e — at least one side must be buildable.
-                        let a_ok = self.finite_rec(&args[1], visiting);
-                        let e_ok = self.finite_rec(&args[0], visiting);
-                        a_ok || e_ok
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match ty {
+                ty::Ty::App(name, args) => {
+                    let tl = tail(name.as_str());
+                    match (tl, args.len()) {
+                        (s, 0) if is_scalar_tail(s) => true,
+                        // A List / Maybe always has a finite value ([] / Nothing),
+                        // even when the element type is not itself generatable.
+                        ("List", 1) | ("Maybe", 1) => true,
+                        ("Result", 2) => {
+                            // Ok a OR Err e — at least one side must be buildable.
+                            let a_ok = self.finite_rec(&args[1], visiting);
+                            let e_ok = self.finite_rec(&args[0], visiting);
+                            a_ok || e_ok
+                        }
+                        (_, 0) => self.finite_nominal(name.as_str(), visiting),
+                        // A generic user type applied to args (e.g. `Store Todo`) is
+                        // out of scope for the value generator.
+                        _ => false,
                     }
-                    (_, 0) => self.finite_nominal(name.as_str(), visiting),
-                    // A generic user type applied to args (e.g. `Store Todo`) is
-                    // out of scope for the value generator.
-                    _ => false,
                 }
+                ty::Ty::Tuple(xs) => xs.iter().all(|t| {
+                    // clone-free borrow dance: evaluate each independently.
+                    self.finite_rec(t, visiting)
+                }),
+                ty::Ty::Record(fs, _) => {
+                    fs.clone().iter().all(|(_, t)| self.finite_rec(t, visiting))
+                }
+                ty::Ty::Unit => true,
+                ty::Ty::Var(_) | ty::Ty::Fun(_, _) | ty::Ty::Error => false,
             }
-            ty::Ty::Tuple(xs) => xs.iter().all(|t| {
-                // clone-free borrow dance: evaluate each independently.
-                self.finite_rec(t, visiting)
-            }),
-            ty::Ty::Record(fs, _) => fs.clone().iter().all(|(_, t)| self.finite_rec(t, visiting)),
-            ty::Ty::Unit => true,
-            ty::Ty::Var(_) | ty::Ty::Fun(_, _) | ty::Ty::Error => false,
-        }
+        })
     }
 
     fn finite_nominal(&mut self, name: &str, visiting: &mut HashSet<String>) -> bool {

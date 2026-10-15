@@ -2510,7 +2510,8 @@ fn walk_telemetry(
     e: ExprId,
     out: &mut Vec<TelemetryCall>,
 ) {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Int(_)
         | Expr::Float(_)
         | Expr::Str(_)
@@ -2578,7 +2579,7 @@ fn walk_telemetry(
             }
         }
         Expr::Access(x, _) => walk_telemetry(db, module_name, body, *x, out),
-    }
+    })
 }
 
 fn walk_telemetry_localdef(
@@ -3041,66 +3042,69 @@ pub struct JourneyReport {
 /// (including `e` itself). Read-only; mirrors the exhaustive traversal used by
 /// the telemetry walk, factored so the route-table + navigation scans share it.
 fn walk_exprs(body: &Body, e: ExprId, f: &mut dyn FnMut(ExprId)) {
-    f(e);
-    match &body.exprs[e] {
-        Expr::List(xs) | Expr::Tuple(xs) => {
-            for x in xs {
-                walk_exprs(body, *x, f);
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        f(e);
+        match &body.exprs[e] {
+            Expr::List(xs) | Expr::Tuple(xs) => {
+                for x in xs {
+                    walk_exprs(body, *x, f);
+                }
             }
-        }
-        Expr::Record(fields) => {
-            for (_, x) in fields {
-                walk_exprs(body, *x, f);
+            Expr::Record(fields) => {
+                for (_, x) in fields {
+                    walk_exprs(body, *x, f);
+                }
             }
-        }
-        Expr::Update { base, fields } => {
-            walk_exprs(body, *base, f);
-            for (_, x) in fields {
-                walk_exprs(body, *x, f);
+            Expr::Update { base, fields } => {
+                walk_exprs(body, *base, f);
+                for (_, x) in fields {
+                    walk_exprs(body, *x, f);
+                }
             }
-        }
-        Expr::Negate(x) => walk_exprs(body, *x, f),
-        Expr::Lambda { body: b, .. } => walk_exprs(body, *b, f),
-        Expr::Call(callee, args) => {
-            walk_exprs(body, *callee, f);
-            for a in args {
-                walk_exprs(body, *a, f);
+            Expr::Negate(x) => walk_exprs(body, *x, f),
+            Expr::Lambda { body: b, .. } => walk_exprs(body, *b, f),
+            Expr::Call(callee, args) => {
+                walk_exprs(body, *callee, f);
+                for a in args {
+                    walk_exprs(body, *a, f);
+                }
             }
-        }
-        Expr::Binop { lhs, rhs, .. } => {
-            walk_exprs(body, *lhs, f);
-            walk_exprs(body, *rhs, f);
-        }
-        Expr::If { arms, els } => {
-            for (c, t) in arms {
-                walk_exprs(body, *c, f);
-                walk_exprs(body, *t, f);
+            Expr::Binop { lhs, rhs, .. } => {
+                walk_exprs(body, *lhs, f);
+                walk_exprs(body, *rhs, f);
             }
-            walk_exprs(body, *els, f);
-        }
-        Expr::Let { defs, body: b } => {
-            for d in defs {
-                walk_exprs(body, d.body, f);
+            Expr::If { arms, els } => {
+                for (c, t) in arms {
+                    walk_exprs(body, *c, f);
+                    walk_exprs(body, *t, f);
+                }
+                walk_exprs(body, *els, f);
             }
-            walk_exprs(body, *b, f);
-        }
-        Expr::Case { subject, branches } => {
-            walk_exprs(body, *subject, f);
-            for br in branches {
-                walk_exprs(body, br.body, f);
+            Expr::Let { defs, body: b } => {
+                for d in defs {
+                    walk_exprs(body, d.body, f);
+                }
+                walk_exprs(body, *b, f);
             }
+            Expr::Case { subject, branches } => {
+                walk_exprs(body, *subject, f);
+                for br in branches {
+                    walk_exprs(body, br.body, f);
+                }
+            }
+            Expr::Access(x, _) => walk_exprs(body, *x, f),
+            Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Chr(_)
+            | Expr::Bool(_)
+            | Expr::Unit
+            | Expr::Var(_)
+            | Expr::Accessor(_)
+            | Expr::Error => {}
         }
-        Expr::Access(x, _) => walk_exprs(body, *x, f),
-        Expr::Int(_)
-        | Expr::Float(_)
-        | Expr::Str(_)
-        | Expr::Chr(_)
-        | Expr::Bool(_)
-        | Expr::Unit
-        | Expr::Var(_)
-        | Expr::Accessor(_)
-        | Expr::Error => {}
-    }
+    })
 }
 
 /// If `e` (or, for an applied constructor, its callee) resolves to a data

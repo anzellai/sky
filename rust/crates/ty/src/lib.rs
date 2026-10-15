@@ -86,7 +86,8 @@ impl Ty {
     }
 
     fn free_vars_into(&self, out: &mut Vec<Name>) {
-        match self {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match self {
             Ty::Var(n) => {
                 if !out.contains(n) {
                     out.push(n.clone());
@@ -112,7 +113,7 @@ impl Ty {
                 }
             }
             Ty::Unit | Ty::Error => {}
-        }
+        })
     }
 
     /// A compact rendering for spot-checks / hover (not the emission form).
@@ -173,7 +174,8 @@ impl Ty {
 
     /// Visit every type/row variable name in first-appearance order.
     fn for_each_var(&self, f: &mut dyn FnMut(&str)) {
-        match self {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match self {
             Ty::Var(n) => f(n.as_str()),
             Ty::Unit | Ty::Error => {}
             Ty::Fun(a, b) => {
@@ -193,57 +195,62 @@ impl Ty {
                     t.for_each_var(f);
                 }
             }
-        }
+        })
     }
 
     fn render_mapped(&self, map: &std::collections::HashMap<String, String>) -> String {
-        let sub = |n: &Name| -> String {
-            map.get(n.as_str())
-                .cloned()
-                .unwrap_or_else(|| n.as_str().to_string())
-        };
-        match self {
-            Ty::Var(n) => sub(n),
-            Ty::Unit => "()".to_string(),
-            Ty::Error => "?".to_string(),
-            Ty::Fun(a, b) => {
-                let lhs = match a.as_ref() {
-                    Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
-                    _ => a.render_mapped(map),
-                };
-                format!("{lhs} -> {}", b.render_mapped(map))
-            }
-            // Print the BARE name: a module qualifier is an internal identity
-            // device (`crate::nominal`), not something a signature should carry.
-            // Keeps every rendered signature, snapshot and oracle message
-            // byte-identical to before unions became module-qualified.
-            Ty::App(n, args) if args.is_empty() => nominal::strip(n.as_str()).to_string(),
-            Ty::App(n, args) => {
-                let parts: Vec<String> = args
-                    .iter()
-                    .map(|a| match a {
-                        Ty::App(_, xs) if !xs.is_empty() => format!("({})", a.render_mapped(map)),
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let sub = |n: &Name| -> String {
+                map.get(n.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| n.as_str().to_string())
+            };
+            match self {
+                Ty::Var(n) => sub(n),
+                Ty::Unit => "()".to_string(),
+                Ty::Error => "?".to_string(),
+                Ty::Fun(a, b) => {
+                    let lhs = match a.as_ref() {
                         Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
                         _ => a.render_mapped(map),
-                    })
-                    .collect();
-                format!("{} {}", nominal::strip(n.as_str()), parts.join(" "))
-            }
-            Ty::Tuple(xs) => {
-                let parts: Vec<String> = xs.iter().map(|t| t.render_mapped(map)).collect();
-                format!("( {} )", parts.join(", "))
-            }
-            Ty::Record(fields, ext) => {
-                let parts: Vec<String> = fields
-                    .iter()
-                    .map(|(n, t)| format!("{} : {}", n.as_str(), t.render_mapped(map)))
-                    .collect();
-                match ext {
-                    Some(e) => format!("{{ {} | {} }}", sub(e), parts.join(", ")),
-                    None => format!("{{ {} }}", parts.join(", ")),
+                    };
+                    format!("{lhs} -> {}", b.render_mapped(map))
+                }
+                // Print the BARE name: a module qualifier is an internal identity
+                // device (`crate::nominal`), not something a signature should carry.
+                // Keeps every rendered signature, snapshot and oracle message
+                // byte-identical to before unions became module-qualified.
+                Ty::App(n, args) if args.is_empty() => nominal::strip(n.as_str()).to_string(),
+                Ty::App(n, args) => {
+                    let parts: Vec<String> = args
+                        .iter()
+                        .map(|a| match a {
+                            Ty::App(_, xs) if !xs.is_empty() => {
+                                format!("({})", a.render_mapped(map))
+                            }
+                            Ty::Fun(_, _) => format!("({})", a.render_mapped(map)),
+                            _ => a.render_mapped(map),
+                        })
+                        .collect();
+                    format!("{} {}", nominal::strip(n.as_str()), parts.join(" "))
+                }
+                Ty::Tuple(xs) => {
+                    let parts: Vec<String> = xs.iter().map(|t| t.render_mapped(map)).collect();
+                    format!("( {} )", parts.join(", "))
+                }
+                Ty::Record(fields, ext) => {
+                    let parts: Vec<String> = fields
+                        .iter()
+                        .map(|(n, t)| format!("{} : {}", n.as_str(), t.render_mapped(map)))
+                        .collect();
+                    match ext {
+                        Some(e) => format!("{{ {} | {} }}", sub(e), parts.join(", ")),
+                        None => format!("{{ {} }}", parts.join(", ")),
+                    }
                 }
             }
-        }
+        })
     }
 }
 

@@ -702,133 +702,136 @@ impl Refs {
 /// `default()` everywhere except the Msg-constant-precision arm walk (see
 /// `CollectCtx`).
 fn collect(body: &Body, e: ExprId, acc: &mut Refs, ctx: &CollectCtx) {
-    if ctx.skip.is_some_and(|s| s.contains(&e)) {
-        return;
-    }
-    match &body.exprs[e] {
-        Expr::Int(_)
-        | Expr::Float(_)
-        | Expr::Str(_)
-        | Expr::Chr(_)
-        | Expr::Bool(_)
-        | Expr::Unit
-        | Expr::Accessor(_)
-        | Expr::Error => {}
-        Expr::List(xs) | Expr::Tuple(xs) => {
-            for x in xs {
-                collect(body, *x, acc, ctx);
-            }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        if ctx.skip.is_some_and(|s| s.contains(&e)) {
+            return;
         }
-        Expr::Record(fields) => {
-            for (_, x) in fields {
-                collect(body, *x, acc, ctx);
-            }
-        }
-        Expr::Update { base, fields } => {
-            collect(body, *base, acc, ctx);
-            for (_, x) in fields {
-                collect(body, *x, acc, ctx);
-            }
-        }
-        Expr::Var(res) => {
-            // Msg-constant precision: `update` referenced as a VALUE (not the
-            // callee of a `update <LiteralMsg> …` call) is a GENERIC use →
-            // conservative server. Never record `update` as a callee here.
-            if let (Some(update_def), Res::Def(d)) = (ctx.update_def, res) {
-                if *d == update_def {
-                    acc.generic_update = true;
-                    return;
+        match &body.exprs[e] {
+            Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Chr(_)
+            | Expr::Bool(_)
+            | Expr::Unit
+            | Expr::Accessor(_)
+            | Expr::Error => {}
+            Expr::List(xs) | Expr::Tuple(xs) => {
+                for x in xs {
+                    collect(body, *x, acc, ctx);
                 }
             }
-            record_res(res, acc, ctx);
-        }
-        Expr::Negate(x) => collect(body, *x, acc, ctx),
-        Expr::Lambda { body: b, .. } => collect(body, *b, acc, ctx),
-        Expr::Call(callee, args) => {
-            // Msg-constant precision (arm analysis only): a direct
-            // `update <LiteralMsg> …` call composes another arm. Record it as a
-            // SCOPED call keyed by the Msg ctor name — NOT as a generic `update`
-            // callee — so composing a pure arm does not force this arm server.
-            if let (Some(update_def), Some(db)) = (ctx.update_def, ctx.db) {
-                if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
+            Expr::Record(fields) => {
+                for (_, x) in fields {
+                    collect(body, *x, acc, ctx);
+                }
+            }
+            Expr::Update { base, fields } => {
+                collect(body, *base, acc, ctx);
+                for (_, x) in fields {
+                    collect(body, *x, acc, ctx);
+                }
+            }
+            Expr::Var(res) => {
+                // Msg-constant precision: `update` referenced as a VALUE (not the
+                // callee of a `update <LiteralMsg> …` call) is a GENERIC use →
+                // conservative server. Never record `update` as a callee here.
+                if let (Some(update_def), Res::Def(d)) = (ctx.update_def, res) {
                     if *d == update_def {
-                        match args.first().and_then(|a| literal_ctor_name(body, db, *a)) {
-                            Some(name) => acc.scoped_updates.push(name),
-                            // No args, or a dynamic / non-literal first arg →
-                            // GENERIC use → conservative server.
-                            None => acc.generic_update = true,
-                        }
-                        // Descend into the ARGS (a payload may carry its own
-                        // effect) but NOT the callee — `update` stays off the
-                        // callee set for this scoped/generic use.
-                        for a in args {
-                            collect(body, *a, acc, ctx);
-                        }
+                        acc.generic_update = true;
                         return;
                     }
                 }
+                record_res(res, acc, ctx);
             }
-            if let Expr::Var(Res::Kernel { module, func }) = &body.exprs[*callee] {
-                let m = module
-                    .as_str()
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(module.as_str());
-                // `Task.run <arg>` — an inline effect-execution site.
-                if m == "Task" && func.as_str() == "run" {
-                    acc.inline_force = true;
-                }
-                // `Ffi.kernel "<Symbol>"` — the REAL effect origin. The stdlib
-                // effect modules (Sky.Core.Http, Sky.Core.System, Std.Db,
-                // Std.Auth, Sky.Core.File, …) are ordinary Sky SOURCE whose
-                // functions are `Ffi.kernel "Db_query"` etc., so they resolve to
-                // `Res::Def`, NOT `Res::Kernel` — the consult's "key off
-                // Res::Kernel.module" would miss every one. The identity is the
-                // symbol string's prefix (`Db_`, `Http_`, `System_`, …).
-                // `Ffi.callPure "<Symbol>" [ args ]` / `Ffi.call` name a
-                // runtime symbol the same way; before v0.27.0 they were not
-                // read, so `Money.getRate` (process state) ran in the client.
-                if m == "Ffi"
-                    && matches!(func.as_str(), "kernel" | "callPure" | "call" | "callTask")
-                {
-                    if let Some(first) = args.first() {
-                        if let Expr::Str(sym) = &body.exprs[*first] {
-                            record_ffi_symbol(sym, acc, ctx.client_crypto);
+            Expr::Negate(x) => collect(body, *x, acc, ctx),
+            Expr::Lambda { body: b, .. } => collect(body, *b, acc, ctx),
+            Expr::Call(callee, args) => {
+                // Msg-constant precision (arm analysis only): a direct
+                // `update <LiteralMsg> …` call composes another arm. Record it as a
+                // SCOPED call keyed by the Msg ctor name — NOT as a generic `update`
+                // callee — so composing a pure arm does not force this arm server.
+                if let (Some(update_def), Some(db)) = (ctx.update_def, ctx.db) {
+                    if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
+                        if *d == update_def {
+                            match args.first().and_then(|a| literal_ctor_name(body, db, *a)) {
+                                Some(name) => acc.scoped_updates.push(name),
+                                // No args, or a dynamic / non-literal first arg →
+                                // GENERIC use → conservative server.
+                                None => acc.generic_update = true,
+                            }
+                            // Descend into the ARGS (a payload may carry its own
+                            // effect) but NOT the callee — `update` stays off the
+                            // callee set for this scoped/generic use.
+                            for a in args {
+                                collect(body, *a, acc, ctx);
+                            }
+                            return;
                         }
                     }
                 }
+                if let Expr::Var(Res::Kernel { module, func }) = &body.exprs[*callee] {
+                    let m = module
+                        .as_str()
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(module.as_str());
+                    // `Task.run <arg>` — an inline effect-execution site.
+                    if m == "Task" && func.as_str() == "run" {
+                        acc.inline_force = true;
+                    }
+                    // `Ffi.kernel "<Symbol>"` — the REAL effect origin. The stdlib
+                    // effect modules (Sky.Core.Http, Sky.Core.System, Std.Db,
+                    // Std.Auth, Sky.Core.File, …) are ordinary Sky SOURCE whose
+                    // functions are `Ffi.kernel "Db_query"` etc., so they resolve to
+                    // `Res::Def`, NOT `Res::Kernel` — the consult's "key off
+                    // Res::Kernel.module" would miss every one. The identity is the
+                    // symbol string's prefix (`Db_`, `Http_`, `System_`, …).
+                    // `Ffi.callPure "<Symbol>" [ args ]` / `Ffi.call` name a
+                    // runtime symbol the same way; before v0.27.0 they were not
+                    // read, so `Money.getRate` (process state) ran in the client.
+                    if m == "Ffi"
+                        && matches!(func.as_str(), "kernel" | "callPure" | "call" | "callTask")
+                    {
+                        if let Some(first) = args.first() {
+                            if let Expr::Str(sym) = &body.exprs[*first] {
+                                record_ffi_symbol(sym, acc, ctx.client_crypto);
+                            }
+                        }
+                    }
+                }
+                collect(body, *callee, acc, ctx);
+                for a in args {
+                    collect(body, *a, acc, ctx);
+                }
             }
-            collect(body, *callee, acc, ctx);
-            for a in args {
-                collect(body, *a, acc, ctx);
+            Expr::Binop { res, lhs, rhs, .. } => {
+                record_res(res, acc, ctx);
+                collect(body, *lhs, acc, ctx);
+                collect(body, *rhs, acc, ctx);
             }
-        }
-        Expr::Binop { res, lhs, rhs, .. } => {
-            record_res(res, acc, ctx);
-            collect(body, *lhs, acc, ctx);
-            collect(body, *rhs, acc, ctx);
-        }
-        Expr::If { arms, els } => {
-            for (c, t) in arms {
-                collect(body, *c, acc, ctx);
-                collect(body, *t, acc, ctx);
+            Expr::If { arms, els } => {
+                for (c, t) in arms {
+                    collect(body, *c, acc, ctx);
+                    collect(body, *t, acc, ctx);
+                }
+                collect(body, *els, acc, ctx);
             }
-            collect(body, *els, acc, ctx);
-        }
-        Expr::Let { defs, body: b } => {
-            for d in defs {
-                collect_localdef(body, d, acc, ctx);
+            Expr::Let { defs, body: b } => {
+                for d in defs {
+                    collect_localdef(body, d, acc, ctx);
+                }
+                collect(body, *b, acc, ctx);
             }
-            collect(body, *b, acc, ctx);
-        }
-        Expr::Case { subject, branches } => {
-            collect(body, *subject, acc, ctx);
-            for br in branches {
-                collect(body, br.body, acc, ctx);
+            Expr::Case { subject, branches } => {
+                collect(body, *subject, acc, ctx);
+                for br in branches {
+                    collect(body, br.body, acc, ctx);
+                }
             }
+            Expr::Access(x, _) => collect(body, *x, acc, ctx),
         }
-        Expr::Access(x, _) => collect(body, *x, acc, ctx),
-    }
+    })
 }
 
 /// The literal Msg ctor NAME of an `update` call's first argument, if it is one:
@@ -1400,7 +1403,8 @@ fn ctor_head_text(src: &str, start: usize, first_arg: usize) -> Option<String> {
 
 /// Replace each type variable of `t` by its binding in `sub`.
 fn subst_ty(t: &ty::Ty, sub: &HashMap<String, ty::Ty>) -> ty::Ty {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         ty::Ty::Var(n) => sub.get(n.as_str()).cloned().unwrap_or_else(|| t.clone()),
         ty::Ty::Fun(a, b) => ty::Ty::Fun(Box::new(subst_ty(a, sub)), Box::new(subst_ty(b, sub))),
         ty::Ty::App(n, xs) => ty::Ty::App(n.clone(), xs.iter().map(|x| subst_ty(x, sub)).collect()),
@@ -1412,7 +1416,7 @@ fn subst_ty(t: &ty::Ty, sub: &HashMap<String, ty::Ty>) -> ty::Ty {
         ),
         ty::Ty::Tuple(xs) => ty::Ty::Tuple(xs.iter().map(|x| subst_ty(x, sub)).collect()),
         ty::Ty::Unit | ty::Ty::Error => t.clone(),
-    }
+    })
 }
 
 /// The declared argument types of the constructor `ctor`, instantiated at the
@@ -2747,7 +2751,8 @@ fn def_reaches_genuine_effect(
 /// spine). The command element is never collected. Empty when the tail is not a
 /// recognisable pair.
 fn collect_init_model_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Tuple(xs) if xs.len() == 2 => out.push(xs[0]),
         Expr::Let { body: b, .. } => collect_init_model_exprs(body, *b, out),
         Expr::If { arms, els } => {
@@ -2762,7 +2767,7 @@ fn collect_init_model_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
             }
         }
         _ => {}
-    }
+    })
 }
 
 /// What the `config` record's `update` field pointed at.
@@ -3722,32 +3727,35 @@ fn cmd_def_kind(db: &dyn SkyDb, d: DefId) -> CmdDefKind {
 /// wrapper (its body walked); any other call shape contributes nothing (the
 /// branch stays a plain wire branch).
 fn collect_guarded_tail_cmd_exprs(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
-    match &body.exprs[e] {
-        Expr::Tuple(xs) if xs.len() == 2 => out.push(xs[1]),
-        Expr::Let { body: b, .. } => collect_guarded_tail_cmd_exprs(body, *b, out),
-        Expr::If { arms, els } => {
-            for (_, t) in arms {
-                collect_guarded_tail_cmd_exprs(body, *t, out);
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match &body.exprs[e] {
+            Expr::Tuple(xs) if xs.len() == 2 => out.push(xs[1]),
+            Expr::Let { body: b, .. } => collect_guarded_tail_cmd_exprs(body, *b, out),
+            Expr::If { arms, els } => {
+                for (_, t) in arms {
+                    collect_guarded_tail_cmd_exprs(body, *t, out);
+                }
+                collect_guarded_tail_cmd_exprs(body, *els, out);
             }
-            collect_guarded_tail_cmd_exprs(body, *els, out);
-        }
-        Expr::Case { branches, .. } => {
-            for br in branches {
-                collect_guarded_tail_cmd_exprs(body, br.body, out);
-            }
-        }
-        // A guard/HOF wrapper: `guard model (\_ -> ( model, cmd ))`. The returned
-        // pair lives in the LAST argument's thunk body — walk it.
-        Expr::Call(_, args) => {
-            if let Some(last) = args.last() {
-                if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
-                    collect_guarded_tail_cmd_exprs(body, *lb, out);
+            Expr::Case { branches, .. } => {
+                for br in branches {
+                    collect_guarded_tail_cmd_exprs(body, br.body, out);
                 }
             }
+            // A guard/HOF wrapper: `guard model (\_ -> ( model, cmd ))`. The returned
+            // pair lives in the LAST argument's thunk body — walk it.
+            Expr::Call(_, args) => {
+                if let Some(last) = args.last() {
+                    if let Expr::Lambda { body: lb, .. } = &body.exprs[*last] {
+                        collect_guarded_tail_cmd_exprs(body, *lb, out);
+                    }
+                }
+            }
+            Expr::Lambda { body: b, .. } => collect_guarded_tail_cmd_exprs(body, *b, out),
+            _ => {}
         }
-        Expr::Lambda { body: b, .. } => collect_guarded_tail_cmd_exprs(body, *b, out),
-        _ => {}
-    }
+    })
 }
 
 /// Statically resolve a command expression into its leaves. FAIL-CLOSED: any
@@ -4231,7 +4239,8 @@ fn def_reaches_client_effect(db: &dyn SkyDb, d: DefId, visited: &mut HashSet<Def
 
 /// Record every constructor NAME (`Res::Ctor`) built directly in `e`'s subtree.
 fn walk_ctor_names(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<String>) {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Var(Res::Ctor(c)) => {
             if let Some(l) = db.def_loc(c.def) {
                 out.insert(l.name.as_str().to_string());
@@ -4285,7 +4294,7 @@ fn walk_ctor_names(db: &dyn SkyDb, body: &Body, e: ExprId, out: &mut BTreeSet<St
             }
         }
         _ => {}
-    }
+    })
 }
 
 /// Every constructor a top-level def BUILDS, transitively through its callees.
@@ -4344,25 +4353,28 @@ fn collect_constructed_ctors(
     out: &mut BTreeSet<String>,
     visited: &mut HashSet<DefId>,
 ) {
-    if !visited.insert(def) {
-        return;
-    }
-    let Some(loc) = db.def_loc(def) else {
-        return;
-    };
-    let resolved = db.resolve(loc.module);
-    let Some(body) = resolved.bodies.get(&def) else {
-        return;
-    };
-    let Some(root) = body.root else {
-        return;
-    };
-    walk_ctor_names(db, body, root, out);
-    let mut acc = Refs::default();
-    collect(body, root, &mut acc, &CollectCtx::default());
-    for c in acc.callees {
-        collect_constructed_ctors(db, c, out, visited);
-    }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        if !visited.insert(def) {
+            return;
+        }
+        let Some(loc) = db.def_loc(def) else {
+            return;
+        };
+        let resolved = db.resolve(loc.module);
+        let Some(body) = resolved.bodies.get(&def) else {
+            return;
+        };
+        let Some(root) = body.root else {
+            return;
+        };
+        walk_ctor_names(db, body, root, out);
+        let mut acc = Refs::default();
+        collect(body, root, &mut acc, &CollectCtx::default());
+        for c in acc.callees {
+            collect_constructed_ctors(db, c, out, visited);
+        }
+    })
 }
 
 /// Every constructor built by an EXPRESSION (a client arm body), transitively.
@@ -6942,7 +6954,8 @@ fn client_model_plan(
             e: ExprId,
             out: &mut Vec<(ExprId, PlanSpliceKind)>,
         ) -> Result<(), ClientModelHold> {
-            match &body.exprs[e] {
+            // One level per level of the tree it walks: grow the stack on demand.
+            base::ensure_stack(|| match &body.exprs[e] {
                 Expr::Tuple(xs) if xs.len() == 2 => {
                     let mut leaves = Vec::new();
                     resolve_cmd_leaves(self.db, body, xs[1], &mut leaves);
@@ -6974,7 +6987,7 @@ fn client_model_plan(
                 Expr::Lambda { .. } => Err(shape_hold("a function")),
                 Expr::Var(_) => Err(shape_hold("a top-level value")),
                 _ => Err(shape_hold("another expression")),
-            }
+            })
         }
 
         /// `x |> f a` / `f a <| x`: the function side is a call or a name
@@ -7229,7 +7242,8 @@ fn trim_span(src: &str, r: (u32, u32)) -> Option<(u32, u32)> {
 /// listed (its command still shows in the command shape).
 pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec<(u32, u32)> {
     fn walk(body: &Body, e: ExprId, src: &str, out: &mut Vec<(u32, u32)>) {
-        match &body.exprs[e] {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match &body.exprs[e] {
             Expr::Tuple(xs) if xs.len() == 2 => {
                 if let Some(r) = body
                     .expr_spans
@@ -7260,7 +7274,7 @@ pub fn update_leaf_cmd_spans(db: &dyn SkyDb, module: ModuleId, src: &str) -> Vec
                 }
             }
             _ => {}
-        }
+        })
     }
     let resolved = db.resolve(module);
     let Some(td) = resolved
@@ -7355,7 +7369,8 @@ fn classify_lambda_update(
 /// Follow the `let`/`if`-spine from `e` to the outermost `case`, folding shared
 /// `let` refs into `shared`. Returns the case ExprId, or None.
 fn find_top_case(body: &Body, e: ExprId, shared: &mut Refs, ctx: &CollectCtx) -> Option<ExprId> {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Case { .. } => Some(e),
         Expr::Let { defs, body: b } => {
             for d in defs {
@@ -7364,7 +7379,7 @@ fn find_top_case(body: &Body, e: ExprId, shared: &mut Refs, ctx: &CollectCtx) ->
             find_top_case(body, *b, shared, ctx)
         }
         _ => None,
-    }
+    })
 }
 
 /// Turn a branch's verdict from its collected refs.

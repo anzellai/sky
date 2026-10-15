@@ -1363,8 +1363,9 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     # ~81s workspace build + ~167s conformance (incl. the release sky build) +
-    # ~48s doc-examples ≈ 5 min. 1.5x ≈ 8, rounded up for runner variance.
-    timeout-minutes: 12
+    # ~48s doc-examples + ~2 min for the release-mode deep-expression tests
+    # ≈ 7 min. 1.5x ≈ 11, rounded up for runner variance.
+    timeout-minutes: 16
     env:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
@@ -1397,6 +1398,20 @@ jobs:
           cargo build --release -p sky --locked
           source ../scripts/lib/cargo-target.sh
           SKY_BIN="$(cargo_bin_path "$PWD" sky --release)" ../scripts/conformance.sh
+      - name: Gate — deep expressions at the release optimisation level
+        # The deep-expression tests check the compiler's stack use. The other
+        # jobs run them under `[profile.dev]` (opt-level 2), where frames are
+        # smaller than in the binary users run. `ty::exhaustive::walk` had no
+        # stack guard; its frame is 160 bytes at opt-level 2 and 448 bytes in
+        # `--release` (where `check_case` is inlined into it), so the 1,500-field
+        # codec test passed in CI and aborted under `--release`. These run the
+        # same tests at the release optimisation level.
+        # The release `sky` and its crates are already built by the step above.
+        working-directory: rust
+        run: |
+          cargo test --release --locked -p project --test deep_expression_emit
+          cargo test --release --locked -p sky-lsp --test deep_expression
+          cargo test --release --locked -p sky --test deep_expression_flow
       - name: Gate — live docs (full-module doc examples still compile)
         # Every `module Main …` Sky example in the live docs (docs/, excluding
         # docs/history/) must `sky check` — so a doc example can't silently rot.

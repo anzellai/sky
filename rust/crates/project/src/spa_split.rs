@@ -799,54 +799,58 @@ impl<'a> CodecResolver<'a> {
     /// each project type it names to `seeds`. `None` for a type with no
     /// spelling (a type variable, a function, an anonymous record).
     fn type_surface(&mut self, t: &ty::Ty, seeds: &mut Vec<String>) -> Option<String> {
-        let shapes: &'a ProjectShapes = self.shapes;
-        let name_key = |this: &mut Self, key: &str, seeds: &mut Vec<String>| {
-            if shapes.is_external(key) {
-                this.external_modules
-                    .insert(ProjectShapes::module_of(key).to_string());
-            } else {
-                seeds.push(ProjectShapes::bare(key).to_string());
-            }
-            shapes.type_ref(key)
-        };
-        match t {
-            ty::Ty::App(n, args) => {
-                let head = match shapes.key_of(n.as_str()) {
-                    Some(k) => name_key(self, k, seeds),
-                    None => tail_seg(n.as_str()).to_string(),
-                };
-                let mut out = head;
-                for a in args {
-                    out.push(' ');
-                    out.push_str(&wrap_arg(&self.type_surface(a, seeds)?));
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let shapes: &'a ProjectShapes = self.shapes;
+            let name_key = |this: &mut Self, key: &str, seeds: &mut Vec<String>| {
+                if shapes.is_external(key) {
+                    this.external_modules
+                        .insert(ProjectShapes::module_of(key).to_string());
+                } else {
+                    seeds.push(ProjectShapes::bare(key).to_string());
                 }
-                Some(out)
-            }
-            ty::Ty::Record(fields, _) => {
-                let set: BTreeSet<String> =
-                    fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
-                let key = shapes.record_by_fields.get(&set)?.clone();
-                match shapes.generic_records.get(&key) {
-                    None => Some(name_key(self, &key, seeds)),
-                    Some(generic) => {
-                        let (args, mut inner) = self.instantiation(&key, generic, Some(t)).ok()?;
-                        seeds.append(&mut inner);
-                        let head = name_key(self, &key, seeds);
-                        let shown: Vec<String> = args.iter().map(|a| wrap_arg(a)).collect();
-                        Some(format!("{head} {}", shown.join(" ")))
+                shapes.type_ref(key)
+            };
+            match t {
+                ty::Ty::App(n, args) => {
+                    let head = match shapes.key_of(n.as_str()) {
+                        Some(k) => name_key(self, k, seeds),
+                        None => tail_seg(n.as_str()).to_string(),
+                    };
+                    let mut out = head;
+                    for a in args {
+                        out.push(' ');
+                        out.push_str(&wrap_arg(&self.type_surface(a, seeds)?));
+                    }
+                    Some(out)
+                }
+                ty::Ty::Record(fields, _) => {
+                    let set: BTreeSet<String> =
+                        fields.iter().map(|(n, _)| n.as_str().to_string()).collect();
+                    let key = shapes.record_by_fields.get(&set)?.clone();
+                    match shapes.generic_records.get(&key) {
+                        None => Some(name_key(self, &key, seeds)),
+                        Some(generic) => {
+                            let (args, mut inner) =
+                                self.instantiation(&key, generic, Some(t)).ok()?;
+                            seeds.append(&mut inner);
+                            let head = name_key(self, &key, seeds);
+                            let shown: Vec<String> = args.iter().map(|a| wrap_arg(a)).collect();
+                            Some(format!("{head} {}", shown.join(" ")))
+                        }
                     }
                 }
-            }
-            ty::Ty::Tuple(xs) => {
-                let mut parts = Vec::new();
-                for x in xs {
-                    parts.push(self.type_surface(x, seeds)?);
+                ty::Ty::Tuple(xs) => {
+                    let mut parts = Vec::new();
+                    for x in xs {
+                        parts.push(self.type_surface(x, seeds)?);
+                    }
+                    Some(format!("( {} )", parts.join(", ")))
                 }
-                Some(format!("( {} )", parts.join(", ")))
+                ty::Ty::Unit => Some("()".to_string()),
+                _ => None,
             }
-            ty::Ty::Unit => Some("()".to_string()),
-            _ => None,
-        }
+        })
     }
 
     /// Synthesise the sound blank RECORD literal for a named record (qualified
@@ -1009,28 +1013,30 @@ fn tail_seg(name: &str) -> &str {
 /// module differ when the modules differ; a bare name is "module unknown") — enough to match a field's type against a
 /// user `Codec <T>` binding's T (`List Todo` ≡ `List Todo`).
 fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
-    use ty::Ty;
-    match (a, b) {
-        (Ty::App(n1, a1), Ty::App(n2, a2)) => {
-            ty::nominal::same(n1.as_str(), n2.as_str())
-                && a1.len() == a2.len()
-                && a1.iter().zip(a2).all(|(x, y)| ty_matches(x, y))
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        use ty::Ty;
+        match (a, b) {
+            (Ty::App(n1, a1), Ty::App(n2, a2)) => {
+                ty::nominal::same(n1.as_str(), n2.as_str())
+                    && a1.len() == a2.len()
+                    && a1.iter().zip(a2).all(|(x, y)| ty_matches(x, y))
+            }
+            (Ty::Tuple(x), Ty::Tuple(y)) => {
+                x.len() == y.len() && x.iter().zip(y).all(|(p, q)| ty_matches(p, q))
+            }
+            (Ty::Record(f1, _), Ty::Record(f2, _)) => {
+                f1.len() == f2.len()
+                    && f1.iter().zip(f2).all(|((n1, t1), (n2, t2))| {
+                        n1.as_str() == n2.as_str() && ty_matches(t1, t2)
+                    })
+            }
+            (Ty::Var(_), Ty::Var(_)) => true,
+            (Ty::Unit, Ty::Unit) => true,
+            (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => ty_matches(a1, a2) && ty_matches(b1, b2),
+            _ => false,
         }
-        (Ty::Tuple(x), Ty::Tuple(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| ty_matches(p, q))
-        }
-        (Ty::Record(f1, _), Ty::Record(f2, _)) => {
-            f1.len() == f2.len()
-                && f1
-                    .iter()
-                    .zip(f2)
-                    .all(|((n1, t1), (n2, t2))| n1.as_str() == n2.as_str() && ty_matches(t1, t2))
-        }
-        (Ty::Var(_), Ty::Var(_)) => true,
-        (Ty::Unit, Ty::Unit) => true,
-        (Ty::Fun(a1, b1), Ty::Fun(a2, b2)) => ty_matches(a1, a2) && ty_matches(b1, b2),
-        _ => false,
-    }
+    })
 }
 
 /// Collect the bare name of every PROJECT type declaration a type names —
@@ -1040,7 +1046,8 @@ fn ty_matches(a: &ty::Ty, b: &ty::Ty) -> bool {
 /// dependency type never seeds a copy of a same-named project type. A bare
 /// name (declaring module unknown) is collected as written.
 fn collect_ty_names(t: &ty::Ty, shapes: &ProjectShapes, out: &mut BTreeSet<String>) {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         ty::Ty::App(name, args) => {
             let n = name.as_str();
             match shapes.key_of(n) {
@@ -1076,7 +1083,7 @@ fn collect_ty_names(t: &ty::Ty, shapes: &ProjectShapes, out: &mut BTreeSet<Strin
             collect_ty_names(b, shapes, out);
         }
         ty::Ty::Var(_) | ty::Ty::Unit | ty::Ty::Error => {}
-    }
+    })
 }
 
 /// What `generate` produced, for the CLI + the acceptance test.
@@ -1288,7 +1295,8 @@ fn union_payloads(db: &SkyDatabase) -> UnionPayloads {
 /// recursive type terminates.
 fn device_key_in(t: &ty::Ty, unions: &UnionPayloads) -> Option<String> {
     fn walk(t: &ty::Ty, unions: &UnionPayloads, seen: &mut Vec<String>) -> Option<String> {
-        match t {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match t {
             ty::Ty::App(name, args) => {
                 let n = name.as_str();
                 if DEVICE_KEY_TYPES.contains(&n) {
@@ -1308,7 +1316,7 @@ fn device_key_in(t: &ty::Ty, unions: &UnionPayloads) -> Option<String> {
             ty::Ty::Tuple(items) => items.iter().find_map(|t| walk(t, unions, seen)),
             ty::Ty::Fun(a, b) => walk(a, unions, seen).or_else(|| walk(b, unions, seen)),
             _ => None,
-        }
+        })
     }
     walk(t, unions, &mut Vec::new())
 }
@@ -1548,7 +1556,8 @@ fn codec_auto_unencodable(f: &ModelFieldTy, db: Option<&dyn ty::TyDb>) -> Option
         }
     }
     fn scan(t: &ty::Ty) -> Option<&'static str> {
-        match t {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match t {
             ty::Ty::App(name, args) => {
                 if let Some(kind) = resolved_kind(name.as_str()) {
                     return Some(kind);
@@ -1562,7 +1571,7 @@ fn codec_auto_unencodable(f: &ModelFieldTy, db: Option<&dyn ty::TyDb>) -> Option
             ty::Ty::Tuple(items) => items.iter().find_map(scan),
             ty::Ty::Fun(a, b) => scan(a).or_else(|| scan(b)),
             _ => None,
-        }
+        })
     }
     let why = |kind: &str| -> String {
         if kind == "SecretKey" {
@@ -6429,7 +6438,8 @@ fn alias_type_params(alias: &syntax::SyntaxNode) -> Vec<String> {
 /// part of the solved type `c`. A part whose shape differs is skipped: the
 /// parameter may still be bound through another field.
 fn bind_type_params(g: &ty::Ty, c: &ty::Ty, params: &[String], out: &mut HashMap<String, ty::Ty>) {
-    match (g, c) {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match (g, c) {
         (ty::Ty::Var(v), _) if params.iter().any(|p| p == v.as_str()) => {
             out.entry(v.as_str().to_string())
                 .or_insert_with(|| c.clone());
@@ -6453,7 +6463,7 @@ fn bind_type_params(g: &ty::Ty, c: &ty::Ty, params: &[String], out: &mut HashMap
             }
         }
         _ => {}
-    }
+    })
 }
 
 /// The declared fields of a record-alias `type alias N = { … }` — each as

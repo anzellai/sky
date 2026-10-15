@@ -533,21 +533,26 @@ fn go_ty_uncached(
 /// var that the caller HAS bound (a parametric alias instantiation) is resolved
 /// and does not count.
 fn has_unresolved(t: &Ty, params: &HashMap<Name, GoTy>) -> bool {
-    match t {
-        Ty::Var(n) => !params.contains_key(n),
-        Ty::Error => true,
-        Ty::App(n, args) => {
-            matches!(
-                n.as_str(),
-                "number" | "comparable" | "appendable" | "compappend"
-            ) || args.iter().any(|a| has_unresolved(a, params))
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match t {
+            Ty::Var(n) => !params.contains_key(n),
+            Ty::Error => true,
+            Ty::App(n, args) => {
+                matches!(
+                    n.as_str(),
+                    "number" | "comparable" | "appendable" | "compappend"
+                ) || args.iter().any(|a| has_unresolved(a, params))
+            }
+            Ty::Fun(a, b) => has_unresolved(a, params) || has_unresolved(b, params),
+            Ty::Tuple(xs) => xs.iter().any(|x| has_unresolved(x, params)),
+            // An OPEN row is itself missing information about the rest of the record.
+            Ty::Record(fs, ext) => {
+                ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params))
+            }
+            Ty::Unit => false,
         }
-        Ty::Fun(a, b) => has_unresolved(a, params) || has_unresolved(b, params),
-        Ty::Tuple(xs) => xs.iter().any(|x| has_unresolved(x, params)),
-        // An OPEN row is itself missing information about the rest of the record.
-        Ty::Record(fs, ext) => ext.is_some() || fs.iter().any(|(_, ft)| has_unresolved(ft, params)),
-        Ty::Unit => false,
-    }
+    })
 }
 
 thread_local! {
@@ -856,7 +861,8 @@ fn instantiate_structural(
 /// inferred field type, binding any template `Ty::Var` that is one of the
 /// alias's type params. First binding wins (deterministic).
 fn unify_param(tmpl: &Ty, concrete: &Ty, param_vars: &[Name], bound: &mut HashMap<Name, Ty>) {
-    match (tmpl, concrete) {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match (tmpl, concrete) {
         (Ty::Var(v), c) if param_vars.contains(v) => {
             bound.entry(v.clone()).or_insert_with(|| c.clone());
         }
@@ -883,7 +889,7 @@ fn unify_param(tmpl: &Ty, concrete: &Ty, param_vars: &[Name], bound: &mut HashMa
             }
         }
         _ => {}
-    }
+    })
 }
 
 fn app_to_go(

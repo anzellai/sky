@@ -51,10 +51,11 @@ pub struct TypeError {
 /// at this layer, so a function-returning callee's result contributes to the
 /// count (which is exactly what the arity gate needs).
 fn count_fun_arrows(t: &Ty) -> usize {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::Fun(_, r) => 1 + count_fun_arrows(r),
         _ => 0,
-    }
+    })
 }
 
 /// Replace leading `Unit` arguments on a scheme's top arrow-spine with fresh
@@ -63,7 +64,8 @@ fn count_fun_arrows(t: &Ty) -> usize {
 /// (e.g. `Task Error ()`) is untouched — only argument positions relax.
 fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
     fn go(ty: &Ty, n: &mut u32) -> Ty {
-        match ty {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match ty {
             Ty::Fun(a, b) => {
                 let arg = if matches!(a.as_ref(), Ty::Unit) {
                     *n += 1;
@@ -74,7 +76,7 @@ fn relax_unit_arg_spine(s: &Scheme) -> Scheme {
                 Ty::Fun(Box::new(arg), Box::new(go(b, n)))
             }
             other => other.clone(),
-        }
+        })
     }
     let mut n = 0;
     Scheme {
@@ -834,7 +836,8 @@ impl<'a> Infer<'a> {
         sub: &mut HashMap<String, TyVarId>,
         holes: &mut Vec<TyVarId>,
     ) -> TyVarId {
-        match ty {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match ty {
             Ty::Var(n) if n.as_str() == "any" => {
                 let v = self.uf.fresh_flex();
                 holes.push(v);
@@ -887,7 +890,7 @@ impl<'a> Infer<'a> {
                 rv
             }
             other => self.ty_to_var(other, sub),
-        }
+        })
     }
 
     /// Every variable name reachable from `v`, spelt as read-back spells it:
@@ -899,29 +902,32 @@ impl<'a> Infer<'a> {
         out: &mut std::collections::HashSet<String>,
         seen: &mut std::collections::HashSet<TyVarId>,
     ) {
-        let r = self.uf.find(v);
-        if !seen.insert(r) {
-            return;
-        }
-        match self.uf.content(r) {
-            Content::Flex => {
-                out.insert(format!("t{}", r.0));
-                out.insert(format!("r{}", r.0));
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let r = self.uf.find(v);
+            if !seen.insert(r) {
+                return;
             }
-            // Spelt as `read_back_scheme` spells a bounded root.
-            Content::FlexSuper(b) => {
-                out.insert(format!("{}{}", b.label(), r.0));
-            }
-            Content::Rigid(n) => {
-                out.insert(n.as_str().to_string());
-            }
-            Content::Structure(ft) => {
-                for k in crate::unify::flat_children(&ft) {
-                    self.collect_var_names(k, out, seen);
+            match self.uf.content(r) {
+                Content::Flex => {
+                    out.insert(format!("t{}", r.0));
+                    out.insert(format!("r{}", r.0));
                 }
+                // Spelt as `read_back_scheme` spells a bounded root.
+                Content::FlexSuper(b) => {
+                    out.insert(format!("{}{}", b.label(), r.0));
+                }
+                Content::Rigid(n) => {
+                    out.insert(n.as_str().to_string());
+                }
+                Content::Structure(ft) => {
+                    for k in crate::unify::flat_children(&ft) {
+                        self.collect_var_names(k, out, seen);
+                    }
+                }
+                Content::Error => {}
             }
-            Content::Error => {}
-        }
+        })
     }
 
     /// Rebuild `ty` with every hole (see [`Infer::ty_to_var_holes`]) replaced by
@@ -932,7 +938,8 @@ impl<'a> Infer<'a> {
         holes: &mut std::vec::IntoIter<TyVarId>,
         names: &HashMap<Name, Name>,
     ) -> Ty {
-        match ty {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match ty {
             Ty::Var(n) if n.as_str() == "any" => match holes.next() {
                 Some(v) => {
                     let t = self.read_back_scheme(v, true);
@@ -973,7 +980,7 @@ impl<'a> Infer<'a> {
                 }
             }
             other => other.clone(),
-        }
+        })
     }
 
     /// C-2 (v0.27.0): the relaxed value restriction for a top-level CAF.
@@ -1710,19 +1717,22 @@ impl<'a> Infer<'a> {
         out: &mut Vec<TyVarId>,
         seen: &mut std::collections::HashSet<TyVarId>,
     ) {
-        let r = self.uf.find(v);
-        if !seen.insert(r) {
-            return;
-        }
-        match self.uf.content(r) {
-            Content::Flex | Content::FlexSuper(_) => out.push(r),
-            Content::Structure(ft) => {
-                for k in crate::unify::flat_children(&ft) {
-                    self.collect_flex(k, out, seen);
-                }
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let r = self.uf.find(v);
+            if !seen.insert(r) {
+                return;
             }
-            Content::Rigid(_) | Content::Error => {}
-        }
+            match self.uf.content(r) {
+                Content::Flex | Content::FlexSuper(_) => out.push(r),
+                Content::Structure(ft) => {
+                    for k in crate::unify::flat_children(&ft) {
+                        self.collect_flex(k, out, seen);
+                    }
+                }
+                Content::Rigid(_) | Content::Error => {}
+            }
+        })
     }
 
     /// A fresh instance of a generalised let binder: copy its type graph,
@@ -1742,53 +1752,56 @@ impl<'a> Infer<'a> {
     }
 
     fn copy_generic(&mut self, v: TyVarId, memo: &mut HashMap<TyVarId, TyVarId>) -> TyVarId {
-        let r = self.uf.find(v);
-        if let Some(&c) = memo.get(&r) {
-            return c;
-        }
-        let out = match self.uf.content(r) {
-            Content::Structure(ft) => {
-                let copied = match &ft {
-                    FlatTy::App(n, args) => {
-                        let a: Vec<TyVarId> =
-                            args.iter().map(|&x| self.copy_generic(x, memo)).collect();
-                        FlatTy::App(n.clone(), a)
-                    }
-                    FlatTy::Fun(a, b) => {
-                        let (a, b) = (*a, *b);
-                        FlatTy::Fun(self.copy_generic(a, memo), self.copy_generic(b, memo))
-                    }
-                    FlatTy::Record(fs, ext) => {
-                        let mut m = std::collections::BTreeMap::new();
-                        for (n, &t) in fs {
-                            m.insert(n.clone(), self.copy_generic(t, memo));
-                        }
-                        let e = ext.map(|e| self.copy_generic(e, memo));
-                        FlatTy::Record(m, e)
-                    }
-                    FlatTy::Tuple(xs) => {
-                        FlatTy::Tuple(xs.iter().map(|&x| self.copy_generic(x, memo)).collect())
-                    }
-                    FlatTy::Unit => FlatTy::Unit,
-                };
-                // Share a sub-graph that holds no quantified var.
-                let old = crate::unify::flat_children(&ft);
-                let new = crate::unify::flat_children(&copied);
-                let unchanged = old.len() == new.len()
-                    && old
-                        .iter()
-                        .zip(&new)
-                        .all(|(&a, &b)| self.uf.find(a) == self.uf.find(b));
-                if unchanged {
-                    r
-                } else {
-                    self.uf.fresh(Content::Structure(copied))
-                }
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            let r = self.uf.find(v);
+            if let Some(&c) = memo.get(&r) {
+                return c;
             }
-            _ => r,
-        };
-        memo.insert(r, out);
-        out
+            let out = match self.uf.content(r) {
+                Content::Structure(ft) => {
+                    let copied = match &ft {
+                        FlatTy::App(n, args) => {
+                            let a: Vec<TyVarId> =
+                                args.iter().map(|&x| self.copy_generic(x, memo)).collect();
+                            FlatTy::App(n.clone(), a)
+                        }
+                        FlatTy::Fun(a, b) => {
+                            let (a, b) = (*a, *b);
+                            FlatTy::Fun(self.copy_generic(a, memo), self.copy_generic(b, memo))
+                        }
+                        FlatTy::Record(fs, ext) => {
+                            let mut m = std::collections::BTreeMap::new();
+                            for (n, &t) in fs {
+                                m.insert(n.clone(), self.copy_generic(t, memo));
+                            }
+                            let e = ext.map(|e| self.copy_generic(e, memo));
+                            FlatTy::Record(m, e)
+                        }
+                        FlatTy::Tuple(xs) => {
+                            FlatTy::Tuple(xs.iter().map(|&x| self.copy_generic(x, memo)).collect())
+                        }
+                        FlatTy::Unit => FlatTy::Unit,
+                    };
+                    // Share a sub-graph that holds no quantified var.
+                    let old = crate::unify::flat_children(&ft);
+                    let new = crate::unify::flat_children(&copied);
+                    let unchanged = old.len() == new.len()
+                        && old
+                            .iter()
+                            .zip(&new)
+                            .all(|(&a, &b)| self.uf.find(a) == self.uf.find(b));
+                    if unchanged {
+                        r
+                    } else {
+                        self.uf.fresh(Content::Structure(copied))
+                    }
+                }
+                _ => r,
+            };
+            memo.insert(r, out);
+            out
+        })
     }
 
     /// End-of-def step for the lowering table: a generalised let binder whose
@@ -2402,57 +2415,60 @@ impl<'a> Infer<'a> {
     }
 
     fn ty_to_var(&mut self, ty: &Ty, sub: &mut HashMap<String, TyVarId>) -> TyVarId {
-        match ty {
-            Ty::Var(n) => {
-                if n.as_str() == "any" {
-                    // wildcard: a fresh var at EVERY occurrence (buildEnv).
-                    return self.uf.fresh_flex();
-                }
-                if let Some(&v) = sub.get(n.as_str()) {
-                    v
-                } else {
-                    let v = self.fresh_for_name(n.as_str());
-                    sub.insert(n.as_str().to_string(), v);
-                    v
-                }
-            }
-            Ty::Fun(a, b) => {
-                let va = self.ty_to_var(a, sub);
-                let vb = self.ty_to_var(b, sub);
-                self.fun(va, vb)
-            }
-            Ty::App(name, args) => {
-                let vs: Vec<TyVarId> = args.iter().map(|a| self.ty_to_var(a, sub)).collect();
-                self.uf
-                    .fresh(Content::Structure(FlatTy::App(name.clone(), vs)))
-            }
-            Ty::Tuple(xs) => {
-                let vs: Vec<TyVarId> = xs.iter().map(|x| self.ty_to_var(x, sub)).collect();
-                self.uf.fresh(Content::Structure(FlatTy::Tuple(vs)))
-            }
-            Ty::Record(fields, ext) => {
-                let mut map = std::collections::BTreeMap::new();
-                for (n, t) in fields {
-                    let v = self.ty_to_var(t, sub);
-                    map.insert(n.clone(), v);
-                }
-                let ext_var = ext.as_ref().map(|e| {
-                    if e.as_str() == "any" {
-                        self.uf.fresh_flex()
-                    } else if let Some(&v) = sub.get(e.as_str()) {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match ty {
+                Ty::Var(n) => {
+                    if n.as_str() == "any" {
+                        // wildcard: a fresh var at EVERY occurrence (buildEnv).
+                        return self.uf.fresh_flex();
+                    }
+                    if let Some(&v) = sub.get(n.as_str()) {
                         v
                     } else {
-                        let v = self.fresh_for_name(e.as_str());
-                        sub.insert(e.as_str().to_string(), v);
+                        let v = self.fresh_for_name(n.as_str());
+                        sub.insert(n.as_str().to_string(), v);
                         v
                     }
-                });
-                self.uf
-                    .fresh(Content::Structure(FlatTy::Record(map, ext_var)))
+                }
+                Ty::Fun(a, b) => {
+                    let va = self.ty_to_var(a, sub);
+                    let vb = self.ty_to_var(b, sub);
+                    self.fun(va, vb)
+                }
+                Ty::App(name, args) => {
+                    let vs: Vec<TyVarId> = args.iter().map(|a| self.ty_to_var(a, sub)).collect();
+                    self.uf
+                        .fresh(Content::Structure(FlatTy::App(name.clone(), vs)))
+                }
+                Ty::Tuple(xs) => {
+                    let vs: Vec<TyVarId> = xs.iter().map(|x| self.ty_to_var(x, sub)).collect();
+                    self.uf.fresh(Content::Structure(FlatTy::Tuple(vs)))
+                }
+                Ty::Record(fields, ext) => {
+                    let mut map = std::collections::BTreeMap::new();
+                    for (n, t) in fields {
+                        let v = self.ty_to_var(t, sub);
+                        map.insert(n.clone(), v);
+                    }
+                    let ext_var = ext.as_ref().map(|e| {
+                        if e.as_str() == "any" {
+                            self.uf.fresh_flex()
+                        } else if let Some(&v) = sub.get(e.as_str()) {
+                            v
+                        } else {
+                            let v = self.fresh_for_name(e.as_str());
+                            sub.insert(e.as_str().to_string(), v);
+                            v
+                        }
+                    });
+                    self.uf
+                        .fresh(Content::Structure(FlatTy::Record(map, ext_var)))
+                }
+                Ty::Unit => self.uf.fresh(Content::Structure(FlatTy::Unit)),
+                Ty::Error => self.uf.fresh(Content::Error),
             }
-            Ty::Unit => self.uf.fresh(Content::Structure(FlatTy::Unit)),
-            Ty::Error => self.uf.fresh(Content::Error),
-        }
+        })
     }
 
     // ---- read-back (variableToType, Solve.hs:1428) ----------------------
@@ -2811,7 +2827,8 @@ fn collect_pat_binders(body: &Body, p: PatId, out: &mut std::collections::HashSe
 /// Every local bound INSIDE expression `e`: lambda parameters, case-branch
 /// patterns, and nested let binders, parameters and destructuring patterns.
 fn collect_expr_binders(body: &Body, e: ExprId, out: &mut std::collections::HashSet<LocalId>) {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Var(_)
         | Expr::Int(_)
         | Expr::Float(_)
@@ -2883,39 +2900,42 @@ fn collect_expr_binders(body: &Body, e: ExprId, out: &mut std::collections::Hash
                 collect_expr_binders(body, br.body, out);
             }
         }
-    }
+    })
 }
 
 /// ML's syntactic-value test (the value restriction): an expression whose
 /// evaluation cannot run a computation. Only such a let binding generalises.
 pub(crate) fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
-    match &body.exprs[e] {
-        Expr::Lambda { .. }
-        | Expr::Int(_)
-        | Expr::Float(_)
-        | Expr::Str(_)
-        | Expr::Chr(_)
-        | Expr::Bool(_)
-        | Expr::Unit
-        | Expr::Accessor(_)
-        | Expr::Var(_) => true,
-        Expr::Negate(x) => is_syntactic_value(body, *x),
-        Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(|&x| is_syntactic_value(body, x)),
-        Expr::Record(fs) => fs.iter().all(|(_, x)| is_syntactic_value(body, *x)),
-        // A constructor applied to values builds data; it runs nothing.
-        // `Ffi.kernel "Name"` names a runtime function: it is a reference, and
-        // evaluating it runs nothing either (FINAL-PLAN §1, "varied").
-        Expr::Call(f, args) => match &body.exprs[*f] {
-            Expr::Var(Res::Ctor(_)) => args.iter().all(|&a| is_syntactic_value(body, a)),
-            Expr::Var(Res::Kernel { module, func }) => {
-                module.as_str() == "Ffi"
-                    && func.as_str() == "kernel"
-                    && matches!(args.as_slice(), [a] if matches!(body.exprs[*a], Expr::Str(_)))
-            }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match &body.exprs[e] {
+            Expr::Lambda { .. }
+            | Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Chr(_)
+            | Expr::Bool(_)
+            | Expr::Unit
+            | Expr::Accessor(_)
+            | Expr::Var(_) => true,
+            Expr::Negate(x) => is_syntactic_value(body, *x),
+            Expr::List(xs) | Expr::Tuple(xs) => xs.iter().all(|&x| is_syntactic_value(body, x)),
+            Expr::Record(fs) => fs.iter().all(|(_, x)| is_syntactic_value(body, *x)),
+            // A constructor applied to values builds data; it runs nothing.
+            // `Ffi.kernel "Name"` names a runtime function: it is a reference, and
+            // evaluating it runs nothing either (FINAL-PLAN §1, "varied").
+            Expr::Call(f, args) => match &body.exprs[*f] {
+                Expr::Var(Res::Ctor(_)) => args.iter().all(|&a| is_syntactic_value(body, a)),
+                Expr::Var(Res::Kernel { module, func }) => {
+                    module.as_str() == "Ffi"
+                        && func.as_str() == "kernel"
+                        && matches!(args.as_slice(), [a] if matches!(body.exprs[*a], Expr::Str(_)))
+                }
+                _ => false,
+            },
             _ => false,
-        },
-        _ => false,
-    }
+        }
+    })
 }
 
 /// The MAXIMAL expansive sub-expressions of `e`: walk through the value
@@ -2924,28 +2944,31 @@ pub(crate) fn is_syntactic_value(body: &Body, e: ExprId) -> bool {
 /// not itself a syntactic value. Lambdas are values and their bodies are not
 /// walked (they run only when called). Empty iff `e` is a syntactic value.
 fn collect_expansive(body: &Body, e: ExprId, out: &mut Vec<ExprId>) {
-    if is_syntactic_value(body, e) {
-        return;
-    }
-    match &body.exprs[e] {
-        Expr::Negate(x) => collect_expansive(body, *x, out),
-        Expr::List(xs) | Expr::Tuple(xs) => {
-            for &x in xs {
-                collect_expansive(body, x, out);
-            }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        if is_syntactic_value(body, e) {
+            return;
         }
-        Expr::Record(fs) => {
-            for (_, x) in fs {
-                collect_expansive(body, *x, out);
+        match &body.exprs[e] {
+            Expr::Negate(x) => collect_expansive(body, *x, out),
+            Expr::List(xs) | Expr::Tuple(xs) => {
+                for &x in xs {
+                    collect_expansive(body, x, out);
+                }
             }
-        }
-        Expr::Call(f, args) if matches!(body.exprs[*f], Expr::Var(Res::Ctor(_))) => {
-            for &a in args {
-                collect_expansive(body, a, out);
+            Expr::Record(fs) => {
+                for (_, x) in fs {
+                    collect_expansive(body, *x, out);
+                }
             }
+            Expr::Call(f, args) if matches!(body.exprs[*f], Expr::Var(Res::Ctor(_))) => {
+                for &a in args {
+                    collect_expansive(body, a, out);
+                }
+            }
+            _ => out.push(e),
         }
-        _ => out.push(e),
-    }
+    })
 }
 
 /// The defs of one `let`, grouped into strongly connected components of their
@@ -2979,34 +3002,37 @@ fn let_def_groups(body: &Body, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
     }
     impl Tarjan<'_> {
         fn visit(&mut self, v: usize) {
-            self.index[v] = Some(self.next);
-            self.low[v] = self.next;
-            self.next += 1;
-            self.stack.push(v);
-            self.on_stack[v] = true;
-            for k in 0..self.edges[v].len() {
-                let w = self.edges[v][k];
-                match self.index[w] {
-                    None => {
-                        self.visit(w);
-                        self.low[v] = self.low[v].min(self.low[w]);
-                    }
-                    Some(iw) if self.on_stack[w] => self.low[v] = self.low[v].min(iw),
-                    Some(_) => {}
-                }
-            }
-            if Some(self.low[v]) == self.index[v] {
-                let mut group = Vec::new();
-                while let Some(w) = self.stack.pop() {
-                    self.on_stack[w] = false;
-                    group.push(w);
-                    if w == v {
-                        break;
+            // One level per level of the tree it walks: grow the stack on demand.
+            base::ensure_stack(|| {
+                self.index[v] = Some(self.next);
+                self.low[v] = self.next;
+                self.next += 1;
+                self.stack.push(v);
+                self.on_stack[v] = true;
+                for k in 0..self.edges[v].len() {
+                    let w = self.edges[v][k];
+                    match self.index[w] {
+                        None => {
+                            self.visit(w);
+                            self.low[v] = self.low[v].min(self.low[w]);
+                        }
+                        Some(iw) if self.on_stack[w] => self.low[v] = self.low[v].min(iw),
+                        Some(_) => {}
                     }
                 }
-                group.sort_unstable();
-                self.out.push(group);
-            }
+                if Some(self.low[v]) == self.index[v] {
+                    let mut group = Vec::new();
+                    while let Some(w) = self.stack.pop() {
+                        self.on_stack[w] = false;
+                        group.push(w);
+                        if w == v {
+                            break;
+                        }
+                    }
+                    group.sort_unstable();
+                    self.out.push(group);
+                }
+            })
         }
     }
     let n = defs.len();
@@ -3030,7 +3056,8 @@ fn let_def_groups(body: &Body, defs: &[hir::LocalDef]) -> Vec<Vec<usize>> {
 /// Every `Res::Local` referenced in expression `e` (including nested lets,
 /// lambdas and case branches).
 fn collect_local_refs(body: &Body, e: ExprId, out: &mut Vec<LocalId>) {
-    match &body.exprs[e] {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match &body.exprs[e] {
         Expr::Var(Res::Local(l)) => out.push(*l),
         Expr::Var(_)
         | Expr::Int(_)
@@ -3088,7 +3115,7 @@ fn collect_local_refs(body: &Body, e: ExprId, out: &mut Vec<LocalId>) {
                 collect_local_refs(body, br.body, out);
             }
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -3161,7 +3188,8 @@ mod tests {
 
 /// Does `t` contain the wildcard `any` anywhere (a type or a record row)?
 pub(crate) fn ty_contains_any(t: &Ty) -> bool {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::Var(n) => n.as_str() == "any",
         Ty::Fun(a, b) => ty_contains_any(a) || ty_contains_any(b),
         Ty::App(_, xs) | Ty::Tuple(xs) => xs.iter().any(ty_contains_any),
@@ -3170,5 +3198,5 @@ pub(crate) fn ty_contains_any(t: &Ty) -> bool {
                 || fs.iter().any(|(_, t)| ty_contains_any(t))
         }
         Ty::Unit | Ty::Error => false,
-    }
+    })
 }
