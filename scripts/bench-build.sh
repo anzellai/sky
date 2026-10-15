@@ -11,7 +11,8 @@
 #             update arms = N, 8 modules, seed 1), for each of `--targets`
 #             (default web:app and web)
 #   skyshop   examples/13-skyshop (Go FFI at 76k-symbol scale; `sky install`
-#             runs once first, untimed, and needs the network)
+#             runs once first, untimed, and needs the network; the timed
+#             builds then resolve modules from the module cache it filled)
 #   desktop   the smallest generated app for --target desktop (macOS only;
 #             skipped with a note elsewhere, as there is no desktop shell)
 #
@@ -167,7 +168,7 @@ timings_json() {
 measure() {
     local case_id="$1" scenario="$2" rep="$3" dir="$4" log="$5"
     shift 5
-    local envs=()
+    local envs=(${CASE_ENVS[@]+"${CASE_ENVS[@]}"})
     while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
     shift
     local tf="$WORK/time.out" code=0
@@ -244,6 +245,9 @@ run_case() {
 
 # ---- the cases ---------------------------------------------------------------
 
+# Environment assignments every timed build of the current case gets.
+CASE_ENVS=()
+
 if [ -n "$FROM_REPORT" ]; then
     CASES=""
 fi
@@ -288,8 +292,21 @@ measure_cases() {
                     tail -20 "$WORK/skyshop-install.log" >&2
                     exit 1
                 }
+                # skyshop's sky.toml pins its Go deps to "latest", so every
+                # build (warm included) runs one `go get <module>@latest` per
+                # module: 8 module-proxy queries. Their wall time is the
+                # network, not Sky: in rust-ci run 38797890228 it moved the
+                # warm build's "write sky-out" phase from 1.0 s to 2.2-6.2 s
+                # while CPU stayed flat, and failed the budget. The timed
+                # builds resolve against the module cache `sky install` just
+                # filled (a file:// GOPROXY), so each `go get` still runs and
+                # still costs its process, and the number of them still
+                # counts, but no proxy round trip is timed. A module missing
+                # from the cache fails the build loudly.
+                CASE_ENVS=("GOPROXY=file://$(go env GOMODCACHE)/cache/download")
                 run_case "skyshop-web" "$shop" src/Page/Home.sky \
                     '"letter-spacing:.1em"' '"letter-spacing:.2em;--bench:@TOKEN@"' -- src/Main.sky
+                CASE_ENVS=()
                 ;;
             desktop)
                 if [ "$OS" != darwin ]; then
