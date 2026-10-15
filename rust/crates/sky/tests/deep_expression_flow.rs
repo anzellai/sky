@@ -10,11 +10,12 @@
 //! (`base::ensure_stack`).
 //!
 //! This test is the end-to-end leg: `sky check` and `sky build` on the real
-//! binary, then run the app. The binary also runs the compiler on a thread with
-//! a large stack (`main.rs`, `COMPILER_STACK_BYTES`), so the guards themselves
-//! are falsified on a 2 MiB thread by `project/tests/deep_expression_emit.rs`
-//! (parse to Go emission) and `sky-lsp/tests/deep_expression.rs` (diagnostics
-//! and hover).
+//! binary, then run the app. The binary runs the compiler on its main thread
+//! (no reserved large stack), so this is also the leg for the default 8 MiB
+//! stack. The guards themselves are falsified on smaller threads by
+//! `project/tests/deep_expression_emit.rs` (parse to Go emission, and a
+//! 1,500-field record codec on 512 KiB) and `sky-lsp/tests/deep_expression.rs`
+//! (diagnostics and hover).
 
 use std::process::Command;
 
@@ -118,4 +119,51 @@ fn a_four_thousand_step_pipeline_compiles() {
         "4000",
         "the pipeline must evaluate every step"
     );
+}
+
+/// A 1,500-field record codec through `sky check` on the binary's main thread:
+/// its step types are curried arrows one field deep each, which the type
+/// read-back and the type table walk.
+#[test]
+fn a_fifteen_hundred_field_record_codec_checks() {
+    let n = 1500;
+    let fields: Vec<String> = (0..n).map(|i| format!("f{i} : String")).collect();
+    let steps: Vec<String> = (0..n)
+        .map(|i| format!("        |> Codec.field \"f{i}\" .f{i} Codec.string"))
+        .collect();
+    let blank: Vec<String> = (0..n).map(|i| format!("f{i} = \"\"")).collect();
+    let src = format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Codec as Codec exposing (Codec)\n\
+         import Std.Log exposing (println)\n\n\n\
+         type alias Big =\n    {{ {}\n    }}\n\n\n\
+         bigCodec : Codec Big\nbigCodec =\n    Codec.object Big\n{}\n        |> Codec.buildObject\n\n\n\
+         blank : Big\nblank =\n    {{ {} }}\n\n\n\
+         main =\n    println (Codec.toJson bigCodec blank)\n",
+        fields.join("\n    , "),
+        steps.join("\n"),
+        blank.join(", ")
+    );
+    let dir = project("codec", &src);
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let check = Command::new(SKY)
+        .args(["check", "src/Main.sky"])
+        .current_dir(&dir)
+        .output()
+        .expect("run sky check");
+    let _ = std::fs::remove_dir_all(&dir);
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        !log.contains("overflowed its stack"),
+        "sky check overflowed its stack on a 1,500-field codec:\n{log}"
+    );
+    assert!(check.status.success(), "sky check must succeed:\n{log}");
 }

@@ -154,8 +154,8 @@ fn growth_failures(shape: &str, phase: &str, points: &[(usize, Snapshot)]) -> Ve
 #[test]
 #[ignore = "quadratic until the shared type table lands (build-speed stream C, P4)"]
 fn typing_and_lowering_large_records_is_linear() {
-    // The compiler runs on a large-stack thread (`sky`'s `COMPILER_STACK_BYTES`);
-    // a long pipeline recurses deeper than a test thread's default stack.
+    // A test thread's default stack is 2 MiB; give the fixtures room without
+    // depending on every walker's on-demand stack growth.
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
         .spawn(growth_body)
