@@ -42,6 +42,19 @@ pub(crate) enum TyNode {
     Error,
 }
 
+/// One node of a [`TyTable`], seen from outside: [`TyTable::view`].
+/// A record is opaque here; read it with [`TyTable::get`].
+#[derive(Clone, Copy, Debug)]
+pub enum TyView<'a> {
+    Var(&'a Name),
+    Fun(TyRef, TyRef),
+    App(&'a Name, &'a [TyRef]),
+    Record,
+    Tuple(&'a [TyRef]),
+    Unit,
+    Error,
+}
+
 /// A frozen, hash-consed set of types. Built with [`TyTableBuilder`].
 #[derive(Default, Clone, Debug)]
 pub struct TyTable {
@@ -54,6 +67,20 @@ impl TyTable {
         rebuild(&self.nodes, r)
     }
 
+    /// The shape of the node at `r`, with its children as references — read a
+    /// type one level at a time without rebuilding it.
+    pub fn view(&self, r: TyRef) -> TyView<'_> {
+        match &self.nodes[r.0 as usize] {
+            TyNode::Var(n) => TyView::Var(n),
+            TyNode::Fun(a, b) => TyView::Fun(*a, *b),
+            TyNode::App(n, xs) => TyView::App(n, xs),
+            TyNode::Record(..) => TyView::Record,
+            TyNode::Tuple(xs) => TyView::Tuple(xs),
+            TyNode::Unit => TyView::Unit,
+            TyNode::Error => TyView::Error,
+        }
+    }
+
     /// The head constructor name when the type at `r` is a nominal
     /// application (`Ty::App(name, _)`), without rebuilding its arguments.
     pub fn app_name(&self, r: TyRef) -> Option<&Name> {
@@ -61,6 +88,13 @@ impl TyTable {
             TyNode::App(n, _) => Some(n),
             _ => None,
         }
+    }
+
+    /// The reference of the `i`-th stored node (`i < node_count()`), to walk
+    /// every node of a table.
+    pub fn nth_ref(&self, i: usize) -> TyRef {
+        assert!(i < self.nodes.len(), "node index out of range");
+        TyRef(i as u32)
     }
 
     /// Number of distinct nodes stored — the table's size measure.

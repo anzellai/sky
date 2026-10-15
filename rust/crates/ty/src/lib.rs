@@ -37,7 +37,8 @@ pub mod variance;
 pub use check::{
     check_modules, check_modules_with_world, BodyTypes, CheckOutput, DefType, TypeErrorKind, Typer,
 };
-pub use db::{compute_body_types, TyDb};
+pub use db::{compute_body_types, compute_body_types_with, TyDb};
+pub use infer::RecordOverlay;
 pub use sig::{
     body_updates_a_param, callsite_param_records_for, record_alias_fields, update_base_defs,
     variant_arg_types, variant_arg_types_qualified, World,

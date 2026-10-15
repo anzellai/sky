@@ -345,7 +345,10 @@ pub fn infer_query(
         // the common case keeps its `type_world`-only (backdated) dependency.
         let updates_param = ty::body_updates_a_param(body);
         if !bases.is_empty() || updates_param {
-            let mut w = world.clone();
+            // The demanded entries are read in place of the world's own (a
+            // `RecordOverlay`), exactly as inserting them into a clone of the
+            // world would be, without cloning the world per def.
+            let mut w = ty::RecordOverlay::default();
             for d in bases {
                 if let Some(scheme) = record_result_sig_query(db, d, module, _file) {
                     w.record_result_sigs.insert(d, scheme.clone());
@@ -357,7 +360,7 @@ pub fn infer_query(
                     w.callsite_param_records.insert(def, recs.clone());
                 }
             }
-            return ty::compute_body_types(&w, sky, module, def);
+            return ty::compute_body_types_with(world, Some(&w), sky, module, def);
         }
     }
     ty::compute_body_types(world, sky, module, def)

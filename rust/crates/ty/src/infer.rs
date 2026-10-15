@@ -148,6 +148,20 @@ pub struct Infer<'a> {
     /// `Codec.auto`. Read by `World::infer_annotated_bounds`, which adds them
     /// to the scheme callers see.
     pub inferred_bounds: Vec<(Name, SuperType)>,
+    /// Per-def entries that take the place of the world's own in its two
+    /// lowering-only record channels (see [`RecordOverlay`]).
+    overlay: Option<&'a RecordOverlay>,
+}
+
+/// Entries for a world's `record_result_sigs` and `callsite_param_records`
+/// that one inference run reads IN PLACE OF the world's own entry for the same
+/// def — what inserting them into a clone of the world would give, without the
+/// clone. The salsa `infer_query` demands these per def; cloning the whole
+/// world for each def that needed one cost O(defs × world size).
+#[derive(Default)]
+pub struct RecordOverlay {
+    pub record_result_sigs: HashMap<DefId, Scheme>,
+    pub callsite_param_records: HashMap<DefId, Vec<Option<Ty>>>,
 }
 
 impl<'a> Infer<'a> {
@@ -172,7 +186,15 @@ impl<'a> Infer<'a> {
             obligations: Vec::new(),
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
+            overlay: None,
         }
+    }
+
+    /// Read `overlay`'s record entries in place of the world's own (see
+    /// [`RecordOverlay`]).
+    pub fn with_overlay(mut self, overlay: Option<&'a RecordOverlay>) -> Self {
+        self.overlay = overlay;
+        self
     }
 
     /// Provide the def's declared scheme so `infer_def_typed` seeds param types
@@ -1186,7 +1208,11 @@ impl<'a> Infer<'a> {
                 if self.use_inferred {
                     match &body.exprs[*base] {
                         Expr::Var(Res::Def(d)) => {
-                            if let Some(s) = self.world.record_result_sigs.get(d) {
+                            let sig = self
+                                .overlay
+                                .and_then(|o| o.record_result_sigs.get(d))
+                                .or_else(|| self.world.record_result_sigs.get(d));
+                            if let Some(s) = sig {
                                 let s = s.clone();
                                 let full = self.instantiate(&s);
                                 self.unify(tb, full);
@@ -1252,9 +1278,11 @@ impl<'a> Infer<'a> {
                                             }
                                         })
                                         .or_else(|| {
-                                            self.world
-                                                .callsite_param_records
-                                                .get(&def)
+                                            self.overlay
+                                                .and_then(|o| o.callsite_param_records.get(&def))
+                                                .or_else(|| {
+                                                    self.world.callsite_param_records.get(&def)
+                                                })
                                                 .and_then(|v| v.get(idx))
                                                 .and_then(|o| o.clone())
                                         });

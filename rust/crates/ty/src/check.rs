@@ -140,6 +140,30 @@ impl BodyTypes {
         t.locals.get(&l).map(|r| t.table.get(*r))
     }
 
+    /// The table reference of expression `e`'s type, if one was recorded. Two
+    /// expressions of one table with equal types have the same reference, so a
+    /// reader can memoise per reference (the lowerer's `goty`) and pay for each
+    /// DISTINCT type once instead of once per expression.
+    pub fn expr_ref(&self, e: ExprId) -> Option<TyRef> {
+        self.tables.exprs.get(&e).copied()
+    }
+
+    /// The table reference of local `l`'s type, if one was recorded.
+    pub fn local_ref(&self, l: LocalId) -> Option<TyRef> {
+        self.tables.locals.get(&l).copied()
+    }
+
+    /// Rebuild the owned type at `r` (a reference from [`BodyTypes::expr_ref`] /
+    /// [`BodyTypes::local_ref`] of THIS table).
+    pub fn get_ref(&self, r: TyRef) -> Ty {
+        self.tables.table.get(r)
+    }
+
+    /// The hash-consed table the references of this def point into.
+    pub fn table(&self) -> &TyTable {
+        &self.tables.table
+    }
+
     /// The head name of expression `e`'s type when it is a nominal application
     /// (`Ty::App(name, _)`) — a cheap test that does not rebuild the arguments.
     pub fn expr_app_name(&self, e: ExprId) -> Option<&base::Name> {

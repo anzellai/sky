@@ -20,7 +20,7 @@
 //! byte-identical by construction.
 
 use crate::check::BodyTypes;
-use crate::infer::Infer;
+use crate::infer::{Infer, RecordOverlay};
 use crate::sig::World;
 use base::{DefId, ModuleId};
 use hir::SkyDb;
@@ -80,13 +80,27 @@ pub fn compute_body_types(
     module: ModuleId,
     def: DefId,
 ) -> BodyTypes {
+    compute_body_types_with(world, None, db, module, def)
+}
+
+/// [`compute_body_types`] with per-def record entries read in place of the
+/// world's own ([`RecordOverlay`]): identical to running it against a clone of
+/// `world` with the overlay's entries inserted.
+pub fn compute_body_types_with(
+    world: &World,
+    overlay: Option<&RecordOverlay>,
+    db: &dyn SkyDb,
+    module: ModuleId,
+    def: DefId,
+) -> BodyTypes {
     let resolved = db.resolve(module);
     let Some(body) = resolved.bodies.get(&def) else {
         return BodyTypes::default();
     };
     let mut infer = Infer::new(world, db)
         .with_self_def(Some(def))
-        .with_inferred(true);
+        .with_inferred(true)
+        .with_overlay(overlay);
     // NB: `signature` is discarded here — the lowerer path only reads
     // `result`/`exprs`/`locals`. It is populated so a stray read stays consistent
     // with the tooling path, but codegen never consumes it (bug-b additivity).

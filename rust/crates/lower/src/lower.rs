@@ -4,7 +4,8 @@
 //! server/TUI/webview backends are reported as out of scope.
 
 use crate::goty::{
-    sky_ty_to_go, sky_ty_to_go_in, sky_ty_to_go_params, Nominal, NominalKind, TypeEnv,
+    sky_ty_ref_to_go_in, sky_ty_to_go, sky_ty_to_go_in, sky_ty_to_go_params, Nominal, NominalKind,
+    TypeEnv,
 };
 use crate::ir::*;
 use crate::kernel::{alias_go_name, kernel_go_name};
@@ -825,6 +826,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             variadic_kernels: &cfg.variadic_kernels,
             cur_module: e.module_name.clone(),
             cur_def: d,
+            goty_memo: HashMap::new(),
+            goty_ref_memo: HashMap::new(),
             def_span: def_spans.get(&d).copied(),
             cur_span: None,
             tco: None,
@@ -2226,6 +2229,19 @@ struct Ctx<'a> {
     /// The `DefId` of the def currently being lowered — identifies self-calls
     /// for the tail-call optimiser.
     cur_def: DefId,
+    /// `goty` of a recorded type, by its reference into `types`, with the
+    /// nominal names it registered in `used_types`. `types`, `env` and
+    /// `cur_module` are fixed for a `Ctx`'s life, and `goty` at the top level is
+    /// a pure function of the type, the env and the module (its context-tainted
+    /// record-guard results are never produced at the top level, where no record
+    /// is mid-resolution), so a hit is exactly what a fresh call returns.
+    /// Expressions of one def share few distinct types: this turns "goty per
+    /// expression" (an owned rebuild plus a walk of the whole type each time)
+    /// into "goty per distinct type".
+    goty_memo: HashMap<ty::tytable::TyRef, (GoTy, Vec<String>)>,
+    /// The per-node memo `sky_ty_ref_to_go_in` fills while serving `goty_memo`
+    /// misses (children of the types asked for, shared across them).
+    goty_ref_memo: HashMap<ty::tytable::TyRef, GoTy>,
     /// Set while lowering a tail-recursive def body in the TCO statement path.
     /// `Some` iff the enclosing def qualified for TCO (see `is_tail_recursive`);
     /// a saturated self-call reached in tail position under this context becomes
@@ -2278,10 +2294,37 @@ impl<'a> Ctx<'a> {
     }
 
     fn expr_ty(&mut self, e: ExprId) -> GoTy {
-        match self.types.expr(e) {
-            Some(t) => self.goty(&t),
+        match self.types.expr_ref(e) {
+            Some(r) => self.goty_ref(r),
             None => GoTy::Any,
         }
+    }
+
+    /// `goty` of the recorded type at `r` in `self.types`, memoised per
+    /// reference (see `goty_memo`).
+    fn goty_ref(&mut self, r: ty::tytable::TyRef) -> GoTy {
+        if let Some((gt, names)) = self.goty_memo.get(&r) {
+            for n in names {
+                if !self.used_types.contains(n) {
+                    self.used_types.insert(n.clone());
+                }
+            }
+            return gt.clone();
+        }
+        let gt = sky_ty_ref_to_go_in(
+            self.types.table(),
+            r,
+            self.env,
+            Some(&self.cur_module),
+            &mut self.goty_ref_memo,
+        );
+        let mut names = Vec::new();
+        collect_named(&gt, &mut names);
+        for n in &names {
+            self.used_types.insert(n.clone());
+        }
+        self.goty_memo.insert(r, (gt.clone(), names));
+        gt
     }
 
     /// The recorded Sky type of an expression node, resolving a `Var(Local)`
@@ -2403,8 +2446,8 @@ impl<'a> Ctx<'a> {
     }
 
     fn local_ty(&mut self, l: LocalId) -> GoTy {
-        match self.types.local(l) {
-            Some(t) => self.goty(&t),
+        match self.types.local_ref(l) {
+            Some(r) => self.goty_ref(r),
             None => GoTy::Any,
         }
     }
@@ -7446,7 +7489,6 @@ impl<'a> Ctx<'a> {
         // (which is a *subset* record when only some fields are read/written).
         // Take the base's own lowered type as the block/`_u` type; the outer
         // `lower_expr` coerces the block to the caller's `expected` if needed.
-        let base_sky_ty = self.sky_ty_of(base);
         let b = self.lower_expr(base, &GoTy::Any);
         let uty = b.ty.clone();
         // A ROW-POLYMORPHIC base (`bump r = { r | age = … }`, base lowers to
@@ -7502,8 +7544,11 @@ impl<'a> Ctx<'a> {
         // check≢build hole). Read the declared field types straight from the base's
         // inferred Sky record type so the update coerces each field exactly like a
         // record literal does.
+        //
+        // Read only here: `sky_ty_of` rebuilds the base's whole record type, and
+        // the common case (a nominal base) never needs it.
         if field_tys.is_empty() {
-            if let Some(Ty::Record(fs, _)) = base_sky_ty {
+            if let Some(Ty::Record(fs, _)) = self.sky_ty_of(base) {
                 field_tys = fs
                     .iter()
                     .map(|(n, t)| (capitalize(n.as_str()), t.clone()))
