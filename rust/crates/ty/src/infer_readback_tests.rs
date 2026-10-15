@@ -526,10 +526,10 @@ fn cyclic_subroot_is_not_shared() {
     // The two reads of `P` really differ, so the test can tell.
     let mut sink = ReadBackSink::new().with_subroot_sharing(true);
     let from_n = inf.read_back_ref(n, &mut sink);
-    let Ty::Fun(_, p_inside_n) = sink.get(from_n) else {
+    let Ok((_, p_inside_n)) = sink.get(from_n).into_fun() else {
         panic!("N reads back as a function");
     };
-    assert_ne!(*p_inside_n, inf.read_back(p));
+    assert_ne!(p_inside_n, inf.read_back(p));
 }
 
 /// A shared sub-root is read once: reading N arrows over one big record costs

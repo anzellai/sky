@@ -149,3 +149,83 @@ fn a_fifteen_hundred_field_record_codec_on_a_2_mib_worker() {
         "the codec type-checks; no error diagnostics: {errors:?}"
     );
 }
+
+/// Diagnostics and hover for an `n`-field codec, run on a thread with the LSP
+/// worker's stack. Returns the error diagnostics and whether the two hovers
+/// answered: on `Big` in `Codec.object Big` (the constructor, whose type is a
+/// curried arrow with one argument per field) and on the last field step.
+fn codec_on_a_worker(n: usize) -> (Vec<String>, bool, bool) {
+    let root = repo_root();
+    std::thread::Builder::new()
+        .name("lsp-worker".to_string())
+        .stack_size(LSP_WORKER_STACK)
+        .spawn(move || {
+            let src = codec_source(n);
+            let mut a = Analysis::new();
+            a.load_stdlib(Some(&root));
+            let u = Url::from_file_path(format!("/tmp/lsp-deep-codec-{n}/src/Main.sky")).unwrap();
+            a.set_document(u.clone(), src.clone());
+            let errors = a
+                .diagnostics(&u)
+                .into_iter()
+                .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+                .map(|d| d.message)
+                .collect::<Vec<_>>();
+            let lines: Vec<&str> = src.lines().collect();
+            let ctor = lines
+                .iter()
+                .position(|l| l.trim() == "Codec.object Big")
+                .expect("the constructor step") as u32;
+            let ctor_hover = a.hover(
+                &u,
+                Position {
+                    line: ctor,
+                    character: 18,
+                },
+            );
+            let last = lines
+                .iter()
+                .rposition(|l| l.trim_start().starts_with("|> Codec.field"))
+                .expect("a field step") as u32;
+            let step_hover = a.hover(
+                &u,
+                Position {
+                    line: last,
+                    character: 14,
+                },
+            );
+            (errors, ctor_hover.is_some(), step_hover.is_some())
+        })
+        .expect("spawn the worker thread")
+        .join()
+        .expect("the worker must not panic")
+}
+
+/// A record codec's types are as deep as the record is wide, and the type
+/// layer clones and drops them whole. The derived `Clone` of `ty::Ty` recursed
+/// once per arrow of the constructor's curried type: a 12,000-field codec
+/// overflowed the 2 MiB worker in `ty::sig::World::extend_decls` on its first
+/// diagnostics request (3,000 and 6,000 fields fitted). `Ty` and `GoTy` now
+/// clone, compare, hash and drop through `base::ensure_stack`.
+///
+/// Falsifier: derive `Clone` on `ty::Ty` again; the 12,000-field case aborts
+/// with "has overflowed its stack".
+#[test]
+fn a_three_thousand_field_record_codec_on_a_2_mib_worker() {
+    let (errors, ctor, step) = codec_on_a_worker(3000);
+    assert!(errors.is_empty(), "no error diagnostics: {errors:?}");
+    assert!(
+        ctor && step,
+        "both hovers answer (ctor {ctor}, step {step})"
+    );
+}
+
+#[test]
+fn a_twelve_thousand_field_record_codec_on_a_2_mib_worker() {
+    let (errors, ctor, step) = codec_on_a_worker(12_000);
+    assert!(errors.is_empty(), "no error diagnostics: {errors:?}");
+    assert!(
+        ctor && step,
+        "both hovers answer (ctor {ctor}, step {step})"
+    );
+}

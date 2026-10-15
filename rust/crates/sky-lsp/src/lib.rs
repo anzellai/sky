@@ -1052,7 +1052,7 @@ impl Analysis {
             Res::Def(d) => typer.value_sig(*d).map(|s| s.ty.clone()),
             _ => None,
         }?;
-        if let Ty::Record(fields, _) = ty {
+        if let Ty::Record(fields, _) = &ty {
             return Some(
                 fields
                     .iter()
@@ -2456,10 +2456,10 @@ fn field_info(typer: &Typer, resolved: &ResolveResult, o: &FieldOcc) -> FieldInf
     let record = match &o.recv {
         FieldRecv::Access(e) | FieldRecv::Record(e) => bt.expr(*e),
         // `.f : record -> field` — the record is the argument, the field the result.
-        FieldRecv::Accessor(e) => match bt.expr(*e) {
-            Some(Ty::Fun(arg, res)) => {
-                info.field = Some(*res);
-                Some(*arg)
+        FieldRecv::Accessor(e) => match bt.expr(*e).map(Ty::into_fun) {
+            Some(Ok((arg, res))) => {
+                info.field = Some(res);
+                Some(arg)
             }
             _ => None,
         },

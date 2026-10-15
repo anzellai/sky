@@ -544,8 +544,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
         // callers as `any` — matching the `any` Go signature `lower_def` emits —
         // so the caller widens its argument instead of coercing it DOWN to a
         // closed struct (which would drop the row-carried fields).
-        let collides = |t: &Ty| match sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(&n, &record_fields, &env),
+        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
+            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
             _ => false,
         };
         let (rp_params, _rp_result) = row_poly_flags(&e.body, &e.types, &collides);
@@ -587,8 +587,8 @@ pub fn lower_program_cfg(db: &dyn TyDb, entry: ModuleId, cfg: &LowerConfig) -> L
             .sig
             .as_ref()
             .map(|s| sig_result_after(s, e.body.params.len()));
-        let collides = |t: &Ty| match sky_ty_to_go(t, &env) {
-            GoTy::Named(n, _) => goty_names_non_model_record(&n, &record_fields, &env),
+        let collides = |t: &Ty| match &sky_ty_to_go(t, &env) {
+            GoTy::Named(n, _) => goty_names_non_model_record(n, &record_fields, &env),
             _ => false,
         };
         let (_rp_params, rp_result) = row_poly_flags(&e.body, &e.types, &collides);
@@ -2355,10 +2355,10 @@ impl<'a> Ctx<'a> {
     /// parameter returns `None` and keeps the untagged call: its narrowing
     /// (`rt.Coerce`) already fails loudly on a wrong shape.
     fn topic_payload_kind(&self, decoder: ExprId) -> Option<&'static str> {
-        let Ty::Fun(param, _) = self.sky_ty_of(decoder)? else {
+        let Ok((param, _)) = self.sky_ty_of(decoder)?.into_fun() else {
             return None;
         };
-        match &*param {
+        match &param {
             Ty::App(n, a) if a.is_empty() => match ty::nominal::base(n.as_str()) {
                 "String" => Some("String"),
                 "Int" => Some("Int"),
@@ -2407,7 +2407,7 @@ impl<'a> Ctx<'a> {
         if args.len() != arity {
             return None;
         }
-        let key_ty = match self.sky_ty_of(args[dict_arg])? {
+        let key_ty = match &self.sky_ty_of(args[dict_arg])? {
             Ty::App(dict, dargs)
                 if ty::nominal::base(dict.as_str()) == "Dict" && dargs.len() == 2 =>
             {
@@ -4480,7 +4480,7 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .enumerate()
                 .map(|(i, a)| {
-                    let slot = ftys.get(i).unwrap_or(&GoTy::Any);
+                    let slot = ftys.get(i).unwrap_or(&GO_ANY);
                     self.container_record_slot = from_container && matches!(slot, GoTy::Struct(_));
                     let x = self.lower_expr(*a, slot);
                     self.container_record_slot = false;
@@ -5184,10 +5184,7 @@ impl<'a> Ctx<'a> {
                         .unwrap_or_else(|| self.expr_ty(*last)),
                     _ => self.expr_ty(*last),
                 };
-                match src_ty {
-                    GoTy::Slice(e) => Some(*e),
-                    _ => None,
-                }
+                src_ty.into_slice().ok()
             } else {
                 None
             };
@@ -5298,7 +5295,7 @@ impl<'a> Ctx<'a> {
             if largs.len() > arity {
                 return self.over_apply(c, largs, arity, &ret_goty);
             }
-        } else if let GoTy::Func(ps, cod) = c.ty.clone() {
+        } else if let Ok((ps, cod)) = c.ty.clone().into_func() {
             // Under-application of a func VALUE (not a top-level Def, so `go_arity`
             // is None) — e.g. a nested-curried return applied STEPWISE:
             // `((makeAdder 1) 2) 3`, where `makeAdder 1` is a `func(int,int) int`
@@ -5309,7 +5306,6 @@ impl<'a> Ctx<'a> {
             // stepwise companion to the `lower_lambda` spine-collapse.)
             let arity = ps.len();
             if !largs.is_empty() && largs.len() < arity {
-                let cod = *cod;
                 return self.make_partial(c, largs, &Some(ps), &cod, arity);
             }
         }
@@ -5366,9 +5362,8 @@ impl<'a> Ctx<'a> {
         let rest: Vec<GoExpr> = it.collect();
         let mut idx = 0;
         while idx < rest.len() {
-            match cur.clone() {
-                GoTy::Func(ps, cod) => {
-                    let cod = *cod;
+            match cur.clone().into_func() {
+                Ok((ps, cod)) => {
                     let n = ps.len().max(1);
                     let end = (idx + n).min(rest.len());
                     let batch: Vec<GoExpr> = rest[idx..end]
@@ -5393,7 +5388,7 @@ impl<'a> Ctx<'a> {
                     cur = cod;
                     idx += n;
                 }
-                _ => {
+                Err(_) => {
                     let ea = self.coerce_if_needed(rest[idx].clone(), &GoTy::Any);
                     call = GoExpr::new(GoExprKind::Call(Box::new(call), vec![ea]), GoTy::Any);
                     cur = GoTy::Any;
@@ -5943,10 +5938,10 @@ impl<'a> Ctx<'a> {
                 let mut ins = Vec::new();
                 let mut cur = target.ty.clone();
                 for _ in 0..arity {
-                    match cur {
-                        GoTy::Func(i, out) if i.len() == 1 => {
+                    match cur.into_func() {
+                        Ok((i, out)) if i.len() == 1 => {
                             ins.push(i[0].clone());
-                            cur = *out;
+                            cur = out;
                         }
                         _ => return None,
                     }
@@ -6174,10 +6169,9 @@ impl<'a> Ctx<'a> {
             // runtime twin matches that order (see `List_foldlElemFirstT`), so
             // the callback needs no permuting wrapper.
             "rt.List_foldlElemFirstT" => {
-                let GoTy::Slice(a) = self.probe_goty(args[2]) else {
+                let Ok(a) = self.probe_goty(args[2]).into_slice() else {
                     return None;
                 };
-                let a = *a;
                 let b = self.probe_goty(args[1]);
                 if !provable(&a) || !provable(&b) {
                     return None;
@@ -6197,10 +6191,9 @@ impl<'a> Ctx<'a> {
             }
             // any pred list
             "rt.List_anyT" => {
-                let GoTy::Slice(a) = self.probe_goty(args[1]) else {
+                let Ok(a) = self.probe_goty(args[1]).into_slice() else {
                     return None;
                 };
-                let a = *a;
                 if !provable(&a) {
                     return None;
                 }
@@ -6239,10 +6232,10 @@ impl<'a> Ctx<'a> {
         // one Go will index. `make_partial` hard-codes its remaining params to
         // `any` (a partially applied top-level def — 23% of the corpus census),
         // so the callback's own param type is NOT a reliable source for it.
-        let GoTy::Slice(elem) = xs.ty.clone() else {
+        let Ok(elem) = xs.ty.clone().into_slice() else {
             return erased(self, f, xs);
         };
-        let GoTy::Func(f_ps, f_r) = f.ty.clone() else {
+        let Ok((f_ps, f_r)) = f.ty.clone().into_func() else {
             return erased(self, f, xs);
         };
         if !provable(&elem) {
@@ -6269,7 +6262,7 @@ impl<'a> Ctx<'a> {
         {
             return erased(self, f, xs);
         }
-        let elem = (*elem).clone();
+        let elem = elem.clone();
 
         // Per-HOF: the callback shape to prove, the Go type arguments, and the
         // result type. `out` is what the typed helper returns — asserted below
@@ -6279,7 +6272,7 @@ impl<'a> Ctx<'a> {
                 if f_ps.len() != 1 || !provable(&f_r) {
                     return erased(self, f, xs);
                 }
-                let b = (*f_r).clone();
+                let b = f_r.clone();
                 (
                     GoTy::Func(vec![elem.clone()], Box::new(b.clone())),
                     vec![elem.clone(), b.clone()],
@@ -6291,7 +6284,7 @@ impl<'a> Ctx<'a> {
                 // nothing extra to prove — but the LOWERED callback must already
                 // say so. One that came back `any`-returning is a callback the
                 // lowering could not type, not one this may retype.
-                if f_ps.len() != 1 || *f_r != GoTy::Bare(Prim::Bool) {
+                if f_ps.len() != 1 || f_r != GoTy::Bare(Prim::Bool) {
                     return erased(self, f, xs);
                 }
                 (
@@ -6305,7 +6298,7 @@ impl<'a> Ctx<'a> {
                 // the NOMINAL is what proves `B`: the erased helper recovers it
                 // with `MaybeCoerce[any]` plus a reflect fallback for a typed
                 // `SkyMaybe[T]`, and neither is needed once `B` is named.
-                let GoTy::Named(n, margs) = &*f_r else {
+                let GoTy::Named(n, margs) = &f_r else {
                     return erased(self, f, xs);
                 };
                 // `B` may be `any` — a `List.filterMap : … -> List any` (the
@@ -6325,7 +6318,7 @@ impl<'a> Ctx<'a> {
                 }
                 let b = margs[0].clone();
                 (
-                    GoTy::Func(vec![elem.clone()], Box::new((*f_r).clone())),
+                    GoTy::Func(vec![elem.clone()], Box::new(f_r.clone())),
                     vec![elem.clone(), b.clone()],
                     GoTy::Slice(Box::new(b)),
                 )
@@ -6337,7 +6330,7 @@ impl<'a> Ctx<'a> {
                 if f_ps.len() != 2 || !provable(&f_r) {
                     return erased(self, f, xs);
                 }
-                let b = (*f_r).clone();
+                let b = f_r.clone();
                 (
                     GoTy::Func(
                         vec![GoTy::Bare(Prim::Int), elem.clone()],
@@ -7611,7 +7604,7 @@ impl<'a> Ctx<'a> {
         // Read only here: `sky_ty_of` rebuilds the base's whole record type, and
         // the common case (a nominal base) never needs it.
         if field_tys.is_empty() {
-            if let Some(Ty::Record(fs, _)) = self.sky_ty_of(base) {
+            if let Some(Ty::Record(fs, _)) = &self.sky_ty_of(base) {
                 field_tys = fs
                     .iter()
                     .map(|(n, t)| (capitalize(n.as_str()), t.clone()))
@@ -9012,8 +9005,8 @@ fn caf_lambda_row_poly_ty(body: &Body, types: &BodyTypes) -> Option<Ty> {
     // The result: an open record carrying the shared row → `any`; a tuple keeps
     // its shape with each such record ELEMENT erased (`rt.T2[any, Cmd]`), so the
     // `( { model | … }, cmd )` literal is built without narrowing its record.
-    let ret = match ret {
-        Ty::Tuple(xs) => Ty::Tuple(
+    let ret = match ret.into_tuple() {
+        Ok(xs) => Ty::Tuple(
             xs.into_iter()
                 .map(|x| {
                     if record_ext_name(Some(&x)).is_some_and(shared) {
@@ -9025,11 +9018,11 @@ fn caf_lambda_row_poly_ty(body: &Body, types: &BodyTypes) -> Option<Ty> {
                 })
                 .collect(),
         ),
-        r if record_ext_name(Some(&r)).is_some_and(shared) => {
+        Err(r) if record_ext_name(Some(&r)).is_some_and(shared) => {
             changed = true;
             any()
         }
-        r => r,
+        Err(r) => r,
     };
     if !changed {
         return None;

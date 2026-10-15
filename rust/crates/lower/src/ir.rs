@@ -36,7 +36,7 @@ impl Prim {
 
 /// Structural Go type — the ONLY representation of a Go type in the IR (doc 07
 /// §1). No `Raw(String)` escape hatch.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Eq, Debug)]
 pub enum GoTy {
     Bare(Prim),
     Unit,
@@ -56,7 +56,144 @@ pub enum GoTy {
     TyVar(String),
 }
 
+// A Go type is as deep as the Sky type it lowers: a curried constructor of a
+// record of n fields is `func(f0) func(f1) … R`, n levels. Derived clone,
+// equality, hashing and drop recurse once per level; each level goes through
+// `base::ensure_stack` instead (see `ty::Ty`, whose derived clone overflowed a
+// 2 MiB LSP worker on a 12,000-field codec). The impls follow the derived ones
+// exactly (same fields, same order, the same variant index hashed as `isize`).
+impl Clone for GoTy {
+    fn clone(&self) -> Self {
+        base::ensure_stack(|| match self {
+            GoTy::Bare(p) => GoTy::Bare(p.clone()),
+            GoTy::Unit => GoTy::Unit,
+            GoTy::Any => GoTy::Any,
+            GoTy::Func(ins, out) => GoTy::Func(ins.clone(), out.clone()),
+            GoTy::Named(n, args) => GoTy::Named(n.clone(), args.clone()),
+            GoTy::Slice(t) => GoTy::Slice(t.clone()),
+            GoTy::Map(k, v) => GoTy::Map(k.clone(), v.clone()),
+            GoTy::Struct(fs) => GoTy::Struct(fs.clone()),
+            GoTy::Tuple(xs) => GoTy::Tuple(xs.clone()),
+            GoTy::TyVar(n) => GoTy::TyVar(n.clone()),
+        })
+    }
+}
+
+impl PartialEq for GoTy {
+    fn eq(&self, other: &Self) -> bool {
+        base::ensure_stack(|| match (self, other) {
+            (GoTy::Bare(a), GoTy::Bare(b)) => a == b,
+            (GoTy::Unit, GoTy::Unit) | (GoTy::Any, GoTy::Any) => true,
+            (GoTy::Func(i1, o1), GoTy::Func(i2, o2)) => i1 == i2 && o1 == o2,
+            (GoTy::Named(n1, a1), GoTy::Named(n2, a2)) => n1 == n2 && a1 == a2,
+            (GoTy::Slice(a), GoTy::Slice(b)) => a == b,
+            (GoTy::Map(k1, v1), GoTy::Map(k2, v2)) => k1 == k2 && v1 == v2,
+            (GoTy::Struct(a), GoTy::Struct(b)) => a == b,
+            (GoTy::Tuple(a), GoTy::Tuple(b)) => a == b,
+            (GoTy::TyVar(a), GoTy::TyVar(b)) => a == b,
+            _ => false,
+        })
+    }
+}
+
+impl std::hash::Hash for GoTy {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        base::ensure_stack(|| match self {
+            GoTy::Bare(p) => {
+                0isize.hash(state);
+                p.hash(state);
+            }
+            GoTy::Unit => 1isize.hash(state),
+            GoTy::Any => 2isize.hash(state),
+            GoTy::Func(ins, out) => {
+                3isize.hash(state);
+                ins.hash(state);
+                out.hash(state);
+            }
+            GoTy::Named(n, args) => {
+                4isize.hash(state);
+                n.hash(state);
+                args.hash(state);
+            }
+            GoTy::Slice(t) => {
+                5isize.hash(state);
+                t.hash(state);
+            }
+            GoTy::Map(k, v) => {
+                6isize.hash(state);
+                k.hash(state);
+                v.hash(state);
+            }
+            GoTy::Struct(fs) => {
+                7isize.hash(state);
+                fs.hash(state);
+            }
+            GoTy::Tuple(xs) => {
+                8isize.hash(state);
+                xs.hash(state);
+            }
+            GoTy::TyVar(n) => {
+                9isize.hash(state);
+                n.hash(state);
+            }
+        })
+    }
+}
+
+impl Drop for GoTy {
+    fn drop(&mut self) {
+        // Move the children out and drop them inside the guard: the drop glue
+        // that runs after this function then finds only leaves.
+        match self {
+            GoTy::Func(ins, out) => {
+                let ins = std::mem::take(ins);
+                let out = std::mem::replace(&mut **out, GoTy::Unit);
+                base::ensure_stack(move || drop((ins, out)));
+            }
+            GoTy::Slice(t) => {
+                let t = std::mem::replace(&mut **t, GoTy::Unit);
+                base::ensure_stack(move || drop(t));
+            }
+            GoTy::Map(k, v) => {
+                let k = std::mem::replace(&mut **k, GoTy::Unit);
+                let v = std::mem::replace(&mut **v, GoTy::Unit);
+                base::ensure_stack(move || drop((k, v)));
+            }
+            GoTy::Named(_, xs) | GoTy::Tuple(xs) if !xs.is_empty() => {
+                let xs = std::mem::take(xs);
+                base::ensure_stack(move || drop(xs));
+            }
+            GoTy::Struct(fs) if !fs.is_empty() => {
+                let fs = std::mem::take(fs);
+                base::ensure_stack(move || drop(fs));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `GoTy::Any` with a `'static` lifetime. `GoTy` has a `Drop` impl, so
+/// `&GoTy::Any` is a temporary, not a promoted constant.
+pub static GO_ANY: GoTy = GoTy::Any;
+
 impl GoTy {
+    /// Split `func(ps) r` into `(ps, r)`, or give the type back. `GoTy` has a
+    /// `Drop` impl, so a pattern cannot move the parts out of it; this does.
+    pub fn into_func(mut self) -> Result<(Vec<GoTy>, GoTy), GoTy> {
+        match &mut self {
+            GoTy::Func(ps, r) => Ok((std::mem::take(ps), std::mem::replace(&mut **r, GoTy::Unit))),
+            _ => Err(self),
+        }
+    }
+
+    /// The element of a slice type, or the type back (see [`GoTy::into_func`]).
+    pub fn into_slice(mut self) -> Result<GoTy, GoTy> {
+        match &mut self {
+            GoTy::Slice(t) => Ok(std::mem::replace(&mut **t, GoTy::Unit)),
+            _ => Err(self),
+        }
+    }
+
     /// The element type of a slice — structural (`[]T` → `T`). `Any` for a
     /// non-slice (defensive; the lowerer only calls this on known slices).
     pub fn elem_ty(&self) -> GoTy {
