@@ -80,6 +80,11 @@ fn auto_record_codec_fixture_entry() -> PathBuf {
         .join("tests/fixtures/spa-auto-record-codec/src/Main.sky")
 }
 
+fn wire_type_names_fixture_entry() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/spa-wire-type-names/src/Main.sky")
+}
+
 fn bare_adt_wire_fixture_entry() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/spa-bare-adt-wire/src/Main.sky")
 }
@@ -1749,6 +1754,104 @@ fn auto_derives_a_record_codec_for_a_plain_record_wire_field() {
         "frontend stages a hashed main.<hash>.wasm"
     );
 
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Every generated wire type is closed: no `any`, no free type variable. Since
+/// the wire dedupe, one annotated builder (`spaModelWireFields_`) is shared by
+/// every whole-model request with Msg args, so an open type there is one fixed
+/// type for all of them (the value restriction) and the backend failed
+/// `[E2012]` ("the one type of `a`") at each `Codec.inline` use. The fixture
+/// has the two shapes that left a type open:
+///
+/// * a record alias with a type parameter (`Paged a`) used at two types in the
+///   Model and as a Msg argument, with no app codec: the split wrote the bare
+///   `Paged`, leaving `a` free. Each use now gets its own codec, named with its
+///   argument (`Paged Item`, `Paged String`).
+/// * an unannotated codec binding (`productListCodec = Codec.list
+///   productCodec`): the split named its type with `render_ty`, which writes a
+///   record as `any`, so the Model wire held `products : List any`. It is now
+///   `List Product`.
+/// * an annotated codec in another module (`Data.presetCodec`) under a doc
+///   comment holding a colon: the annotation reader split at the comment's
+///   colon, lost the surface, and every codec the split composes over it
+///   (`Codec.list`, `Codec.maybe`, `Codec.dict`, nested) carried `any`.
+#[test]
+fn generated_wire_types_name_every_type_they_hold() {
+    let _build_lock = BUILD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let out = scratch();
+    let _ = std::fs::remove_dir_all(&out);
+
+    let output = Command::new(SKY)
+        .args([
+            "spa-split",
+            wire_type_names_fixture_entry().to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run sky spa-split");
+    assert!(
+        output.status.success(),
+        "sky spa-split must split an app whose wire holds these types, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let shared = std::fs::read_to_string(out.join("shared/Shared.sky")).unwrap();
+    for want in [
+        "blankPaged_Item_ : Paged Item",
+        "autoPaged_ItemCodec_ : Codec (Paged Item)",
+        "autoPaged_StringCodec_ : Codec (Paged String)",
+        "items : Paged Item",
+        "names : Paged String",
+        "type alias Item =",
+        "products : List Product",
+        "hits : List Preset",
+        "pick : Maybe Preset",
+        "slots : List (Maybe Preset)",
+        "groups : Maybe (List Preset)",
+        "byCode : Dict String Preset",
+    ] {
+        assert!(
+            shared.contains(want),
+            "Shared must name each use of `Paged` with its argument (`{want}`):\n{shared}"
+        );
+    }
+    for line in shared.lines() {
+        let t = line.trim_end();
+        if t.trim_start().starts_with("--") {
+            continue;
+        }
+        assert!(
+            !t.ends_with(": Paged") && !t.ends_with("Codec Paged"),
+            "no generated annotation may name `Paged` without its argument (`{t}`):\n{shared}"
+        );
+        assert!(
+            !t.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|w| w == "any"),
+            "no generated type may hold `any` (`{t}`):\n{shared}"
+        );
+    }
+
+    if !required(Need::Go, have_go()) {
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    for (leg, args) in [
+        ("backend", vec!["check", "src/Main.sky"]),
+        ("frontend", vec!["check", "--target", "web", "src/Main.sky"]),
+    ] {
+        let run = Command::new(SKY)
+            .args(&args)
+            .current_dir(out.join(leg))
+            .output()
+            .expect("run sky check");
+        assert!(
+            run.status.success(),
+            "the {leg} of the split must type-check and build:\n{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
     let _ = std::fs::remove_dir_all(&out);
 }
 

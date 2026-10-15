@@ -1,0 +1,15 @@
+module Data exposing (presetCodec)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Codec as Codec exposing (Codec)
+import Types exposing (Preset)
+
+
+-- | The wire codec for a preset: its code and weight. (The colon in this
+-- comment is part of the test: the annotation reader once split here.)
+presetCodec : Codec Preset
+presetCodec =
+    Codec.object Preset
+        |> Codec.field "code" .code Codec.string
+        |> Codec.field "weight" .weight Codec.int
+        |> Codec.buildObject
