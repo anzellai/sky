@@ -43,13 +43,13 @@ pub(crate) enum TyNode {
 }
 
 /// One node of a [`TyTable`], seen from outside: [`TyTable::view`].
-/// A record is opaque here; read it with [`TyTable::get`].
 #[derive(Clone, Copy, Debug)]
 pub enum TyView<'a> {
     Var(&'a Name),
     Fun(TyRef, TyRef),
     App(&'a Name, &'a [TyRef]),
-    Record,
+    /// Fields sorted by name, and the row extension.
+    Record(&'a [(Name, TyRef)], Option<&'a Name>),
     Tuple(&'a [TyRef]),
     Unit,
     Error,
@@ -74,7 +74,7 @@ impl TyTable {
             TyNode::Var(n) => TyView::Var(n),
             TyNode::Fun(a, b) => TyView::Fun(*a, *b),
             TyNode::App(n, xs) => TyView::App(n, xs),
-            TyNode::Record(..) => TyView::Record,
+            TyNode::Record(fs, ext) => TyView::Record(fs, ext.as_ref()),
             TyNode::Tuple(xs) => TyView::Tuple(xs),
             TyNode::Unit => TyView::Unit,
             TyNode::Error => TyView::Error,
@@ -125,6 +125,31 @@ fn rebuild_guarded(nodes: &[TyNode], r: TyRef) -> Ty {
         TyNode::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| rebuild(nodes, *x)).collect()),
         TyNode::Unit => Ty::Unit,
         TyNode::Error => Ty::Error,
+    }
+}
+
+/// One def's recorded expression types as the checker's scans read them: by
+/// expression, the LAST recorded type winning for an expression recorded more
+/// than once (what collecting the push-ordered list into a `HashMap` gave). A
+/// lookup rebuilds only the type asked for, so a scan that reads a few
+/// expressions costs those, not the whole table.
+pub struct ExprTypes<'t> {
+    map: std::collections::HashMap<hir::ExprId, TyRef>,
+    table: &'t TyTable,
+}
+
+impl<'t> ExprTypes<'t> {
+    /// From the push-ordered recorded list (duplicates allowed, last wins).
+    pub fn new(recorded: &[(hir::ExprId, TyRef)], table: &'t TyTable) -> Self {
+        ExprTypes {
+            map: recorded.iter().copied().collect(),
+            table,
+        }
+    }
+
+    /// The type recorded for `e`, rebuilt.
+    pub fn get(&self, e: &hir::ExprId) -> Option<Ty> {
+        self.map.get(e).map(|r| self.table.get(*r))
     }
 }
 

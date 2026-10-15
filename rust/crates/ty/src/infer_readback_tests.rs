@@ -76,6 +76,54 @@ fn compare_drains(infer: &mut Infer<'_>, what: &str) -> Option<String> {
     None
 }
 
+/// The checker's drain (`recorded_expr_table`) against the owned one
+/// (`recorded_expr_types`): the same entries in the same push order, with
+/// duplicates; the same `[E2008]` key list per entry from the memoised scan;
+/// the same last-wins lookup per expression.
+fn compare_checker_table(infer: &mut Infer<'_>, what: &str) -> Option<String> {
+    let saved = infer.expr_vars.clone();
+    let owned = infer.recorded_expr_types();
+    infer.expr_vars = saved.clone();
+    let (refs, table) = infer.recorded_expr_table();
+    infer.expr_vars = saved;
+    if owned.len() != refs.len() {
+        return Some(format!(
+            "{what}: checker table length {} vs {}",
+            refs.len(),
+            owned.len()
+        ));
+    }
+    let mut memo = HashMap::new();
+    for ((e1, t), (e2, r)) in owned.iter().zip(refs.iter()) {
+        if e1 != e2 {
+            return Some(format!(
+                "{what}: checker table order differs at {e1:?} / {e2:?}"
+            ));
+        }
+        let got = table.get(*r);
+        if &got != t {
+            return Some(format!(
+                "{what}: checker expr {e1:?}\n  owned: {}\n  table: {}",
+                t.render(),
+                got.render()
+            ));
+        }
+        let want_keys = crate::dictkey::unsupported_keys(t);
+        let got_keys = crate::dictkey::unsupported_keys_ref(&table, *r, &mut memo);
+        if want_keys != *got_keys {
+            return Some(format!("{what}: Dict-key list differs at {e1:?}"));
+        }
+    }
+    let want: HashMap<ExprId, Ty> = owned.into_iter().collect();
+    let view = crate::tytable::ExprTypes::new(&refs, &table);
+    for (e, t) in &want {
+        if view.get(e).as_ref() != Some(t) {
+            return Some(format!("{what}: last-wins lookup differs at {e:?}"));
+        }
+    }
+    None
+}
+
 /// Which inference entry a def is driven through.
 #[derive(Clone, Copy)]
 enum Mode {
@@ -182,6 +230,9 @@ fn check_program(db: &SourceDb, check: &[base::ModuleId], label: &str) -> (usize
                         .unwrap_or_else(|| "line counts differ".to_string());
                     bad.push(format!("{what}: fast path differs\n  {line}"));
                 }
+                if matches!(mode, Mode::Check) {
+                    bad.extend(compare_checker_table(&mut fast, &what));
+                }
                 bad.extend(compare_drains(&mut fast, &what));
             }
         }
@@ -279,10 +330,20 @@ fn generated() -> Vec<(String, String)> {
          usePoly =\n    ( poly o0, poly { name = \"q\" }, (poly o0).inner.a )\n\n\
          sameTwice o =\n    ( o.name, o.name, { o | name = o.name, tags = o.tags } )\n\n\
          main =\n    clash1 o0\n";
+    // Offending `Dict` keys in several places of one type and in several
+    // expressions, nested in records, functions and other dicts' values.
+    let dict_keys = "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Dict as Dict exposing (Dict)\n\n\
+         type alias M =\n    { grid : Dict ( Int, Int ) String, nest : Dict String (Dict ( Int, Int ) Int), ok : Dict String Int }\n\n\
+         m0 =\n    { grid = Dict.insert ( 1, 2 ) \"a\" Dict.empty, nest = Dict.empty, ok = Dict.empty }\n\n\
+         f m =\n    ( m.grid, Dict.insert ( 3, 4 ) \"b\" m.grid, \\k -> Dict.get k m.grid, m.nest )\n\n\
+         g =\n    Dict.insert { a = 1 } 2 Dict.empty\n\n\
+         main =\n    f m0\n";
     vec![
         ("codec_chain".into(), codec),
         ("model_app".into(), model),
         ("record_errors".into(), errors.to_string()),
+        ("dict_keys".into(), dict_keys.to_string()),
     ]
 }
 

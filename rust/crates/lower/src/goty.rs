@@ -201,7 +201,7 @@ fn sky_ty_ref_to_go_guarded(
         ),
         TyView::Unit => GoTy::Unit,
         TyView::Var(_) | TyView::Error => GoTy::Any,
-        TyView::Record => go_ty(&table.get(r), env, cur_mod, &empty),
+        TyView::Record(..) => go_ty(&table.get(r), env, cur_mod, &empty),
     };
     memo.insert(r, g.clone());
     g

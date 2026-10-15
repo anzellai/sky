@@ -17,7 +17,8 @@
 //! added by the second doubling with the work added by the first: linear work
 //! gives a ratio near 2, quadratic work near 4. The bound is 2.3.
 //!
-//! The counters are process-wide, so this file holds ONE test.
+//! The counters are process-wide, so the tests in this file run one at a
+//! time (`SERIAL`).
 
 use lower::LowerConfig;
 use skydb::{go_program, BuildConfig, SkyDatabase};
@@ -123,10 +124,18 @@ fn model_app(n: usize) -> String {
 
 /// Check that every counter of `phase` grows at most linearly over the three
 /// sizes. Returns the failures as text.
-fn growth_failures(shape: &str, phase: &str, points: &[(usize, Snapshot)]) -> Vec<String> {
+fn growth_failures(
+    shape: &str,
+    phase: &str,
+    points: &[(usize, Snapshot)],
+    counters: &[&str],
+) -> Vec<String> {
     let mut bad = Vec::new();
     for idx in 0..points[0].1.fields().len() {
         let name = points[0].1.fields()[idx].0;
+        if !counters.contains(&name) {
+            continue;
+        }
         let v: Vec<u64> = points.iter().map(|(_, s)| s.fields()[idx].1).collect();
         let d1 = v[1].saturating_sub(v[0]);
         let d2 = v[2].saturating_sub(v[1]);
@@ -151,20 +160,45 @@ fn growth_failures(shape: &str, phase: &str, points: &[(usize, Snapshot)]) -> Ve
     bad
 }
 
+/// The counters of the shared type table: read-back, owned rebuilds, the
+/// `[E2008]` key scan, interning and the lowerer's Go-type mapping.
+const TABLE_COUNTERS: &[&str] = &["readback", "owned_rebuild", "dictkey", "intern", "goty"];
+
+/// The unifier's counters. Still quadratic on both shapes: binding an
+/// instantiated variable to a large structure runs the occurs check over the
+/// whole structure (`Codec.field`'s `r` and `b` against the record and the
+/// rest of the constructor arrow), and the lowering path's update of an
+/// annotated record param unifies a fresh instance of the declared record per
+/// update (#166 / doc 13 D2). Kept as an ignored test so the gap stays visible.
+const UNIFIER_COUNTERS: &[&str] = &["occurs", "record_fields"];
+
+/// The counters are process-wide: the two tests below must not overlap.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
-#[ignore = "quadratic until the shared type table lands (build-speed stream C, P4)"]
-fn typing_and_lowering_large_records_is_linear() {
+fn type_table_work_is_linear_in_record_size() {
+    growth_test(TABLE_COUNTERS);
+}
+
+#[test]
+#[ignore = "known quadratic: occurs check and D2 record instance per update (see UNIFIER_COUNTERS)"]
+fn unifier_work_is_linear_in_record_size() {
+    growth_test(UNIFIER_COUNTERS);
+}
+
+fn growth_test(counters: &'static [&'static str]) {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
     // A test thread's default stack is 2 MiB; give the fixtures room without
     // depending on every walker's on-demand stack growth.
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
-        .spawn(growth_body)
+        .spawn(move || growth_body(counters))
         .expect("spawn")
         .join()
         .expect("growth check panicked");
 }
 
-fn growth_body() {
+fn growth_body(counters: &[&str]) {
     let root = repo_root();
     let stdlib: Vec<(String, String)> = ty::reject_corpus::load_stdlib(&root)
         .into_iter()
@@ -180,8 +214,8 @@ fn growth_body() {
             sizes.iter().map(|&n| (n, run(&stdlib, &gen(n)))).collect();
         let check: Vec<(usize, Snapshot)> = runs.iter().map(|(n, (c, _))| (*n, *c)).collect();
         let lower: Vec<(usize, Snapshot)> = runs.iter().map(|(n, (_, l))| (*n, *l)).collect();
-        failures.extend(growth_failures(shape, "typecheck", &check));
-        failures.extend(growth_failures(shape, "lower", &lower));
+        failures.extend(growth_failures(shape, "typecheck", &check, counters));
+        failures.extend(growth_failures(shape, "lower", &lower, counters));
     }
     assert!(
         failures.is_empty(),

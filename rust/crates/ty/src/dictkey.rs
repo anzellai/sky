@@ -189,6 +189,66 @@ pub fn unsupported_keys(t: &Ty) -> Vec<Ty> {
     out
 }
 
+/// [`unsupported_keys`] of the type at `r` in `table`, memoised per
+/// reference. A node's list is its own offending key (if it is such a `Dict`)
+/// followed by its children's lists in [`walk`]'s order (`Fun` argument then
+/// result, `App`/tuple arguments, record fields), deduplicated by rendering
+/// keeping the first occurrence: exactly the pre-order first-occurrence list
+/// `walk` builds, because first-occurrence dedup of a concatenation is the
+/// dedup of its parts' dedups. A type with no offending key — nearly all —
+/// costs one memo lookup after its first visit.
+pub fn unsupported_keys_ref(
+    table: &crate::tytable::TyTable,
+    r: crate::tytable::TyRef,
+    memo: &mut std::collections::HashMap<crate::tytable::TyRef, std::rc::Rc<Vec<Ty>>>,
+) -> std::rc::Rc<Vec<Ty>> {
+    // A type is as deep as a curried constructor's arity (one arrow per field of
+    // a record constructor): grow the stack on demand rather than overflow it.
+    base::ensure_stack(|| unsupported_keys_ref_guarded(table, r, memo))
+}
+
+fn unsupported_keys_ref_guarded(
+    table: &crate::tytable::TyTable,
+    r: crate::tytable::TyRef,
+    memo: &mut std::collections::HashMap<crate::tytable::TyRef, std::rc::Rc<Vec<Ty>>>,
+) -> std::rc::Rc<Vec<Ty>> {
+    use crate::tytable::TyView;
+    if let Some(v) = memo.get(&r) {
+        return v.clone();
+    }
+    crate::counters::DICTKEY_NODES.bump();
+    let mut out: Vec<Ty> = Vec::new();
+    let push = |out: &mut Vec<Ty>, key: &Ty| {
+        if !out.iter().any(|k| k.render() == key.render()) {
+            out.push(key.clone());
+        }
+    };
+    let kids: Vec<crate::tytable::TyRef> = match table.view(r) {
+        TyView::App(name, args) => {
+            if name.as_str() == DICT && args.len() == 2 {
+                let key = table.get(args[0]);
+                if classify(&key) == KeyVerdict::Unsupported {
+                    push(&mut out, &key);
+                }
+            }
+            args.to_vec()
+        }
+        TyView::Fun(a, b) => vec![a, b],
+        TyView::Tuple(xs) => xs.to_vec(),
+        TyView::Record(fs, _) => fs.iter().map(|(_, t)| *t).collect(),
+        TyView::Var(_) | TyView::Unit | TyView::Error => Vec::new(),
+    };
+    for k in kids {
+        let sub = unsupported_keys_ref(table, k, memo);
+        for key in sub.iter() {
+            push(&mut out, key);
+        }
+    }
+    let v = std::rc::Rc::new(out);
+    memo.insert(r, v.clone());
+    v
+}
+
 fn walk(t: &Ty, out: &mut Vec<Ty>) {
     // A type is as deep as a curried constructor's arity (one arrow per field of
     // a record constructor): grow the stack on demand rather than overflow it.

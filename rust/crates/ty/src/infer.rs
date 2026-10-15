@@ -244,6 +244,23 @@ impl<'a> Infer<'a> {
         self
     }
 
+    /// Drain the recorded per-expression table into one hash-consed table: the
+    /// checker's view of the solved types. One entry per recording, in PUSH
+    /// order (post-order inference, `infer_expr`), an expression recorded
+    /// twice appearing twice — the order and multiplicity the `[E2008]` scan's
+    /// first-seen dedup and the scans' last-wins lookup depend on. Every value
+    /// equals the owned read-back (`recorded_expr_types`, kept as the oracle).
+    /// Empty unless [`Infer::with_record_exprs`] was set.
+    pub fn recorded_expr_table(&mut self) -> (Vec<(ExprId, TyRef)>, TyTable) {
+        let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
+        let mut sink = ReadBackSink::new();
+        let out = recorded
+            .into_iter()
+            .map(|(e, tv)| (e, self.read_back_ref(tv, &mut sink)))
+            .collect();
+        (out, sink.finish())
+    }
+
     /// Drain the recorded per-expression table, reading each type back.
     ///
     /// Read-back is memoised per union-find ROOT: a def's expressions share very
@@ -251,6 +268,7 @@ impl<'a> Infer<'a> {
     /// same root), so this costs strictly less than `infer_def_typed`'s
     /// unconditional per-expression `read_back` — which the build path already
     /// pays for every def. Empty unless [`Infer::with_record_exprs`] was set.
+    #[cfg(test)]
     pub fn recorded_expr_types(&mut self) -> Vec<(ExprId, Ty)> {
         let recorded: Vec<(ExprId, TyVarId)> = std::mem::take(&mut self.expr_vars);
         let mut memo: HashMap<TyVarId, Ty> = HashMap::new();
@@ -2670,7 +2688,7 @@ impl ReadBackSink {
         ReadBackSink {
             builder: TyTableBuilder::new(),
             memo: FxHashMap::default(),
-            share_subroots: false,
+            share_subroots: true,
             frames: 0,
         }
     }
