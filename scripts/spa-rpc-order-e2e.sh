@@ -35,6 +35,15 @@
 # path with no client route is a full navigation; Std.Analytics identity and
 # consent are per visitor on the Spa backend.
 #
+# A fourth stage builds rust/crates/sky/tests/fixtures/spa-async-arms twice
+# (--target web:app and Sky.Live) and checks (scripts/spa-async-arms-verify.mjs)
+# that a server arm whose model write runs in the client (through a helper, a
+# `case`, an `if`) shows that write while its server call runs, as Sky.Live
+# does: the app's model call is held by the script until it releases it, so
+# the selection, the busy label and typed text are read while the request is
+# known to be pending. A `Cmd.none` branch sends no request; a hold arm is the
+# negative control.
+#
 # Browsers: SKY_E2E_BROWSERS (default "chromium,webkit"); SKY_E2E_CHANNEL=chrome
 # uses Google Chrome; SKY_E2E_HEADED=1 runs them headed.
 #
@@ -101,8 +110,25 @@ echo "==> driving one-click dispatch, the link router and per-visitor analytics 
 SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
   with_timeout 300 node "$ROOT/scripts/spa-click-routing-verify.mjs" "$CLICK" --port "${CLICK_ROUTING_PORT:-9365}"
 
+mkdir -p "$TMP/async"
+cp -Rf "$ROOT/rust/crates/sky/tests/fixtures/spa-async-arms/." "$TMP/async/"
+echo "==> building fixture spa-async-arms (--target web:app)"
+(cd "$TMP/async" && with_timeout 1200 "$SKY" build --target web:app src/Main.sky) >"$TMP/build-async-spa.log" 2>&1 \
+  || { cat "$TMP/build-async-spa.log" >&2; echo "spa-rpc-order-e2e: spa-async-arms web:app build failed" >&2; exit 1; }
+echo "==> building fixture spa-async-arms (Sky.Live, --target web)"
+(cd "$TMP/async" && with_timeout 1200 "$SKY" build --target web src/Main.sky) >"$TMP/build-async-live.log" 2>&1 \
+  || { cat "$TMP/build-async-live.log" >&2; echo "spa-rpc-order-e2e: spa-async-arms web build failed" >&2; exit 1; }
+ASYNC_SPA="$TMP/async/.skyapp/web-app/.split/backend/sky-out/app"
+ASYNC_LIVE="$TMP/async/.skyapp/web/sky-out/app"
+[ -x "$ASYNC_SPA" ] || { echo "spa-rpc-order-e2e: backend not built at $ASYNC_SPA" >&2; exit 1; }
+[ -x "$ASYNC_LIVE" ] || { echo "spa-rpc-order-e2e: Live app not built at $ASYNC_LIVE" >&2; exit 1; }
+echo "==> driving async arms against a held model call in a browser"
+SKY_E2E_BROWSERS="${SKY_E2E_BROWSERS:-chromium,webkit}" \
+  with_timeout 300 node "$ROOT/scripts/spa-async-arms-verify.mjs" "$ASYNC_SPA" "$ASYNC_LIVE" --port "${ASYNC_ARMS_PORT:-9385}"
+
 echo "spa-rpc-order-e2e: PASS — web:app runs each Msg once, in order, with its Cmds, as Sky.Live does;"
 echo "  every RPC names its wire schema, a mismatch reloads once and says the action was not sent;"
 echo "  a handled client Err logs nothing, an unhandled RPC failure logs once;"
-echo "  one click runs one Msg, server paths are full navigations, analytics are per visitor."
+echo "  one click runs one Msg, server paths are full navigations, analytics are per visitor;"
+echo "  an async arm shows its write while its server call runs."
 rm -rf "$TMP"

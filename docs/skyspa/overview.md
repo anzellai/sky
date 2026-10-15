@@ -202,7 +202,12 @@ the split picks the kind from the arm (`runtime-go/rt/spa_rpcqueue.go`):
 
 - **Async** (`Spa.rpc`) — the arm's own model write is empty or reads no server
   data. The client runs that write itself when the Msg runs, exactly as Sky.Live
-  does, and sends the request at once. The response comes back later as a Msg of
+  does, and sends the request at once. The arm may reach its `( model, cmd )`
+  tuples through `case`, `if`, `let` and helper calls (v0.27.9; before, only a
+  tuple written directly in the arm): the client runs the arm as written, with
+  each command that needs the server replaced by the request, and a branch
+  that returns `Cmd.none` sends no request and gets no `Applied<Msg>`, as
+  Sky.Live performs nothing there. The response comes back later as a Msg of
   its own (`Applied<Msg>`, then the result Msg of a `Cmd.perform serverTask
   ResultMsg`) and runs in arrival order, like any `Cmd.perform` result. Msgs that
   arrive meanwhile run at once, once each, against the current model, with their
@@ -216,11 +221,37 @@ the split picks the kind from the arm (`runtime-go/rt/spa_rpcqueue.go`):
 
   Got (Ok data) ->                           -- a client arm: runs when the read
       ( { model | polling = False, inbox = data :: model.inbox }, Cmd.none )
+
+  Select id ->                               -- async too: the client selects and
+      selectTicket id model                  -- sets `busy` at once, the draft
+                                             -- arrives as `Drafted`
+  selectTicket id model =
+      let
+          opened = { model | selected = id }
+      in
+      case findTicket id opened of
+          Just t ->
+              ( { opened | busy = True }, Cmd.perform (Assist.draft t.body) Drafted )
+
+          Nothing ->
+              ( opened, Cmd.none )            -- no request on this branch
   ```
 
+  A helper on the path must be a top-level function called with all its
+  arguments (directly or through `|>`), in the module that declares `update` or
+  in a module the client already uses. Every condition, `case` subject, `let`
+  binding and model write the client runs must read no server data: keep the
+  task inside the command (`Cmd.perform <task> <Msg>`).
+
 - **Hold** (`Spa.rpcHold`) — the arm's own model write needs server data (an
-  inline `Task.run`, a server-tainted value), or its continuation arms settle on
-  the server (a server-internal chain). Sky.Live runs such an update as one
+  inline `Task.run`, a server-tainted value in the model, a condition or a
+  `let`), its continuation arms settle on the server (a server-internal chain),
+  it reads or writes the signed identity (a `Session` / `Maybe Session` field,
+  whose trusted value only the server holds), or the client cannot read its
+  shape (a tuple bound to a name, a guard wrapper with a lambda, a recursive
+  or partly applied helper, `update X model`). The build prints a note for
+  every arm that holds, naming the arm, the reason and the change that would
+  make it async. Sky.Live runs such an update as one
   synchronous step: nothing else runs on the session until it returns. The client
   does the same: Msgs that arrive while a hold RPC is in flight wait, in order,
   and run once each, with their Cmds, after its response. The response's
@@ -254,19 +285,24 @@ Per-arm guarantees, in one list:
   read through a value derived from the model (`let m2 = { model | n = 0 } in
   if m2.flag …`), so the backend takes the branch Sky.Live takes (v0.27.9);
 - a branch that returns `Cmd.none` dispatches nothing, as on Sky.Live. When the
-  arm returns one `Cmd.perform` on one branch and `Cmd.none` on the others
-  (`if model.flag then ( model, Cmd.perform t Got ) else ( model, Cmd.none )`),
-  the client runs the arm's conditions itself and sends no request on a
-  `Cmd.none` branch, and gets no `Applied<Msg>`. When the `Cmd.none` sits where
-  the client cannot see it (a guard helper's reject path), the request goes out
-  and the backend answers that no task ran; the client dispatches nothing.
-  Before v0.27.9 that answer was an `Err`, and the client ran `Got (Err …)`.
+  client runs the arm itself (an async arm, above: `if model.flag then ( model,
+  Cmd.perform t Got ) else ( model, Cmd.none )`), it runs the arm's conditions
+  and sends no request on a `Cmd.none` branch, and gets no `Applied<Msg>`. When
+  the `Cmd.none` sits where the client cannot see it (a guard helper's reject
+  path, a hold arm), the request goes out and the backend answers that no task
+  ran; the client dispatches nothing. Before v0.27.9 that answer was an `Err`,
+  and the client ran `Got (Err …)`;
+- an async arm's client copy is checked: the frontend build compiles it, and a
+  copy that does not compile makes that arm hold, with a note, instead of
+  failing the build.
 
-**Write a long wait as an async arm.** A long poll or a slow relay read belongs
-in a `Cmd.perform` from an arm whose model write reads no server data; the
-client then keeps running while it waits, and other server calls go out beside
-it. An arm that writes a server value into the model holds the client for its
-whole round trip.
+**Write a long wait as an async arm.** A long poll, a slow relay read or a
+model call belongs in a `Cmd.perform` from an arm whose model write reads no
+server data; the client then keeps running while it waits (a selection, a
+"drafting" label and typed text show at once), and other server calls go out
+beside it. An arm that writes a server value into the model holds the client
+for its whole round trip. Read the build's `holds later Msgs` notes: each names
+an arm that holds and the change that makes it async.
 
 **A failed task is a result, not a console error.** A client-local
 `Cmd.perform` whose task fails (`Task.fail`, a `Std.Native` call in a browser
