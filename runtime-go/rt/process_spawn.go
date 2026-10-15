@@ -55,6 +55,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"sky-app/rt/periodic"
 )
 
 // Consumer modes (procHandle.owner).
@@ -101,6 +103,10 @@ type procHandle struct {
 	// output under load.
 	ptySlave     *os.File
 	ptySlaveOnce sync.Once
+	// ptyQueued reads how many bytes the child queued on the slave that the
+	// master has not read yet. Nil means ptyQueuedOutput; a test sets it to
+	// drive releasePtySlave without a real PTY.
+	ptyQueued func(*os.File) int
 
 	// stdinMu orders writes. stdinClosed is atomic, and shutdown closes the
 	// descriptor WITHOUT stdinMu: a write blocked on a full pipe holds the
@@ -405,20 +411,37 @@ func spawnProcess(s procSpec) (*procHandle, any) {
 // exit. The slave's last close then reaches an empty queue: nothing is
 // discarded, and the master's read returns EOF (or EIO). A grandchild that
 // still holds the slave keeps the master open, as before.
+//
+// The wait runs on the reaper goroutine, which nobody joins, so each poll is
+// one periodic.Guard cycle: a panic in a poll is recovered and reported, and
+// it ends the wait (the queue cannot be read, so there is nothing left to
+// wait for). The deferred close runs on every path, so the slave is never
+// leaked and the master always reaches EOF.
 func (h *procHandle) releasePtySlave() {
 	if h.ptySlave == nil {
 		return
 	}
+	defer h.closePtySlave()
+	probe := h.ptyQueued
+	if probe == nil {
+		probe = ptyQueuedOutput
+	}
 	deadline := time.Now().Add(procExitGrace)
-	for ptyQueuedOutput(h.ptySlave) > 0 && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
+		queued := 0
+		periodic.Guard("process.pty-drain", periodicReport, func() error {
+			queued = probe(h.ptySlave)
+			return nil
+		})
+		if queued <= 0 {
+			return
+		}
 		select {
 		case <-h.closedCh:
-			h.closePtySlave()
 			return
 		case <-time.After(time.Millisecond):
 		}
 	}
-	h.closePtySlave()
 }
 
 // closePtySlave closes the parent's PTY slave once. Idempotent.
