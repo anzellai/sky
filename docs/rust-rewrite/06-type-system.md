@@ -216,6 +216,33 @@ fn occurs(&mut self, target: TyVarId) -> bool {
 }
 ```
 
+As built (`UnionFind::occurs`, `rust/crates/ty/src/unify.rs`), the walk runs on
+an explicit stack and reads each root's children in place: it copies no record
+field map per node, and its depth does not depend on the thread's stack.
+
+**A field access or a record update on a closed record does not unify the
+whole record.** `model.f` and `{ model | f = x }` unify the base with a fresh
+constraint `{ f | ρ }`. When the base is a closed record holding the fields,
+`UnionFind::unify_closed_record_fresh_row` reaches the state the general
+`unify_records` leaves on every live node, with the same variables allocated in
+the same order: it links the constraint under the base, unifies (for an access,
+links) each shared field in field order and stops at the first clash, and
+allocates the variable for the row's record of remaining fields without copying
+the base's map into it or walking it for the occurs check. Nothing live refers
+to that row once the constraint is a link, so its content is never read. An
+access costs O(log fields) instead of O(size of the record). The
+`infer_readback_tests` differential runs every corpus def with this fast form on
+and off and compares errors, variables allocated, every recorded type, the
+obligations and the whole `World`.
+
+**Still quadratic (known):** binding an instantiated scheme variable to a large
+structure walks the structure for the occurs check (a `Codec.field` step binds
+`r` to the record and `b` to the rest of the constructor arrow), and the
+lowering path's #166 / D2 close of an update on an annotated record param
+instantiates and unifies the declared record once per update. The ignored test
+`unifier_work_is_linear_in_record_size` (`skydb/tests/typed_table_growth.rs`)
+measures both.
+
 ## Go-FFI references — typed on the `Result` wrapper (v0.27.0)
 
 Until v0.27.0 every `Res::Foreign` reference (a `sky add` binding) inferred to a
@@ -639,10 +666,51 @@ exists — `grep -rn 'RegionTable\|region_ty' rust/crates` is empty — and the 
 justification does not describe the shipped structure, which is a `HashMap`.
 
 ```rust
-// The real shape — Infer::infer_def_typed, rust/crates/ty/src/infer.rs:206-214
-pub fn infer_def_typed(&mut self, body: &Body)
-    -> (Option<Ty>, Option<Ty>, HashMap<ExprId, Ty>, HashMap<LocalId, Ty>);
+// The real shape — Infer::infer_def_tables, rust/crates/ty/src/infer.rs
+pub(crate) fn infer_def_tables(&mut self, body: &Body) -> TypedTables;
+// TypedTables { result, signature, exprs: HashMap<ExprId, TyRef>,
+//               locals: HashMap<LocalId, TyRef>, table: TyTable }
 ```
+
+### The shared type table
+
+A def's recorded types are read straight out of the solved union-find into one
+hash-consed `TyTable` (`rust/crates/ty/src/tytable.rs`): `Infer::read_back_ref`
+builds each node from its children's references (`TyTableBuilder::intern_node`),
+so no owned `Ty` tree is built per expression, and a sub-tree shared by many
+types is stored and read once. `BodyTypes` keeps the API it had (`expr`, `local`
+return the owned `Ty`) and adds `expr_ref` / `local_ref` / `table` for readers
+that work per reference.
+
+The read-back memo maps a union-find root to its reference and lives for ONE
+drain (`ReadBackSink`: `infer_def_tables`, the checker's
+`recorded_expr_table`), never on `Infer`: earlier read-backs (the E2007 arity
+gate, the value restriction, `collapse_let_poly`) run before later
+unifications. It stores only UNTAINTED results. A frame is tainted when it, or
+any frame below it, met the cycle guard (a root already on the path, read back
+as `Error`); a tainted value depends on the path that reached it. An untainted
+value met no node on its path, so its root is on no cycle, and reading it from
+any other path gives the same value. Cycles are real: `satisfy` binds a bounded
+variable without an occurs check, and `normalize_record` follows recursive
+rows. `cyclic_subroot_is_not_shared` pins the rule on `N = Fun(A, P)`,
+`A = List N`, `P = Maybe N`.
+
+The checker drains its table with `recorded_expr_table`: entries in push order,
+with duplicates, which the `[E2008]` first-seen dedup depends on.
+`dictkey::unsupported_keys_ref` computes each distinct type's offending keys
+once (first-occurrence order, deduplicated by `render`, as `walk`), and the
+`[E2009]`/`[E2010]`/`[E2011]`/`[E2013]` scans read types through
+`tytable::ExprTypes`, a last-wins lookup that rebuilds only what a scan asks
+for.
+
+The owned read-back stays as the test oracle (`infer_def_typed` and
+`recorded_expr_types`, `#[cfg(test)]`). The differential tests in
+`rust/crates/ty/src/infer_readback_tests.rs` drain the same solved union-find
+both ways for every def of the stdlib, every example, the accept and reject
+corpora and generated large-record programs, in the lowering, tooling and
+checker modes. The work counters (`ty::counters`) and the growth ratchet
+`type_table_work_is_linear_in_record_size` hold read-back, owned rebuilds, the
+key scan, interning and `goty` linear in the size of a record.
 
 `ExprId` is the HIR arena index, and `rust/crates/ty/src/check.rs:202-205`
 states why it was preferred: it is "the stable per-expression identity in this

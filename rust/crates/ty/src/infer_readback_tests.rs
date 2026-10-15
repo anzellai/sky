@@ -526,3 +526,42 @@ fn shared_subroot_is_read_once() {
         assert_eq!(sink.get(r), inf.read_back(v));
     }
 }
+
+/// The fast record paths change no world channel: the stdlib world and every
+/// example's world (value_sigs, inferred_sigs, the check-only channels, the
+/// record-result and call-site record channels: `World`'s `==`) are equal
+/// built with the fast paths on and off.
+#[test]
+fn world_is_the_same_with_and_without_fast_paths() {
+    on_big_stack(|| {
+        let root = repo_root();
+        let mut programs: Vec<(String, SourceDb)> = vec![("stdlib".into(), stdlib_db().0)];
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(root.join("examples"))
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.join("src").is_dir())
+            .collect();
+        dirs.sort();
+        for d in &dirs {
+            let (db, _) = program(crate::reject_corpus::load_dir(&d.join("src"), "src"));
+            programs.push((d.file_name().unwrap().to_string_lossy().to_string(), db));
+        }
+        for (label, src) in generated() {
+            programs.push((label, program(vec![parse_named(&src)]).0));
+        }
+        let mut bad = Vec::new();
+        for (label, db) in &programs {
+            let fast = World::build(db);
+            FORCE_GENERAL_PATHS.with(|f| f.set(true));
+            let slow = World::build(db);
+            FORCE_GENERAL_PATHS.with(|f| f.set(false));
+            if fast != slow {
+                bad.push(label.clone());
+            }
+            // The test is not vacuous: the world has signatures.
+            assert!(!fast.value_sigs.is_empty(), "{label}: empty world");
+        }
+        assert!(programs.len() > 50);
+        assert!(bad.is_empty(), "worlds differ: {bad:?}");
+    });
+}

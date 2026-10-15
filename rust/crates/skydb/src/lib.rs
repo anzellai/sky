@@ -307,9 +307,9 @@ pub fn callsite_param_records_query(
 ///
 /// The union-find stays **local to this query's execution**: `compute_body_types`
 /// creates the `Infer` (and its `UnionFind`), drives it, and reads every result
-/// back to a canonical `ty::Ty` before returning — a `TyVarId` never escapes into
-/// the memoised `BodyTypes` (doc 12 #M1; verified: `infer_def_typed` calls
-/// `read_back` on the result + every recorded expr/local var).
+/// back to canonical types before returning — a `TyVarId` never escapes into
+/// the memoised `BodyTypes` (doc 12 #M1; verified: `infer_def_tables` reads the
+/// result and every recorded expr/local var back into a hash-consed `TyTable`).
 ///
 /// `no_eq`: `BodyTypes` carries `HashMap`s and is consumed eagerly by the lowerer
 /// (not yet a query), so recompute-on-demand is fine — no backdate needed. Keyed

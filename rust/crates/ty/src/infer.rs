@@ -157,6 +157,14 @@ pub struct Infer<'a> {
     pub(crate) no_fast_paths: bool,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam: every `Infer` created on this thread starts with the record
+    /// fast paths off, so a test can build a whole `World` both ways.
+    pub(crate) static FORCE_GENERAL_PATHS: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
 /// Entries for a world's `record_result_sigs` and `callsite_param_records`
 /// that one inference run reads IN PLACE OF the world's own entry for the same
 /// def — what inserting them into a clone of the world would give, without the
@@ -192,7 +200,7 @@ impl<'a> Infer<'a> {
             inferred_bounds: Vec::new(),
             overlay: None,
             #[cfg(test)]
-            no_fast_paths: false,
+            no_fast_paths: FORCE_GENERAL_PATHS.with(|f| f.get()),
         }
     }
 
