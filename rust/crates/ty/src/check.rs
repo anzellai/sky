@@ -14,7 +14,6 @@ use base::{DefId, ModuleId, Span};
 use diagnostics::{Code, Diagnostic, Severity};
 use hir::{Body, Expr, ExprId, LocalId, Res};
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// The kind of type-error emitted (all currently map to a unify clash).
@@ -200,7 +199,7 @@ impl BodyTypes {
 /// on `SourceDb`. `body_types` routes through the `infer(DefId)` query, so a def's
 /// typed table is memoised at per-def granularity on the salsa backend.
 pub struct Typer<'a> {
-    world: Rc<World>,
+    world: Arc<World>,
     db: &'a dyn TyDb,
 }
 
@@ -817,7 +816,7 @@ pub fn check_modules(db: &dyn TyDb, to_check: &[ModuleId]) -> CheckOutput {
 /// paths, so a divergence can only come from the world, never from the checking.
 pub fn check_modules_with_world(
     db: &dyn TyDb,
-    world: std::rc::Rc<crate::sig::World>,
+    world: std::sync::Arc<crate::sig::World>,
     to_check: &[ModuleId],
 ) -> CheckOutput {
     let sky = db.as_sky_db();

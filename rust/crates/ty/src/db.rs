@@ -25,18 +25,21 @@ use crate::sig::World;
 use base::{DefId, ModuleId};
 use hir::SkyDb;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// The type-layer database: [`SkyDb`] plus the memoisable typed artefacts.
 ///
-/// Every method returns an owned/`Rc` value (never a borrow into a memo) so the
+/// Every method returns an owning handle (never a borrow into a memo) so the
 /// two backends share one signature regardless of where the value lives — the
-/// same shape `SkyDb::resolve` uses.
+/// same shape `SkyDb::resolve` uses. The worlds come as an `Arc`: the salsa
+/// memo stores them behind one, so every caller shares the memoised world
+/// instead of copying it.
 pub trait TyDb: SkyDb {
     /// The assembled sig-world (stdlib + deps + entry). On the salsa backend
     /// this is a single memoised query, so the build's several rebuild sites
     /// (`check_modules`, `Typer::new`, `lower`'s `collect_types`) share one
     /// assembly instead of rebuilding it each.
-    fn type_world(&self) -> Rc<World>;
+    fn type_world(&self) -> Arc<World>;
 
     /// The FULL world including the body-derived CHECK-ONLY channels (passes 5-6:
     /// `app_check_sigs` / `any_result_check_sigs`), consumed by the accept/reject
@@ -44,7 +47,7 @@ pub trait TyDb: SkyDb {
     /// (declarations only, passes 1-4) so that the salsa backend's `type_world`
     /// stays body-independent and backdates on app body edits while the checker
     /// still sees the F1c / D1 pins. On the eager backend both are plain builds.
-    fn check_world(&self) -> Rc<World>;
+    fn check_world(&self) -> Arc<World>;
 
     /// The per-expression/per-local type table for one def — doc 01's
     /// `infer(DefId)`. On the salsa backend this is a `#[salsa::tracked]` query
@@ -110,14 +113,14 @@ pub fn compute_body_types_with(
 /// Eager backend. `SourceDb` has no incremental store, so every call recomputes —
 /// the status quo for the LSP + accept/reject gates, unchanged in behaviour.
 impl TyDb for hir::SourceDb {
-    fn type_world(&self) -> Rc<World> {
+    fn type_world(&self) -> Arc<World> {
         // Declarations only (passes 1-4). The eager backend has no incremental
         // store, so this is a fresh subset build; its consumers (`Typer`, the
         // alias-expander in `lower`) read only declaration channels.
-        Rc::new(World::build_decls(self))
+        Arc::new(World::build_decls(self))
     }
-    fn check_world(&self) -> Rc<World> {
-        Rc::new(World::build(self))
+    fn check_world(&self) -> Arc<World> {
+        Arc::new(World::build(self))
     }
     fn body_types_of(&self, module: ModuleId, def: DefId) -> Rc<BodyTypes> {
         // FULL world so the lowering path's `Expr::Update` arm sees pass-7

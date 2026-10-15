@@ -115,7 +115,7 @@ fn defid_no_leak_across_consecutive_cases() {
         naive_world.extend_decls(&scoped, false);
         naive_world.extend_bodies(&scoped);
     }
-    let leaked = ty::check_modules_with_world(&naive_db, std::rc::Rc::new(naive_world), &[idb]);
+    let leaked = ty::check_modules_with_world(&naive_db, std::sync::Arc::new(naive_world), &[idb]);
     assert!(
         leaked.type_errors > 0,
         "the cross-case leak this gate guards is not reproducible — the \
