@@ -230,6 +230,12 @@ impl UnionFind {
         UnionFind::default()
     }
 
+    /// Number of variables allocated so far.
+    #[cfg(test)]
+    pub(crate) fn var_count(&self) -> usize {
+        self.slots.len()
+    }
+
     /// Allocate a fresh variable with the given content. Deterministic (L4):
     /// the id is the next dense index, drawn in constraint-generation order.
     pub fn fresh(&mut self, content: Content) -> TyVarId {
@@ -320,33 +326,41 @@ impl UnionFind {
     /// Does `target`'s representative appear inside the structure reachable
     /// from `v` (other than at `v == target`)? Gates the Flex↔Structure merge
     /// that would otherwise build an infinite type.
+    ///
+    /// A reachability question, so the walk order does not matter: it runs on
+    /// an explicit stack and reads each node's children in place (no copy of a
+    /// record's field map per node, no recursion depth bound by the type's).
     fn occurs(&mut self, v: TyVarId, target: TyVarId) -> bool {
         let target = self.find(target);
         let mut seen = std::collections::HashSet::new();
-        self.occurs_in(v, target, &mut seen)
-    }
-
-    fn occurs_in(
-        &mut self,
-        v: TyVarId,
-        target: TyVarId,
-        seen: &mut std::collections::HashSet<TyVarId>,
-    ) -> bool {
-        crate::counters::OCCURS_NODES.bump();
-        let r = self.find(v);
-        if r == target {
-            return true;
-        }
-        if !seen.insert(r) {
-            return false;
-        }
-        match self.content(r) {
-            Content::Structure(ft) => {
-                let kids = flat_children(&ft);
-                kids.into_iter().any(|k| self.occurs_in(k, target, seen))
+        let mut stack = vec![v];
+        while let Some(x) = stack.pop() {
+            crate::counters::OCCURS_NODES.bump();
+            let r = self.find(x);
+            if r == target {
+                return true;
             }
-            _ => false,
+            if !seen.insert(r) {
+                continue;
+            }
+            if let Slot::Root {
+                content: Content::Structure(ft),
+                ..
+            } = &self.slots[r.0 as usize]
+            {
+                match ft {
+                    FlatTy::App(_, args) => stack.extend(args.iter().copied()),
+                    FlatTy::Fun(a, b) => stack.extend([*a, *b]),
+                    FlatTy::Record(fs, e) => {
+                        stack.extend(fs.values().copied());
+                        stack.extend(e.iter().copied());
+                    }
+                    FlatTy::Tuple(xs) => stack.extend(xs.iter().copied()),
+                    FlatTy::Unit => {}
+                }
+            }
         }
+        false
     }
 
     // ---- unification (Unify.hs actuallyUnify) ---------------------------
@@ -749,8 +763,11 @@ impl UnionFind {
                     Err(Mismatch::new(format!("type mismatch: `{d1}` vs `{d2}`")))
                 }
             }
-            (FlatTy::Record(fs1, e1), FlatTy::Record(fs2, e2)) => {
-                self.unify_records(ra, rb, fs1.clone(), *e1, fs2.clone(), *e2)
+            (FlatTy::Record(..), FlatTy::Record(..)) => {
+                let (FlatTy::Record(fs1, e1), FlatTy::Record(fs2, e2)) = (f1, f2) else {
+                    unreachable!("matched as two records above")
+                };
+                self.unify_records(ra, rb, fs1, e1, fs2, e2)
             }
             _ => {
                 let (d1, d2) = (self.describe_flat(&f1, 0), self.describe_flat(&f2, 0));
@@ -792,12 +809,16 @@ impl UnionFind {
                     if !seen.insert(r) {
                         return (fields, Some(r));
                     }
-                    match self.content(r) {
-                        Content::Structure(FlatTy::Record(fs_inner, ext_inner)) => {
+                    match &self.slots[r.0 as usize] {
+                        Slot::Root {
+                            content: Content::Structure(FlatTy::Record(fs_inner, ext_inner)),
+                            ..
+                        } => {
+                            crate::counters::RECORD_FIELDS.add(fs_inner.len() as u64);
                             for (k, v) in fs_inner {
-                                fields.entry(k).or_insert(v);
+                                fields.entry(k.clone()).or_insert(*v);
                             }
-                            cur = ext_inner;
+                            cur = *ext_inner;
                         }
                         // Flex/super/rigid/error/non-record structure: the row is
                         // still open under `r` (or malformed — leave it to the
@@ -809,6 +830,98 @@ impl UnionFind {
                 }
             }
         }
+    }
+
+    /// `unify(base, rec)` where `rec` is a constraint node built for a field
+    /// access or a record update — `{ fields | row }` — and `rec` and `row`
+    /// are FRESH: nothing but `rec` refers to `row`, and nothing refers to
+    /// `rec`. Returns `None` when the fast form does not apply (the base is not
+    /// a closed record holding every field); the caller then runs the general
+    /// `unify`.
+    ///
+    /// When it applies, the union-find ends in the state the general path
+    /// leaves on every node reachable from a live variable, with the same
+    /// variables allocated in the same order, and the same result:
+    ///
+    /// * `unify_records(base, rec)` links `rec` under `base`'s root and keeps
+    ///   the base's content (a closed record whose fields include all of
+    ///   `fields` is its own merge): [`UnionFind::link_fresh`];
+    /// * it unifies each shared field pair in field order, stopping at the
+    ///   first clash. With `fresh_values` (a field ACCESS: each value is a
+    ///   fresh flex var referred to only by `rec`), that unify is a union in
+    ///   which the field keeps its own content and the occurs check cannot
+    ///   fire, so it is a link too; otherwise the general `unify` runs;
+    /// * when the base has fields beyond `fields`, it binds `row` to a fresh
+    ///   record of them. Nothing live refers to `row` (only `rec`'s content
+    ///   did, and `rec` is now a link), so that record is never read: the fast
+    ///   form allocates its variable, to keep later variable ids (and so the
+    ///   `t<id>` names of read-back) identical, without copying the base's
+    ///   field map into it or walking it for the occurs check.
+    ///
+    /// This turns a field access from O(size of the record) into O(log
+    /// fields), and an update into O(updated fields) plus their unifications.
+    pub(crate) fn unify_closed_record_fresh_row(
+        &mut self,
+        base: TyVarId,
+        rec: TyVarId,
+        row: TyVarId,
+        fields: &BTreeMap<Name, TyVarId>,
+        fresh_values: bool,
+    ) -> Option<Result<(), Mismatch>> {
+        let ra = self.find(base);
+        let rb = self.find(rec);
+        if ra == rb {
+            return None;
+        }
+        let (field_vars, has_rest) = match &self.slots[ra.0 as usize] {
+            Slot::Root {
+                content: Content::Structure(FlatTy::Record(fs, None)),
+                ..
+            } => {
+                let mut vs = Vec::with_capacity(fields.len());
+                for n in fields.keys() {
+                    vs.push(*fs.get(n)?);
+                }
+                (vs, fs.len() > fields.len())
+            }
+            _ => return None,
+        };
+        crate::counters::RECORD_FIELDS.add(fields.len() as u64);
+        self.link_fresh(ra, rb);
+        for (fv, (_, val)) in field_vars.into_iter().zip(fields.iter()) {
+            if fresh_values {
+                let r = self.find(fv);
+                self.link_fresh(r, *val);
+            } else if let Err(m) = self.unify(fv, *val) {
+                return Some(Err(m));
+            }
+        }
+        if has_rest {
+            let rest = self.fresh(Content::Structure(FlatTy::Record(BTreeMap::new(), None)));
+            // `union(row, rest, …)`: two rank-0 roots, `row` first.
+            self.link_fresh(row, rest);
+            self.set_content(
+                row,
+                Content::Structure(FlatTy::Record(BTreeMap::new(), None)),
+            );
+        }
+        Some(Ok(()))
+    }
+
+    /// `union(root, child, <root's own content>)` for a `child` that is a
+    /// rank-0 root distinct from `root`: `child` links under `root`, whose
+    /// rank rises to 1 if it was 0 (union by rank). The content stays.
+    fn link_fresh(&mut self, root: TyVarId, child: TyVarId) {
+        let root = self.find(root);
+        let child = self.find(child);
+        debug_assert_ne!(root, child);
+        debug_assert_eq!(self.rank(child), 0, "link_fresh: child must be rank 0");
+        if self.rank(root) == 0 {
+            if let Slot::Root { rank, .. } = &mut self.slots[root.0 as usize] {
+                *rank = 1;
+            }
+        }
+        self.slots[child.0 as usize] = Slot::Link(root);
     }
 
     /// `unify_records` (`Unify.hs:468`) — the closed/open discipline.

@@ -76,9 +76,85 @@ fn compare_drains(infer: &mut Infer<'_>, what: &str) -> Option<String> {
     None
 }
 
+/// Which inference entry a def is driven through.
+#[derive(Clone, Copy)]
+enum Mode {
+    /// `compute_body_types` (the lowerer's table).
+    Lower,
+    /// `body_types_annotated` (hover / completion).
+    Tooling,
+    /// `check_modules` (record_exprs + the annotation gate).
+    Check,
+}
+
+/// Infer `body` in `mode`, with or without the record fast paths. Returns the
+/// run's `Infer` for draining and a summary of everything a caller can
+/// observe: the errors (code, message, span), the variables allocated, the
+/// recorded types in push order, the obligations and inferred bounds.
+fn drive<'a>(
+    world: &'a World,
+    db: &'a SourceDb,
+    def: DefId,
+    body: &Body,
+    mode: Mode,
+    no_fast: bool,
+) -> (Infer<'a>, String) {
+    let mut inf = Infer::new(world, db).with_self_def(Some(def));
+    inf.no_fast_paths = no_fast;
+    let result = match mode {
+        Mode::Lower => {
+            inf = inf.with_inferred(true);
+            inf.infer_def_vars(body).map(|(v, ps)| {
+                let mut s = inf.read_back(v).render();
+                for p in ps {
+                    s.push_str(&format!(" | {}", inf.read_back(p).render()));
+                }
+                s
+            })
+        }
+        Mode::Tooling => {
+            inf = inf
+                .with_inferred(true)
+                .with_expected(world.value_sigs.get(&def).cloned());
+            inf.infer_def_vars(body)
+                .map(|(v, _)| inf.read_back(v).render())
+        }
+        Mode::Check => {
+            inf = inf.with_record_exprs(true);
+            match world.value_sigs.get(&def) {
+                Some(s) => {
+                    let s = s.clone();
+                    inf.infer_def_against(body, &s);
+                    None
+                }
+                None => inf.infer_def(body).map(|t| t.render()),
+            }
+        }
+    };
+    let mut out = format!("result={result:?} vars={}\n", inf.uf.var_count());
+    for e in &inf.errors {
+        out.push_str(&format!("error {} {:?} {}\n", e.code, e.span, e.message));
+    }
+    for (e, tv) in inf.expr_vars.clone() {
+        out.push_str(&format!("expr {e:?} {}\n", inf.read_back(tv).render()));
+    }
+    for (l, tv) in inf.local_vars.clone() {
+        out.push_str(&format!("local {l:?} {}\n", inf.read_back(tv).render()));
+    }
+    out.push_str(&format!(
+        "obligations={} bounds={:?} vr={:?}\n",
+        inf.obligations.len(),
+        inf.inferred_bounds,
+        inf.last_vr.as_ref().map(|(t, v, _)| (t.render(), v.len()))
+    ));
+    (inf, out)
+}
+
 /// Check every def of `check` (module ids in `db`) in the lowering mode
 /// (`compute_body_types`), the tooling mode (`body_types_annotated`) and the
-/// checker mode (`check_modules`). Returns (defs checked, mismatches).
+/// checker mode (`check_modules`): the record fast paths change nothing a
+/// caller can observe, and the table read-back equals the owned one. Returns
+/// (defs checked, mismatches).
 fn check_program(db: &SourceDb, check: &[base::ModuleId], label: &str) -> (usize, Vec<String>) {
     let world = World::build(db);
     let mut n = 0usize;
@@ -89,36 +165,25 @@ fn check_program(db: &SourceDb, check: &[base::ModuleId], label: &str) -> (usize
         defs.sort_by_key(|(d, _)| **d);
         for (def, body) in defs {
             n += 1;
-            let what = |mode: &str| format!("{label} {}::{def:?} [{mode}]", db.module_name(m));
-            // Lowering mode.
-            let mut inf = Infer::new(&world, db)
-                .with_self_def(Some(*def))
-                .with_inferred(true);
-            if inf.infer_def_vars(body).is_some() {
-                bad.extend(compare_drains(&mut inf, &what("lower")));
-            }
-            // Tooling mode (annotation-seeded).
-            let mut inf = Infer::new(&world, db)
-                .with_self_def(Some(*def))
-                .with_inferred(true)
-                .with_expected(world.value_sigs.get(def).cloned());
-            if inf.infer_def_vars(body).is_some() {
-                bad.extend(compare_drains(&mut inf, &what("tooling")));
-            }
-            // Checker mode (record_exprs, annotation gate).
-            let mut inf = Infer::new(&world, db)
-                .with_self_def(Some(*def))
-                .with_record_exprs(true);
-            match world.value_sigs.get(def) {
-                Some(s) => {
-                    let s = s.clone();
-                    inf.infer_def_against(body, &s);
+            for (mode, tag) in [
+                (Mode::Lower, "lower"),
+                (Mode::Tooling, "tooling"),
+                (Mode::Check, "check"),
+            ] {
+                let what = format!("{label} {}::{def:?} [{tag}]", db.module_name(m));
+                let (mut fast, fast_sum) = drive(&world, db, *def, body, mode, false);
+                let (_, slow_sum) = drive(&world, db, *def, body, mode, true);
+                if fast_sum != slow_sum {
+                    let line = fast_sum
+                        .lines()
+                        .zip(slow_sum.lines())
+                        .find(|(a, b)| a != b)
+                        .map(|(a, b)| format!("fast: {a}\n  slow: {b}"))
+                        .unwrap_or_else(|| "line counts differ".to_string());
+                    bad.push(format!("{what}: fast path differs\n  {line}"));
                 }
-                None => {
-                    inf.infer_def(body);
-                }
+                bad.extend(compare_drains(&mut fast, &what));
             }
-            bad.extend(compare_drains(&mut inf, &what("check")));
         }
     }
     (n, bad)
@@ -198,7 +263,27 @@ fn generated() -> Vec<(String, String)> {
         arms.join("\n"),
         reads.join(", ")
     );
-    vec![("codec_chain".into(), codec), ("model_app".into(), model)]
+    // Record accesses and updates that clash, miss a field, nest, or meet a
+    // non-record: the fast path's error behaviour must equal the general one.
+    let errors = "module Main exposing (main)\n\nimport Sky.Core.Prelude exposing (..)\n\n\
+         type alias Inner =\n    { a : Int, b : String }\n\n\
+         type alias Outer =\n    { inner : Inner, name : String, tags : List String }\n\n\
+         o0 : Outer\no0 =\n    { inner = { a = 1, b = \"x\" }, name = \"n\", tags = [] }\n\n\
+         clash1 : Outer -> Outer\nclash1 o =\n    { o | name = 3 }\n\n\
+         clash2 o =\n    { o | name = 3, tags = \"t\" }\n\n\
+         missing o =\n    { o | nope = 1 }\n\n\
+         nested : Outer -> Outer\nnested o =\n    { o | inner = { a = o.inner.a + 1, b = o.inner.b } }\n\n\
+         nestedBad : Outer -> Int\nnestedBad o =\n    o.inner.c\n\n\
+         notRecord =\n    (5).field\n\n\
+         poly r =\n    { r | name = r.name ++ \"!\" }\n\n\
+         usePoly =\n    ( poly o0, poly { name = \"q\" }, (poly o0).inner.a )\n\n\
+         sameTwice o =\n    ( o.name, o.name, { o | name = o.name, tags = o.tags } )\n\n\
+         main =\n    clash1 o0\n";
+    vec![
+        ("codec_chain".into(), codec),
+        ("model_app".into(), model),
+        ("record_errors".into(), errors.to_string()),
+    ]
 }
 
 fn on_big_stack<F: FnOnce() + Send + 'static>(f: F) {

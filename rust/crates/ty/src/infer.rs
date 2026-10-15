@@ -151,6 +151,10 @@ pub struct Infer<'a> {
     /// Per-def entries that take the place of the world's own in its two
     /// lowering-only record channels (see [`RecordOverlay`]).
     overlay: Option<&'a RecordOverlay>,
+    /// Test seam: run every record access / update through the general
+    /// unify, so a test can compare the fast form against it.
+    #[cfg(test)]
+    pub(crate) no_fast_paths: bool,
 }
 
 /// Entries for a world's `record_result_sigs` and `callsite_param_records`
@@ -187,6 +191,8 @@ impl<'a> Infer<'a> {
             bound_seen: std::collections::HashSet::new(),
             inferred_bounds: Vec::new(),
             overlay: None,
+            #[cfg(test)]
+            no_fast_paths: false,
         }
     }
 
@@ -1103,6 +1109,39 @@ impl<'a> Infer<'a> {
 
     fn unify(&mut self, a: TyVarId, b: TyVarId) {
         let res = self.uf.unify(a, b);
+        self.finish_unify(res);
+    }
+
+    /// [`Infer::unify`] of `base` with the fresh constraint node `rec =
+    /// { fields | row }` built by a field access or a record update, through
+    /// the unifier's fast form when the base is a closed record holding the
+    /// fields (`UnionFind::unify_closed_record_fresh_row`, same result and the
+    /// same live union-find state), else the general unify.
+    fn unify_record_constraint(
+        &mut self,
+        base: TyVarId,
+        rec: TyVarId,
+        row: TyVarId,
+        fields: &std::collections::BTreeMap<Name, TyVarId>,
+        fresh_values: bool,
+    ) {
+        #[cfg(test)]
+        if self.no_fast_paths {
+            self.unify(base, rec);
+            return;
+        }
+        match self
+            .uf
+            .unify_closed_record_fresh_row(base, rec, row, fields, fresh_values)
+        {
+            Some(res) => self.finish_unify(res),
+            None => self.unify(base, rec),
+        }
+    }
+
+    /// Record the outcome of a unification: drain deferred obligations, then
+    /// report a clash.
+    fn finish_unify(&mut self, res: Result<(), crate::unify::Mismatch>) {
         // Obligations the unifier deferred are anchored where they arose.
         self.drain_pending();
         if let Err(m) = res {
@@ -1195,8 +1234,8 @@ impl<'a> Infer<'a> {
                 let row = self.uf.fresh_flex();
                 let constraint = self
                     .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.unify(tb, constraint);
+                    .fresh(Content::Structure(FlatTy::Record(map.clone(), Some(row))));
+                self.unify_record_constraint(tb, constraint, row, &map, false);
                 // D2 (lowering-path only): if the base is an unannotated sibling
                 // `Res::Def`, it resolved to a fresh flex above, so `tb`'s row
                 // stays open and reads back as the SUBSET of updated fields — but
@@ -1467,8 +1506,8 @@ impl<'a> Infer<'a> {
                 map.insert(field.clone(), fv);
                 let rec = self
                     .uf
-                    .fresh(Content::Structure(FlatTy::Record(map, Some(row))));
-                self.unify(tb, rec);
+                    .fresh(Content::Structure(FlatTy::Record(map.clone(), Some(row))));
+                self.unify_record_constraint(tb, rec, row, &map, true);
                 fv
             }
             Expr::Error => self.uf.fresh_flex(),
