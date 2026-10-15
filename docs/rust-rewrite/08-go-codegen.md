@@ -164,6 +164,44 @@ truth:
 Where each of these comes from in the lowering, and which are floor, is
 [`14-runtime-narrowing-taxonomy.md`](14-runtime-narrowing-taxonomy.md).
 
+#### Generic runtime helpers: the generic part is only the assertion
+
+Go compiles a generic function once per type *shape*, and it compiles that
+instance in the package that instantiates it: the app's `main`, not `rt`. Every
+Sky record alias is its own shape, because its field names and `sky:` tags are
+part of the struct type. So the body of an `rt` generic that emitted code
+instantiates with a record type is compiled once per record type, in the app's
+package, on every build of it.
+
+`rt.Coerce`, `rt.coerceInner`, `rt.ResultCoerce` and `rt.MaybeCoerce` are
+therefore thin shells. The generic part holds the fast-path `v.(T)` and the
+final assertion to `T`. The reflect fallback is non-generic and compiled once in
+`rt`: `coerceHead` / `coerceTail` (Coerce), `coerceInnerSlow`,
+`reflectResultFields`, `reflectMaybeFields`. The target crosses as
+`any(zero T)`, so `reflect.TypeOf(z)` and `z.(I)` read exactly what the generic
+body read, including `nil` for an interface target. Each step returns a boxed
+value that the shell asserts to `T`, at the same point the old body asserted
+it, so results, `TypeAssertionError`s and the `rt.Coerce: expected …` /
+`rt.coerceInner: type mismatch …` messages that `classifyPanic` reads are
+unchanged. The emitted Go is unchanged. Only the stack frame of a slow-path
+narrowing is named `rt.coerceTail` (or another step) instead of
+`rt.Coerce[…]`; the profiler reports both as Sky runtime plumbing.
+
+A Sky.Spa wasm client narrows each RPC response to its own record
+(`rt.ResultCoerceOk[Error, Shared_LoadKResp_R](…, rt.Coerce[…])`). With the
+fallback in the generic body, a generated web:app at 400 response types spent
+8.3 s of the 10.8 s its frontend `go build` spent in SSA on `rt.Coerce`,
+`rt.coerceInner` and `rt.makeFuncAdapter` instances, and took 13.7 s wall and
+4.3 GB peak (go1.26.1, `-c=8`). After the split: 2.6 s in SSA, 3.7 s wall,
+1.1 GB, and the whole `sky build --target web:app` went from 101.5 s and
+4.4 GB to 54.6 s and 1.1 GB. A new generic helper in `rt` keeps the same rule: anything that does
+not need `T` goes in a non-generic function.
+`runtime-go/rt/coerce_generic_shell_test.go` pins every branch of the shells.
+`rust/crates/sky/tests/spa_frontend_generic_scale_flow.rs` builds a wasm
+frontend with `n` and `2n` response types, reads the `-S` listing of `main`,
+and fails when a response type adds more than 800 bytes of `rt` generic
+instances (2,509 with the fallback in the body, 164 without).
+
 The **program entry** wraps the Task-typed `main` unconditionally — the CLAUDE.md
 "runtime auto-forces a Task-typed `main`" rule: `func main()` emits
 `rt.AnyTaskRun(<entry-expr>)` with no trailing `Task.run` (that call is a no-op at
