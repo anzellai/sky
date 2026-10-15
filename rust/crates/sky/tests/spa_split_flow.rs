@@ -9998,10 +9998,25 @@ fn whole_model_branches_share_one_model_wire_codec() {
         probe_dir.join("src/Shared.sky"),
     )
     .unwrap();
-    let names: Vec<String> = client_cases
+    // The SSR `sky-model` seed and the client's saved model are
+    // `Codec.toJson (Codec.auto m) m` of the app's Model. Go lowering gives
+    // every record alias with one field set one struct, declared in the order
+    // of the first alias it meets, and `Codec.auto` writes keys in struct
+    // order. A wire record with the Model's fields declared in chain order
+    // (`log` first) re-ordered the seed. The probe declares the Model in a
+    // module that imports `Shared`, as an app's `Types` module does.
+    let types_src = "module Types exposing (Model, encSeed)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Codec as Codec\n\
+         import Shared exposing (..)\n\n\n\
+         type alias Model =\n    { n : Int\n    , scale : Int\n    , log : String\n    }\n\n\n\
+         seedModel : Model\nseedModel =\n    { n = 2, scale = 3, log = \"\" }\n\n\n\
+         encSeed : String\nencSeed =\n    Codec.toJson (Codec.auto seedModel) seedModel\n";
+    let mut names: Vec<String> = client_cases
         .iter()
         .map(|(msg, _)| format!("enc{msg}"))
         .collect();
+    names.push("encSeed".to_string());
     std::fs::write(
         probe_dir.join("src/Main.sky"),
         format!(
@@ -10010,7 +10025,8 @@ fn whole_model_branches_share_one_model_wire_codec() {
              import Sky.Core.String as String\n\
              import Std.Codec as Codec\n\
              import Std.Log exposing (println)\n\
-             import Shared exposing (..)\n\n\n\
+             import Shared exposing (..)\n\
+             import Types exposing (encSeed)\n\n\n\
              {}\
              main =\n    println (String.join \"\\n\" [ {} ])\n",
             encodes.join(""),
@@ -10018,6 +10034,7 @@ fn whole_model_branches_share_one_model_wire_codec() {
         ),
     )
     .unwrap();
+    std::fs::write(probe_dir.join("src/Types.sky"), types_src).unwrap();
     let probe = Command::new(SKY)
         .args(["build", "src/Main.sky"])
         .current_dir(&probe_dir)
@@ -10038,8 +10055,13 @@ fn whole_model_branches_share_one_model_wire_codec() {
     let lines: Vec<&str> = encoded.lines().collect();
     assert_eq!(
         lines.len(),
-        client_cases.len(),
-        "one encoded request per case:\n{encoded}"
+        client_cases.len() + 1,
+        "one encoded request per case, then the seed:\n{encoded}"
+    );
+    assert_eq!(
+        lines[client_cases.len()],
+        r#"{"n":2,"scale":3,"log":""}"#,
+        "the Model seed keeps the Model's declaration order"
     );
     for ((msg, want), got) in client_cases.iter().zip(lines) {
         assert_eq!(

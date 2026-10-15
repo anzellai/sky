@@ -2689,22 +2689,106 @@ fn open_type_word(surface: &str) -> Option<String> {
     None
 }
 
+/// The field order a generated wire record is DECLARED in, keyed by its field
+/// NAME set: the source order of the project record with exactly those fields
+/// (`ProjectShapes::record_by_fields`). Go lowering gives every record alias
+/// with one field set ONE struct, declared in the order of whichever alias it
+/// meets first (`lower::record_fieldsets`), and `Codec.auto` writes JSON keys
+/// in struct order. A wire record declared in chain (alphabetical) order with
+/// the same fields and types as the app's `Model` therefore re-ordered the
+/// keys of every `Codec.auto` encode of the Model: the SSR `sky-model` seed and
+/// the client's saved model. Declaring the wire record in the project
+/// record's order keeps that struct, and with it those bytes, as they are
+/// without the split. The codec chain (the RPC JSON order) does not change.
+type DeclOrders = HashMap<BTreeSet<String>, Vec<String>>;
+
+/// [`DeclOrders`] for the project's records.
+fn wire_decl_orders(shapes: &ProjectShapes) -> DeclOrders {
+    shapes
+        .record_by_fields
+        .iter()
+        .filter_map(|(set, key)| {
+            let fields = shapes.records.get(key)?;
+            Some((set.clone(), fields.iter().map(|(n, _)| n.clone()).collect()))
+        })
+        .collect()
+}
+
+/// The declared field order of a wire record whose fields (in codec chain
+/// order) are `fields`: a project record's order when [`DeclOrders`] has one
+/// for the same name set and it differs from the chain, else `None` (declare
+/// in chain order).
+fn wire_decl_order(fields: &[ModelFieldTy], orders: &DeclOrders) -> Option<Vec<usize>> {
+    let set: BTreeSet<String> = fields.iter().map(|f| f.name.clone()).collect();
+    if set.len() != fields.len() {
+        return None;
+    }
+    let order = orders.get(&set)?;
+    let idx: Vec<usize> = order
+        .iter()
+        .map(|n| fields.iter().position(|f| &f.name == n))
+        .collect::<Option<Vec<usize>>>()?;
+    if idx.len() != fields.len() || idx.iter().enumerate().all(|(i, j)| i == *j) {
+        return None;
+    }
+    Some(idx)
+}
+
+/// The `type alias <name> = { … }` declaration of a wire record and the
+/// constructor its `Codec.object` takes. Declared in `decl` order when given
+/// (see [`DeclOrders`]); the constructor then takes the fields in chain order
+/// (`\spaW0_ spaW1_ … -> { … }`), because `Codec.object` applies its
+/// constructor to the fields in the order the chain adds them.
+fn render_wire_record(
+    name: &str,
+    fields: &[ModelFieldTy],
+    decl: Option<&[usize]>,
+) -> (String, String) {
+    let order: Vec<usize> = match decl {
+        Some(d) => d.to_vec(),
+        None => (0..fields.len()).collect(),
+    };
+    let mut out = format!("type alias {name} =\n");
+    for (i, j) in order.iter().enumerate() {
+        let f = &fields[*j];
+        let lead = if i == 0 { "    { " } else { "    , " };
+        out.push_str(&format!("{lead}{} : {}\n", f.name, f.ty_name));
+    }
+    out.push_str("    }\n\n\n");
+    let ctor = if decl.is_some() {
+        let params: Vec<String> = (0..fields.len()).map(|i| format!("spaW{i}_")).collect();
+        let sets: Vec<String> = fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| format!("{} = spaW{i}_", f.name))
+            .collect();
+        format!("(\\{} -> {{ {} }})", params.join(" "), sets.join(", "))
+    } else {
+        name.to_string()
+    };
+    (out, ctor)
+}
+
 /// A `type alias <Name> = { … }` + its codec, rendered from a resolved field
 /// list (every field's `codec` is `Some`).
-fn render_wire_type(name: &str, codec_name: &str, fields: &[ModelFieldTy]) -> String {
+fn render_wire_type(
+    name: &str,
+    codec_name: &str,
+    fields: &[ModelFieldTy],
+    orders: &DeclOrders,
+) -> String {
     let mut out = String::new();
+    let mut ctor = name.to_string();
     if fields.is_empty() {
         out.push_str(&format!("type alias {name} =\n    {{}}\n\n\n"));
     } else {
-        out.push_str(&format!("type alias {name} =\n"));
-        for (i, f) in fields.iter().enumerate() {
-            let lead = if i == 0 { "    { " } else { "    , " };
-            out.push_str(&format!("{lead}{} : {}\n", f.name, f.ty_name));
-        }
-        out.push_str("    }\n\n\n");
+        let (decl, c) =
+            render_wire_record(name, fields, wire_decl_order(fields, orders).as_deref());
+        out.push_str(&decl);
+        ctor = c;
     }
     out.push_str(&format!("{codec_name} : Codec {name}\n{codec_name} =\n"));
-    out.push_str(&format!("    Codec.object {name}\n"));
+    out.push_str(&format!("    Codec.object {ctor}\n"));
     for f in fields {
         // Every field is resolved by construction; the fallback is defensive.
         let codec = f.codec.clone().unwrap_or_else(|| "Codec.string".into());
@@ -2729,6 +2813,8 @@ struct WireShapes {
     /// The `SpaModelWire_` declarations, rendered once each, ahead of the
     /// branch records.
     model_decls: String,
+    /// The order each wire record is declared in (see [`DeclOrders`]).
+    orders: DeclOrders,
 }
 
 impl WireShapes {
@@ -2769,14 +2855,14 @@ impl WireShapes {
              -- request that also carries Msg args. `Codec.inline` writes its fields\n\
              -- flat, so the request JSON is the Model fields, then the Msg args.\n",
         );
-        out.push_str(&format!("type alias {ty} =\n"));
-        for (i, f) in fields.iter().enumerate() {
-            let lead = if i == 0 { "    { " } else { "    , " };
-            out.push_str(&format!("{lead}{} : {}\n", f.name, f.ty_name));
-        }
-        out.push_str("    }\n\n\n");
+        let (decl, ctor) = render_wire_record(
+            &ty,
+            fields,
+            wire_decl_order(fields, &self.orders).as_deref(),
+        );
+        out.push_str(&decl);
         out.push_str(&format!(
-            "{builder} : Codec.ObjectCodec {ty} {ty}\n{builder} =\n    Codec.object {ty}\n"
+            "{builder} : Codec.ObjectCodec {ty} {ty}\n{builder} =\n    Codec.object {ctor}\n"
         ));
         for (name, _, codec) in &key {
             out.push_str(&format!(
@@ -2832,7 +2918,7 @@ impl WireShapes {
             );
         }
         match embed {
-            None => render_wire_type(name, codec_name, fields),
+            None => render_wire_type(name, codec_name, fields, &self.orders),
             Some((ty, builder)) => render_embedded_wire_type(name, codec_name, &ty, &builder, rest),
         }
     }
@@ -2916,6 +3002,7 @@ fn gen_shared(
     auto_codec_defs: &str,
     copied_exposing: &[String],
     session_proj: &[SessionProjField],
+    decl_orders: DeclOrders,
 ) -> String {
     let mut exposing: Vec<String> = copied_exposing.to_vec();
     let mut bodies = String::new();
@@ -2948,7 +3035,10 @@ fn gen_shared(
     // gets a one-line alias of each. The JSON a codec writes depends only on the
     // ordered (name, codec) list, which the key holds, so the wire bytes are
     // unchanged.
-    let mut shapes = WireShapes::default();
+    let mut shapes = WireShapes {
+        orders: decl_orders,
+        ..WireShapes::default()
+    };
     // Declare the embedded Model first, so every whole-model record (with or
     // without Msg args) shares its one field list.
     for w in wires {
@@ -4611,6 +4701,7 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         &auto_codec_defs,
         &copied_exposing,
         &session_projection,
+        wire_decl_orders(&shapes),
     );
     let push_mode = report.subscribes_topics || report.publishes;
     let broker_url = broker_url.map(str::trim).filter(|s| !s.is_empty());
