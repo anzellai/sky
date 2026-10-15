@@ -19015,10 +19015,10 @@
       "id": "flow:spa_split_flow",
       "modules_imported": 37,
       "path": "rust/crates/sky/tests/spa_split_flow.rs",
-      "refs_generous": 151,
-      "refs_qualified": 145,
+      "refs_generous": 153,
+      "refs_qualified": 147,
       "role": "FlowTest",
-      "sky_files": 128,
+      "sky_files": 131,
       "sky_toml_sections": []
     },
     {

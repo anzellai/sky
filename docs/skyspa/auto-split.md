@@ -1769,3 +1769,39 @@ client sent, byte for byte) and
 `generated_wire_grows_linearly_with_whole_model_branches` (Shared stays linear
 from N=25 to N=100) hold it; `CodecConformanceTest` pins that `Codec.inline`
 writes the same JSON as the flat record.
+
+### 27.1 Every wire type is closed
+
+The shared builder makes an open type in the Model wire fatal. `spaModelWireFields_`
+is ONE annotated value (a CAF), so an `any` or a type variable in
+`SpaModelWire_` is one fixed type for every whole-model request (the v0.27.0
+value restriction), and the backend failed `[E2012]` ("the one type of `a`")
+at each `Codec.inline .spaWholeModel_ spaModelWireFields_` use. The per-branch
+records before §27 hid the same gap, because each record's annotation filled
+its own `any`. Three shapes left a wire type open, and all are now named:
+
+- **A comment above a codec annotation.** The annotation reader sliced the
+  declaration with the comments above it and split at the first `:`. A doc
+  comment with a colon (`-- | The codec for a preset: …`) lost the codec's
+  surface, and every codec the split composed over it (`Codec.list`,
+  `Codec.maybe`, `Codec.dict`, nested) carried `any`. The reader now reads the
+  annotation without its comments.
+- **An unannotated codec binding.** `presetListCodec = Codec.list presetCodec`
+  has no `Codec <T>` line to copy. The split named its type with the
+  solved-type renderer, which writes a record as `any`, so the wire held
+  `List any`. The resolver now spells the solved type through the project's
+  shapes (a record by its alias name, `List Preset`) and seeds the named types
+  into `Shared`; a type it cannot spell is refused with a request to annotate
+  the binding.
+- **A record alias with type parameters.** `type alias Paged a = { … }` used as
+  `Paged Item` was written as the bare `Paged`, leaving `a` free. The split
+  recovers the arguments of each use from its fields, names the use
+  `Paged Item`, and derives one codec per use (`autoPaged_ItemCodec_ : Codec
+  (Paged Item)`). A parameter no field shows is refused with a request to
+  declare a `Codec (Paged …)` binding.
+
+`build_wire` refuses any generated field type that still holds `any` or a type
+variable (`open_type_word`), so a future resolver gap fails the split with a
+clear message instead of `[E2012]` in generated code. The `spa_split_flow`
+test `generated_wire_types_name_every_type_they_hold` (fixture
+`spa-wire-type-names`) checks both legs of an app with all three shapes.

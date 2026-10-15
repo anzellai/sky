@@ -1,0 +1,9 @@
+module Types exposing (Preset)
+
+-- A record the Model holds in several shapes; its codec lives in `Data`.
+
+
+type alias Preset =
+    { code : String
+    , weight : Int
+    }
