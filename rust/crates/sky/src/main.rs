@@ -139,8 +139,22 @@ fn take_go_build_flags(
 ) -> Result<(Vec<String>, Vec<(&'static str, String)>), String> {
     let mut rest = Vec::with_capacity(args.len());
     let mut env = Vec::new();
-    for a in args {
-        if a == "--no-trimpath" {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let jobs = if a == "--go-jobs" {
+            Some(
+                it.next()
+                    .ok_or("--go-jobs needs a value: a whole number >= 1, or `auto`")?
+                    .clone(),
+            )
+        } else {
+            a.strip_prefix("--go-jobs=").map(str::to_string)
+        };
+        if let Some(n) = jobs {
+            // Checked here, so a bad value fails before any work starts.
+            project::go_jobs::parse_user(Some(&n))?;
+            env.push((project::go_jobs::ENV_JOBS, n));
+        } else if a == "--no-trimpath" {
             env.push((project::go_cmd::ENV_TRIMPATH, "0".to_string()));
         } else {
             rest.push(a.clone());
@@ -16091,6 +16105,20 @@ mod tests {
         let (rest, env) = take_go_build_flags(&args).unwrap();
         assert_eq!(rest, ["build", "src/Main.sky"]);
         assert_eq!(env, vec![(project::go_cmd::ENV_TRIMPATH, "0".to_string())]);
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (rest, env) =
+            take_go_build_flags(&v(&["build", "--go-jobs", "3", "src/Main.sky"])).unwrap();
+        assert_eq!(rest, ["build", "src/Main.sky"]);
+        assert_eq!(env, vec![(project::go_jobs::ENV_JOBS, "3".to_string())]);
+        let (_, env) = take_go_build_flags(&v(&["run", "--go-jobs=auto"])).unwrap();
+        assert_eq!(env, vec![(project::go_jobs::ENV_JOBS, "auto".to_string())]);
+        for bad in [
+            &["build", "--go-jobs"][..],
+            &["build", "--go-jobs=0"],
+            &["build", "--go-jobs", "x"],
+        ] {
+            assert!(take_go_build_flags(&v(bad)).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

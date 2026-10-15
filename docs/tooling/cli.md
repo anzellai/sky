@@ -157,24 +157,31 @@ Linux, capped by the cgroup's remaining limit in a container. The plan
 estimates each leg from the size of its generated sources, and raises each
 figure to the peak the leg measured on a previous build when that was more
 (each leg keeps the largest it has seen in its own `sky-out/`,
-`.sky-front-peak-bytes` and `.sky-go-peak-bytes`; a record from a compiler
+`.sky-front-peak-bytes` and `.sky-go-peak-bytes`, which covers `main`'s compile
+and the link; a record from a compiler
 before v0.25.18 is ignored). When memory cannot be read, the legs run serially.
 `SKY_BUILD_SERIAL=1` forces serial and `SKY_BUILD_PARALLEL=1` forces parallel.
 The build prints its decision in the `== building … ==` line and in the
 `--timings` report.
 
 Go compile parallelism. `go build` compiles up to one package per CPU at the
-same time, and the compile of a large app's generated `main` package is the
-largest process in a build (about 2.2 GB for a 22k-line app). So `sky build`
-passes `go build -p <n>` when the available memory does not hold one such
-compile per CPU plus the 1 GB reserve, with `n` the number of compiles it does
-hold (at least 1). The per-compile peak is an estimate from the size of the
-generated `main.go`, raised to the largest Go process measured on the project's
-previous builds (`sky-out/.sky-go-peak-bytes`) when that was more. Unknown memory builds one package at a time. When a
-client build runs its legs in parallel, it sets each leg's `-p` from the memory
-both legs share. `SKY_GO_BUILD_JOBS=<n>` sets `-p <n>` yourself (`auto` decides
-as above), and a `-p` already in `GOFLAGS` is kept. The decision is printed
-under the `--timings` table as `go build: -p …`.
+same time. Inside one `go build` the generated `main` package always compiles
+alone (every other package is one of its dependencies), so a limit on `-p`
+protects no memory from `main`: it only limits the dependency compiles that run
+beside one another. So `sky build` sizes `-p` from the dependency compiles: the
+largest one (the generated `sky-out/skyffi` package for a project with large Go
+FFI bindings, estimated from its size, else about 0.7 GB, or the largest
+dependency peak measured on an earlier build of the project,
+`sky-out/.sky-go-dep-peak-bytes`) plus as many others of about 0.7 GB each as
+the available memory holds after the 1 GB reserve. When that is one per CPU, Go
+keeps its default. A build records a dependency peak only when its dependencies
+compiled and its `main` did not (Go's action graph says which ran), so a cache
+hit or a `main` compile never sets it. Unknown memory builds one package at a
+time. When a client build runs its legs in parallel, it sets each leg's `-p`
+from the memory both legs share. `--go-jobs <n>` (or `SKY_GO_BUILD_JOBS=<n>`)
+sets `-p <n>` yourself (`auto` decides as above), and a `-p` already in
+`GOFLAGS` is kept. The decision is printed under the `--timings` table as
+`go build: -p …`.
 
 Build identity. The app's version, commit and build time are automatic: no
 flag, no environment variable, no CI step. `sky build` writes them into

@@ -1266,13 +1266,16 @@ fn run_wasm_build(out_dir: &Path, jobs: Option<&str>) -> Result<(), String> {
     // The one Go command builder (go_cmd.rs): `-trimpath`, Sky's GOFLAGS,
     // `-ldflags=-s -w`, GOOS=js GOARCH=wasm, and Sky's isolated, bounded build
     // cache. The wasm build is a SEPARATE cache namespace (GOOS=js/GOARCH=wasm).
+    // `-debug-actiongraph` tells `go_jobs::record_peaks` which packages
+    // compiled; it is not part of any cache key.
+    let graph = crate::go_jobs::action_graph_flag(out_dir);
     let mut cmd = crate::go_cmd::GoBuild {
         dir: out_dir,
         target: crate::go_cmd::Target::Wasm,
         jobs,
         output: Some(std::ffi::OsStr::new("main.wasm")),
         packages: &["."],
-        extra: &[],
+        extra: &[graph.as_str()],
     }
     .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.
@@ -1390,13 +1393,16 @@ fn run_go_build_once(
     // user's, plus `-mod=mod -buildvcs=false`), the explicit CGO_ENABLED, and
     // Sky's isolated, size-bounded build cache (~/.sky/go-build, honouring an
     // explicit user GOCACHE, with the unwritable-$HOME module-cache fallback).
+    // `-debug-actiongraph` tells `go_jobs::record_peaks` which packages
+    // compiled; it is not part of any cache key.
+    let graph = crate::go_jobs::action_graph_flag(out_dir);
     let cmd = crate::go_cmd::GoBuild {
         dir: out_dir,
         target: crate::go_cmd::Target::Native { cgo: cgo == "1" },
         jobs,
         output: Some(std::ffi::OsStr::new(bin_name)),
         packages: &["."],
-        extra: &[],
+        extra: &[graph.as_str()],
     }
     .command();
     // Hold the cache shared for the whole build: a concurrent clean waits.

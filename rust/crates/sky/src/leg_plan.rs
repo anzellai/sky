@@ -17,14 +17,16 @@
 //!     `project::go_jobs`). A record alone would under-state a build whose Go
 //!     came from the cache.
 //!   * In parallel, the plan also sets each leg's `go build -p`
-//!     (`SKY_GO_BUILD_JOBS`) to the number of compiles per leg the memory left
-//!     after both `sky` processes holds, unless the user set it.
+//!     (`SKY_GO_BUILD_JOBS`), unless the user set it, from the leg's largest
+//!     DEPENDENCY compile (`project::go_jobs`): what is left after both `sky`
+//!     processes must hold both legs' dependency compiles at once (half each),
+//!     and one leg's dependency compiles beside the other leg's `main`.
 //!   * Available memory is `project::memory::available_memory`.
 //!   * Unknown memory → serial: a slower build is recoverable, an OOM-killed one
 //!     is not.
 //!   * `SKY_BUILD_SERIAL=1` forces serial, `SKY_BUILD_PARALLEL=1` forces parallel.
 
-use project::go_jobs::{FRONT_PEAK_RECORD, GO_PEAK_RECORD};
+use project::go_jobs::{compiles_that_fit, largest_dep_for, FRONT_PEAK_RECORD, GO_PEAK_RECORD};
 use project::memory::{gib, recorded_peak, RESERVE_BYTES};
 use std::path::Path;
 
@@ -49,8 +51,12 @@ const GO_BYTES_PER_SOURCE_BYTE: u64 = 1200;
 pub struct LegNeed {
     /// The leg's `sky` process (parse, typecheck, lower + emit).
     pub front: u64,
-    /// The leg's largest Go tool process (`compile` / `link`).
+    /// The leg's largest Go tool process (`compile` / `link`): its `main`
+    /// compile, kept at the largest measured.
     pub go: u64,
+    /// The leg's largest dependency compile (`project::go_jobs`), which
+    /// sizes its `-p`.
+    pub dep: u64,
 }
 
 impl LegNeed {
@@ -111,14 +117,16 @@ pub fn decide(
             reason: format!("serial (available memory unknown; {legs})"),
         },
         Some(avail) if avail >= need => {
-            // Compiles per leg: what is left after both `sky` processes and the
-            // reserve, shared by one compile of each leg per slot.
+            // Compiles per leg. What is left after both `sky` processes and
+            // the reserve must hold both legs' dependency compiles at once
+            // (half each), and one leg's dependency compiles beside the other
+            // leg's `main` (a `main` compiles alone within its own leg).
             let left = avail
                 .saturating_sub(RESERVE_BYTES)
                 .saturating_sub(backend.front)
                 .saturating_sub(frontend.front);
-            let per_slot = backend.go.saturating_add(frontend.go).max(1);
-            let slots = ((left / per_slot) as usize).max(1);
+            let room = (left / 2).min(left.saturating_sub(backend.go.max(frontend.go)));
+            let slots = compiles_that_fit(room, backend.dep.max(frontend.dep));
             let go_jobs = (slots < cpus.max(1)).then_some(slots);
             let jobs = match go_jobs {
                 Some(n) => format!("; go build -p {n} per leg"),
@@ -152,6 +160,7 @@ pub fn estimate_from_source(leg_source_bytes: u64) -> LegNeed {
         front: FRONT_BASE_BYTES
             .saturating_add(leg_source_bytes.saturating_mul(FRONT_BYTES_PER_SOURCE_BYTE)),
         go: GO_BASE_BYTES.saturating_add(leg_source_bytes.saturating_mul(GO_BYTES_PER_SOURCE_BYTE)),
+        dep: project::go_jobs::OTHER_COMPILE_BYTES,
     }
 }
 
@@ -167,6 +176,7 @@ pub fn leg_need(leg_dir: &Path) -> (LegNeed, bool) {
         LegNeed {
             front: front.max(est.front),
             go: go.max(est.go),
+            dep: largest_dep_for(&out).0,
         },
         front > est.front || go > est.go,
     )
@@ -200,7 +210,11 @@ mod tests {
     const MB: u64 = 1 << 20;
 
     fn leg(front: u64, go: u64) -> LegNeed {
-        LegNeed { front, go }
+        LegNeed {
+            front,
+            go,
+            dep: project::go_jobs::OTHER_COMPILE_BYTES,
+        }
     }
 
     #[test]
@@ -213,10 +227,12 @@ mod tests {
         let p = decide(false, false, b, f, "(measured)", Some(10 * GB), 8);
         assert!(p.parallel, "{p:?}");
         assert!(p.reason.starts_with("parallel ("), "{p:?}");
-        // 10 GB - 1 GB - 1.4 GB leaves 7.6 GB = 2 slots of 3.3 GB: -p 2 per leg.
-        assert_eq!(p.go_jobs, Some(2), "{p:?}");
-        assert!(p.reason.contains("go build -p 2 per leg"), "{p:?}");
-        // Exactly at the line is still parallel, with one compile per leg.
+        // 10 GB - 1 GB - 1.4 GB leaves 7.6 GB; half is 3.8 GB, which holds a
+        // 0.7 GB dependency compile + 4 others: -p 5 per leg.
+        assert_eq!(p.go_jobs, Some(5), "{p:?}");
+        assert!(p.reason.contains("go build -p 5 per leg"), "{p:?}");
+        // Exactly at the line is still parallel, with one compile per leg:
+        // what is left beside the backend's 2.2 GB `main` holds one.
         let at = b.total() + f.total() + RESERVE_BYTES;
         let p = decide(false, false, b, f, "", Some(at), 8);
         assert!(p.parallel);
