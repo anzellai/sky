@@ -10,6 +10,14 @@
 //! invocation, so they are cached under the input's SHA-256: a rebuild whose
 //! wasm did not change copies the stored result instead of compressing again.
 //!
+//! Several assets are compressed at once (each in its own thread), so every
+//! store goes through its own temporary name, and every hit is checked by
+//! decompressing the stored entry and comparing it with the input: an entry
+//! that does not decompress to exactly the input is removed and the tool runs.
+//! (Before v0.27.9 the temporary name was `.tmp-<pid>-<ext>`, one per process
+//! and tool, so two brotli threads of one build could store each other's
+//! output under the wrong key, and every later build would have served it.)
+//!
 //! The cache lives in `~/.cache/sky/precompress` (or `$XDG_CACHE_HOME/sky/…`),
 //! outside the project, because a Std.App `--target web:app` build restages its
 //! whole generated project on every build. It keeps the newest
@@ -17,7 +25,8 @@
 //! so the cache can never fail a build.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// How many cached results to keep (newest by mtime). A multi-MB wasm is
 /// ~2 MB compressed, so this bounds the cache to tens of MB.
@@ -30,18 +39,22 @@ pub struct Tool {
     pub args: &'static [&'static str],
     /// Output extension: the tool writes `<file>.<ext>`.
     pub ext: &'static str,
+    /// Arguments that decompress stdin to stdout, to check a cached entry.
+    pub decompress: &'static [&'static str],
 }
 
 pub const GZIP: Tool = Tool {
     program: "gzip",
     args: &["-9", "-k", "-f"],
     ext: "gz",
+    decompress: &["-d", "-c"],
 };
 
 pub const BROTLI: Tool = Tool {
     program: "brotli",
     args: &["-q", "11", "-k", "-f"],
     ext: "br",
+    decompress: &["-d", "-c"],
 };
 
 /// What [`compress`] did.
@@ -83,13 +96,17 @@ pub fn compress(file: &Path, tool: &Tool, cache: Option<&Path>) -> Outcome {
     // (a Nix store). Neither the cache copy nor the tool can open it for
     // writing, so remove it first; the directory is ours and writable.
     let _ = std::fs::remove_file(&out);
-    let cached = cache.and_then(|dir| {
-        let bytes = std::fs::read(file).ok()?;
-        Some(dir.join(cache_key(&bytes, tool)))
-    });
-    if let Some(c) = &cached {
+    let input = cache.and_then(|_| std::fs::read(file).ok());
+    let cached = cache
+        .zip(input.as_ref())
+        .map(|(dir, bytes)| dir.join(cache_key(bytes, tool)));
+    if let (Some(c), Some(bytes)) = (&cached, &input) {
         let hit = std::fs::metadata(c).map(|m| m.len() > 0).unwrap_or(false);
-        if hit && std::fs::copy(c, &out).is_ok() {
+        if hit && !decompresses_to(c, bytes, tool) {
+            // Not this input's result (a store raced by another writer, a
+            // torn or foreign file): drop it and compress.
+            let _ = std::fs::remove_file(c);
+        } else if hit && std::fs::copy(c, &out).is_ok() {
             // Touch so pruning keeps what is in use.
             let _ = std::fs::File::options()
                 .append(true)
@@ -109,14 +126,45 @@ pub fn compress(file: &Path, tool: &Tool, cache: Option<&Path>) -> Outcome {
     }
     if let (Some(c), Some(dir)) = (&cached, cache) {
         // Store via a temp name + rename so a concurrent build never reads a
-        // half-written entry.
-        let tmp = dir.join(format!(".tmp-{}-{}", std::process::id(), tool.ext));
+        // half-written entry. The name is unique to this call (process, and a
+        // counter across this process's threads), so two compressions running
+        // at once never share it.
+        let tmp = dir.join(format!(
+            ".tmp-{}-{}-{}",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+            tool.ext
+        ));
         if std::fs::copy(&out, &tmp).is_ok() && std::fs::rename(&tmp, c).is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
         prune(dir, CACHE_KEEP);
     }
     Outcome::Compressed
+}
+
+/// Distinguishes the temporary store names of one process's calls.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Whether the cached `entry` decompresses (with `tool`) to exactly `input`.
+/// Any failure to check is a "no": the caller compresses again.
+fn decompresses_to(entry: &Path, input: &[u8], tool: &Tool) -> bool {
+    let Ok(stored) = std::fs::File::open(entry) else {
+        return false;
+    };
+    let Ok(child) = Command::new(tool.program)
+        .args(tool.decompress)
+        .stdin(stored)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    match child.wait_with_output() {
+        Ok(o) => o.status.success() && o.stdout == input,
+        Err(_) => false,
+    }
 }
 
 /// Keep only the newest `keep` entries in `dir`. Best-effort.
@@ -157,7 +205,7 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nfor a in \"$@\"; do f=\"$a\"; done\necho run >> '{}'\ncp \"$f\" \"$f.fk\"\n",
+                "#!/bin/sh\nif [ \"$1\" = -d ]; then exec cat; fi\nfor a in \"$@\"; do f=\"$a\"; done\necho run >> '{}'\ncp \"$f\" \"$f.fk\"\n",
                 log.display()
             ),
         )
@@ -170,6 +218,7 @@ mod tests {
                 program,
                 args: &["-k", "-f"],
                 ext: "fk",
+                decompress: &["-d"],
             },
             log,
         )
@@ -244,6 +293,116 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// Regression (B1): several assets compressed at once by one process. The
+    /// temporary store name was `.tmp-<pid>-<ext>`, shared by every thread of
+    /// the process, so one thread could rename another's output into its own
+    /// cache key. Every stored entry must be its own input's result.
+    #[test]
+    fn files_compressed_at_once_each_store_their_own_result() {
+        let d = scratch("parallel");
+        let (tool, _log) = fake_tool(&d);
+        let cache = d.join("cache");
+        for round in 0..3u8 {
+            let files: Vec<PathBuf> = (0..16u8)
+                .map(|i| {
+                    let f = d.join(format!("r{round}-f{i}.wasm"));
+                    std::fs::write(&f, vec![round.wrapping_mul(31).wrapping_add(i); 2 << 20])
+                        .unwrap();
+                    f
+                })
+                .collect();
+            let start = std::sync::Barrier::new(files.len());
+            std::thread::scope(|s| {
+                for f in &files {
+                    let (start, tool, cache) = (&start, &tool, &cache);
+                    s.spawn(move || {
+                        start.wait();
+                        compress(f, tool, Some(cache))
+                    });
+                }
+            });
+            for f in &files {
+                let input = std::fs::read(f).unwrap();
+                let entry = cache.join(cache_key(&input, &tool));
+                if let Ok(stored) = std::fs::read(&entry) {
+                    assert!(
+                        stored == input,
+                        "the cache entry of {} holds another file's output",
+                        f.display()
+                    );
+                }
+            }
+            prune(&cache, 0);
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A cached entry is used only when it decompresses to the input. A wrong
+    /// entry (stored before the fix above, or by any other writer) is replaced.
+    #[test]
+    fn a_cache_entry_that_is_not_the_inputs_result_is_replaced() {
+        let d = scratch("poisoned");
+        let (tool, log) = fake_tool(&d);
+        let cache = d.join("cache");
+        let f = d.join("main.abc.wasm");
+        std::fs::write(&f, b"the real wasm").unwrap();
+        let entry = cache.join(cache_key(b"the real wasm", &tool));
+        std::fs::write(&entry, b"another file's output").unwrap();
+        assert_eq!(compress(&f, &tool, Some(&cache)), Outcome::Compressed);
+        assert_eq!(runs(&log), 1, "a wrong entry must not be served");
+        assert_eq!(
+            std::fs::read(d.join("main.abc.wasm.fk")).unwrap(),
+            b"the real wasm"
+        );
+        assert_eq!(std::fs::read(&entry).unwrap(), b"the real wasm");
+        // And now it is a hit.
+        assert_eq!(compress(&f, &tool, Some(&cache)), Outcome::CacheHit);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The real tools: compressing through the cache, hit or miss, writes the
+    /// same bytes as `gzip -9` / `brotli -q 11` run by hand.
+    #[test]
+    fn the_output_is_the_tools_own_output() {
+        let d = scratch("bytes");
+        let f = d.join("main.0123.wasm");
+        let content: Vec<u8> = (0..300_000u32).map(|i| (i * 7 % 251) as u8).collect();
+        std::fs::write(&f, &content).unwrap();
+        let have_brotli = Command::new("brotli").arg("--version").output().is_ok();
+        let tools: &[&Tool] =
+            if crate::live_gate::required(crate::live_gate::Need::Brotli, have_brotli) {
+                &[&GZIP, &BROTLI]
+            } else {
+                &[&GZIP]
+            };
+        for tool in tools {
+            let reference = d.join("ref");
+            std::fs::create_dir_all(&reference).unwrap();
+            let rf = reference.join("main.0123.wasm");
+            std::fs::copy(&f, &rf).unwrap();
+            assert!(Command::new(tool.program)
+                .args(tool.args)
+                .arg(&rf)
+                .status()
+                .unwrap()
+                .success());
+            let want =
+                std::fs::read(reference.join(format!("main.0123.wasm.{}", tool.ext))).unwrap();
+            let out = d.join(format!("main.0123.wasm.{}", tool.ext));
+            for expect in [Outcome::Compressed, Outcome::CacheHit] {
+                assert_eq!(compress(&f, tool, Some(&d.join("cache"))), expect);
+                assert_eq!(
+                    std::fs::read(&out).unwrap(),
+                    want,
+                    "{} ({expect:?})",
+                    tool.program
+                );
+            }
+            let _ = std::fs::remove_dir_all(&reference);
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn no_cache_dir_always_runs_the_tool() {
         let d = scratch("nocache");
@@ -263,6 +422,7 @@ mod tests {
             program: "sky-no-such-compressor",
             args: &[],
             ext: "zz",
+            decompress: &[],
         };
         let f = d.join("a.wasm");
         std::fs::write(&f, b"x").unwrap();

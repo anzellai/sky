@@ -81,6 +81,9 @@ pub enum Need {
     AndroidEmulator,
     /// Node.js, for the tests that run a `scripts/*.mjs` helper.
     Node,
+    /// The `brotli` command-line tool, for the tests that compare the
+    /// precompressed web assets with its own output.
+    Brotli,
 }
 
 impl Need {
@@ -115,6 +118,7 @@ impl Need {
             Need::Node => {
                 "install Node.js 20+ (the e2e harnesses under scripts/ are Node programs)"
             }
+            Need::Brotli => "install brotli (`brew install brotli`, or `apt-get install brotli`)",
         }
     }
 
@@ -128,6 +132,7 @@ impl Need {
             Need::AndroidSdk => "the Android SDK and a JDK",
             Need::AndroidEmulator => "the Android emulator with an AVD",
             Need::Node => "Node.js",
+            Need::Brotli => "the brotli tool",
         }
     }
 }
