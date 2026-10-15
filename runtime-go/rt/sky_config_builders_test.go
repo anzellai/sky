@@ -38,6 +38,15 @@ import (
 // ApplyConfig, exactly as the compiler-emitted `main` would.
 func applyCfg(cfg any) { ApplyConfig(cfg) }
 
+// resetAllConfigSuffixes resets every prefixed Sky.Config suffix a builder can
+// write (configKeyToEnvSuffix), each restored when the test ends.
+func resetAllConfigSuffixes(t *testing.T) {
+	t.Helper()
+	for _, suffix := range configKeyToEnvSuffix {
+		resetEnvFor(t, suffix)
+	}
+}
+
 // resetLiteralEnv clears a LITERAL (non-`[env]`-prefixed) env var and its
 // provenance marks for a subtest, restoring the prior state after. The prefixed
 // sibling is resetEnvFor (sky_config_test.go).
@@ -63,8 +72,20 @@ func resetLiteralEnv(t *testing.T, name string) {
 // chain (applyBuilder) and checking the winner with skyGetenv — the same read
 // the runtime consumer uses. `withXVal` is the normalised string the builder
 // writes.
+//
+// A builder writes more than the suffix under test (`withSessions` writes
+// LIVE_STORE and LIVE_STORE_PATH), so each subtest resets every Sky.Config
+// suffix and its cleanup restores them all. Resetting only `suffix` left the
+// sibling in the withX layer for later tests: a `withSessions "redis"` kept
+// LIVE_STORE at redis, and a Sky.Spa boot test later in the run saw a redis
+// store it never configured.
 func fourLayerPrecedence(t *testing.T, suffix string, applyBuilder func(), withXVal string) {
 	t.Helper()
+	resetEnvFor := func(t *testing.T, suffix string) {
+		t.Helper()
+		resetAllConfigSuffixes(t)
+		resetEnvFor(t, suffix)
+	}
 	t.Run("seed_only_beats_fallback", func(t *testing.T) {
 		resetEnvFor(t, suffix)
 		seedLegacy(suffix, "seededval")
