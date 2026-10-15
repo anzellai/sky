@@ -106,7 +106,7 @@ pub enum GoBin {
     Or,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(PartialEq, Debug)]
 pub struct GoExpr {
     pub kind: GoExprKind,
     pub ty: GoTy,
@@ -115,6 +115,42 @@ pub struct GoExpr {
 impl GoExpr {
     pub fn new(kind: GoExprKind, ty: GoTy) -> Self {
         GoExpr { kind, ty }
+    }
+
+    /// Take the node's kind, leaving `Nil` in its place. `GoExpr` has a `Drop`
+    /// impl, so a kind cannot be moved out of it by a pattern; this is the way
+    /// to consume one.
+    pub fn take_kind(&mut self) -> GoExprKind {
+        std::mem::replace(&mut self.kind, GoExprKind::Nil)
+    }
+
+    /// Consume the node into its kind and type (see [`GoExpr::take_kind`]).
+    pub fn into_parts(mut self) -> (GoExprKind, GoTy) {
+        let kind = self.take_kind();
+        let ty = std::mem::replace(&mut self.ty, GoTy::Unit);
+        (kind, ty)
+    }
+}
+
+// A lowered expression is as deep as the Sky expression it comes from: a
+// left-nested `|>` pipeline or a generated record codec gives one `Call` level
+// per step. The derived clone and drop glue recurse once per level, which
+// overflowed a 2 MiB thread on a 20,000-step pipeline when the program was
+// dropped. Each level goes through `base::ensure_stack` instead, so depth is
+// bounded by memory, as in the walkers that build and read the tree.
+impl Clone for GoExpr {
+    fn clone(&self) -> Self {
+        base::ensure_stack(|| GoExpr {
+            kind: self.kind.clone(),
+            ty: self.ty.clone(),
+        })
+    }
+}
+
+impl Drop for GoExpr {
+    fn drop(&mut self) {
+        let kind = self.take_kind();
+        base::ensure_stack(move || drop(kind));
     }
 }
 

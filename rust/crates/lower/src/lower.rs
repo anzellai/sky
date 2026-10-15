@@ -1475,7 +1475,8 @@ fn import_module_map(db: &dyn SkyDb, m: base::ModuleId) -> HashMap<String, Strin
 /// by the type's final segment. Bare names and unmapped qualifiers pass through
 /// unchanged.
 fn requalify_ty(t: &Ty, map: &HashMap<String, String>) -> Ty {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::App(name, args) => {
             let args: Vec<Ty> = args.iter().map(|a| requalify_ty(a, map)).collect();
             let n = name.as_str();
@@ -1500,7 +1501,7 @@ fn requalify_ty(t: &Ty, map: &HashMap<String, String>) -> Ty {
             ext.clone(),
         ),
         other => other.clone(),
-    }
+    })
 }
 
 #[allow(clippy::type_complexity)]
@@ -2024,7 +2025,8 @@ fn emit_type_decl(
 }
 
 fn collect_named(t: &GoTy, out: &mut Vec<String>) {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         GoTy::Named(n, args) => {
             if !n.starts_with("rt.") {
                 out.push(n.clone());
@@ -2055,7 +2057,7 @@ fn collect_named(t: &GoTy, out: &mut Vec<String>) {
             }
         }
         _ => {}
-    }
+    })
 }
 
 fn capitalize(s: &str) -> String {
@@ -2115,21 +2117,24 @@ fn rune_lit(s: &str) -> GoExpr {
 /// be resolved to a single Go type after the qualifier is dropped, so a union
 /// carrying it as a variant field is NOT sealed.
 fn ty_refs_ambiguous(t: &Ty, ambiguous: &HashSet<String>) -> bool {
-    match t {
-        Ty::App(n, args) => {
-            // Compare the BARE head. `ambiguous` holds bare names, while a
-            // reference can arrive module-qualified — from
-            // `ast_type_to_ty_qualified` (always could) and now from the checker
-            // for unions too. Comparing the full name would silently make this
-            // set inert and seal the very unions the floor exists to protect.
-            ambiguous.contains(ty::nominal::base(n.as_str()))
-                || args.iter().any(|a| ty_refs_ambiguous(a, ambiguous))
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match t {
+            Ty::App(n, args) => {
+                // Compare the BARE head. `ambiguous` holds bare names, while a
+                // reference can arrive module-qualified — from
+                // `ast_type_to_ty_qualified` (always could) and now from the checker
+                // for unions too. Comparing the full name would silently make this
+                // set inert and seal the very unions the floor exists to protect.
+                ambiguous.contains(ty::nominal::base(n.as_str()))
+                    || args.iter().any(|a| ty_refs_ambiguous(a, ambiguous))
+            }
+            Ty::Fun(a, b) => ty_refs_ambiguous(a, ambiguous) || ty_refs_ambiguous(b, ambiguous),
+            Ty::Tuple(xs) => xs.iter().any(|x| ty_refs_ambiguous(x, ambiguous)),
+            Ty::Record(fs, _) => fs.iter().any(|(_, x)| ty_refs_ambiguous(x, ambiguous)),
+            _ => false,
         }
-        Ty::Fun(a, b) => ty_refs_ambiguous(a, ambiguous) || ty_refs_ambiguous(b, ambiguous),
-        Ty::Tuple(xs) => xs.iter().any(|x| ty_refs_ambiguous(x, ambiguous)),
-        Ty::Record(fs, _) => fs.iter().any(|(_, x)| ty_refs_ambiguous(x, ambiguous)),
-        _ => false,
-    }
+    })
 }
 
 // ---- per-def lowering context ------------------------------------------
@@ -3538,31 +3543,34 @@ impl<'a> Ctx<'a> {
     /// expression carries its own returns, which belong to that IIFE's result
     /// type, not to this function's.
     fn coerce_tail_returns(&mut self, body: Vec<GoStmt>, to: &GoTy) -> Vec<GoStmt> {
-        body.into_iter()
-            .map(|s| match s {
-                GoStmt::Return(Some(e)) => GoStmt::Return(Some(self.eta_narrow(e, to))),
-                GoStmt::If(c, t, e) => GoStmt::If(
-                    c,
-                    self.coerce_tail_returns(t, to),
-                    self.coerce_tail_returns(e, to),
-                ),
-                GoStmt::IfTypeAssert {
-                    binder,
-                    ok,
-                    subj,
-                    ty,
-                    then,
-                } => GoStmt::IfTypeAssert {
-                    binder,
-                    ok,
-                    subj,
-                    ty,
-                    then: self.coerce_tail_returns(then, to),
-                },
-                GoStmt::Loop(b) => GoStmt::Loop(self.coerce_tail_returns(b, to)),
-                other => other,
-            })
-            .collect()
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            body.into_iter()
+                .map(|s| match s {
+                    GoStmt::Return(Some(e)) => GoStmt::Return(Some(self.eta_narrow(e, to))),
+                    GoStmt::If(c, t, e) => GoStmt::If(
+                        c,
+                        self.coerce_tail_returns(t, to),
+                        self.coerce_tail_returns(e, to),
+                    ),
+                    GoStmt::IfTypeAssert {
+                        binder,
+                        ok,
+                        subj,
+                        ty,
+                        then,
+                    } => GoStmt::IfTypeAssert {
+                        binder,
+                        ok,
+                        subj,
+                        ty,
+                        then: self.coerce_tail_returns(then, to),
+                    },
+                    GoStmt::Loop(b) => GoStmt::Loop(self.coerce_tail_returns(b, to)),
+                    other => other,
+                })
+                .collect()
+        })
     }
 
     fn lower_expr_inner(&mut self, e: ExprId, actual: &GoTy, expected: &GoTy) -> GoExpr {
@@ -3578,13 +3586,14 @@ impl<'a> Ctx<'a> {
             Expr::Binop { op, lhs, rhs, .. } => self.lower_binop(op.as_str(), *lhs, *rhs, actual),
             Expr::Negate(inner) => {
                 let x = self.lower_expr(*inner, actual);
+                let ty = x.ty.clone();
                 GoExpr::new(
                     GoExprKind::Binary(
                         GoBin::Sub,
-                        Box::new(GoExpr::new(GoExprKind::IntLit(0), x.ty.clone())),
-                        Box::new(x.clone()),
+                        Box::new(GoExpr::new(GoExprKind::IntLit(0), ty.clone())),
+                        Box::new(x),
                     ),
-                    x.ty,
+                    ty,
                 )
             }
             Expr::If { arms, els } => self.lower_if(arms, *els, actual),
@@ -5849,7 +5858,8 @@ impl<'a> Ctx<'a> {
     /// kernel call is dropped; a narrowing of any other value (a user def, a
     /// literal, an FFI return) is kept.
     fn kernel_to_kernel(e: GoExpr) -> GoExpr {
-        match e.kind {
+        let (kind, ty) = e.into_parts();
+        match kind {
             GoExprKind::Coerce {
                 inner,
                 from: GoTy::Any,
@@ -5861,7 +5871,7 @@ impl<'a> Ctx<'a> {
             {
                 *inner
             }
-            kind => GoExpr { kind, ty: e.ty },
+            kind => GoExpr { kind, ty },
         }
     }
 
@@ -5919,8 +5929,10 @@ impl<'a> Ctx<'a> {
         // Lower the field value; peel the `any(…)` widen a func-into-`any` slot
         // adds so we see the concrete function value + its Go func type.
         let mut target = self.lower_expr(field, &GoTy::Any);
-        while let GoExprKind::Widen(inner) = target.kind {
-            target = *inner;
+        while let GoExprKind::Widen(_) = &target.kind {
+            if let GoExprKind::Widen(inner) = target.take_kind() {
+                target = *inner;
+            }
         }
         // Determine param types + call style. An uncurried n-ary Go func
         // (`func(A, B) R` — how 2-arg Sky funcs emit) is called in one go; a
@@ -6798,12 +6810,15 @@ impl<'a> Ctx<'a> {
     /// `expr_children`, the canonical complete child enumerator, so a new AST
     /// node that adds a child there is covered here too.
     fn body_references_def(&self, e: ExprId, def: DefId) -> bool {
-        if matches!(&self.body.exprs[e], Expr::Var(Res::Def(d)) if *d == def) {
-            return true;
-        }
-        self.expr_children(e)
-            .into_iter()
-            .any(|c| self.body_references_def(c, def))
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            if matches!(&self.body.exprs[e], Expr::Var(Res::Def(d)) if *d == def) {
+                return true;
+            }
+            self.expr_children(e)
+                .into_iter()
+                .any(|c| self.body_references_def(c, def))
+        })
     }
 
     /// True when the subtree rooted at `e` contains a record UPDATE whose base
@@ -6812,17 +6827,20 @@ impl<'a> Ctx<'a> {
     /// carry a full-record update without dropping fields. Does NOT descend into
     /// nested lambdas (a different param binds `pid` there).
     fn param_is_updated(&self, e: ExprId, pid: LocalId) -> bool {
-        if let Expr::Update { base, .. } = &self.body.exprs[e] {
-            if matches!(&self.body.exprs[*base], Expr::Var(Res::Local(l)) if *l == pid) {
-                return true;
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            if let Expr::Update { base, .. } = &self.body.exprs[e] {
+                if matches!(&self.body.exprs[*base], Expr::Var(Res::Local(l)) if *l == pid) {
+                    return true;
+                }
             }
-        }
-        if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
-            return false;
-        }
-        self.expr_children(e)
-            .into_iter()
-            .any(|c| self.param_is_updated(c, pid))
+            if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
+                return false;
+            }
+            self.expr_children(e)
+                .into_iter()
+                .any(|c| self.param_is_updated(c, pid))
+        })
     }
 
     /// The first "fresh-value" kernel (`Uuid.v4` / entropy `Random.*` /
@@ -6833,34 +6851,37 @@ impl<'a> Ctx<'a> {
     /// value — the footgun that silently gave colliding UUIDs / a frozen clock
     /// after CAF memoisation landed.
     fn find_fresh_value_kernel(&self, e: ExprId) -> Option<(String, String)> {
-        match &self.body.exprs[e] {
-            // Direct kernel reference (rare at user sites).
-            Expr::Var(Res::Kernel { module, func })
-                if is_fresh_value_kernel(module.as_str(), func.as_str()) =>
-            {
-                return Some((module.as_str().to_string(), func.as_str().to_string()));
-            }
-            // The usual case: `Uuid.v4` is a `Res::Def` to the stdlib alias
-            // whose body is `Ffi.kernel "Uuid_v4"` — resolve it to the symbol.
-            Expr::Var(Res::Def(d)) => {
-                if let Some(sym) = self.kernel_alias.get(d) {
-                    if let Some((m, f)) = fresh_value_symbol_parts(sym) {
-                        return Some((m, f));
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match &self.body.exprs[e] {
+                // Direct kernel reference (rare at user sites).
+                Expr::Var(Res::Kernel { module, func })
+                    if is_fresh_value_kernel(module.as_str(), func.as_str()) =>
+                {
+                    return Some((module.as_str().to_string(), func.as_str().to_string()));
+                }
+                // The usual case: `Uuid.v4` is a `Res::Def` to the stdlib alias
+                // whose body is `Ffi.kernel "Uuid_v4"` — resolve it to the symbol.
+                Expr::Var(Res::Def(d)) => {
+                    if let Some(sym) = self.kernel_alias.get(d) {
+                        if let Some((m, f)) = fresh_value_symbol_parts(sym) {
+                            return Some((m, f));
+                        }
                     }
                 }
+                _ => {}
             }
-            _ => {}
-        }
-        // A fresh-value call inside a lambda fires per-call; skip that subtree.
-        if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
-            return None;
-        }
-        for c in self.expr_children(e) {
-            if let Some(hit) = self.find_fresh_value_kernel(c) {
-                return Some(hit);
+            // A fresh-value call inside a lambda fires per-call; skip that subtree.
+            if matches!(&self.body.exprs[e], Expr::Lambda { .. }) {
+                return None;
             }
-        }
-        None
+            for c in self.expr_children(e) {
+                if let Some(hit) = self.find_fresh_value_kernel(c) {
+                    return Some(hit);
+                }
+            }
+            None
+        })
     }
 
     /// Every child expression, for a NON-tail (`inTail = false`) walk. Includes
@@ -6874,16 +6895,19 @@ impl<'a> Ctx<'a> {
     /// omits, the param is widened to `any` so the access routes through
     /// `rt.Field` instead of emitting `v.Field` on a struct that lacks it.
     fn fields_read_on_local(&self, e: ExprId, param: LocalId, out: &mut HashSet<String>) {
-        if let Expr::Access(base, field) = &self.body.exprs[e] {
-            if let Expr::Var(Res::Local(l)) = &self.body.exprs[*base] {
-                if *l == param {
-                    out.insert(field.as_str().to_string());
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            if let Expr::Access(base, field) = &self.body.exprs[e] {
+                if let Expr::Var(Res::Local(l)) = &self.body.exprs[*base] {
+                    if *l == param {
+                        out.insert(field.as_str().to_string());
+                    }
                 }
             }
-        }
-        for c in self.expr_children(e) {
-            self.fields_read_on_local(c, param, out);
-        }
+            for c in self.expr_children(e) {
+                self.fields_read_on_local(c, param, out);
+            }
+        })
     }
 
     fn expr_children(&self, e: ExprId) -> Vec<ExprId> {
@@ -6939,7 +6963,8 @@ impl<'a> Ctx<'a> {
     /// (`if`/`case`/`let` bodies) recurse in tail; every other node breaks tail
     /// context and its children are walked NON-tail (arg positions never count).
     fn count_tail_self(&self, e: ExprId, def: DefId, arity: usize, in_tail: bool) -> usize {
-        match &self.body.exprs[e] {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match &self.body.exprs[e] {
             Expr::If { arms, els } if in_tail => {
                 arms.iter()
                     .map(|(_, b)| self.count_tail_self(*b, def, arity, true))
@@ -6964,46 +6989,51 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .map(|c| self.count_tail_self(*c, def, arity, false))
                 .sum(),
-        }
+        })
     }
 
     /// Count self-references in NON-tail position. Any self-call that is not a
     /// saturated tail call (wrong arity, or outside tail position) counts —
     /// a non-zero result disqualifies TCO.
     fn count_nontail_self(&self, e: ExprId, def: DefId, arity: usize, in_tail: bool) -> usize {
-        match &self.body.exprs[e] {
-            Expr::If { arms, els } if in_tail => {
-                arms.iter()
-                    .map(|(_, b)| self.count_nontail_self(*b, def, arity, true))
-                    .sum::<usize>()
-                    + self.count_nontail_self(*els, def, arity, true)
-            }
-            Expr::Let { body, .. } if in_tail => self.count_nontail_self(*body, def, arity, true),
-            Expr::Case { branches, .. } if in_tail => branches
-                .iter()
-                .map(|b| self.count_nontail_self(b.body, def, arity, true))
-                .sum(),
-            // Saturated tail call: don't count, but walk its args non-tail.
-            Expr::Call(callee, args)
-                if in_tail && self.is_self_call(*callee, def) && args.len() == arity =>
-            {
-                args.iter()
-                    .map(|a| self.count_nontail_self(*a, def, arity, false))
-                    .sum()
-            }
-            // Any other self-call (non-tail position, or wrong arity): count it.
-            Expr::Call(callee, args) if self.is_self_call(*callee, def) => {
-                1 + args
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match &self.body.exprs[e] {
+                Expr::If { arms, els } if in_tail => {
+                    arms.iter()
+                        .map(|(_, b)| self.count_nontail_self(*b, def, arity, true))
+                        .sum::<usize>()
+                        + self.count_nontail_self(*els, def, arity, true)
+                }
+                Expr::Let { body, .. } if in_tail => {
+                    self.count_nontail_self(*body, def, arity, true)
+                }
+                Expr::Case { branches, .. } if in_tail => branches
                     .iter()
-                    .map(|a| self.count_nontail_self(*a, def, arity, false))
-                    .sum::<usize>()
+                    .map(|b| self.count_nontail_self(b.body, def, arity, true))
+                    .sum(),
+                // Saturated tail call: don't count, but walk its args non-tail.
+                Expr::Call(callee, args)
+                    if in_tail && self.is_self_call(*callee, def) && args.len() == arity =>
+                {
+                    args.iter()
+                        .map(|a| self.count_nontail_self(*a, def, arity, false))
+                        .sum()
+                }
+                // Any other self-call (non-tail position, or wrong arity): count it.
+                Expr::Call(callee, args) if self.is_self_call(*callee, def) => {
+                    1 + args
+                        .iter()
+                        .map(|a| self.count_nontail_self(*a, def, arity, false))
+                        .sum::<usize>()
+                }
+                _ => self
+                    .expr_children(e)
+                    .iter()
+                    .map(|c| self.count_nontail_self(*c, def, arity, false))
+                    .sum(),
             }
-            _ => self
-                .expr_children(e)
-                .iter()
-                .map(|c| self.count_nontail_self(*c, def, arity, false))
-                .sum(),
-        }
+        })
     }
 
     /// Lower `e` at a TAIL position of a TCO'd def, pushing statements into
@@ -7012,36 +7042,39 @@ impl<'a> Ctx<'a> {
     /// scoping IIFE); a saturated self-call becomes a `continue` jump; every
     /// other leaf is a `return`.
     fn lower_tail_stmts(&mut self, e: ExprId, ret: &GoTy, out: &mut Vec<GoStmt>) {
-        match self.body.exprs[e].clone() {
-            Expr::If { arms, els } => self.build_tail_if_chain(&arms, els, ret, out),
-            Expr::Let { defs, body } => {
-                // Pre-register binders (forward refs). Def RHSs are lowered
-                // normally — a self-call in a let-RHS stays a recursive call
-                // (correct; only tail-position calls become jumps).
-                for d in &defs {
-                    for (bn, lid) in &d.binders {
-                        let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            match self.body.exprs[e].clone() {
+                Expr::If { arms, els } => self.build_tail_if_chain(&arms, els, ret, out),
+                Expr::Let { defs, body } => {
+                    // Pre-register binders (forward refs). Def RHSs are lowered
+                    // normally — a self-call in a let-RHS stays a recursive call
+                    // (correct; only tail-position calls become jumps).
+                    for d in &defs {
+                        for (bn, lid) in &d.binders {
+                            let _ = self.fresh_local_named(*lid, Some(bn.as_str()));
+                        }
+                    }
+                    for d in &defs {
+                        self.lower_let_def(d, out);
+                    }
+                    self.lower_tail_stmts(body, ret, out);
+                }
+                Expr::Case {
+                    subject, branches, ..
+                } => {
+                    self.emit_case(subject, &branches, ret, true, out);
+                }
+                _ => {
+                    if let Some(js) = self.try_tail_jump(e) {
+                        out.extend(js);
+                    } else {
+                        let g = self.lower_expr(e, ret);
+                        out.push(GoStmt::Return(Some(g)));
                     }
                 }
-                for d in &defs {
-                    self.lower_let_def(d, out);
-                }
-                self.lower_tail_stmts(body, ret, out);
             }
-            Expr::Case {
-                subject, branches, ..
-            } => {
-                self.emit_case(subject, &branches, ret, true, out);
-            }
-            _ => {
-                if let Some(js) = self.try_tail_jump(e) {
-                    out.extend(js);
-                } else {
-                    let g = self.lower_expr(e, ret);
-                    out.push(GoStmt::Return(Some(g)));
-                }
-            }
-        }
+        })
     }
 
     /// The tail-position `if`-chain of a TCO'd def: like `build_if_chain`, but
@@ -7109,7 +7142,8 @@ impl<'a> Ctx<'a> {
     /// dependency edge (degrading to source order — the prior behaviour), never a
     /// crash, but every `Expr` variant is covered here.
     fn collect_local_refs(&self, e: ExprId, out: &mut HashSet<LocalId>) {
-        match &self.body.exprs[e] {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match &self.body.exprs[e] {
             Expr::Var(Res::Local(l)) => {
                 out.insert(*l);
             }
@@ -7169,7 +7203,7 @@ impl<'a> Ctx<'a> {
                     self.collect_local_refs(b.body, out);
                 }
             }
-        }
+        })
     }
 
     /// Return the emission order of a `let` group's defs so each def is emitted
@@ -9450,7 +9484,8 @@ impl ListHof {
 /// Recursive, because a `Named`'s type arguments and a `Slice`'s element are
 /// just as capable of being erased as the outer type is.
 fn provable(t: &GoTy) -> bool {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         GoTy::Any | GoTy::TyVar(_) | GoTy::Struct(_) => false,
         GoTy::Bare(_) | GoTy::Unit => true,
         GoTy::Slice(e) => provable(e),
@@ -9458,7 +9493,7 @@ fn provable(t: &GoTy) -> bool {
         GoTy::Tuple(es) => es.iter().all(provable),
         GoTy::Named(_, args) => args.iter().all(provable),
         GoTy::Func(ps, r) => ps.iter().all(provable) && provable(r),
-    }
+    })
 }
 
 /// Narrow an operand of a Go string `+` to `string`. A statically-`string`
@@ -9522,45 +9557,48 @@ fn tuple_type_args(t: &GoTy) -> String {
 /// only — expressions are always proper IR nodes (keeps `codegen` a leaf, no
 /// crate cycle). Mirrors `codegen::render_ty`.
 fn render_goty(t: &GoTy) -> String {
-    match t {
-        GoTy::Bare(p) => p.go_name().to_string(),
-        GoTy::Unit => "struct{}".to_string(),
-        GoTy::Any => "any".to_string(),
-        GoTy::Named(n, args) if args.is_empty() => n.clone(),
-        GoTy::Named(n, args) => {
-            let a: Vec<String> = args.iter().map(render_goty).collect();
-            format!("{n}[{}]", a.join(", "))
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        match t {
+            GoTy::Bare(p) => p.go_name().to_string(),
+            GoTy::Unit => "struct{}".to_string(),
+            GoTy::Any => "any".to_string(),
+            GoTy::Named(n, args) if args.is_empty() => n.clone(),
+            GoTy::Named(n, args) => {
+                let a: Vec<String> = args.iter().map(render_goty).collect();
+                format!("{n}[{}]", a.join(", "))
+            }
+            GoTy::Slice(t) => format!("[]{}", render_goty(t)),
+            GoTy::Map(k, v) => format!("map[{}]{}", render_goty(k), render_goty(v)),
+            GoTy::Func(ps, r) => {
+                let a: Vec<String> = ps.iter().map(render_goty).collect();
+                format!("func({}) {}", a.join(", "), render_goty(r))
+            }
+            // Tuples render as the runtime `rt.TN[…]` generic instantiation with
+            // each element's concrete Go type (typed-tuple codegen). A
+            // `GoTy::Any` element renders to `"any"`, so a floor/type-var position
+            // stays `any` (partial typing, e.g. `rt.T2[any, int]`). Phase 0
+            // hardened the runtime reflection sites to accept these typed shapes.
+            GoTy::Tuple(xs) => match xs.len() {
+                // Typed structs `rt.T2`..`rt.T9`; arity ≥10 → slice-backed
+                // `rt.SkyTupleN` (must match codegen::render_tuple_ty + lower_tuple).
+                2..=9 => format!(
+                    "rt.T{}[{}]",
+                    xs.len(),
+                    xs.iter().map(render_goty).collect::<Vec<_>>().join(", ")
+                ),
+                _ => "rt.SkyTupleN".to_string(),
+            },
+            GoTy::TyVar(n) => n.clone(),
+            GoTy::Struct(fs) => {
+                let parts: Vec<String> = fs
+                    .iter()
+                    .map(|(n, t)| format!("{} {}", n.as_str(), render_goty(t)))
+                    .collect();
+                format!("struct{{ {} }}", parts.join("; "))
+            }
         }
-        GoTy::Slice(t) => format!("[]{}", render_goty(t)),
-        GoTy::Map(k, v) => format!("map[{}]{}", render_goty(k), render_goty(v)),
-        GoTy::Func(ps, r) => {
-            let a: Vec<String> = ps.iter().map(render_goty).collect();
-            format!("func({}) {}", a.join(", "), render_goty(r))
-        }
-        // Tuples render as the runtime `rt.TN[…]` generic instantiation with
-        // each element's concrete Go type (typed-tuple codegen). A
-        // `GoTy::Any` element renders to `"any"`, so a floor/type-var position
-        // stays `any` (partial typing, e.g. `rt.T2[any, int]`). Phase 0
-        // hardened the runtime reflection sites to accept these typed shapes.
-        GoTy::Tuple(xs) => match xs.len() {
-            // Typed structs `rt.T2`..`rt.T9`; arity ≥10 → slice-backed
-            // `rt.SkyTupleN` (must match codegen::render_tuple_ty + lower_tuple).
-            2..=9 => format!(
-                "rt.T{}[{}]",
-                xs.len(),
-                xs.iter().map(render_goty).collect::<Vec<_>>().join(", ")
-            ),
-            _ => "rt.SkyTupleN".to_string(),
-        },
-        GoTy::TyVar(n) => n.clone(),
-        GoTy::Struct(fs) => {
-            let parts: Vec<String> = fs
-                .iter()
-                .map(|(n, t)| format!("{} {}", n.as_str(), render_goty(t)))
-                .collect();
-            format!("struct{{ {} }}", parts.join("; "))
-        }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -9793,13 +9831,16 @@ mod tco_tests {
 
     /// Recursively test whether any `GoStmt` in `body` (or nested) matches `f`.
     fn any_stmt(body: &[GoStmt], f: &dyn Fn(&GoStmt) -> bool) -> bool {
-        body.iter().any(|s| {
-            f(s) || match s {
-                GoStmt::Loop(b) => any_stmt(b, f),
-                GoStmt::If(_, t, e) => any_stmt(t, f) || any_stmt(e, f),
-                GoStmt::IfTypeAssert { then, .. } => any_stmt(then, f),
-                _ => false,
-            }
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| {
+            body.iter().any(|s| {
+                f(s) || match s {
+                    GoStmt::Loop(b) => any_stmt(b, f),
+                    GoStmt::If(_, t, e) => any_stmt(t, f) || any_stmt(e, f),
+                    GoStmt::IfTypeAssert { then, .. } => any_stmt(then, f),
+                    _ => false,
+                }
+            })
         })
     }
 

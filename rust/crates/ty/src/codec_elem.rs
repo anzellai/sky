@@ -102,15 +102,18 @@ fn collection_free_elem(t: &Ty) -> Option<&'static str> {
 /// collections or function positions, because an element that cannot decode
 /// cannot decode wherever it is written.
 pub fn first_undeterminable(t: &Ty) -> Option<&'static str> {
-    if let Some(kind) = collection_free_elem(t) {
-        return Some(kind);
-    }
-    match t {
-        Ty::App(_, args) | Ty::Tuple(args) => args.iter().find_map(first_undeterminable),
-        Ty::Record(fields, _) => fields.iter().find_map(|(_, ft)| first_undeterminable(ft)),
-        Ty::Fun(a, b) => first_undeterminable(a).or_else(|| first_undeterminable(b)),
-        Ty::Var(_) | Ty::Unit | Ty::Error => None,
-    }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        if let Some(kind) = collection_free_elem(t) {
+            return Some(kind);
+        }
+        match t {
+            Ty::App(_, args) | Ty::Tuple(args) => args.iter().find_map(first_undeterminable),
+            Ty::Record(fields, _) => fields.iter().find_map(|(_, ft)| first_undeterminable(ft)),
+            Ty::Fun(a, b) => first_undeterminable(a).or_else(|| first_undeterminable(b)),
+            Ty::Var(_) | Ty::Unit | Ty::Error => None,
+        }
+    })
 }
 
 /// One offending `Codec.auto`-family call.

@@ -46,9 +46,14 @@ impl Event {
 
 /// Replay `events` into a green tree, pulling trivia + significant token text
 /// from `raw`/`src`. Every raw token is emitted exactly once, in order.
-pub(crate) fn build_tree(src: &str, raw: &[LexToken], mut events: Vec<Event>) -> GreenNode {
+///
+/// Also returns the tree's depth in nodes, which decides how the tree is
+/// dropped (see [`crate::drop_green_flat`]).
+pub(crate) fn build_tree(src: &str, raw: &[LexToken], mut events: Vec<Event>) -> (GreenNode, u32) {
     let mut builder = GreenNodeBuilder::new();
     let mut raw_pos = 0usize;
+    let mut depth = 0u32;
+    let mut max_depth = 0u32;
 
     // index of the final event (root Finish) so trailing trivia is flushed
     // into the root, not dropped.
@@ -91,6 +96,8 @@ pub(crate) fn build_tree(src: &str, raw: &[LexToken], mut events: Vec<Event>) ->
                 for &k in forward_kinds.iter().rev() {
                     if k != SyntaxKind::Tombstone {
                         builder.start_node(SkyLang::kind_to_raw(k));
+                        depth += 1;
+                        max_depth = max_depth.max(depth);
                     }
                 }
             }
@@ -99,6 +106,7 @@ pub(crate) fn build_tree(src: &str, raw: &[LexToken], mut events: Vec<Event>) ->
                     eat_trivia(&mut builder, src, raw, &mut raw_pos);
                 }
                 builder.finish_node();
+                depth = depth.saturating_sub(1);
             }
             Event::Token { kind } => {
                 eat_trivia(&mut builder, src, raw, &mut raw_pos);
@@ -127,7 +135,7 @@ pub(crate) fn build_tree(src: &str, raw: &[LexToken], mut events: Vec<Event>) ->
     // flush at the root so nothing is lost.
     eat_trivia(&mut builder, src, raw, &mut raw_pos);
 
-    builder.finish()
+    (builder.finish(), max_depth)
 }
 
 fn eat_trivia(

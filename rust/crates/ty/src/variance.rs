@@ -270,7 +270,8 @@ impl VarianceTable {
     /// The combined variance of every occurrence of the variable `v` in `t`,
     /// where `t` itself sits at polarity `pol`.
     pub fn occurrence(&self, v: &Name, t: &Ty, pol: Variance) -> Variance {
-        match t {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match t {
             Ty::Var(n) => {
                 if n == v {
                     pol
@@ -311,13 +312,14 @@ impl VarianceTable {
                 .iter()
                 .fold(Variance::Bi, |acc, x| acc.join(self.occurrence(v, x, pol))),
             Ty::Unit | Ty::Error => Variance::Bi,
-        }
+        })
     }
 
     /// Why `v` is not generalisable in `t`: the first position that makes it
     /// contravariant or invariant, in words for a diagnostic.
     pub fn reason(&self, v: &Name, t: &Ty, pol: Variance) -> Option<String> {
-        match t {
+        // One level per level of the tree it walks: grow the stack on demand.
+        base::ensure_stack(|| match t {
             Ty::Var(_) | Ty::Unit | Ty::Error => None,
             Ty::Fun(a, b) => {
                 if self.occurrence(v, a, pol.flip()) != Variance::Bi
@@ -352,12 +354,13 @@ impl VarianceTable {
             }
             Ty::Record(fields, _) => fields.iter().find_map(|(_, ft)| self.reason(v, ft, pol)),
             Ty::Tuple(xs) => xs.iter().find_map(|x| self.reason(v, x, pol)),
-        }
+        })
     }
 }
 
 pub(crate) fn rename_vars(t: &Ty, m: &HashMap<Name, Name>) -> Ty {
-    match t {
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| match t {
         Ty::Var(n) => Ty::Var(m.get(n).cloned().unwrap_or_else(|| n.clone())),
         Ty::Fun(a, b) => Ty::Fun(Box::new(rename_vars(a, m)), Box::new(rename_vars(b, m))),
         Ty::App(n, args) => Ty::App(n.clone(), args.iter().map(|a| rename_vars(a, m)).collect()),
@@ -371,7 +374,7 @@ pub(crate) fn rename_vars(t: &Ty, m: &HashMap<Name, Name>) -> Ty {
         Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| rename_vars(x, m)).collect()),
         Ty::Unit => Ty::Unit,
         Ty::Error => Ty::Error,
-    }
+    })
 }
 
 /// One type variable a CAF may not be generalised over.
@@ -440,27 +443,30 @@ pub fn violations(
 /// `t` with each variable named in `vars` replaced by `with` — the concrete
 /// type a diagnostic suggests (`Result Error (Ref (List Int))`).
 pub fn concretise(t: &Ty, vars: &[String], with: &Ty) -> Ty {
-    let hit = |n: &Name| vars.iter().any(|v| v == n.as_str());
-    match t {
-        Ty::Var(n) if hit(n) => with.clone(),
-        Ty::Fun(a, b) => Ty::Fun(
-            Box::new(concretise(a, vars, with)),
-            Box::new(concretise(b, vars, with)),
-        ),
-        Ty::App(n, args) => Ty::App(
-            n.clone(),
-            args.iter().map(|a| concretise(a, vars, with)).collect(),
-        ),
-        Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| concretise(x, vars, with)).collect()),
-        Ty::Record(fs, ext) => Ty::Record(
-            fs.iter()
-                .map(|(n, t)| (n.clone(), concretise(t, vars, with)))
-                .collect(),
-            // A row variable has no concrete spelling; closing it is the fix.
-            ext.as_ref().filter(|e| !hit(e)).cloned(),
-        ),
-        other => other.clone(),
-    }
+    // One level per level of the tree it walks: grow the stack on demand.
+    base::ensure_stack(|| {
+        let hit = |n: &Name| vars.iter().any(|v| v == n.as_str());
+        match t {
+            Ty::Var(n) if hit(n) => with.clone(),
+            Ty::Fun(a, b) => Ty::Fun(
+                Box::new(concretise(a, vars, with)),
+                Box::new(concretise(b, vars, with)),
+            ),
+            Ty::App(n, args) => Ty::App(
+                n.clone(),
+                args.iter().map(|a| concretise(a, vars, with)).collect(),
+            ),
+            Ty::Tuple(xs) => Ty::Tuple(xs.iter().map(|x| concretise(x, vars, with)).collect()),
+            Ty::Record(fs, ext) => Ty::Record(
+                fs.iter()
+                    .map(|(n, t)| (n.clone(), concretise(t, vars, with)))
+                    .collect(),
+                // A row variable has no concrete spelling; closing it is the fix.
+                ext.as_ref().filter(|e| !hit(e)).cloned(),
+            ),
+            other => other.clone(),
+        }
+    })
 }
 
 /// Is `n` a variable the unifier minted (`t42`, `r7`), rather than one the

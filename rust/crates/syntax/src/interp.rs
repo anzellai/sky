@@ -148,15 +148,24 @@ pub(crate) fn body(p: &mut Parser, start: u32, end: u32) {
     let (events, _diags) = sub.finish();
 
     if clean {
-        let green = build_tree(&text, &raw, events);
-        let root = SyntaxNode::new_root(green);
+        let (green, depth) = build_tree(&text, &raw, events);
+        let root = SyntaxNode::new_root(green.clone());
         // Defensive: only take the structured path if the sub-tree covers the
         // body byte-for-byte (guarantees the offset walk lands exactly on
         // `end`); otherwise the flat fallback keeps losslessness.
-        if u32::from(root.text_range().len()) == end - base {
+        let covers = u32::from(root.text_range().len()) == end - base;
+        if covers {
             let mut cursor = base;
             emit_green_node(p, &root, &mut cursor);
             debug_assert_eq!(cursor, end, "interp expr walk must cover the body");
+        }
+        // The body can be as deep as any expression: drop its sub-tree without
+        // recursion, as `Parse` does for a deep file.
+        drop(root);
+        if depth > crate::FLAT_DROP_DEPTH {
+            crate::drop_green_flat(green);
+        }
+        if covers {
             return;
         }
     }
@@ -170,6 +179,11 @@ pub(crate) fn body(p: &mut Parser, start: u32, end: u32) {
 /// absolute byte offset (the sub-tree is contiguous + lossless, so token
 /// lengths reconstruct exact spans).
 fn emit_green_node(p: &mut Parser, node: &SyntaxNode, cursor: &mut u32) {
+    // One level per level of the sub-tree: grow the stack on demand.
+    base::ensure_stack(|| emit_green_node_guarded(p, node, cursor))
+}
+
+fn emit_green_node_guarded(p: &mut Parser, node: &SyntaxNode, cursor: &mut u32) {
     let m = p.start();
     for child in node.children_with_tokens() {
         match child {
