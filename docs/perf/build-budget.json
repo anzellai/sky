@@ -1,6 +1,6 @@
 {
-  "note": "Build-speed budget for scripts/bench-build.sh --budget (the build-perf CI job). Per platform: the median wall seconds and peak RSS bytes of each case/scenario over --reps runs; a median above budget x factor AND above budget + slack fails. darwin-arm64 was seeded on 2026-10-15 from docs/perf/runs/build-speed-20261015/ci-shape.json: an Apple silicon Mac, 8 CPUs, 16 GB, go1.26.1, branch perf/build-speed, --reps 3 --cases \"app skyshop\". It is NOT a budget for the ubuntu CI runner: The CI runner uses the linux-x86_64 entry, which was seeded from the build-perf job of rust-ci run 38764872817 (ubuntu-latest, commit 4f45d6604; the job uploads build-budget.proposed.json, and a new platform is seeded by merging its platforms entry here). rust-ci (every pull request, push to main and manual run) measures only --cases app --sizes 50 with --budget-subset, against the same entries; the nightly measures every budgeted key (the app at both sizes and skyshop, every scenario). The skyshop-web entries of both platforms were seeded while every timed skyshop build also ran 8 `go get <module>@latest` proxy queries (its sky.toml pins \"latest\"); since then bench-build resolves those against the module cache, which takes the network out of the timing (a warm build on the darwin machine: 3.5 s with the queries, 1.55 s without). Those entries are therefore looser than the code needs until they are re-seeded from the next full run (build-budget.proposed.json); the factor and slack are unchanged.",
-  "factor": 1.5,
+  "note": "Build-speed budget for scripts/bench-build.sh --budget (the build-perf CI jobs and the nightly). RATIO FORM: before every repetition of every case the script times a fixed reference workload on the same machine (a cold `go build` of the Go std packages in `reference.packages`, empty GOCACHE), and each key's `wall_ratio` is the case's median wall time divided by that reference. A measured ratio above wall_ratio x factor fails, unless the wall is also within (wall_ratio x this run's reference) + slack_s, the absolute floor that keeps a sub-second build from failing on jitter. Peak RSS stays absolute (budget x factor, plus slack_bytes). Why: ubuntu-latest runners are not one machine. The same cold app50-web build took 30-47 s on different runners (ten parallel runs of one commit, bench-probe run 38899508863), an absolute 1.55x spread that failed build-perf on the slow runners (2 of 8 runs on main, 4 of 7 on ci/ubuntu-latest); as a ratio to the reference the same ten runs spread 1.05x for the cold build and at most 1.10x for any build above 2 s. The factor is therefore 1.25 (it was 1.5 against absolute seconds): a 25% slowdown of Sky on the same runner fails, whatever the runner. Proof: a real slowdown measured on CI (the same runs with GOFLAGS=-p=1 slowing every Sky go build but not the reference, bench-probe legs 11 and 12) raises the cold app50-web ratio from 3.96 to 5.12-5.17 and fails this budget, while the slow and fast runners of the normal legs pass; rust/crates/xtask/tests/build_budget_normalises_runner_speed.rs replays the rule on fixtures (a 1.6x slower runner passes, a 1.6x slower build fails on either runner). linux-x86_64 is the median over the bench-probe runs named in its `seeded_from` (app50 keys over 14 runs, the app100 and skyshop keys over 4 full-set runs; go 1.26, ubuntu-latest, 4 vCPU). darwin-arm64 keeps its 2026-10-15 walls (an Apple silicon Mac, 8 CPUs, 16 GB, go1.26.1, docs/perf/runs/build-speed-20261015/ci-shape.json) with ratios to the reference measured on the same machine and Go version on 2026-10-16 (median of 5 runs); it is a local comparison only, and the next local --write-budget re-seeds it in full. Re-seed a platform with: scripts/bench-build.sh --reps 3 --cases \"app skyshop\" --write-budget <file> on that platform (the nightly uploads build-budget.proposed.json), ideally the median of several runs.",
+  "factor": 1.25,
   "slack_s": 2,
   "slack_bytes": 67108864,
   "platforms": {
@@ -16,84 +16,108 @@
       "budget": {
         "app100-web/cold": {
           "wall_s": 20.69,
-          "peak_rss_bytes": 863567872
+          "peak_rss_bytes": 863567872,
+          "wall_ratio": 4.0648
         },
         "app100-web/edit": {
           "wall_s": 2.71,
-          "peak_rss_bytes": 626229248
+          "peak_rss_bytes": 626229248,
+          "wall_ratio": 0.5324
         },
         "app100-web/newdir": {
           "wall_s": 1.65,
-          "peak_rss_bytes": 634765312
+          "peak_rss_bytes": 634765312,
+          "wall_ratio": 0.3242
         },
         "app100-web/warm": {
           "wall_s": 0.74,
-          "peak_rss_bytes": 110968832
+          "peak_rss_bytes": 110968832,
+          "wall_ratio": 0.1454
         },
         "app100-web:app/cold": {
           "wall_s": 31.8,
-          "peak_rss_bytes": 814956544
+          "peak_rss_bytes": 814956544,
+          "wall_ratio": 6.2475
         },
         "app100-web:app/edit": {
           "wall_s": 27.46,
-          "peak_rss_bytes": 647987200
+          "peak_rss_bytes": 647987200,
+          "wall_ratio": 5.3949
         },
         "app100-web:app/newdir": {
           "wall_s": 4.15,
-          "peak_rss_bytes": 631554048
+          "peak_rss_bytes": 631554048,
+          "wall_ratio": 0.8153
         },
         "app100-web:app/warm": {
           "wall_s": 2.42,
-          "peak_rss_bytes": 191463424
+          "peak_rss_bytes": 191463424,
+          "wall_ratio": 0.4754
         },
         "app50-web/cold": {
           "wall_s": 20.61,
-          "peak_rss_bytes": 826441728
+          "peak_rss_bytes": 826441728,
+          "wall_ratio": 4.0491
         },
         "app50-web/edit": {
           "wall_s": 2.48,
-          "peak_rss_bytes": 620134400
+          "peak_rss_bytes": 620134400,
+          "wall_ratio": 0.4872
         },
         "app50-web/newdir": {
           "wall_s": 1.52,
-          "peak_rss_bytes": 619610112
+          "peak_rss_bytes": 619610112,
+          "wall_ratio": 0.2986
         },
         "app50-web/warm": {
           "wall_s": 0.61,
-          "peak_rss_bytes": 84230144
+          "peak_rss_bytes": 84230144,
+          "wall_ratio": 0.1198
         },
         "app50-web:app/cold": {
           "wall_s": 30.64,
-          "peak_rss_bytes": 802996224
+          "peak_rss_bytes": 802996224,
+          "wall_ratio": 6.0196
         },
         "app50-web:app/edit": {
           "wall_s": 23.81,
-          "peak_rss_bytes": 620986368
+          "peak_rss_bytes": 620986368,
+          "wall_ratio": 4.6778
         },
         "app50-web:app/newdir": {
           "wall_s": 3.49,
-          "peak_rss_bytes": 622657536
+          "peak_rss_bytes": 622657536,
+          "wall_ratio": 0.6857
         },
         "app50-web:app/warm": {
           "wall_s": 1.73,
-          "peak_rss_bytes": 135970816
+          "peak_rss_bytes": 135970816,
+          "wall_ratio": 0.3399
         },
         "skyshop-web/cold": {
           "wall_s": 79.88,
-          "peak_rss_bytes": 4107501568
+          "peak_rss_bytes": 4107501568,
+          "wall_ratio": 15.6935
         },
         "skyshop-web/edit": {
           "wall_s": 8.31,
-          "peak_rss_bytes": 1338900480
+          "peak_rss_bytes": 1338900480,
+          "wall_ratio": 1.6326
         },
         "skyshop-web/newdir": {
           "wall_s": 4.97,
-          "peak_rss_bytes": 1326678016
+          "peak_rss_bytes": 1326678016,
+          "wall_ratio": 0.9764
         },
         "skyshop-web/warm": {
           "wall_s": 3.4,
-          "peak_rss_bytes": 327827456
+          "peak_rss_bytes": 327827456,
+          "wall_ratio": 0.668
         }
+      },
+      "reference": {
+        "packages": "net/http encoding/json text/template",
+        "wall_s": 5.09
       }
     },
     "linux-x86_64": {
@@ -101,92 +125,116 @@
         "platform": "linux-x86_64",
         "cpus": 4,
         "mem_bytes": 16766414848,
-        "go": "go version go1.26.9 linux/amd64",
-        "sky": "sky v0.27.9 (4f45d6604)"
+        "go": "go version go1.26.9 linux/amd64"
       },
       "reps": 3,
+      "reference": {
+        "packages": "net/http encoding/json text/template",
+        "wall_s": 11.41
+      },
       "budget": {
         "app100-web/cold": {
-          "wall_s": 32.47,
-          "peak_rss_bytes": 866783232
+          "wall_s": 45.40,
+          "wall_ratio": 3.9875,
+          "peak_rss_bytes": 836337664
         },
         "app100-web/edit": {
-          "wall_s": 2.11,
-          "peak_rss_bytes": 585256960
+          "wall_s": 2.71,
+          "wall_ratio": 0.2375,
+          "peak_rss_bytes": 585547776
         },
         "app100-web/newdir": {
-          "wall_s": 1.29,
-          "peak_rss_bytes": 585400320
+          "wall_s": 1.64,
+          "wall_ratio": 0.1462,
+          "peak_rss_bytes": 585801728
         },
         "app100-web/warm": {
-          "wall_s": 0.45,
-          "peak_rss_bytes": 74063872
+          "wall_s": 0.60,
+          "wall_ratio": 0.0526,
+          "peak_rss_bytes": 74194944
         },
         "app100-web:app/cold": {
-          "wall_s": 45.27,
-          "peak_rss_bytes": 840855552
+          "wall_s": 62.32,
+          "wall_ratio": 5.4571,
+          "peak_rss_bytes": 836440064
         },
         "app100-web:app/edit": {
-          "wall_s": 12.96,
-          "peak_rss_bytes": 590581760
+          "wall_s": 18.59,
+          "wall_ratio": 1.6278,
+          "peak_rss_bytes": 597045248
         },
         "app100-web:app/newdir": {
-          "wall_s": 3.03,
-          "peak_rss_bytes": 588152832
+          "wall_s": 3.77,
+          "wall_ratio": 0.3342,
+          "peak_rss_bytes": 592928768
         },
         "app100-web:app/warm": {
-          "wall_s": 1.19,
-          "peak_rss_bytes": 141451264
+          "wall_s": 1.61,
+          "wall_ratio": 0.1415,
+          "peak_rss_bytes": 138551296
         },
         "app50-web/cold": {
-          "wall_s": 33.05,
-          "peak_rss_bytes": 881172480
+          "wall_s": 45.27,
+          "wall_ratio": 3.9763,
+          "peak_rss_bytes": 855465984
         },
         "app50-web/edit": {
-          "wall_s": 1.98,
-          "peak_rss_bytes": 583671808
+          "wall_s": 2.45,
+          "wall_ratio": 0.2184,
+          "peak_rss_bytes": 583802880
         },
         "app50-web/newdir": {
-          "wall_s": 1.31,
-          "peak_rss_bytes": 583434240
+          "wall_s": 1.58,
+          "wall_ratio": 0.1413,
+          "peak_rss_bytes": 581984256
         },
         "app50-web/warm": {
-          "wall_s": 0.42,
-          "peak_rss_bytes": 66498560
+          "wall_s": 0.54,
+          "wall_ratio": 0.0475,
+          "peak_rss_bytes": 67162112
         },
         "app50-web:app/cold": {
-          "wall_s": 44.57,
-          "peak_rss_bytes": 871038976
+          "wall_s": 60.74,
+          "wall_ratio": 5.3427,
+          "peak_rss_bytes": 844861440
         },
         "app50-web:app/edit": {
-          "wall_s": 11.26,
-          "peak_rss_bytes": 585089024
+          "wall_s": 15.73,
+          "wall_ratio": 1.3778,
+          "peak_rss_bytes": 587603968
         },
         "app50-web:app/newdir": {
-          "wall_s": 2.87,
-          "peak_rss_bytes": 585170944
+          "wall_s": 3.49,
+          "wall_ratio": 0.3109,
+          "peak_rss_bytes": 585461760
         },
         "app50-web:app/warm": {
-          "wall_s": 0.99,
-          "peak_rss_bytes": 124968960
+          "wall_s": 1.33,
+          "wall_ratio": 0.1177,
+          "peak_rss_bytes": 123629568
         },
         "skyshop-web/cold": {
-          "wall_s": 79.48,
-          "peak_rss_bytes": 4484460544
+          "wall_s": 107.09,
+          "wall_ratio": 9.3856,
+          "peak_rss_bytes": 4358729728
         },
         "skyshop-web/edit": {
-          "wall_s": 6.94,
-          "peak_rss_bytes": 1284231168
+          "wall_s": 7.73,
+          "wall_ratio": 0.688,
+          "peak_rss_bytes": 1272856576
         },
         "skyshop-web/newdir": {
-          "wall_s": 3.78,
-          "peak_rss_bytes": 1276387328
+          "wall_s": 3.70,
+          "wall_ratio": 0.3257,
+          "peak_rss_bytes": 1276665856
         },
         "skyshop-web/warm": {
-          "wall_s": 2.1,
-          "peak_rss_bytes": 285278208
+          "wall_s": 1.57,
+          "wall_ratio": 0.1376,
+          "peak_rss_bytes": 284971008
         }
-      }
+      },
+      "seeded_from": "bench-probe runs 38899508863 (legs 1-10: app at 50, both targets) and 38901707955 (legs 21-24: app at 50 and 100 and skyshop), branch ci/bench-probe; per key the median of the per-run ratios"
     }
   }
 }

@@ -844,7 +844,7 @@ jobs:
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" brotli jq time
       - name: Build and install the compiler (sky-out/sky)
         run: bash scripts/build.sh
-      - name: 'Gate — build speed within budget (medians of 3, budget x 1.5)'
+      - name: 'Gate — build speed within budget (medians of 3, as a ratio to the reference workload)'
         run: bash scripts/bench-build.sh --reps 3 --cases "app skyshop" --out build-perf.json --write-budget build-budget.proposed.json --budget docs/perf/build-budget.json
       - name: Keep the measurements
         if: always()

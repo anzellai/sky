@@ -1568,10 +1568,15 @@ jobs:
   # ── build-perf: build wall time, CPU and peak memory against a budget ──────
   #
   # `scripts/bench-build.sh` builds the `xtask bench-gen` app (a medium Std.App
-  # web app) at 50 fields for --target web:app and web: first build, warm
+  # web app) at 50 fields for --target web (this job) and web:app (build-perf-2):
+  # first build, warm
   # rebuild, a copy in a new directory, a one-module edit, and a cold build
   # with an empty GOCACHE, three times each. The medians are compared to the
-  # app's keys in docs/perf/build-budget.json; above budget x 1.5 fails. The
+  # app's keys in docs/perf/build-budget.json AS A RATIO to a fixed reference
+  # workload timed on the same runner (a cold `go build` of Go std packages):
+  # ubuntu-latest runners differ by ~1.6x in speed, and an absolute budget
+  # failed on the slow ones (2 of 8 runs on main, 4 of 7 on a branch). A
+  # ratio above budget x factor fails (scripts/bench-build.sh). The
   # nightly measures the full set (the app at both sizes and
   # examples/13-skyshop) against every budgeted key. The
   # counted guards (growth, new-directory) run in every push's sky tests and
@@ -1583,10 +1588,10 @@ jobs:
   # `needs: setup` (it builds the compiler in release itself).
   build-perf:
     runs-on: ubuntu-latest
-    # The linux-x86_64 budget is seeded from rust-ci run 38764872817 (see
-    # docs/perf/build-budget.json). With the 50-field measure the whole job
-    # took 11.6 minutes in run 38833457153 (8.5 of them measuring); 40 bounds
-    # a cache-cold run.
+    # The linux-x86_64 budget is seeded from the bench-probe runs named in
+    # docs/perf/build-budget.json. Both targets in one job took 11.6 minutes
+    # in run 38833457153 (8.5 of them measuring); each half is about 7. 40
+    # bounds a cache-cold run.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
