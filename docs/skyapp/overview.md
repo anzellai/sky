@@ -25,7 +25,8 @@ Bare family = a Sky.Live delivery; a named platform = a native (wasm) build:
 | `web` · `tablet` | server-driven HTML + SSE (responsive) | **Sky.Live** |
 | `desktop` | Sky.Live in a native window (server + webview) | **Sky.Live** + webview |
 | `terminal:tui` (or bare `terminal`) · `terminal:cli` | full-screen ANSI · line text | **Sky.Tui / Sky.Cli** |
-| `web:app` · `desktop:mac\|windows\|linux` · `tablet:ipad\|android` · `mobile:ios\|android` | client wasm (auto-split) + native shell | **Sky.Spa** — see [client targets](#client-targets--same-source-no-stdspa-entry) |
+| `web:app` · `desktop:mac` · `tablet:ipad\|android` · `mobile:ios\|android` | client wasm (auto-split) + native shell | **Sky.Spa** — see [client targets](#client-targets--same-source-no-stdspa-entry) |
+| `desktop:windows` · `desktop:linux` | not supported yet: the build refuses them, because the desktop window (Sky.Webview) runs on macOS only in this version | build `web:app` and open it in a browser |
 
 ## The entry — `main = App.run app`
 

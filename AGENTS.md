@@ -415,8 +415,10 @@ For an app that should run across several shapes from ONE source, write
 family[:variant]` picks the backend (optional — bare defaults to `web`). You never
 import `Std.Live`/`Spa`/`Tui`/`Cli`/`Webview` yourself. Delivery = family, native =
 platform: `web` · `tablet` → **Sky.Live**; `desktop` → Sky.Live in a native
-window; `terminal:tui|cli` → **Sky.Tui/Cli**; `web:app` · `desktop:mac|windows|
-linux` · `tablet:ipad|android` · `mobile:ios|android` → **Sky.Spa** (client wasm).
+window; `terminal:tui|cli` → **Sky.Tui/Cli**; `web:app` · `desktop:mac` ·
+`tablet:ipad|android` · `mobile:ios|android` → **Sky.Spa** (client wasm).
+`desktop:windows|linux` are refused at build: the desktop window runs on macOS
+only in this version, so those platforms use `web:app` in a browser.
 The build rewrites `App.run` → the target's `run<Backend>` (DCE prunes the rest)
 and, for the Spa targets, **synthesises a `Spa.app` from your `App.app`** and feeds
 the existing auto-split — so client targets need **no** separate `Std.Spa` entry.

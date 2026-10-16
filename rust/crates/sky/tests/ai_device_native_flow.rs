@@ -448,3 +448,134 @@ fn desktop_mac_runs_the_slot_on_the_managed_engine() {
     assert!(answered, "no answer: {:?}", backend.reports());
     assert_on_device(&backend.reports(), "desktop:mac");
 }
+
+/// Build `examples/75-ai-everywhere`, the Std.Ai.Device example, for one
+/// target in a scratch copy, and return the copy. The example is the one the
+/// docs point at, so each client target it names must build after any merge.
+fn build_example_75(target: &str) -> PathBuf {
+    let dir = scratch(&format!("ex75-{}", target.replace(':', "-")));
+    copy_dir(&repo_root().join("examples/75-ai-everywhere"), &dir);
+    for stale in ["sky-out", ".skycache", ".skyapp"] {
+        let _ = std::fs::remove_dir_all(dir.join(stale));
+    }
+    let mut cmd = Command::new(SKY);
+    cmd.args(["build", "--target", target, "src/Main.sky"])
+        .current_dir(&dir);
+    // The iOS build runs Xcode's tools. The other builds keep the caller's
+    // toolchain: Xcode's SDK headers under another C compiler break cgo.
+    if target.starts_with("mobile:ios") {
+        cmd.env(
+            "DEVELOPER_DIR",
+            "/Applications/Xcode.app/Contents/Developer",
+        );
+    }
+    let out = cmd.output().expect("sky build");
+    assert!(
+        out.status.success(),
+        "examples/75-ai-everywhere --target {target}:\n{}",
+        text(&out)
+    );
+    dir
+}
+
+#[test]
+#[ignore = "native: needs Go (release gate-ai-device-native)"]
+fn example_75_builds_for_web_app() {
+    if !required(Need::Go, have("go", "version")) {
+        return;
+    }
+    let dir = build_example_75("web:app");
+    let split = dir.join(".skyapp/web-app/.split");
+    assert!(split.join("backend/sky-out/app").is_file(), "no backend");
+    let dist = split.join("frontend/dist");
+    assert!(
+        std::fs::read_dir(&dist)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(".wasm")),
+        "no wasm client in {}",
+        dist.display()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "native: needs Go and Xcode (release gate-ai-device-native)"]
+fn example_75_builds_for_desktop_mac() {
+    if !required(Need::Go, have("go", "version"))
+        || !required(Need::Xcode, have("/usr/bin/xcodebuild", "-version"))
+    {
+        return;
+    }
+    let dir = build_example_75("desktop:mac");
+    let desktop = dir.join(".skyapp/desktop-mac/.split/frontend/sky-out/desktop");
+    assert!(
+        std::fs::read_dir(&desktop)
+            .map(|rd| rd.flatten().any(|e| e.path().is_file()))
+            .unwrap_or(false),
+        "no desktop binary in {}",
+        desktop.display()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "native: needs Go and Xcode (release gate-ai-device-native)"]
+fn example_75_builds_for_mobile_ios() {
+    if !required(Need::Go, have("go", "version"))
+        || !required(Need::Xcode, have("/usr/bin/xcodebuild", "-version"))
+    {
+        return;
+    }
+    let dir = build_example_75("mobile:ios");
+    let build = dir.join(".skyapp/mobile-ios/.split/frontend/sky-out/ios/build");
+    assert!(
+        std::fs::read_dir(&build)
+            .map(|rd| rd
+                .flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == "app")))
+            .unwrap_or(false),
+        "no .app in {}",
+        build.display()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[ignore = "native: needs Go and the Android SDK (release gate-ai-device-android)"]
+fn example_75_builds_for_mobile_android() {
+    if !required(Need::Go, have("go", "version"))
+        || !required(
+            Need::AndroidSdk,
+            std::env::var_os("ANDROID_HOME").is_some()
+                || std::env::var_os("ANDROID_SDK_ROOT").is_some(),
+        )
+    {
+        return;
+    }
+    let dir = build_example_75("mobile:android");
+    let apks: Vec<PathBuf> =
+        walk_files(&dir.join(".skyapp/mobile-android/.split/frontend/sky-out"))
+            .into_iter()
+            .filter(|p| p.extension().is_some_and(|x| x == "apk"))
+            .collect();
+    assert!(!apks.is_empty(), "no .apk under {}", dir.display());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn walk_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk_files(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}

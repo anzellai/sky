@@ -598,6 +598,19 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
 
 ### Fixed
 
+- **`--target desktop:windows` and `desktop:linux` are refused with the
+  reason.** The desktop window (Sky.Webview) runs on macOS only in this
+  version. These targets used to build the host's shell: a macOS binary on a
+  Mac, and elsewhere a binary whose window never opened, so the app and any
+  `Std.Ai.Device` slot in it never ran. `sky build` and `sky check` now say
+  they are not supported yet and name `web:app` in a browser, where a device
+  slot runs in the browser engine, else on the server, or fails typed
+  (`DeviceUnsupported`) for a `DeviceOnly` slot.
+- **`Std.Ai.Registry.adapterFor` reads the device clearance with a `case`.**
+  `v.onDevice /= Nothing` went through the erased `!=` kernel and added one
+  runtime narrowing to every program that resolves a registry adapter
+  (examples 72, 73 and 74); the coerce-floor golden holds.
+
 - **Sky.Http.Server: a second `Server.listen` in one process serves.** A
   program that served two ports (a public API and an admin API, each started
   with `Task.spawn (Server.listen …)`) lost the second server: every
@@ -863,6 +876,11 @@ Phase 5 (browser and device bridges) adds `Std.Ai.Device`; its guide is
   typed slot is built at that type.
 
 ### Tests
+
+- `examples/75-ai-everywhere` builds for `web:app`, `desktop:mac` and
+  `mobile:ios` in the release job `gate-ai-device-native`, and for
+  `mobile:android` in `gate-ai-device-android`
+  (`ai_device_native_flow.rs`, `example_75_builds_for_*`).
 
 - The Sky.Spa differential split fuzzer (`xtask harness --only
   spa-diff-fuzz`) now compares the leaf and the command each leg takes, not

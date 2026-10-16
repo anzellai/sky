@@ -38,7 +38,7 @@ composes them for you, and they are **deprecated for direct use**.
 | `web` (default) · `tablet` | Sky.Live (server-driven HTML + SSE) |
 | `desktop` | Sky.Live in a native window |
 | `terminal:tui` · `terminal:cli` | Sky.Tui / Sky.Cli |
-| `web:app` · `desktop:mac\|…` · `tablet:ipad\|…` · `mobile:ios\|android` | Sky.Spa (the build synthesises the Spa app from `App.app` — no separate entry) |
+| `web:app` · `desktop:mac` · `tablet:ipad\|…` · `mobile:ios\|android` | Sky.Spa (the build synthesises the Spa app from `App.app` — no separate entry). `desktop:windows` / `desktop:linux` are not supported yet (the build refuses them): use `web:app` in a browser |
 
 `web` requires `App.withNotFound` (compile-enforced). A `Std.Html` view (raw
 markup) → use `App.web` instead of `App.app`. The only non-`Std.App` entry you

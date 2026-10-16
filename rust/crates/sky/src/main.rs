@@ -1605,6 +1605,36 @@ fn rewrite_app_run(src: &str, runner: &str) -> String {
     project::app_entry::rewrite_run(src, runner)
 }
 
+/// Why a `desktop:<os>` target cannot be built in this version, or `None`.
+///
+/// The desktop shell is a Sky.Webview window, and Sky.Webview opens a window
+/// on macOS only (runtime-go/rt/webview.go is `cgo && darwin`; every other
+/// build gets webview_stub.go, whose `Webview.app` returns an `Err`). Before
+/// this check `desktop:windows` / `desktop:linux` built the shell for the
+/// HOST: a macOS binary on a Mac, or on Linux a binary whose window never
+/// opened, so the app (and any `Std.Ai.Device` slot in it) never ran. The
+/// build now says so and names the targets that work there.
+fn desktop_target_refused(tgt: target::Target) -> Option<String> {
+    use target::{DesktopOs, Target};
+    match tgt {
+        Target::Desktop(os @ (DesktopOs::Windows | DesktopOs::Linux)) => Some(format!(
+            "`--target {}` is not supported yet: the desktop window (Sky.Webview) runs on \
+             macOS only in this version, so `desktop:mac` is the one desktop shell. On {} \
+             build `web:app` and open it in a browser: a `Std.Ai.Device` slot then runs \
+             in the browser engine (WebGPU or CPU WebAssembly) when the browser can run it, \
+             else on the server, or fails typed (`DeviceUnsupported`) for a `DeviceOnly` \
+             slot.",
+            tgt.canonical(),
+            if os == DesktopOs::Windows {
+                "Windows"
+            } else {
+                "Linux"
+            }
+        )),
+        _ => None,
+    }
+}
+
 /// Map a resolved [`target::Target`] to the `Std.App` runner that backs it and
 /// whether that runner builds directly (plain / cgo `go build`) or through the
 /// Sky.Spa auto-split. This is the single place the `--target family[:variant]`
@@ -5137,6 +5167,10 @@ fn cmd_build(args: &[String], check_only: bool) -> ExitCode {
         },
         None => None,
     };
+    if let Some(msg) = parsed_target.and_then(desktop_target_refused) {
+        eprintln!("sky {}: {msg}", verb(check_only));
+        return ExitCode::FAILURE;
+    }
     // Repo-root guard: refuse to write sky-out/ into the compiler repo root,
     // which would overwrite the oracle binary kept there.
     if is_compiler_repo_root(&project_dir) && out_override.is_none() {
@@ -17706,6 +17740,32 @@ mod tests {
         // Concrete runners (already picked a backend) are NEVER a bare dispatcher.
         assert!(!uses_app_run("main = App.runTui appDef\n"));
         assert!(!uses_app_run("main = App.runLive appDef\n"));
+    }
+
+    /// `desktop:windows` / `desktop:linux` used to build the HOST's shell (a
+    /// macOS binary on a Mac), whose window never opened elsewhere. They are
+    /// refused with the reason; `desktop:mac` and bare `desktop` still build.
+    #[test]
+    fn a_desktop_target_without_a_window_is_refused_with_the_reason() {
+        for t in ["desktop:windows", "desktop:linux"] {
+            let msg = desktop_target_refused(target::Target::parse(t).unwrap())
+                .unwrap_or_else(|| panic!("{t} must be refused"));
+            assert!(msg.contains("not supported yet"), "{msg}");
+            assert!(msg.contains("web:app"), "{msg}");
+            assert!(msg.contains("DeviceUnsupported"), "{msg}");
+        }
+        for t in [
+            "desktop:mac",
+            "desktop",
+            "web:app",
+            "mobile:ios",
+            "mobile:android",
+        ] {
+            assert!(
+                desktop_target_refused(target::Target::parse(t).unwrap()).is_none(),
+                "{t} must build"
+            );
+        }
     }
 
     #[test]

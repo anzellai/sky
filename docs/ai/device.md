@@ -53,7 +53,11 @@ main =
 This program runs on the server, so `assistant` is the `notes` slot itself. In
 a Sky.Spa client (`web:app`, `desktop:mac`, `mobile:ios`, `mobile:android`)
 the same `Device.provider "notes"` runs in the client, and the device decides
-per call.
+per call. `desktop:windows` and `desktop:linux` are not supported yet: the
+build refuses them, because the desktop window runs on macOS only in this
+version. On Windows and Linux, build `web:app` and open it in a browser; the
+slot then runs in the browser engine when the browser can run it, else on the
+server, and a `DeviceOnly` slot fails typed (`DeviceUnsupported`).
 
 The build checks the pairing: a `Device.provider "x"` needs an
 `Endpoint.endpoint "x"` binding with `Endpoint.withDevice` in a module the
