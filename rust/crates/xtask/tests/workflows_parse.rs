@@ -1882,10 +1882,19 @@ const FULL_BENCH: &str = "bash scripts/bench-build.sh --reps 3 --cases \"app sky
      --budget docs/perf/build-budget.json";
 
 /// The per-push and pull-request measure in rust-ci.yml: the 50-field app
-/// against its own budget keys. `--budget-subset` requires every budgeted key
-/// of the measured case and still fails on a rise.
-const SUBSET_BENCH: &str = "bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 \
-     --out build-perf.json --budget docs/perf/build-budget.json --budget-subset";
+/// against its own budget keys, one target per job (`build-perf` measures
+/// `web`, `build-perf-2` measures `web:app`; together they are the script's
+/// default targets, so the per-push scope is unchanged by the split).
+/// `--budget-subset` requires every budgeted key of the measured case and
+/// still fails on a rise.
+const SUBSET_BENCH_JOBS: [(&str, &str); 2] = [("build-perf", "web"), ("build-perf-2", "web:app")];
+
+fn subset_bench(target: &str) -> String {
+    format!(
+        "bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 --targets {target} \
+         --out build-perf.json --budget docs/perf/build-budget.json --budget-subset"
+    )
+}
 
 /// The only condition rust-ci.yml's measure may carry: the in-job path
 /// filter. Anything else (an event or branch test, `false`) is a skip.
@@ -1896,9 +1905,18 @@ fn build_perf_job<'a>(
     file: &str,
     doc: &'a serde_yaml::Value,
 ) -> Result<&'a serde_yaml::Value, String> {
-    let job = &doc["jobs"]["build-perf"];
+    named_build_perf_job(file, doc, "build-perf")
+}
+
+/// The named build-speed job of a parsed workflow, or why it is unusable.
+fn named_build_perf_job<'a>(
+    file: &str,
+    doc: &'a serde_yaml::Value,
+    name: &str,
+) -> Result<&'a serde_yaml::Value, String> {
+    let job = &doc["jobs"][name];
     if job.is_null() || job_is_disabled(job) {
-        return Err(format!("{file}: no enabled build-perf job"));
+        return Err(format!("{file}: no enabled {name} job"));
     }
     Ok(job)
 }
@@ -1955,64 +1973,68 @@ fn nightly_build_perf_problems(doc: &serde_yaml::Value) -> Vec<String> {
 /// that filter must say `run=true` when a build-speed input changes.
 fn rust_ci_build_perf_problems(doc: &serde_yaml::Value) -> Vec<String> {
     let file = "rust-ci.yml";
-    let job = match build_perf_job(file, doc) {
-        Ok(j) => j,
-        Err(e) => return vec![e],
-    };
     let mut problems = Vec::new();
-    if !job["if"].is_null() {
-        problems.push(format!(
-            "{file}: build-perf carries a job-level `if: {:?}`; ci-green treats a \
-             skipped job as a failure, and the path filter lives inside the job",
-            job["if"]
-        ));
-    }
-    let benches = bench_steps(job);
-    if benches.len() != 1 {
-        problems.push(format!(
-            "{file}: build-perf has {} bench-build steps, want 1 (the full measure \
-             belongs in the nightly; it does not fit the T1 tier budget)",
-            benches.len()
-        ));
-    }
-    for s in benches {
-        let run = s["run"].as_str().unwrap_or("").trim();
-        if run != SUBSET_BENCH {
+    for (name, target) in SUBSET_BENCH_JOBS {
+        let want = subset_bench(target);
+        let job = match named_build_perf_job(file, doc, name) {
+            Ok(j) => j,
+            Err(e) => {
+                problems.push(e);
+                continue;
+            }
+        };
+        if !job["if"].is_null() {
             problems.push(format!(
-                "{file}: build-perf runs `{run}`, want exactly `{SUBSET_BENCH}`"
+                "{file}: {name} carries a job-level `if: {:?}`; ci-green treats a \
+                 skipped job as a failure, and the path filter lives inside the job",
+                job["if"]
             ));
         }
-        let cond = s["if"].as_str().map(str::trim);
-        if cond != Some(RUST_CI_BENCH_IF) {
+        let benches = bench_steps(job);
+        if benches.len() != 1 {
             problems.push(format!(
-                "{file}: the build-perf measure runs under `if: {cond:?}`, want \
-                 {RUST_CI_BENCH_IF:?} (the path filter only, on every event)"
+                "{file}: {name} has {} bench-build steps, want 1 (the full measure \
+                 belongs in the nightly; it does not fit the T1 tier budget)",
+                benches.len()
             ));
         }
-    }
-    // The path filter must exist, set `run=true`, and match the compiler,
-    // runtime, stdlib, bench script and budget. A filter that never says
-    // `run=true` is a skip in disguise.
-    let paths = job["steps"]
-        .as_sequence()
-        .into_iter()
-        .flatten()
-        .find(|s| s["id"].as_str() == Some("paths"));
-    match paths.and_then(|s| s["run"].as_str()) {
-        None => problems.push(format!("{file}: build-perf has no `id: paths` step")),
-        Some(run) => {
-            for needle in [
-                "echo \"run=true\" >> \"$GITHUB_OUTPUT\"",
-                "rust/crates/(project|sky|codegen|lower|ty|hir|skydb)/",
-                "runtime-go/",
-                "sky-stdlib/",
-                "scripts/bench-build\\.sh$",
-                "docs/perf/build-budget\\.json$",
-            ] {
-                if !run.contains(needle) {
-                    problems.push(format!(
-                        "{file}: the build-perf path filter lacks `{needle}`"
-                    ));
+        for s in benches {
+            let run = s["run"].as_str().unwrap_or("").trim();
+            if run != want {
+                problems.push(format!(
+                    "{file}: {name} runs `{run}`, want exactly `{want}`"
+                ));
+            }
+            let cond = s["if"].as_str().map(str::trim);
+            if cond != Some(RUST_CI_BENCH_IF) {
+                problems.push(format!(
+                    "{file}: the {name} measure runs under `if: {cond:?}`, want \
+                     {RUST_CI_BENCH_IF:?} (the path filter only, on every event)"
+                ));
+            }
+        }
+        // The path filter must exist, set `run=true`, and match the compiler,
+        // runtime, stdlib, bench script and budget. A filter that never says
+        // `run=true` is a skip in disguise.
+        let paths = job["steps"]
+            .as_sequence()
+            .into_iter()
+            .flatten()
+            .find(|s| s["id"].as_str() == Some("paths"));
+        match paths.and_then(|s| s["run"].as_str()) {
+            None => problems.push(format!("{file}: {name} has no `id: paths` step")),
+            Some(run) => {
+                for needle in [
+                    "echo \"run=true\" >> \"$GITHUB_OUTPUT\"",
+                    "rust/crates/(project|sky|codegen|lower|ty|hir|skydb)/",
+                    "runtime-go/",
+                    "sky-stdlib/",
+                    "scripts/bench-build\\.sh$",
+                    "docs/perf/build-budget\\.json$",
+                ] {
+                    if !run.contains(needle) {
+                        problems.push(format!("{file}: the {name} path filter lacks `{needle}`"));
+                    }
                 }
             }
         }
@@ -2085,7 +2107,7 @@ fn the_full_build_speed_check_catches_a_shrunk_measure() {
     set_run(&mut d, &format!("{FULL_BENCH} --budget-subset"));
     cases.push(("nightly: --budget-subset", d));
     let mut d = nightly.clone();
-    set_run(&mut d, SUBSET_BENCH);
+    set_run(&mut d, &subset_bench("web"));
     cases.push(("nightly: the per-push subset", d));
     let mut d = nightly.clone();
     bench_step_mut(&mut d)["if"] = serde_yaml::Value::String("false".into());
@@ -2110,12 +2132,12 @@ fn the_full_build_speed_check_catches_a_shrunk_measure() {
     set_run(&mut d, FULL_BENCH);
     cases.push(("rust-ci: the full measure per push", d));
     let mut d = ci.clone();
-    set_run(&mut d, &SUBSET_BENCH.replace(" --budget-subset", ""));
+    set_run(&mut d, &subset_bench("web").replace(" --budget-subset", ""));
     cases.push(("rust-ci: no --budget-subset", d));
     let mut d = ci.clone();
     set_run(
         &mut d,
-        &SUBSET_BENCH.replace(" --budget docs/perf/build-budget.json", ""),
+        &subset_bench("web").replace(" --budget docs/perf/build-budget.json", ""),
     );
     cases.push(("rust-ci: no --budget", d));
     let mut d = ci.clone();
@@ -2143,6 +2165,26 @@ fn the_full_build_speed_check_catches_a_shrunk_measure() {
         }
     }
     cases.push(("rust-ci: the path filter never says run=true", d));
+    let mut d = ci.clone();
+    d["jobs"]
+        .as_mapping_mut()
+        .expect("jobs")
+        .remove(serde_yaml::Value::from("build-perf-2"));
+    cases.push(("rust-ci: the web:app half is gone", d));
+    let mut d = ci.clone();
+    for s in d["jobs"]["build-perf-2"]["steps"]
+        .as_sequence_mut()
+        .expect("steps")
+        .iter_mut()
+    {
+        if s["run"]
+            .as_str()
+            .is_some_and(|r| r.contains("scripts/bench-build.sh"))
+        {
+            s["run"] = serde_yaml::Value::String(subset_bench("web"));
+        }
+    }
+    cases.push(("rust-ci: both halves measure web", d));
     for (what, d) in &cases {
         assert!(
             !rust_ci_build_perf_problems(d).is_empty(),
