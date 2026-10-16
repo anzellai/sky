@@ -4169,10 +4169,11 @@ fn cargo_test_outcome(
 }
 
 /// `scripts/ai-device-e2e.sh --scenarios chromium-cpu`: the probe on the CPU
-/// engine in Chromium under the strict policy. Six checks: the status, the
-/// preparation, the device's answer, the download from the app's own server,
-/// no call reaching the server, and no policy violation.
-pub const AI_DEVICE_BROWSER_EXPECTED: u64 = 6;
+/// engine in Chromium under the strict policy. Seven checks: the status, the
+/// preparation, the device's answer, the answer streamed piece by piece (added
+/// with the streaming providers in phase 5), the download from the app's own
+/// server, no call reaching the server, and no policy violation.
+pub const AI_DEVICE_BROWSER_EXPECTED: u64 = 7;
 
 pub fn ai_device_browser(ctx: &GateCtx) -> GateOutcome {
     // The two mutations edit embedded inputs (`Std.Ai.Device`, the device

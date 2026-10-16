@@ -75,7 +75,7 @@
       "tier": "T1"
     },
     "ai-device-csp": {
-      "expected_assertions": 6,
+      "expected_assertions": 7,
       "falsifier_mutation": "ai-device-csp.evaluate-a-string",
       "falsifier_proven": true,
       "summary": "the device worker and engines run under script-src 'self' 'wasm-unsafe-eval' with no violation",
@@ -135,7 +135,7 @@
       "tier": "T2"
     },
     "ai-device-privacy": {
-      "expected_assertions": 6,
+      "expected_assertions": 7,
       "falsifier_mutation": "ai-device-privacy.device-calls-the-server",
       "falsifier_proven": true,
       "summary": "a call that runs on the device sends nothing to the server (Chromium, strict CSP)",
