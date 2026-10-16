@@ -15,8 +15,9 @@
 # Debian Trixie (glibc 2.41), NOT Bookworm (glibc 2.36): the downloaded release
 # binary links against the build host's glibc, and the v0.18.1 linux binaries
 # were built on Ubuntu 24.04 (glibc 2.39), which Bookworm cannot run ("version
-# GLIBC_2.39 not found"). Trixie runs them. From v0.18.2 the release binaries
-# build on Ubuntu 22.04 (glibc 2.35) for portability, which Trixie also runs.
+# GLIBC_2.39 not found"). Trixie runs them. Since v0.18.2 the release binaries
+# need at most glibc 2.35 (release.yml SKY_GLIBC_FLOOR, checked per build),
+# which Trixie also runs.
 FROM golang:1.26-trixie
 
 # Debian's default locale is POSIX/C (ASCII). Set a UTF-8 locale so the Go

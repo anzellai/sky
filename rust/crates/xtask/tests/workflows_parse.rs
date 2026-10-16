@@ -2075,3 +2075,337 @@ fn the_full_build_speed_check_catches_a_shrunk_measure() {
         );
     }
 }
+
+/// Every file under `.github/` that a job runs: the workflows and the local
+/// composite actions.
+fn workflows_and_actions() -> Vec<PathBuf> {
+    let mut out = workflows();
+    let actions = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/actions"
+    ));
+    for entry in std::fs::read_dir(&actions)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", actions.display()))
+        .flatten()
+    {
+        for name in ["action.yml", "action.yaml"] {
+            let p = entry.path().join(name);
+            if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Does this line name a numbered PostgreSQL package or install path
+/// (`postgresql-16`, `/usr/lib/postgresql/16`, `/usr/share/postgresql/16`)?
+fn names_a_postgresql_major(line: &str) -> bool {
+    [
+        "postgresql-",
+        "/usr/lib/postgresql/",
+        "/usr/share/postgresql/",
+    ]
+    .iter()
+    .any(|prefix| {
+        line.match_indices(prefix).any(|(i, _)| {
+            line[i + prefix.len()..]
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_digit())
+        })
+    })
+}
+
+#[test]
+fn the_postgresql_major_detector_sees_every_spelling() {
+    for hit in [
+        "sudo apt-get install -y -qq postgresql-16 sqlite3",
+        "sudo apt-get install -y -qq postgresql-18-pgvector",
+        "SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin",
+        "[ -f /usr/share/postgresql/16/extension/vector.control ]",
+    ] {
+        assert!(names_a_postgresql_major(hit), "missed: {hit}");
+    }
+    for miss in [
+        "apt_install postgresql",
+        "apt_install \"postgresql-$major-pgvector\"",
+        "for d in /usr/lib/postgresql/*/bin; do",
+        "image: postgres:16",
+    ] {
+        assert!(!names_a_postgresql_major(miss), "false hit: {miss}");
+    }
+}
+
+/// Does this step resolve PostgreSQL for the steps after it?
+fn resolves_postgres(step: &serde_yaml::Value) -> bool {
+    let run = step.get("run").and_then(|r| r.as_str()).unwrap_or("");
+    if run.contains("scripts/ci/resolve-postgres.sh") {
+        return true;
+    }
+    step.get("uses").and_then(|u| u.as_str()) == Some("./.github/actions/gate-setup")
+        && step
+            .get("with")
+            .and_then(|w| w.get("postgres"))
+            .and_then(|p| p.as_str())
+            == Some("true")
+}
+
+/// Does this run line need a real PostgreSQL on the runner? The workspace and
+/// `sky` crate tests (the shared-cluster live tests, `db_*_flow`), the
+/// `--ignored` real-DB leg, the rt race run (the embedded supervisor) and the
+/// harness T1 / T3 tiers (Layer-2 apps) all stand up their own cluster from
+/// SKY_POSTGRES_BIN.
+fn needs_runner_postgres(run: &str) -> bool {
+    run.lines().any(|l| {
+        l.contains("cargo test --workspace")
+            || l.contains("nextest run -p sky")
+            || (l.contains("cargo test -p sky") && l.contains("--ignored"))
+            || (l.contains("go test -race") && l.contains("./rt/"))
+            || l.contains("harness --tier t1")
+            || l.contains("harness --tier t3")
+    })
+}
+
+/// The PostgreSQL major is a fact about the runner image, never a literal.
+///
+/// Every job used to `apt-get install postgresql-16` and set
+/// `SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin`. That held only while
+/// `ubuntu-latest` meant Ubuntu 24.04: the 26.04 image ships PostgreSQL 18 and
+/// its archive has no `postgresql-16`, so every live-test job would have died
+/// on an apt error the day the label moved. `scripts/ci/resolve-postgres.sh`
+/// now discovers the major (the image's own, else the distribution default)
+/// and exports SKY_POSTGRES_BIN, so:
+///
+///   * no workflow or composite action names a numbered PostgreSQL package or
+///     a `/usr/lib/postgresql/<n>` path,
+///   * no `env:` map sets SKY_POSTGRES_BIN (a literal would override the
+///     resolver for that step), and
+///   * every Linux job that runs a PostgreSQL-backed test resolves it in an
+///     EARLIER step, so the test cannot reach its "PostgreSQL is missing" path.
+#[test]
+fn postgresql_comes_from_the_resolver_never_a_hardcoded_major() {
+    let mut bad = Vec::new();
+    for path in workflows_and_actions() {
+        let text = std::fs::read_to_string(&path).expect("read");
+        let file = path.display().to_string();
+        for (n, line) in text.lines().enumerate() {
+            if names_a_postgresql_major(line) {
+                bad.push(format!(
+                    "{file}:{}: hardcoded PostgreSQL major: {}",
+                    n + 1,
+                    line.trim()
+                ));
+            }
+        }
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let mut envs: Vec<(String, &serde_yaml::Value)> = Vec::new();
+        if let Some(e) = doc.get("env") {
+            envs.push(("workflow".into(), e));
+        }
+        let mut job_steps: Vec<(String, &serde_yaml::Value, Vec<&serde_yaml::Value>)> = Vec::new();
+        if let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) {
+            for (name, job) in jobs {
+                let name = name.as_str().unwrap_or("?").to_string();
+                if let Some(e) = job.get("env") {
+                    envs.push((format!("job {name}"), e));
+                }
+                let steps: Vec<&serde_yaml::Value> = job
+                    .get("steps")
+                    .and_then(|s| s.as_sequence())
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                for s in &steps {
+                    if let Some(e) = s.get("env") {
+                        envs.push((format!("job {name} step"), e));
+                    }
+                }
+                job_steps.push((name, job, steps));
+            }
+        }
+        if let Some(steps) = doc
+            .get("runs")
+            .and_then(|r| r.get("steps"))
+            .and_then(|s| s.as_sequence())
+        {
+            for s in steps {
+                if let Some(e) = s.get("env") {
+                    envs.push(("composite step".into(), e));
+                }
+            }
+        }
+        for (where_, env) in envs {
+            if env.get("SKY_POSTGRES_BIN").is_some() {
+                bad.push(format!(
+                    "{file}: {where_} sets SKY_POSTGRES_BIN in `env:`; it comes from scripts/ci/resolve-postgres.sh"
+                ));
+            }
+        }
+        for (name, job, steps) in job_steps {
+            let linux = job
+                .get("runs-on")
+                .and_then(|r| r.as_str())
+                .is_some_and(|r| r.contains("ubuntu"));
+            if !linux || job_is_disabled(job) {
+                continue;
+            }
+            for (i, s) in steps.iter().enumerate() {
+                let run = s.get("run").and_then(|r| r.as_str()).unwrap_or("");
+                if needs_runner_postgres(run) && !steps[..i].iter().any(|p| resolves_postgres(p)) {
+                    bad.push(format!(
+                        "{file}: job {name} step {:?} needs a runner PostgreSQL but no earlier step \
+                         runs scripts/ci/resolve-postgres.sh (or gate-setup with postgres: 'true')",
+                        s.get("name").and_then(|n| n.as_str()).unwrap_or("?")
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "PostgreSQL pinned outside the resolver:\n  {}",
+        bad.join("\n  ")
+    );
+
+    let resolver = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../scripts/ci/resolve-postgres.sh"
+    ))
+    .expect("read resolve-postgres.sh");
+    for must in [
+        "SKY_POSTGRES_BIN=",
+        "GITHUB_ENV",
+        "::error::",
+        "apt_install postgresql\n",
+    ] {
+        assert!(
+            resolver.contains(must),
+            "scripts/ci/resolve-postgres.sh lost `{}`: it must install the distribution's \
+             unnumbered `postgresql`, fail with ::error:: on a missing binary, and export \
+             SKY_POSTGRES_BIN to $GITHUB_ENV",
+            must.trim()
+        );
+    }
+}
+
+/// The Linux release binaries link against a pinned glibc floor, and each
+/// build leg proves it before anything is uploaded.
+///
+/// The legs run on the CURRENT Ubuntu runners so a breaking image change shows
+/// up early. A binary linked normally needs the build host's glibc (24.04 gives
+/// 2.39, which Debian 12, Ubuntu 22.04 and RHEL 9 cannot run), so the legs
+/// build with `cargo zigbuild --target <triple>.$SKY_GLIBC_FLOOR`, and two
+/// steps before `Package` check the result: the highest GLIBC_x.y symbol
+/// version against the floor, and `--version` inside debian:12.
+#[test]
+fn linux_release_binaries_link_against_the_glibc_floor_and_prove_it() {
+    let doc = read_workflow("release.yml");
+    let floor = doc["env"]["SKY_GLIBC_FLOOR"]
+        .as_str()
+        .expect("release.yml declares env.SKY_GLIBC_FLOOR as a string");
+    let is_version = floor
+        .strip_prefix("2.")
+        .is_some_and(|minor| !minor.is_empty() && minor.bytes().all(|b| b.is_ascii_digit()));
+    assert!(
+        is_version,
+        "SKY_GLIBC_FLOOR must be a glibc version like 2.35, got {floor:?}"
+    );
+
+    let build = &doc["jobs"]["build"];
+    assert!(
+        !build.is_null() && !job_is_disabled(build),
+        "release.yml has no enabled build job"
+    );
+    let legs = build["strategy"]["matrix"]["include"]
+        .as_sequence()
+        .expect("build.strategy.matrix.include");
+    let linux: Vec<&serde_yaml::Value> = legs
+        .iter()
+        .filter(|l| {
+            l["artifact"]
+                .as_str()
+                .is_some_and(|a| a.starts_with("sky-linux-"))
+        })
+        .collect();
+    assert_eq!(
+        linux.len(),
+        2,
+        "expected the sky-linux-x64 and sky-linux-arm64 legs"
+    );
+    for leg in &linux {
+        let artifact = leg["artifact"].as_str().unwrap();
+        let target = leg["rust-target"].as_str().unwrap_or("");
+        assert!(
+            target.ends_with("-unknown-linux-gnu"),
+            "{artifact}: rust-target must be a *-unknown-linux-gnu triple (zigbuild appends the \
+             floor), got {target:?}"
+        );
+        let os = leg["os"].as_str().unwrap_or("");
+        assert!(
+            os == "ubuntu-latest" || os == "ubuntu-24.04-arm",
+            "{artifact}: the Linux legs run on the current runners (ubuntu-latest / \
+             ubuntu-24.04-arm); the glibc floor comes from zigbuild, not an old image. Got {os:?}"
+        );
+    }
+
+    let steps = build["steps"].as_sequence().expect("build steps");
+    let run_of = |s: &serde_yaml::Value| s["run"].as_str().unwrap_or("").to_string();
+    let idx = |pred: &dyn Fn(&serde_yaml::Value) -> bool, what: &str| {
+        steps
+            .iter()
+            .position(|s| pred(s))
+            .unwrap_or_else(|| panic!("release.yml build job has no {what} step"))
+    };
+    let compile = idx(
+        &|s| {
+            let r = run_of(s);
+            r.contains("cargo zigbuild")
+                && r.contains("--target \"$target\"")
+                && r.contains("${{ matrix.rust-target }}.${SKY_GLIBC_FLOOR}")
+        },
+        "`cargo zigbuild --target <rust-target>.$SKY_GLIBC_FLOOR`",
+    );
+    let symbols = idx(
+        &|s| {
+            let r = run_of(s);
+            r.contains("SKY_GLIBC_FLOOR")
+                && r.contains("objdump -T")
+                && r.contains("sky-ffi-inspect-")
+        },
+        "glibc symbol-version check (objdump -T against SKY_GLIBC_FLOOR, both binaries)",
+    );
+    let debian = idx(
+        &|s| {
+            let r = run_of(s);
+            r.contains("docker run") && r.contains("debian:12") && r.contains("--version")
+        },
+        "`--version` inside debian:12",
+    );
+    let package = idx(&|s| s["name"].as_str() == Some("Package"), "Package");
+    let upload = idx(
+        &|s| {
+            s["uses"]
+                .as_str()
+                .is_some_and(|u| u.starts_with("actions/upload-artifact@"))
+        },
+        "upload-artifact",
+    );
+    for (i, what) in [(symbols, "glibc symbol check"), (debian, "debian:12 run")] {
+        let step = &steps[i];
+        assert_eq!(
+            step["if"].as_str(),
+            Some("matrix.rust-target != ''"),
+            "the {what} must run on exactly the Linux legs"
+        );
+        assert!(
+            compile < i && i < package && i < upload,
+            "the {what} must run after the build and BEFORE Package and upload-artifact, so a \
+             binary that fails it never reaches the publish job"
+        );
+        assert!(
+            step.get("continue-on-error").is_none(),
+            "the {what} must fail the leg"
+        );
+    }
+}

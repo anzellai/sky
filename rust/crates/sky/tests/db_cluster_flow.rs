@@ -803,7 +803,7 @@ fn require_pg_bin() -> PathBuf {
          cluster. Skipping it would report `ok` having asserted nothing — which is how\n\
          the defect it covers survived.\n\
          Point SKY_POSTGRES_BIN at a PostgreSQL bin directory, or install one\n\
-         (apt: postgresql-16, brew: postgresql@16)."
+         (apt: postgresql, brew: postgresql@16)."
     )
 }
 

@@ -106,7 +106,7 @@ fn copy_dir(from: &Path, to: &Path) {
 // Heavy real-DB e2e leg: starts a real embedded PostgreSQL cluster and needs the
 // pgvector extension. Excluded from the per-commit T1 tier (it would blow the
 // test-sky latency budget) and run NIGHTLY via `cargo test -p sky -- --ignored`,
-// where nightly-sweep.yml installs postgresql-16-pgvector. This is the sanctioned
+// where scripts/ci/resolve-postgres.sh --pgvector installs pgvector. This is the sanctioned
 // placement for `#[ignore]`d heavy postgres legs (rust-ci.yml test-sky notes).
 #[test]
 #[ignore = "heavy: real embedded postgres + pgvector; runs nightly via --ignored"]

@@ -118,7 +118,7 @@ jobs:
     # headroom for a fully cache-cold run after a lockfile bump.
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         id: rust-cache
@@ -179,7 +179,7 @@ jobs:
     # is what holds the TIER budget; this bound only catches a runaway job.
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -210,7 +210,7 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -221,12 +221,12 @@ jobs:
       # ran against whatever Go the runner image happened to ship, while every
       # other Go-touching job pinned 1.26. A runner image bump could therefore
       # change a codegen gate's verdict with no change in this repo.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -245,18 +245,19 @@ jobs:
       #
       # `integration-postgres` installs these binaries too, and cannot help:
       # its own first comment is "No Rust build at all" — it runs `go test`.
+      #
+      # DECLARED, not inherited: `db_cluster_flow::a_second_start_retunes_the_managed_block`
+      # is a live gate that REFUSES to skip, because without a real cluster
+      # "PostgreSQL is missing" and "the retune is broken" produce the same
+      # green line. scripts/ci/resolve-postgres.sh uses the image's PostgreSQL
+      # whatever its major, installs the distribution default when the image
+      # has none, fails loudly on a missing binary, and exports SKY_POSTGRES_BIN
+      # for every later step.
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3
-          # Fail here, loudly, rather than at the first live test: an absent
-          # binary and a test that decided not to run are indistinguishable in
-          # a verdict line, which is the whole defect being closed.
-          for b in initdb pg_ctl postgres; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -265,36 +266,8 @@ jobs:
       - name: Clippy (report only)
         run: cargo clippy --workspace --all-targets || true
 
-      # PostgreSQL binaries, DECLARED rather than inherited from the runner
-      # image. `db_cluster_flow::a_second_start_retunes_the_managed_block` is a
-      # live gate that REFUSES to skip: its whole subject is a start that is not
-      # the first one, so without a real cluster "PostgreSQL is missing" and
-      # "the retune is broken" produce the same green line — which is how the
-      # frozen managed block survived. The rest of that file's live tests do
-      # skip, and did so silently on any runner image that dropped PostgreSQL.
-      - name: PostgreSQL binaries for the live cluster gates
-        run: |
-          set -euo pipefail
-          dir=""
-          for v in 17 16 15 14; do
-            if [ -x "/usr/lib/postgresql/$v/bin/initdb" ]; then dir="/usr/lib/postgresql/$v/bin"; break; fi
-          done
-          if [ -z "$dir" ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq postgresql-16
-            dir=/usr/lib/postgresql/16/bin
-          fi
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "$dir/$b" ] || { echo "missing $dir/$b — the live cluster gates cannot run" >&2; exit 1; }
-          done
-          echo "SKY_POSTGRES_BIN=$dir" >> "$GITHUB_ENV"
-
       - name: Tests — workspace except ty and sky
         env:
-          # Debian's PostgreSQL binaries are NOT on PATH — they live under
-          # /usr/lib/postgresql/<major>/bin — so this is set explicitly rather
-          # than left to discovery.
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           # The default, stated anyway: an unmet live environment must fail this
           # job rather than let a test return. The opt-out is `skip`, and no CI
           # job sets it.
@@ -360,14 +333,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -377,12 +350,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -398,7 +367,6 @@ jobs:
       # error "no library targets found").
       - name: Tests — sky crate shard 1/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:1/9
       - name: Bound the Go caches before save
@@ -413,14 +381,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -430,12 +398,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -447,7 +411,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 2/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:2/9
       - name: Bound the Go caches before save
@@ -462,14 +425,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -479,12 +442,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -496,7 +455,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 3/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:3/9
       - name: Bound the Go caches before save
@@ -516,14 +474,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -533,12 +491,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -550,7 +504,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 4/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:4/9
       - name: Bound the Go caches before save
@@ -575,14 +528,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -592,12 +545,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -609,7 +558,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 5/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:5/9
       - name: Bound the Go caches before save
@@ -625,14 +573,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -642,12 +590,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -659,7 +603,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 6/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:6/9
       - name: Bound the Go caches before save
@@ -675,14 +618,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -692,12 +635,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -709,7 +648,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 7/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:7/9
       - name: Bound the Go caches before save
@@ -732,14 +670,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -749,12 +687,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -766,7 +700,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 8/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:8/9
       - name: Bound the Go caches before save
@@ -782,14 +715,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -799,12 +732,8 @@ jobs:
       - name: PostgreSQL + sqlite3 for the live tests
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16 sqlite3 brotli
-          for b in initdb pg_ctl postgres psql; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "::error::missing /usr/lib/postgresql/16/bin/$b" >&2; exit 1; }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
+          bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" sqlite3 brotli
       - name: Install cargo-nextest (prebuilt binary)
         run: |
           set -euo pipefail
@@ -816,7 +745,6 @@ jobs:
           save-if: 'false'
       - name: Tests — sky crate shard 9/9 (nextest partition; postgres-live + integration)
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_LIVE_TESTS: require
         run: cargo nextest run -p sky --locked --partition slice:9/9
       - name: Bound the Go caches before save
@@ -832,7 +760,7 @@ jobs:
     # ~4 min + roundtrip/resolve/divergences/s8 ~3 min ≈ 20 min. 1.5x = 30.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -860,7 +788,7 @@ jobs:
     # ≈ 20 min. 1.5x = 30. Drop this to ~12 if the gates ever build --release.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -887,7 +815,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -903,7 +831,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -927,14 +855,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1017,13 +945,13 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1035,7 +963,7 @@ jobs:
       # Node.js runs the embedded browser clients in the rt tests (island,
       # scene, terminal and Sky.Live client tests). A missing node FAILS those
       # tests (runtime-go/rt/live_gate_test.go), so it is installed, not assumed.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       # SKY_LIVE_TESTS=skip covers only what this job does not provide: the
@@ -1101,14 +1029,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1156,14 +1084,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1201,14 +1129,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1275,14 +1203,14 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       SKY_BIN: ${{ github.workspace }}/rust/target/debug/sky
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1321,14 +1249,14 @@ jobs:
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
       SKY_BIN: ${{ github.workspace }}/rust/target/debug/sky
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1371,14 +1299,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1489,14 +1417,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1575,7 +1503,7 @@ jobs:
     # a cache-cold run.
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Does this change touch what a build's speed depends on?
@@ -1616,7 +1544,7 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: steps.paths.outputs.run == 'true'
         with:
           go-version: '1.26'
@@ -1627,7 +1555,7 @@ jobs:
       # GOCACHE of its own, so this cache never makes a cold number warm.
       - name: Cache the Sky Go build cache
         if: steps.paths.outputs.run == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.sky/go-build
@@ -1638,7 +1566,7 @@ jobs:
       - name: Install brotli, jq and time
         if: steps.paths.outputs.run == 'true'
         working-directory: .
-        run: sudo apt-get update -q && sudo apt-get install -y -q brotli jq time
+        run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" brotli jq time
       - name: Build and install the compiler (sky-out/sky)
         if: steps.paths.outputs.run == 'true'
         working-directory: .
@@ -1657,7 +1585,7 @@ jobs:
         run: bash scripts/bench-build.sh --reps 3 --cases app --sizes 50 --out build-perf.json --budget docs/perf/build-budget.json --budget-subset
       - name: Keep the measurements
         if: always() && steps.paths.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-perf
           path: |
@@ -1681,14 +1609,19 @@ jobs:
     # lsp-fuzz is not the critical path, so no tier split is needed.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
+      # Extract on the same filesystem as $HOME. Ubuntu 26.04 mounts /tmp as
+      # tmpfs, and the action's rename from os.tmpdir() into $HOME then fails
+      # with EXDEV ("cross-device link not permitted").
       - uses: rhysd/action-setup-vim@v1
+        env:
+          TMPDIR: ${{ runner.temp }}
         with:
           neovim: true
       - run: cargo build --workspace --locked
@@ -1728,7 +1661,7 @@ jobs:
     # under a minute observed locally. 5 is a runaway bound, not an estimate.
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # A real GNU readline lets the suite include one rejection driven by a
       # genuine GPL library rather than a stub carrying its name. The suite
       # skips that case when readline is absent, so this is fidelity, not a
@@ -1747,7 +1680,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install GNU readline (fidelity fixture)
         run: brew install readline || true
       - name: Prove the licence gate rejects what it must
@@ -1790,15 +1723,15 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       # A -race build shares nothing with the non-race caches, so it gets its
       # own family.
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1829,21 +1762,11 @@ jobs:
       - name: PostgreSQL binaries for the embedded supervisor
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-16
-          # Fail here, loudly, rather than letting SKY_POSTGRES_BIN point at
-          # nothing and every live test skip its way to a green run.
-          for b in initdb pg_ctl postgres; do
-            [ -x "/usr/lib/postgresql/16/bin/$b" ] || {
-              echo "missing /usr/lib/postgresql/16/bin/$b — the live tests would" \
-                   "have skipped silently" >&2
-              exit 1
-            }
-          done
+          bash "$GITHUB_WORKSPACE/scripts/ci/resolve-postgres.sh"
 
       # The rt tests that run the embedded browser clients need node; a
       # missing one fails them (runtime-go/rt/live_gate_test.go).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: rt tests under the race detector, with a live PostgreSQL
@@ -1851,7 +1774,6 @@ jobs:
         # The DSN-gated live tests fail, never skip, without it (G-8,
         # runtime-go/rt/live_gate_test.go); the job's postgres service is it.
         env:
-          SKY_POSTGRES_BIN: /usr/lib/postgresql/16/bin
           SKY_TEST_POSTGRES_DSN: postgres://sky:sky@localhost:5432/sky?sslmode=disable
         run: CGO_ENABLED=1 go test -race -timeout 20m ./rt/... -count=1
       - name: Bound the Go caches before save
@@ -1888,14 +1810,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -1956,14 +1878,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -2010,14 +1932,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -2070,14 +1992,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -2090,7 +2012,7 @@ jobs:
           shared-key: sky-macos
           save-if: 'false'
       - run: cargo build --workspace --locked
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       # Node is installed, so the browser-client rt tests run on this platform
@@ -2121,14 +2043,14 @@ jobs:
       GOCACHE: ${{ github.workspace }}/.gocache
       GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: false
       - name: Cache Go build + module cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ github.workspace }}/.gocache
@@ -2204,7 +2126,7 @@ jobs:
       # Needed to read this run's per-job timings via the REST API.
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Rendered from the `needs` graph, not from anything a job reported about
       # itself, so a job cannot pass by not running: `skipped` and `cancelled`
