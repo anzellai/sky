@@ -22,7 +22,15 @@ fn repo_root() -> PathBuf {
 }
 
 fn shard(list: &str, k: u32, n: u32) -> Vec<String> {
-    let mut child = Command::new("bash")
+    shard_weighted(list, k, n, None)
+}
+
+fn shard_weighted(list: &str, k: u32, n: u32, weights: Option<&std::path::Path>) -> Vec<String> {
+    let mut cmd = Command::new("bash");
+    if let Some(w) = weights {
+        cmd.env("GO_TEST_DURATIONS", w);
+    }
+    let mut child = cmd
         .arg("scripts/ci/go-test-shard.sh")
         .arg("--partition")
         .arg(format!("{k}/{n}"))
@@ -100,4 +108,45 @@ fn an_out_of_range_shard_is_a_usage_error() {
             .unwrap();
         assert_eq!(out.status.code(), Some(2), "accepted shard `{spec}`");
     }
+}
+
+/// With measured durations the shards are still disjoint and total, the long
+/// tests are spread across shards, and a test the durations file does not
+/// know (a new or renamed test) is still assigned to exactly one shard.
+#[test]
+fn weighted_shards_balance_and_stay_disjoint_and_total() {
+    let dir = std::env::temp_dir().join(format!("sky-go-shard-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let weights = dir.join("w.tsv");
+    std::fs::write(
+        &weights,
+        "p\tTestSlowA\t300\np\tTestSlowB\t290\np\tTestSlowC\t10\np\tTestGone\t500\n",
+    )
+    .unwrap();
+    let mut list = String::new();
+    for t in [
+        "TestSlowA",
+        "TestSlowB",
+        "TestSlowC",
+        "TestNew1",
+        "TestNew2",
+        "TestNew3",
+    ] {
+        list.push_str(&format!("p\t{t}\n"));
+    }
+    let all: BTreeSet<String> = list.lines().map(str::to_string).collect();
+    for n in 1..=4u32 {
+        let mut seen = Vec::new();
+        for k in 1..=n {
+            seen.extend(shard_weighted(&list, k, n, Some(&weights)));
+        }
+        let uniq: BTreeSet<String> = seen.iter().cloned().collect();
+        assert_eq!(uniq.len(), seen.len(), "N={n}: a pair runs twice: {seen:?}");
+        assert_eq!(uniq, all, "N={n}: the shards do not cover the list");
+    }
+    let one = shard_weighted(&list, 1, 2, Some(&weights));
+    let a = one.iter().any(|l| l.ends_with("TestSlowA"));
+    let b = one.iter().any(|l| l.ends_with("TestSlowB"));
+    assert!(a != b, "the two long tests landed in one shard: {one:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -10,9 +10,10 @@
 # split cannot shorten that, so this splits the TESTS: it lists every top-level
 # Test/Example/Fuzz function of the packages with the same flags the run uses
 # (`go test -list`, which compiles the same test binaries the run then reuses),
-# sorts the (package, name) pairs, and gives shard K of N every pair whose
-# index is K-1 modulo N. Every shard derives its share from the same full list,
-# so the shards are disjoint and their union is the unsharded run, by
+# weighs each (package, name) pair by its measured duration
+# (go-test-durations.tsv) and deals them longest first to the least-loaded
+# shard. Every shard derives its share from the same full list and the same
+# weights, so the shards are disjoint and their union is the unsharded run, by
 # construction. `--partition` exposes that rule on a list read from stdin, and
 # rust/crates/xtask/tests/go_test_shards_are_disjoint_and_total.rs checks it.
 #
@@ -52,10 +53,40 @@ sha256_16() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-16
 }
 
-# partition: stdin "pkg<TAB>name" lines -> this shard's lines, in sorted order.
+# The measured duration of each test, "pkg<TAB>name<TAB>seconds"
+# (scripts/ci/go-test-durations.tsv). Only the BALANCE uses it: an unlisted or
+# renamed test gets DEFAULT_WEIGHT and is still assigned, so a stale file can
+# make the shards uneven but never drops or repeats a test.
+DURATIONS="${GO_TEST_DURATIONS:-$(cd "$(dirname "$0")" && pwd)/go-test-durations.tsv}"
+DEFAULT_WEIGHT=0.1
+
+# partition: stdin "pkg<TAB>name" lines -> this shard's lines, sorted.
+#
+# Longest first: every test is weighed (its measured seconds, else
+# DEFAULT_WEIGHT), the list is ordered by weight descending then by name, and
+# each test goes to the shard with the least weight so far (the lowest index on
+# a tie). Every shard computes the same assignment from the same list, so the
+# shards are disjoint and their union is the list. Round-robin by name, the
+# first rule here, split the race run 120 s / 479 s (rust-ci run 38905775007).
 partition() {
-  LC_ALL=C sort -u | awk -F '\t' -v k="$SHARD_K" -v n="$SHARD_N" \
-    'NF == 2 && $1 != "" && $2 != "" { if ((i % n) == (k - 1)) print; i++ }'
+  local weights=/dev/null
+  [ -f "$DURATIONS" ] && weights="$DURATIONS"
+  LC_ALL=C sort -u | awk -F '\t' -v OFS='\t' -v dflt="$DEFAULT_WEIGHT" '
+    FILENAME == ARGV[1] { if (NF >= 3) w[$1 "\t" $2] = $3 + 0; next }
+    NF == 2 && $1 != "" && $2 != "" {
+      key = $1 "\t" $2
+      printf "%.6f\t%s\t%s\n", ((key in w) ? w[key] : dflt), $1, $2
+    }' "$weights" - \
+    | LC_ALL=C sort -t "$(printf '\t')" -k1,1gr -k2,2 -k3,3 \
+    | awk -F '\t' -v OFS='\t' -v k="$SHARD_K" -v n="$SHARD_N" '
+      BEGIN { for (s = 1; s <= n; s++) load[s] = 0 }
+      {
+        best = 1
+        for (s = 2; s <= n; s++) if (load[s] < load[best]) best = s
+        load[best] += $1
+        if (best == k) print $2, $3
+      }' \
+    | LC_ALL=C sort
 }
 
 if [ "${1:-}" = "--partition" ]; then
@@ -96,10 +127,23 @@ if [ "$total" -eq 0 ] || [ "$count" -eq 0 ]; then
 fi
 
 status=0
+timings="$(mktemp "${TMPDIR:-/tmp}/go-test-shard.XXXXXX")"
+trap 'rm -f "$timings" "$timings.log"' EXIT
 for pkg in $(printf '%s\n' "$mine" | cut -f1 | LC_ALL=C sort -u); do
   regex="^($(printf '%s\n' "$mine" | awk -F '\t' -v p="$pkg" '$1 == p { print $2 }' | paste -sd '|' -))\$"
   n="$(printf '%s\n' "$mine" | awk -F '\t' -v p="$pkg" '$1 == p' | grep -c .)"
   echo "go-test-shard: $pkg ($n tests)"
-  go test ${flags[@]+"${flags[@]}"} -run "$regex" "$pkg" || status=$?
+  # -v prints each top-level test's own duration ("--- PASS: TestX (1.23s)"
+  # at column 0), which the summary below turns into go-test-durations.tsv
+  # lines. The test output itself passes through unchanged.
+  rc=0
+  # pipefail (set above) makes the pipeline's status go test's own.
+  go test ${flags[@]+"${flags[@]}"} -v -run "$regex" "$pkg" 2>&1 | tee "$timings.log" || rc=$?
+  awk -v p="$pkg" 'match($0, /^--- (PASS|FAIL): [A-Za-z0-9_]+ \([0-9.]+s\)$/) {
+        printf "%s\t%s\t%s\n", p, $3, substr($4, 2, length($4) - 3)
+      }' "$timings.log" >> "$timings"
+  [ "$rc" = 0 ] || status="$rc"
 done
+echo "go-test-shard: the 25 slowest tests of this shard (go-test-durations.tsv lines):"
+LC_ALL=C sort -t "$(printf '\t')" -k3,3gr "$timings" | head -25 | sed 's/^/  /'
 exit "$status"
