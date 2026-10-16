@@ -2150,6 +2150,21 @@ jobs:
         env:
           SKY_LIVE_TESTS: skip
         run: cargo run -q -p xtask -- coerce-floor
+      # The Go runtime's own tests on the 2nd platform. They moved here from
+      # macos-behaviour, which built the workspace, ran these (~300 s) and the
+      # project tests (~130 s), and was the longest rust-ci job (10-14 min,
+      # runs 38892647386, 38915868318); this job had the most room.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      # Node is installed, so the browser-client rt tests run on this platform
+      # too. SKY_LIVE_TESTS=skip covers only the embedded-PostgreSQL live
+      # tests, which `integration-postgres` runs on Linux with real binaries;
+      # a PostgreSQL install here would bill at 10x for no platform signal.
+      - name: Gate — runtime rt tests (go test, 2nd platform)
+        env:
+          SKY_LIVE_TESTS: skip
+        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       # NOTE: the `golden` gate (the other 2nd-platform emit/go-build parity
       # gate) runs on `macos-determinism-2`, not here — the two determinism
       # gates are balanced one-per-shard so neither job binds the tier.
@@ -2304,7 +2319,8 @@ jobs:
   # Predicted from this run's per-step numbers — the next run is the measurement.
   macos-behaviour:
     runs-on: macos-latest
-    # Workspace build + rt tests + project tests. The stdlib conformance leg
+    # Workspace build + project tests (the rt tests moved to macos-determinism
+    # on ci/speed). The stdlib conformance leg
     # moved to `macos-conformance` at v0.27.0: with 42 suites the whole job ran
     # past its 20 min limit (PR run 36641698044, cancelled at 20.5 min inside
     # conformance; 1045-1074 s when it did finish). Measured without
@@ -2340,17 +2356,6 @@ jobs:
           shared-key: sky-macos
           save-if: 'false'
       - run: cargo build --workspace --locked
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-      # Node is installed, so the browser-client rt tests run on this platform
-      # too. SKY_LIVE_TESTS=skip covers only the embedded-PostgreSQL live
-      # tests, which `integration-postgres` runs on Linux with real binaries;
-      # a PostgreSQL install here would bill at 10x for no platform signal.
-      - name: Gate — runtime rt tests (go test, 2nd platform)
-        env:
-          SKY_LIVE_TESTS: skip
-        run: cd ../runtime-go && CGO_ENABLED=0 go test ./rt/...
       - name: Gate — project integration tests (go build regressions, 2nd platform)
         run: cargo test -p project --locked
       - name: Bound the Go caches before save
