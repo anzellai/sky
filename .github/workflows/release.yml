@@ -453,7 +453,7 @@ jobs:
 
   gate-core:
     runs-on: ubuntu-latest
-    # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..9.
+    # Workspace tests EXCEPT the `sky` crate, which runs in gate-core-sky-1..6.
     # They took ~37 min on the runner at v0.25.18 (run 36122173135), so the
     # corpus gates + coerce-floor + doc examples that used to follow them here
     # moved to gate-corpus. At v0.27.0 the sky crate alone outgrew the job: run
@@ -471,7 +471,7 @@ jobs:
           postgres: 'true'
           neovim: 'true'
 
-      # `--exclude sky`: the sky crate runs in gate-core-sky-1..9 below, sliced
+      # `--exclude sky`: the sky crate runs in gate-core-sky-1..6 below, sliced
       # by test with nextest. Doctests still run here (`cargo test` runs them;
       # nextest does not, and sky is bin-only, so it has none).
       - name: Workspace tests (every crate except sky)
@@ -485,15 +485,15 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  # gate-core-sky-1..9 — the `sky` crate's tests, split out of gate-core.
-  # `cargo nextest run -p sky --partition slice:k/9`: slice splits the whole
-  # sorted test list evenly across the nine jobs, so a long binary such as
+  # gate-core-sky-1..6 — the `sky` crate's tests, split out of gate-core.
+  # `cargo nextest run -p sky --partition slice:k/6`: slice splits the whole
+  # sorted test list evenly across the six jobs, so a long binary such as
   # spa_split_flow (81 tests, 25-40 min alone under `cargo test`) is spread
   # across all of them. Disjoint and total by construction;
-  # tests/workflows_parse.rs checks the nine slices are all present. The
+  # tests/workflows_parse.rs checks the six slices are all present. The
   # `serial-servers` group in rust/.config/nextest.toml still runs the
   # fixed-port server tests one at a time within each job. The same split the
-  # per-commit `test-sky` jobs use (rust-ci.yml, also 9 slices).
+  # per-commit `test-sky` jobs use (rust-ci.yml, at 9 slices).
   #
   # Why nine, measured (release runs 37545837777, 37594890617, 37713125127,
   # 37752520304, all at five slices): the nextest execution summed over the
@@ -509,6 +509,14 @@ jobs:
   # 13.6 min (rust-ci runs 37711532703, 37750307576). That is >= 40% headroom
   # under 30 min. Seven slices would put the slowest job at ~18 min, at the
   # edge of that margin, so nine. Timeout stays 30.
+  #
+  # Why SIX since v0.27.9: the build-speed work made the tests faster. At nine
+  # slices the jobs took 268-429 s each, compile and setup included (release run
+  # 38858732165): about 29 min of tests in all, under 4 min per slice, behind a
+  # ~2.5 min compile that every slice repeats. Nine jobs of mostly fixed cost
+  # held nine of the 40 jobs that can run at once, and the release queued. Six
+  # slices are ~5 min of tests each (~8 min a job), still under a third of the
+  # 30-min timeout.
   # The heavy `#[ignore]`d legs run in gate-app (`-- --ignored`), unchanged.
   gate-core-sky-1:
     runs-on: ubuntu-latest
@@ -523,11 +531,11 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 1/9 (nextest)
+      - name: sky crate tests, slice 1/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:1/9
+        run: cargo nextest run -p sky --locked --partition slice:1/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -546,11 +554,11 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 2/9 (nextest)
+      - name: sky crate tests, slice 2/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:2/9
+        run: cargo nextest run -p sky --locked --partition slice:2/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -569,11 +577,11 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 3/9 (nextest)
+      - name: sky crate tests, slice 3/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:3/9
+        run: cargo nextest run -p sky --locked --partition slice:3/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -592,11 +600,11 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 4/9 (nextest)
+      - name: sky crate tests, slice 4/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:4/9
+        run: cargo nextest run -p sky --locked --partition slice:4/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -615,11 +623,11 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 5/9 (nextest)
+      - name: sky crate tests, slice 5/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:5/9
+        run: cargo nextest run -p sky --locked --partition slice:5/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -638,84 +646,18 @@ jobs:
         run: |
           set -euo pipefail
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 6/9 (nextest)
+      - name: sky crate tests, slice 6/6 (nextest)
         working-directory: rust
         env:
           SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:6/9
+        run: cargo nextest run -p sky --locked --partition slice:6/6
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  gate-core-sky-7:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          postgres: 'true'
-          install-compiler: 'false'
-      - name: Install cargo-nextest (prebuilt binary)
-        run: |
-          set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 7/9 (nextest)
-        working-directory: rust
-        env:
-          SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:7/9
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
-  gate-core-sky-8:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          postgres: 'true'
-          install-compiler: 'false'
-      - name: Install cargo-nextest (prebuilt binary)
-        run: |
-          set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 8/9 (nextest)
-        working-directory: rust
-        env:
-          SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:8/9
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
-  gate-core-sky-9:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          postgres: 'true'
-          install-compiler: 'false'
-      - name: Install cargo-nextest (prebuilt binary)
-        run: |
-          set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"
-      - name: sky crate tests, slice 9/9 (nextest)
-        working-directory: rust
-        env:
-          SKY_LIVE_TESTS: require
-        run: cargo nextest run -p sky --locked --partition slice:9/9
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
   # gate-corpus — the corpus gates, coerce-floor and the live-doc examples,
   # split out of gate-core (see its comment) so both finish inside a ceiling.
@@ -776,27 +718,30 @@ jobs:
 
   # The T1 shards need postgres + neovim because T1 includes the lsp gate and
   # the postgres-arm gates. Caches are restore-only (main writes them).
-  # gate-t1-N — the T1 gate harness, SHARDED 4 ways by `--only`. Its 30 gates
+  # gate-t1-N — the T1 gate harness, SHARDED 3 ways by `--only`. Its 30 gates
   # run one after another inside one harness, and their budgets sum to ~413 min;
   # as ONE job it passed a 40-min and then a 75-min ceiling at v0.25.18 (runs
   # 36111406977 and 36122173135, cancelled with no verdict). The shards run in
   # parallel. `workflows_parse::the_release_workflow_is_the_full_suite` fails if
   # a T1 gate is in no shard. The harness prints each gate's verdict as it ends.
+  # Shard 1 holds what were shards 1 and 4 (conformance + verify-cli, 256 s;
+  # the corpus, runtime-safety and census gates, 159 s; release run
+  # 38764879819): two jobs of mostly setup became one of ~9 minutes.
   gate-t1-1:
     runs-on: ubuntu-latest
     # The harness runs this job's gates one after another: their summed budget
     # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
     # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 95
+    timeout-minutes: 235
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
           postgres: 'true'
           neovim: 'true'
-      - name: Gate harness (T1 shard 1/4 — conformance and verify-cli) with proof requirement
+      - name: Gate harness (T1 shard 1/3 — conformance, verify-cli, corpus, runtime safety, census) with proof requirement
         working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only conformance,verify-cli
+        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only conformance,verify-cli,roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger,config-surface,kernel-members,config-migration,config-migrate
       - name: Bound the Go caches before save
         if: always()
         working-directory: .
@@ -814,7 +759,7 @@ jobs:
         with:
           postgres: 'true'
           neovim: 'true'
-      - name: Gate harness (T1 shard 2/4 — sky-verify, sky-suites, lsp) with proof requirement
+      - name: Gate harness (T1 shard 2/3 — sky-verify, sky-suites, lsp) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only sky-verify,sky-suites,lsp
       - name: Bound the Go caches before save
@@ -834,7 +779,7 @@ jobs:
         with:
           postgres: 'true'
           neovim: 'true'
-      - name: Gate harness (T1 shard 3/4 — Layer-2 apps and CLI verbs) with proof requirement
+      - name: Gate harness (T1 shard 3/3 — Layer-2 apps and CLI verbs) with proof requirement
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only apps-bundled,cli-verbs,apps-ledger,apps-dispatch,apps-dispatch-destructive,apps-relay,config-matrix,build-growth-linear
       - name: Bound the Go caches before save
@@ -842,25 +787,6 @@ jobs:
         working-directory: .
         run: bash scripts/ci/bound-go-cache.sh
 
-  gate-t1-4:
-    runs-on: ubuntu-latest
-    # The harness runs this job's gates one after another: their summed budget
-    # plus ~15 min of setup must fit, or a slow gate ends as a cancelled job
-    # instead of a harness verdict (G-18; `e2e_scripts_are_gated.rs` checks it).
-    timeout-minutes: 155
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/gate-setup
-        with:
-          postgres: 'true'
-          neovim: 'true'
-      - name: Gate harness (T1 shard 4/4 — corpus, runtime safety, census) with proof requirement
-        working-directory: rust
-        run: cargo run --release --locked -q -p xtask -- harness --tier t1 --require-proofs --only roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape,analytics-retention-survives-a-panic,analytics-prune-errors-are-reported,console-analytics-queries-are-bounded,erasure-path-uses-an-index,periodic-loops-recover-per-cycle,live-time-every-mutex-survives-a-panic,jobs-complete-failure-is-reported,coverage-ledger,config-surface,kernel-members,config-migration,config-migrate
-      - name: Bound the Go caches before save
-        if: always()
-        working-directory: .
-        run: bash scripts/ci/bound-go-cache.sh
 
   # gate-buildrun — the codegen build+run sweep, SHARDED 2 ways. Each shard
   # emits + `go build`s a DISJOINT half of every example (`--shard=N/2`) and
@@ -1804,14 +1730,10 @@ jobs:
       - gate-core-sky-4
       - gate-core-sky-5
       - gate-core-sky-6
-      - gate-core-sky-7
-      - gate-core-sky-8
-      - gate-core-sky-9
       - gate-corpus
       - gate-t1-1
       - gate-t1-2
       - gate-t1-3
-      - gate-t1-4
       - gate-buildrun
       - gate-t2-corpus
       - gate-t2-rest
