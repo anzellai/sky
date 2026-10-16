@@ -124,9 +124,15 @@ runs:
     # Neovim is a DECLARED dependency of the `lsp` harness gate (T1). Without it
     # that gate reports 0 assertions and the harness fails — a gate that cannot
     # run has not passed.
+    #
+    # TMPDIR: extract on the same filesystem as $HOME. Ubuntu 26.04 mounts /tmp
+    # as tmpfs, and the action's rename from os.tmpdir() into $HOME then fails
+    # with EXDEV ("cross-device link not permitted").
     - name: Neovim for the lsp harness gate
       if: inputs.neovim == 'true'
       uses: rhysd/action-setup-vim@v1
+      env:
+        TMPDIR: ${{ runner.temp }}
       with:
         neovim: true
 

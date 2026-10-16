@@ -587,7 +587,12 @@ jobs:
       # the falsifier's baseline + mutated runs both need it. Absent, that gate
       # FAILs (never skips) and would fail this job — which is correct, but the
       # point here is to verify the mutation, so the editor is installed.
+      # Extract on the same filesystem as $HOME. Ubuntu 26.04 mounts /tmp as
+      # tmpfs, and the action's rename from os.tmpdir() into $HOME then fails
+      # with EXDEV ("cross-device link not permitted").
       - uses: rhysd/action-setup-vim@v1
+        env:
+          TMPDIR: ${{ runner.temp }}
         with:
           neovim: true
       - name: Cache Go build + module cache

@@ -152,7 +152,7 @@ jobs:
           echo "$dir/ziglang" >> "$GITHUB_PATH"
           "$dir/ziglang/zig" version
           cargo install --locked "cargo-zigbuild@${CARGO_ZIGBUILD_VERSION}"
-          cargo zigbuild --version
+          command -v cargo-zigbuild
 
       - name: Build sky compiler (cargo)
         shell: bash

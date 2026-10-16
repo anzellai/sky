@@ -1616,7 +1616,12 @@ jobs:
           workspaces: rust
           shared-key: sky-linux
           save-if: 'false'
+      # Extract on the same filesystem as $HOME. Ubuntu 26.04 mounts /tmp as
+      # tmpfs, and the action's rename from os.tmpdir() into $HOME then fails
+      # with EXDEV ("cross-device link not permitted").
       - uses: rhysd/action-setup-vim@v1
+        env:
+          TMPDIR: ${{ runner.temp }}
         with:
           neovim: true
       - run: cargo build --workspace --locked

@@ -4,6 +4,6 @@
   "type": "module",
   "description": "Dev-tooling deps for scripts/verify-examples.{sh,mjs}. Not part of the compiler/runtime; node_modules is gitignored.",
   "devDependencies": {
-    "playwright": "^1.49.0"
+    "playwright": "^1.63.0"
   }
 }
