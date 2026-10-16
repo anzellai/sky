@@ -69,7 +69,15 @@ use std::path::Path;
 ///   stratum found on its first run — two modules that both `exposing (..)` the
 ///   same name resolve to the last import, silently, so the program's value
 ///   depends on import order (`gen::blocked_reason`).
-pub const N_ISO_CEILING: usize = 58;
+/// * `62` — **raised deliberately** to admit the `alias_ctor_collision`
+///   stratum: 4 units (2 `alias_names` × 2 `ctor_use`), `≈ 2.8 s` per run. Two
+///   modules that each declare `type alias Reply` must each build their own
+///   record; the lowering picked the constructor by bare name and built the
+///   other module's record, a runtime `CoerceFailure` behind a clean `sky
+///   check` (v0.27.10). The collision is between modules, so the module graph
+///   IS the subject and the cases cannot share a compilation unit. 61 units
+///   leave one slot of headroom, as before.
+pub const N_ISO_CEILING: usize = 62;
 
 /// **What the ceiling counts, and why it is not simply "unit cases".**
 ///

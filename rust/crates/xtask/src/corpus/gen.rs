@@ -639,6 +639,83 @@ fn fieldset_ctor(a: &Assignment) -> (String, String, String) {
 }
 
 // ---------------------------------------------------------------------------
+// Stratum: alias_ctor_collision  (v0.27.10)   — ISOLATED
+// ---------------------------------------------------------------------------
+
+/// Two modules each declare a record alias, and each uses its OWN alias's
+/// constructor. With `alias_names = same` both are `type alias Reply` (two
+/// fields in `Alpha`, three in `Beta`); with `distinct` the second is
+/// `BetaReply`, the shape that always worked.
+///
+/// The defect: a record-alias constructor resolves to a bodyless def, and the
+/// lowering found its Go constructor by the bare name in a last-writer-wins
+/// table, so `Alpha`'s `Reply` built `Beta`'s record. `sky check` passed and
+/// the program panicked with `CoerceFailure`. Each module prints a field read
+/// of the record it built, so a record built by the other module's
+/// constructor cannot print the expected line.
+fn alias_ctor_collision(a: &Assignment) -> (Vec<(String, String)>, String, String) {
+    let beta_alias = match a.get(ALIAS_NAMES) {
+        "same" => "Reply",
+        "distinct" => "BetaReply",
+        other => panic!("alias_ctor_collision: unknown alias_names {other:?}"),
+    };
+    let (alpha_make, beta_make) = match a.get(CTOR_USE) {
+        "applied" => (
+            "make : String -> Reply\nmake s =\n    Reply True s\n".to_string(),
+            format!(
+                "make : String -> {beta_alias}\nmake s =\n    {beta_alias} s [ \"n\" ] False\n"
+            ),
+        ),
+        // `Decode.mapN Reply …`: the constructor passed as a value.
+        "value" => (
+            "decoder : Decode.Decoder Reply\ndecoder =\n    Decode.map2 Reply\n        (Decode.field \"relevant\" Decode.bool)\n        (Decode.field \"answer\" Decode.string)\n\n\n\
+             make : String -> Reply\nmake s =\n    case Decode.decodeString decoder (\"{\\\"relevant\\\":true,\\\"answer\\\":\\\"\" ++ s ++ \"\\\"}\") of\n        Ok r ->\n            r\n\n        Err _ ->\n            { relevant = False, answer = \"err\" }\n"
+                .to_string(),
+            format!(
+                "decoder : Decode.Decoder {beta_alias}\ndecoder =\n    Decode.map3 {beta_alias}\n        (Decode.field \"text\" Decode.string)\n        (Decode.field \"notes\" (Decode.list Decode.string))\n        (Decode.field \"flag\" Decode.bool)\n\n\n\
+                 make : String -> {beta_alias}\nmake s =\n    case Decode.decodeString decoder (\"{{\\\"text\\\":\\\"\" ++ s ++ \"\\\",\\\"notes\\\":[\\\"n\\\"],\\\"flag\\\":false}}\") of\n        Ok r ->\n            r\n\n        Err _ ->\n            {{ text = \"err\", notes = [], flag = False }}\n"
+            ),
+        ),
+        other => panic!("alias_ctor_collision: unknown ctor_use {other:?}"),
+    };
+    let alpha_src = format!(
+        "module Alpha exposing (Reply, make, show)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Json.Decode as Decode\n\n\n\
+         type alias Reply =\n    {{ relevant : Bool, answer : String }}\n\n\n\
+         {alpha_make}\n\n\
+         show : Reply -> String\nshow r =\n    if r.relevant then\n        r.answer ++ \"+\"\n\n    else\n        r.answer ++ \"-\"\n"
+    );
+    let beta_src = format!(
+        "module Beta exposing ({beta_alias}, make, show)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Sky.Core.Json.Decode as Decode\n\
+         import Sky.Core.String as String\n\n\n\
+         type alias {beta_alias} =\n    {{ text : String, notes : List String, flag : Bool }}\n\n\n\
+         {beta_make}\n\n\
+         show : {beta_alias} -> String\nshow r =\n    r.text ++ String.join \",\" r.notes\n"
+    );
+    let main_src = format!(
+        "module Main exposing (main)\n\n\
+         import Sky.Core.Prelude exposing (..)\n\
+         import Std.Log exposing (println)\n\
+         import Alpha\n\
+         import Beta\n\n\n\
+         main =\n    println (Alpha.show (Alpha.make \"{SURVIVOR}\") ++ \"|\" ++ Beta.show (Beta.make \"{SURVIVOR}\"))\n"
+    );
+    (
+        vec![
+            ("Alpha".to_string(), alpha_src),
+            ("Beta".to_string(), beta_src),
+            ("Main".to_string(), main_src),
+        ],
+        "Main".to_string(),
+        // `Alpha` reads `answer` + `relevant`, `Beta` reads `text` + `notes`.
+        format!("{SURVIVOR}+|{SURVIVOR}n"),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Stratum: import_shape  (#164)   — ISOLATED
 // ---------------------------------------------------------------------------
 
@@ -787,8 +864,13 @@ fn family_of(stratum: &str) -> Family {
 pub fn build(stratum: &Stratum, assignment: &Assignment) -> GenCase {
     let (modules, entry, stdout, body) = match stratum.name {
         "import_shape" => {
-            // The only multi-module stratum: the module graph IS the subject.
+            // A multi-module stratum: the module graph IS the subject.
             let (mods, entry, out) = import_shape(assignment);
+            (mods, entry, out, None)
+        }
+        "alias_ctor_collision" => {
+            // Multi-module: the collision is between two modules.
+            let (mods, entry, out) = alias_ctor_collision(assignment);
             (mods, entry, out, None)
         }
         // ---- Family S: the body already carries its own imports ------------

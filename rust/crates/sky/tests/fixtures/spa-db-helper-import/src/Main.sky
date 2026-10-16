@@ -1,0 +1,71 @@
+module Main exposing (main)
+
+-- The entry imports `Std.Db` for one constructor, used by a pure helper the
+-- client view calls (`show (SqlString "x")`). The client entry must keep it.
+
+import Leads
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.App as App
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Ui as Ui
+
+type alias Model =
+    { out : String }
+
+type Msg
+    = Count
+    | Counted (Result Error Int)
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { out = "" }, Cmd.none )
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Count ->
+            ( model
+            , Cmd.perform (Leads.countFor { ownerId = "o1" } "l1") Counted
+            )
+
+        Counted (Ok n) ->
+            ( { model | out = String.fromInt n }, Cmd.none )
+
+        Counted (Err _) ->
+            ( { model | out = "err" }, Cmd.none )
+
+
+show : SqlValue -> String
+show v =
+    case v of
+
+        SqlString s ->
+            s
+
+        _ ->
+            "?"
+
+
+main =
+    App.run
+        (App.app
+            { init = init
+            , update = update
+            , view =
+                \m ->
+                    Ui.column
+                        []
+                        [ Ui.text (show (SqlString "x"))
+                        , Ui.text
+                              (Leads.label { ownerId = "o1" } ++ " OUT=" ++ m.out)
+                        , Ui.button
+                              []
+                              { onPress = Just Count, label = Ui.text "count" }
+                        ]
+            , subscriptions = \_ -> Sub.none
+            }
+            |> App.withNotFound ())

@@ -1,0 +1,62 @@
+module Leads exposing (Lead, Session, countFor, label, scope)
+
+-- A server module (it opens the database) with pure helpers the client keeps.
+-- `scope` is pure: it builds a `Store.Cond` and names `Std.Db` only through a
+-- constructor that `exposing (SqlValue(..))` brings in (`SqlString`). The
+-- client copy of this module must keep that import while `scope` uses it.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.System as System
+import Sky.Core.Task as Task
+import Std.Codec as Codec
+import Std.Db as Db exposing (SqlValue(..))
+import Std.Db.Store as Store
+
+type alias Session =
+    { ownerId : String }
+
+type alias Lead =
+    { id : String
+    , ownerId : String
+    , name : String
+    }
+
+
+leadCodec : Codec.Codec Lead
+leadCodec =
+    Codec.auto { id = "", ownerId = "", name = "" }
+
+
+leads : Store.Store Lead
+leads =
+    Store.fromCodec "leads" leadCodec
+
+
+db : Db.Db
+db =
+    case Task.run
+             (Db.open "sqlite" (System.getenvOr "LEADS_DB_PATH" "leads.db")) of
+
+        Ok c ->
+            c
+
+        Err _ ->
+            System.exit 1
+
+
+scope : Session -> String -> Store.Cond
+scope session id =
+    Store.and_
+        [ Store.eq "id" (SqlString id)
+        , Store.eq "owner_id" (SqlString session.ownerId)
+        ]
+
+
+countFor : Session -> String -> Task Error Int
+countFor session id =
+    Store.query leads |> Store.where_ (scope session id) |> Store.count db
+
+
+label : Session -> String
+label session =
+    "owner " ++ session.ownerId

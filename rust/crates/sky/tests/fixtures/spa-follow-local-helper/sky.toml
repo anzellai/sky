@@ -1,0 +1,7 @@
+name = "spa-follow-local-helper"
+version = "0.1.0"
+entry = "src/Main.sky"
+bin = "app"
+
+[source]
+root = "src"

@@ -3871,6 +3871,15 @@ fn resolve_cmd_leaves_rec(
                 }
                 return;
             }
+            // A call to a `let`-bound local function returning a `Cmd`: its
+            // command is its body's. Chasing it spends depth (a recursive local
+            // ends as `Unresolvable`).
+            if let Expr::Var(Res::Local(l)) = &body.exprs[*callee] {
+                if let Some(fb) = let_bound_fn_body(body, *l) {
+                    resolve_cmd_leaves_rec(db, body, fb, out, depth + 1, visited);
+                    return;
+                }
+            }
             out.push(CmdLeaf::Unresolvable);
         }
         // A prelude `Cmd.none` resolves to the kernel, not to a `Std.Cmd` def.
@@ -3933,6 +3942,32 @@ fn let_bound_expr(body: &Body, l: LocalId) -> Option<ExprId> {
     None
 }
 
+/// The body of the local FUNCTION a `let` binds to `l`: `refuse msg = …` (a
+/// let def with parameters) or `refuse = \msg -> …` (a parameterless let bound
+/// to a lambda). A call `refuse "x"` then returns what that body returns, so a
+/// reader of the call's command reads the body. The body's references to the
+/// function's parameters stay unresolved (a parameter is not a `let`), so a
+/// `Cmd.perform task toMsg` whose `toMsg` is a parameter is still read as an
+/// unknown constructor (fail closed). `None` for anything else.
+fn let_bound_fn_body(body: &Body, l: LocalId) -> Option<ExprId> {
+    for (_, expr) in body.exprs.iter() {
+        if let Expr::Let { defs, .. } = expr {
+            for d in defs {
+                if d.pat.is_none() && d.binders.len() == 1 && d.binders[0].1 == l {
+                    if !d.params.is_empty() {
+                        return Some(d.body);
+                    }
+                    if let Expr::Lambda { body: lb, .. } = &body.exprs[d.body] {
+                        return Some(*lb);
+                    }
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Is `callee` the stdlib list function whose kernel symbol is `sym`
 /// (`List.map` → `List_map`)? Matches both a `Sky.Core.List` def (a
 /// `Ffi.kernel` alias) and a direct kernel reference.
@@ -3977,6 +4012,32 @@ fn resolve_cmd_list_leaves(
             None => out.push(CmdLeaf::Unresolvable),
         },
         Expr::Let { body: b, .. } => resolve_cmd_list_leaves(db, body, *b, out, depth, visited),
+        // A list chosen by a condition (`ownerAlert = if owner then [ … ] else
+        // []`): the commands are the union of every branch's list. The reader
+        // claims constructors, not counts, so a branch that does not run only
+        // widens the set (a superset is sound for the follow-up wire).
+        Expr::If { arms, els } => {
+            for (_, t) in arms {
+                resolve_cmd_list_leaves(db, body, *t, out, depth, visited);
+            }
+            resolve_cmd_list_leaves(db, body, *els, out, depth, visited);
+        }
+        Expr::Case { branches, .. } => {
+            for br in branches {
+                resolve_cmd_list_leaves(db, body, br.body, out, depth, visited);
+            }
+        }
+        // A list returned by a `let`-bound local function (`alerts owner`).
+        Expr::Call(callee, _)
+            if matches!(&body.exprs[*callee], Expr::Var(Res::Local(l))
+                if let_bound_fn_body(body, *l).is_some()) =>
+        {
+            let Expr::Var(Res::Local(l)) = &body.exprs[*callee] else {
+                unreachable!("guarded above")
+            };
+            let fb = let_bound_fn_body(body, *l).expect("guarded above");
+            resolve_cmd_list_leaves(db, body, fb, out, depth + 1, visited);
+        }
         Expr::Binop { op, lhs, rhs, .. } if op.as_str() == "++" => {
             resolve_cmd_list_leaves(db, body, *lhs, out, depth, visited);
             resolve_cmd_list_leaves(db, body, *rhs, out, depth, visited);
@@ -4137,6 +4198,16 @@ fn collect_tail_cmd_leaves_tagged(
             if let Expr::Var(Res::Def(d)) = &body.exprs[*callee] {
                 collect_delegate_tail_cmd_leaves(db, *d, guarded, out, depth + 1, visited);
                 return;
+            }
+            // A `let`-bound local function returning `( model, cmd )` (`refuse
+            // msg = ( { model | … }, Cmd.none )`, then `refuse "…"` in a tail):
+            // its body's tail command is the call's. It contributed nothing
+            // before, so a perform inside such a helper was never seen.
+            if let Expr::Var(Res::Local(l)) = &body.exprs[*callee] {
+                if let Some(fb) = let_bound_fn_body(body, *l) {
+                    collect_tail_cmd_leaves_tagged(db, body, fb, guarded, out, depth + 1, visited);
+                    return;
+                }
             }
             // Any other call shape contributes nothing (fail-closed).
         }

@@ -1987,10 +1987,17 @@ fn render_follow_backend(fc: &FollowCtx, q: &str) -> String {
 /// The client half of SPA-3: decode `spaFollow_` back into typed Msgs. Emitted
 /// after the regenerated `update` (in whichever module declares it); `q`
 /// qualifies Msg references there.
+///
+/// The tag dispatch is ONE flat `case tag_ of "Ctor" -> …` with a string pattern
+/// per constructor. It was an `if tag_ == "A" then … else if tag_ == "B" …`
+/// chain, which nests one level per constructor: when a server branch's command
+/// could not be read, every `Msg` constructor joins the chain, and a large `Msg`
+/// passed the parser's nesting limit (`syntax::parser::MAX_DEPTH`). The frontend
+/// then failed with hundreds of parse errors in generated code. A flat `case`
+/// keeps the depth constant however many constructors there are.
 fn render_follow_frontend(fc: &FollowCtx, q: &str) -> String {
     let mut chain = String::new();
-    for (i, (c, n)) in fc.ctors.iter().enumerate() {
-        let kw = if i == 0 { "if" } else { "else if" };
+    for (c, n) in fc.ctors.iter() {
         let build = if *n == 0 {
             format!("{q}{c}")
         } else {
@@ -2003,19 +2010,14 @@ fn render_follow_frontend(fc: &FollowCtx, q: &str) -> String {
             )
         };
         chain.push_str(&format!(
-            "\x20           {kw} tag_ == \"{c}\" then\n\
-             \x20               case Codec.fromJson spaFollow{c}ReqCodec body_ of\n\
-             \x20                   Ok r_ ->\n\
-             \x20                       Ok ({build})\n\n\
-             \x20                   Err e_ ->\n\
-             \x20                       Err e_\n\n"
+            "\x20               \"{c}\" ->\n\
+             \x20                   case Codec.fromJson spaFollow{c}ReqCodec body_ of\n\
+             \x20                       Ok r_ ->\n\
+             \x20                           Ok ({build})\n\n\
+             \x20                       Err e_ ->\n\
+             \x20                           Err e_\n\n"
         ));
     }
-    let open_else = if fc.ctors.is_empty() {
-        ""
-    } else {
-        "else\n                "
-    };
     format!(
         "-- SPA-3: decode the follow-up Msgs a server branch's command produced on\n\
          -- the backend (`spaFollow_`), for `Spa.followUps` to dispatch in order.\n\
@@ -2045,12 +2047,52 @@ fn render_follow_frontend(fc: &FollowCtx, q: &str) -> String {
          spaDecodeFollow_ item_ =\n\
          \x20   case item_ of\n\
          \x20       tag_ :: body_ :: [] ->\n\
+         \x20           case tag_ of\n\
          {chain}\
-         \x20           {open_else}Err (Error.unexpected (\"sky.spa: unknown follow-up Msg \" ++ tag_))\n\n\
+         \x20               _ ->\n\
+         \x20                   Err (Error.unexpected (\"sky.spa: unknown follow-up Msg \" ++ tag_))\n\n\
          \x20       _ ->\n\
          \x20           Err (Error.unexpected \"sky.spa: malformed follow-up\")\n\n\n",
         ty = fc.msg_ty,
     )
+}
+
+/// Every `.sky` file the split writes must parse. The split builds its output
+/// from text, so a generator defect shows up as source the parser refuses, and
+/// the frontend or backend build then reported it as hundreds of parse errors
+/// in a file the author never wrote (the `spaDecodeFollow_` nesting defect).
+/// This stops the split at the first such file, with one message that names
+/// the file and says the defect is in the generator. The author's own modules
+/// are copied into the trees too, and they parse already (the split runs on a
+/// program that type-checks), so only generated text can trip this.
+fn generated_source_parses(rel: &str, content: &str) -> Result<(), String> {
+    let parse = syntax::parse(content, base::FileId(0));
+    let errors: Vec<&diagnostics::Diagnostic> = parse
+        .errors()
+        .iter()
+        .filter(|d| d.severity == diagnostics::Severity::Error)
+        .collect();
+    let Some(first) = errors.first() else {
+        return Ok(());
+    };
+    let at = first
+        .labels
+        .first()
+        .map(|l| {
+            let off = (l.span.range.0 as usize).min(content.len());
+            let before = &content[..off];
+            let line = before.matches('\n').count() + 1;
+            let col = off - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+            format!("{line}:{col}")
+        })
+        .unwrap_or_else(|| "?".to_string());
+    Err(format!(
+        "sky.spa: the split generated `{rel}`, which does not parse ({} error(s), the first at \
+         {at}: {}). This is a defect in the split generator, not in your code. Please report it \
+         with the `update` and `Msg` of your app.",
+        errors.len(),
+        first.message
+    ))
 }
 
 /// Add `line` after the last import unless that exact line is already present.
@@ -4402,6 +4444,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         .iter()
         .map(|m| db.module_name(*m).to_string())
         .collect();
+    // What each server-only module's `T(..)` / `(..)` imports bind, for the
+    // usage gate that keeps a client copy's import while a name it binds is used.
+    let exposed_names = ExposedNames::from_db(&db);
     if !tainted_mods.is_empty() || !pure_sibling_mods.is_empty() {
         let pure: Vec<String> = pure_sibling_mods
             .iter()
@@ -4929,6 +4974,9 @@ The command runs server-side during SSR and the client hydrates from it; a read 
 
     let mut files: Vec<String> = Vec::new();
     let write = |rel: &str, content: &str, files: &mut Vec<String>| -> Result<(), String> {
+        if rel.ends_with(".sky") {
+            generated_source_parses(rel, content)?;
+        }
         let full = out_dir.join(rel);
         if let Some(p) = full.parent() {
             std::fs::create_dir_all(p).map_err(|e| format!("mkdir {}: {e}", p.display()))?;
@@ -4938,13 +4986,15 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         Ok(())
     };
 
+    let shared_src =
+        drop_dangling_sibling_imports(&shared_src, &no_frontend_names, Some(&exposed_names));
     write("shared/Shared.sky", &shared_src, &mut files)?;
     write("backend/src/Shared.sky", &shared_src, &mut files)?;
     write("frontend/src/Shared.sky", &shared_src, &mut files)?;
     write("backend/src/Main.sky", &backend_src, &mut files)?;
     // `init`'s server command: the client `init` sends the RPC instead.
     let frontend_src = match &init_plan {
-        Some(p) if init_in_entry => apply_init_rpc(&frontend_src, p, &no_frontend_names)?,
+        Some(p) if init_in_entry => apply_init_rpc(&frontend_src, p, &no_frontend_names, None)?,
         _ => frontend_src,
     };
     let frontend_src = strip_tainted_from_imports(&frontend_src, &tainted_by_module);
@@ -4953,6 +5003,10 @@ The command runs server-side during SSR and the client hydrates from it; a read 
         arm_routes.helper_copies.get(&entry_name),
         false,
     )?;
+    // The server-only imports `gen_frontend` kept go unless the client source
+    // still uses a name they bind.
+    let frontend_src =
+        drop_dangling_sibling_imports(&frontend_src, &no_frontend_names, Some(&exposed_names));
     write("frontend/src/Main.sky", &frontend_src, &mut files)?;
     // The generated projects must be able to REBUILD any third-party imports the
     // app uses: carry the `[dependencies]` (Sky packages) + `["go.dependencies"]`
@@ -5048,15 +5102,21 @@ The command runs server-side during SSR and the client hydrates from it; a read 
             // `init` already gets in `gen_frontend`. (This module never declares
             // the moved union — the Msg module does — so the moved-union pass
             // below only needs to inject its `Shared` import.)
-            let stripped_init =
-                frontend_sibling_with_stripped_init(&text, &mparse.tree(), &no_frontend_names)
-                    .unwrap_or_else(|| text.clone());
+            let stripped_init = frontend_sibling_with_stripped_init(
+                &text,
+                &mparse.tree(),
+                &no_frontend_names,
+                &exposed_names,
+            )
+            .unwrap_or_else(|| text.clone());
             own_moved_nominals_verbatim(&mparse.tree(), &stripped_init, &moved_unions)
         } else {
             own_moved_nominals_verbatim(&mparse.tree(), &text, &moved_unions)
         };
         let frontend_text = match &init_plan {
-            Some(p) if *m == init_mod => apply_init_rpc(&frontend_text, p, &no_frontend_names)?,
+            Some(p) if *m == init_mod => {
+                apply_init_rpc(&frontend_text, p, &no_frontend_names, Some(&exposed_names))?
+            }
             _ => frontend_text,
         };
         let frontend_text = strip_tainted_from_imports(&frontend_text, &tainted_by_module);
@@ -5126,11 +5186,15 @@ The command runs server-side during SSR and the client hydrates from it; a read 
                 subset
             };
             let subset = match &init_plan {
-                Some(p) if *m == init_mod => apply_init_rpc(&subset, p, &no_frontend_names)?,
+                Some(p) if *m == init_mod => apply_init_rpc(&subset, p, &no_frontend_names, None)?,
                 _ => subset,
             };
             let subset = strip_tainted_from_imports(&subset, &tainted_by_module);
             let subset = with_helper_copies(&subset, arm_routes.helper_copies.get(&mname), true)?;
+            // The server-only imports go unless the finished copy (its helper
+            // copies included) still uses a name they bind.
+            let subset =
+                drop_dangling_sibling_imports(&subset, &no_frontend_names, Some(&exposed_names));
             write(&format!("frontend/src/{rel}"), &subset, &mut files)?;
         }
     }
@@ -6911,8 +6975,9 @@ fn copied_exposing_list(
     out
 }
 
-/// Shared's imports: the input's imports minus the server-only effect families,
-/// the `Std.Spa` framework (Shared is pure wire types + codecs), and any
+/// Shared's imports: the input's imports (a server-only stdlib module's goes
+/// through the usage gate on the finished `Shared`), minus the `Std.Spa`
+/// framework (Shared is pure wire types + codecs), and any
 /// **backend-only** project module (whose effects must never reach the wasm
 /// client), with Prelude + Codec guaranteed present. `needed_siblings` are the
 /// PURE sibling project modules whose types/codecs the wire references — Shared
@@ -6926,9 +6991,9 @@ fn shared_import_lines(
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for i in imports {
-        if is_server_only_module(&i.module_path) {
-            continue;
-        }
+        // A server-only stdlib module's import is kept here: the usage gate
+        // (`drop_dangling_sibling_imports`) on the finished `Shared` drops it
+        // unless a copied type or codec still names something it binds.
         if i.module_path.rsplit('.').next() == Some("Spa") {
             continue;
         }
@@ -7643,6 +7708,7 @@ fn apply_init_rpc(
     text: &str,
     plan: &InitRpcPlan,
     backend_only: &HashSet<String>,
+    exposed: Option<&ExposedNames>,
 ) -> Result<String, String> {
     if text.matches(plan.original.as_str()).count() != 1 {
         return Err(
@@ -7655,7 +7721,7 @@ fn apply_init_rpc(
     for line in &plan.imports {
         out = ensure_import_line(&out, line);
     }
-    Ok(drop_dangling_sibling_imports(&out, backend_only))
+    Ok(drop_dangling_sibling_imports(&out, backend_only, exposed))
 }
 
 /// The joined source of every decl named `init` (the type annotation and the
@@ -7739,6 +7805,7 @@ fn frontend_sibling_with_stripped_init(
     msrc: &str,
     mfile: &SourceFile,
     backend_only: &HashSet<String>,
+    exposed: &ExposedNames,
 ) -> Option<String> {
     let init_decl = mfile
         .decls()
@@ -7751,7 +7818,11 @@ fn frontend_sibling_with_stripped_init(
     out.push_str(&msrc[..a]);
     out.push_str(&rewritten);
     out.push_str(&msrc[b..]);
-    Some(drop_dangling_sibling_imports(&out, backend_only))
+    Some(drop_dangling_sibling_imports(
+        &out,
+        backend_only,
+        Some(exposed),
+    ))
 }
 
 /// Drop `import` lines that a sibling's init-strip leaves dangling: a backend-only
@@ -7762,38 +7833,112 @@ fn frontend_sibling_with_stripped_init(
 /// server-only import drop `gen_frontend` applies to the entry, but usage-gated so
 /// a legitimately-used server-only import (a pure sibling reading a literal path)
 /// is untouched.
-fn drop_dangling_sibling_imports(src: &str, backend_only: &HashSet<String>) -> String {
-    // The module's code with comments + import lines removed, so an import's own
+///
+/// The gate reads every name the import binds, including the ones it binds
+/// without spelling them: the constructors of an `exposing (T(..))` and every
+/// export of an `exposing (..)` ([`ExposedNames`]). It used to see only the
+/// spelled names, so a pure helper whose one use of `Std.Db` was a constructor
+/// (`SqlString id`, through `exposing (SqlValue(..))`) lost the import in its
+/// client copy and failed with `Undefined name: SqlString`. Imports are read as
+/// parsed nodes, so a multi-line import goes or stays whole.
+fn drop_dangling_sibling_imports(
+    src: &str,
+    backend_only: &HashSet<String>,
+    exposed: Option<&ExposedNames>,
+) -> String {
+    let parse = syntax::parse(src, base::FileId(0));
+    let imports: Vec<(usize, usize, String)> = parse
+        .tree()
+        .imports()
+        .map(|imp| {
+            let r = imp.syntax().text_range();
+            (
+                usize::from(r.start()),
+                usize::from(r.end()),
+                imp.name().map(|n| n.text()).unwrap_or_default(),
+            )
+        })
+        .collect();
+    // The module's code with comments + imports removed, so an import's own
     // text does not count as a reference to itself.
-    let body: String = strip_sky_comments(src)
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("import "))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut out = String::new();
-    for line in src.lines() {
-        if let Some(rest) = line.trim_start().strip_prefix("import ") {
-            let path = rest.split_whitespace().next().unwrap_or("");
-            if backend_only.contains(path) {
-                continue; // never exists in the frontend tree
-            }
-            if is_server_only_module(path) {
-                let names = import_referenceable_names(rest);
-                if !names.iter().any(|n| references_word(&body, n)) {
-                    continue; // unused after the strip
-                }
+    let mut code = String::with_capacity(src.len());
+    let mut at = 0;
+    for (s, e, _) in &imports {
+        code.push_str(&src[at..*s]);
+        at = *e;
+    }
+    code.push_str(&src[at..]);
+    let body = strip_sky_comments(&code);
+    let mut out = String::with_capacity(src.len());
+    let mut at = 0;
+    for (s, e, path) in &imports {
+        // `exposed: None` is an intermediate step: more client code (a helper
+        // copy) may still be appended, so a server-only import stays until the
+        // gate runs on the finished file.
+        let drop = backend_only.contains(path) // never exists in the frontend tree
+            || exposed.is_some_and(|ex| {
+                is_server_only_module(path)
+                    && !import_referenceable_names(&src[*s..*e], ex)
+                        .iter()
+                        .any(|n| references_word(&body, n)) // unused after the strip
+            });
+        if drop {
+            out.push_str(&src[at..*s]);
+            at = *e;
+            if src[at..].starts_with('\n') {
+                at += 1;
             }
         }
-        out.push_str(line);
-        out.push('\n');
     }
+    out.push_str(&src[at..]);
     out
+}
+
+/// The names a server-only module binds through an import that does not spell
+/// them: per `(module, union)`, the constructors `exposing (T(..))` brings in,
+/// and per module, every export `exposing (..)` brings in. Read from the
+/// resolver's exports ([`hir::ModuleExports`]), never guessed from text.
+#[derive(Default)]
+pub(crate) struct ExposedNames {
+    ctors: HashMap<(String, String), Vec<String>>,
+    all: HashMap<String, Vec<String>>,
+}
+
+impl ExposedNames {
+    fn from_db(db: &SkyDatabase) -> Self {
+        let mut out = ExposedNames::default();
+        for mid in db.module_ids() {
+            let path = db.module_name(mid).to_string();
+            if !is_server_only_module(&path) {
+                continue;
+            }
+            let ex = db.module_exports(mid);
+            let all = out.all.entry(path.clone()).or_default();
+            all.extend(ex.values.iter().map(|(n, _)| n.as_str().to_string()));
+            all.extend(ex.aliases.iter().map(|a| a.name.as_str().to_string()));
+            for u in &ex.unions {
+                let ctors: Vec<String> = u
+                    .ctors
+                    .iter()
+                    .map(|c| c.name.as_str().to_string())
+                    .collect();
+                all.push(u.name.as_str().to_string());
+                all.extend(ctors.iter().cloned());
+                out.ctors
+                    .insert((path.clone(), u.name.as_str().to_string()), ctors);
+            }
+        }
+        out
+    }
 }
 
 /// The names an `import` clause binds into scope: its alias (`import X.Y as A` → `A`,
 /// else the last path segment `Y`) plus every name in an `exposing (…)` list
-/// (`Foo(..)` → `Foo`). `rest` is the import text after the `import ` keyword.
-fn import_referenceable_names(rest: &str) -> Vec<String> {
+/// (`Foo(..)` → `Foo` and its constructors, `(..)` → every export, both from
+/// `exposed`). `text` is the whole import, from `import` (multi-line is fine).
+fn import_referenceable_names(text: &str, exposed: &ExposedNames) -> Vec<String> {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let rest = flat.strip_prefix("import ").unwrap_or(&flat);
     let mut names: Vec<String> = Vec::new();
     let path = rest.split_whitespace().next().unwrap_or("");
     // alias, else the last dotted segment.
@@ -7810,15 +7955,30 @@ fn import_referenceable_names(rest: &str) -> Vec<String> {
         if let Some(lp) = rest[open..].find('(') {
             let after = &rest[open + lp + 1..];
             if let Some(rp) = after.rfind(')') {
-                for tok in after[..rp].split(',') {
+                let inner = &after[..rp];
+                if inner.trim() == ".." {
+                    names.extend(exposed.all.get(path).into_iter().flatten().cloned());
+                }
+                for tok in inner.split(',') {
+                    let tok = tok.trim();
                     let name: String = tok
-                        .trim()
                         .chars()
                         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                         .collect();
-                    if !name.is_empty() {
-                        names.push(name);
+                    if name.is_empty() {
+                        continue;
                     }
+                    if tok[name.len()..].trim_start().starts_with('(') {
+                        names.extend(
+                            exposed
+                                .ctors
+                                .get(&(path.to_string(), name.clone()))
+                                .into_iter()
+                                .flatten()
+                                .cloned(),
+                        );
+                    }
+                    names.push(name);
                 }
             }
         }
@@ -9904,14 +10064,17 @@ fn gen_frontend(
     // Per-arm routing of `update`'s case (see [`ArmRoutes`]).
     arm_routes: &ArmRoutes,
 ) -> Result<String, String> {
-    // Imports: drop server-only effect modules AND any backend-only project
-    // module (the security spine — an effectful module never reaches the client),
-    // add Error + Shared.
+    // Imports: drop any backend-only project module (the security spine — an
+    // effectful module never reaches the client), add Error + Shared. A
+    // server-only stdlib module's import (`Std.Db`, …) stays here and goes
+    // through the usage gate (`drop_dangling_sibling_imports`) on the finished
+    // client source: it is dropped unless a client def still uses a name it
+    // binds (a pure view building `SqlString "x"` through `exposing
+    // (SqlValue(..))`). Dropping it unconditionally left such a def with
+    // `Undefined name: SqlString`.
     let mut import_lines: Vec<String> = imports
         .iter()
-        .filter(|i| {
-            !is_server_only_module(&i.module_path) && !backend_only.contains(&i.module_path)
-        })
+        .filter(|i| !backend_only.contains(&i.module_path))
         // Same as the backend: a copied type/codec comes from `import Shared`, so
         // drop it from any kept import to avoid an ambiguous double-import.
         .map(|i| strip_names_from_import_exposing(&i.text, copied_names))
@@ -11642,7 +11805,7 @@ fn render_module_client_subset(
     out.push_str("\n\n\n");
     out.push_str(&body);
 
-    let out = drop_dangling_sibling_imports(&out, no_frontend);
+    let out = drop_dangling_sibling_imports(&out, no_frontend, None);
     let out = if regen_update {
         ensure_import_present(&out, "Std.Spa", "import Std.Spa as Spa")
     } else {
@@ -13052,5 +13215,151 @@ mod open_wire_type_tests {
                 "`{open}` leaves `{word}` open"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod follow_codec_parse_tests {
+    use super::*;
+
+    /// A follow-up context over `n` wire constructors (arities 0, 1 and 2 in
+    /// turn) and `outside` constructors without a wire codec, in a union of
+    /// `extra` more constructors than those.
+    fn ctx(n: usize, outside: usize, extra: usize) -> FollowCtx {
+        FollowCtx {
+            branches: HashMap::from([("Send".to_string(), false)]),
+            ctors: (0..n).map(|i| (format!("Pick{i}"), i % 3)).collect(),
+            outside_wire: (0..outside).map(|i| (format!("Raw{i}"), 1)).collect(),
+            all_ctors: n + outside + extra,
+            msg_ty: "Msg".to_string(),
+            msg_module: ModuleId(0),
+            msg_module_name: "Main".to_string(),
+            native_alias: HashMap::new(),
+        }
+    }
+
+    /// The generated follow-up codec parses for EVERY fallback shape, at every
+    /// size. When a server branch's command cannot be read, every `Msg`
+    /// constructor joins the wire, so the decoder must parse for a `Msg` of any
+    /// size. Before the fix it was an `else if` chain, one level of nesting per
+    /// constructor, and a `Msg` of a few hundred constructors passed the
+    /// parser's nesting limit: the frontend failed with hundreds of parse errors
+    /// in `spaDecodeFollow_`. Each half is checked with the q-qualified form too
+    /// (the codec emitted into a module that does not declare `Msg`).
+    #[test]
+    fn the_follow_up_codec_parses_for_every_fallback_shape() {
+        for n in [0usize, 1, 2, 3, 50, 300, 1000] {
+            for outside in [0usize, 1, 5] {
+                for extra in [0usize, 1] {
+                    let fc = ctx(n, outside, extra);
+                    for q in ["", "SpaMsgMod_."] {
+                        let src = format!(
+                            "module Gen exposing (..)\n\n\n{}\n\n{}",
+                            render_follow_frontend(&fc, q),
+                            render_follow_backend(&fc, q)
+                        );
+                        let rel = format!("n{n}-o{outside}-e{extra}{q}.sky");
+                        if let Err(e) = generated_source_parses(&rel, &src) {
+                            panic!("{e}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The check itself: generated source that does not parse stops the split
+    /// with one message naming the file, instead of a downstream build failing
+    /// on hundreds of parse errors in code the author never wrote.
+    #[test]
+    fn generated_source_that_does_not_parse_is_refused_by_name() {
+        let deep = format!(
+            "module Gen exposing (..)\n\n\nx =\n    {}1{}\n",
+            "(".repeat(400),
+            ")".repeat(400)
+        );
+        let e = generated_source_parses("frontend/src/Main.sky", &deep)
+            .expect_err("a too-deep expression does not parse");
+        assert!(
+            e.contains("`frontend/src/Main.sky`") && e.contains("defect in the split generator"),
+            "{e}"
+        );
+        assert!(
+            generated_source_parses("ok.sky", "module Ok exposing (x)\n\n\nx =\n    1\n").is_ok()
+        );
+    }
+}
+
+#[cfg(test)]
+mod import_gate_tests {
+    use super::*;
+
+    fn exposed() -> ExposedNames {
+        let mut ex = ExposedNames::default();
+        ex.ctors.insert(
+            ("Std.Db".to_string(), "SqlValue".to_string()),
+            vec!["SqlString".to_string(), "SqlInt".to_string()],
+        );
+        ex.all.insert(
+            "Std.Db".to_string(),
+            vec![
+                "SqlValue".to_string(),
+                "SqlString".to_string(),
+                "SqlInt".to_string(),
+                "open".to_string(),
+            ],
+        );
+        ex
+    }
+
+    fn gated(src: &str) -> String {
+        drop_dangling_sibling_imports(src, &HashSet::new(), Some(&exposed()))
+    }
+
+    /// An import whose only use is a constructor that `T(..)` brings in stays.
+    /// The gate used to read only the spelled names (`Db`, `SqlValue`) and drop
+    /// it, leaving `Undefined name: SqlString` in the client copy.
+    #[test]
+    fn a_constructor_exposed_by_t_dot_dot_keeps_the_import() {
+        let src = "module M exposing (k)\n\nimport Std.Db as Db exposing (SqlValue(..))\n\n\nk =\n    SqlString \"x\"\n";
+        assert_eq!(gated(src), src);
+    }
+
+    /// The same through `exposing (..)`: every export counts as used.
+    #[test]
+    fn a_name_exposed_by_dot_dot_keeps_the_import() {
+        let src = "module M exposing (k)\n\nimport Std.Db exposing (..)\n\n\nk =\n    SqlInt 1\n";
+        assert_eq!(gated(src), src);
+    }
+
+    /// An unused server-only import still goes, whole, even across lines.
+    #[test]
+    fn an_unused_multi_line_import_goes_whole() {
+        let src = "module M exposing (k)\n\nimport Std.Db as Db\n    exposing\n        ( SqlValue(..)\n        )\nimport Sky.Core.Prelude exposing (..)\n\n\nk =\n    1\n";
+        let out = gated(src);
+        assert!(
+            !out.contains("Std.Db") && !out.contains("SqlValue"),
+            "{out}"
+        );
+        assert!(
+            out.contains("import Sky.Core.Prelude exposing (..)\n"),
+            "{out}"
+        );
+        assert!(
+            syntax::parse(&out, base::FileId(0)).errors().is_empty(),
+            "{out}"
+        );
+    }
+
+    /// A step that more client code follows (`None`) keeps every server-only
+    /// import: the gate decides on the finished file.
+    #[test]
+    fn an_intermediate_step_keeps_server_only_imports() {
+        let src = "module M exposing (k)\n\nimport Std.Db as Db exposing (SqlValue(..))\n\n\nk =\n    1\n";
+        assert_eq!(
+            drop_dangling_sibling_imports(src, &HashSet::new(), None),
+            src
+        );
+        assert!(!gated(src).contains("Std.Db"));
     }
 }

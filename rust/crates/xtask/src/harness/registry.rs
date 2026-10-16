@@ -474,9 +474,10 @@ pub static GATES: &[Gate] = &[
                 // task_slot, let_polymorphism and qualified_field (+95 cases,
                 // 519 → 614), and the v0.27.0 Std.Sync surface (+2 cases,
                 // 614 → 616), and the v0.27.7 adt_equality stratum (+60 cases,
-                // 616 → 676).
-                from: "n_min = 676",
-                to: "n_min = 677",
+                // 616 → 676), and the v0.27.10 alias_ctor_collision stratum
+                // (+4 cases, 676 → 680).
+                from: "n_min = 680",
+                to: "n_min = 681",
             },
         }]),
         body: bodies::corpus_manifest,
