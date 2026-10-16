@@ -106,17 +106,16 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
-          cache: true
-          # This job's only Go compile is tools/sky-ffi-inspect, whose deps live
-          # in tools/sky-ffi-inspect/go.sum. Without this, setup-go looks for a
-          # go.sum in the repo root (there is none) and logs "Restore cache
-          # failed: Dependencies file is not found ... go.sum" on every leg. Name
-          # the file it should hash so the module cache keys and warms correctly.
-          cache-dependency-path: tools/sky-ffi-inspect/go.sum
+          # No setup-go cache: these legs run on a tag, and a cache saved on a
+          # tag ref is visible to that tag alone, so it only filled the 10 GB
+          # repository budget. The one Go compile here is tools/sky-ffi-inspect.
+          cache: false
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          # A cache saved on a tag ref serves that tag alone. Save nothing.
+          save-if: 'false'
 
       # The Linux legs link against SKY_GLIBC_FLOOR, not the runner's glibc.
       # Both tools are pinned: zig from its PyPI wheel (the files.pythonhosted.org
@@ -393,16 +392,16 @@ jobs:
   #
   # Shared setup (Rust + Go toolchains, warm caches, disk reclaim, the
   # scripts/build.sh compiler install) is defined ONCE in the local composite
-  # action .github/actions/gate-setup. The composite's actions/cache restore-key
-  # falls back to the per-commit `go-linux-` family, so a release inherits the
-  # Go build cache that main's rust-ci warmed on the last push instead of
-  # starting cold (releases are infrequent, so the release-only `go-release-*`
-  # namespace is otherwise always evicted).
+  # action .github/actions/gate-setup. Caches are RESTORE-ONLY here: only
+  # refs/heads/main saves a cache (rust-ci and the nightly), so a release
+  # restores the Go cache main last wrote (`go-linux`, or `go-sweep` for the
+  # FFI-heavy jobs) and the release-profile cargo cache the nightly writes
+  # (`sky-gates-linux`), and saves nothing that could evict them.
   # ════════════════════════════════════════════════════════════════════════
 
   # gate-core: workspace tests + corpus gates + coerce-floor + the T1 harness
   # (with proofs). The `lsp` T1 gate needs Neovim; the workspace live tests + T1
-  # apps need a real PostgreSQL. Sole writer of the shared cargo cache.
+  # apps need a real PostgreSQL. Caches are restore-only here.
   # `build-run --all` used to run here too; it now lives in `gate-buildrun`.
   # ────────────────────────────────────────────────────────────────
   # verify-ci-green — the tagged commit's per-commit `ci-green` must be GREEN.
@@ -469,10 +468,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
-          rust-cache-writer: 'true'
 
       # `--exclude sky`: the sky crate runs in gate-core-sky-1..9 below, sliced
       # by test with nextest. Doctests still run here (`cargo test` runs them;
@@ -520,7 +517,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -544,7 +540,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -568,7 +563,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -592,7 +586,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -616,7 +609,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -640,7 +632,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -664,7 +655,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -688,7 +678,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -712,7 +701,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core-sky
           postgres: 'true'
           install-compiler: 'false'
       - name: Install cargo-nextest (prebuilt binary)
@@ -737,8 +725,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: corpus
 
       # Release-built, deliberately. `preflight-tag.sh:70-74` records the
       # measurement: an unoptimised xtask made these ~10x slower, and `reject`
@@ -789,7 +775,7 @@ jobs:
         run: bash scripts/ci/bound-go-cache.sh
 
   # The T1 shards need postgres + neovim because T1 includes the lsp gate and
-  # the postgres-arm gates. Not the rust-cache writer (gate-core writes it).
+  # the postgres-arm gates. Caches are restore-only (main writes them).
   # gate-t1-N — the T1 gate harness, SHARDED 4 ways by `--only`. Its 30 gates
   # run one after another inside one harness, and their budgets sum to ~413 min;
   # as ONE job it passed a 40-min and then a 75-min ceiling at v0.25.18 (runs
@@ -806,7 +792,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
       - name: Gate harness (T1 shard 1/4 — conformance and verify-cli) with proof requirement
@@ -827,7 +812,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
       - name: Gate harness (T1 shard 2/4 — sky-verify, sky-suites, lsp) with proof requirement
@@ -848,7 +832,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
       - name: Gate harness (T1 shard 3/4 — Layer-2 apps and CLI verbs) with proof requirement
@@ -869,7 +852,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: core
           postgres: 'true'
           neovim: 'true'
       - name: Gate harness (T1 shard 4/4 — corpus, runtime safety, census) with proof requirement
@@ -897,10 +879,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          # All shards share one Go cache family so the build-run cache warms
-          # once and is reused across the three shards.
-          cache-key: buildrun
       # The composite's free-disk default makes sure the job starts with room
       # before the sweep fills the go-build cache (it reclaims OS junk only when
       # the runner is short). No `go clean -cache` — the sweep repopulates
@@ -937,8 +915,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: t2
 
       - name: Gate harness (T2 — corpus, build+run every fixture) with proof requirement
         working-directory: rust
@@ -964,8 +940,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: t2
 
       - name: Gate harness (T2 — isolation / witness / spa-diff-fuzz / fieldbook) with proof requirement
         working-directory: rust
@@ -1012,7 +986,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: app
           postgres: 'true'
 
       # T3 — the Layer-2 app tier. Set the DSN on the STEP, not the job, so the
@@ -1078,8 +1051,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: falsifiers-1
       - name: Falsifier verification (group 1 — corpus / sky-suites)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only sky-suites,roundtrip,reject,shared-world,corpus-manifest,corpus-reject,corpus-emit-shape
@@ -1098,7 +1069,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-2
           neovim: 'true'
       - name: Falsifier verification (group 2 — verify-cli / lsp / config)
         working-directory: rust
@@ -1121,7 +1091,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-3
           postgres: 'true'
       - name: Falsifier verification (group 3 — Layer-2 apps)
         working-directory: rust
@@ -1172,8 +1141,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: t2
       - name: Falsifier verification (group 4 — the T2 behavioural corpus)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only corpus
@@ -1205,7 +1172,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: app
           postgres: 'true'
       - name: Falsifier verification (group 5 — T2 rest + T3 on Postgres)
         working-directory: rust
@@ -1229,7 +1195,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: sweep
+          go-cache-family: go-sweep
       - name: Falsifier verification (group 6 — T4 FFI scale)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only apps-ffi-scale
@@ -1247,7 +1213,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-7
           postgres: 'true'
       - name: Falsifier verification (group 7 — analytics safety + coverage ledger)
         working-directory: rust
@@ -1268,7 +1233,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: falsifiers-8
           postgres: 'true'
       - name: Falsifier verification (group 8 — runtime loops and locks)
         working-directory: rust
@@ -1288,8 +1252,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: falsifiers-9
       - name: Falsifier verification (group 9 — conformance / config-matrix)
         working-directory: rust
         run: cargo run --release --locked -q -p xtask -- harness --verify-falsifiers --all --only conformance,config-matrix
@@ -1305,6 +1267,9 @@ jobs:
   gate-race:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     services:
       postgres:
         image: postgres:16
@@ -1322,9 +1287,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
           cache: false
+      - name: Restore the race-build Go cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-race-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-race-linux-
       - name: PostgreSQL binaries for the embedded supervisor
         run: |
           set -euo pipefail
@@ -1378,8 +1354,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
-        with:
-          cache-key: web
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
@@ -1488,7 +1462,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/gate-setup
         with:
-          cache-key: example-e2e
+          go-cache-family: go-sweep
       - name: Install jq, lsof, sqlite3
         run: bash "$GITHUB_WORKSPACE/scripts/ci/ensure-tools.sh" jq lsof sqlite3
       - name: Example behavioural contracts
@@ -1533,7 +1507,7 @@ jobs:
         with:
           # All shards share one Go cache family so the FFI cache is warmed
           # once and reused; distinct from the light jobs' caches.
-          cache-key: sweep
+          go-cache-family: go-sweep
           postgres: 'true'
 
       - name: Full example sweep (clean-slate build AND run, shard ${{ matrix.shard }}/5, incl. FFI/Std.Db)
@@ -1583,17 +1557,34 @@ jobs:
     # tests (~4.5 min measured locally: the iOS launch gate 158 s, the macOS
     # universal-link gate 62 s, the Android release 36 s). 1.5x.
     timeout-minutes: 45
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
-          cache: true
-          cache-dependency-path: runtime-go/go.sum
+          cache: false
+      # Restore only: main writes these (rust-ci macos-determinism). A tag or a
+      # dispatched branch saving its own copy evicted main's entries.
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-macos-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-macos-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          shared-key: sky-macos
+          save-if: 'false'
       - name: Native shell smoke (iOS simulator, macOS universal links, Android release)
         working-directory: rust
         env:
@@ -1625,17 +1616,33 @@ jobs:
     # (220-250 s measured locally after a cold boot, plus up to 85 s for the
     # system-dialog test). About 1.5x.
     timeout-minutes: 60
+    env:
+      GOCACHE: ${{ github.workspace }}/.gocache
+      GOMODCACHE: ${{ github.workspace }}/.gomodcache
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v7
+        id: setup-go
         with:
           go-version: '1.26'
-          cache: true
-          cache-dependency-path: runtime-go/go.sum
+          cache: false
+      # Restore only: main writes these (rust-ci). See gate-native.
+      - name: Restore the Go build + module cache (saved on main only)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ github.workspace }}/.gocache
+            ${{ github.workspace }}/.gomodcache
+          key: go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+          restore-keys: |
+            go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+            go-linux-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+          shared-key: sky-linux
+          save-if: 'false'
       - name: Enable KVM for the emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -1900,5 +1907,6 @@ jobs:
           tags: |
             anzel/sky:latest
             anzel/sky:${{ steps.version.outputs.VERSION }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No `type=gha` layer cache: this runs on a tag (or a dispatch), and a
+          # cache saved there serves that ref alone while it fills the 10 GB
+          # repository budget that main's caches live in.

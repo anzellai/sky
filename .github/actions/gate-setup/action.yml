@@ -12,12 +12,6 @@ description: >-
   ./.github/actions/gate-setup`.
 
 inputs:
-  cache-key:
-    description: >-
-      Namespaces this job family's Go cache (e.g. core / t2 / app / falsifiers
-      / sweep) so a heavy job's Go cache does not evict a light one's.
-    required: false
-    default: 'release'
   install-compiler:
     description: >-
       Run scripts/build.sh to install the compiler at sky-out/sky. Every gate
@@ -50,13 +44,14 @@ inputs:
       the warm cache this setup exists to keep.
     required: false
     default: 'true'
-  rust-cache-writer:
+  go-cache-family:
     description: >-
-      Whether this job SAVES the shared cargo cache (`sky-release-linux`).
-      Exactly one job family should write it; the rest restore it. Concurrent
-      writes of the same key churn the 10 GB repo cache budget.
+      The Go cache family this job restores: `go-linux` (the default, written
+      by rust-ci on main) or `go-sweep` (the FFI module cache the nightly
+      example sweep writes on main; it falls back to go-linux). A release
+      never runs on main, so it only restores.
     required: false
-    default: 'false'
+    default: 'go-linux'
 
 runs:
   using: 'composite'
@@ -81,6 +76,7 @@ runs:
     # whatever Go the runner image ships. cache:false — the Go cache is managed
     # explicitly below so the BUILD cache (not just the module cache) is warm.
     - uses: actions/setup-go@v7
+      id: setup-go
       with:
         go-version: '1.26'
         cache: false
@@ -95,31 +91,33 @@ runs:
         echo "GOCACHE=${{ github.workspace }}/.gocache"     >> "$GITHUB_ENV"
         echo "GOMODCACHE=${{ github.workspace }}/.gomodcache" >> "$GITHUB_ENV"
 
-    # WARMTH: the primary key is per-family and per-go.sum, saved by this job at
-    # release time. But releases are infrequent, so the `go-release-*` namespace
-    # is almost always evicted (GitHub drops caches after 7 idle days / over the
-    # 10 GB budget) — a release used to start cache-COLD every time, which is the
-    # single biggest avoidable cost here. The per-commit rust-ci warms the
-    # `go-linux-*` family on EVERY push to main, so the release falls back to it:
-    # a release now inherits the Go BUILD cache main last produced. restore-keys
-    # are tried in order (most specific first), so a same-release warm entry
-    # still wins when one exists; `go-linux-` is the always-available floor.
-    - name: Cache Go build + module cache (keep it WARM across releases)
-      uses: actions/cache@v6
+    # WARMTH, RESTORE ONLY. Caches are saved on refs/heads/main alone (rust-ci
+    # and the nightly write them); a release runs on a tag or a dispatched
+    # branch, so it restores them and saves nothing. When every branch and tag
+    # saved its own family (go-release-<job>, ~25 entries), they filled the
+    # 10 GB repository budget and evicted main's entries, and every run started
+    # cache-cold. The key ends with the Go version (a build cache is useless across Go
+    # versions); the go.sum-hash prefix still restores the module cache.
+    - name: Restore the Go build + module cache (saved on main only)
+      uses: actions/cache/restore@v6
       with:
         path: |
           ${{ github.workspace }}/.gocache
           ${{ github.workspace }}/.gomodcache
-        key: go-release-${{ inputs.cache-key }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+        key: ${{ inputs.go-cache-family }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}-${{ steps.setup-go.outputs.go-version }}
         restore-keys: |
-          go-release-${{ inputs.cache-key }}-
+          ${{ inputs.go-cache-family }}-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          go-linux-${{ hashFiles('runtime-go/go.sum', 'runtime-go/go.mod') }}
+          ${{ inputs.go-cache-family }}-
           go-linux-
 
+    # The release-profile cargo cache the nightly writes on main
+    # (nightly-sweep.yml example-sweep, shared-key sky-gates-linux). Restore only.
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
-        shared-key: sky-release-linux
-        save-if: ${{ inputs.rust-cache-writer == 'true' }}
+        shared-key: sky-gates-linux
+        save-if: 'false'
 
     # Neovim is a DECLARED dependency of the `lsp` harness gate (T1). Without it
     # that gate reports 0 assertions and the harness fails — a gate that cannot

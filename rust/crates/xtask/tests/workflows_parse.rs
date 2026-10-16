@@ -2409,3 +2409,131 @@ fn linux_release_binaries_link_against_the_glibc_floor_and_prove_it() {
         );
     }
 }
+
+/// Every step of a parsed workflow (`jobs.*.steps`) or composite action
+/// (`runs.steps`), with the name of the job it sits in.
+fn all_steps(doc: &serde_yaml::Value) -> Vec<(String, &serde_yaml::Value)> {
+    let mut out = Vec::new();
+    if let Some(jobs) = doc.get("jobs").and_then(|j| j.as_mapping()) {
+        for (k, job) in jobs {
+            let name = k.as_str().unwrap_or("?").to_string();
+            for s in job["steps"].as_sequence().into_iter().flatten() {
+                out.push((name.clone(), s));
+            }
+        }
+    }
+    for s in doc["runs"]["steps"].as_sequence().into_iter().flatten() {
+        out.push(("(composite)".to_string(), s));
+    }
+    out
+}
+
+/// What breaks the "only main saves a cache" rule in one parsed file.
+fn cache_discipline_problems(file: &str, doc: &serde_yaml::Value) -> Vec<String> {
+    let main_only = |cond: &str| cond.contains("github.ref == 'refs/heads/main'");
+    let mut problems = Vec::new();
+    for (job, s) in all_steps(doc) {
+        let uses = s["uses"].as_str().unwrap_or("");
+        let with = &s["with"];
+        let at = format!("{file} `{job}`");
+        if uses.starts_with("actions/cache@") {
+            problems.push(format!(
+                "{at}: `{uses}` saves on every ref; use actions/cache/restore and a \
+                 main-only actions/cache/save"
+            ));
+        }
+        if uses.starts_with("actions/cache/save@") && !s["if"].as_str().is_some_and(main_only) {
+            problems.push(format!(
+                "{at}: actions/cache/save without `if: ... github.ref == 'refs/heads/main'`"
+            ));
+        }
+        if uses.starts_with("Swatinem/rust-cache@") {
+            let save = match &with["save-if"] {
+                serde_yaml::Value::String(v) => v.trim().to_string(),
+                serde_yaml::Value::Bool(b) => b.to_string(),
+                _ => String::new(),
+            };
+            if save != "false" && !main_only(&save) {
+                problems.push(format!(
+                    "{at}: rust-cache `save-if: {save:?}`; it must be 'false' or main-only \
+                     (a missing save-if saves on every ref)"
+                ));
+            }
+        }
+        if uses.starts_with("actions/setup-go@") {
+            let cache_off = matches!(&with["cache"], serde_yaml::Value::Bool(false))
+                || with["cache"].as_str() == Some("false");
+            if !cache_off {
+                problems.push(format!(
+                    "{at}: actions/setup-go without `cache: false` saves its own cache on \
+                     every ref; restore the main-only Go family instead"
+                ));
+            }
+        }
+        if with["cache-to"].as_str().is_some_and(|c| c.contains("type=gha")) {
+            problems.push(format!("{at}: a docker `type=gha` cache-to saves on every ref"));
+        }
+    }
+    problems
+}
+
+/// Only `refs/heads/main` saves a cache. Every other ref restores.
+///
+/// # Why this exists
+///
+/// GitHub gives a repository 10 GB of Actions cache, evicted least recently
+/// used. Every branch, tag and pull request saved its own entries: on
+/// 2026-10-16 the repository held 31 entries (10.5 GB), 26 of them from one
+/// branch, and main's entries were evicted. A branch can restore main's caches
+/// but not another branch's, so every run started cold: rust-cache found
+/// nothing, and the Go build caches were missing in rust-ci run 38764872817 and
+/// release run 38764879819. With main as the only writer, each family has one
+/// entry, the total stays far under the budget, and every ref restores it.
+///
+/// Parsed, not grepped: a comment cannot vouch for a step.
+#[test]
+fn caches_are_saved_on_main_only() {
+    let mut problems = Vec::new();
+    for path in workflows_and_actions() {
+        let text = std::fs::read_to_string(&path).expect("read");
+        let doc: serde_yaml::Value = serde_yaml::from_str(&text).expect("parses");
+        let file = path.file_name().unwrap().to_string_lossy().to_string();
+        let file = if file.starts_with("action.") {
+            path.parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(file)
+        } else {
+            file
+        };
+        problems.extend(cache_discipline_problems(&file, &doc));
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The check above goes red on each shape that saves a cache off main.
+#[test]
+fn the_cache_discipline_check_catches_a_branch_save() {
+    let cases = [
+        ("save-always cache", "jobs:\n  a:\n    steps:\n      - uses: actions/cache@v6\n        with:\n          path: x\n          key: k\n"),
+        ("unguarded save", "jobs:\n  a:\n    steps:\n      - uses: actions/cache/save@v6\n        with:\n          path: x\n          key: k\n"),
+        ("rust-cache default", "jobs:\n  a:\n    steps:\n      - uses: Swatinem/rust-cache@v2\n        with:\n          workspaces: rust\n"),
+        ("rust-cache true", "jobs:\n  a:\n    steps:\n      - uses: Swatinem/rust-cache@v2\n        with:\n          save-if: 'true'\n"),
+        ("setup-go cache", "jobs:\n  a:\n    steps:\n      - uses: actions/setup-go@v7\n        with:\n          go-version: '1.26'\n"),
+        ("docker gha", "jobs:\n  a:\n    steps:\n      - uses: docker/build-push-action@v7\n        with:\n          cache-to: type=gha,mode=max\n"),
+        ("composite save", "runs:\n  using: composite\n  steps:\n    - uses: actions/cache@v6\n      with:\n        path: x\n        key: k\n"),
+    ];
+    for (what, yaml) in cases {
+        let doc: serde_yaml::Value = serde_yaml::from_str(yaml).expect(what);
+        assert!(
+            !cache_discipline_problems("t.yml", &doc).is_empty(),
+            "the check missed: {what}"
+        );
+    }
+    let ok = "jobs:\n  a:\n    steps:\n      - uses: actions/cache/restore@v6\n        with:\n          path: x\n          key: k\n      - uses: actions/cache/save@v6\n        if: always() && github.ref == 'refs/heads/main'\n        with:\n          path: x\n          key: k\n      - uses: Swatinem/rust-cache@v2\n        with:\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n      - uses: actions/setup-go@v7\n        with:\n          cache: false\n";
+    let doc: serde_yaml::Value = serde_yaml::from_str(ok).unwrap();
+    assert_eq!(
+        cache_discipline_problems("t.yml", &doc),
+        Vec::<String>::new()
+    );
+}
